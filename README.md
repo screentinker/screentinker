@@ -192,6 +192,40 @@ server {
 }
 ```
 
+### Updating
+
+To update a running instance to the latest version:
+
+```bash
+cd /opt/screentinker
+
+# Back up the database first
+sqlite3 server/db/remote_display.db ".backup server/db/backup-$(date +%F).db"
+
+# Pull latest code
+git pull origin main
+
+# Install any new dependencies
+cd server && npm install --production
+
+# Restart the service
+sudo systemctl restart screentinker
+```
+
+If you deployed without git, you can initialize it:
+
+```bash
+cd /opt/screentinker
+git init
+git remote add origin https://github.com/screentinker/screentinker.git
+git fetch origin main
+git checkout origin/main -- .
+cd server && npm install --production
+sudo systemctl restart screentinker
+```
+
+Your database, uploads, and configuration are preserved — only code files are updated.
+
 ### Backups
 
 The SQLite database is at `server/db/remote_display.db`. Back it up regularly:

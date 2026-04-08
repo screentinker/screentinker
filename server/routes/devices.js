@@ -24,10 +24,24 @@ router.get('/', (req, res) => {
       INNER JOIN (SELECT device_id, MAX(captured_at) as max_at FROM screenshots GROUP BY device_id) latest
       ON sc.device_id = latest.device_id AND sc.captured_at = latest.max_at
     ) s ON d.id = s.device_id
-    ${isAdmin ? '' : 'WHERE (d.user_id = ? OR d.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))'}
+    ${isAdmin ? 'WHERE d.user_id IS NOT NULL' : 'WHERE d.user_id IS NOT NULL AND (d.user_id = ? OR d.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))'}
     ORDER BY d.created_at ASC
     LIMIT ? OFFSET ?
   `).all(...(isAdmin ? [] : [req.user.id, req.user.id]), Math.min(parseInt(req.query.limit) || 100, 500), parseInt(req.query.offset) || 0);
+  res.json(devices);
+});
+
+// List unclaimed provisioning devices (admin only)
+router.get('/unassigned', (req, res) => {
+  if (!['admin', 'superadmin'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const devices = db.prepare(`
+    SELECT id, pairing_code, status, ip_address, android_version, app_version,
+      screen_width, screen_height, created_at, last_heartbeat
+    FROM devices WHERE user_id IS NULL
+    ORDER BY created_at DESC
+  `).all();
   res.json(devices);
 });
 
