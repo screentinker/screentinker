@@ -473,7 +473,7 @@ function showPreview(content) {
       <button style="position:absolute;top:8px;right:8px;z-index:1;background:rgba(0,0,0,0.7);border:none;color:white;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer" id="closePreview">&times;</button>
       <div style="max-width:80vw;max-height:80vh">
         ${isYoutube
-          ? `<iframe src="${src}" style="width:80vw;height:45vw;max-height:80vh;display:block;border:none" allow="autoplay;encrypted-media" allowfullscreen></iframe>`
+          ? `<iframe src="${(() => { try { const u = new URL(src); if (!u.searchParams.has('mute')) u.searchParams.set('mute','1'); if (!u.searchParams.has('enablejsapi')) u.searchParams.set('enablejsapi','1'); if (!u.searchParams.has('origin')) u.searchParams.set('origin', window.location.origin); return u.toString(); } catch { return src; } })()}" style="width:80vw;height:45vw;max-height:80vh;display:block;border:none" allow="autoplay;encrypted-media" allowfullscreen></iframe>`
           : isVideo
             ? `<video src="${src}" controls autoplay style="max-width:80vw;max-height:80vh;display:block"></video>`
             : `<img src="${src}" style="max-width:80vw;max-height:80vh;display:block">`

@@ -504,6 +504,16 @@
     }
 
     // ==================== Content Rendering ====================
+    function fixYoutubeUrl(url) {
+      try {
+        const u = new URL(url);
+        if (!u.searchParams.has('mute')) u.searchParams.set('mute', '1');
+        if (!u.searchParams.has('enablejsapi')) u.searchParams.set('enablejsapi', '1');
+        if (!u.searchParams.has('origin')) u.searchParams.set('origin', window.location.origin);
+        return u.toString();
+      } catch { return url; }
+    }
+
     function renderContent(item) {
       const container = document.getElementById('playerContainer');
       container.style.display = 'block';
@@ -522,7 +532,7 @@
         // Fullscreen
         if (isYoutube) {
           const iframe = document.createElement('iframe');
-          iframe.src = src;
+          iframe.src = fixYoutubeUrl(src);
           iframe.allow = 'autoplay; encrypted-media';
           iframe.allowFullscreen = true;
           iframe.style.cssText = 'width:100%;height:100%;border:none;background:#000';
@@ -584,7 +594,7 @@
           div.appendChild(iframe);
         } else if (isYoutubeZone) {
           const iframe = document.createElement('iframe');
-          iframe.src = src;
+          iframe.src = fixYoutubeUrl(src);
           iframe.allow = 'autoplay; encrypted-media';
           iframe.allowFullscreen = true;
           iframe.style.cssText = 'width:100%;height:100%;border:none';
