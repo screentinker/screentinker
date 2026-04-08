@@ -16,6 +16,8 @@ Open-source digital signage management software. Control content on TVs, display
 - **Alerts** — email notifications when devices go offline
 - **Teams** — multi-user with owner, editor, and viewer roles
 - **White-label** — custom branding, colors, logo, domain
+- **YouTube support** — embed YouTube videos as content, no storage needed
+- **Export/Import** — migrate or back up devices, content, layouts, and widgets with optional media bundling (ZIP)
 - **Built-in billing** — Stripe integration for SaaS subscriptions (optional)
 - **Auto-update** — OTA updates pushed to devices automatically
 
