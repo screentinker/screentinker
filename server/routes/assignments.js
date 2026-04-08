@@ -2,6 +2,20 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../db/database');
 
+// Push playlist update to a connected device via WebSocket
+function pushPlaylistToDevice(req, deviceId) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const { buildPlaylistPayload } = require('../ws/deviceSocket');
+    if (!buildPlaylistPayload) return;
+    const deviceNs = io.of('/device');
+    deviceNs.to(deviceId).emit('device:playlist-update', buildPlaylistPayload(deviceId));
+  } catch (e) {
+    console.warn('Failed to push playlist update:', e.message);
+  }
+}
+
 // Check device ownership for device-scoped routes
 function checkDeviceAccess(req, res) {
   const device = db.prepare('SELECT user_id FROM devices WHERE id = ?').get(req.params.deviceId);
@@ -73,6 +87,7 @@ router.post('/device/:deviceId', (req, res) => {
       WHERE a.id = ?
     `).get(result.lastInsertRowid);
 
+    pushPlaylistToDevice(req, req.params.deviceId);
     res.status(201).json(assignment);
   } catch (err) {
     if (err.message.includes('UNIQUE')) {
@@ -111,6 +126,7 @@ router.put('/:id', (req, res) => {
     FROM assignments a LEFT JOIN content c ON a.content_id = c.id LEFT JOIN widgets w ON a.widget_id = w.id
     WHERE a.id = ?
   `).get(req.params.id);
+  pushPlaylistToDevice(req, assignment.device_id);
   res.json(updated);
 });
 
@@ -120,6 +136,7 @@ router.delete('/:id', (req, res) => {
   if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
 
   db.prepare('DELETE FROM assignments WHERE id = ?').run(req.params.id);
+  pushPlaylistToDevice(req, assignment.device_id);
   res.json({ success: true, device_id: assignment.device_id, content_id: assignment.content_id });
 });
 
@@ -143,6 +160,7 @@ router.post('/device/:deviceId/reorder', (req, res) => {
     WHERE a.device_id = ?
     ORDER BY a.sort_order ASC
   `).all(req.params.deviceId);
+  pushPlaylistToDevice(req, req.params.deviceId);
   res.json(assignments);
 });
 
@@ -169,6 +187,7 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
   });
   transaction();
 
+  pushPlaylistToDevice(req, req.params.targetDeviceId);
   res.json({ success: true, copied: source.length });
 });
 

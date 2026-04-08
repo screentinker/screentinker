@@ -461,10 +461,10 @@ function renderPlaylist(assignments) {
       <div class="playlist-item-info">
         <div class="playlist-item-name">${a.filename || a.widget_name || 'Unknown'}</div>
         <div class="playlist-item-meta">
-          ${a.widget_id && !a.content_id ? `Widget (${a.widget_type || 'custom'})` : a.mime_type?.startsWith('video/') ? 'Video' : 'Image'}
+          ${a.widget_id && !a.content_id ? `Widget (${a.widget_type || 'custom'})` : a.mime_type === 'video/youtube' ? 'YouTube' : a.mime_type?.startsWith('video/') ? 'Video' : 'Image'}
           ${a.zone_id ? ` &middot; <span style="color:var(--accent)">Zone: ${a.zone_id.slice(0,8)}</span>` : ''}
-          ${a.duration_sec ? ` &middot; Duration: ${a.duration_sec}s` : ''}
-          ${a.content_duration ? ` &middot; Length: ${Math.round(a.content_duration)}s` : ''}
+          ${a.content_duration ? ` &middot; ${Math.floor(a.content_duration / 60)}:${String(Math.floor(a.content_duration % 60)).padStart(2, '0')}` : ''}
+          ${!a.content_duration && !a.mime_type?.startsWith('video/') && a.duration_sec ? ` &middot; ${a.duration_sec}s` : ''}
           ${a.schedule_start ? ` &middot; ${a.schedule_start}-${a.schedule_end}` : ''}
         </div>
       </div>

@@ -155,6 +155,12 @@
     }
 
     // ==================== Boot ====================
+    // Auto-detect server URL from origin since player is served from the same server
+    if (!config.serverUrl) {
+      config.serverUrl = window.location.origin;
+      saveConfig(config);
+    }
+
     if (config.serverUrl && config.deviceId && config.paired) {
       // Show tap-to-start overlay to unlock audio on auto-reconnect
       const tapOverlay = document.createElement('div');
@@ -183,8 +189,9 @@
     }
 
     // ==================== Setup UI ====================
-    const savedUrl = config.serverUrl || '';
+    const savedUrl = config.serverUrl || window.location.origin;
     document.getElementById('serverUrl').value = savedUrl;
+
 
     // Unlock audio on any user interaction
     function unlockAudio() {
@@ -397,12 +404,14 @@
     function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }
 
     function startPlaylistRefresh() {
+      // No longer needed — server pushes playlist updates instantly via WebSocket.
+      // Kept as a fallback with a long interval in case a push is missed.
       if (refreshTimer) clearInterval(refreshTimer);
       refreshTimer = setInterval(() => {
         if (socket?.connected && config.deviceId && config.paired) {
           socket.emit('device:register', { device_id: config.deviceId, device_info: {} });
         }
-      }, PLAYLIST_REFRESH_INTERVAL);
+      }, 300000); // 5 minutes fallback
     }
 
     // ==================== Playlist ====================
@@ -536,6 +545,7 @@
     }
 
     let activeYtPlayer = null;
+    let ytGeneration = 0; // Incremented on each new YouTube embed to ignore stale callbacks
 
     function createYoutubeEmbed(src, item, container) {
       const videoId = extractVideoId(src);
@@ -544,6 +554,12 @@
         if (playlist.length > 1) setTimeout(nextItem, 2000);
         return null;
       }
+
+      // Invalidate any previous player's callbacks
+      const myGeneration = ++ytGeneration;
+
+      // Destroy old player without triggering side effects (callbacks check generation)
+      if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch {} activeYtPlayer = null; }
 
       // Create a div for the YT player to replace
       const playerDiv = document.createElement('div');
@@ -572,7 +588,11 @@
       }
 
       loadYoutubeApi(() => {
-        if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch {} }
+        // Bail if a newer player was created while we waited for the API
+        if (myGeneration !== ytGeneration) return;
+
+        const shouldLoop = playlist.length <= 1;
+        let playStartTime = 0;
         activeYtPlayer = new YT.Player(playerDiv.id, {
           videoId: videoId,
           width: '100%',
@@ -583,13 +603,14 @@
             controls: 0,
             rel: 0,
             modestbranding: 1,
-            loop: 1,
-            playlist: videoId,
+            loop: shouldLoop ? 1 : 0,
+            playlist: shouldLoop ? videoId : undefined,
             enablejsapi: 1,
             origin: window.location.origin,
           },
           events: {
             onReady: (event) => {
+              if (myGeneration !== ytGeneration) return;
               console.log('YouTube player ready:', item.filename);
               event.target.playVideo();
               if (userHasInteracted) {
@@ -598,16 +619,21 @@
               }
             },
             onError: (event) => {
+              if (myGeneration !== ytGeneration) return;
               console.error('YouTube error', event.data, 'for:', item.filename);
-              // 2=invalid param, 5=HTML5 error, 100=not found, 101/150=restricted
               if (playlist.length > 1) {
                 console.log('Skipping unplayable YouTube video');
                 setTimeout(nextItem, 2000);
               }
             },
             onStateChange: (event) => {
-              // YT.PlayerState.ENDED = 0
-              if (event.data === 0 && playlist.length > 1) {
+              if (myGeneration !== ytGeneration) return;
+              // Track when video actually starts playing
+              if (event.data === 1) playStartTime = Date.now();
+              // YT.PlayerState.ENDED = 0 — advance to next video
+              // Ignore ENDED if video played for less than 3 seconds (spurious during init)
+              if (event.data === 0 && !shouldLoop && (Date.now() - playStartTime) > 3000) {
+                console.log('YouTube video ended:', item.filename);
                 nextItem();
               }
             },
@@ -615,10 +641,9 @@
         });
       });
 
-      // Fallback: advance after duration if set
-      if (playlist.length > 1 && item.duration_sec) {
-        setTimeout(nextItem, (item.duration_sec || 30) * 1000);
-      }
+      // Note: YouTube advancement is handled by onStateChange ENDED event.
+      // Do NOT use duration_sec timeout here — it defaults to 10s for assignments
+      // and would cut videos short. The YouTube player tells us when it's done.
 
       return playerDiv;
     }

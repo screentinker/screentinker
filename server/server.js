@@ -276,6 +276,7 @@ app.use('/uploads/content', (req, res, next) => {
 // Setup WebSockets
 const setupWebSockets = require('./ws');
 const { deviceNs, dashboardNs } = setupWebSockets(io);
+app.set('io', io);
 
 // Start heartbeat checker
 const { startHeartbeatChecker } = require('./services/heartbeat');

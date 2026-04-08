@@ -140,7 +140,7 @@ router.post('/remote', checkRemoteUrl, (req, res) => {
 });
 
 // Add YouTube content (available to all plans - no storage used)
-router.post('/youtube', (req, res) => {
+router.post('/youtube', async (req, res) => {
   try {
     const { url, name } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
@@ -149,10 +149,22 @@ router.post('/youtube', (req, res) => {
     const videoId = extractYoutubeId(url);
     if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
+    // Fetch video title from YouTube oEmbed if no name provided
+    let filename = name;
+    if (!filename) {
+      try {
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+        if (oembedRes.ok) {
+          const oembed = await oembedRes.json();
+          filename = oembed.title;
+        }
+      } catch {}
+    }
+    if (!filename) filename = `YouTube: ${videoId}`;
+
     const id = uuidv4();
     const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=${videoId}&enablejsapi=1`;
     const thumbnailUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    const filename = name || `YouTube: ${videoId}`;
 
     db.prepare(`
       INSERT INTO content (id, user_id, filename, filepath, mime_type, file_size, remote_url, thumbnail_path)

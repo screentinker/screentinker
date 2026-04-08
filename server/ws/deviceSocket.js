@@ -85,8 +85,9 @@ function checkDeviceAccess(deviceId) {
 }
 
 module.exports = function setupDeviceSocket(io) {
-  // Expose lastScreenshots for the screenshot API endpoint
+  // Expose helpers for use by route handlers
   module.exports.lastScreenshots = lastScreenshots;
+  module.exports.buildPlaylistPayload = buildPlaylistPayload;
   const deviceNs = io.of('/device');
   const dashboardNs = io.of('/dashboard');
 
