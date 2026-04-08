@@ -147,7 +147,7 @@
 
   <!-- Add Device Modal -->
   <div class="modal-overlay" id="addDeviceModal" style="display:none">
-    <div class="modal">
+    <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <h3>Add Display</h3>
         <button class="btn-icon" onclick="document.getElementById('addDeviceModal').style.display='none'">
@@ -157,7 +157,7 @@
         </button>
       </div>
       <div class="modal-body">
-        <p class="modal-description">Enter the 6-digit pairing code shown on the display.</p>
+        <p class="modal-description" style="margin-bottom:16px">Enter the 6-digit pairing code shown on the display.</p>
         <div class="form-group">
           <label>Pairing Code</label>
           <input type="text" id="pairingCodeInput" maxlength="6" pattern="[0-9]{6}" placeholder="000000" class="pairing-input">
@@ -165,6 +165,24 @@
         <div class="form-group">
           <label>Display Name (optional)</label>
           <input type="text" id="deviceNameInput" placeholder="e.g., Lobby TV" class="input">
+        </div>
+        <div style="border-top:1px solid var(--border,#1e293b);margin-top:20px;padding-top:16px">
+          <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500">Need a player app? Install one to get a pairing code:</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <a href="/download/apk" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+              &#129302; Android APK
+            </a>
+            <a href="/player" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+              &#127760; Web Player
+            </a>
+            <a href="/scripts/raspberry-pi-setup.sh" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+              &#129359; Raspberry Pi
+            </a>
+            <a href="/scripts/windows-setup.bat" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+              &#128187; Windows
+            </a>
+          </div>
+          <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:8px">Smart TVs (LG/Samsung): open the built-in browser and navigate to <code style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px">/player</code></p>
         </div>
       </div>
       <div class="modal-footer">

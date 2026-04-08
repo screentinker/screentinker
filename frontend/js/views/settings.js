@@ -65,43 +65,6 @@ export async function render(container) {
     </div>
 
     <div class="settings-section">
-      <h3>Player Downloads</h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
-        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
-          <div style="font-size:24px;margin-bottom:8px">&#129302;</div>
-          <div style="font-weight:600;margin-bottom:4px">Android APK</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Apolosign, Fire TV, any Android device</div>
-          <a href="/download/apk" class="btn btn-primary btn-sm" style="text-decoration:none;width:100%;justify-content:center">Download APK</a>
-        </div>
-        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
-          <div style="font-size:24px;margin-bottom:8px">&#127760;</div>
-          <div style="font-weight:600;margin-bottom:4px">Web Player</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Any browser, ChromeOS, Smart TVs</div>
-          <a href="/player" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none;width:100%;justify-content:center">Open Player</a>
-        </div>
-        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
-          <div style="font-size:24px;margin-bottom:8px">&#129359;</div>
-          <div style="font-weight:600;margin-bottom:4px">Raspberry Pi</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Auto-start kiosk mode on Pi OS</div>
-          <a href="/scripts/raspberry-pi-setup.sh" class="btn btn-secondary btn-sm" style="text-decoration:none;width:100%;justify-content:center">Download Script</a>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:6px"><code>curl -sSL ${serverUrl}/scripts/raspberry-pi-setup.sh | bash</code></div>
-        </div>
-        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
-          <div style="font-size:24px;margin-bottom:8px">&#128187;</div>
-          <div style="font-weight:600;margin-bottom:4px">Windows</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Chrome kiosk mode on Windows</div>
-          <a href="/scripts/windows-setup.bat" class="btn btn-secondary btn-sm" style="text-decoration:none;width:100%;justify-content:center">Download Script</a>
-        </div>
-        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
-          <div style="font-size:24px;margin-bottom:8px">&#128250;</div>
-          <div style="font-weight:600;margin-bottom:4px">LG webOS / Samsung Tizen</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Use the TV's built-in browser</div>
-          <div style="font-size:11px;color:var(--text-secondary)">Navigate to:<br><code>${serverUrl}/player</code></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-section">
       <h3>Setup Guide</h3>
       <div style="color:var(--text-secondary);font-size:13px;line-height:1.8">
         <ol style="padding-left:20px;list-style:decimal">
