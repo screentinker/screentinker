@@ -150,7 +150,7 @@ router.post('/youtube', (req, res) => {
     if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
     const id = uuidv4();
-    const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=${videoId}&enablejsapi=1&origin=${encodeURIComponent(req.protocol + '://' + req.get('host'))}`;
+    const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=${videoId}&enablejsapi=1`;
     const thumbnailUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
     const filename = name || `YouTube: ${videoId}`;
 
