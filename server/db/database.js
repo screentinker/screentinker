@@ -59,6 +59,38 @@ for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { /* already exists */ }
 }
 
+// Fix assignments table: make content_id nullable (SQLite requires table rebuild)
+try {
+  const colInfo = db.prepare("PRAGMA table_info(assignments)").all();
+  const contentCol = colInfo.find(c => c.name === 'content_id');
+  if (contentCol && contentCol.notnull === 1) {
+    console.log('Migrating assignments table: making content_id nullable...');
+    db.exec(`
+      CREATE TABLE assignments_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        content_id TEXT REFERENCES content(id) ON DELETE CASCADE,
+        widget_id TEXT REFERENCES widgets(id) ON DELETE CASCADE,
+        zone_id TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        duration_sec INTEGER NOT NULL DEFAULT 10,
+        schedule_start TEXT,
+        schedule_end TEXT,
+        schedule_days TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        muted INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      );
+      INSERT INTO assignments_new SELECT id, device_id, content_id, widget_id, zone_id, sort_order, duration_sec, schedule_start, schedule_end, schedule_days, enabled, muted, created_at FROM assignments;
+      DROP TABLE assignments;
+      ALTER TABLE assignments_new RENAME TO assignments;
+    `);
+    console.log('Assignments table migrated successfully.');
+  }
+} catch (e) {
+  console.error('Assignments migration error:', e.message);
+}
+
 // Prune old telemetry (keep last 24h worth at 15s intervals = ~5760, cap at 6000)
 function pruneTelemetry(deviceId) {
   db.prepare(`

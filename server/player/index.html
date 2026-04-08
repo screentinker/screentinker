@@ -436,7 +436,7 @@
 
       const newItems = data.assignments || [];
       // Build fingerprint from id + url + filename to detect any content change
-      const fingerprint = (items) => items.map(a => `${a.content_id}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}`).join(',');
+      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}`).join(',');
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
 
@@ -693,6 +693,14 @@
           container.appendChild(img);
           // Auto advance for images
           setTimeout(nextItem, (item.duration_sec || 10) * 1000);
+        } else if (item.widget_id) {
+          const iframe = document.createElement('iframe');
+          iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render`;
+          iframe.style.cssText = 'width:100%;height:100%;border:none;background:#000';
+          iframe.allow = 'autoplay; fullscreen';
+          container.appendChild(iframe);
+          // Auto advance for widgets
+          setTimeout(nextItem, (item.duration_sec || 30) * 1000);
         }
       }
     }

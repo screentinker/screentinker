@@ -69,10 +69,22 @@ app.get('/app', (req, res) => {
 });
 
 // Serve frontend static files
-app.use(express.static(config.frontendDir, { index: false }));
+// JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
+// Images/fonts/icons: long cache for Cloudflare + browser
+app.use(express.static(config.frontendDir, { index: false, etag: true, lastModified: true, setHeaders: (res, filePath) => {
+  if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
+    res.setHeader('Cache-Control', 'no-cache');
+  } else if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|webp|mp4|webm)$/i.test(filePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=2592000'); // 30 days
+  }
+}}));
 
-// Serve web player at /player
-app.use('/player', express.static(path.join(__dirname, 'player')));
+// Serve web player at /player (same no-cache for JS/HTML)
+app.use('/player', express.static(path.join(__dirname, 'player'), { etag: true, lastModified: true, setHeaders: (res, filePath) => {
+  if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
+    res.setHeader('Cache-Control', 'no-cache');
+  }
+}}));
 
 // Serve setup scripts
 app.use('/scripts', express.static(path.join(__dirname, '..', 'scripts')));
@@ -267,9 +279,11 @@ app.get('/api/update/check', (req, res) => {
 // (Screenshot route moved above protected routes)
 
 // Serve uploaded content files directly (with CORS for web player canvas capture)
+// Long cache for media files — Cloudflare and browsers can cache these aggressively
 app.use('/uploads/content', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'public, max-age=2592000, immutable'); // 30 days
   next();
 }, express.static(config.contentDir));
 

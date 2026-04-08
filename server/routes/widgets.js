@@ -207,18 +207,26 @@ load(); setInterval(load, 300000);
 }
 
 function renderText(c) {
+  // Designer preview uses fontSize/10 vw, but older published HTML used fontSize*10.8 px.
+  // Convert any px-based font sizes to vw so they scale to any viewport: px / 108 = vw
+  let html = c.html || '<p style="color:white;padding:20px">Empty text widget</p>';
+  html = html.replace(/font-size:\s*([\d.]+)px/g, (match, px) => {
+    return `font-size:${(parseFloat(px) / 108).toFixed(2)}vw`;
+  });
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:${c.background || 'transparent'}; height:100vh; overflow:hidden; }
+  body { background:${c.background || 'transparent'}; width:100vw; height:100vh; overflow:hidden; }
   ${c.css || ''}
-</style></head><body>${c.html || '<p style="color:white;padding:20px">Empty text widget</p>'}</body></html>`;
+</style></head><body>${html}</body></html>`;
   // NOTE: c.html is intentionally rendered as raw HTML - this is user-authored content for the text widget
 }
 
 function renderWebpage(c) {
+  const zoom = (c.zoom || 100) / 100;
+  const invZoom = 100 / (c.zoom || 100) * 100;
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; } body { height:100vh; overflow:hidden; }
-  iframe { width:100%; height:100%; border:0; transform:scale(${(c.zoom || 100) / 100}); transform-origin:0 0; }
+  iframe { width:${invZoom}%; height:${invZoom}%; border:0; transform:scale(${zoom}); transform-origin:0 0; }
 </style></head><body>
 <iframe src="${escapeHtml(safeUrl(c.url))}" sandbox="allow-scripts allow-same-origin"></iframe>
 ${c.refresh_interval > 0 ? `<script>setInterval(()=>document.querySelector('iframe').src=document.querySelector('iframe').src,${c.refresh_interval * 1000});</script>` : ''}

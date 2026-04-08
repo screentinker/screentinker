@@ -508,16 +508,19 @@ function updateLayers() {
 function generateInnerHTML() {
   let html = '';
   elements.forEach((el, i) => {
+    // Use vw units for font sizes (same as designer preview) so output scales to any viewport
+    const fs = el.fontSize / 10;
+    const fsLabel = el.fontSize / 15;
     switch (el.type) {
       case 'text':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize * 10.8}px;font-family:${el.fontFamily};color:${el.color};font-weight:${el.bold ? 'bold' : 'normal'};${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}white-space:nowrap">${el.text}</div>`;
+        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${fs}vw;font-family:${el.fontFamily};color:${el.color};font-weight:${el.bold ? 'bold' : 'normal'};${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}white-space:nowrap">${el.text}</div>`;
         break;
       case 'clock':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize * 10.8}px;font-family:${el.fontFamily};color:${el.color};font-weight:bold" id="c${i}"></div>
+        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${fs}vw;font-family:${el.fontFamily};color:${el.color};font-weight:bold" id="c${i}"></div>
           <script>setInterval(()=>{const o={hour:'2-digit',minute:'2-digit'${el.showSeconds ? ",second:'2-digit'" : ''},hour12:${el.format !== '24h'}};document.getElementById('c${i}').textContent=new Date().toLocaleTimeString('en-US',o)},1000)</script>`;
         break;
       case 'date':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize * 10.8}px;font-family:${el.fontFamily};color:${el.color}" id="d${i}"></div>
+        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${fs}vw;font-family:${el.fontFamily};color:${el.color}" id="d${i}"></div>
           <script>document.getElementById('d${i}').textContent=new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})</script>`;
         break;
       case 'image':
@@ -530,19 +533,19 @@ function generateInnerHTML() {
         html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.width}%;height:${el.height}%;background:${el.color};opacity:${el.opacity};${el.shape === 'circle' ? 'border-radius:50%' : `border-radius:${el.radius}px`}"></div>`;
         break;
       case 'weather':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize * 10.8}px;color:${el.color}" id="w${i}">Loading...</div>
+        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${fs}vw;color:${el.color}" id="w${i}">Loading...</div>
           <script>fetch('https://wttr.in/${encodeURIComponent(el.location)}?format=j1').then(r=>r.json()).then(d=>{const c=d.current_condition[0];document.getElementById('w${i}').textContent=c.temp_${el.units === 'metric' ? 'C' : 'F'}+'°${el.units === 'metric' ? 'C' : 'F'} '+c.weatherDesc[0].value}).catch(()=>{})</script>`;
         break;
       case 'ticker':
         html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.width}%;height:${el.height}%;background:${el.bgColor};overflow:hidden;display:flex;align-items:center">
-          <div style="white-space:nowrap;animation:t ${el.speed}s linear infinite;font-size:${el.fontSize * 10.8}px;color:${el.color}" id="t${i}">Loading...</div></div>
+          <div style="white-space:nowrap;animation:t ${el.speed}s linear infinite;font-size:${fs}vw;color:${el.color}" id="t${i}">Loading...</div></div>
           <style>@keyframes t{0%{transform:translateX(100%)}100%{transform:translateX(-100%)}}</style>
           <script>fetch('https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(el.feedUrl)}').then(r=>r.json()).then(d=>{document.getElementById('t${i}').textContent=d.items.map(i=>i.title).join('  •  ')}).catch(()=>{})</script>`;
         break;
       case 'countdown':
         html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;text-align:center;color:${el.color}">
-          <div style="font-size:${el.fontSize * 7}px;opacity:0.8">${el.label}</div>
-          <div style="font-size:${el.fontSize * 10.8}px;font-weight:bold" id="cd${i}"></div></div>
+          <div style="font-size:${fsLabel}vw;opacity:0.8">${el.label}</div>
+          <div style="font-size:${fs}vw;font-weight:bold" id="cd${i}"></div></div>
           <script>setInterval(()=>{const d=new Date('${el.targetDate}')-new Date();if(d<=0){document.getElementById('cd${i}').textContent='NOW!';return}document.getElementById('cd${i}').textContent=Math.floor(d/864e5)+'d '+Math.floor(d%864e5/36e5)+'h '+Math.floor(d%36e5/6e4)+'m'},6e4)</script>`;
         break;
       case 'webpage':
