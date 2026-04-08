@@ -539,7 +539,8 @@
           video.playsInline = true;
           video.crossOrigin = 'anonymous';
           video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';
-          video.onended = () => nextItem();
+          video.loop = (playlist.length === 1);
+          video.onended = () => { if (!video.loop) nextItem(); };
           video.onerror = (e) => { console.error('Video error:', src, e); setTimeout(nextItem, 3000); };
           video.onloadeddata = () => {
             console.log('Video loaded:', item.filename, 'muted:', video.muted);
