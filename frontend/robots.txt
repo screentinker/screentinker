@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Allow: /legal/
+Allow: /player/
+
+Disallow: /api/
+Disallow: /app
+Disallow: /uploads/
+Disallow: /scripts/
+
+Sitemap: https://screentinker.com/sitemap.xml

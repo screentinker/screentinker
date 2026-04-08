@@ -1,0 +1,96 @@
+const Database = require('better-sqlite3');
+const fs = require('fs');
+const path = require('path');
+const config = require('../config');
+
+const dbDir = path.dirname(config.dbPath);
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+const db = new Database(config.dbPath);
+
+// Enable WAL mode and foreign keys
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// Run schema
+const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+db.exec(schema);
+
+// Migrations for existing databases
+const migrations = [
+  'ALTER TABLE content ADD COLUMN remote_url TEXT',
+  'ALTER TABLE devices ADD COLUMN user_id TEXT REFERENCES users(id)',
+  'ALTER TABLE content ADD COLUMN user_id TEXT REFERENCES users(id)',
+  "ALTER TABLE users ADD COLUMN plan_id TEXT DEFAULT 'free'",
+  'ALTER TABLE users ADD COLUMN stripe_customer_id TEXT',
+  'ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT',
+  "ALTER TABLE users ADD COLUMN subscription_status TEXT DEFAULT 'active'",
+  'ALTER TABLE users ADD COLUMN subscription_ends INTEGER',
+  // Layout & zone support on devices and assignments
+  'ALTER TABLE devices ADD COLUMN layout_id TEXT',
+  'ALTER TABLE devices ADD COLUMN timezone TEXT DEFAULT \'UTC\'',
+  'ALTER TABLE devices ADD COLUMN wall_id TEXT',
+  'ALTER TABLE devices ADD COLUMN team_id TEXT',
+  'ALTER TABLE assignments ADD COLUMN zone_id TEXT',
+  'ALTER TABLE assignments ADD COLUMN widget_id TEXT',
+  // Team support on content
+  'ALTER TABLE content ADD COLUMN team_id TEXT',
+  // Device notes
+  'ALTER TABLE devices ADD COLUMN notes TEXT',
+  // Email settings on users
+  "ALTER TABLE users ADD COLUMN email_alerts INTEGER DEFAULT 1",
+  // Content folders
+  'ALTER TABLE content ADD COLUMN folder TEXT',
+  // Device orientation and default content
+  "ALTER TABLE devices ADD COLUMN orientation TEXT DEFAULT 'landscape'",
+  'ALTER TABLE devices ADD COLUMN default_content_id TEXT',
+  // Audio control per assignment
+  "ALTER TABLE assignments ADD COLUMN muted INTEGER DEFAULT 0",
+  // Trial tracking
+  "ALTER TABLE users ADD COLUMN trial_started INTEGER",
+  "ALTER TABLE users ADD COLUMN trial_plan TEXT DEFAULT 'pro'",
+  // Stripe price IDs on plans
+  "ALTER TABLE plans ADD COLUMN stripe_price_monthly TEXT",
+  "ALTER TABLE plans ADD COLUMN stripe_price_yearly TEXT",
+  // Last login tracking
+  "ALTER TABLE users ADD COLUMN last_login INTEGER",
+];
+for (const sql of migrations) {
+  try { db.exec(sql); } catch (e) { /* already exists */ }
+}
+
+// Prune old telemetry (keep last 24h worth at 15s intervals = ~5760, cap at 6000)
+function pruneTelemetry(deviceId) {
+  db.prepare(`
+    DELETE FROM device_telemetry
+    WHERE device_id = ? AND id NOT IN (
+      SELECT id FROM device_telemetry
+      WHERE device_id = ?
+      ORDER BY reported_at DESC LIMIT 6000
+    )
+  `).run(deviceId, deviceId);
+}
+
+// Prune old screenshots (keep only latest per device)
+function pruneScreenshots(deviceId) {
+  const old = db.prepare(`
+    SELECT filepath FROM screenshots
+    WHERE device_id = ? AND id NOT IN (
+      SELECT id FROM screenshots WHERE device_id = ? ORDER BY captured_at DESC LIMIT 1
+    )
+  `).all(deviceId, deviceId);
+
+  for (const row of old) {
+    const fullPath = path.join(config.screenshotsDir, row.filepath);
+    if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+  }
+
+  db.prepare(`
+    DELETE FROM screenshots
+    WHERE device_id = ? AND id NOT IN (
+      SELECT id FROM screenshots WHERE device_id = ? ORDER BY captured_at DESC LIMIT 1
+    )
+  `).run(deviceId, deviceId);
+}
+
+module.exports = { db, pruneTelemetry, pruneScreenshots };

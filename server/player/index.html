@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ScreenTinker Player</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; }
+
+    /* Setup Screen */
+    #setupScreen {
+      position: fixed; inset: 0; background: #111827; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; z-index: 1000; color: #f1f5f9;
+    }
+    #setupScreen h1 { font-size: 36px; color: #3b82f6; margin-bottom: 8px; }
+    #setupScreen .subtitle { color: #94a3b8; font-size: 16px; margin-bottom: 48px; }
+    #setupScreen .form { width: 400px; max-width: 90vw; }
+    #setupScreen label { display: block; font-size: 14px; color: #94a3b8; margin-bottom: 8px; }
+    #setupScreen input { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155;
+      border-radius: 8px; color: #f1f5f9; font-size: 16px; margin-bottom: 24px; outline: none; }
+    #setupScreen input:focus { border-color: #3b82f6; }
+    #setupScreen button { width: 100%; padding: 12px; background: #3b82f6; color: white;
+      border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
+    #setupScreen button:hover { background: #2563eb; }
+    #setupScreen button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .pairing-code { font-size: 72px; font-weight: 700; color: #3b82f6; font-family: monospace;
+      letter-spacing: 12px; margin: 24px 0; }
+    .pairing-hint { color: #64748b; font-size: 14px; }
+    .status-msg { color: #94a3b8; font-size: 14px; margin-top: 16px; }
+    .spinner { width: 40px; height: 40px; border: 3px solid #334155; border-top-color: #3b82f6;
+      border-radius: 50%; animation: spin 1s linear infinite; margin: 24px auto; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Player */
+    #playerContainer { position: fixed; inset: 0; background: #000; }
+    .zone { position: absolute; overflow: hidden; }
+    .zone video { width: 100%; height: 100%; object-fit: cover; }
+    .zone img { width: 100%; height: 100%; object-fit: cover; }
+    .zone iframe { width: 100%; height: 100%; border: none; }
+
+    /* Status overlay */
+    #statusOverlay {
+      position: fixed; inset: 0; background: #000; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; color: #94a3b8; z-index: 500;
+    }
+    #statusOverlay h2 { color: #3b82f6; font-size: 28px; margin-bottom: 8px; }
+    #statusOverlay p { font-size: 16px; }
+  </style>
+</head>
+<body>
+  <!-- Setup Screen -->
+  <div id="setupScreen">
+    <h1>ScreenTinker</h1>
+    <div class="subtitle">Web Player</div>
+    <div class="form" id="urlForm">
+      <label>Server URL</label>
+      <input type="url" id="serverUrl" placeholder="https://sign.yourdomain.com" autofocus>
+      <button id="connectBtn">Connect</button>
+    </div>
+    <div id="pairingSection" style="display:none;text-align:center">
+      <p>Pairing Code</p>
+      <div class="pairing-code" id="pairingCode">------</div>
+      <p class="pairing-hint">Enter this code in the dashboard to pair this display</p>
+    </div>
+    <div class="spinner" id="setupSpinner" style="display:none"></div>
+    <div class="status-msg" id="setupStatus"></div>
+  </div>
+
+  <!-- Player Container -->
+  <div id="playerContainer" style="display:none"></div>
+
+  <!-- Status Overlay -->
+  <div id="statusOverlay" style="display:none">
+    <div class="spinner"></div>
+    <h2>ScreenTinker</h2>
+    <p id="statusText">Connecting...</p>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // ==================== Config ====================
+    const STORAGE_KEY = 'rd_web_player';
+    const HEARTBEAT_INTERVAL = 15000;
+    const PLAYLIST_REFRESH_INTERVAL = 60000;
+
+    function getConfig() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
+    }
+    function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
+
+    // ==================== State ====================
+    let socket = null;
+    let config = getConfig();
+    let playlist = [];
+    let currentIndex = -1;
+    let isPlaying = false;
+    let heartbeatTimer = null;
+    let refreshTimer = null;
+    let remoteStreaming = false;
+    let streamTimer = null;
+    let layout = null;
+    let zones = {};
+    let userHasInteracted = false;
+
+    // Track user interaction for autoplay policy
+    ['click', 'touchstart', 'keydown'].forEach(evt => {
+      document.addEventListener(evt, () => {
+        userHasInteracted = true;
+        // Try to unmute any playing video
+        const video = document.querySelector('#playerContainer video');
+        if (video && video.muted) {
+          video.muted = false;
+          video.play().catch(() => {});
+          console.log('Unmuted video after user interaction');
+        }
+      }, { once: false });
+    });
+
+    // ==================== Browser Fingerprint ====================
+    function generateBrowserFingerprint() {
+      const components = [
+        navigator.userAgent,
+        navigator.language,
+        screen.width + 'x' + screen.height,
+        screen.colorDepth,
+        new Date().getTimezoneOffset(),
+        navigator.hardwareConcurrency || 0,
+        navigator.platform,
+        // Canvas fingerprint
+        (() => {
+          try {
+            const c = document.createElement('canvas');
+            const ctx = c.getContext('2d');
+            ctx.textBaseline = 'top';
+            ctx.font = '14px Arial';
+            ctx.fillText('ScreenTinker fingerprint', 2, 2);
+            return c.toDataURL().slice(-50);
+          } catch { return ''; }
+        })(),
+      ];
+      // Simple hash
+      const str = components.join('|');
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+      }
+      return 'web-' + Math.abs(hash).toString(36) + '-' + str.length.toString(36);
+    }
+
+    // ==================== Boot ====================
+    if (config.serverUrl && config.deviceId && config.paired) {
+      // Show tap-to-start overlay to unlock audio on auto-reconnect
+      const tapOverlay = document.createElement('div');
+      tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
+      tapOverlay.innerHTML = `
+        <h1 style="color:#3b82f6;font-size:36px;font-family:sans-serif;margin-bottom:12px">ScreenTinker</h1>
+        <p style="color:#94a3b8;font-size:18px;font-family:sans-serif">Tap anywhere to start</p>
+        <p style="color:#64748b;font-size:13px;font-family:sans-serif;margin-top:24px">Audio requires user interaction</p>
+      `;
+      tapOverlay.onclick = () => {
+        unlockAudio();
+        tapOverlay.remove();
+        showStatus('Connecting...');
+        connect(config.serverUrl);
+      };
+      document.body.appendChild(tapOverlay);
+
+      // Auto-dismiss after 5 seconds if no interaction (plays muted)
+      setTimeout(() => {
+        if (tapOverlay.parentNode) {
+          tapOverlay.remove();
+          showStatus('Connecting (audio muted)...');
+          connect(config.serverUrl);
+        }
+      }, 5000);
+    }
+
+    // ==================== Setup UI ====================
+    const savedUrl = config.serverUrl || '';
+    document.getElementById('serverUrl').value = savedUrl;
+
+    // Unlock audio on any user interaction
+    function unlockAudio() {
+      userHasInteracted = true;
+      // Create and resume AudioContext (unlocks audio for the session)
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        ctx.resume().then(() => { console.log('AudioContext unlocked'); });
+        // Play a silent buffer to fully unlock
+        const buf = ctx.createBuffer(1, 1, 22050);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch(e) { console.warn('Audio unlock failed:', e); }
+      // Unmute any playing video
+      document.querySelectorAll('video').forEach(v => { v.muted = false; });
+    }
+
+    document.getElementById('connectBtn').onclick = () => {
+      unlockAudio();
+      const url = document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
+      if (!url) return;
+      config.serverUrl = url;
+      saveConfig(config);
+      document.getElementById('connectBtn').disabled = true;
+      document.getElementById('setupSpinner').style.display = 'block';
+      document.getElementById('setupStatus').textContent = 'Connecting...';
+      connect(url);
+    };
+
+    // ==================== Socket Connection ====================
+    function connect(serverUrl) {
+      if (socket) { socket.disconnect(); socket = null; }
+
+      socket = io(serverUrl + '/device', {
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
+        timeout: 20000,
+      });
+
+      socket.on('connect', () => {
+        console.log('Connected');
+        register();
+      });
+
+      socket.on('disconnect', () => {
+        console.log('Disconnected');
+        stopHeartbeat();
+      });
+
+      socket.on('connect_error', (err) => {
+        document.getElementById('setupStatus').textContent = 'Connection failed: ' + err.message;
+        document.getElementById('setupSpinner').style.display = 'none';
+        document.getElementById('connectBtn').disabled = false;
+      });
+
+      socket.on('device:registered', (data) => {
+        config.deviceId = data.device_id;
+        saveConfig(config);
+        console.log('Registered:', data.device_id);
+
+        if (!config.paired) {
+          // Show pairing code
+          document.getElementById('urlForm').style.display = 'none';
+          document.getElementById('setupSpinner').style.display = 'none';
+          document.getElementById('pairingSection').style.display = 'block';
+          document.getElementById('pairingCode').textContent = config.pairingCode || '------';
+          document.getElementById('setupStatus').textContent = '';
+        }
+
+        startHeartbeat();
+        startPlaylistRefresh();
+      });
+
+      socket.on('device:paired', (data) => {
+        config.paired = true;
+        config.deviceName = data.name;
+        saveConfig(config);
+        console.log('Paired as:', data.name);
+        document.getElementById('setupScreen').style.display = 'none';
+        showStatus('Waiting for content...');
+      });
+
+      socket.on('device:playlist-update', (data) => {
+        console.log('Playlist update:', data.assignments?.length, 'items');
+        handlePlaylistUpdate(data);
+      });
+
+      socket.on('device:content-delete', (data) => {
+        playlist = playlist.filter(p => p.content_id !== data.content_id);
+        if (playlist.length === 0) showStatus('Waiting for content...');
+      });
+
+      socket.on('device:screenshot-request', () => { console.log('Screenshot requested'); captureAndSend(); });
+      socket.on('device:remote-start', () => { console.log('Remote start received'); remoteStreaming = true; startStreaming(); });
+      socket.on('device:remote-stop', () => { console.log('Remote stop received'); remoteStreaming = false; stopStreaming(); });
+
+      socket.on('device:remote-touch', (data) => {
+        // Simulate click at normalized coordinates within the player
+        const container = document.getElementById('playerContainer');
+        if (!container) return;
+        const x = data.x * container.offsetWidth;
+        const y = data.y * container.offsetHeight;
+        const el = document.elementFromPoint(x, y);
+        if (el) el.click();
+        console.log('Touch:', data.x, data.y, '-> element:', el?.tagName);
+      });
+
+      socket.on('device:remote-key', (data) => {
+        console.log('Key:', data.keycode);
+        const video = document.querySelector('#playerContainer video');
+        switch (data.keycode) {
+          case 'KEYCODE_DPAD_RIGHT':
+            // Skip to next content
+            nextItem();
+            break;
+          case 'KEYCODE_DPAD_LEFT':
+            // Go to previous content
+            currentIndex = (currentIndex - 2 + playlist.length) % playlist.length;
+            nextItem();
+            break;
+          case 'KEYCODE_DPAD_CENTER':
+          case 'KEYCODE_ENTER':
+            // Toggle play/pause
+            if (video) { video.paused ? video.play() : video.pause(); }
+            break;
+          case 'KEYCODE_VOLUME_UP':
+            if (video) { video.volume = Math.min(1, video.volume + 0.1); video.muted = false; }
+            break;
+          case 'KEYCODE_VOLUME_DOWN':
+            if (video) { video.volume = Math.max(0, video.volume - 0.1); }
+            break;
+          case 'KEYCODE_MENU':
+            // Toggle mute
+            if (video) { video.muted = !video.muted; }
+            break;
+          case 'KEYCODE_HOME':
+            // Go back to first item
+            currentIndex = -1;
+            nextItem();
+            break;
+          case 'KEYCODE_BACK':
+            // Show/hide status overlay with device info
+            const overlay = document.getElementById('infoOverlay');
+            if (overlay) { overlay.style.display = overlay.style.display === 'none' ? 'flex' : 'none'; }
+            break;
+          case 'KEYCODE_POWER':
+            // Toggle screen (show black overlay)
+            toggleScreenOff();
+            break;
+        }
+      });
+
+      socket.on('device:command', (data) => {
+        console.log('Command:', data.type);
+        if (data.type === 'refresh') location.reload();
+        if (data.type === 'launch') { document.getElementById('screenOffOverlay')?.remove(); }
+        if (data.type === 'screen_off') toggleScreenOff();
+        if (data.type === 'screen_on') { document.getElementById('screenOffOverlay')?.remove(); }
+      });
+    }
+
+    function register() {
+      const data = {};
+      if (config.deviceId && config.paired) {
+        data.device_id = config.deviceId;
+      } else {
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        config.pairingCode = code;
+        saveConfig(config);
+        data.pairing_code = code;
+      }
+      data.device_info = {
+        android_version: 'Web/' + navigator.userAgent.split(' ').pop(),
+        app_version: '1.1.0-web',
+        screen_width: screen.width,
+        screen_height: screen.height,
+      };
+      // Browser fingerprint (survives localStorage clear)
+      data.fingerprint = generateBrowserFingerprint();
+      socket.emit('device:register', data);
+    }
+
+    // ==================== Heartbeat ====================
+    function startHeartbeat() {
+      stopHeartbeat();
+      heartbeatTimer = setInterval(() => {
+        if (!socket?.connected || !config.deviceId) return;
+        socket.emit('device:heartbeat', {
+          device_id: config.deviceId,
+          telemetry: {
+            battery_level: null,
+            battery_charging: false,
+            storage_free_mb: null,
+            storage_total_mb: null,
+            ram_free_mb: null,
+            ram_total_mb: null,
+            cpu_usage: null,
+            wifi_ssid: 'Web Player',
+            wifi_rssi: null,
+            uptime_seconds: Math.floor(performance.now() / 1000),
+          }
+        });
+      }, HEARTBEAT_INTERVAL);
+    }
+
+    function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }
+
+    function startPlaylistRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(() => {
+        if (socket?.connected && config.deviceId && config.paired) {
+          socket.emit('device:register', { device_id: config.deviceId, device_info: {} });
+        }
+      }, PLAYLIST_REFRESH_INTERVAL);
+    }
+
+    // ==================== Playlist ====================
+    function handlePlaylistUpdate(data) {
+      // Check if device is suspended (trial expired / over limit)
+      if (data.suspended) {
+        isPlaying = false;
+        playlist = [];
+        document.getElementById('playerContainer').style.display = 'none';
+        const overlay = document.getElementById('statusOverlay');
+        overlay.style.display = 'flex';
+        overlay.innerHTML = `
+          <div style="text-align:center;max-width:500px">
+            <div style="font-size:64px;margin-bottom:16px">&#9888;</div>
+            <h2 style="color:#f59e0b;margin-bottom:8px">${data.message || 'Account Suspended'}</h2>
+            <p style="color:#94a3b8;font-size:16px;margin-bottom:24px">${data.detail || 'Please upgrade your plan.'}</p>
+            <p style="color:#64748b;font-size:13px">Visit your dashboard to manage your subscription</p>
+          </div>
+        `;
+        return;
+      }
+
+      const newItems = data.assignments || [];
+      const newIds = newItems.map(a => a.content_id).join(',');
+      const oldIds = playlist.map(a => a.content_id).join(',');
+
+      // Apply orientation
+      if (data.orientation) {
+        const rotations = { 'landscape': '0deg', 'portrait': '90deg', 'landscape-flipped': '180deg', 'portrait-flipped': '270deg' };
+        document.getElementById('playerContainer').style.transform = `rotate(${rotations[data.orientation] || '0deg'})`;
+        if (data.orientation.includes('portrait')) {
+          document.getElementById('playerContainer').style.transformOrigin = 'center center';
+          document.getElementById('playerContainer').style.width = '100vh';
+          document.getElementById('playerContainer').style.height = '100vw';
+        }
+      }
+
+      layout = data.layout || null;
+
+      if (newIds === oldIds && playlist.length > 0) {
+        console.log('Playlist unchanged');
+        return;
+      }
+
+      playlist = newItems;
+
+      if (playlist.length === 0) {
+        showStatus('Waiting for content...');
+        isPlaying = false;
+        return;
+      }
+
+      document.getElementById('setupScreen').style.display = 'none';
+
+      if (!isPlaying) {
+        currentIndex = 0;
+        isPlaying = true;
+        playCurrentItem();
+      } else {
+        // Check if current item still exists
+        const curId = playlist[currentIndex]?.content_id;
+        if (!curId) { currentIndex = 0; playCurrentItem(); }
+      }
+    }
+
+    function playCurrentItem() {
+      if (currentIndex < 0 || currentIndex >= playlist.length) {
+        currentIndex = 0;
+        if (playlist.length === 0) { showStatus('Waiting for content...'); return; }
+      }
+
+      hideStatus();
+      const item = playlist[currentIndex];
+      console.log('Playing:', item.filename, `(${currentIndex + 1}/${playlist.length})`);
+
+      // Send play event
+      if (socket?.connected) {
+        socket.emit('device:play-event', {
+          device_id: config.deviceId,
+          event: 'play_start',
+          content_id: item.content_id,
+          content_name: item.filename,
+        });
+      }
+
+      renderContent(item);
+    }
+
+    function nextItem() {
+      // Send play_end for current
+      if (playlist[currentIndex] && socket?.connected) {
+        socket.emit('device:play-event', {
+          device_id: config.deviceId,
+          event: 'play_end',
+          content_id: playlist[currentIndex].content_id,
+          content_name: playlist[currentIndex].filename,
+          completed: true,
+        });
+      }
+
+      currentIndex = (currentIndex + 1) % playlist.length;
+      playCurrentItem();
+    }
+
+    // ==================== Content Rendering ====================
+    function renderContent(item) {
+      const container = document.getElementById('playerContainer');
+      container.style.display = 'block';
+      container.innerHTML = '';
+
+      const isYoutube = item.mime_type === 'video/youtube';
+      const isVideo = !isYoutube && item.mime_type?.startsWith('video/');
+      const isImage = item.mime_type?.startsWith('image/');
+      const remoteUrl = item.remote_url;
+      const serverUrl = config.serverUrl;
+      const src = remoteUrl || `${serverUrl}/uploads/content/${item.filepath}`;
+
+      if (layout && layout.zones && layout.zones.length > 1) {
+        renderZones(container, item);
+      } else {
+        // Fullscreen
+        if (isYoutube) {
+          const iframe = document.createElement('iframe');
+          iframe.src = src;
+          iframe.allow = 'autoplay; encrypted-media';
+          iframe.allowFullscreen = true;
+          iframe.style.cssText = 'width:100%;height:100%;border:none;background:#000';
+          container.appendChild(iframe);
+          // YouTube videos loop via playlist param — advance after duration or loop indefinitely
+          if (playlist.length > 1 && item.duration_sec) {
+            setTimeout(nextItem, (item.duration_sec || 30) * 1000);
+          }
+        } else if (isVideo) {
+          const video = document.createElement('video');
+          video.src = src;
+          video.autoplay = true;
+          video.muted = !userHasInteracted; // Unmuted if user has interacted
+          video.playsInline = true;
+          video.crossOrigin = 'anonymous';
+          video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';
+          video.onended = () => nextItem();
+          video.onerror = (e) => { console.error('Video error:', src, e); setTimeout(nextItem, 3000); };
+          video.onloadeddata = () => {
+            console.log('Video loaded:', item.filename, 'muted:', video.muted);
+          };
+          container.appendChild(video);
+          // Try playing unmuted, fall back to muted
+          video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+          // Fallback: force play if not started after 2s
+          setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000);
+        } else if (isImage) {
+          const img = document.createElement('img');
+          img.src = src;
+          img.style.cssText = 'width:100%;height:100%;object-fit:contain';
+          img.onerror = () => { console.error('Image error'); setTimeout(nextItem, 3000); };
+          container.appendChild(img);
+          // Auto advance for images
+          setTimeout(nextItem, (item.duration_sec || 10) * 1000);
+        }
+      }
+    }
+
+    function renderZones(container, defaultItem) {
+      // Multi-zone layout
+      layout.zones.forEach(zone => {
+        const div = document.createElement('div');
+        div.className = 'zone';
+        div.style.cssText = `left:${zone.x_percent}%;top:${zone.y_percent}%;width:${zone.width_percent}%;height:${zone.height_percent}%;z-index:${zone.z_index || 0}`;
+
+        // Find assignment for this zone
+        const assignment = playlist.find(a => a.zone_id === zone.id) || defaultItem;
+        if (!assignment) return;
+
+        const isVideo = assignment.mime_type?.startsWith('video/');
+        const src = assignment.remote_url || `${config.serverUrl}/uploads/content/${assignment.filepath}`;
+
+        const isYoutubeZone = assignment.mime_type === 'video/youtube';
+
+        if (zone.zone_type === 'widget' && assignment.widget_id) {
+          const iframe = document.createElement('iframe');
+          iframe.src = `${config.serverUrl}/api/widgets/${assignment.widget_id}/render`;
+          div.appendChild(iframe);
+        } else if (isYoutubeZone) {
+          const iframe = document.createElement('iframe');
+          iframe.src = src;
+          iframe.allow = 'autoplay; encrypted-media';
+          iframe.allowFullscreen = true;
+          iframe.style.cssText = 'width:100%;height:100%;border:none';
+          div.appendChild(iframe);
+        } else if (isVideo) {
+          const video = document.createElement('video');
+          video.src = src;
+          video.autoplay = true;
+          video.muted = (zone.sort_order > 0); // Only first zone has audio
+          video.loop = (playlist.length === 1);
+          video.playsInline = true;
+          video.style.cssText = `width:100%;height:100%;object-fit:${zone.fit_mode || 'cover'}`;
+          if (!video.loop) video.onended = () => nextItem();
+          div.appendChild(video);
+        } else {
+          const img = document.createElement('img');
+          img.src = src;
+          img.style.cssText = `width:100%;height:100%;object-fit:${zone.fit_mode || 'cover'}`;
+          div.appendChild(img);
+          if (playlist.length > 1) setTimeout(nextItem, (assignment.duration_sec || 10) * 1000);
+        }
+
+        container.appendChild(div);
+      });
+    }
+
+    // ==================== Screenshots ====================
+    function captureAndSend() {
+      if (!socket?.connected) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = 960;
+      canvas.height = 540;
+      const ctx = canvas.getContext('2d');
+      let captured = false;
+
+      try {
+        const container = document.getElementById('playerContainer');
+        const video = container?.querySelector('video');
+        const img = container?.querySelector('img');
+
+        // Try video first
+        if (video && video.readyState >= 2 && video.videoWidth > 0) {
+          try {
+            ctx.drawImage(video, 0, 0, 960, 540);
+            captured = true;
+          } catch (e) {
+            console.warn('Video capture failed (CORS?):', e.message);
+          }
+        }
+
+        // Try image
+        if (!captured && img && img.complete && img.naturalWidth > 0) {
+          try {
+            ctx.drawImage(img, 0, 0, 960, 540);
+            captured = true;
+          } catch (e) {
+            console.warn('Image capture failed:', e.message);
+          }
+        }
+
+        // Fallback: draw status info
+        if (!captured) {
+          ctx.fillStyle = '#111827';
+          ctx.fillRect(0, 0, 960, 540);
+          ctx.fillStyle = '#3b82f6';
+          ctx.font = 'bold 28px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('ScreenTinker Web Player', 480, 230);
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '16px sans-serif';
+          const item = playlist[currentIndex];
+          ctx.fillText(item ? `Playing: ${item.filename}` : 'No content', 480, 270);
+          ctx.fillText(`${config.deviceName || 'Web Player'} | ${new Date().toLocaleTimeString()}`, 480, 310);
+        }
+      } catch (e) {
+        // Even on error, draw something
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 960, 540);
+        ctx.fillStyle = '#ef4444';
+        ctx.font = '16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Screenshot error: ' + e.message, 480, 270);
+      }
+
+      try {
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+        const base64 = dataUrl.split(',')[1];
+        if (base64 && base64.length > 100) {
+          socket.emit('device:screenshot', { device_id: config.deviceId, image_b64: base64 });
+          console.log('Screenshot sent:', base64.length, 'chars', captured ? '(content)' : '(fallback)');
+        }
+      } catch (e) {
+        console.error('Screenshot encode/send failed:', e);
+      }
+    }
+
+    function startStreaming() {
+      stopStreaming();
+      streamTimer = setInterval(captureAndSend, 1000);
+    }
+
+    function stopStreaming() {
+      if (streamTimer) { clearInterval(streamTimer); streamTimer = null; }
+    }
+
+    // ==================== UI Helpers ====================
+    function showStatus(msg) {
+      document.getElementById('statusOverlay').style.display = 'flex';
+      document.getElementById('statusText').textContent = msg;
+    }
+
+    function hideStatus() {
+      document.getElementById('statusOverlay').style.display = 'none';
+    }
+
+    function toggleScreenOff() {
+      let overlay = document.getElementById('screenOffOverlay');
+      if (overlay) { overlay.remove(); return; }
+      overlay = document.createElement('div');
+      overlay.id = 'screenOffOverlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:#000;z-index:9999;cursor:pointer';
+      overlay.onclick = () => overlay.remove();
+      document.body.appendChild(overlay);
+    }
+
+    // Create info overlay (toggled by Back button)
+    const infoDiv = document.createElement('div');
+    infoDiv.id = 'infoOverlay';
+    infoDiv.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:800;display:none;flex-direction:column;align-items:center;justify-content:center;color:#f1f5f9;font-family:-apple-system,sans-serif';
+    infoDiv.innerHTML = `
+      <h2 style="color:#3b82f6;margin-bottom:16px">ScreenTinker Web Player</h2>
+      <div style="font-size:14px;line-height:2;text-align:center;color:#94a3b8" id="infoContent"></div>
+      <p style="margin-top:24px;font-size:12px;color:#64748b">Press Back again or click to close</p>
+    `;
+    infoDiv.onclick = () => { infoDiv.style.display = 'none'; };
+    document.body.appendChild(infoDiv);
+
+    // Update info overlay content periodically
+    setInterval(() => {
+      const el = document.getElementById('infoContent');
+      if (!el) return;
+      const item = playlist[currentIndex];
+      el.innerHTML = `
+        Device ID: ${config.deviceId?.slice(0, 8) || 'N/A'}...<br>
+        Device Name: ${config.deviceName || 'N/A'}<br>
+        Server: ${config.serverUrl || 'N/A'}<br>
+        Status: ${socket?.connected ? '<span style="color:#22c55e">Connected</span>' : '<span style="color:#ef4444">Disconnected</span>'}<br>
+        Now Playing: ${item?.filename || 'Nothing'} (${currentIndex + 1}/${playlist.length})<br>
+        Resolution: ${screen.width}x${screen.height}<br>
+        Uptime: ${Math.floor(performance.now() / 60000)}m<br>
+        Platform: ${navigator.platform}<br>
+        Cache: Service Worker ${navigator.serviceWorker?.controller ? '<span style="color:#22c55e">Active</span>' : 'Inactive'}
+      `;
+    }, 2000);
+
+    // ==================== Fullscreen ====================
+    document.addEventListener('click', () => {
+      if (!document.fullscreenElement && config.paired) {
+        document.documentElement.requestFullscreen?.() ||
+        document.documentElement.webkitRequestFullscreen?.();
+      }
+    });
+
+    // Prevent sleep/screen saver
+    let wakeLock = null;
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { setTimeout(requestWakeLock, 1000); });
+        }
+      } catch {}
+    }
+    requestWakeLock();
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWakeLock(); });
+
+    // Register service worker for offline content caching
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/player/sw.js').then(
+        () => console.log('Service Worker registered'),
+        (err) => console.warn('SW registration failed:', err)
+      );
+    }
+
+    // ==================== Keyboard shortcuts ====================
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        // Reset config and go back to setup
+        if (confirm('Reset player and return to setup?')) {
+          localStorage.removeItem(STORAGE_KEY);
+          location.reload();
+        }
+      }
+      if (e.key === 'f' || e.key === 'F11') {
+        e.preventDefault();
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen();
+      }
+    });
+  </script>
+</body>
+</html>

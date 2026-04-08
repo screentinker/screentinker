@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Database
+server/db/*.db
+server/db/*.db-wal
+server/db/*.db-shm
+
+# Uploads (user content)
+server/uploads/
+
+# Secrets and certificates
+server/certs/key.pem
+server/certs/cert.pem
+server/certs/license_private.pem
+server/certs/.jwt_secret
+server/certs/.license_key
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/release-key.jks
+*.apk
+*.aab
+
+# IDE / Editor
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*

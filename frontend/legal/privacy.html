@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - ScreenTinker</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,sans-serif; background:#111827; color:#e2e8f0; line-height:1.8; }
+    .container { max-width:800px; margin:0 auto; padding:40px 24px 80px; }
+    h1 { color:#3b82f6; font-size:32px; margin-bottom:8px; }
+    .updated { color:#64748b; font-size:14px; margin-bottom:40px; }
+    h2 { color:#f1f5f9; font-size:20px; margin:32px 0 12px; }
+    h3 { color:#cbd5e1; font-size:16px; margin:20px 0 8px; }
+    p, li { color:#94a3b8; font-size:15px; margin-bottom:12px; }
+    ul { padding-left:24px; }
+    a { color:#3b82f6; }
+    .back { display:inline-flex; align-items:center; gap:6px; color:#64748b; font-size:13px; margin-bottom:24px; text-decoration:none; }
+    .back:hover { color:#94a3b8; }
+    table { width:100%; border-collapse:collapse; margin:16px 0; }
+    th, td { padding:10px 12px; text-align:left; border-bottom:1px solid #1e293b; font-size:14px; color:#94a3b8; }
+    th { color:#cbd5e1; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/" class="back">&larr; Back to ScreenTinker</a>
+    <h1>Privacy Policy</h1>
+    <p class="updated">Last updated: March 24, 2026</p>
+
+    <h2>1. Overview</h2>
+    <p>ScreenTinker ("we", "us", "our") respects your privacy. This policy explains what data we collect, how we use it, and your rights regarding your information.</p>
+
+    <h2>2. Information We Collect</h2>
+
+    <h3>2.1 Account Information</h3>
+    <table>
+      <tr><th>Data</th><th>Purpose</th><th>Retention</th></tr>
+      <tr><td>Email address</td><td>Authentication, notifications</td><td>Until account deletion</td></tr>
+      <tr><td>Name</td><td>Display in dashboard</td><td>Until account deletion</td></tr>
+      <tr><td>Password hash</td><td>Authentication (bcrypt, never stored in plain text)</td><td>Until account deletion</td></tr>
+      <tr><td>OAuth provider ID</td><td>Google/Microsoft sign-in</td><td>Until account deletion</td></tr>
+    </table>
+
+    <h3>2.2 Device Information</h3>
+    <table>
+      <tr><th>Data</th><th>Purpose</th><th>Retention</th></tr>
+      <tr><td>Device ID</td><td>Unique device identification</td><td>Until device removal</td></tr>
+      <tr><td>IP address</td><td>Network connectivity, security</td><td>Overwritten each connection</td></tr>
+      <tr><td>Android version, screen resolution</td><td>Compatibility, display optimization</td><td>Until device removal</td></tr>
+      <tr><td>Battery, storage, RAM, CPU, WiFi</td><td>Device health monitoring</td><td>90 days (rolling)</td></tr>
+      <tr><td>Device fingerprint (hardware hash)</td><td>Prevent trial abuse</td><td>Until device removal</td></tr>
+    </table>
+
+    <h3>2.3 Usage Data</h3>
+    <table>
+      <tr><th>Data</th><th>Purpose</th><th>Retention</th></tr>
+      <tr><td>Content play logs</td><td>Proof-of-play reporting</td><td>90 days</td></tr>
+      <tr><td>Activity log (API actions)</td><td>Audit trail, security</td><td>90 days</td></tr>
+      <tr><td>Screenshots (on-demand)</td><td>Remote monitoring</td><td>Latest only per device</td></tr>
+    </table>
+
+    <h3>2.4 Content</h3>
+    <p>Media files (images, videos) you upload are stored on our servers solely to deliver them to your devices. We do not analyze, sell, or share your content.</p>
+
+    <h2>3. How We Use Your Information</h2>
+    <ul>
+      <li><strong>Provide the Service:</strong> Deliver content to devices, enable remote management, process subscriptions</li>
+      <li><strong>Security:</strong> Detect unauthorized access, prevent abuse, protect accounts</li>
+      <li><strong>Communications:</strong> Send device offline alerts, subscription notifications, service updates</li>
+      <li><strong>Improvement:</strong> Analyze aggregate usage patterns to improve the Service (no individual tracking)</li>
+    </ul>
+
+    <h2>4. Data Sharing</h2>
+    <p>We do not sell your personal information. We share data only in these limited circumstances:</p>
+    <ul>
+      <li><strong>Service providers:</strong> Payment processing (Stripe), email delivery, hosting infrastructure</li>
+      <li><strong>Team members:</strong> If you belong to a team, other team members can see shared devices and content</li>
+      <li><strong>Legal requirements:</strong> When required by law, subpoena, or court order</li>
+      <li><strong>Business transfers:</strong> In the event of a merger, acquisition, or sale of assets</li>
+    </ul>
+
+    <h2>5. Self-Hosted Deployments</h2>
+    <p>If you self-host ScreenTinker on your own infrastructure:</p>
+    <ul>
+      <li>All data stays on your servers. We have no access to it.</li>
+      <li>You are the data controller and responsible for compliance with applicable privacy laws.</li>
+      <li>No telemetry or usage data is sent to us from self-hosted instances.</li>
+    </ul>
+
+    <h2>6. Data Security</h2>
+    <ul>
+      <li>Passwords are hashed with bcrypt (never stored in plain text)</li>
+      <li>API authentication uses JWT tokens with auto-expiry</li>
+      <li>All connections use HTTPS/TLS encryption</li>
+      <li>Android app uses encrypted storage for credentials</li>
+      <li>Rate limiting protects against brute force attacks</li>
+      <li>Regular security audits of the codebase</li>
+    </ul>
+
+    <h2>7. Your Rights</h2>
+    <p>You have the right to:</p>
+    <ul>
+      <li><strong>Access:</strong> View all data associated with your account from the Settings page</li>
+      <li><strong>Correction:</strong> Update your account information at any time</li>
+      <li><strong>Deletion:</strong> Delete your account and all associated data from Settings</li>
+      <li><strong>Export:</strong> Download your data via the database backup feature (admin) or API</li>
+      <li><strong>Portability:</strong> Export content and reports in standard formats (CSV, PNG, MP4)</li>
+    </ul>
+
+    <h2>8. Cookies and Local Storage</h2>
+    <ul>
+      <li>We use localStorage to store your authentication token and preferences (language, theme)</li>
+      <li>The web player uses a Service Worker for offline content caching</li>
+      <li>We do not use third-party tracking cookies</li>
+      <li>Google/Microsoft OAuth may set cookies as part of their authentication flow</li>
+    </ul>
+
+    <h2>9. Children's Privacy</h2>
+    <p>The Service is not intended for use by children under 13. We do not knowingly collect information from children under 13.</p>
+
+    <h2>10. International Data Transfers</h2>
+    <p>If you access the Service from outside the United States, your data may be transferred to and processed in the United States. By using the Service, you consent to this transfer.</p>
+
+    <h2>11. Data Retention</h2>
+    <ul>
+      <li>Account data: retained until you delete your account</li>
+      <li>Device telemetry: 90 days (automatically pruned)</li>
+      <li>Play logs: 90 days (automatically pruned)</li>
+      <li>Activity logs: 90 days (automatically pruned)</li>
+      <li>Content: retained until you delete it or your account</li>
+      <li>After account deletion: all data removed within 30 days</li>
+    </ul>
+
+    <h2>12. Changes to This Policy</h2>
+    <p>We may update this policy from time to time. We will notify registered users of material changes via email. The "Last updated" date will be revised accordingly.</p>
+
+    <h2>13. Contact Us</h2>
+    <p>For privacy-related questions or data requests, contact us at:</p>
+    <p>Email: support@screentinker.com</p>
+  </div>
+</body>
+</html>

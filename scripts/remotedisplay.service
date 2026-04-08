@@ -1,0 +1,19 @@
+[Unit]
+Description=ScreenTinker Digital Signage Server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=owner
+WorkingDirectory=/home/owner/Downloads/remote_display/server
+ExecStart=/home/owner/.nvm/versions/node/v20.20.1/bin/node server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=remotedisplay
+
+[Install]
+WantedBy=multi-user.target

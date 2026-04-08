@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RemoteDisplay</string>
+    <string name="accessibility_description">RemoteDisplay uses accessibility to enable remote power controls and system navigation.</string>
+</resources>
