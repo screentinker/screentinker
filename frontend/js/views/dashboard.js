@@ -2,6 +2,11 @@ import { api } from '../api.js';
 import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
 
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
 const DESTRUCTIVE_COMMANDS = ['reboot', 'shutdown'];
 const GROUP_COMMANDS = [
   { type: 'screen_on', label: 'Screen On' },
@@ -61,12 +66,12 @@ function renderDeviceCard(device) {
         </div>` : ''}
       </div>
       <div class="device-card-body">
-        <div class="device-card-name">${device.name}</div>
+        <div class="device-card-name">${esc(device.name)}</div>
         ${device.owner_name || device.owner_email ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
           </svg>
-          ${device.owner_name || device.owner_email}
+          ${esc(device.owner_name || device.owner_email)}
         </div>` : ''}
         <div class="device-card-meta">
           <div class="meta-item">
@@ -108,14 +113,14 @@ function renderGroupSection(group, devices) {
   const onlineCount = devices.filter(d => d.status === 'online').length;
   return `
     <div class="group-section" data-group-id="${group.id}" style="margin-bottom:24px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${group.color || '#3B82F6'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#3B82F6')}">
         <div style="display:flex;align-items:center;gap:10px">
-          <strong style="font-size:15px">${group.name}</strong>
+          <strong style="font-size:15px">${esc(group.name)}</strong>
           <span style="color:var(--text-muted);font-size:12px">${devices.length} device${devices.length !== 1 ? 's' : ''} &middot; ${onlineCount} online</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           ${devices.length > 0 ? `
-          <select class="input group-cmd-select" data-group-id="${group.id}" data-group-name="${group.name}" data-device-count="${devices.length}" style="width:150px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
+          <select class="input group-cmd-select" data-group-id="${group.id}" data-group-name="${esc(group.name)}" data-device-count="${devices.length}" style="width:150px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
             <option value="">Send Command...</option>
             ${GROUP_COMMANDS.map(c => `<option value="${c.type}" ${c.destructive ? 'style="color:var(--danger)"' : ''}>${c.label}</option>`).join('')}
           </select>
@@ -412,7 +417,7 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
       modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
       modal.innerHTML = `
         <div style="background:var(--bg-card);border-radius:12px;padding:24px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto">
-          <h3 style="margin:0 0 4px">${group.name}</h3>
+          <h3 style="margin:0 0 4px">${esc(group.name)}</h3>
           <p style="margin:0 0 16px;font-size:12px;color:var(--text-muted)">Check devices to add them to this group</p>
           <div style="display:flex;flex-direction:column;gap:6px">
             ${allDevices.filter(d => d.status !== 'provisioning').map(d => {
@@ -421,8 +426,8 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
                 <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:var(--bg-secondary)">
                   <input type="checkbox" data-device-id="${d.id}" data-in-groups="${inOther.join(',')}" ${memberIds.has(d.id) ? 'checked' : ''}>
                   <span class="status-dot ${d.status}" style="width:8px;height:8px"></span>
-                  <span style="font-size:13px;flex:1">${d.name}</span>
-                  ${inOther.length > 0 ? `<span style="font-size:10px;color:var(--text-muted);background:var(--bg-primary);padding:1px 6px;border-radius:8px">${inOther.join(', ')}</span>` : ''}
+                  <span style="font-size:13px;flex:1">${esc(d.name)}</span>
+                  ${inOther.length > 0 ? `<span style="font-size:10px;color:var(--text-muted);background:var(--bg-primary);padding:1px 6px;border-radius:8px">${esc(inOther.join(', '))}</span>` : ''}
                 </label>
               `;
             }).join('')}

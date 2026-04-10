@@ -3,6 +3,17 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 
+const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
+const ALLOWED_COMMANDS = ['screen_on', 'screen_off', 'launch', 'update', 'reboot', 'shutdown'];
+
+// Verify group belongs to the authenticated user
+function requireGroupOwnership(req, res, next) {
+  const group = db.prepare('SELECT * FROM device_groups WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!group) return res.status(404).json({ error: 'group not found' });
+  req.group = group;
+  next();
+}
+
 // List groups
 router.get('/', (req, res) => {
   const groups = db.prepare(`
@@ -20,6 +31,7 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   const { name, color } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
+  if (color && !VALID_COLOR.test(color)) return res.status(400).json({ error: 'invalid color format, use #RRGGBB' });
   const id = uuidv4();
   db.prepare('INSERT INTO device_groups (id, user_id, name, color) VALUES (?, ?, ?, ?)')
     .run(id, req.user.id, name, color || '#3B82F6');
@@ -27,21 +39,22 @@ router.post('/', (req, res) => {
 });
 
 // Update group
-router.put('/:id', (req, res) => {
+router.put('/:id', requireGroupOwnership, (req, res) => {
   const { name, color } = req.body;
-  if (name) db.prepare('UPDATE device_groups SET name = ? WHERE id = ? AND user_id = ?').run(name, req.params.id, req.user.id);
-  if (color) db.prepare('UPDATE device_groups SET color = ? WHERE id = ? AND user_id = ?').run(color, req.params.id, req.user.id);
+  if (color && !VALID_COLOR.test(color)) return res.status(400).json({ error: 'invalid color format, use #RRGGBB' });
+  if (name) db.prepare('UPDATE device_groups SET name = ? WHERE id = ?').run(name, req.params.id);
+  if (color) db.prepare('UPDATE device_groups SET color = ? WHERE id = ?').run(color, req.params.id);
   res.json(db.prepare('SELECT * FROM device_groups WHERE id = ?').get(req.params.id));
 });
 
 // Delete group
-router.delete('/:id', (req, res) => {
-  db.prepare('DELETE FROM device_groups WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+router.delete('/:id', requireGroupOwnership, (req, res) => {
+  db.prepare('DELETE FROM device_groups WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // Get devices in a group
-router.get('/:id/devices', (req, res) => {
+router.get('/:id/devices', requireGroupOwnership, (req, res) => {
   const devices = db.prepare(`
     SELECT d.* FROM devices d
     JOIN device_group_members dgm ON d.id = dgm.device_id
@@ -52,7 +65,7 @@ router.get('/:id/devices', (req, res) => {
 });
 
 // Add device to group
-router.post('/:id/devices', (req, res) => {
+router.post('/:id/devices', requireGroupOwnership, (req, res) => {
   const { device_id } = req.body;
   if (!device_id) return res.status(400).json({ error: 'device_id required' });
   try {
@@ -64,13 +77,13 @@ router.post('/:id/devices', (req, res) => {
 });
 
 // Remove device from group
-router.delete('/:id/devices/:deviceId', (req, res) => {
+router.delete('/:id/devices/:deviceId', requireGroupOwnership, (req, res) => {
   db.prepare('DELETE FROM device_group_members WHERE device_id = ? AND group_id = ?').run(req.params.deviceId, req.params.id);
   res.json({ success: true });
 });
 
 // Bulk assign content to all devices in a group
-router.post('/:id/assign-content', (req, res) => {
+router.post('/:id/assign-content', requireGroupOwnership, (req, res) => {
   const { content_id, duration_sec } = req.body;
   if (!content_id) return res.status(400).json({ error: 'content_id required' });
 
@@ -86,13 +99,10 @@ router.post('/:id/assign-content', (req, res) => {
 });
 
 // Send command to all devices in a group
-router.post('/:id/command', (req, res) => {
+router.post('/:id/command', requireGroupOwnership, (req, res) => {
   const { type, payload } = req.body;
   if (!type) return res.status(400).json({ error: 'command type required' });
-
-  // Verify group belongs to user
-  const group = db.prepare('SELECT * FROM device_groups WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
-  if (!group) return res.status(404).json({ error: 'group not found' });
+  if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
 
   const devices = db.prepare(`
     SELECT d.id, d.name, d.status FROM devices d
@@ -115,7 +125,7 @@ router.post('/:id/command', (req, res) => {
 
   const sent = results.filter(r => r.status === 'sent').length;
   const offline = results.filter(r => r.status === 'offline').length;
-  console.log(`Group command '${type}' sent to group '${group.name}': ${sent} sent, ${offline} offline`);
+  console.log(`Group command '${type}' sent to group '${req.group.name}': ${sent} sent, ${offline} offline`);
   res.json({ success: true, sent, offline, total: devices.length, results });
 });
 

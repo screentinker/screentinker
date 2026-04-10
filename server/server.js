@@ -13,7 +13,7 @@ const config = require('./config');
 });
 
 const app = express();
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 
 // Determine if SSL certs are available
 const hasSsl = fs.existsSync(config.sslCert) && fs.existsSync(config.sslKey);
