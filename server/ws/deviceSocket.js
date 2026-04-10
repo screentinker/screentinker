@@ -9,6 +9,12 @@ const { getUserPlan, getUserDeviceCount } = require('../middleware/subscription'
 // In-memory store for latest screenshot per device (avoids disk writes during streaming)
 let lastScreenshots = {};
 
+function getClientIp(socket) {
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return socket.handshake.address;
+}
+
 function logDeviceStatus(deviceId, status) {
   try {
     db.prepare('INSERT INTO device_status_log (device_id, status) VALUES (?, ?)').run(deviceId, status);
@@ -141,7 +147,7 @@ module.exports = function setupDeviceSocket(io) {
         if (device) {
           currentDeviceId = device_id;
           db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), ip_address = ?, updated_at = strftime('%s','now') WHERE id = ?")
-            .run(socket.handshake.address, device_id);
+            .run(getClientIp(socket), device_id);
 
           if (device_info) {
             db.prepare('UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ? WHERE id = ?')
@@ -181,7 +187,7 @@ module.exports = function setupDeviceSocket(io) {
           INSERT INTO devices (id, pairing_code, status, ip_address, android_version, app_version, screen_width, screen_height, last_heartbeat)
           VALUES (?, ?, 'provisioning', ?, ?, ?, ?, ?, strftime('%s','now'))
         `).run(
-          id, pairing_code, socket.handshake.address,
+          id, pairing_code, getClientIp(socket),
           device_info?.android_version || null,
           device_info?.app_version || null,
           device_info?.screen_width || null,

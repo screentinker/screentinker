@@ -91,6 +91,15 @@ export const api = {
     body: JSON.stringify({ order })
   }),
 
+  // Device Groups
+  getGroups: () => request('/groups'),
+  createGroup: (name, color) => request('/groups', { method: 'POST', body: JSON.stringify({ name, color }) }),
+  deleteGroup: (id) => request(`/groups/${id}`, { method: 'DELETE' }),
+  getGroupDevices: (id) => request(`/groups/${id}/devices`),
+  addDeviceToGroup: (groupId, device_id) => request(`/groups/${groupId}/devices`, { method: 'POST', body: JSON.stringify({ device_id }) }),
+  removeDeviceFromGroup: (groupId, deviceId) => request(`/groups/${groupId}/devices/${deviceId}`, { method: 'DELETE' }),
+  sendGroupCommand: (groupId, type, payload) => request(`/groups/${groupId}/command`, { method: 'POST', body: JSON.stringify({ type, payload }) }),
+
   // Admin - Users
   getUsers: () => request('/auth/users'),
   deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),

@@ -85,4 +85,38 @@ router.post('/:id/assign-content', (req, res) => {
   res.json({ success: true, devices_updated: devices.length });
 });
 
+// Send command to all devices in a group
+router.post('/:id/command', (req, res) => {
+  const { type, payload } = req.body;
+  if (!type) return res.status(400).json({ error: 'command type required' });
+
+  // Verify group belongs to user
+  const group = db.prepare('SELECT * FROM device_groups WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!group) return res.status(404).json({ error: 'group not found' });
+
+  const devices = db.prepare(`
+    SELECT d.id, d.name, d.status FROM devices d
+    JOIN device_group_members dgm ON d.id = dgm.device_id
+    WHERE dgm.group_id = ?
+  `).all(req.params.id);
+
+  const deviceNs = req.app.get('io').of('/device');
+  const results = [];
+
+  for (const device of devices) {
+    const room = deviceNs.adapter.rooms.get(device.id);
+    if (room && room.size > 0) {
+      deviceNs.to(device.id).emit('device:command', { type, payload: payload || {} });
+      results.push({ device_id: device.id, name: device.name, status: 'sent' });
+    } else {
+      results.push({ device_id: device.id, name: device.name, status: 'offline' });
+    }
+  }
+
+  const sent = results.filter(r => r.status === 'sent').length;
+  const offline = results.filter(r => r.status === 'offline').length;
+  console.log(`Group command '${type}' sent to group '${group.name}': ${sent} sent, ${offline} offline`);
+  res.json({ success: true, sent, offline, total: devices.length, results });
+});
+
 module.exports = router;

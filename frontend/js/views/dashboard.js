@@ -2,6 +2,16 @@ import { api } from '../api.js';
 import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
 
+const DESTRUCTIVE_COMMANDS = ['reboot', 'shutdown'];
+const GROUP_COMMANDS = [
+  { type: 'screen_on', label: 'Screen On' },
+  { type: 'screen_off', label: 'Screen Off' },
+  { type: 'launch', label: 'Restart App' },
+  { type: 'update', label: 'Check Update' },
+  { type: 'reboot', label: 'Reboot', destructive: true },
+  { type: 'shutdown', label: 'Shutdown', destructive: true },
+];
+
 let statusHandler = null;
 let screenshotHandler = null;
 let refreshInterval = null;
@@ -94,6 +104,33 @@ function renderDeviceCard(device) {
   `;
 }
 
+function renderGroupSection(group, devices) {
+  const onlineCount = devices.filter(d => d.status === 'online').length;
+  return `
+    <div class="group-section" data-group-id="${group.id}" style="margin-bottom:24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${group.color || '#3B82F6'}">
+        <div style="display:flex;align-items:center;gap:10px">
+          <strong style="font-size:15px">${group.name}</strong>
+          <span style="color:var(--text-muted);font-size:12px">${devices.length} device${devices.length !== 1 ? 's' : ''} &middot; ${onlineCount} online</span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${devices.length > 0 ? `
+          <select class="input group-cmd-select" data-group-id="${group.id}" data-group-name="${group.name}" data-device-count="${devices.length}" style="width:150px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
+            <option value="">Send Command...</option>
+            ${GROUP_COMMANDS.map(c => `<option value="${c.type}" ${c.destructive ? 'style="color:var(--danger)"' : ''}>${c.label}</option>`).join('')}
+          </select>
+          ` : ''}
+          <button class="btn" data-group-manage="${group.id}" style="padding:4px 10px;font-size:12px" title="Add/remove devices">Manage</button>
+          <button class="btn" data-group-delete="${group.id}" style="padding:4px 8px;font-size:12px;color:var(--danger)" title="Delete group">&#x2715;</button>
+        </div>
+      </div>
+      <div class="device-grid">
+        ${devices.length > 0 ? devices.map(renderDeviceCard).join('') : '<div style="color:var(--text-muted);font-size:13px;padding:8px 12px">No devices in this group. Click Manage to add some.</div>'}
+      </div>
+    </div>
+  `;
+}
+
 export function render(container) {
   container.innerHTML = `
     <div class="page-header">
@@ -101,12 +138,15 @@ export function render(container) {
         <h1>Displays <span class="help-tip" data-tip="Your paired display devices. Green = online, red = offline. Click a device to manage its playlist, view telemetry, or use remote control.">?</span></h1>
         <div class="subtitle">Manage your remote displays</div>
       </div>
-      <button class="btn btn-primary" id="addDeviceBtn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-        </svg>
-        Add Display
-      </button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="createGroupBtn">+ Group</button>
+        <button class="btn btn-primary" id="addDeviceBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Add Display
+        </button>
+      </div>
     </div>
     <div id="dashStats" style="display:flex;gap:12px;margin-bottom:16px"></div>
     <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
@@ -117,16 +157,7 @@ export function render(container) {
         <option value="offline">Offline</option>
       </select>
     </div>
-    <div class="device-grid" id="deviceGrid">
-      <div class="empty-state">
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-          <line x1="8" y1="21" x2="16" y2="21"/>
-          <line x1="12" y1="17" x2="12" y2="21"/>
-        </svg>
-        <h3>Loading displays...</h3>
-      </div>
-    </div>
+    <div id="groupedDevices"></div>
   `;
 
   const addBtn = container.querySelector('#addDeviceBtn');
@@ -166,41 +197,51 @@ export function render(container) {
       await api.pairDevice(code, name || undefined);
       document.getElementById('addDeviceModal').style.display = 'none';
       showToast('Display paired successfully!', 'success');
-      loadDevices();
+      loadDashboard();
     } catch (err) {
       showToast(err.message, 'error');
     }
   };
 
-  // Load devices
-  loadDevices();
+  // Create group
+  container.querySelector('#createGroupBtn').addEventListener('click', async () => {
+    const name = prompt('Group name:');
+    if (!name) return;
+    try {
+      await api.createGroup(name);
+      showToast('Group created', 'success');
+      loadDashboard();
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+
+  // Load everything
+  loadDashboard();
 
   // Real-time updates
   statusHandler = (data) => {
-    const card = document.querySelector(`[data-device-id="${data.device_id}"]`);
-    if (card) {
+    const cards = document.querySelectorAll(`[data-device-id="${data.device_id}"]`);
+    cards.forEach(card => {
       const statusEl = card.querySelector('.device-card-status');
-      statusEl.innerHTML = `<span class="status-dot ${data.status}"></span><span>${data.status}</span>`;
-    }
+      if (statusEl) statusEl.innerHTML = `<span class="status-dot ${data.status}"></span><span>${data.status}</span>`;
+    });
   };
 
   screenshotHandler = (data) => {
-    const preview = document.getElementById(`preview-${data.device_id}`);
-    if (preview) {
+    // Update all instances of this device's preview (may appear in multiple groups)
+    document.querySelectorAll(`#preview-${data.device_id}`).forEach(preview => {
       const imgSrc = data.image_data || (data.url + '&token=' + localStorage.getItem('token'));
       const img = preview.querySelector('img');
       if (img) {
         img.src = imgSrc;
       } else {
-        preview.innerHTML = `<img src="${imgSrc}" alt="Screenshot" loading="lazy">` +
-          preview.querySelector('.device-card-status').outerHTML;
+        const statusHtml = preview.querySelector('.device-card-status')?.outerHTML || '';
+        preview.innerHTML = `<img src="${imgSrc}" alt="Screenshot" loading="lazy">${statusHtml}`;
       }
-    }
+    });
   };
 
-  // Device added/removed - refresh the whole list
-  const deviceAddedHandler = () => loadDevices();
-  const deviceRemovedHandler = () => loadDevices();
+  const deviceAddedHandler = () => loadDashboard();
+  const deviceRemovedHandler = () => loadDashboard();
 
   on('device-status', statusHandler);
   on('screenshot-ready', screenshotHandler);
@@ -214,7 +255,6 @@ export function render(container) {
     });
   }, 2000);
 
-  // Refresh screenshots periodically
   refreshInterval = setInterval(() => {
     document.querySelectorAll('.device-card').forEach(card => {
       requestScreenshot(card.dataset.deviceId);
@@ -222,14 +262,14 @@ export function render(container) {
   }, 30000);
 }
 
-async function loadDevices() {
-  const grid = document.getElementById('deviceGrid');
-  if (!grid) return;
+async function loadDashboard() {
+  const main = document.getElementById('groupedDevices');
+  if (!main) return;
 
   try {
-    const devices = await api.getDevices();
+    const [devices, groups] = await Promise.all([api.getDevices(), api.getGroups()]);
 
-    // Stats cards
+    // Stats
     const online = devices.filter(d => d.status === 'online').length;
     const offline = devices.filter(d => d.status === 'offline').length;
     const provisioning = devices.filter(d => d.status === 'provisioning').length;
@@ -256,9 +296,9 @@ async function loadDevices() {
       `;
     }
 
-    if (devices.length === 0) {
-      grid.innerHTML = `
-        <div class="empty-state" style="grid-column: 1/-1">
+    if (devices.length === 0 && groups.length === 0) {
+      main.innerHTML = `
+        <div class="empty-state">
           <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
             <line x1="8" y1="21" x2="16" y2="21"/>
@@ -268,12 +308,159 @@ async function loadDevices() {
           <p>Install the ScreenTinker app on your Apolosign TV and pair it using the button above.</p>
         </div>
       `;
-    } else {
-      grid.innerHTML = devices.map(renderDeviceCard).join('');
+      return;
     }
+
+    // Fetch group memberships
+    const groupsWithDevices = await Promise.all(groups.map(async g => {
+      const members = await api.getGroupDevices(g.id);
+      const memberIds = new Set(members.map(m => m.id));
+      // Use full device data from the main devices list (has telemetry/screenshots)
+      const fullDevices = devices.filter(d => memberIds.has(d.id));
+      return { ...g, devices: fullDevices, memberIds };
+    }));
+
+    // Find ungrouped devices
+    const allGroupedIds = new Set();
+    groupsWithDevices.forEach(g => g.memberIds.forEach(id => allGroupedIds.add(id)));
+    const ungrouped = devices.filter(d => !allGroupedIds.has(d.id));
+
+    let html = '';
+
+    // Render each group with its devices
+    for (const g of groupsWithDevices) {
+      html += renderGroupSection(g, g.devices);
+    }
+
+    // Render ungrouped devices
+    if (ungrouped.length > 0) {
+      html += `
+        <div style="margin-bottom:24px">
+          ${groups.length > 0 ? `
+          <div style="display:flex;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid var(--text-muted)">
+            <strong style="font-size:15px;color:var(--text-muted)">Ungrouped</strong>
+            <span style="color:var(--text-muted);font-size:12px;margin-left:10px">${ungrouped.length} device${ungrouped.length !== 1 ? 's' : ''}</span>
+          </div>` : ''}
+          <div class="device-grid">
+            ${ungrouped.map(renderDeviceCard).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    main.innerHTML = html;
+    attachGroupHandlers(groupsWithDevices, devices);
+
   } catch (err) {
-    grid.innerHTML = `<div class="empty-state" style="grid-column: 1/-1"><h3>Failed to load displays</h3><p>${err.message}</p></div>`;
+    main.innerHTML = `<div class="empty-state"><h3>Failed to load displays</h3><p>${err.message}</p></div>`;
   }
+}
+
+function attachGroupHandlers(groupsWithDevices, allDevices) {
+  // Command select handlers
+  document.querySelectorAll('.group-cmd-select').forEach(select => {
+    select.addEventListener('change', async (e) => {
+      const type = e.target.value;
+      if (!type) return;
+      const groupId = e.target.dataset.groupId;
+      const groupName = e.target.dataset.groupName;
+      const count = e.target.dataset.deviceCount;
+
+      if (DESTRUCTIVE_COMMANDS.includes(type)) {
+        if (!confirm(`${type.toUpperCase()} all ${count} device${count !== '1' ? 's' : ''} in "${groupName}"?\n\nThis cannot be undone.`)) {
+          e.target.value = '';
+          return;
+        }
+      }
+
+      try {
+        const result = await api.sendGroupCommand(groupId, type);
+        showToast(`${type} sent to ${result.sent}/${result.total} devices${result.offline > 0 ? ` (${result.offline} offline)` : ''}`, result.offline > 0 ? 'warning' : 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      e.target.value = '';
+    });
+  });
+
+  // Delete group
+  document.querySelectorAll('[data-group-delete]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.groupDelete;
+      if (!confirm('Delete this group? Devices will not be affected.')) return;
+      try {
+        await api.deleteGroup(id);
+        showToast('Group deleted', 'success');
+        loadDashboard();
+      } catch (e) { showToast(e.message, 'error'); }
+    });
+  });
+
+  // Manage group (add/remove devices)
+  document.querySelectorAll('[data-group-manage]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const groupId = btn.dataset.groupManage;
+      const group = groupsWithDevices.find(g => g.id === groupId);
+      const memberIds = new Set(group.devices.map(d => d.id));
+
+      // Get all groups for multi-group warning
+      const otherGroups = groupsWithDevices.filter(g => g.id !== groupId);
+
+      const modal = document.createElement('div');
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+      modal.innerHTML = `
+        <div style="background:var(--bg-card);border-radius:12px;padding:24px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto">
+          <h3 style="margin:0 0 4px">${group.name}</h3>
+          <p style="margin:0 0 16px;font-size:12px;color:var(--text-muted)">Check devices to add them to this group</p>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${allDevices.filter(d => d.status !== 'provisioning').map(d => {
+              const inOther = otherGroups.filter(g => g.memberIds.has(d.id)).map(g => g.name);
+              return `
+                <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:var(--bg-secondary)">
+                  <input type="checkbox" data-device-id="${d.id}" data-in-groups="${inOther.join(',')}" ${memberIds.has(d.id) ? 'checked' : ''}>
+                  <span class="status-dot ${d.status}" style="width:8px;height:8px"></span>
+                  <span style="font-size:13px;flex:1">${d.name}</span>
+                  ${inOther.length > 0 ? `<span style="font-size:10px;color:var(--text-muted);background:var(--bg-primary);padding:1px 6px;border-radius:8px">${inOther.join(', ')}</span>` : ''}
+                </label>
+              `;
+            }).join('')}
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+            <button class="btn" id="manageGroupClose">Done</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      modal.querySelector('#manageGroupClose').onclick = () => { modal.remove(); loadDashboard(); };
+      modal.addEventListener('click', (ev) => { if (ev.target === modal) { modal.remove(); loadDashboard(); } });
+
+      modal.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', async () => {
+          const deviceId = cb.dataset.deviceId;
+          const existingGroups = cb.dataset.inGroups;
+          try {
+            if (cb.checked && existingGroups) {
+              if (!confirm(`This device is already in: ${existingGroups}\n\nAdd it to "${group.name}" too?`)) {
+                cb.checked = false;
+                return;
+              }
+            }
+            if (cb.checked) {
+              await api.addDeviceToGroup(groupId, deviceId);
+            } else {
+              await api.removeDeviceFromGroup(groupId, deviceId);
+            }
+          } catch (err) {
+            showToast(err.message, 'error');
+            cb.checked = !cb.checked;
+          }
+        });
+      });
+    });
+  });
 }
 
 export function cleanup() {

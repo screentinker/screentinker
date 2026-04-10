@@ -200,6 +200,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">IP Address</div>
             <div class="info-card-value small">${device.ip_address || '--'}</div>
           </div>
+          ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">Battery</div>
             <div class="info-card-value" id="telBattery">${latestTelemetry.battery_level != null ? latestTelemetry.battery_level + '%' : '--'}</div>
@@ -218,27 +219,38 @@ async function loadDevice(deviceId, activeTab = null) {
                    style="width:${((latestTelemetry.storage_total_mb - latestTelemetry.storage_free_mb) / latestTelemetry.storage_total_mb * 100)}%"></div>
             </div>` : ''}
           </div>
+          ` : `
+          <div class="info-card">
+            <div class="info-card-label">Player Type</div>
+            <div class="info-card-value small">Web Player</div>
+          </div>
+          `}
+          ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">WiFi</div>
             <div class="info-card-value small" id="telWifi">${latestTelemetry.wifi_ssid || '--'}</div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="telRssi">${latestTelemetry.wifi_rssi ? latestTelemetry.wifi_rssi + ' dBm' : ''}</div>
           </div>
+          ` : ''}
           <div class="info-card">
             <div class="info-card-label">Uptime</div>
             <div class="info-card-value small" id="telUptime">${formatUptime(latestTelemetry.uptime_seconds)}</div>
           </div>
+          ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">Android Version</div>
-            <div class="info-card-value small">${device.android_version || '--'}</div>
+            <div class="info-card-value small">${device.android_version}</div>
           </div>
           <div class="info-card">
             <div class="info-card-label">App Version</div>
             <div class="info-card-value small">${device.app_version || '--'}</div>
           </div>
+          ` : ''}
           <div class="info-card">
             <div class="info-card-label">Screen Resolution</div>
             <div class="info-card-value small">${device.screen_width && device.screen_height ? device.screen_width + 'x' + device.screen_height : '--'}</div>
           </div>
+          ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">RAM</div>
             <div class="info-card-value small" id="telRam">${latestTelemetry.ram_free_mb ? formatBytes(latestTelemetry.ram_free_mb) + ' free' : '--'}</div>
@@ -247,6 +259,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">CPU Usage</div>
             <div class="info-card-value small" id="telCpu">${latestTelemetry.cpu_usage != null ? latestTelemetry.cpu_usage.toFixed(1) + '%' : '--'}</div>
           </div>
+          ` : ''}
         </div>
 
         <!-- Uptime Timeline (24h) -->
