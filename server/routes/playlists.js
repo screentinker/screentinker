@@ -6,16 +6,21 @@ const { db } = require('../db/database');
 const config = require('../config');
 
 // Re-probe video duration with ffprobe if content.duration_sec is missing
-function probeAndUpdateDuration(content) {
+async function probeAndUpdateDuration(content) {
   if (content.duration_sec) return content.duration_sec;
   if (!content.mime_type || !content.mime_type.startsWith('video/')) return null;
   if (!content.filepath) return null;
   try {
-    const { execFileSync } = require('child_process');
+    const { execFile } = require('child_process');
     const fullPath = path.join(config.contentDir, content.filepath);
-    const probe = execFileSync('ffprobe', [
-      '-v', 'quiet', '-print_format', 'json', '-show_format', fullPath
-    ], { timeout: 15000 }).toString();
+    const probe = await new Promise((resolve, reject) => {
+      execFile('ffprobe', [
+        '-v', 'quiet', '-print_format', 'json', '-show_format', fullPath
+      ], { timeout: 15000 }, (err, stdout) => {
+        if (err) return reject(err);
+        resolve(stdout);
+      });
+    });
     const info = JSON.parse(probe);
     if (info.format?.duration) {
       const dur = parseFloat(info.format.duration);
@@ -126,63 +131,68 @@ router.get('/:id/items', requirePlaylistOwnership, (req, res) => {
 });
 
 // Add item
-router.post('/:id/items', requirePlaylistOwnership, (req, res) => {
-  const { content_id, widget_id, sort_order } = req.body;
-  let { duration_sec } = req.body;
+router.post('/:id/items', requirePlaylistOwnership, async (req, res) => {
+  try {
+    const { content_id, widget_id, sort_order } = req.body;
+    let { duration_sec } = req.body;
 
-  if (!content_id && !widget_id) return res.status(400).json({ error: 'content_id or widget_id required' });
-  if (duration_sec !== undefined && duration_sec !== null && (typeof duration_sec !== 'number' || duration_sec < 1)) {
-    return res.status(400).json({ error: 'duration_sec must be a positive integer' });
-  }
-
-  // Validate content ownership; use content's native duration as default for videos
-  if (content_id) {
-    const content = db.prepare('SELECT id, user_id, duration_sec, mime_type, filepath FROM content WHERE id = ?').get(content_id);
-    if (!content) return res.status(404).json({ error: 'Content not found' });
-    if (!['admin', 'superadmin'].includes(req.user.role) && content.user_id && content.user_id !== req.user.id) {
-      return res.status(403).json({ error: 'Content not owned by you' });
+    if (!content_id && !widget_id) return res.status(400).json({ error: 'content_id or widget_id required' });
+    if (duration_sec !== undefined && duration_sec !== null && (typeof duration_sec !== 'number' || duration_sec < 1)) {
+      return res.status(400).json({ error: 'duration_sec must be a positive integer' });
     }
-    if (duration_sec === undefined || duration_sec === null) {
-      // Use stored duration, or re-probe if missing (backfills content table too)
-      const contentDur = probeAndUpdateDuration(content);
-      if (contentDur) duration_sec = Math.ceil(contentDur);
+
+    // Validate content ownership; use content's native duration as default for videos
+    if (content_id) {
+      const content = db.prepare('SELECT id, user_id, duration_sec, mime_type, filepath FROM content WHERE id = ?').get(content_id);
+      if (!content) return res.status(404).json({ error: 'Content not found' });
+      if (!['admin', 'superadmin'].includes(req.user.role) && content.user_id && content.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Content not owned by you' });
+      }
+      if (duration_sec === undefined || duration_sec === null) {
+        // Use stored duration, or re-probe if missing (backfills content table too)
+        const contentDur = await probeAndUpdateDuration(content);
+        if (contentDur) duration_sec = Math.ceil(contentDur);
+      }
     }
+    if (duration_sec === undefined || duration_sec === null) duration_sec = 10;
+    if (widget_id) {
+      const widget = db.prepare('SELECT id FROM widgets WHERE id = ?').get(widget_id);
+      if (!widget) return res.status(404).json({ error: 'Widget not found' });
+    }
+
+    // Auto-increment sort_order if not specified
+    let order = sort_order;
+    if (order === undefined || order === null) {
+      const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
+        .get(req.params.id);
+      order = (max.max_order || 0) + 1;
+    }
+
+    const result = db.prepare(`
+      INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(req.params.id, content_id || null, widget_id || null, order, duration_sec);
+
+    // Touch playlist updated_at
+    db.prepare("UPDATE playlists SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+
+    const item = db.prepare(`
+      SELECT pi.*,
+             COALESCE(c.filename, w.name) as filename,
+             c.mime_type, c.filepath, c.thumbnail_path,
+             c.duration_sec as content_duration, c.file_size, c.remote_url,
+             w.name as widget_name, w.widget_type, w.config as widget_config
+      FROM playlist_items pi
+      LEFT JOIN content c ON pi.content_id = c.id
+      LEFT JOIN widgets w ON pi.widget_id = w.id
+      WHERE pi.id = ?
+    `).get(result.lastInsertRowid);
+
+    res.status(201).json(item);
+  } catch (err) {
+    console.error('Failed to add playlist item:', err);
+    res.status(500).json({ error: 'Failed to add item' });
   }
-  if (duration_sec === undefined || duration_sec === null) duration_sec = 10;
-  if (widget_id) {
-    const widget = db.prepare('SELECT id FROM widgets WHERE id = ?').get(widget_id);
-    if (!widget) return res.status(404).json({ error: 'Widget not found' });
-  }
-
-  // Auto-increment sort_order if not specified
-  let order = sort_order;
-  if (order === undefined || order === null) {
-    const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
-      .get(req.params.id);
-    order = (max.max_order || 0) + 1;
-  }
-
-  const result = db.prepare(`
-    INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(req.params.id, content_id || null, widget_id || null, order, duration_sec);
-
-  // Touch playlist updated_at
-  db.prepare("UPDATE playlists SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
-
-  const item = db.prepare(`
-    SELECT pi.*,
-           COALESCE(c.filename, w.name) as filename,
-           c.mime_type, c.filepath, c.thumbnail_path,
-           c.duration_sec as content_duration, c.file_size, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config
-    FROM playlist_items pi
-    LEFT JOIN content c ON pi.content_id = c.id
-    LEFT JOIN widgets w ON pi.widget_id = w.id
-    WHERE pi.id = ?
-  `).get(result.lastInsertRowid);
-
-  res.status(201).json(item);
 });
 
 // Update item
