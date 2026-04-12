@@ -84,8 +84,12 @@ router.get('/export', (req, res) => {
   const layoutPlaceholders = layoutIds.map(() => '?').join(',') || "'__none__'";
   const layoutZones = layoutIds.length ? db.prepare(`SELECT * FROM layout_zones WHERE layout_id IN (${layoutPlaceholders})`).all(...layoutIds) : [];
 
-  const assignments = deviceIds.length ? db.prepare(`SELECT id, device_id, content_id, widget_id, zone_id, sort_order, duration_sec, enabled FROM assignments WHERE device_id IN (${devicePlaceholders})`).all(...deviceIds) : [];
-  const schedules = db.prepare('SELECT id, device_id, zone_id, content_id, widget_id, layout_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at FROM schedules WHERE user_id = ?').all(userId);
+  const playlists = db.prepare('SELECT id, name, description, is_auto_generated, created_at, updated_at FROM playlists WHERE user_id = ?').all(userId);
+  const playlistIds = playlists.map(p => p.id);
+  const playlistPlaceholders = playlistIds.map(() => '?').join(',') || "'__none__'";
+  const playlistItems = playlistIds.length ? db.prepare(`SELECT id, playlist_id, content_id, widget_id, sort_order, duration_sec FROM playlist_items WHERE playlist_id IN (${playlistPlaceholders})`).all(...playlistIds) : [];
+
+  const schedules = db.prepare('SELECT id, device_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at FROM schedules WHERE user_id = ?').all(userId);
   const videoWalls = db.prepare('SELECT * FROM video_walls WHERE user_id = ?').all(userId);
   const wallIds = videoWalls.map(w => w.id);
   const wallPlaceholders = wallIds.map(() => '?').join(',') || "'__none__'";
@@ -100,15 +104,19 @@ router.get('/export', (req, res) => {
   const whiteLabel = db.prepare('SELECT * FROM white_labels WHERE user_id = ?').get(userId);
 
   const exportData = {
-    format: 'screentinker-export-v1',
+    format: 'screentinker-export-v2',
     exported_at: new Date().toISOString(),
     user,
-    devices,
+    devices: devices.map(d => {
+      const dev = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(d.id);
+      return { ...d, playlist_id: dev?.playlist_id || null };
+    }),
     content,
     widgets: widgets.map(w => ({ ...w, config: JSON.parse(w.config || '{}') })),
     layouts,
     layout_zones: layoutZones,
-    assignments,
+    playlists,
+    playlist_items: playlistItems,
     schedules,
     video_walls: videoWalls,
     video_wall_devices: wallDevices,
@@ -240,11 +248,12 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
     return res.status(400).json({ error: 'Invalid export file. Must be a ScreenTinker export JSON.' });
   }
 
+  const isV2 = data.format === 'screentinker-export-v2';
   const uuid = require('uuid');
-  const stats = { devices: 0, content: 0, widgets: 0, layouts: 0, schedules: 0, video_walls: 0, kiosk_pages: 0, device_groups: 0 };
+  const stats = { devices: 0, content: 0, widgets: 0, layouts: 0, playlists: 0, schedules: 0, video_walls: 0, kiosk_pages: 0, device_groups: 0 };
 
   // Map old IDs to new IDs
-  const idMap = { devices: {}, content: {}, widgets: {}, layouts: {}, zones: {}, groups: {}, walls: {}, kiosk: {} };
+  const idMap = { devices: {}, content: {}, widgets: {}, layouts: {}, zones: {}, playlists: {}, groups: {}, walls: {}, kiosk: {} };
 
   const importDb = db.transaction(() => {
     // Import devices (as offline, unlinked - they'll need re-pairing)
@@ -317,15 +326,50 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       db.prepare(`INSERT INTO layout_zones (id, layout_id, name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, newLayoutId, z.name, z.x_percent, z.y_percent, z.width_percent, z.height_percent, z.z_index || 0, z.zone_type || 'content', z.fit_mode || 'cover', z.background_color || '#000000', z.sort_order || 0);
     }
 
-    // Import assignments
-    for (const a of (data.assignments || [])) {
-      const devId = idMap.devices[a.device_id];
-      if (!devId) continue;
-      const contentId = a.content_id ? idMap.content[a.content_id] : null;
-      const widgetId = a.widget_id ? idMap.widgets[a.widget_id] : null;
-      const zoneId = a.zone_id ? (idMap.zones[a.zone_id] || null) : null;
-      if (!contentId && !widgetId) continue;
-      db.prepare(`INSERT INTO assignments (device_id, content_id, widget_id, zone_id, sort_order, duration_sec, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(devId, contentId, widgetId, zoneId, a.sort_order || 0, a.duration_sec || 10, a.enabled !== undefined ? a.enabled : 1);
+    // Import playlists (v2) or convert assignments to playlists (v1)
+    if (isV2) {
+      for (const p of (data.playlists || [])) {
+        const newId = uuid.v4();
+        idMap.playlists[p.id] = newId;
+        db.prepare('INSERT INTO playlists (id, user_id, name, description, is_auto_generated, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(newId, userId, p.name, p.description || '', p.is_auto_generated || 0, p.created_at || Math.floor(Date.now() / 1000), p.updated_at || Math.floor(Date.now() / 1000));
+        stats.playlists++;
+      }
+      for (const pi of (data.playlist_items || [])) {
+        const playlistId = idMap.playlists[pi.playlist_id];
+        if (!playlistId) continue;
+        const contentId = pi.content_id ? idMap.content[pi.content_id] : null;
+        const widgetId = pi.widget_id ? idMap.widgets[pi.widget_id] : null;
+        if (!contentId && !widgetId) continue;
+        db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)').run(playlistId, contentId, widgetId, pi.sort_order || 0, pi.duration_sec || 10);
+      }
+      // Set device playlist_id references
+      for (const d of (data.devices || [])) {
+        if (d.playlist_id && idMap.playlists[d.playlist_id]) {
+          db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(idMap.playlists[d.playlist_id], idMap.devices[d.id]);
+        }
+      }
+    } else {
+      // v1: convert assignments to per-device playlists
+      const assignmentsByDevice = {};
+      for (const a of (data.assignments || [])) {
+        if (!assignmentsByDevice[a.device_id]) assignmentsByDevice[a.device_id] = [];
+        assignmentsByDevice[a.device_id].push(a);
+      }
+      for (const [oldDevId, assignments] of Object.entries(assignmentsByDevice)) {
+        const devId = idMap.devices[oldDevId];
+        if (!devId) continue;
+        const devName = (data.devices || []).find(d => d.id === oldDevId)?.name || 'Display';
+        const playlistId = uuid.v4();
+        db.prepare('INSERT INTO playlists (id, user_id, name, description, is_auto_generated) VALUES (?, ?, ?, ?, 1)').run(playlistId, userId, `${devName} (imported)`, 'Converted from v1 assignments');
+        for (const a of assignments) {
+          const contentId = a.content_id ? idMap.content[a.content_id] : null;
+          const widgetId = a.widget_id ? idMap.widgets[a.widget_id] : null;
+          if (!contentId && !widgetId) continue;
+          db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)').run(playlistId, contentId, widgetId, a.sort_order || 0, a.duration_sec || 10);
+        }
+        db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(playlistId, devId);
+        stats.playlists++;
+      }
     }
 
     // Import schedules
@@ -333,7 +377,8 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       const devId = idMap.devices[s.device_id];
       if (!devId) continue;
       const newId = uuid.v4();
-      db.prepare(`INSERT INTO schedules (id, user_id, device_id, zone_id, content_id, widget_id, layout_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#3B82F6', s.created_at || Math.floor(Date.now() / 1000));
+      const playlistId = s.playlist_id ? (idMap.playlists[s.playlist_id] || null) : null;
+      db.prepare(`INSERT INTO schedules (id, user_id, device_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#3B82F6', s.created_at || Math.floor(Date.now() / 1000));
       stats.schedules++;
     }
 
