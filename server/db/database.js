@@ -151,6 +151,8 @@ async function migrateAssignmentsToPlaylists() {
 
   // Probe durations outside the transaction (async ffprobe can't run inside SQLite transaction)
   const devicePlaylists = [];
+  let videosProbed = 0;
+  let totalItems = 0;
   for (const device of devicesWithAssignments) {
     const playlistId = uuidv4();
     const assignments = getAssignments.all(device.id);
@@ -159,9 +161,10 @@ async function migrateAssignmentsToPlaylists() {
       let duration = a.duration_sec;
       if (a.content_id && a.mime_type?.startsWith('video/')) {
         const probed = await probeVideoDuration({ id: a.content_id, mime_type: a.mime_type, filepath: a.filepath, duration_sec: a.content_duration });
-        if (probed) duration = probed;
+        if (probed) { duration = probed; videosProbed++; }
       }
       items.push({ content_id: a.content_id, widget_id: a.widget_id, sort_order: a.sort_order, duration_sec: duration });
+      totalItems++;
     }
     devicePlaylists.push({ device, playlistId, items });
   }
@@ -182,7 +185,8 @@ async function migrateAssignmentsToPlaylists() {
   });
   migrate();
 
-  console.log(`Migration complete: ${devicesWithAssignments.length} playlist(s) created.`);
+  const scheduleCount = db.prepare('SELECT COUNT(*) as count FROM schedules').get().count;
+  console.log(`Migration complete: ${devicesWithAssignments.length} device(s), ${totalItems} playlist item(s), ${videosProbed} video(s) probed, ${scheduleCount} schedule(s).`);
 }
 
 migrateAssignmentsToPlaylists().catch(e => console.error('Migration error:', e));
