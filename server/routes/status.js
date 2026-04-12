@@ -349,27 +349,8 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
         }
       }
     } else {
-      // v1: convert assignments to per-device playlists
-      const assignmentsByDevice = {};
-      for (const a of (data.assignments || [])) {
-        if (!assignmentsByDevice[a.device_id]) assignmentsByDevice[a.device_id] = [];
-        assignmentsByDevice[a.device_id].push(a);
-      }
-      for (const [oldDevId, assignments] of Object.entries(assignmentsByDevice)) {
-        const devId = idMap.devices[oldDevId];
-        if (!devId) continue;
-        const devName = (data.devices || []).find(d => d.id === oldDevId)?.name || 'Display';
-        const playlistId = uuid.v4();
-        db.prepare('INSERT INTO playlists (id, user_id, name, description, is_auto_generated) VALUES (?, ?, ?, ?, 1)').run(playlistId, userId, `${devName} (imported)`, 'Converted from v1 assignments');
-        for (const a of assignments) {
-          const contentId = a.content_id ? idMap.content[a.content_id] : null;
-          const widgetId = a.widget_id ? idMap.widgets[a.widget_id] : null;
-          if (!contentId && !widgetId) continue;
-          db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)').run(playlistId, contentId, widgetId, a.sort_order || 0, a.duration_sec || 10);
-        }
-        db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(playlistId, devId);
-        stats.playlists++;
-      }
+      // v1: defer playlist creation to after the transaction so we can async-probe videos
+      // Just stash the mapping for now; actual insertion happens below after importDb()
     }
 
     // Import schedules
@@ -440,6 +421,67 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
 
   try {
     importDb();
+
+    // v1: convert assignments to per-device playlists AFTER transaction (content files now on disk)
+    if (!isV2 && data.assignments?.length) {
+      const { execFile } = require('child_process');
+
+      async function probeImportedContent(newContentId) {
+        const c = db.prepare('SELECT id, mime_type, filepath, duration_sec FROM content WHERE id = ?').get(newContentId);
+        if (!c || !c.mime_type?.startsWith('video/') || !c.filepath) return c?.duration_sec ? Math.ceil(c.duration_sec) : null;
+        if (c.duration_sec) return Math.ceil(c.duration_sec);
+        try {
+          const fullPath = path.join(config.contentDir, c.filepath);
+          const stdout = await new Promise((resolve, reject) => {
+            execFile('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_format', fullPath],
+              { timeout: 15000 }, (err, out) => err ? reject(err) : resolve(out));
+          });
+          const info = JSON.parse(stdout);
+          if (info.format?.duration) {
+            const dur = parseFloat(info.format.duration);
+            db.prepare('UPDATE content SET duration_sec = ? WHERE id = ?').run(dur, c.id);
+            return Math.ceil(dur);
+          }
+        } catch (e) { /* probe failed, fall back to default */ }
+        return null;
+      }
+
+      const assignmentsByDevice = {};
+      for (const a of (data.assignments || [])) {
+        if (!assignmentsByDevice[a.device_id]) assignmentsByDevice[a.device_id] = [];
+        assignmentsByDevice[a.device_id].push(a);
+      }
+
+      for (const [oldDevId, assignments] of Object.entries(assignmentsByDevice)) {
+        const devId = idMap.devices[oldDevId];
+        if (!devId) continue;
+        const devName = (data.devices || []).find(d => d.id === oldDevId)?.name || 'Display';
+        const playlistId = uuid.v4();
+
+        const items = [];
+        for (const a of assignments) {
+          const contentId = a.content_id ? idMap.content[a.content_id] : null;
+          const widgetId = a.widget_id ? idMap.widgets[a.widget_id] : null;
+          if (!contentId && !widgetId) continue;
+          let duration = a.duration_sec || 10;
+          if (contentId) {
+            const probed = await probeImportedContent(contentId);
+            if (probed) duration = probed;
+          }
+          items.push({ contentId, widgetId, sort_order: a.sort_order || 0, duration });
+        }
+
+        db.prepare('INSERT INTO playlists (id, user_id, name, description, is_auto_generated) VALUES (?, ?, ?, ?, 1)')
+          .run(playlistId, userId, `${devName} (imported)`, 'Converted from v1 assignments');
+        for (const item of items) {
+          db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)')
+            .run(playlistId, item.contentId, item.widgetId, item.sort_order, item.duration);
+        }
+        db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(playlistId, devId);
+        stats.playlists++;
+      }
+    }
+
     // Collect pairing codes for imported devices
     const devicePairings = (data.devices || []).map(d => {
       const newId = idMap.devices[d.id];

@@ -96,12 +96,13 @@ try {
 }
 
 // Phase 2 migration: convert existing assignments into per-device playlists
-function migrateAssignmentsToPlaylists() {
+async function migrateAssignmentsToPlaylists() {
   // Skip if already migrated (any device has a playlist_id set)
   const migrated = db.prepare('SELECT 1 FROM devices WHERE playlist_id IS NOT NULL LIMIT 1').get();
   if (migrated) return;
 
   const { v4: uuidv4 } = require('uuid');
+  const { execFile } = require('child_process');
 
   // Find devices that have at least one assignment
   const devicesWithAssignments = db.prepare(`
@@ -115,21 +116,21 @@ function migrateAssignmentsToPlaylists() {
 
   console.log(`Migrating ${devicesWithAssignments.length} device(s) from assignments to playlists...`);
 
-  // Probe video duration with ffprobe (synchronous — fine for one-time migration)
-  const { execFileSync } = require('child_process');
-  function probeVideoDuration(content) {
+  // Async ffprobe — matches the pattern in playlists.js probeAndUpdateDuration
+  async function probeVideoDuration(content) {
     if (!content || !content.mime_type || !content.mime_type.startsWith('video/')) return null;
     if (content.duration_sec) return Math.ceil(content.duration_sec);
     if (!content.filepath) return null;
     try {
       const fullPath = path.join(config.contentDir, content.filepath);
-      const stdout = execFileSync('ffprobe', [
-        '-v', 'quiet', '-print_format', 'json', '-show_format', fullPath
-      ], { timeout: 15000 });
+      const stdout = await new Promise((resolve, reject) => {
+        execFile('ffprobe', [
+          '-v', 'quiet', '-print_format', 'json', '-show_format', fullPath
+        ], { timeout: 15000 }, (err, out) => err ? reject(err) : resolve(out));
+      });
       const info = JSON.parse(stdout);
       if (info.format?.duration) {
         const dur = parseFloat(info.format.duration);
-        // Backfill the content table too
         db.prepare('UPDATE content SET duration_sec = ? WHERE id = ?').run(dur, content.id);
         return Math.ceil(dur);
       }
@@ -139,15 +140,6 @@ function migrateAssignmentsToPlaylists() {
     return null;
   }
 
-  const insertPlaylist = db.prepare(`
-    INSERT INTO playlists (id, user_id, name, description, is_auto_generated)
-    VALUES (?, ?, ?, ?, 1)
-  `);
-  const insertItem = db.prepare(`
-    INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  const setDevicePlaylist = db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?');
   const getAssignments = db.prepare(`
     SELECT a.content_id, a.widget_id, a.sort_order, a.duration_sec,
            c.mime_type, c.filepath, c.duration_sec as content_duration
@@ -157,23 +149,28 @@ function migrateAssignmentsToPlaylists() {
     ORDER BY a.sort_order ASC
   `);
 
-  // Probe durations outside the transaction (ffprobe can't run inside SQLite transaction)
+  // Probe durations outside the transaction (async ffprobe can't run inside SQLite transaction)
   const devicePlaylists = [];
   for (const device of devicesWithAssignments) {
     const playlistId = uuidv4();
     const assignments = getAssignments.all(device.id);
-    const items = assignments.map(a => {
+    const items = [];
+    for (const a of assignments) {
       let duration = a.duration_sec;
       if (a.content_id && a.mime_type?.startsWith('video/')) {
-        const probed = probeVideoDuration({ id: a.content_id, mime_type: a.mime_type, filepath: a.filepath, duration_sec: a.content_duration });
+        const probed = await probeVideoDuration({ id: a.content_id, mime_type: a.mime_type, filepath: a.filepath, duration_sec: a.content_duration });
         if (probed) duration = probed;
       }
-      return { content_id: a.content_id, widget_id: a.widget_id, sort_order: a.sort_order, duration_sec: duration };
-    });
+      items.push({ content_id: a.content_id, widget_id: a.widget_id, sort_order: a.sort_order, duration_sec: duration });
+    }
     devicePlaylists.push({ device, playlistId, items });
   }
 
   // Insert everything in a single transaction
+  const insertPlaylist = db.prepare(`INSERT INTO playlists (id, user_id, name, description, is_auto_generated) VALUES (?, ?, ?, ?, 1)`);
+  const insertItem = db.prepare(`INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)`);
+  const setDevicePlaylist = db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?');
+
   const migrate = db.transaction(() => {
     for (const { device, playlistId, items } of devicePlaylists) {
       insertPlaylist.run(playlistId, device.user_id, `${device.name} (migrated)`, 'Auto-generated from previous assignments');
@@ -188,7 +185,7 @@ function migrateAssignmentsToPlaylists() {
   console.log(`Migration complete: ${devicesWithAssignments.length} playlist(s) created.`);
 }
 
-migrateAssignmentsToPlaylists();
+migrateAssignmentsToPlaylists().catch(e => console.error('Migration error:', e));
 
 // Prune old telemetry (keep last 24h worth at 15s intervals = ~5760, cap at 6000)
 function pruneTelemetry(deviceId) {
