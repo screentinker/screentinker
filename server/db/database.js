@@ -95,6 +95,62 @@ try {
   console.error('Assignments migration error:', e.message);
 }
 
+// Phase 2 migration: convert existing assignments into per-device playlists
+function migrateAssignmentsToPlaylists() {
+  // Skip if already migrated (any device has a playlist_id set)
+  const migrated = db.prepare('SELECT 1 FROM devices WHERE playlist_id IS NOT NULL LIMIT 1').get();
+  if (migrated) return;
+
+  const { v4: uuidv4 } = require('uuid');
+
+  // Find devices that have at least one assignment
+  const devicesWithAssignments = db.prepare(`
+    SELECT DISTINCT d.id, d.name, d.user_id
+    FROM devices d
+    INNER JOIN assignments a ON a.device_id = d.id
+    WHERE d.user_id IS NOT NULL
+  `).all();
+
+  if (devicesWithAssignments.length === 0) return;
+
+  console.log(`Migrating ${devicesWithAssignments.length} device(s) from assignments to playlists...`);
+
+  const insertPlaylist = db.prepare(`
+    INSERT INTO playlists (id, user_id, name, description, is_auto_generated)
+    VALUES (?, ?, ?, ?, 1)
+  `);
+  const insertItem = db.prepare(`
+    INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const setDevicePlaylist = db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?');
+  const getAssignments = db.prepare(`
+    SELECT content_id, widget_id, sort_order, duration_sec
+    FROM assignments
+    WHERE device_id = ? AND enabled = 1
+    ORDER BY sort_order ASC
+  `);
+
+  const migrate = db.transaction(() => {
+    for (const device of devicesWithAssignments) {
+      const playlistId = uuidv4();
+      insertPlaylist.run(playlistId, device.user_id, `${device.name} (migrated)`, 'Auto-generated from previous assignments');
+
+      const assignments = getAssignments.all(device.id);
+      for (const a of assignments) {
+        insertItem.run(playlistId, a.content_id || null, a.widget_id || null, a.sort_order, a.duration_sec);
+      }
+
+      setDevicePlaylist.run(playlistId, device.id);
+    }
+  });
+  migrate();
+
+  console.log(`Migration complete: ${devicesWithAssignments.length} playlist(s) created.`);
+}
+
+migrateAssignmentsToPlaylists();
+
 // Prune old telemetry (keep last 24h worth at 15s intervals = ~5760, cap at 6000)
 function pruneTelemetry(deviceId) {
   db.prepare(`
