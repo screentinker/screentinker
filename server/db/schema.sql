@@ -311,6 +311,28 @@ CREATE TABLE IF NOT EXISTS device_group_members (
     PRIMARY KEY (device_id, group_id)
 );
 
+-- ===================== PLAYLISTS =====================
+
+CREATE TABLE IF NOT EXISTS playlists (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id),
+    name            TEXT NOT NULL,
+    description     TEXT DEFAULT '',
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE TABLE IF NOT EXISTS playlist_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_id     TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    content_id      TEXT REFERENCES content(id) ON DELETE CASCADE,
+    widget_id       TEXT REFERENCES widgets(id) ON DELETE CASCADE,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    duration_sec    INTEGER NOT NULL DEFAULT 10,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
 -- ===================== ACTIVITY LOG =====================
 
 CREATE TABLE IF NOT EXISTS activity_log (
