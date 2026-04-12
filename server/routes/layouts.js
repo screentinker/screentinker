@@ -24,10 +24,20 @@ router.get('/', (req, res) => {
   res.json(layouts);
 });
 
+// Helper: check layout access (owner, admin, or template)
+function checkLayoutAccess(req, res) {
+  const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
+  if (!layout) { res.status(404).json({ error: 'Layout not found' }); return null; }
+  if (!layout.is_template && !['admin','superadmin'].includes(req.user.role) && layout.user_id !== req.user.id) {
+    res.status(403).json({ error: 'Access denied' }); return null;
+  }
+  return layout;
+}
+
 // Get layout with zones
 router.get('/:id', (req, res) => {
-  const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
-  if (!layout) return res.status(404).json({ error: 'Layout not found' });
+  const layout = checkLayoutAccess(req, res);
+  if (!layout) return;
 
   layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
   res.json(layout);
@@ -62,8 +72,8 @@ router.post('/', (req, res) => {
 
 // Update layout
 router.put('/:id', (req, res) => {
-  const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
-  if (!layout) return res.status(404).json({ error: 'Layout not found' });
+  const layout = checkLayoutAccess(req, res);
+  if (!layout) return;
   if (layout.is_template && !['admin','superadmin'].includes(req.user.role)) return res.status(403).json({ error: 'Cannot edit templates' });
 
   const { name, width, height } = req.body;
@@ -78,8 +88,8 @@ router.put('/:id', (req, res) => {
 
 // Delete layout
 router.delete('/:id', (req, res) => {
-  const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
-  if (!layout) return res.status(404).json({ error: 'Layout not found' });
+  const layout = checkLayoutAccess(req, res);
+  if (!layout) return;
   if (layout.is_template && !['admin','superadmin'].includes(req.user.role)) return res.status(403).json({ error: 'Cannot delete templates' });
 
   db.prepare('DELETE FROM layouts WHERE id = ?').run(req.params.id);
@@ -88,8 +98,8 @@ router.delete('/:id', (req, res) => {
 
 // Add zone to layout
 router.post('/:id/zones', (req, res) => {
-  const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
-  if (!layout) return res.status(404).json({ error: 'Layout not found' });
+  const layout = checkLayoutAccess(req, res);
+  if (!layout) return;
 
   const { name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color } = req.body;
   const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM layout_zones WHERE layout_id = ?').get(req.params.id).m || 0;
@@ -110,6 +120,8 @@ router.post('/:id/zones', (req, res) => {
 
 // Update zone
 router.put('/:id/zones/:zoneId', (req, res) => {
+  const layout = checkLayoutAccess(req, res);
+  if (!layout) return;
   const zone = db.prepare('SELECT * FROM layout_zones WHERE id = ? AND layout_id = ?').get(req.params.zoneId, req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
@@ -132,6 +144,8 @@ router.put('/:id/zones/:zoneId', (req, res) => {
 
 // Delete zone
 router.delete('/:id/zones/:zoneId', (req, res) => {
+  const layout = checkLayoutAccess(req, res);
+  if (!layout) return;
   db.prepare('DELETE FROM layout_zones WHERE id = ? AND layout_id = ?').run(req.params.zoneId, req.params.id);
   db.prepare("UPDATE layouts SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
   res.json({ success: true });
@@ -139,8 +153,8 @@ router.delete('/:id/zones/:zoneId', (req, res) => {
 
 // Duplicate layout (for using templates)
 router.post('/:id/duplicate', (req, res) => {
-  const source = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
-  if (!source) return res.status(404).json({ error: 'Layout not found' });
+  const source = checkLayoutAccess(req, res);
+  if (!source) return;
 
   const newId = uuidv4();
   const name = req.body.name || `${source.name} (Copy)`;
@@ -166,6 +180,9 @@ router.post('/:id/duplicate', (req, res) => {
 
 // Assign layout to device
 router.put('/device/:deviceId', (req, res) => {
+  const device = db.prepare('SELECT user_id FROM devices WHERE id = ?').get(req.params.deviceId);
+  if (!device) return res.status(404).json({ error: 'Device not found' });
+  if (!['admin','superadmin'].includes(req.user.role) && device.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
   const { layout_id } = req.body;
   db.prepare("UPDATE devices SET layout_id = ?, updated_at = strftime('%s','now') WHERE id = ?")
     .run(layout_id || null, req.params.deviceId);

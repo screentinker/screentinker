@@ -143,6 +143,8 @@ router.put('/:id/devices', (req, res) => {
 
 // Set wall content
 router.put('/:id/content', (req, res) => {
+  const wall = checkWallAccess(req, res);
+  if (!wall) return;
   const { content_id } = req.body;
   db.prepare("UPDATE video_walls SET content_id = ?, updated_at = strftime('%s','now') WHERE id = ?")
     .run(content_id || null, req.params.id);
@@ -151,8 +153,8 @@ router.put('/:id/content', (req, res) => {
 
 // Get wall config for a specific device (used by Android app)
 router.get('/:id/device-config/:deviceId', (req, res) => {
-  const wall = db.prepare('SELECT * FROM video_walls WHERE id = ?').get(req.params.id);
-  if (!wall) return res.status(404).json({ error: 'Wall not found' });
+  const wall = checkWallAccess(req, res);
+  if (!wall) return;
 
   const position = db.prepare('SELECT * FROM video_wall_devices WHERE wall_id = ? AND device_id = ?')
     .get(req.params.id, req.params.deviceId);

@@ -39,6 +39,7 @@ const helmet = require('helmet');
 app.use(helmet({
   contentSecurityPolicy: false, // Allow inline scripts in widget renders
   crossOriginEmbedderPolicy: false, // Allow loading external widget content
+  hsts: { maxAge: 31536000, includeSubDomains: true },
 }));
 // CORS: open for public content (kiosk, widgets, player, uploads), restricted for API
 app.use(cors({
@@ -123,6 +124,10 @@ app.use('/api/auth/register', rateLimit(60000, 5)); // 5 registrations per minut
 app.use('/api/auth', require('./routes/auth'));
 // Rate limit pairing to prevent brute force (5 attempts per minute per IP)
 app.use('/api/provision/pair', rateLimit(60000, 5));
+// Rate limit expensive operations
+app.use('/api/status/export', rateLimit(60000, 5)); // 5 exports per minute
+app.use('/api/status/import', rateLimit(60000, 3)); // 3 imports per minute
+app.use('/api/content', rateLimit(60000, 30)); // 30 content operations per minute
 
 // Subscription routes (mixed auth)
 app.use('/api/subscription', require('./routes/subscription'));
@@ -148,7 +153,7 @@ app.get('/api/devices/:id/screenshot', (req, res) => {
   const { db: sdb } = require('./db/database');
   const device = sdb.prepare('SELECT user_id FROM devices WHERE id = ?').get(req.params.id);
   if (!device) return res.status(404).json({ error: 'Device not found' });
-  if (user.role !== 'admin' && device.user_id && device.user_id !== user.id) return res.status(403).json({ error: 'Access denied' });
+  if (!['admin','superadmin'].includes(user.role) && device.user_id && device.user_id !== user.id) return res.status(403).json({ error: 'Access denied' });
   // Serve from memory if available (device online), otherwise from disk (offline snapshot)
   const deviceSocket = require('./ws/deviceSocket');
   const memScreenshot = deviceSocket.lastScreenshots?.[req.params.id];
@@ -171,8 +176,8 @@ app.get('/api/content/:id/file', (req, res) => {
   const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
   if (!content) return res.status(404).json({ error: 'Content not found' });
   if (!content.filepath) return res.status(404).json({ error: 'No file (remote URL content)' });
-  const assigned = db.prepare('SELECT id FROM assignments WHERE content_id = ? LIMIT 1').get(req.params.id);
-  if (!assigned) return res.status(403).json({ error: 'Content not assigned to any device' });
+  const assigned = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
+  if (!assigned) return res.status(403).json({ error: 'Content not assigned to any playlist' });
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
   res.sendFile(safePath);

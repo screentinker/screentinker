@@ -1,11 +1,7 @@
 import { api } from '../api.js';
 import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
-
-function esc(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-}
+import { esc } from '../utils.js';
 
 const DESTRUCTIVE_COMMANDS = ['reboot', 'shutdown'];
 const GROUP_COMMANDS = [
@@ -357,7 +353,7 @@ async function loadDashboard() {
     attachGroupHandlers(groupsWithDevices, devices);
 
   } catch (err) {
-    main.innerHTML = `<div class="empty-state"><h3>Failed to load displays</h3><p>${err.message}</p></div>`;
+    main.innerHTML = `<div class="empty-state"><h3>Failed to load displays</h3><p>${esc(err.message)}</p></div>`;
   }
 }
 

@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
+import { esc } from '../utils.js';
 
 export async function render(container) {
   container.innerHTML = `
@@ -140,7 +141,7 @@ export async function render(container) {
     }
 
   } catch (err) {
-    document.getElementById('billingContent').innerHTML = `<div class="empty-state"><h3>Failed to load</h3><p>${err.message}</p></div>`;
+    document.getElementById('billingContent').innerHTML = `<div class="empty-state"><h3>Failed to load</h3><p>${esc(err.message)}</p></div>`;
   }
 }
 

@@ -6,12 +6,12 @@ function generateToken(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
     config.jwtSecret,
-    { expiresIn: config.jwtExpiry }
+    { algorithm: 'HS256', expiresIn: config.jwtExpiry }
   );
 }
 
 function verifyToken(token) {
-  return jwt.verify(token, config.jwtSecret);
+  return jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
 }
 
 // Express middleware - requires valid JWT

@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
+import { esc } from '../utils.js';
 
 const API = (url, opts = {}) => fetch('/api' + url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(r => r.json());
 
@@ -158,7 +159,7 @@ export async function render(container) {
       renderBarChart('hourlyChart', hourData);
 
     } catch (err) {
-      content.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
+      content.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${esc(err.message)}</p></div>`;
     }
   }
 }

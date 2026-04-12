@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
+import { esc } from '../utils.js';
 
 function formatFileSize(bytes) {
   if (!bytes) return '--';
@@ -355,7 +356,7 @@ async function loadContent() {
     };
 
   } catch (err) {
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>Failed to load content</h3><p>${err.message}</p></div>`;
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>Failed to load content</h3><p>${esc(err.message)}</p></div>`;
   }
 }
 

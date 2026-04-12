@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { db, pruneTelemetry, pruneScreenshots } = require('../db/database');
@@ -8,6 +9,24 @@ const { getUserPlan, getUserDeviceCount } = require('../middleware/subscription'
 
 // In-memory store for latest screenshot per device (avoids disk writes during streaming)
 let lastScreenshots = {};
+
+// Generate a random device token
+function generateDeviceToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// Validate device_id + device_token pair. Returns true if valid.
+function validateDeviceToken(deviceId, token) {
+  if (!deviceId || !token) return false;
+  const row = db.prepare('SELECT device_token FROM devices WHERE id = ?').get(deviceId);
+  if (!row || !row.device_token) return false;
+  // Constant-time comparison to prevent timing attacks
+  try {
+    return crypto.timingSafeEqual(Buffer.from(row.device_token), Buffer.from(token));
+  } catch {
+    return false;
+  }
+}
 
 function getClientIp(socket) {
   const forwarded = socket.handshake.headers['x-forwarded-for'];
@@ -102,16 +121,18 @@ module.exports = function setupDeviceSocket(io) {
   // Expose helpers for use by route handlers
   module.exports.lastScreenshots = lastScreenshots;
   module.exports.buildPlaylistPayload = buildPlaylistPayload;
+  module.exports.generateDeviceToken = generateDeviceToken;
   const deviceNs = io.of('/device');
   const dashboardNs = io.of('/dashboard');
 
   deviceNs.on('connection', (socket) => {
     console.log(`Device socket connected: ${socket.id}`);
     let currentDeviceId = null;
+    let authenticated = false; // Track whether this socket has been authenticated
 
-    // Device registers with a pairing code (first time) or device_id (reconnect)
+    // Device registers with a pairing code (first time) or device_id + device_token (reconnect)
     socket.on('device:register', (data) => {
-      const { pairing_code, device_id, device_info, fingerprint } = data;
+      const { pairing_code, device_id, device_token, device_info, fingerprint } = data;
 
       // Track device fingerprint to prevent reinstall abuse
       if (fingerprint) {
@@ -125,8 +146,16 @@ module.exports = function setupDeviceSocket(io) {
               // Someone reinstalled - link them back to existing device
               const oldDevice = db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.device_id);
               if (oldDevice) {
+                // Validate token if the old device has one
+                if (oldDevice.device_token && !validateDeviceToken(existing.device_id, device_token)) {
+                  console.warn(`Fingerprint match but invalid token for device ${existing.device_id}`);
+                  // Generate a new token — the reinstalled app needs a fresh one via re-pairing
+                  socket.emit('device:unpaired', { reason: 'invalid_token' });
+                  return;
+                }
                 console.log(`Fingerprint match: linking to existing device ${existing.device_id}`);
-                socket.emit('device:registered', { device_id: existing.device_id, status: oldDevice.status });
+                authenticated = true;
+                socket.emit('device:registered', { device_id: existing.device_id, device_token: oldDevice.device_token, status: oldDevice.status });
                 currentDeviceId = existing.device_id;
                 heartbeat.registerConnection(existing.device_id, socket.id);
                 socket.join(existing.device_id);
@@ -150,12 +179,27 @@ module.exports = function setupDeviceSocket(io) {
       }
 
       if (device_id) {
-        // Reconnecting known device
+        // Reconnecting known device — require valid token
         const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(device_id);
         if (device) {
+          // Validate device token (skip for legacy devices that don't have a token yet)
+          if (device.device_token && !validateDeviceToken(device_id, device_token)) {
+            console.warn(`Invalid device token for ${device_id} from ${getClientIp(socket)}`);
+            socket.emit('device:auth-error', { error: 'Invalid device token' });
+            return;
+          }
+
           currentDeviceId = device_id;
+          authenticated = true;
           db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), ip_address = ?, updated_at = strftime('%s','now') WHERE id = ?")
             .run(getClientIp(socket), device_id);
+
+          // Generate token for legacy devices that don't have one yet
+          let tokenToSend = device.device_token;
+          if (!tokenToSend) {
+            tokenToSend = generateDeviceToken();
+            db.prepare('UPDATE devices SET device_token = ? WHERE id = ?').run(tokenToSend, device_id);
+          }
 
           if (device_info) {
             db.prepare('UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ? WHERE id = ?')
@@ -164,7 +208,7 @@ module.exports = function setupDeviceSocket(io) {
 
           heartbeat.registerConnection(device_id, socket.id);
           socket.join(device_id);
-          socket.emit('device:registered', { device_id, status: 'online' });
+          socket.emit('device:registered', { device_id, device_token: tokenToSend, status: 'online' });
           logDeviceStatus(device_id, 'online');
 
           // Check subscription/trial status before sending playlist
@@ -187,15 +231,17 @@ module.exports = function setupDeviceSocket(io) {
       }
 
       if (pairing_code) {
-        // New device registering with pairing code
+        // New device registering with pairing code — generate a device_token
         const id = uuidv4();
+        const newToken = generateDeviceToken();
         currentDeviceId = id;
+        authenticated = true;
 
         db.prepare(`
-          INSERT INTO devices (id, pairing_code, status, ip_address, android_version, app_version, screen_width, screen_height, last_heartbeat)
-          VALUES (?, ?, 'provisioning', ?, ?, ?, ?, ?, strftime('%s','now'))
+          INSERT INTO devices (id, pairing_code, device_token, status, ip_address, android_version, app_version, screen_width, screen_height, last_heartbeat)
+          VALUES (?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, strftime('%s','now'))
         `).run(
-          id, pairing_code, getClientIp(socket),
+          id, pairing_code, newToken, getClientIp(socket),
           device_info?.android_version || null,
           device_info?.app_version || null,
           device_info?.screen_width || null,
@@ -204,17 +250,27 @@ module.exports = function setupDeviceSocket(io) {
 
         heartbeat.registerConnection(id, socket.id);
         socket.join(id);
-        socket.emit('device:registered', { device_id: id, status: 'provisioning' });
+        socket.emit('device:registered', { device_id: id, device_token: newToken, status: 'provisioning' });
 
         dashboardNs.emit('dashboard:device-added', db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
         console.log(`New device registered: ${id} with pairing code: ${pairing_code}`);
       }
     });
 
+    // Require authentication for all events after register
+    function requireDeviceAuth() {
+      if (!authenticated || !currentDeviceId) {
+        socket.emit('device:auth-error', { error: 'Not authenticated. Send device:register first.' });
+        return false;
+      }
+      return true;
+    }
+
     // Heartbeat with telemetry
     socket.on('device:heartbeat', (data) => {
+      if (!requireDeviceAuth()) return;
       const { device_id, telemetry } = data;
-      if (!device_id) return;
+      if (!device_id || device_id !== currentDeviceId) return;
 
       currentDeviceId = device_id;
       heartbeat.updateHeartbeat(device_id);
@@ -252,8 +308,11 @@ module.exports = function setupDeviceSocket(io) {
 
     // Screenshot received from device - relay via WebSocket, keep latest in memory
     socket.on('device:screenshot', (data) => {
+      if (!requireDeviceAuth()) return;
       const { device_id, image_b64 } = data;
-      if (!device_id || !image_b64) return;
+      if (!device_id || device_id !== currentDeviceId || !image_b64) return;
+      // Validate screenshot size (max 2MB base64 ≈ 1.5MB image)
+      if (image_b64.length > 2 * 1024 * 1024) return;
 
       // Store latest screenshot in memory (for Now Playing preview and offline snapshot)
       if (!lastScreenshots) lastScreenshots = {};
@@ -273,19 +332,24 @@ module.exports = function setupDeviceSocket(io) {
 
     // Content download acknowledgement
     socket.on('device:content-ack', (data) => {
+      if (!requireDeviceAuth()) return;
       const { device_id, content_id, status } = data;
+      if (device_id !== currentDeviceId) return;
       console.log(`Device ${device_id} content ${content_id}: ${status}`);
       dashboardNs.emit('dashboard:content-ack', { device_id, content_id, status });
     });
 
     // Playback state update
     socket.on('device:playback-state', (data) => {
+      if (!requireDeviceAuth()) return;
       dashboardNs.emit('dashboard:playback-state', data);
     });
 
     // Play event logging (proof-of-play)
     socket.on('device:play-event', (data) => {
+      if (!requireDeviceAuth()) return;
       const { device_id, event, content_id, content_name, zone_id, completed } = data;
+      if (device_id !== currentDeviceId) return;
       try {
         if (event === 'play_start') {
           db.prepare(`
@@ -310,6 +374,7 @@ module.exports = function setupDeviceSocket(io) {
 
     // Video wall sync relay
     socket.on('wall:sync', (data) => {
+      if (!requireDeviceAuth()) return;
       // Relay to all devices in the same wall
       const wallDevices = db.prepare(
         'SELECT device_id FROM video_wall_devices WHERE wall_id = ? AND device_id != ?'

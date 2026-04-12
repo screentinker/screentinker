@@ -382,6 +382,15 @@ CREATE TABLE IF NOT EXISTS kiosk_pages (
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 
+-- ===================== DEVICE STATUS LOG =====================
+
+CREATE TABLE IF NOT EXISTS device_status_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id       TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    timestamp       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
 -- ===================== DEVICE FINGERPRINTS =====================
 
 CREATE TABLE IF NOT EXISTS device_fingerprints (

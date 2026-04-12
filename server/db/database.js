@@ -58,6 +58,8 @@ const migrations = [
   "ALTER TABLE devices ADD COLUMN playlist_id TEXT REFERENCES playlists(id) ON DELETE SET NULL",
   "ALTER TABLE schedules ADD COLUMN playlist_id TEXT REFERENCES playlists(id) ON DELETE SET NULL",
   "ALTER TABLE playlists ADD COLUMN is_auto_generated INTEGER NOT NULL DEFAULT 0",
+  // Device authentication token
+  "ALTER TABLE devices ADD COLUMN device_token TEXT",
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { /* already exists */ }

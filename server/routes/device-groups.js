@@ -109,6 +109,10 @@ router.post('/:id/assign-content', requireGroupOwnership, (req, res) => {
   const { content_id, duration_sec } = req.body;
   if (!content_id) return res.status(400).json({ error: 'content_id required' });
 
+  // Verify content belongs to the user
+  const content = db.prepare('SELECT id FROM content WHERE id = ? AND user_id = ?').get(content_id, req.user.id);
+  if (!content) return res.status(404).json({ error: 'Content not found' });
+
   const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(req.params.id);
 
   const transaction = db.transaction(() => {

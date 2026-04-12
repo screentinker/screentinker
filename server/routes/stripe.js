@@ -91,11 +91,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
   let event;
   try {
-    if (config.stripeWebhookSecret) {
-      event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], config.stripeWebhookSecret);
-    } else {
-      event = JSON.parse(req.body.toString());
+    if (!config.stripeWebhookSecret) {
+      console.error('Stripe webhook secret not configured — rejecting unsigned webhook');
+      return res.status(400).json({ error: 'Webhook secret not configured' });
     }
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], config.stripeWebhookSecret);
   } catch (err) {
     console.error('Webhook signature verification failed:', err.message);
     return res.status(400).json({ error: 'Invalid signature' });

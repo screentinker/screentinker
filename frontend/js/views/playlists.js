@@ -1,12 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-
-// Escape user-controlled strings for safe HTML interpolation
-function esc(str) {
-  const d = document.createElement('div');
-  d.textContent = str || '';
-  return d.innerHTML;
-}
+import { esc } from '../utils.js';
 
 function formatDate(ts) {
   if (!ts) return '--';

@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { getLanguage, setLanguage, getAvailableLanguages } from '../i18n.js';
+import { esc } from '../utils.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
@@ -180,7 +181,7 @@ export async function render(container) {
       if (isZip) {
         // For ZIP, show basic info and skip preview parsing
         data = { format: 'screentinker-export-v1', _isZip: true };
-        statusEl.innerHTML = `ZIP export detected: <strong>${file.name}</strong> (${(file.size / 1048576).toFixed(1)} MB)<br>Contains data + media files.<br><br><button class="btn btn-primary btn-sm" id="confirmImportBtn">Confirm Import</button> <button class="btn btn-secondary btn-sm" id="cancelImportBtn">Cancel</button>`;
+        statusEl.innerHTML = `ZIP export detected: <strong>${esc(file.name)}</strong> (${(file.size / 1048576).toFixed(1)} MB)<br>Contains data + media files.<br><br><button class="btn btn-primary btn-sm" id="confirmImportBtn">Confirm Import</button> <button class="btn btn-secondary btn-sm" id="cancelImportBtn">Cancel</button>`;
       } else {
         const text = await file.text();
         data = JSON.parse(text);
@@ -198,7 +199,7 @@ export async function render(container) {
           data.video_walls?.length ? `${data.video_walls.length} video walls` : null,
           data.kiosk_pages?.length ? `${data.kiosk_pages.length} kiosk pages` : null,
         ].filter(Boolean).join(', ');
-        statusEl.innerHTML = `Found: ${summary || 'empty export'}.<br>From: ${data.user?.email || 'unknown'} (exported ${data.exported_at?.split('T')[0] || 'unknown'})<br><br><button class="btn btn-primary btn-sm" id="confirmImportBtn">Confirm Import</button> <button class="btn btn-secondary btn-sm" id="cancelImportBtn">Cancel</button>`;
+        statusEl.innerHTML = `Found: ${esc(summary) || 'empty export'}.<br>From: ${esc(data.user?.email) || 'unknown'} (exported ${esc(data.exported_at?.split('T')[0]) || 'unknown'})<br><br><button class="btn btn-primary btn-sm" id="confirmImportBtn">Confirm Import</button> <button class="btn btn-secondary btn-sm" id="cancelImportBtn">Cancel</button>`;
       }
       document.getElementById('cancelImportBtn').onclick = () => { statusEl.style.display = 'none'; e.target.value = ''; };
       document.getElementById('confirmImportBtn').onclick = async () => {
@@ -413,7 +414,7 @@ async function loadUsers() {
     });
 
   } catch (err) {
-    el.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`;
+    el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`;
   }
 }
 

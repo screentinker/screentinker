@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendKey, sendCommand } from '../socket.js';
 import { showToast } from '../components/toast.js';
+import { esc } from '../utils.js';
 
 let currentDevice = null;
 let statusHandler = null;
@@ -449,7 +450,7 @@ async function loadDevice(deviceId, activeTab = null) {
     }
 
   } catch (err) {
-    contentEl.innerHTML = `<div class="empty-state"><h3>Failed to load device</h3><p>${err.message}</p></div>`;
+    contentEl.innerHTML = `<div class="empty-state"><h3>Failed to load device</h3><p>${esc(err.message)}</p></div>`;
   }
 }
 

@@ -108,7 +108,12 @@ router.post('/google', async (req, res) => {
 
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     } else if (user.auth_provider !== 'google') {
-      // Link Google to existing account
+      // Existing account with different provider — do NOT silently overwrite auth_provider.
+      // If they have a local password, require them to log in locally and link from settings.
+      if (user.password_hash) {
+        return res.status(409).json({ error: 'An account with this email already exists. Please log in with your password.' });
+      }
+      // No password (e.g. Microsoft → Google switch) — allow linking
       db.prepare('UPDATE users SET auth_provider = ?, provider_id = ?, avatar_url = ? WHERE id = ?')
         .run('google', googleId, picture || user.avatar_url, user.id);
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
@@ -178,6 +183,10 @@ router.post('/microsoft', async (req, res) => {
 
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     } else if (user.auth_provider !== 'microsoft') {
+      // Existing account with different provider — do NOT silently overwrite auth_provider.
+      if (user.password_hash) {
+        return res.status(409).json({ error: 'An account with this email already exists. Please log in with your password.' });
+      }
       db.prepare('UPDATE users SET auth_provider = ?, provider_id = ? WHERE id = ?')
         .run('microsoft', microsoftId, user.id);
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
@@ -223,7 +232,7 @@ router.put('/me', requireAuth, (req, res) => {
     db.prepare('UPDATE users SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?')
       .run(name, req.user.id);
   }
-  if (password && password.length >= 6) {
+  if (password && password.length >= 8) {
     const hash = bcrypt.hashSync(password, 10);
     db.prepare('UPDATE users SET password_hash = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?')
       .run(hash, req.user.id);

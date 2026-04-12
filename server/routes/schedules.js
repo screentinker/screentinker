@@ -17,8 +17,12 @@ router.get('/', (req, res) => {
   res.json(db.prepare(sql).all(...params));
 });
 
-// Get schedules for a device
+// Get schedules for a device (verify device belongs to user)
 router.get('/device/:deviceId', (req, res) => {
+  const device = db.prepare('SELECT user_id FROM devices WHERE id = ?').get(req.params.deviceId);
+  if (!device) return res.status(404).json({ error: 'Device not found' });
+  if (!['admin','superadmin'].includes(req.user.role) && device.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
   const schedules = db.prepare(`
     SELECT s.*, c.filename as content_name, w.name as widget_name, p.name as playlist_name
     FROM schedules s
@@ -35,6 +39,11 @@ router.get('/device/:deviceId', (req, res) => {
 router.get('/week', (req, res) => {
   const { date, device_id } = req.query;
   if (!device_id) return res.status(400).json({ error: 'device_id required' });
+
+  // Verify device ownership
+  const device = db.prepare('SELECT user_id FROM devices WHERE id = ?').get(device_id);
+  if (!device) return res.status(404).json({ error: 'Device not found' });
+  if (!['admin','superadmin'].includes(req.user.role) && device.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
   const weekStart = date ? new Date(date) : new Date();
   weekStart.setHours(0, 0, 0, 0);

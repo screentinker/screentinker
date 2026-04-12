@@ -1,4 +1,5 @@
 import { showToast } from '../components/toast.js';
+import { esc } from '../utils.js';
 
 const API = (url) => fetch('/api' + url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }}).then(r => r.json());
 
@@ -39,10 +40,10 @@ export async function render(container) {
             <div style="width:32px;height:32px;border-radius:50%;background:var(--bg-card);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px">${icon}</div>
             <div style="flex:1;min-width:0">
               <div style="font-size:13px">
-                <strong>${item.user_name || item.user_email || 'System'}</strong>
-                <span style="color:var(--text-secondary)"> ${formatAction(item.action)}</span>
+                <strong>${esc(item.user_name || item.user_email || 'System')}</strong>
+                <span style="color:var(--text-secondary)"> ${esc(formatAction(item.action))}</span>
               </div>
-              ${item.details ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${item.details}</div>` : ''}
+              ${item.details ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(item.details)}</div>` : ''}
             </div>
             <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;flex-shrink:0">${timeStr}</div>
           </div>

@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
+import { esc } from '../utils.js';
 
 const headers = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
 const API = (url, opts = {}) => fetch('/api' + url, { headers: headers(), ...opts }).then(r => r.json());
@@ -117,7 +118,7 @@ async function loadUsers() {
         setTimeout(() => { confirming = false; btn.textContent = 'Remove'; btn.style.background = ''; btn.style.color = ''; }, 3000);
       };
     });
-  } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`; }
+  } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
 
 async function loadPlans() {
@@ -146,7 +147,7 @@ async function loadPlans() {
         </tbody>
       </table>
     `;
-  } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`; }
+  } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
 
 async function loadSystem() {
@@ -164,7 +165,7 @@ async function loadSystem() {
         <a href="/api/status" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">Server Status</a>
       </div>
     `;
-  } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`; }
+  } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
 
 export function cleanup() {}
