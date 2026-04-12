@@ -1,7 +1,32 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
+const config = require('../config');
+
+// Re-probe video duration with ffprobe if content.duration_sec is missing
+function probeAndUpdateDuration(content) {
+  if (content.duration_sec) return content.duration_sec;
+  if (!content.mime_type || !content.mime_type.startsWith('video/')) return null;
+  if (!content.filepath) return null;
+  try {
+    const { execFileSync } = require('child_process');
+    const fullPath = path.join(config.contentDir, content.filepath);
+    const probe = execFileSync('ffprobe', [
+      '-v', 'quiet', '-print_format', 'json', '-show_format', fullPath
+    ], { timeout: 15000 }).toString();
+    const info = JSON.parse(probe);
+    if (info.format?.duration) {
+      const dur = parseFloat(info.format.duration);
+      db.prepare('UPDATE content SET duration_sec = ? WHERE id = ?').run(dur, content.id);
+      return dur;
+    }
+  } catch (e) {
+    console.warn('ffprobe re-probe failed for', content.id, e.message);
+  }
+  return null;
+}
 
 // Verify playlist belongs to the authenticated user
 function requirePlaylistOwnership(req, res, next) {
@@ -112,13 +137,15 @@ router.post('/:id/items', requirePlaylistOwnership, (req, res) => {
 
   // Validate content ownership; use content's native duration as default for videos
   if (content_id) {
-    const content = db.prepare('SELECT id, user_id, duration_sec FROM content WHERE id = ?').get(content_id);
+    const content = db.prepare('SELECT id, user_id, duration_sec, mime_type, filepath FROM content WHERE id = ?').get(content_id);
     if (!content) return res.status(404).json({ error: 'Content not found' });
     if (!['admin', 'superadmin'].includes(req.user.role) && content.user_id && content.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Content not owned by you' });
     }
-    if ((duration_sec === undefined || duration_sec === null) && content.duration_sec) {
-      duration_sec = Math.ceil(content.duration_sec);
+    if (duration_sec === undefined || duration_sec === null) {
+      // Use stored duration, or re-probe if missing (backfills content table too)
+      const contentDur = probeAndUpdateDuration(content);
+      if (contentDur) duration_sec = Math.ceil(contentDur);
     }
   }
   if (duration_sec === undefined || duration_sec === null) duration_sec = 10;
