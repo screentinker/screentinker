@@ -17,6 +17,7 @@ import * as help from './views/help.js';
 import * as teams from './views/teams.js';
 import * as admin from './views/admin.js';
 import * as designer from './views/designer.js';
+import * as playlists from './views/playlists.js';
 
 const app = document.getElementById('app');
 const sidebar = document.querySelector('.sidebar');
@@ -83,6 +84,7 @@ function route() {
     else if (hash.startsWith('#/settings') && link.dataset.view === 'settings') link.classList.add('active');
     else if (hash.startsWith('#/billing') && link.dataset.view === 'billing') link.classList.add('active');
     else if ((hash.startsWith('#/layout') || hash === '#/layouts') && link.dataset.view === 'layouts') link.classList.add('active');
+    else if ((hash === '#/playlists' || hash.startsWith('#/playlists/')) && link.dataset.view === 'playlists') link.classList.add('active');
     else if (hash === '#/schedule' && link.dataset.view === 'schedule') link.classList.add('active');
     else if (hash === '#/widgets' && link.dataset.view === 'widgets') link.classList.add('active');
     else if ((hash.startsWith('#/wall') || hash === '#/walls') && link.dataset.view === 'walls') link.classList.add('active');
@@ -105,6 +107,9 @@ function route() {
   } else if (hash === '#/content') {
     currentView = contentLibrary;
     contentLibrary.render(app);
+  } else if (hash === '#/playlists' || hash.startsWith('#/playlists/')) {
+    currentView = playlists;
+    playlists.render(app);
   } else if (hash === '#/layouts' || hash.startsWith('#/layout/')) {
     currentView = layoutEditor;
     layoutEditor.render(app);
