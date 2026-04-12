@@ -33,6 +33,10 @@ class ServerConfig(context: Context) {
         get() = prefs.getString("device_id", "") ?: ""
         set(value) = prefs.edit().putString("device_id", value).apply()
 
+    var deviceToken: String
+        get() = prefs.getString("device_token", "") ?: ""
+        set(value) = prefs.edit().putString("device_token", value).apply()
+
     var deviceName: String
         get() = prefs.getString("device_name", "Unnamed Display") ?: "Unnamed Display"
         set(value) = prefs.edit().putString("device_name", value).apply()
@@ -45,6 +49,14 @@ class ServerConfig(context: Context) {
 
     fun setPaired(paired: Boolean) {
         prefs.edit().putBoolean("is_paired", paired).apply()
+    }
+
+    fun clearDeviceCredentials() {
+        prefs.edit()
+            .remove("device_id")
+            .remove("device_token")
+            .remove("is_paired")
+            .apply()
     }
 
     fun clear() {

@@ -253,6 +253,7 @@
 
       socket.on('device:registered', (data) => {
         config.deviceId = data.device_id;
+        if (data.device_token) config.deviceToken = data.device_token;
         saveConfig(config);
         console.log('Registered:', data.device_id);
 
@@ -276,6 +277,30 @@
         console.log('Paired as:', data.name);
         document.getElementById('setupScreen').style.display = 'none';
         showStatus('Waiting for content...');
+      });
+
+      socket.on('device:unpaired', () => {
+        console.warn('Device not found on server — clearing credentials');
+        delete config.deviceId;
+        delete config.deviceToken;
+        config.paired = false;
+        saveConfig(config);
+        document.getElementById('setupScreen').style.display = 'flex';
+        document.getElementById('urlForm').style.display = 'block';
+        document.getElementById('pairingSection').style.display = 'none';
+        document.getElementById('setupStatus').textContent = 'Device was removed from server. Please reconnect.';
+      });
+
+      socket.on('device:auth-error', (data) => {
+        console.warn('Device auth rejected:', data?.error || 'unknown');
+        delete config.deviceId;
+        delete config.deviceToken;
+        config.paired = false;
+        saveConfig(config);
+        document.getElementById('setupScreen').style.display = 'flex';
+        document.getElementById('urlForm').style.display = 'block';
+        document.getElementById('pairingSection').style.display = 'none';
+        document.getElementById('setupStatus').textContent = 'Authentication failed. Please re-pair this device.';
       });
 
       socket.on('device:playlist-update', (data) => {
@@ -361,6 +386,7 @@
       const data = {};
       if (config.deviceId && config.paired) {
         data.device_id = config.deviceId;
+        if (config.deviceToken) data.device_token = config.deviceToken;
       } else {
         const code = String(Math.floor(100000 + Math.random() * 900000));
         config.pairingCode = code;

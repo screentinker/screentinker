@@ -102,15 +102,25 @@ class WebSocketService : Service() {
                     val data = args[0] as JSONObject
                     val newDeviceId = data.getString("device_id")
                     config.deviceId = newDeviceId
+                    // Persist device_token (issued on first register, or refreshed on reconnect)
+                    if (data.has("device_token")) {
+                        config.deviceToken = data.getString("device_token")
+                    }
                     Log.i("WebSocketService", "Registered as: $newDeviceId")
                     handler.post { onRegistered?.invoke(newDeviceId) }
                     startHeartbeat()
                 }
 
                 on("device:unpaired") {
-                    Log.w("WebSocketService", "Device not found on server - clearing config")
-                    config.setPaired(false)
-                    config.deviceId = ""
+                    Log.w("WebSocketService", "Device not found on server - clearing credentials")
+                    config.clearDeviceCredentials()
+                    handler.post { onUnpaired?.invoke() }
+                }
+
+                on("device:auth-error") { args ->
+                    val msg = (args.firstOrNull() as? JSONObject)?.optString("error", "Authentication failed") ?: "Authentication failed"
+                    Log.w("WebSocketService", "Device auth rejected: $msg — clearing credentials for re-pair")
+                    config.clearDeviceCredentials()
                     handler.post { onUnpaired?.invoke() }
                 }
 
@@ -234,6 +244,11 @@ class WebSocketService : Service() {
         val data = JSONObject().apply {
             if (config.isProvisioned && config.isPaired) {
                 put("device_id", config.deviceId)
+                // Send device_token for authentication (may be empty for legacy devices)
+                val token = config.deviceToken
+                if (token.isNotEmpty()) {
+                    put("device_token", token)
+                }
             } else {
                 // Generate a pairing code if we don't have one
                 val pairingCode = (100000..999999).random().toString()
@@ -279,6 +294,10 @@ class WebSocketService : Service() {
         // Re-register triggers the server to send current playlist
         val data = org.json.JSONObject().apply {
             put("device_id", config.deviceId)
+            val token = config.deviceToken
+            if (token.isNotEmpty()) {
+                put("device_token", token)
+            }
             put("device_info", deviceInfo.getDeviceInfo())
         }
         socket?.emit("device:register", data)
