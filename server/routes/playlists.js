@@ -102,21 +102,26 @@ router.get('/:id/items', requirePlaylistOwnership, (req, res) => {
 
 // Add item
 router.post('/:id/items', requirePlaylistOwnership, (req, res) => {
-  const { content_id, widget_id, duration_sec = 10, sort_order } = req.body;
+  const { content_id, widget_id, sort_order } = req.body;
+  let { duration_sec } = req.body;
 
   if (!content_id && !widget_id) return res.status(400).json({ error: 'content_id or widget_id required' });
-  if (duration_sec !== undefined && (typeof duration_sec !== 'number' || duration_sec < 1)) {
+  if (duration_sec !== undefined && duration_sec !== null && (typeof duration_sec !== 'number' || duration_sec < 1)) {
     return res.status(400).json({ error: 'duration_sec must be a positive integer' });
   }
 
-  // Validate content ownership
+  // Validate content ownership; use content's native duration as default for videos
   if (content_id) {
-    const content = db.prepare('SELECT id, user_id FROM content WHERE id = ?').get(content_id);
+    const content = db.prepare('SELECT id, user_id, duration_sec FROM content WHERE id = ?').get(content_id);
     if (!content) return res.status(404).json({ error: 'Content not found' });
     if (!['admin', 'superadmin'].includes(req.user.role) && content.user_id && content.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Content not owned by you' });
     }
+    if ((duration_sec === undefined || duration_sec === null) && content.duration_sec) {
+      duration_sec = Math.ceil(content.duration_sec);
+    }
   }
+  if (duration_sec === undefined || duration_sec === null) duration_sec = 10;
   if (widget_id) {
     const widget = db.prepare('SELECT id FROM widgets WHERE id = ?').get(widget_id);
     if (!widget) return res.status(404).json({ error: 'Widget not found' });
