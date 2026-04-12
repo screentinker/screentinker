@@ -173,7 +173,12 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <h3 style="font-size:16px">Playlist</h3>
+          <div style="display:flex;align-items:center;gap:12px">
+            <h3 style="font-size:16px">Playlist</h3>
+            <select class="input" id="playlistPicker" style="font-size:12px;padding:4px 8px;width:200px">
+              <option value="">No playlist</option>
+            </select>
+          </div>
           <div style="display:flex;gap:6px">
             <button class="btn btn-secondary btn-sm" id="copyPlaylistBtn">Copy To...</button>
             <button class="btn btn-primary btn-sm" id="addContentBtn">
@@ -561,6 +566,37 @@ async function setupActions(device) {
       showToast(err.message, 'error');
     }
   });
+
+  // Populate playlist picker
+  const playlistPicker = document.getElementById('playlistPicker');
+  if (playlistPicker) {
+    api.getPlaylists().then(playlists => {
+      playlists.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.name}${p.is_auto_generated ? ' (auto)' : ''} — ${p.item_count} items`;
+        if (p.id === device.playlist_id) opt.selected = true;
+        playlistPicker.appendChild(opt);
+      });
+      // If device has no playlist, keep "No playlist" selected
+      if (!device.playlist_id) playlistPicker.value = '';
+    }).catch(() => {});
+
+    playlistPicker.addEventListener('change', async () => {
+      const newPlaylistId = playlistPicker.value;
+      if (!newPlaylistId) return; // Don't allow deselecting for now
+      try {
+        await api.assignPlaylistToDevice(newPlaylistId, device.id);
+        device.playlist_id = newPlaylistId;
+        const assignments = await api.getAssignments(device.id);
+        document.getElementById('playlistContainer').innerHTML = renderPlaylist(assignments);
+        attachRemoveHandlers(device);
+        showToast('Playlist changed');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  }
 
   // Copy playlist to another device
   document.getElementById('copyPlaylistBtn')?.addEventListener('click', async () => {
