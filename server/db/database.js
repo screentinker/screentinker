@@ -54,6 +54,10 @@ const migrations = [
   "ALTER TABLE plans ADD COLUMN stripe_price_yearly TEXT",
   // Last login tracking
   "ALTER TABLE users ADD COLUMN last_login INTEGER",
+  // Phase 2: every device gets a playlist, schedules can override with a playlist
+  "ALTER TABLE devices ADD COLUMN playlist_id TEXT REFERENCES playlists(id) ON DELETE SET NULL",
+  "ALTER TABLE schedules ADD COLUMN playlist_id TEXT REFERENCES playlists(id) ON DELETE SET NULL",
+  "ALTER TABLE playlists ADD COLUMN is_auto_generated INTEGER NOT NULL DEFAULT 0",
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { /* already exists */ }

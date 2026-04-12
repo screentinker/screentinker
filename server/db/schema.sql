@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS devices (
     app_version     TEXT,
     screen_width    INTEGER,
     screen_height   INTEGER,
+    playlist_id     TEXT REFERENCES playlists(id) ON DELETE SET NULL,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -199,6 +200,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     content_id      TEXT REFERENCES content(id) ON DELETE CASCADE,
     widget_id       TEXT REFERENCES widgets(id) ON DELETE CASCADE,
     layout_id       TEXT REFERENCES layouts(id) ON DELETE SET NULL,
+    playlist_id     TEXT REFERENCES playlists(id) ON DELETE SET NULL,
     title           TEXT NOT NULL DEFAULT '',
     start_time      TEXT NOT NULL,
     end_time        TEXT NOT NULL,
@@ -318,6 +320,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     user_id         TEXT NOT NULL REFERENCES users(id),
     name            TEXT NOT NULL,
     description     TEXT DEFAULT '',
+    is_auto_generated INTEGER NOT NULL DEFAULT 0,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
