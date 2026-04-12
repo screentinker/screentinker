@@ -408,3 +408,10 @@ CREATE TABLE IF NOT EXISTS device_status_log (
     status          TEXT NOT NULL,
     timestamp       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
+
+-- ===================== SCHEMA MIGRATIONS =====================
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    id              TEXT PRIMARY KEY,
+    ran_at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);

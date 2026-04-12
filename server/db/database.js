@@ -96,10 +96,12 @@ try {
 }
 
 // Phase 2 migration: convert existing assignments into per-device playlists
+const MIGRATION_ID = 'phase2_playlist_migration';
+
 async function migrateAssignmentsToPlaylists() {
-  // Skip if already migrated (any device has a playlist_id set)
-  const migrated = db.prepare('SELECT 1 FROM devices WHERE playlist_id IS NOT NULL LIMIT 1').get();
-  if (migrated) return;
+  // Skip if already ran (tracked in schema_migrations table)
+  const already = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(MIGRATION_ID);
+  if (already) return;
 
   const { v4: uuidv4 } = require('uuid');
   const { execFile } = require('child_process');
@@ -184,6 +186,9 @@ async function migrateAssignmentsToPlaylists() {
     }
   });
   migrate();
+
+  // Record that this migration has run
+  db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(MIGRATION_ID);
 
   const scheduleCount = db.prepare('SELECT COUNT(*) as count FROM schedules').get().count;
   console.log(`Migration complete: ${devicesWithAssignments.length} device(s), ${totalItems} playlist item(s), ${videosProbed} video(s) probed, ${scheduleCount} schedule(s).`);
