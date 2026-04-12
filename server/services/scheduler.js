@@ -9,6 +9,9 @@ function startScheduler(socketIo) {
   console.log('Scheduler service started');
 }
 
+// Track which devices have a schedule override active so we can revert
+const activeOverrides = new Map(); // deviceId -> { playlist_id, layout_id }
+
 function evaluateSchedules() {
   const deviceNs = io?.of('/device');
   if (!deviceNs) return;
@@ -18,27 +21,38 @@ function evaluateSchedules() {
 
   for (const device of onlineDevices) {
     const schedules = db.prepare(`
-      SELECT s.*, c.filename, c.mime_type, c.filepath, c.file_size, c.remote_url,
-             c.duration_sec as content_duration
+      SELECT s.*
       FROM schedules s
-      LEFT JOIN content c ON s.content_id = c.id
       WHERE s.device_id = ? AND s.enabled = 1
       ORDER BY s.priority DESC
     `).all(device.id);
 
-    // Find currently active schedule
     const active = schedules.find(s => isScheduleActiveNow(s, now));
+    const override = activeOverrides.get(device.id);
+    let changed = false;
 
-    if (active && active.content_id) {
-      // Check if this is different from current playback
-      const currentLayout = device.layout_id;
-      if (active.layout_id && active.layout_id !== currentLayout) {
-        // Switch layout
+    if (active) {
+      // Apply layout override if schedule has one
+      if (active.layout_id && active.layout_id !== device.layout_id) {
+        if (!override) activeOverrides.set(device.id, { layout_id: device.layout_id, playlist_id: device.playlist_id });
         db.prepare("UPDATE devices SET layout_id = ? WHERE id = ?").run(active.layout_id, device.id);
-        // Push updated playlist
-        pushPlaylistToDevice(device.id, deviceNs);
+        changed = true;
       }
+      // Apply playlist override if schedule has one
+      if (active.playlist_id && active.playlist_id !== device.playlist_id) {
+        if (!override) activeOverrides.set(device.id, { layout_id: device.layout_id, playlist_id: device.playlist_id });
+        db.prepare("UPDATE devices SET playlist_id = ? WHERE id = ?").run(active.playlist_id, device.id);
+        changed = true;
+      }
+    } else if (override) {
+      // No active schedule — revert to original playlist/layout
+      db.prepare("UPDATE devices SET playlist_id = ?, layout_id = ? WHERE id = ?")
+        .run(override.playlist_id, override.layout_id, device.id);
+      activeOverrides.delete(device.id);
+      changed = true;
     }
+
+    if (changed) pushPlaylistToDevice(device.id, deviceNs);
   }
 }
 

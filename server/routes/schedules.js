@@ -6,7 +6,7 @@ const { db } = require('../db/database');
 // List schedules (filterable)
 router.get('/', (req, res) => {
   const { device_id, start, end } = req.query;
-  let sql = 'SELECT s.*, c.filename as content_name, w.name as widget_name FROM schedules s LEFT JOIN content c ON s.content_id = c.id LEFT JOIN widgets w ON s.widget_id = w.id WHERE s.user_id = ?';
+  let sql = 'SELECT s.*, c.filename as content_name, w.name as widget_name, p.name as playlist_name FROM schedules s LEFT JOIN content c ON s.content_id = c.id LEFT JOIN widgets w ON s.widget_id = w.id LEFT JOIN playlists p ON s.playlist_id = p.id WHERE s.user_id = ?';
   const params = [req.user.id];
 
   if (device_id) { sql += ' AND s.device_id = ?'; params.push(device_id); }
@@ -20,10 +20,11 @@ router.get('/', (req, res) => {
 // Get schedules for a device
 router.get('/device/:deviceId', (req, res) => {
   const schedules = db.prepare(`
-    SELECT s.*, c.filename as content_name, w.name as widget_name
+    SELECT s.*, c.filename as content_name, w.name as widget_name, p.name as playlist_name
     FROM schedules s
     LEFT JOIN content c ON s.content_id = c.id
     LEFT JOIN widgets w ON s.widget_id = w.id
+    LEFT JOIN playlists p ON s.playlist_id = p.id
     WHERE s.device_id = ? AND s.enabled = 1
     ORDER BY s.priority DESC, s.start_time ASC
   `).all(req.params.deviceId);
@@ -42,10 +43,11 @@ router.get('/week', (req, res) => {
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const schedules = db.prepare(`
-    SELECT s.*, c.filename as content_name, w.name as widget_name
+    SELECT s.*, c.filename as content_name, w.name as widget_name, p.name as playlist_name
     FROM schedules s
     LEFT JOIN content c ON s.content_id = c.id
     LEFT JOIN widgets w ON s.widget_id = w.id
+    LEFT JOIN playlists p ON s.playlist_id = p.id
     WHERE s.device_id = ? AND s.enabled = 1
     ORDER BY s.priority DESC, s.start_time ASC
   `).all(device_id);
@@ -61,7 +63,7 @@ router.get('/week', (req, res) => {
 
 // Create schedule
 router.post('/', (req, res) => {
-  const { device_id, zone_id, content_id, widget_id, layout_id, title, start_time, end_time,
+  const { device_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time,
           timezone, recurrence, recurrence_end, priority, color } = req.body;
 
   if (!device_id || !start_time || !end_time) {
@@ -70,11 +72,11 @@ router.post('/', (req, res) => {
 
   const id = uuidv4();
   db.prepare(`
-    INSERT INTO schedules (id, user_id, device_id, zone_id, content_id, widget_id, layout_id, title,
+    INSERT INTO schedules (id, user_id, device_id, zone_id, content_id, widget_id, layout_id, playlist_id, title,
       start_time, end_time, timezone, recurrence, recurrence_end, priority, color)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, req.user.id, device_id, zone_id || null, content_id || null, widget_id || null,
-    layout_id || null, title || '', start_time, end_time, timezone || 'UTC',
+    layout_id || null, playlist_id || null, title || '', start_time, end_time, timezone || 'UTC',
     recurrence || null, recurrence_end || null, priority || 0, color || '#3B82F6');
 
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
@@ -87,7 +89,7 @@ router.put('/:id', (req, res) => {
   if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
   if (!['admin','superadmin'].includes(req.user.role) && schedule.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
-  const fields = ['device_id', 'zone_id', 'content_id', 'widget_id', 'layout_id', 'title',
+  const fields = ['device_id', 'zone_id', 'content_id', 'widget_id', 'layout_id', 'playlist_id', 'title',
     'start_time', 'end_time', 'timezone', 'recurrence', 'recurrence_end', 'priority', 'enabled', 'color'];
   const updates = [];
   const values = [];
