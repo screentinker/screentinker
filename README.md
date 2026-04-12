@@ -6,20 +6,25 @@ Open-source digital signage management software. Control content on TVs, display
 
 ## Features
 
-- **Multi-zone layouts** — split screens into zones with drag-and-drop editor
-- **Video walls** — combine multiple displays into one screen with bezel compensation
-- **Remote control** — live view, key input, power on/off
-- **Scheduling** — visual weekly calendar with recurrence rules
+- **Playlists** — first-class playlist objects: create, reorder, set per-item duration, share one playlist across multiple displays
+- **Device groups** — organize displays into groups, bulk-assign content or playlists, send bulk commands (reboot, screen on/off, launch, update, shutdown)
+- **Multi-zone layouts** — split screens into zones with drag-and-drop editor; 7 built-in templates (fullscreen, split, L-bar, PiP, grid)
+- **Video walls** — combine multiple displays into one screen with bezel compensation, device rotation, and leader-based sync
+- **Remote control** — live view, touch injection, key input, power on/off
+- **Scheduling** — visual weekly calendar with recurrence rules (daily/weekly/monthly), priority levels, timezone support, and playlist overrides
 - **Content designer** — clocks, weather, RSS tickers, countdowns, QR codes
 - **Kiosk mode** — interactive touchscreen interfaces
-- **Proof-of-play** — analytics and CSV export for ad verification
+- **Proof-of-play** — per-content and per-device analytics, hourly/daily breakdowns, CSV export for ad verification
+- **Device telemetry** — battery, storage, RAM, CPU, WiFi signal strength, and uptime reported by Android players
 - **Alerts** — email notifications when devices go offline
-- **Teams** — multi-user with owner, editor, and viewer roles
-- **White-label** — custom branding, colors, logo, domain
-- **YouTube support** — embed YouTube videos as content, no storage needed
-- **Export/Import** — migrate or back up devices, content, layouts, and widgets with optional media bundling (ZIP)
+- **Teams** — multi-user with owner, editor, and viewer roles; team-based device access
+- **White-label** — custom branding, colors, logo, favicon, CSS, and domain
+- **Content management** — folder organization, remote URL content (no upload needed), YouTube embeds, video duration detection via ffprobe, automatic thumbnail generation
+- **Export/Import** — v2 format with playlists, device groups, schedules, and optional media bundling (ZIP); backward-compatible v1 import with automatic playlist migration
+- **Device authentication** — per-device tokens for secure WebSocket connections; devices authenticate on every reconnect
 - **Built-in billing** — Stripe integration for SaaS subscriptions (optional)
 - **Auto-update** — OTA updates pushed to devices automatically
+- **Activity log** — full audit trail of user and system actions
 
 ## Supported Platforms
 
@@ -41,13 +46,14 @@ npm install
 SELF_HOSTED=true node server.js
 ```
 
-The server starts on port 3001. Open `http://localhost:3001` in your browser. The first registered user gets full access with all features unlocked.
+The server starts on port 3001 (HTTP). If SSL certificates are present in `server/certs/`, it starts on port 3443 (HTTPS) with automatic HTTP-to-HTTPS redirect. Open the URL shown in the startup banner. The first registered user gets full access with all features unlocked.
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | HTTP port | `3001` |
+| `HTTPS_PORT` | HTTPS port (used when SSL certs are present) | `3443` |
 | `SELF_HOSTED` | First user gets all features unlocked | `false` |
 | `APP_URL` | Your public URL (used for Stripe callbacks) | _(none)_ |
 | `JWT_SECRET` | JWT signing key (auto-generated if not set) | _(auto)_ |
@@ -81,7 +87,7 @@ If you want to charge your users, plug in your own Stripe keys. Without them, al
 | `STRIPE_WEBHOOK_SECRET` | Webhook signing secret (`whsec_...`) |
 | `APP_URL` | Your public URL (e.g. `https://signage.yourcompany.com`) |
 
-The default plans are: Free (1 device), Starter ($39/mo, 5 devices), Pro ($99/mo, 15 devices), Business ($199/mo, 50 devices), and Custom (unlimited). Edit the `plans` table to change pricing, limits, or add/remove tiers.
+The default plans are: Free (2 devices), Starter (8 devices), Pro (25 devices), and Enterprise (unlimited). Edit the `plans` table to change pricing, limits, or add/remove tiers. In self-hosted mode, the first user gets Enterprise automatically.
 
 #### Google OAuth
 
@@ -292,17 +298,18 @@ keytool -genkey -v -keystore android/release-key.jks -keyalg RSA -keysize 2048 -
 server/           Node.js/Express backend
   config.js       Configuration and environment variables
   server.js       Main entry point
-  db/             SQLite database and schema
-  routes/         API route handlers
-  middleware/     Auth, rate limiting, file upload
-  services/       Background services (heartbeat, scheduler, alerts)
-  ws/             WebSocket handlers (device + dashboard)
+  db/             SQLite database, schema, and migrations
+  routes/         API route handlers (devices, playlists, groups, schedules, etc.)
+  middleware/     Auth (JWT + device tokens), rate limiting, file upload, sanitization
+  services/       Background services (heartbeat, scheduler, alerts, activity logging)
+  ws/             WebSocket handlers (device namespace + dashboard namespace)
   player/         Web-based display player
 frontend/         Static SPA dashboard
-  js/views/       View components
+  js/views/       View components (dashboard, playlists, groups, schedules, etc.)
+  js/utils.js     Shared utilities (HTML escaping)
   css/            Stylesheets
   legal/          Terms, privacy, licenses
-android/          Android TV/tablet player app
+android/          Android TV/tablet player app (Kotlin, ExoPlayer)
 scripts/          Device setup scripts + admin recovery
 ```
 
