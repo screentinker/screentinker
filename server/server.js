@@ -203,6 +203,7 @@ app.use('/api/walls', requireAuth, require('./routes/video-walls'));
 app.use('/api/teams', requireAuth, require('./routes/teams'));
 app.use('/api/reports', requireAuth, require('./routes/reports'));
 app.use('/api/groups', requireAuth, require('./routes/device-groups'));
+app.use('/api/playlists', requireAuth, require('./routes/playlists'));
 app.use('/api/activity', requireAuth, require('./routes/activity'));
 app.use('/api/white-label', requireAuth, require('./routes/white-label'));
 // Kiosk render is public (accessed by devices), CRUD is protected
