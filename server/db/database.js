@@ -115,6 +115,30 @@ function migrateAssignmentsToPlaylists() {
 
   console.log(`Migrating ${devicesWithAssignments.length} device(s) from assignments to playlists...`);
 
+  // Probe video duration with ffprobe (synchronous — fine for one-time migration)
+  const { execFileSync } = require('child_process');
+  function probeVideoDuration(content) {
+    if (!content || !content.mime_type || !content.mime_type.startsWith('video/')) return null;
+    if (content.duration_sec) return Math.ceil(content.duration_sec);
+    if (!content.filepath) return null;
+    try {
+      const fullPath = path.join(config.contentDir, content.filepath);
+      const stdout = execFileSync('ffprobe', [
+        '-v', 'quiet', '-print_format', 'json', '-show_format', fullPath
+      ], { timeout: 15000 });
+      const info = JSON.parse(stdout);
+      if (info.format?.duration) {
+        const dur = parseFloat(info.format.duration);
+        // Backfill the content table too
+        db.prepare('UPDATE content SET duration_sec = ? WHERE id = ?').run(dur, content.id);
+        return Math.ceil(dur);
+      }
+    } catch (e) {
+      console.warn(`  ffprobe failed for ${content.id}:`, e.message);
+    }
+    return null;
+  }
+
   const insertPlaylist = db.prepare(`
     INSERT INTO playlists (id, user_id, name, description, is_auto_generated)
     VALUES (?, ?, ?, ?, 1)
@@ -125,22 +149,37 @@ function migrateAssignmentsToPlaylists() {
   `);
   const setDevicePlaylist = db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?');
   const getAssignments = db.prepare(`
-    SELECT content_id, widget_id, sort_order, duration_sec
-    FROM assignments
-    WHERE device_id = ? AND enabled = 1
-    ORDER BY sort_order ASC
+    SELECT a.content_id, a.widget_id, a.sort_order, a.duration_sec,
+           c.mime_type, c.filepath, c.duration_sec as content_duration
+    FROM assignments a
+    LEFT JOIN content c ON a.content_id = c.id
+    WHERE a.device_id = ? AND a.enabled = 1
+    ORDER BY a.sort_order ASC
   `);
 
-  const migrate = db.transaction(() => {
-    for (const device of devicesWithAssignments) {
-      const playlistId = uuidv4();
-      insertPlaylist.run(playlistId, device.user_id, `${device.name} (migrated)`, 'Auto-generated from previous assignments');
-
-      const assignments = getAssignments.all(device.id);
-      for (const a of assignments) {
-        insertItem.run(playlistId, a.content_id || null, a.widget_id || null, a.sort_order, a.duration_sec);
+  // Probe durations outside the transaction (ffprobe can't run inside SQLite transaction)
+  const devicePlaylists = [];
+  for (const device of devicesWithAssignments) {
+    const playlistId = uuidv4();
+    const assignments = getAssignments.all(device.id);
+    const items = assignments.map(a => {
+      let duration = a.duration_sec;
+      if (a.content_id && a.mime_type?.startsWith('video/')) {
+        const probed = probeVideoDuration({ id: a.content_id, mime_type: a.mime_type, filepath: a.filepath, duration_sec: a.content_duration });
+        if (probed) duration = probed;
       }
+      return { content_id: a.content_id, widget_id: a.widget_id, sort_order: a.sort_order, duration_sec: duration };
+    });
+    devicePlaylists.push({ device, playlistId, items });
+  }
 
+  // Insert everything in a single transaction
+  const migrate = db.transaction(() => {
+    for (const { device, playlistId, items } of devicePlaylists) {
+      insertPlaylist.run(playlistId, device.user_id, `${device.name} (migrated)`, 'Auto-generated from previous assignments');
+      for (const item of items) {
+        insertItem.run(playlistId, item.content_id || null, item.widget_id || null, item.sort_order, item.duration_sec);
+      }
       setDevicePlaylist.run(playlistId, device.id);
     }
   });
