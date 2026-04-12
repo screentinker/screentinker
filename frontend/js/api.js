@@ -91,6 +91,9 @@ export const api = {
     body: JSON.stringify({ order })
   }),
 
+  // Widgets
+  getWidgets: () => request('/widgets'),
+
   // Device Groups
   getGroups: () => request('/groups'),
   createGroup: (name, color) => request('/groups', { method: 'POST', body: JSON.stringify({ name, color }) }),
