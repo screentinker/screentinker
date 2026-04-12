@@ -64,15 +64,22 @@ router.get('/:id', (req, res) => {
     'SELECT * FROM screenshots WHERE device_id = ? ORDER BY captured_at DESC LIMIT 1'
   ).get(req.params.id);
 
-  const assignments = db.prepare(`
-    SELECT a.*, COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.thumbnail_path, c.duration_sec as content_duration, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config
-    FROM assignments a
-    LEFT JOIN content c ON a.content_id = c.id
-    LEFT JOIN widgets w ON a.widget_id = w.id
-    WHERE a.device_id = ?
-    ORDER BY a.sort_order ASC
-  `).all(req.params.id);
+  // Get playlist items if device has an assigned playlist
+  let assignments = [];
+  if (device.playlist_id) {
+    assignments = db.prepare(`
+      SELECT pi.id, pi.content_id, pi.widget_id, pi.sort_order, pi.duration_sec,
+             pi.created_at, pi.updated_at,
+             COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.thumbnail_path,
+             c.duration_sec as content_duration, c.remote_url,
+             w.name as widget_name, w.widget_type, w.config as widget_config
+      FROM playlist_items pi
+      LEFT JOIN content c ON pi.content_id = c.id
+      LEFT JOIN widgets w ON pi.widget_id = w.id
+      WHERE pi.playlist_id = ?
+      ORDER BY pi.sort_order ASC
+    `).all(device.playlist_id);
+  }
 
   // Uptime timeline: get status change events for last 24 hours
   const dayAgo = Math.floor(Date.now() / 1000) - 86400;
@@ -135,8 +142,7 @@ router.delete('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  // Clean up related data
-  db.prepare('DELETE FROM assignments WHERE device_id = ?').run(req.params.id);
+  // Clean up related data (playlist is NOT deleted — may be shared with other devices)
   db.prepare('DELETE FROM schedules WHERE device_id = ?').run(req.params.id);
   db.prepare('DELETE FROM screenshots WHERE device_id = ?').run(req.params.id);
   db.prepare('DELETE FROM device_telemetry WHERE device_id = ?').run(req.params.id);
