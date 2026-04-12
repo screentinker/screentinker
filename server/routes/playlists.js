@@ -44,9 +44,10 @@ function requirePlaylistOwnership(req, res, next) {
 // List playlists
 router.get('/', (req, res) => {
   const playlists = db.prepare(`
-    SELECT p.*, COUNT(pi.id) as item_count
+    SELECT p.*, COUNT(DISTINCT pi.id) as item_count, COUNT(DISTINCT d.id) as display_count
     FROM playlists p
     LEFT JOIN playlist_items pi ON p.id = pi.playlist_id
+    LEFT JOIN devices d ON d.playlist_id = p.id
     WHERE p.user_id = ?
     GROUP BY p.id
     ORDER BY p.name ASC
@@ -62,7 +63,7 @@ router.post('/', (req, res) => {
   db.prepare('INSERT INTO playlists (id, user_id, name, description) VALUES (?, ?, ?, ?)')
     .run(id, req.user.id, name.trim(), (description || '').trim());
   res.status(201).json(db.prepare(`
-    SELECT p.*, 0 as item_count FROM playlists p WHERE p.id = ?
+    SELECT p.*, 0 as item_count, 0 as display_count FROM playlists p WHERE p.id = ?
   `).get(id));
 });
 
@@ -80,7 +81,8 @@ router.get('/:id', requirePlaylistOwnership, (req, res) => {
     WHERE pi.playlist_id = ?
     ORDER BY pi.sort_order ASC
   `).all(req.params.id);
-  res.json({ ...req.playlist, items, item_count: items.length });
+  const displayCount = db.prepare('SELECT COUNT(*) as count FROM devices WHERE playlist_id = ?').get(req.params.id).count;
+  res.json({ ...req.playlist, items, item_count: items.length, display_count: displayCount });
 });
 
 // Update playlist
@@ -274,6 +276,31 @@ router.post('/:id/items/reorder', requirePlaylistOwnership, (req, res) => {
     ORDER BY pi.sort_order ASC
   `).all(req.params.id);
   res.json(items);
+});
+
+// Assign playlist to a device
+router.post('/:id/assign', requirePlaylistOwnership, (req, res) => {
+  const { device_id } = req.body;
+  if (!device_id) return res.status(400).json({ error: 'device_id required' });
+
+  const device = db.prepare('SELECT id, user_id FROM devices WHERE id = ?').get(device_id);
+  if (!device) return res.status(404).json({ error: 'Device not found' });
+  if (!['admin', 'superadmin'].includes(req.user.role) && device.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Device not owned by you' });
+  }
+
+  db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(req.params.id, device_id);
+
+  // Push update to device
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      io.of('/device').to(device_id).emit('device:playlist-update', buildPlaylistPayload(device_id));
+    }
+  } catch (e) { /* silent */ }
+
+  res.json({ success: true });
 });
 
 module.exports = router;
