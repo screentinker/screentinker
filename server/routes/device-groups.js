@@ -82,20 +82,68 @@ router.delete('/:id/devices/:deviceId', requireGroupOwnership, (req, res) => {
   res.json({ success: true });
 });
 
-// Bulk assign content to all devices in a group
+// Ensure a device has a playlist; auto-create one if missing
+function ensureDevicePlaylist(deviceId, userId) {
+  const device = db.prepare('SELECT playlist_id, name FROM devices WHERE id = ?').get(deviceId);
+  if (device?.playlist_id) return device.playlist_id;
+  const playlistId = uuidv4();
+  db.prepare('INSERT INTO playlists (id, user_id, name, is_auto_generated) VALUES (?, ?, ?, 1)')
+    .run(playlistId, userId, `${device?.name || 'Display'} playlist`);
+  db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?').run(playlistId, deviceId);
+  return playlistId;
+}
+
+// Push playlist update to a device
+function pushPlaylistToDevice(req, deviceId) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const { buildPlaylistPayload } = require('../ws/deviceSocket');
+    const deviceNs = io.of('/device');
+    deviceNs.to(deviceId).emit('device:playlist-update', buildPlaylistPayload(deviceId));
+  } catch (e) { /* silent */ }
+}
+
+// Bulk assign content to all devices in a group (adds to each device's playlist)
 router.post('/:id/assign-content', requireGroupOwnership, (req, res) => {
   const { content_id, duration_sec } = req.body;
   if (!content_id) return res.status(400).json({ error: 'content_id required' });
 
-  const devices = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(req.params.id);
-  const stmt = db.prepare('INSERT OR IGNORE INTO assignments (device_id, content_id, duration_sec, sort_order) VALUES (?, ?, ?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM assignments WHERE device_id = ?))');
+  const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(req.params.id);
+
   const transaction = db.transaction(() => {
-    for (const d of devices) {
-      stmt.run(d.device_id, content_id, duration_sec || 10, d.device_id);
+    for (const m of members) {
+      const playlistId = ensureDevicePlaylist(m.device_id, req.user.id);
+      const max = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM playlist_items WHERE playlist_id = ?').get(playlistId);
+      db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
+        .run(playlistId, content_id, max.next, duration_sec || 10);
+      db.prepare("UPDATE playlists SET updated_at = strftime('%s','now') WHERE id = ?").run(playlistId);
     }
   });
   transaction();
-  res.json({ success: true, devices_updated: devices.length });
+
+  for (const m of members) pushPlaylistToDevice(req, m.device_id);
+  res.json({ success: true, devices_updated: members.length });
+});
+
+// Assign an existing playlist to all devices in a group
+router.post('/:id/assign-playlist', requireGroupOwnership, (req, res) => {
+  const { playlist_id } = req.body;
+  if (!playlist_id) return res.status(400).json({ error: 'playlist_id required' });
+
+  const playlist = db.prepare('SELECT id FROM playlists WHERE id = ? AND user_id = ?').get(playlist_id, req.user.id);
+  if (!playlist) return res.status(404).json({ error: 'Playlist not found' });
+
+  const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(req.params.id);
+
+  const stmt = db.prepare('UPDATE devices SET playlist_id = ? WHERE id = ?');
+  const transaction = db.transaction(() => {
+    for (const m of members) stmt.run(playlist_id, m.device_id);
+  });
+  transaction();
+
+  for (const m of members) pushPlaylistToDevice(req, m.device_id);
+  res.json({ success: true, devices_updated: members.length });
 });
 
 // Send command to all devices in a group
