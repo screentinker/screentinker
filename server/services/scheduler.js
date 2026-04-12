@@ -81,24 +81,10 @@ function parseSimpleRRule(rrule) {
 }
 
 function pushPlaylistToDevice(deviceId, deviceNs) {
-  const assignments = db.prepare(`
-    SELECT a.*, COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size, c.duration_sec as content_duration, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config
-    FROM assignments a LEFT JOIN content c ON a.content_id = c.id LEFT JOIN widgets w ON a.widget_id = w.id
-    WHERE a.device_id = ? AND a.enabled = 1
-    ORDER BY a.sort_order ASC
-  `).all(deviceId);
-
-  const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
-  let layout = null;
-  if (device.layout_id) {
-    layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(device.layout_id);
-    if (layout) {
-      layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
-    }
-  }
-
-  deviceNs.to(deviceId).emit('device:playlist-update', { assignments, layout, orientation: device?.orientation || 'landscape' });
+  // Use the single-source buildPlaylistPayload from deviceSocket
+  const { buildPlaylistPayload } = require('../ws/deviceSocket');
+  const payload = buildPlaylistPayload(deviceId);
+  deviceNs.to(deviceId).emit('device:playlist-update', payload);
 }
 
 module.exports = { startScheduler, pushPlaylistToDevice };

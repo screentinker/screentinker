@@ -25,17 +25,25 @@ function logDeviceStatus(deviceId, status) {
 
 
 // Build playlist payload with layout and zones
+// Reads from the device's assigned playlist (Phase 2) instead of assignments table
 function buildPlaylistPayload(deviceId) {
-  const assignments = db.prepare(`
-    SELECT a.*, COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size, c.duration_sec as content_duration, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config
-    FROM assignments a LEFT JOIN content c ON a.content_id = c.id LEFT JOIN widgets w ON a.widget_id = w.id
-    WHERE a.device_id = ? AND a.enabled = 1
-    ORDER BY a.sort_order ASC
-  `).all(deviceId);
+  const device = db.prepare('SELECT playlist_id, layout_id, orientation FROM devices WHERE id = ?').get(deviceId);
 
-  // Get device's layout with zones
-  const device = db.prepare('SELECT layout_id, orientation FROM devices WHERE id = ?').get(deviceId);
+  let assignments = [];
+  if (device?.playlist_id) {
+    assignments = db.prepare(`
+      SELECT pi.id, pi.content_id, pi.widget_id, pi.sort_order, pi.duration_sec,
+             COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
+             c.duration_sec as content_duration, c.remote_url,
+             w.name as widget_name, w.widget_type, w.config as widget_config
+      FROM playlist_items pi
+      LEFT JOIN content c ON pi.content_id = c.id
+      LEFT JOIN widgets w ON pi.widget_id = w.id
+      WHERE pi.playlist_id = ?
+      ORDER BY pi.sort_order ASC
+    `).all(device.playlist_id);
+  }
+
   let layout = null;
   if (device?.layout_id) {
     layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(device.layout_id);
