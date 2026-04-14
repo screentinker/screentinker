@@ -317,9 +317,12 @@ router.delete('/:id', (req, res) => {
   `).all(req.params.id);
 
   // Scrub published snapshots that reference this content
+  // Validate UUID format to prevent LIKE wildcard injection
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid content ID format' });
   const snapshotPlaylists = db.prepare(
-    "SELECT id, published_snapshot FROM playlists WHERE published_snapshot LIKE ?"
-  ).all(`%${req.params.id}%`);
+    "SELECT id, published_snapshot FROM playlists WHERE user_id = ? AND published_snapshot LIKE ?"
+  ).all(content.user_id, `%${req.params.id}%`);
   for (const pl of snapshotPlaylists) {
     try {
       const items = JSON.parse(pl.published_snapshot);

@@ -9,8 +9,8 @@ function markDraft(playlistId) {
 }
 
 // Check device ownership for device-scoped routes
-function checkDeviceAccess(req, res) {
-  const device = db.prepare('SELECT user_id FROM devices WHERE id = ?').get(req.params.deviceId);
+function checkDeviceAccess(req, res, paramName = 'deviceId') {
+  const device = db.prepare('SELECT user_id FROM devices WHERE id = ?').get(req.params[paramName]);
   if (!device) { res.status(404).json({ error: 'Device not found' }); return false; }
   if (!['admin','superadmin'].includes(req.user.role) && device.user_id && device.user_id !== req.user.id) {
     res.status(403).json({ error: 'Access denied' }); return false;
@@ -105,6 +105,9 @@ router.post('/device/:deviceId', (req, res) => {
 router.put('/:id', (req, res) => {
   const item = db.prepare('SELECT pi.*, p.user_id FROM playlist_items pi JOIN playlists p ON pi.playlist_id = p.id WHERE pi.id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
+  if (!['admin','superadmin'].includes(req.user.role) && item.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
 
   const { sort_order, duration_sec, zone_id } = req.body;
   const updates = [];
@@ -128,6 +131,9 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   const item = db.prepare('SELECT pi.*, p.user_id FROM playlist_items pi JOIN playlists p ON pi.playlist_id = p.id WHERE pi.id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
+  if (!['admin','superadmin'].includes(req.user.role) && item.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
 
   db.prepare('DELETE FROM playlist_items WHERE id = ?').run(req.params.id);
   markDraft(item.playlist_id);
@@ -161,6 +167,8 @@ router.post('/device/:deviceId/reorder', (req, res) => {
 
 // Copy playlist from one device to another
 router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
+  if (!checkDeviceAccess(req, res, 'deviceId')) return;
+  if (!checkDeviceAccess(req, res, 'targetDeviceId')) return;
   const sourceDevice = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
   if (!sourceDevice?.playlist_id) return res.status(404).json({ error: 'Source device has no playlist' });
 

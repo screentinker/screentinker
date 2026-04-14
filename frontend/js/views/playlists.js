@@ -304,7 +304,7 @@ function renderItems(items) {
       </div>
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.filename || item.widget_name || 'Unknown')}</div>
-        <div style="font-size:12px;color:var(--text-muted)">${item.widget_id ? 'Widget' : (item.mime_type || 'Unknown type')}</div>
+        <div style="font-size:12px;color:var(--text-muted)">${item.widget_id ? 'Widget' : esc(item.mime_type || 'Unknown type')}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         <label style="font-size:12px;color:var(--text-muted)">Duration</label>

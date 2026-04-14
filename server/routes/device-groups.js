@@ -68,6 +68,12 @@ router.get('/:id/devices', requireGroupOwnership, (req, res) => {
 router.post('/:id/devices', requireGroupOwnership, (req, res) => {
   const { device_id } = req.body;
   if (!device_id) return res.status(400).json({ error: 'device_id required' });
+  // Verify device belongs to the user (admin/superadmin bypass)
+  const device = db.prepare('SELECT user_id FROM devices WHERE id = ?').get(device_id);
+  if (!device) return res.status(404).json({ error: 'Device not found' });
+  if (!['admin','superadmin'].includes(req.user.role) && device.user_id && device.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
   try {
     db.prepare('INSERT OR IGNORE INTO device_group_members (device_id, group_id) VALUES (?, ?)').run(device_id, req.params.id);
     res.status(201).json({ success: true });

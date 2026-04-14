@@ -1018,9 +1018,7 @@ async function setupPlaylistActions(device) {
           }
           modal.remove();
           showToast('Added to playlist', 'success');
-          const assignments = await api.getAssignments(device.id);
-          document.getElementById('playlistContainer').innerHTML = renderPlaylist(assignments);
-          attachRemoveHandlers(device);
+          loadDevice(device.id, 'playlist');
         } catch (err) {
           showToast(err.message, 'error');
         }
@@ -1063,6 +1061,7 @@ function attachRemoveHandlers(device) {
             try {
               await api.updateAssignment(assignmentId, { zone_id: select.value || null });
               showToast(`Zone updated`, 'success');
+              loadDevice(device.id, 'playlist');
             } catch (err) { showToast(err.message, 'error'); }
           };
         });
@@ -1078,9 +1077,7 @@ function attachRemoveHandlers(device) {
       try {
         await api.updateAssignment(id, { muted: !currentlyMuted });
         showToast(currentlyMuted ? 'Unmuted' : 'Muted', 'success');
-        const assignments = await api.getAssignments(device.id);
-        document.getElementById('playlistContainer').innerHTML = renderPlaylist(assignments);
-        attachRemoveHandlers(device);
+        loadDevice(device.id, 'playlist');
       } catch (err) { showToast(err.message, 'error'); }
     });
   });
@@ -1093,9 +1090,7 @@ function attachRemoveHandlers(device) {
       try {
         await api.deleteAssignment(id);
         showToast('Content removed from playlist', 'success');
-        const assignments = await api.getAssignments(device.id);
-        document.getElementById('playlistContainer').innerHTML = renderPlaylist(assignments);
-        attachRemoveHandlers(device);
+        loadDevice(device.id, 'playlist');
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -1146,12 +1141,10 @@ function attachRemoveHandlers(device) {
       try {
         await api.reorderAssignments(device.id, newOrder);
         showToast('Playlist reordered', 'success');
+        loadDevice(device.id, 'playlist');
       } catch (err) {
         showToast(err.message, 'error');
-        // Reload to revert
-        const assignments = await api.getAssignments(device.id);
-        container.innerHTML = renderPlaylist(assignments);
-        attachRemoveHandlers(device);
+        loadDevice(device.id, 'playlist');
       }
     });
   });

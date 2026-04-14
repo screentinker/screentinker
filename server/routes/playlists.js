@@ -167,10 +167,18 @@ router.post('/:id/discard', requirePlaylistOwnership, (req, res) => {
   const transaction = db.transaction(() => {
     // Clear current draft items
     db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(req.params.id);
-    // Re-insert from snapshot
+    // Re-insert from snapshot, skipping items whose content/widget was deleted
     const insert = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)');
     for (const item of publishedItems) {
-      insert.run(req.params.id, item.content_id || null, item.widget_id || null, item.sort_order, item.duration_sec);
+      try {
+        insert.run(req.params.id, item.content_id || null, item.widget_id || null, item.sort_order, item.duration_sec);
+      } catch (e) {
+        if (e.message.includes('FOREIGN KEY')) {
+          console.warn(`Discard: skipping snapshot item (content_id=${item.content_id}, widget_id=${item.widget_id}) — referenced entity was deleted`);
+          continue;
+        }
+        throw e;
+      }
     }
     db.prepare("UPDATE playlists SET status = 'published', updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
   });
