@@ -3,37 +3,9 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 
-// Auto-publish: snapshot current items and push to devices.
-// Device-detail edits always go live immediately.
-// If deviceId is provided, pushes to that device only; otherwise pushes to all devices using this playlist.
-function autoPublish(playlistId, req, deviceId) {
-  const items = db.prepare(`
-    SELECT pi.content_id, pi.widget_id, pi.sort_order, pi.duration_sec,
-           COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
-           c.duration_sec as content_duration, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config
-    FROM playlist_items pi
-    LEFT JOIN content c ON pi.content_id = c.id
-    LEFT JOIN widgets w ON pi.widget_id = w.id
-    WHERE pi.playlist_id = ?
-    ORDER BY pi.sort_order ASC
-  `).all(playlistId);
-  db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, updated_at = strftime('%s','now') WHERE id = ?")
-    .run(JSON.stringify(items), playlistId);
-  try {
-    const io = req?.app?.get('io');
-    if (!io) return;
-    const { buildPlaylistPayload } = require('../ws/deviceSocket');
-    if (!buildPlaylistPayload) return;
-    if (deviceId) {
-      io.of('/device').to(deviceId).emit('device:playlist-update', buildPlaylistPayload(deviceId));
-    } else {
-      const devices = db.prepare('SELECT id FROM devices WHERE playlist_id = ?').all(playlistId);
-      for (const d of devices) {
-        io.of('/device').to(d.id).emit('device:playlist-update', buildPlaylistPayload(d.id));
-      }
-    }
-  } catch (e) { /* silent */ }
+// Mark playlist as draft (called after any item mutation)
+function markDraft(playlistId) {
+  db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(playlistId);
 }
 
 // Check device ownership for device-scoped routes
@@ -117,7 +89,7 @@ router.post('/device/:deviceId', (req, res) => {
       VALUES (?, ?, ?, ?, ?)
     `).run(playlistId, content_id || null, widget_id || null, order, duration_sec);
 
-    autoPublish(playlistId, req, req.params.deviceId);
+    markDraft(playlistId);
 
     const item = db.prepare(`${ITEM_SELECT} WHERE pi.id = ?`).get(result.lastInsertRowid);
     res.status(201).json(item);
@@ -145,7 +117,7 @@ router.put('/:id', (req, res) => {
     updates.push("updated_at = strftime('%s','now')");
     values.push(req.params.id);
     db.prepare(`UPDATE playlist_items SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    autoPublish(item.playlist_id, req, null);
+    markDraft(item.playlist_id);
   }
 
   const updated = db.prepare(`${ITEM_SELECT} WHERE pi.id = ?`).get(req.params.id);
@@ -158,7 +130,7 @@ router.delete('/:id', (req, res) => {
   if (!item) return res.status(404).json({ error: 'Item not found' });
 
   db.prepare('DELETE FROM playlist_items WHERE id = ?').run(req.params.id);
-  autoPublish(item.playlist_id, req, null);
+  markDraft(item.playlist_id);
 
   res.json({ success: true, content_id: item.content_id });
 });
@@ -180,7 +152,7 @@ router.post('/device/:deviceId/reorder', (req, res) => {
   });
   transaction();
 
-  autoPublish(device.playlist_id, req, req.params.deviceId);
+  markDraft(device.playlist_id);
 
   const items = db.prepare(`${ITEM_SELECT} WHERE pi.playlist_id = ? ORDER BY pi.sort_order ASC`)
     .all(device.playlist_id);
@@ -216,7 +188,7 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
   });
   transaction();
 
-  autoPublish(targetPlaylistId, req, req.params.targetDeviceId);
+  markDraft(targetPlaylistId);
   res.json({ success: true, copied: sourceItems.length });
 });
 

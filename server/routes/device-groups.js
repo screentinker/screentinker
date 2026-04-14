@@ -93,30 +93,9 @@ function ensureDevicePlaylist(deviceId, userId) {
   return playlistId;
 }
 
-// Auto-publish: snapshot current items and push to device.
-// Group assign-content is the bulk equivalent of device-detail — always goes live immediately.
-function autoPublish(playlistId, req, deviceId) {
-  const items = db.prepare(`
-    SELECT pi.content_id, pi.widget_id, pi.sort_order, pi.duration_sec,
-           COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
-           c.duration_sec as content_duration, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config
-    FROM playlist_items pi
-    LEFT JOIN content c ON pi.content_id = c.id
-    LEFT JOIN widgets w ON pi.widget_id = w.id
-    WHERE pi.playlist_id = ?
-    ORDER BY pi.sort_order ASC
-  `).all(playlistId);
-  db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, updated_at = strftime('%s','now') WHERE id = ?")
-    .run(JSON.stringify(items), playlistId);
-  try {
-    const io = req?.app?.get('io');
-    if (!io) return;
-    const { buildPlaylistPayload } = require('../ws/deviceSocket');
-    if (buildPlaylistPayload && deviceId) {
-      io.of('/device').to(deviceId).emit('device:playlist-update', buildPlaylistPayload(deviceId));
-    }
-  } catch (e) { /* silent */ }
+// Mark playlist as draft (called after any item mutation)
+function markDraft(playlistId) {
+  db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(playlistId);
 }
 
 // Push playlist update to a device (used by assign-playlist which doesn't modify items)
@@ -147,7 +126,7 @@ router.post('/:id/assign-content', requireGroupOwnership, (req, res) => {
       const max = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM playlist_items WHERE playlist_id = ?').get(playlistId);
       db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
         .run(playlistId, content_id, max.next, duration_sec || 10);
-      autoPublish(playlistId, req, m.device_id);
+      markDraft(playlistId);
     }
   });
   transaction();
