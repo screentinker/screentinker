@@ -321,6 +321,8 @@ CREATE TABLE IF NOT EXISTS playlists (
     name            TEXT NOT NULL,
     description     TEXT DEFAULT '',
     is_auto_generated INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'draft',
+    published_snapshot TEXT,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );

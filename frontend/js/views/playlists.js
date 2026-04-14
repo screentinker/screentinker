@@ -99,6 +99,7 @@ async function loadPlaylists() {
           <div style="display:flex;align-items:center;gap:8px">
             <div style="font-size:16px;font-weight:600;color:var(--text-primary)">${esc(p.name)}</div>
             ${p.is_auto_generated ? '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted)">auto</span>' : ''}
+            ${p.status === 'draft' ? '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24">draft</span>' : ''}
           </div>
           <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;margin-left:12px">${p.item_count} item${p.item_count !== 1 ? 's' : ''}</div>
         </div>
@@ -175,7 +176,26 @@ async function renderDetail(container, playlistId) {
 }
 
 function renderDetailContent(container, playlist) {
+  const isDraft = playlist.status === 'draft';
+  const hasPublished = !!playlist.published_snapshot;
+
   container.innerHTML = `
+    ${isDraft ? `
+    <div id="draftBanner" style="background:#78350f;border:1px solid #92400e;border-radius:var(--radius-lg);padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+      <div style="display:flex;align-items:center;gap:10px;color:#fbbf24">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div>
+          <div style="font-weight:600;font-size:14px">Unpublished changes</div>
+          <div style="font-size:12px;color:#fcd34d;opacity:0.85">${hasPublished ? 'Devices are still showing the last published version.' : 'This playlist has never been published. Devices will show nothing until you publish.'}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        ${hasPublished ? '<button class="btn btn-secondary btn-sm" id="discardDraftBtn" style="color:#fbbf24;border-color:#92400e">Discard Changes</button>' : ''}
+        <button class="btn btn-sm" id="publishBtn" style="background:#f59e0b;color:#000;font-weight:600;border:none">Publish</button>
+      </div>
+    </div>
+    ` : ''}
+
     <div class="page-header">
       <div style="display:flex;align-items:center;gap:12px">
         <a href="#/playlists" style="color:var(--text-muted);text-decoration:none;font-size:20px" title="Back">&larr;</a>
@@ -197,6 +217,37 @@ function renderDetailContent(container, playlist) {
 
   renderItems(playlist.items || []);
 
+  // Publish / Discard handlers
+  const publishBtn = document.getElementById('publishBtn');
+  if (publishBtn) {
+    publishBtn.addEventListener('click', async () => {
+      try {
+        publishBtn.disabled = true;
+        publishBtn.textContent = 'Publishing...';
+        const updated = await api.publishPlaylist(playlist.id);
+        showToast('Playlist published — devices updated');
+        renderDetailContent(container, updated);
+      } catch (err) {
+        publishBtn.disabled = false;
+        publishBtn.textContent = 'Publish';
+        showToast(err.message, 'error');
+      }
+    });
+  }
+  const discardBtn = document.getElementById('discardDraftBtn');
+  if (discardBtn) {
+    discardBtn.addEventListener('click', async () => {
+      if (!confirm('Discard all unpublished changes and revert to the last published version?')) return;
+      try {
+        const updated = await api.discardPlaylistDraft(playlist.id);
+        showToast('Draft changes discarded');
+        renderDetailContent(container, updated);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  }
+
   // Inline rename
   document.getElementById('playlistTitle').addEventListener('click', () => inlineEdit(playlist, 'name'));
   document.getElementById('playlistDesc').addEventListener('click', () => inlineEdit(playlist, 'description'));
@@ -215,6 +266,17 @@ function renderDetailContent(container, playlist) {
       showToast(err.message, 'error');
     }
   });
+}
+
+// After any item mutation, re-fetch and re-render the full detail to update the draft banner
+async function refreshAfterMutation() {
+  if (!currentPlaylistId) return;
+  const mainContainer = document.getElementById('draftBanner')?.parentElement || document.querySelector('.page-header')?.parentElement;
+  if (!mainContainer) return;
+  try {
+    const playlist = await api.getPlaylist(currentPlaylistId);
+    renderDetailContent(mainContainer, playlist);
+  } catch (e) { /* silent */ }
 }
 
 function renderItems(items) {
@@ -263,6 +325,7 @@ function renderItems(items) {
       if (!val || val < 1) { e.target.value = 10; return; }
       try {
         await api.updatePlaylistItem(currentPlaylistId, itemId, { duration_sec: val });
+        refreshAfterMutation();
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -277,6 +340,7 @@ function renderItems(items) {
         await api.deletePlaylistItem(currentPlaylistId, itemId);
         const playlist = await api.getPlaylist(currentPlaylistId);
         renderItems(playlist.items || []);
+        refreshAfterMutation();
         showToast('Item removed');
       } catch (err) {
         showToast(err.message, 'error');
@@ -329,6 +393,7 @@ function setupDragReorder(container) {
     try {
       const items = await api.reorderPlaylistItems(currentPlaylistId, order);
       renderItems(items);
+      refreshAfterMutation();
     } catch (err) {
       showToast(err.message, 'error');
       // Reload to fix state
@@ -494,9 +559,8 @@ async function showAddItemModal(playlistId) {
           btn.textContent = 'Added';
           btn.classList.remove('btn-primary');
           btn.classList.add('btn-secondary');
-          // Refresh the detail view items
-          const playlist = await api.getPlaylist(playlistId);
-          renderItems(playlist.items || []);
+          // Refresh the detail view (items + draft banner)
+          refreshAfterMutation();
         } catch (err) {
           btn.disabled = false;
           btn.textContent = 'Add';

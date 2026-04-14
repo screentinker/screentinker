@@ -115,6 +115,8 @@ export const api = {
   deletePlaylistItem: (id, itemId) => request(`/playlists/${id}/items/${itemId}`, { method: 'DELETE' }),
   reorderPlaylistItems: (id, order) => request(`/playlists/${id}/items/reorder`, { method: 'POST', body: JSON.stringify({ order }) }),
   assignPlaylistToDevice: (playlistId, device_id) => request(`/playlists/${playlistId}/assign`, { method: 'POST', body: JSON.stringify({ device_id }) }),
+  publishPlaylist: (id) => request(`/playlists/${id}/publish`, { method: 'POST' }),
+  discardPlaylistDraft: (id) => request(`/playlists/${id}/discard`, { method: 'POST' }),
 
   // Device Groups - Playlist
   groupAssignPlaylist: (groupId, playlist_id) => request(`/groups/${groupId}/assign-playlist`, { method: 'POST', body: JSON.stringify({ playlist_id }) }),

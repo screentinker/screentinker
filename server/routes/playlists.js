@@ -41,7 +41,40 @@ function requirePlaylistOwnership(req, res, next) {
   next();
 }
 
-// List playlists
+// Build the snapshot item list for a playlist (denormalized for device payload)
+function buildSnapshotItems(playlistId) {
+  return db.prepare(`
+    SELECT pi.content_id, pi.widget_id, pi.sort_order, pi.duration_sec,
+           COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
+           c.duration_sec as content_duration, c.remote_url,
+           w.name as widget_name, w.widget_type, w.config as widget_config
+    FROM playlist_items pi
+    LEFT JOIN content c ON pi.content_id = c.id
+    LEFT JOIN widgets w ON pi.widget_id = w.id
+    WHERE pi.playlist_id = ?
+    ORDER BY pi.sort_order ASC
+  `).all(playlistId);
+}
+
+// Mark playlist as draft (called after item mutations from the playlist detail UI)
+function markDraft(playlistId) {
+  db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(playlistId);
+}
+
+// Push playlist update to all devices using this playlist
+function pushToDevices(playlistId, req) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const { buildPlaylistPayload } = require('../ws/deviceSocket');
+    const devices = db.prepare('SELECT id FROM devices WHERE playlist_id = ?').all(playlistId);
+    for (const d of devices) {
+      io.of('/device').to(d.id).emit('device:playlist-update', buildPlaylistPayload(d.id));
+    }
+  } catch (e) { /* silent */ }
+}
+
+// List playlists (status is already in p.*)
 router.get('/', (req, res) => {
   const playlists = db.prepare(`
     SELECT p.*, COUNT(DISTINCT pi.id) as item_count, COUNT(DISTINCT d.id) as display_count
@@ -105,6 +138,57 @@ router.put('/:id', requirePlaylistOwnership, (req, res) => {
     db.prepare(`UPDATE playlists SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   }
   res.json(db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id));
+});
+
+// Publish playlist — snapshot current items and push to devices
+router.post('/:id/publish', requirePlaylistOwnership, (req, res) => {
+  const items = buildSnapshotItems(req.params.id);
+  db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(JSON.stringify(items), req.params.id);
+  pushToDevices(req.params.id, req);
+  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items });
+});
+
+// Discard draft — revert playlist_items to match published_snapshot
+router.post('/:id/discard', requirePlaylistOwnership, (req, res) => {
+  const playlist = req.playlist;
+  if (!playlist.published_snapshot) {
+    return res.status(400).json({ error: 'No published version to revert to' });
+  }
+  if (playlist.status === 'published') {
+    return res.status(400).json({ error: 'Playlist has no unpublished changes' });
+  }
+
+  let publishedItems;
+  try { publishedItems = JSON.parse(playlist.published_snapshot); } catch (e) {
+    return res.status(500).json({ error: 'Corrupt published snapshot' });
+  }
+
+  const transaction = db.transaction(() => {
+    // Clear current draft items
+    db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(req.params.id);
+    // Re-insert from snapshot
+    const insert = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)');
+    for (const item of publishedItems) {
+      insert.run(req.params.id, item.content_id || null, item.widget_id || null, item.sort_order, item.duration_sec);
+    }
+    db.prepare("UPDATE playlists SET status = 'published', updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+  });
+  transaction();
+
+  const items = db.prepare(`
+    SELECT pi.*,
+           COALESCE(c.filename, w.name) as filename,
+           c.mime_type, c.filepath, c.thumbnail_path,
+           c.duration_sec as content_duration, c.file_size, c.remote_url,
+           w.name as widget_name, w.widget_type, w.config as widget_config
+    FROM playlist_items pi
+    LEFT JOIN content c ON pi.content_id = c.id
+    LEFT JOIN widgets w ON pi.widget_id = w.id
+    WHERE pi.playlist_id = ?
+    ORDER BY pi.sort_order ASC
+  `).all(req.params.id);
+  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items });
 });
 
 // Delete playlist
@@ -175,8 +259,8 @@ router.post('/:id/items', requirePlaylistOwnership, async (req, res) => {
       VALUES (?, ?, ?, ?, ?)
     `).run(req.params.id, content_id || null, widget_id || null, order, duration_sec);
 
-    // Touch playlist updated_at
-    db.prepare("UPDATE playlists SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+    // Mark as draft (items changed since last publish)
+    markDraft(req.params.id);
 
     const item = db.prepare(`
       SELECT pi.*,
@@ -220,7 +304,7 @@ router.put('/:id/items/:itemId', requirePlaylistOwnership, (req, res) => {
     updates.push("updated_at = strftime('%s','now')");
     values.push(req.params.itemId);
     db.prepare(`UPDATE playlist_items SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    db.prepare("UPDATE playlists SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+    markDraft(req.params.id);
   }
 
   const updated = db.prepare(`
@@ -244,7 +328,7 @@ router.delete('/:id/items/:itemId', requirePlaylistOwnership, (req, res) => {
   if (!item) return res.status(404).json({ error: 'item not found' });
 
   db.prepare('DELETE FROM playlist_items WHERE id = ?').run(req.params.itemId);
-  db.prepare("UPDATE playlists SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+  markDraft(req.params.id);
   res.json({ success: true });
 });
 
@@ -261,7 +345,7 @@ router.post('/:id/items/reorder', requirePlaylistOwnership, (req, res) => {
   });
   transaction();
 
-  db.prepare("UPDATE playlists SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+  markDraft(req.params.id);
 
   const items = db.prepare(`
     SELECT pi.*,

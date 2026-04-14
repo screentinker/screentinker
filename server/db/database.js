@@ -60,6 +60,9 @@ const migrations = [
   "ALTER TABLE playlists ADD COLUMN is_auto_generated INTEGER NOT NULL DEFAULT 0",
   // Device authentication token
   "ALTER TABLE devices ADD COLUMN device_token TEXT",
+  // Phase 3: playlist publish/draft state
+  "ALTER TABLE playlists ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
+  "ALTER TABLE playlists ADD COLUMN published_snapshot TEXT",
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { /* already exists */ }
@@ -197,6 +200,49 @@ async function migrateAssignmentsToPlaylists() {
 }
 
 migrateAssignmentsToPlaylists().catch(e => console.error('Migration error:', e));
+
+// Phase 3 migration: snapshot existing playlist items into published_snapshot
+const PHASE3_MIGRATION_ID = 'phase3_publish_snapshot';
+
+function migratePublishSnapshots() {
+  const already = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(PHASE3_MIGRATION_ID);
+  if (already) return;
+
+  const playlists = db.prepare('SELECT id FROM playlists').all();
+  if (playlists.length === 0) {
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(PHASE3_MIGRATION_ID);
+    return;
+  }
+
+  console.log(`Phase 3 migration: snapshotting ${playlists.length} playlist(s) as published...`);
+
+  const getItems = db.prepare(`
+    SELECT pi.content_id, pi.widget_id, pi.sort_order, pi.duration_sec,
+           COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
+           c.duration_sec as content_duration, c.remote_url,
+           w.name as widget_name, w.widget_type, w.config as widget_config
+    FROM playlist_items pi
+    LEFT JOIN content c ON pi.content_id = c.id
+    LEFT JOIN widgets w ON pi.widget_id = w.id
+    WHERE pi.playlist_id = ?
+    ORDER BY pi.sort_order ASC
+  `);
+  const updatePlaylist = db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ? WHERE id = ?");
+
+  const migrate = db.transaction(() => {
+    let snapshotted = 0;
+    for (const playlist of playlists) {
+      const items = getItems.all(playlist.id);
+      updatePlaylist.run(JSON.stringify(items), playlist.id);
+      snapshotted++;
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(PHASE3_MIGRATION_ID);
+    console.log(`Phase 3 migration complete: ${snapshotted} playlist(s) snapshotted as published.`);
+  });
+  migrate();
+}
+
+migratePublishSnapshots();
 
 // Prune old telemetry (keep last 24h worth at 15s intervals = ~5760, cap at 6000)
 function pruneTelemetry(deviceId) {

@@ -308,13 +308,42 @@ router.delete('/:id', (req, res) => {
     if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
   }
 
-  // Get devices that have this content assigned (to notify them)
-  const affectedDevices = db.prepare(
-    'SELECT DISTINCT device_id FROM assignments WHERE content_id = ?'
-  ).all(req.params.id);
+  // Get devices that have this content in their playlist (via playlist_items)
+  const affectedDevices = db.prepare(`
+    SELECT DISTINCT d.id as device_id FROM devices d
+    JOIN playlists p ON d.playlist_id = p.id
+    JOIN playlist_items pi ON pi.playlist_id = p.id
+    WHERE pi.content_id = ?
+  `).all(req.params.id);
 
-  // Delete from DB (cascades to assignments)
+  // Scrub published snapshots that reference this content
+  const snapshotPlaylists = db.prepare(
+    "SELECT id, published_snapshot FROM playlists WHERE published_snapshot LIKE ?"
+  ).all(`%${req.params.id}%`);
+  for (const pl of snapshotPlaylists) {
+    try {
+      const items = JSON.parse(pl.published_snapshot);
+      const filtered = items.filter(item => item.content_id !== req.params.id);
+      if (filtered.length !== items.length) {
+        db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
+          .run(JSON.stringify(filtered), pl.id);
+      }
+    } catch (e) { /* corrupt snapshot, skip */ }
+  }
+
+  // Delete from DB (cascades to playlist_items via ON DELETE CASCADE)
   db.prepare('DELETE FROM content WHERE id = ?').run(req.params.id);
+
+  // Push updated snapshots to affected devices
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      for (const d of affectedDevices) {
+        io.of('/device').to(d.device_id).emit('device:playlist-update', buildPlaylistPayload(d.device_id));
+      }
+    }
+  } catch (e) { /* silent */ }
 
   res.json({ success: true, affectedDevices: affectedDevices.map(d => d.device_id) });
 });

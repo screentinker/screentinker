@@ -64,8 +64,10 @@ router.get('/:id', (req, res) => {
     'SELECT * FROM screenshots WHERE device_id = ? ORDER BY captured_at DESC LIMIT 1'
   ).get(req.params.id);
 
-  // Get playlist items if device has an assigned playlist
+  // Get playlist items and status if device has an assigned playlist
   let assignments = [];
+  let playlist_status = null;
+  let playlist_has_published = false;
   if (device.playlist_id) {
     assignments = db.prepare(`
       SELECT pi.id, pi.content_id, pi.widget_id, pi.sort_order, pi.duration_sec,
@@ -79,6 +81,11 @@ router.get('/:id', (req, res) => {
       WHERE pi.playlist_id = ?
       ORDER BY pi.sort_order ASC
     `).all(device.playlist_id);
+    const pl = db.prepare('SELECT status, published_snapshot FROM playlists WHERE id = ?').get(device.playlist_id);
+    if (pl) {
+      playlist_status = pl.status;
+      playlist_has_published = pl.published_snapshot !== null;
+    }
   }
 
   // Uptime timeline: get status change events for last 24 hours
@@ -95,7 +102,7 @@ router.get('/:id', (req, res) => {
     'SELECT reported_at FROM device_telemetry WHERE device_id = ? AND reported_at > ? ORDER BY reported_at ASC'
   ).all(req.params.id, dayAgo).map(r => r.reported_at);
 
-  res.json({ ...device, telemetry, screenshot, assignments, uptimeData, statusLog });
+  res.json({ ...device, telemetry, screenshot, assignments, playlist_status, playlist_has_published, uptimeData, statusLog });
 });
 
 // Helper: check device ownership
