@@ -62,4 +62,13 @@ class ServerConfig(context: Context) {
     fun clear() {
         prefs.edit().clear().apply()
     }
+
+    // Playlist cache for offline cold-start
+    var cachedPlaylist: String
+        get() = prefs.getString("cached_playlist", "") ?: ""
+        set(value) = prefs.edit().putString("cached_playlist", value).apply()
+
+    fun clearPlaylistCache() {
+        prefs.edit().remove("cached_playlist").apply()
+    }
 }

@@ -139,19 +139,24 @@ module.exports = function setupDeviceSocket(io) {
               // Someone reinstalled - link them back to existing device
               const oldDevice = db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.device_id);
               if (oldDevice) {
-                // Validate token if the old device has one
-                if (oldDevice.device_token && !validateDeviceToken(existing.device_id, device_token)) {
-                  console.warn(`Fingerprint match but invalid token for device ${existing.device_id}`);
-                  // Generate a new token — the reinstalled app needs a fresh one via re-pairing
-                  socket.emit('device:unpaired', { reason: 'invalid_token' });
-                  return;
-                }
-                console.log(`Fingerprint match: linking to existing device ${existing.device_id}`);
+                // Fingerprint matched — this is a reinstalled app reconnecting to its old device.
+                // Issue a fresh token so the app can authenticate going forward.
+                const newToken = generateDeviceToken();
+                db.prepare('UPDATE devices SET device_token = ? WHERE id = ?').run(newToken, existing.device_id);
+                console.log(`Fingerprint match: linking reinstalled app to existing device ${existing.device_id} (new token issued)`);
                 authenticated = true;
-                socket.emit('device:registered', { device_id: existing.device_id, device_token: oldDevice.device_token, status: oldDevice.status });
+                db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), ip_address = ?, updated_at = strftime('%s','now') WHERE id = ?")
+                  .run(getClientIp(socket), existing.device_id);
+                socket.emit('device:registered', { device_id: existing.device_id, device_token: newToken, status: 'online' });
+                // If device was already claimed by a user, tell the player it's paired
+                if (oldDevice.user_id) {
+                  socket.emit('device:paired', { name: oldDevice.name || 'Display' });
+                }
                 currentDeviceId = existing.device_id;
                 heartbeat.registerConnection(existing.device_id, socket.id);
                 socket.join(existing.device_id);
+                logDeviceStatus(existing.device_id, 'online');
+                dashboardNs.emit('dashboard:device-status', { device_id: existing.device_id, status: 'online' });
                 // Send playlist
                 const access = checkDeviceAccess(existing.device_id);
                 if (!access.allowed) {

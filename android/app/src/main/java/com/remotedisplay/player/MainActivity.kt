@@ -147,7 +147,25 @@ class MainActivity : AppCompatActivity() {
             onVideoComplete = { playlistController.onVideoComplete() }
         )
 
-        showStatus("Connecting to server...")
+        // Restore cached playlist for offline cold-start (play immediately from disk cache)
+        val cachedJson = config.cachedPlaylist
+        if (cachedJson.isNotEmpty()) {
+            try {
+                val cached = JSONObject(cachedJson)
+                val assignments = cached.getJSONArray("assignments")
+                if (assignments.length() > 0) {
+                    Log.i("MainActivity", "Restoring cached playlist: ${assignments.length()} items")
+                    playlistController.updatePlaylist(assignments)
+                    playlistController.startIfNeeded()
+                }
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Failed to restore cached playlist: ${e.message}")
+            }
+        }
+
+        if (!playlistController.isPlaying) {
+            showStatus("Connecting to server...")
+        }
 
         // Start and bind to WebSocket service
         try {
@@ -183,6 +201,9 @@ class MainActivity : AppCompatActivity() {
             } else {
 
             val assignments = data.getJSONArray("assignments")
+
+            // Cache playlist JSON for offline cold-start
+            config.cachedPlaylist = data.toString()
 
             // Check for multi-zone layout
             val layoutObj = if (data.isNull("layout")) null else data.optJSONObject("layout")
@@ -272,6 +293,20 @@ class MainActivity : AppCompatActivity() {
         wsService?.onContentDelete = { contentId ->
             contentCache.deleteContent(contentId)
             playlistController.removeContent(contentId)
+            // Update cached playlist to reflect deletion
+            try {
+                val cached = JSONObject(config.cachedPlaylist)
+                val arr = cached.optJSONArray("assignments")
+                if (arr != null) {
+                    val filtered = org.json.JSONArray()
+                    for (i in 0 until arr.length()) {
+                        val item = arr.getJSONObject(i)
+                        if (item.optString("content_id") != contentId) filtered.put(item)
+                    }
+                    cached.put("assignments", filtered)
+                    config.cachedPlaylist = cached.toString()
+                }
+            } catch (_: Exception) {}
         }
 
         wsService?.onScreenshotRequest = {
@@ -360,6 +395,7 @@ class MainActivity : AppCompatActivity() {
 
         wsService?.onUnpaired = {
             Log.w("MainActivity", "Device removed from server, going to provisioning")
+            config.clearPlaylistCache()
             handler.post {
                 startActivity(Intent(this, ProvisioningActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)

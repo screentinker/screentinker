@@ -88,6 +88,13 @@
       try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
     }
     function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
+    const PLAYLIST_CACHE_KEY = 'rd_playlist_cache';
+    function savePlaylistCache(items) {
+      try { localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify(items)); } catch {}
+    }
+    function loadPlaylistCache() {
+      try { return JSON.parse(localStorage.getItem(PLAYLIST_CACHE_KEY) || '[]'); } catch { return []; }
+    }
 
     // ==================== State ====================
     let socket = null;
@@ -162,6 +169,17 @@
     }
 
     if (config.serverUrl && config.deviceId && config.paired) {
+      // Restore cached playlist immediately so content plays even if offline
+      const cachedPlaylist = loadPlaylistCache();
+      if (cachedPlaylist.length > 0) {
+        console.log('Restored cached playlist:', cachedPlaylist.length, 'items');
+        playlist = cachedPlaylist;
+        currentIndex = 0;
+        isPlaying = true;
+        document.getElementById('setupScreen').style.display = 'none';
+        playCurrentItem();
+      }
+
       // Show tap-to-start overlay to unlock audio on auto-reconnect
       const tapOverlay = document.createElement('div');
       tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
@@ -285,6 +303,7 @@
         delete config.deviceToken;
         config.paired = false;
         saveConfig(config);
+        savePlaylistCache([]);
         document.getElementById('setupScreen').style.display = 'flex';
         document.getElementById('urlForm').style.display = 'block';
         document.getElementById('pairingSection').style.display = 'none';
@@ -310,6 +329,7 @@
 
       socket.on('device:content-delete', (data) => {
         playlist = playlist.filter(p => p.content_id !== data.content_id);
+        savePlaylistCache(playlist);
         if (playlist.length === 0) showStatus('Waiting for content...');
       });
 
@@ -486,6 +506,7 @@
 
       console.log('Playlist changed, updating');
       playlist = newItems;
+      savePlaylistCache(playlist);
 
       if (playlist.length === 0) {
         showStatus('Waiting for content...');
@@ -939,6 +960,7 @@
         // Reset config and go back to setup
         if (confirm('Reset player and return to setup?')) {
           localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem(PLAYLIST_CACHE_KEY);
           location.reload();
         }
       }
