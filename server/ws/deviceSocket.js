@@ -182,7 +182,7 @@ module.exports = function setupDeviceSocket(io) {
         if (device) {
           // Validate device token (skip for legacy devices that don't have a token yet)
           if (device.device_token && !validateDeviceToken(device_id, device_token)) {
-            console.warn(`Invalid device token for ${device_id} from ${getClientIp(socket)}`);
+            console.warn(`Invalid device token for ${device_id} from ${getClientIp(socket)} — received_len=${(device_token || '').length}, stored_len=${device.device_token.length}, received_prefix=${(device_token || '').substring(0, 8)}, stored_prefix=${device.device_token.substring(0, 8)}`);
             socket.emit('device:auth-error', { error: 'Invalid device token' });
             return;
           }

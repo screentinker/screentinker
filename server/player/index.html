@@ -421,6 +421,7 @@
       };
       // Browser fingerprint (survives localStorage clear)
       data.fingerprint = generateBrowserFingerprint();
+      console.log(`[register] device_id=${data.device_id || 'none'}, has_token=${!!data.device_token}, token_len=${data.device_token?.length || 0}, paired=${config.paired}, pairing_code=${data.pairing_code || 'none'}`);
       socket.emit('device:register', data);
     }
 
@@ -455,7 +456,10 @@
       if (refreshTimer) clearInterval(refreshTimer);
       refreshTimer = setInterval(() => {
         if (socket?.connected && config.deviceId && config.paired) {
-          socket.emit('device:register', { device_id: config.deviceId, device_info: {} });
+          const data = { device_id: config.deviceId, device_info: {} };
+          if (config.deviceToken) data.device_token = config.deviceToken;
+          console.log(`[refresh-register] device_id=${config.deviceId}, has_token=${!!config.deviceToken}`);
+          socket.emit('device:register', data);
         }
       }, 300000); // 5 minutes fallback
     }
