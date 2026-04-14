@@ -952,10 +952,21 @@
 
     // Register service worker for offline content caching
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/player/sw.js').then(
-        () => console.log('Service Worker registered'),
-        (err) => console.warn('SW registration failed:', err)
-      );
+      navigator.serviceWorker.register('/player/sw.js').then(reg => {
+        console.log('Service Worker registered');
+        // When a new SW activates, reload so the fresh code takes effect immediately
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+                console.log('New Service Worker activated — reloading for fresh code');
+                location.reload();
+              }
+            });
+          }
+        });
+      }, (err) => console.warn('SW registration failed:', err));
     }
 
     // ==================== Keyboard shortcuts ====================
