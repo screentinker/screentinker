@@ -287,6 +287,7 @@
 
         startHeartbeat();
         startPlaylistRefresh();
+        startVersionCheck();
       });
 
       socket.on('device:paired', (data) => {
@@ -463,6 +464,27 @@
           socket.emit('device:register', data);
         }
       }, 300000); // 5 minutes fallback
+    }
+
+    // ==================== Auto-reload on code update ====================
+    let knownServerHash = null;
+    let versionCheckTimer = null;
+    function startVersionCheck() {
+      if (versionCheckTimer) clearInterval(versionCheckTimer);
+      // Initial fetch to learn current hash
+      fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
+        knownServerHash = data.hash;
+        console.log('Server version:', data.version, 'hash:', data.hash);
+      }).catch(() => {});
+      // Poll every 30s
+      versionCheckTimer = setInterval(() => {
+        fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
+          if (knownServerHash && data.hash !== knownServerHash) {
+            console.log('Server code updated, reloading...', knownServerHash, '->', data.hash);
+            location.reload();
+          }
+        }).catch(() => {});
+      }, 30000);
     }
 
     // ==================== Playlist ====================

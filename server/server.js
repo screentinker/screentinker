@@ -235,6 +235,9 @@ function updateFrontendHash() {
       'js/views/activity.js', 'js/views/kiosk.js'].map(f => {
       try { return fs.readFileSync(path.join(config.frontendDir, f)); } catch { return ''; }
     });
+    // Include player files in hash so web players detect code updates
+    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'index.html'))); } catch {}
+    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'sw.js'))); } catch {}
     frontendHash = crypto.createHash('md5').update(Buffer.concat(files.map(f => Buffer.from(f)))).digest('hex').slice(0, 8);
   } catch { frontendHash = Date.now().toString(36); }
 }
