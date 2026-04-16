@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS schedules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_device ON schedules(device_id, enabled);
-CREATE INDEX IF NOT EXISTS idx_schedules_group ON schedules(group_id, enabled);
+-- Note: idx_schedules_group is created by the phase4 migration which rebuilds the table
 
 -- ===================== VIDEO WALLS =====================
 
