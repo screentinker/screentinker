@@ -108,13 +108,14 @@
     let streamTimer = null;
     let layout = null;
     let zones = {};
-    let userHasInteracted = false;
+    let userHasInteracted = !!localStorage.getItem('rd_audio_unlocked');
     let advanceTimer = null;
 
     // Track user interaction for autoplay policy
     ['click', 'touchstart', 'keydown'].forEach(evt => {
       document.addEventListener(evt, () => {
         userHasInteracted = true;
+        localStorage.setItem('rd_audio_unlocked', '1');
         // Try to unmute any playing HTML5 video
         const video = document.querySelector('#playerContainer video');
         if (video && video.muted) {
@@ -181,30 +182,37 @@
         playCurrentItem();
       }
 
-      // Show tap-to-start overlay to unlock audio on auto-reconnect
-      const tapOverlay = document.createElement('div');
-      tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
-      tapOverlay.innerHTML = `
-        <h1 style="color:#3b82f6;font-size:36px;font-family:sans-serif;margin-bottom:12px">ScreenTinker</h1>
-        <p style="color:#94a3b8;font-size:18px;font-family:sans-serif">Tap anywhere to start</p>
-        <p style="color:#64748b;font-size:13px;font-family:sans-serif;margin-top:24px">Audio requires user interaction</p>
-      `;
-      tapOverlay.onclick = () => {
+      // If audio was previously unlocked (user tapped in a prior session), skip the overlay
+      if (userHasInteracted) {
+        console.log('Audio previously unlocked, skipping tap overlay');
         unlockAudio();
-        tapOverlay.remove();
-        if (!isPlaying) showStatus('Connecting...');
         connect(config.serverUrl);
-      };
-      document.body.appendChild(tapOverlay);
-
-      // Auto-dismiss after 5 seconds if no interaction (plays muted)
-      setTimeout(() => {
-        if (tapOverlay.parentNode) {
+      } else {
+        // Show tap-to-start overlay to unlock audio on auto-reconnect
+        const tapOverlay = document.createElement('div');
+        tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
+        tapOverlay.innerHTML = `
+          <h1 style="color:#3b82f6;font-size:36px;font-family:sans-serif;margin-bottom:12px">ScreenTinker</h1>
+          <p style="color:#94a3b8;font-size:18px;font-family:sans-serif">Tap anywhere to start</p>
+          <p style="color:#64748b;font-size:13px;font-family:sans-serif;margin-top:24px">Audio requires user interaction</p>
+        `;
+        tapOverlay.onclick = () => {
+          unlockAudio();
           tapOverlay.remove();
-          if (!isPlaying) showStatus('Connecting (audio muted)...');
+          if (!isPlaying) showStatus('Connecting...');
           connect(config.serverUrl);
-        }
-      }, 5000);
+        };
+        document.body.appendChild(tapOverlay);
+
+        // Auto-dismiss after 5 seconds if no interaction (plays muted)
+        setTimeout(() => {
+          if (tapOverlay.parentNode) {
+            tapOverlay.remove();
+            if (!isPlaying) showStatus('Connecting (audio muted)...');
+            connect(config.serverUrl);
+          }
+        }, 5000);
+      }
     }
 
     // ==================== Setup UI ====================
@@ -215,6 +223,7 @@
     // Unlock audio on any user interaction
     function unlockAudio() {
       userHasInteracted = true;
+      localStorage.setItem('rd_audio_unlocked', '1');
       // Create and resume AudioContext (unlocks audio for the session)
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();

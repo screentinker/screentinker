@@ -23,9 +23,18 @@ function evaluateSchedules() {
     const schedules = db.prepare(`
       SELECT s.*
       FROM schedules s
-      WHERE s.device_id = ? AND s.enabled = 1
-      ORDER BY s.priority DESC
-    `).all(device.id);
+      WHERE s.enabled = 1
+        AND (
+          s.device_id = ?
+          OR s.group_id IN (
+            SELECT group_id FROM device_group_members WHERE device_id = ?
+          )
+        )
+      ORDER BY
+        CASE WHEN s.device_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+        s.priority DESC,
+        s.created_at ASC
+    `).all(device.id, device.id);
 
     const active = schedules.find(s => isScheduleActiveNow(s, now));
     const override = activeOverrides.get(device.id);

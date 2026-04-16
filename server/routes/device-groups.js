@@ -47,10 +47,53 @@ router.put('/:id', requireGroupOwnership, (req, res) => {
   res.json(db.prepare('SELECT * FROM device_groups WHERE id = ?').get(req.params.id));
 });
 
-// Delete group
+// Delete group — converts group schedules to per-device schedules first
 router.delete('/:id', requireGroupOwnership, (req, res) => {
-  db.prepare('DELETE FROM device_groups WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
+  const groupId = req.params.id;
+
+  const convert = db.transaction(() => {
+    // Find group schedules that need conversion
+    const groupSchedules = db.prepare('SELECT * FROM schedules WHERE group_id = ?').all(groupId);
+
+    // Find current group members
+    const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(groupId);
+
+    let converted = 0;
+
+    if (groupSchedules.length > 0 && members.length > 0) {
+      const insert = db.prepare(`
+        INSERT INTO schedules (id, user_id, device_id, group_id, zone_id, content_id,
+          widget_id, layout_id, playlist_id, title, start_time, end_time, timezone,
+          recurrence, recurrence_end, priority, enabled, color, created_at, updated_at)
+        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const schedule of groupSchedules) {
+        for (const member of members) {
+          insert.run(
+            uuidv4(), schedule.user_id, member.device_id,
+            schedule.zone_id, schedule.content_id, schedule.widget_id,
+            schedule.layout_id, schedule.playlist_id, schedule.title,
+            schedule.start_time, schedule.end_time, schedule.timezone,
+            schedule.recurrence, schedule.recurrence_end, schedule.priority,
+            schedule.enabled, schedule.color, schedule.created_at, schedule.updated_at
+          );
+        }
+        converted++;
+      }
+    }
+
+    // Delete group schedules explicitly (before group delete turns group_id to NULL via ON DELETE SET NULL)
+    db.prepare('DELETE FROM schedules WHERE group_id = ?').run(groupId);
+
+    // Delete the group (cascades to device_group_members)
+    db.prepare('DELETE FROM device_groups WHERE id = ?').run(groupId);
+
+    return { converted, devices: members.length };
+  });
+
+  const result = convert();
+  res.json({ success: true, schedules_converted: result.converted, devices: result.devices });
 });
 
 // Get devices in a group

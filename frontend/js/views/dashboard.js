@@ -105,17 +105,35 @@ function renderDeviceCard(device) {
   `;
 }
 
-function renderGroupSection(group, devices) {
+function getGroupPlaylistLabel(devices, playlists) {
+  const playlistMap = new Map((playlists || []).map(p => [p.id, p]));
+  const assigned = devices.filter(d => d.playlist_id).map(d => d.playlist_id);
+  if (assigned.length === 0) return '';
+  const unique = [...new Set(assigned)];
+  if (unique.length === 1) {
+    const pl = playlistMap.get(unique[0]);
+    return pl ? esc(pl.name) : 'Unknown playlist';
+  }
+  return 'Mixed playlists';
+}
+
+function renderGroupSection(group, devices, playlists) {
   const onlineCount = devices.filter(d => d.status === 'online').length;
+  const playlistLabel = getGroupPlaylistLabel(devices, playlists);
   return `
     <div class="group-section" data-group-id="${group.id}" style="margin-bottom:24px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#3B82F6')}">
         <div style="display:flex;align-items:center;gap:10px">
           <strong style="font-size:15px">${esc(group.name)}</strong>
           <span style="color:var(--text-muted);font-size:12px">${devices.length} device${devices.length !== 1 ? 's' : ''} &middot; ${onlineCount} online</span>
+          ${playlistLabel ? `<span style="font-size:11px;color:var(--text-secondary);background:var(--bg-primary);padding:2px 8px;border-radius:10px">Playlist: ${playlistLabel}</span>` : ''}
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           ${devices.length > 0 ? `
+          <select class="input group-playlist-select" data-group-id="${group.id}" data-group-name="${esc(group.name)}" style="width:160px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
+            <option value="">Set Playlist...</option>
+            ${(playlists || []).map(p => `<option value="${esc(p.id)}">${esc(p.name)}${p.status === 'draft' ? ' (draft)' : ''}</option>`).join('')}
+          </select>
           <select class="input group-cmd-select" data-group-id="${group.id}" data-group-name="${esc(group.name)}" data-device-count="${devices.length}" style="width:150px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
             <option value="">Send Command...</option>
             ${GROUP_COMMANDS.map(c => `<option value="${c.type}" ${c.destructive ? 'style="color:var(--danger)"' : ''}>${c.label}</option>`).join('')}
@@ -268,7 +286,7 @@ async function loadDashboard() {
   if (!main) return;
 
   try {
-    const [devices, groups] = await Promise.all([api.getDevices(), api.getGroups()]);
+    const [devices, groups, playlists] = await Promise.all([api.getDevices(), api.getGroups(), api.getPlaylists()]);
 
     // Stats
     const online = devices.filter(d => d.status === 'online').length;
@@ -330,7 +348,7 @@ async function loadDashboard() {
 
     // Render each group with its devices
     for (const g of groupsWithDevices) {
-      html += renderGroupSection(g, g.devices);
+      html += renderGroupSection(g, g.devices, playlists);
     }
 
     // Render ungrouped devices
@@ -358,6 +376,30 @@ async function loadDashboard() {
 }
 
 function attachGroupHandlers(groupsWithDevices, allDevices) {
+  // Playlist assignment handlers
+  document.querySelectorAll('.group-playlist-select').forEach(select => {
+    select.addEventListener('change', async (e) => {
+      const playlistId = e.target.value;
+      if (!playlistId) return;
+      const groupId = e.target.dataset.groupId;
+      const groupName = e.target.dataset.groupName;
+      const playlistName = e.target.options[e.target.selectedIndex].textContent;
+
+      if (!confirm(`Assign playlist "${playlistName}" to all devices in "${groupName}"?`)) {
+        e.target.value = '';
+        return;
+      }
+
+      try {
+        const result = await api.groupAssignPlaylist(groupId, playlistId);
+        showToast(`Playlist assigned to ${result.devices_updated} device${result.devices_updated !== 1 ? 's' : ''}`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      e.target.value = '';
+    });
+  });
+
   // Command select handlers
   document.querySelectorAll('.group-cmd-select').forEach(select => {
     select.addEventListener('change', async (e) => {

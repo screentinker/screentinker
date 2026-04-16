@@ -89,7 +89,7 @@ router.get('/export', (req, res) => {
   const playlistPlaceholders = playlistIds.map(() => '?').join(',') || "'__none__'";
   const playlistItems = playlistIds.length ? db.prepare(`SELECT id, playlist_id, content_id, widget_id, sort_order, duration_sec FROM playlist_items WHERE playlist_id IN (${playlistPlaceholders})`).all(...playlistIds) : [];
 
-  const schedules = db.prepare('SELECT id, device_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at FROM schedules WHERE user_id = ?').all(userId);
+  const schedules = db.prepare('SELECT id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at FROM schedules WHERE user_id = ?').all(userId);
   const videoWalls = db.prepare('SELECT * FROM video_walls WHERE user_id = ?').all(userId);
   const wallIds = videoWalls.map(w => w.id);
   const wallPlaceholders = wallIds.map(() => '?').join(',') || "'__none__'";
@@ -355,11 +355,13 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
 
     // Import schedules
     for (const s of (data.schedules || [])) {
-      const devId = idMap.devices[s.device_id];
-      if (!devId) continue;
+      const devId = s.device_id ? (idMap.devices[s.device_id] || null) : null;
+      const grpId = s.group_id ? (idMap.groups[s.group_id] || null) : null;
+      // Must have either a mapped device or group target
+      if (!devId && !grpId) continue;
       const newId = uuid.v4();
       const playlistId = s.playlist_id ? (idMap.playlists[s.playlist_id] || null) : null;
-      db.prepare(`INSERT INTO schedules (id, user_id, device_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#3B82F6', s.created_at || Math.floor(Date.now() / 1000));
+      db.prepare(`INSERT INTO schedules (id, user_id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, grpId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#3B82F6', s.created_at || Math.floor(Date.now() / 1000));
       stats.schedules++;
     }
 

@@ -195,7 +195,8 @@ CREATE TABLE IF NOT EXISTS widgets (
 CREATE TABLE IF NOT EXISTS schedules (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL REFERENCES users(id),
-    device_id       TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    device_id       TEXT REFERENCES devices(id) ON DELETE CASCADE,
+    group_id        TEXT REFERENCES device_groups(id) ON DELETE SET NULL,
     zone_id         TEXT REFERENCES layout_zones(id) ON DELETE CASCADE,
     content_id      TEXT REFERENCES content(id) ON DELETE CASCADE,
     widget_id       TEXT REFERENCES widgets(id) ON DELETE CASCADE,
@@ -211,10 +212,12 @@ CREATE TABLE IF NOT EXISTS schedules (
     enabled         INTEGER NOT NULL DEFAULT 1,
     color           TEXT DEFAULT '#3B82F6',
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_device ON schedules(device_id, enabled);
+CREATE INDEX IF NOT EXISTS idx_schedules_group ON schedules(group_id, enabled);
 
 -- ===================== VIDEO WALLS =====================
 

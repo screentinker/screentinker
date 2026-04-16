@@ -63,6 +63,8 @@ const migrations = [
   // Phase 3: playlist publish/draft state
   "ALTER TABLE playlists ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
   "ALTER TABLE playlists ADD COLUMN published_snapshot TEXT",
+  // Phase 4: group scheduling (column add only — full migration with CHECK below)
+  "ALTER TABLE schedules ADD COLUMN group_id TEXT REFERENCES device_groups(id) ON DELETE SET NULL",
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { /* already exists */ }
@@ -243,6 +245,62 @@ function migratePublishSnapshots() {
 }
 
 migratePublishSnapshots();
+
+// Phase 4 migration: add group_id to schedules, make device_id nullable, add CHECK constraint
+const PHASE4_MIGRATION_ID = 'phase4_group_schedules';
+
+function migrateGroupSchedules() {
+  const already = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(PHASE4_MIGRATION_ID);
+  if (already) return;
+
+  console.log('Phase 4 migration: adding group_id to schedules, making device_id nullable...');
+
+  const migrate = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE schedules_new (
+        id              TEXT PRIMARY KEY,
+        user_id         TEXT NOT NULL REFERENCES users(id),
+        device_id       TEXT REFERENCES devices(id) ON DELETE CASCADE,
+        group_id        TEXT REFERENCES device_groups(id) ON DELETE SET NULL,
+        zone_id         TEXT REFERENCES layout_zones(id) ON DELETE CASCADE,
+        content_id      TEXT REFERENCES content(id) ON DELETE CASCADE,
+        widget_id       TEXT REFERENCES widgets(id) ON DELETE CASCADE,
+        layout_id       TEXT REFERENCES layouts(id) ON DELETE SET NULL,
+        playlist_id     TEXT REFERENCES playlists(id) ON DELETE SET NULL,
+        title           TEXT NOT NULL DEFAULT '',
+        start_time      TEXT NOT NULL,
+        end_time        TEXT NOT NULL,
+        timezone        TEXT NOT NULL DEFAULT 'UTC',
+        recurrence      TEXT,
+        recurrence_end  TEXT,
+        priority        INTEGER NOT NULL DEFAULT 0,
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        color           TEXT DEFAULT '#3B82F6',
+        created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
+      );
+
+      INSERT INTO schedules_new (id, user_id, device_id, zone_id, content_id, widget_id, layout_id, playlist_id,
+        title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at, updated_at)
+      SELECT id, user_id, device_id, zone_id, content_id, widget_id, layout_id, playlist_id,
+        title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at, updated_at
+      FROM schedules;
+
+      DROP TABLE schedules;
+      ALTER TABLE schedules_new RENAME TO schedules;
+
+      CREATE INDEX idx_schedules_device ON schedules(device_id, enabled);
+      CREATE INDEX idx_schedules_group ON schedules(group_id, enabled);
+    `);
+
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(PHASE4_MIGRATION_ID);
+    console.log('Phase 4 migration complete: schedules table rebuilt with group_id support.');
+  });
+  migrate();
+}
+
+migrateGroupSchedules();
 
 // Prune old telemetry (keep last 24h worth at 15s intervals = ~5760, cap at 6000)
 function pruneTelemetry(deviceId) {
