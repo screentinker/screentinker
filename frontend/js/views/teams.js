@@ -97,7 +97,7 @@ async function renderTeamDetail(container, teamId) {
                 <div style="font-size:13px;font-weight:500">${m.user_name || m.email}</div>
                 <div style="font-size:11px;color:var(--text-muted)">${m.email}</div>
               </div>
-              <select class="input" style="width:100px;background:var(--bg-input);font-size:12px;padding:4px 8px" data-member-id="${m.user_id}" ${m.role === 'owner' ? 'disabled' : ''}>
+              <select class="input" style="max-width:100px;width:100%;background:var(--bg-input);font-size:12px;padding:4px 8px" data-member-id="${m.user_id}" ${m.role === 'owner' ? 'disabled' : ''}>
                 <option value="viewer" ${m.role === 'viewer' ? 'selected' : ''}>Viewer</option>
                 <option value="editor" ${m.role === 'editor' ? 'selected' : ''}>Editor</option>
                 <option value="owner" ${m.role === 'owner' ? 'selected' : ''}>Owner</option>
@@ -112,7 +112,7 @@ async function renderTeamDetail(container, teamId) {
       <div class="settings-section" style="margin:0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <h3 style="font-size:15px">Shared Devices (${devices.length})</h3>
-          <select id="addDeviceToTeam" class="input" style="width:200px;background:var(--bg-input);font-size:12px">
+          <select id="addDeviceToTeam" class="input" style="max-width:200px;width:100%;background:var(--bg-input);font-size:12px">
             <option value="">+ Add device...</option>
             ${unassignedDevices.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
           </select>

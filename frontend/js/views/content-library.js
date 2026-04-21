@@ -72,8 +72,8 @@ export function render(container) {
     </div>
 
     <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
-      <input type="text" id="contentSearch" class="input" placeholder="Search content..." style="width:250px">
-      <select id="folderFilter" class="input" style="width:180px;background:var(--bg-input)">
+      <input type="text" id="contentSearch" class="input" placeholder="Search content..." style="max-width:250px;width:100%">
+      <select id="folderFilter" class="input" style="max-width:180px;width:100%;background:var(--bg-input)">
         <option value="">All Folders</option>
       </select>
       <button class="btn btn-secondary btn-sm" id="newFolderBtn">+ New Folder</button>
@@ -368,7 +368,7 @@ function showEditModal(contentItem, onSave) {
   const isRemote = !!contentItem.remote_url;
 
   overlay.innerHTML = `
-    <div class="modal" style="width:500px">
+    <div class="modal" style="max-width:500px;width:95vw">
       <div class="modal-header">
         <h3>Edit Content</h3>
         <button class="btn-icon" id="closeEditModal">

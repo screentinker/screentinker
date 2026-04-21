@@ -39,12 +39,12 @@ const STEPS = [
     content: `<p style="color:var(--text-secondary);margin-bottom:16px">Enter the 6-digit code shown on your display.</p>
       <div style="text-align:center;margin:20px 0">
         <input type="text" id="onboardPairingCode" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
-          style="width:240px;padding:16px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;
+          style="max-width:240px;width:100%;padding:16px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;
           color:var(--text-primary);font-size:32px;font-weight:700;text-align:center;letter-spacing:8px;font-family:monospace">
       </div>
       <div style="text-align:center">
         <input type="text" id="onboardDeviceName" placeholder="Display name (e.g., Lobby TV)"
-          style="width:240px;padding:10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;text-align:center">
+          style="max-width:240px;width:100%;padding:10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;text-align:center">
       </div>
       <p id="onboardPairStatus" style="color:var(--text-muted);font-size:13px;text-align:center;margin-top:12px"></p>`,
     action: 'pair'

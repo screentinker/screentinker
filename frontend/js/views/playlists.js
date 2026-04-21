@@ -513,7 +513,7 @@ async function showAddItemModal(playlistId) {
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000';
   modal.innerHTML = `
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:560px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column">
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;max-width:560px;width:95vw;max-height:80vh;display:flex;flex-direction:column">
       <h3 style="margin-bottom:16px;color:var(--text-primary)">Add Content to Playlist</h3>
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <button class="btn btn-primary btn-sm tab-btn active" data-tab="content">Content</button>

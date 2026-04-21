@@ -891,7 +891,7 @@ async function setupPlaylistActions(device) {
       const modal = document.createElement('div');
       modal.className = 'modal-overlay';
       modal.innerHTML = `
-        <div class="modal" style="width:650px">
+        <div class="modal" style="max-width:650px;width:95vw">
           <div class="modal-header">
             <h3>Add to Playlist</h3>
             <button class="btn-icon" id="closeAssignModal">

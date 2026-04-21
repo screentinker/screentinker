@@ -65,14 +65,14 @@ async function loadUsers() {
               <td style="padding:8px"><span style="background:var(--bg-primary);padding:2px 8px;border-radius:10px;font-size:11px">${u.auth_provider}</span></td>
               <td style="padding:8px;font-size:11px;color:var(--text-muted)">${u.last_login ? new Date(u.last_login * 1000).toLocaleString() : 'Never'}</td>
               <td style="padding:8px">
-                <select class="input" style="width:120px;background:var(--bg-input);font-size:12px;padding:4px" data-role-user="${u.id}">
+                <select class="input" style="max-width:120px;width:100%;background:var(--bg-input);font-size:12px;padding:4px" data-role-user="${u.id}">
                   <option value="user" ${u.role === 'user' ? 'selected' : ''}>User</option>
                   <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
                   <option value="superadmin" ${u.role === 'superadmin' ? 'selected' : ''}>Superadmin</option>
                 </select>
               </td>
               <td style="padding:8px">
-                <select class="input" style="width:130px;background:var(--bg-input);font-size:12px;padding:4px" data-plan-user="${u.id}">
+                <select class="input" style="max-width:130px;width:100%;background:var(--bg-input);font-size:12px;padding:4px" data-plan-user="${u.id}">
                   ${plans.map(p => `<option value="${p.id}" ${u.plan_id === p.id ? 'selected' : ''}>${p.display_name}</option>`).join('')}
                 </select>
               </td>
