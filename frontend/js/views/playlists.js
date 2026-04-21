@@ -294,7 +294,7 @@ function renderItems(items) {
   }
 
   itemsEl.innerHTML = items.map((item, i) => `
-    <div class="playlist-item" data-item-id="${item.id}" draggable="true" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:grab;transition:border-color 0.15s">
+    <div class="playlist-item" data-item-id="${item.id}" data-index="${i}" draggable="true" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:grab;transition:border-color 0.15s;flex-wrap:wrap">
       <div style="color:var(--text-muted);font-size:12px;min-width:24px;text-align:center;user-select:none">${i + 1}</div>
       <div style="width:48px;height:36px;border-radius:4px;overflow:hidden;background:var(--bg-input);flex-shrink:0;display:flex;align-items:center;justify-content:center">
         ${item.thumbnail_path
@@ -311,9 +311,17 @@ function renderItems(items) {
         <input type="number" class="input item-duration" data-item-id="${item.id}" value="${item.duration_sec}" min="1" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">sec</span>
       </div>
-      <button class="btn-icon item-remove" data-item-id="${item.id}" title="Remove" style="color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px;border-radius:4px">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+        <button class="btn-icon item-move" data-item-id="${item.id}" data-dir="up" title="Move up" aria-label="Move up" ${i === 0 ? 'disabled' : ''} style="color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px;border-radius:4px;${i === 0 ? 'opacity:0.3;cursor:not-allowed' : ''}">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+        </button>
+        <button class="btn-icon item-move" data-item-id="${item.id}" data-dir="down" title="Move down" aria-label="Move down" ${i === items.length - 1 ? 'disabled' : ''} style="color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px;border-radius:4px;${i === items.length - 1 ? 'opacity:0.3;cursor:not-allowed' : ''}">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <button class="btn-icon item-remove" data-item-id="${item.id}" title="Remove" aria-label="Remove item" style="color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px;border-radius:4px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
     </div>
   `).join('');
 
@@ -342,6 +350,28 @@ function renderItems(items) {
         renderItems(playlist.items || []);
         refreshAfterMutation();
         showToast('Item removed');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+
+  // Up/down reorder (touch-friendly alternative to drag)
+  itemsEl.querySelectorAll('.item-move').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      if (btn.disabled) return;
+      const itemId = parseInt(e.currentTarget.dataset.itemId, 10);
+      const dir = e.currentTarget.dataset.dir;
+      const order = Array.from(itemsEl.querySelectorAll('.playlist-item'))
+        .map(el => parseInt(el.dataset.itemId, 10));
+      const idx = order.indexOf(itemId);
+      const swap = dir === 'up' ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= order.length) return;
+      [order[idx], order[swap]] = [order[swap], order[idx]];
+      try {
+        const updated = await api.reorderPlaylistItems(currentPlaylistId, order);
+        renderItems(updated);
+        refreshAfterMutation();
       } catch (err) {
         showToast(err.message, 'error');
       }
