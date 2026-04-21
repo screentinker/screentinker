@@ -19,7 +19,7 @@ export function render(container) {
       </div>
     </div>
 
-    <div style="display:flex;gap:16px;margin-bottom:24px">
+    <div class="content-toolbar" style="display:flex;gap:16px;margin-bottom:24px">
       <div class="upload-area" id="uploadArea" style="flex:1;margin-bottom:0">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>

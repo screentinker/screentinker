@@ -920,10 +920,29 @@ body {
   .page-header { flex-direction: column; gap: 12px; align-items: flex-start; }
   .device-grid { grid-template-columns: 1fr; }
   .content-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-  .info-grid { grid-template-columns: 1fr 1fr; }
+  .info-grid { grid-template-columns: 1fr; }
   .remote-container { flex-direction: column; }
   .remote-controls { width: 100%; flex-direction: row; flex-wrap: wrap; }
   .modal { width: 95vw; max-height: 90vh; overflow-y: auto; }
   .tabs { overflow-x: auto; }
   .tab { white-space: nowrap; }
+
+  /* Dashboard stats stack to single column */
+  .dash-stats-row { flex-direction: column; }
+  .dash-stats-row .info-card { flex: none; }
+
+  /* Content-library 3-up toolbar stacks vertically */
+  .content-toolbar { flex-direction: column; }
+  .content-toolbar > div[style*="width:320px"] { width: auto !important; }
+
+  /* Schedule controls: allow wrap and widen select to full row */
+  .schedule-controls { gap: 8px; }
+  .schedule-controls > select { flex: 1 1 100%; }
+  .schedule-controls > button,
+  .schedule-controls > span { flex: 0 1 auto; }
+}
+
+@media (max-width: 480px) {
+  .content-grid { grid-template-columns: 1fr; }
+  .assign-content-grid { grid-template-columns: 1fr 1fr; }
 }

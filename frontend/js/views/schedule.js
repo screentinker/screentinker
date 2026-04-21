@@ -28,8 +28,8 @@ export async function render(container) {
     <div class="page-header">
       <div><h1>Schedule <span class="help-tip" data-tip="Visual weekly calendar for content scheduling. Click Add Schedule to create time slots. Set recurrence for repeating content. Higher priority overrides lower. Device-level schedules override group-level.">?</span></h1><div class="subtitle">Content scheduling calendar</div></div>
     </div>
-    <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
-      <select id="schedDevice" class="input" style="width:200px;background:var(--bg-input)">
+    <div class="schedule-controls" style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+      <select id="schedDevice" class="input" style="width:200px;max-width:100%;background:var(--bg-input)">
         ${devices.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}
       </select>
       <button class="btn btn-secondary btn-sm" id="prevWeek">&lt; Prev</button>

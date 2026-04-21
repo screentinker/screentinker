@@ -167,7 +167,7 @@ export function render(container) {
         </button>
       </div>
     </div>
-    <div id="dashStats" style="display:flex;gap:12px;margin-bottom:16px"></div>
+    <div id="dashStats" class="dash-stats-row" style="display:flex;gap:12px;margin-bottom:16px"></div>
     <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
       <input type="text" id="deviceSearch" class="input" placeholder="Search displays..." style="max-width:300px">
       <select id="deviceFilter" class="input" style="width:140px;background:var(--bg-input)">
