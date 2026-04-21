@@ -937,6 +937,7 @@ body {
     -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
   }
   .tab { white-space: nowrap; flex-shrink: 0; }
+  .playlist-item { flex-wrap: wrap; }
 
   /* Dashboard stats stack to single column */
   .dash-stats-row { flex-direction: column; }
