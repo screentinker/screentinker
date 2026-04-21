@@ -14,8 +14,8 @@ export async function render(container) {
   const isSetup = config.needsSetup;
 
   container.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:center;height:100vh;margin-left:calc(-1 * var(--sidebar-width))">
-      <div style="width:400px;max-width:90vw">
+    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px">
+      <div style="width:400px;max-width:100%">
         <div style="text-align:center;margin-bottom:32px">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="margin:0 auto 12px">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
@@ -117,7 +117,7 @@ export async function render(container) {
         <details style="margin-top:16px">
           <summary style="font-size:11px;color:var(--text-muted);cursor:pointer;text-align:center">Support Access</summary>
           <div style="margin-top:8px">
-            <input type="text" id="supportToken" class="input" placeholder="Paste support token" style="font-family:monospace;font-size:11px">
+            <input type="text" id="supportToken" class="input" placeholder="Paste support token" style="font-family:monospace">
             <button class="btn btn-secondary" id="supportLoginBtn" style="width:100%;justify-content:center;padding:8px;margin-top:6px;font-size:12px">Authenticate with Support Token</button>
           </div>
         </details>

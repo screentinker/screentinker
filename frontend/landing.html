@@ -117,13 +117,27 @@
     footer { max-width:1200px; margin:0 auto; padding:40px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; border-top:1px solid var(--border); }
     footer .links a { color:var(--dim); margin-left:16px; font-size:13px; }
 
+    /* Horizontal-scroll wrapper for wide tables on mobile */
+    .table-scroll { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
     @media (max-width:768px) {
-      .nav-links { display:none; }
+      /* Hide section anchor links + the secondary Sign In button; keep primary CTA */
+      .nav-links a:not(.btn), .nav-links a.btn-outline { display:none; }
+      .nav-links { margin-left:auto; }
+      .nav-inner { padding:12px 16px; }
+
       .feature-grid { grid-template-columns:1fr; }
       .pricing-grid { grid-template-columns:1fr; }
-      .compare-table { font-size:12px; }
+      .compare-table { font-size:12px; min-width:560px; }
       .compare-table th, .compare-table td { padding:8px; }
       footer { flex-direction:column; text-align:center; }
+
+      /* 44px tap targets for all buttons on mobile */
+      .btn { min-height:44px; }
+      .hero { padding:110px 16px 60px; }
+      .features, .platforms, .pricing, .compare { padding:60px 16px; }
+      .cta { padding:60px 16px; }
+      .screenshot { padding:0 16px; margin-bottom:60px; }
     }
   </style>
 </head>
@@ -209,6 +223,7 @@
   <!-- Compare -->
   <section class="compare" id="compare">
     <h2>How We Compare</h2>
+    <div class="table-scroll">
     <table class="compare-table">
       <thead><tr><th></th><th style="color:var(--accent);font-weight:700">ScreenTinker</th><th>Yodeck</th><th>ScreenCloud</th><th>OptiSigns</th></tr></thead>
       <tbody>
@@ -226,6 +241,7 @@
         <tr><td>Hardware Lock-in</td><td class="yes">None</td><td>RPi focused</td><td>Chromecast</td><td>Various</td></tr>
       </tbody>
     </table>
+    </div>
   </section>
 
   <!-- CTA -->

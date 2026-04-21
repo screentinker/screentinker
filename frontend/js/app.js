@@ -64,6 +64,8 @@ function route() {
   if (hash === '#/login') {
     sidebar.style.display = 'none';
     app.style.marginLeft = '0';
+    const mb = document.getElementById('mobileMenuBtn');
+    if (mb) mb.style.display = 'none';
     currentView = login;
     login.render(app);
     return;
@@ -72,6 +74,8 @@ function route() {
   // Show sidebar for authenticated views
   sidebar.style.display = '';
   app.style.marginLeft = '';
+  const mb = document.getElementById('mobileMenuBtn');
+  if (mb) mb.style.display = '';
 
   // Update user info in sidebar
   updateSidebarUser();
