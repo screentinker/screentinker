@@ -17,11 +17,11 @@
   <!-- OAuth providers loaded on-demand by login.js when needed -->
 </head>
 <body>
-  <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="document.querySelector('.sidebar').classList.toggle('open');document.getElementById('sidebarBackdrop').classList.toggle('open')">
+  <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidebar">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
   </button>
-  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="document.querySelector('.sidebar').classList.remove('open');this.classList.remove('open')"></div>
-  <nav class="sidebar">
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+  <nav class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="logo">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

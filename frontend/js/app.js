@@ -206,10 +206,25 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw-admin.js').catch(() => {});
 }
 
-// Close mobile menu on navigation
-window.addEventListener('hashchange', () => {
-  document.querySelector('.sidebar')?.classList.remove('open');
-  document.getElementById('sidebarBackdrop')?.classList.remove('open');
+// Mobile sidebar: open/close via hamburger, backdrop, nav tap, Escape
+const sidebarEl = document.querySelector('.sidebar');
+const backdropEl = document.getElementById('sidebarBackdrop');
+const menuBtn = document.getElementById('mobileMenuBtn');
+
+function setMobileNav(open) {
+  if (!sidebarEl || !backdropEl) return;
+  sidebarEl.classList.toggle('open', open);
+  backdropEl.classList.toggle('open', open);
+  menuBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+menuBtn?.addEventListener('click', () => {
+  setMobileNav(!sidebarEl.classList.contains('open'));
+});
+backdropEl?.addEventListener('click', () => setMobileNav(false));
+window.addEventListener('hashchange', () => setMobileNav(false));
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && sidebarEl?.classList.contains('open')) setMobileNav(false);
 });
 
 // Auto-reload on frontend update (no more hard refresh needed)
