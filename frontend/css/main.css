@@ -940,6 +940,40 @@ body {
   .schedule-controls > select { flex: 1 1 100%; }
   .schedule-controls > button,
   .schedule-controls > span { flex: 0 1 auto; }
+
+  /* Tap targets: minimum 44px height for interactive elements */
+  .btn { min-height: 44px; padding: 10px 16px; }
+  .btn-sm { min-height: 36px; padding: 8px 12px; }
+  .btn-icon { min-width: 40px; min-height: 40px; }
+
+  /* Form inputs: 16px font to prevent iOS focus zoom; 44px tap target */
+  .input,
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="url"],
+  input[type="search"],
+  input[type="tel"],
+  select,
+  textarea {
+    font-size: 16px;
+    min-height: 44px;
+  }
+  .pairing-input { font-size: 24px; letter-spacing: 6px; }
+
+  /* Modals: adjust padding at 95vw so content doesn't touch edges */
+  .modal-header,
+  .modal-footer { padding: 14px 16px; }
+  .modal-body { padding: 16px; }
+
+  /* Toast container: full-width bar instead of 280px fixed to right */
+  .toast-container {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+  .toast { min-width: 0; width: 100%; }
 }
 
 @media (max-width: 480px) {
