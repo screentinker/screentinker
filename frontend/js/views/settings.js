@@ -333,7 +333,8 @@ async function loadUsers() {
     const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
 
     el.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <div class="table-wrap">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">
         <thead>
           <tr style="border-bottom:1px solid var(--border);text-align:left">
             <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">User</th>
@@ -368,6 +369,7 @@ async function loadUsers() {
           `).join('')}
         </tbody>
       </table>
+      </div>
       <p style="color:var(--text-muted);font-size:11px;margin-top:12px">${users.length} user(s) registered</p>
     `;
 

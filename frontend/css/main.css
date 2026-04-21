@@ -878,6 +878,12 @@ body {
   line-height: 1.4;
 }
 
+/* Table wrapper: enables horizontal scroll when table min-width exceeds viewport */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Mobile hamburger toggle */
 .mobile-menu-btn {
   display: none;
@@ -924,8 +930,13 @@ body {
   .remote-container { flex-direction: column; }
   .remote-controls { width: 100%; flex-direction: row; flex-wrap: wrap; }
   .modal { width: 95vw; max-height: 90vh; overflow-y: auto; }
-  .tabs { overflow-x: auto; }
-  .tab { white-space: nowrap; }
+  .tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+  }
+  .tab { white-space: nowrap; flex-shrink: 0; }
 
   /* Dashboard stats stack to single column */
   .dash-stats-row { flex-direction: column; }

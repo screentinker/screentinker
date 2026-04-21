@@ -103,7 +103,8 @@ export async function render(container) {
         <!-- Top Content -->
         <div class="settings-section" style="margin-bottom:20px">
           <h3 style="font-size:14px;margin-bottom:12px">Top Content</h3>
-          <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <div class="table-wrap">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:460px">
             <thead><tr style="border-bottom:1px solid var(--border)">
               <th style="padding:8px;text-align:left;color:var(--text-muted)">Content</th>
               <th style="padding:8px;text-align:right;color:var(--text-muted)">Plays</th>
@@ -121,12 +122,14 @@ export async function render(container) {
               `).join('') || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-muted)">No data</td></tr>'}
             </tbody>
           </table>
+          </div>
         </div>
 
         <!-- By Device -->
         <div class="settings-section">
           <h3 style="font-size:14px;margin-bottom:12px">By Device</h3>
-          <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <div class="table-wrap">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:400px">
             <thead><tr style="border-bottom:1px solid var(--border)">
               <th style="padding:8px;text-align:left;color:var(--text-muted)">Device</th>
               <th style="padding:8px;text-align:right;color:var(--text-muted)">Plays</th>
@@ -142,6 +145,7 @@ export async function render(container) {
               `).join('') || '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--text-muted)">No data</td></tr>'}
             </tbody>
           </table>
+          </div>
         </div>
       `;
 

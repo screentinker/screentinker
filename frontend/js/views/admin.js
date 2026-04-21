@@ -48,7 +48,8 @@ async function loadUsers() {
     const [users, plans] = await Promise.all([API('/auth/users'), fetch('/api/subscription/plans').then(r => r.json())]);
 
     el.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <div class="table-wrap">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:720px">
         <thead><tr style="border-bottom:1px solid var(--border)">
           <th style="padding:8px;text-align:left;color:var(--text-muted)">User</th>
           <th style="padding:8px;text-align:left;color:var(--text-muted)">Auth</th>
@@ -82,6 +83,7 @@ async function loadUsers() {
           `).join('')}
         </tbody>
       </table>
+      </div>
       <p style="color:var(--text-muted);font-size:11px;margin-top:8px">${users.length} total users</p>
     `;
 
@@ -126,7 +128,8 @@ async function loadPlans() {
   try {
     const plans = await fetch('/api/subscription/plans').then(r => r.json());
     el.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <div class="table-wrap">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:500px">
         <thead><tr style="border-bottom:1px solid var(--border)">
           <th style="padding:8px;text-align:left;color:var(--text-muted)">Plan</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">Devices</th>
@@ -146,6 +149,7 @@ async function loadPlans() {
           `).join('')}
         </tbody>
       </table>
+      </div>
     `;
   } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
