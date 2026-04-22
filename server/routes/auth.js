@@ -227,12 +227,23 @@ router.get('/me', requireAuth, (req, res) => {
 
 // Update current user
 router.put('/me', requireAuth, (req, res) => {
-  const { name, password } = req.body;
+  const { name, password, current_password } = req.body;
   if (name) {
     db.prepare('UPDATE users SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?')
       .run(name, req.user.id);
   }
-  if (password && password.length >= 8) {
+  if (password) {
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const row = db.prepare('SELECT password_hash, auth_provider FROM users WHERE id = ?').get(req.user.id);
+    if (!row) return res.status(404).json({ error: 'User not found' });
+    if (row.auth_provider !== 'local') {
+      return res.status(400).json({ error: `Your account signs in via ${row.auth_provider}. Manage your password there.` });
+    }
+    if (row.password_hash) {
+      if (!current_password || !bcrypt.compareSync(current_password, row.password_hash)) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+    }
     const hash = bcrypt.hashSync(password, 10);
     db.prepare('UPDATE users SET password_hash = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?')
       .run(hash, req.user.id);

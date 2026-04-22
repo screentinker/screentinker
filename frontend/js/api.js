@@ -121,6 +121,9 @@ export const api = {
   // Device Groups - Playlist
   groupAssignPlaylist: (groupId, playlist_id) => request(`/groups/${groupId}/assign-playlist`, { method: 'POST', body: JSON.stringify({ playlist_id }) }),
 
+  // Current user
+  updateMe: (data) => request('/auth/me', { method: 'PUT', body: JSON.stringify(data) }),
+
   // Admin - Users
   getUsers: () => request('/auth/users'),
   deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),

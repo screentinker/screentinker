@@ -17,6 +17,30 @@ export async function render(container) {
       </div>
     </div>
 
+    <div class="settings-section">
+      <h3>Account</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+        <div class="form-group"><label>Email</label><input type="email" class="input" value="${esc(user.email || '')}" disabled></div>
+        <div class="form-group"><label>Name</label><input type="text" id="acctName" class="input" value="${esc(user.name || '')}"></div>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="saveAcctBtn">Save Profile</button>
+
+      ${user.auth_provider === 'local' ? `
+      <div style="border-top:1px solid var(--border);margin-top:20px;padding-top:16px">
+        <h4 style="font-size:14px;margin-bottom:8px">Change Password</h4>
+        <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Must be at least 8 characters.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+          <div class="form-group"><label>Current Password</label><input type="password" id="acctCurrentPw" class="input" autocomplete="current-password"></div>
+          <div class="form-group"><label>New Password</label><input type="password" id="acctNewPw" class="input" autocomplete="new-password"></div>
+          <div class="form-group"><label>Confirm New Password</label><input type="password" id="acctConfirmPw" class="input" autocomplete="new-password"></div>
+        </div>
+        <button class="btn btn-primary btn-sm" id="changePwBtn">Change Password</button>
+      </div>
+      ` : `
+      <p style="color:var(--text-muted);font-size:12px;margin-top:16px">You sign in via <strong>${esc(user.auth_provider || 'SSO')}</strong>. Manage your password there.</p>
+      `}
+    </div>
+
     ${isAdmin ? `
     <div class="settings-section">
       <h3>License</h3>
@@ -254,6 +278,45 @@ export async function render(container) {
   document.getElementById('langSelect')?.addEventListener('change', (e) => {
     setLanguage(e.target.value);
     showToast('Language changed. Refresh for full effect.', 'info');
+  });
+
+  document.getElementById('saveAcctBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('acctName').value.trim();
+    if (!name) return showToast('Name cannot be empty', 'error');
+    const btn = document.getElementById('saveAcctBtn');
+    btn.disabled = true;
+    try {
+      const updated = await api.updateMe({ name });
+      const stored = JSON.parse(localStorage.getItem('user') || '{}');
+      localStorage.setItem('user', JSON.stringify({ ...stored, ...updated }));
+      showToast('Profile saved', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('changePwBtn')?.addEventListener('click', async () => {
+    const current = document.getElementById('acctCurrentPw').value;
+    const next = document.getElementById('acctNewPw').value;
+    const confirm = document.getElementById('acctConfirmPw').value;
+    if (!current) return showToast('Enter your current password', 'error');
+    if (next.length < 8) return showToast('New password must be at least 8 characters', 'error');
+    if (next !== confirm) return showToast('New passwords do not match', 'error');
+    const btn = document.getElementById('changePwBtn');
+    btn.disabled = true;
+    try {
+      await api.updateMe({ current_password: current, password: next });
+      document.getElementById('acctCurrentPw').value = '';
+      document.getElementById('acctNewPw').value = '';
+      document.getElementById('acctConfirmPw').value = '';
+      showToast('Password changed', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
