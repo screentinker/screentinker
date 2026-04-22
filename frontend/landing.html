@@ -120,12 +120,20 @@
     /* Horizontal-scroll wrapper for wide tables on mobile */
     .table-scroll { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
 
+    .nav-links { display:flex; align-items:center; flex-wrap:nowrap; }
+    .btn-short { display:none; }
     @media (max-width:768px) {
       /* Hide section anchor links on mobile; keep Sign In + primary CTA */
       .nav-links a:not(.btn) { display:none; }
-      .nav-links { margin-left:auto; }
-      .nav-inner { padding:12px 16px; }
-      .nav-links .btn { padding:8px 14px; font-size:13px; margin-left:8px; }
+      .nav-links { margin-left:auto; gap:8px; }
+      .nav-inner { padding:12px 14px; }
+      .nav-links .btn { padding:8px 12px; font-size:13px; margin-left:0 !important; flex-shrink:0; min-height:0; }
+      .btn-full { display:none; }
+      .btn-short { display:inline; }
+    }
+    @media (max-width:420px) {
+      .nav-logo-text { display:none; }
+    }
 
       .feature-grid { grid-template-columns:1fr; }
       .pricing-grid { grid-template-columns:1fr; }
@@ -147,7 +155,7 @@
     <div class="nav-inner">
       <div class="nav-logo">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        ScreenTinker
+        <span class="nav-logo-text">ScreenTinker</span>
       </div>
       <div class="nav-links">
         <a href="#features">Features</a>
@@ -155,7 +163,7 @@
         <a href="#pricing">Pricing</a>
         <a href="#compare">Compare</a>
         <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
-        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Start Free Trial</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px"><span class="btn-full">Start Free Trial</span><span class="btn-short">Try Free</span></a>
       </div>
     </div>
   </nav>
