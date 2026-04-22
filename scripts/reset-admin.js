@@ -13,7 +13,7 @@ const crypto = require('crypto');
 
 const nonce = crypto.randomBytes(8).toString('hex');
 const token = jwt.sign(
-  { id: 'recovery-' + nonce, email: 'admin@localhost', role: 'admin' },
+  { id: 'recovery-' + nonce, email: 'admin@localhost', role: 'admin', recovery: true },
   config.jwtSecret,
   { expiresIn: '1h' }
 );
