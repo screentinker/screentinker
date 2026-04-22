@@ -38,11 +38,10 @@
 
     /* Nav */
     nav { position:fixed; top:0; left:0; right:0; z-index:100; background:rgba(17,24,39,0.9); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); }
-    .nav-inner { max-width:1200px; margin:0 auto; padding:16px 24px; display:flex; align-items:center; gap:24px; }
+    .nav-inner { max-width:1200px; margin:0 auto; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; }
     .nav-logo { display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; color:var(--accent); flex-shrink:0; }
     .nav-links a { color:var(--muted); margin-left:24px; font-size:14px; transition:color 0.2s; }
     .nav-links a:hover { color:var(--text); }
-    .nav-signin { margin-left:auto; flex-shrink:0; }
     .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 20px; border-radius:8px; font-weight:600; font-size:14px; transition:all 0.2s; border:none; cursor:pointer; }
     .btn-primary { background:var(--accent); color:white; }
     .btn-primary:hover { background:#2563eb; }
@@ -127,7 +126,7 @@
       /* Hide section anchor links on mobile; keep Try Free + Sign In */
       .nav-links a:not(.btn) { display:none; }
       .nav-inner { padding:12px 14px; gap:8px; }
-      .nav-links .btn, .nav-signin { padding:8px 12px; font-size:13px; margin-left:0 !important; flex-shrink:0; min-height:0; }
+      .nav-links .btn { padding:8px 12px; font-size:13px; margin-left:8px !important; flex-shrink:0; min-height:0; }
       .btn-full { display:none; }
       .btn-short { display:inline; }
     }
@@ -162,9 +161,9 @@
         <a href="#platforms">Platforms</a>
         <a href="#pricing">Pricing</a>
         <a href="#compare">Compare</a>
-        <a href="/app#/login" class="btn btn-primary" style="margin-left:16px"><span class="btn-full">Start Free Trial</span><span class="btn-short">Try Free</span></a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px"><span class="btn-full">Start Free Trial</span><span class="btn-short">Try Free</span></a>
       </div>
-      <a href="/app#/login" class="btn btn-outline nav-signin">Sign In</a>
     </div>
   </nav>
 
