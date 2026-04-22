@@ -176,8 +176,13 @@ app.get('/api/content/:id/file', (req, res) => {
   const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
   if (!content) return res.status(404).json({ error: 'Content not found' });
   if (!content.filepath) return res.status(404).json({ error: 'No file (remote URL content)' });
-  const assigned = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
-  if (!assigned) return res.status(403).json({ error: 'Content not assigned to any playlist' });
+  const inPlaylist = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
+  // Scope widget lookup to content owner's widgets only — prevents a user from unlocking
+  // another user's content by creating their own widget that references the UUID.
+  // Perf note: LIKE scan on widgets.config is O(n) per request. Fine at current scale
+  // (<100 widgets); revisit with a content_widget_refs join table if this grows.
+  const inWidget = inPlaylist ? null : db.prepare('SELECT id FROM widgets WHERE user_id = ? AND config LIKE ? LIMIT 1').get(content.user_id, `%/api/content/${req.params.id}/%`);
+  if (!inPlaylist && !inWidget) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
   res.sendFile(safePath);
@@ -202,6 +207,8 @@ app.use('/api/provision', requireAuth, require('./routes/provisioning'));
 app.use('/api/layouts', requireAuth, require('./routes/layouts'));
 // Widget render is public (accessed by devices)
 app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
+// Rate limit preview endpoint — it inlines user content as base64 which is memory-intensive
+app.use('/api/widgets/preview', rateLimit(60000, 30));
 app.use('/api/widgets', (req, res, next) => { if (req._skipAuth) return next(); requireAuth(req, res, next); }, require('./routes/widgets'));
 app.use('/api/schedules', requireAuth, require('./routes/schedules'));
 app.use('/api/walls', requireAuth, require('./routes/video-walls'));
