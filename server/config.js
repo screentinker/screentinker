@@ -39,4 +39,7 @@ module.exports = {
   emailWebhookUrl: process.env.EMAIL_WEBHOOK_URL || '',
   // Self-hosted mode: if true, first user gets enterprise plan and no billing
   selfHosted: process.env.SELF_HOSTED === 'true',
+  // Disable public registration (OAuth auto-signup is also blocked when set).
+  // First-user setup is still allowed so a fresh install can be initialized.
+  disableRegistration: ['true', '1'].includes(String(process.env.DISABLE_REGISTRATION || '').toLowerCase()),
 };

@@ -25,8 +25,19 @@ function logSuccessfulLogin(userId, email, ip) {
 
 // ==================== Local Auth ====================
 
+// Returns true if new account creation is allowed at this moment.
+// First-user setup (empty DB) is always allowed so a fresh install can be initialized.
+function canRegister() {
+  if (!config.disableRegistration) return true;
+  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+  return userCount === 0;
+}
+
 // Register
 router.post('/register', (req, res) => {
+  if (!canRegister()) {
+    return res.status(403).json({ error: 'Public registration is disabled. Contact your administrator.' });
+  }
   const { email, password, name } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
@@ -94,6 +105,9 @@ router.post('/google', async (req, res) => {
     let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
 
     if (!user) {
+      if (!canRegister()) {
+        return res.status(403).json({ error: 'Public registration is disabled. Contact your administrator.' });
+      }
       const id = uuidv4();
       const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
       const role = userCount === 0 ? 'superadmin' : 'user';
@@ -169,6 +183,9 @@ router.post('/microsoft', async (req, res) => {
     let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
 
     if (!user) {
+      if (!canRegister()) {
+        return res.status(403).json({ error: 'Public registration is disabled. Contact your administrator.' });
+      }
       const id = uuidv4();
       const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
       const role = userCount === 0 ? 'superadmin' : 'user';
@@ -297,6 +314,7 @@ router.get('/config', (req, res) => {
     microsoftTenantId: config.microsoftTenantId,
     localEnabled: true,
     needsSetup: userCount === 0,
+    registration_enabled: !config.disableRegistration || userCount === 0,
   });
 });
 

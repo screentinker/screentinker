@@ -59,6 +59,7 @@ The server starts on port 3001 (HTTP). If SSL certificates are present in `serve
 | `PORT` | HTTP port | `3001` |
 | `HTTPS_PORT` | HTTPS port (used when SSL certs are present) | `3443` |
 | `SELF_HOSTED` | First user gets all features unlocked | `false` |
+| `DISABLE_REGISTRATION` | Block new account creation (including OAuth auto-signup). First-user setup on an empty DB is still allowed. | `false` |
 | `APP_URL` | Your public URL (used for Stripe callbacks) | _(none)_ |
 | `JWT_SECRET` | JWT signing key (auto-generated if not set) | _(auto)_ |
 | `SSL_CERT` | Path to SSL certificate | `server/certs/cert.pem` |

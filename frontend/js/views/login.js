@@ -12,6 +12,8 @@ async function loadAuthConfig() {
 export async function render(container) {
   const config = await loadAuthConfig();
   const isSetup = config.needsSetup;
+  // registration_enabled may be absent on older servers — treat as enabled for back-compat
+  const canRegister = config.registration_enabled !== false;
 
   container.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px">
@@ -26,7 +28,7 @@ export async function render(container) {
           <p style="color:var(--text-secondary);font-size:13px;margin-top:4px">
             ${isSetup ? 'Create your admin account to get started' : 'Sign in to manage your displays'}
           </p>
-          ${isSetup ? '' : '<p style="color:var(--warning);font-size:12px;margin-top:8px">New accounts get a 14-day free Pro trial</p>'}
+          ${!isSetup && canRegister ? '<p style="color:var(--warning);font-size:12px;margin-top:8px">New accounts get a 14-day free Pro trial</p>' : ''}
         </div>
 
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px">
@@ -49,7 +51,7 @@ export async function render(container) {
             <button class="btn btn-primary" id="loginBtn" style="width:100%;justify-content:center;padding:10px">
               ${isSetup ? 'Create Admin Account' : 'Sign In'}
             </button>
-            ${!isSetup ? `
+            ${!isSetup && canRegister ? `
             <button class="btn btn-secondary" id="showRegisterBtn" style="width:100%;justify-content:center;padding:10px;margin-top:8px">
               Create Account
             </button>
