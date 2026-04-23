@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { getLanguage, setLanguage, getAvailableLanguages } from '../i18n.js';
 import { esc } from '../utils.js';
+import { resetBranding } from '../branding.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
@@ -368,6 +369,7 @@ async function loadWhiteLabel() {
           hide_branding: document.getElementById('wlHideBranding').checked ? 1 : 0,
         })
       });
+      await resetBranding();
       showToast('Branding saved', 'success');
     } catch (err) {
       showToast(err.message, 'error');

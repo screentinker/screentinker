@@ -18,6 +18,7 @@ import * as teams from './views/teams.js';
 import * as admin from './views/admin.js';
 import * as designer from './views/designer.js';
 import * as playlists from './views/playlists.js';
+import { applyBranding } from './branding.js';
 
 const app = document.getElementById('app');
 const sidebar = document.querySelector('.sidebar');
@@ -203,6 +204,7 @@ function updateSidebarUser() {
 // Initialize
 if (isAuthenticated()) {
   connectSocket();
+  applyBranding();
 }
 
 // Register PWA service worker
