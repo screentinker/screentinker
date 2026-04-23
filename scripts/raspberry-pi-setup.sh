@@ -5,12 +5,12 @@
 # Player-Only: connects to an existing ScreenTinker server
 #
 # Usage:
-#   All-in-One:   curl -sSL https://screentinker.com/scripts/pi-setup.sh | sudo bash
-#   Player-Only:  curl -sSL https://screentinker.com/scripts/pi-setup.sh | sudo bash -s -- --player-only https://screentinker.com
+#   All-in-One:   curl -sSL https://screentinker.com/scripts/raspberry-pi-setup.sh | sudo bash
+#   Player-Only:  curl -sSL https://screentinker.com/scripts/raspberry-pi-setup.sh | sudo bash -s -- --player-only https://screentinker.com
 #
 # Or clone and run:
 #   git clone https://github.com/screentinker/screentinker.git
-#   cd screentinker/pi && sudo ./setup.sh
+#   cd screentinker/scripts && sudo ./raspberry-pi-setup.sh
 #
 # Works on Raspberry Pi OS Lite or Desktop (Bookworm / Bullseye)
 # Tested on Pi 3B+, Pi 4, Pi 5
@@ -42,15 +42,15 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --player-only) PLAYER_ONLY=true; shift ;;
         --help|-h)
-            echo "Usage: sudo ./setup.sh [OPTIONS] [SERVER_URL]"
+            echo "Usage: sudo ./raspberry-pi-setup.sh [OPTIONS] [SERVER_URL]"
             echo ""
             echo "Options:"
             echo "  --player-only URL    Player-only mode (no local server)"
             echo "  --help               Show this help"
             echo ""
             echo "Examples:"
-            echo "  sudo ./setup.sh                                    # All-in-One (interactive)"
-            echo "  sudo ./setup.sh --player-only https://screentinker.com"
+            echo "  sudo ./raspberry-pi-setup.sh                                    # All-in-One (interactive)"
+            echo "  sudo ./raspberry-pi-setup.sh --player-only https://screentinker.com"
             exit 0
             ;;
         http*) SERVER_URL="$1"; shift ;;
@@ -60,7 +60,7 @@ done
 
 # -- Root check --
 if [ "$(id -u)" -ne 0 ]; then
-    err "This script must be run as root. Try: sudo bash setup.sh"
+    err "This script must be run as root. Try: sudo bash raspberry-pi-setup.sh"
 fi
 
 # -- Architecture check --
