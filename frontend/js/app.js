@@ -34,6 +34,22 @@ function getCurrentUser() {
   } catch { return null; }
 }
 
+// Refresh the cached user from the server. The server reads plan_id fresh
+// from the DB on every request, but the frontend only wrote `user` into
+// localStorage at login — so plan/role changes made by an admin weren't
+// visible until the user logged out and back in.
+async function refreshCurrentUser() {
+  const token = localStorage.getItem('token');
+  if (!token) return;
+  try {
+    const res = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return;
+    const fresh = await res.json();
+    localStorage.setItem('user', JSON.stringify(fresh));
+    window.dispatchEvent(new CustomEvent('user-refreshed', { detail: fresh }));
+  } catch {}
+}
+
 function route() {
   // Cleanup previous view
   if (currentView && currentView.cleanup) currentView.cleanup();
@@ -205,7 +221,12 @@ function updateSidebarUser() {
 if (isAuthenticated()) {
   connectSocket();
   applyBranding();
+  refreshCurrentUser().then(() => updateSidebarUser());
 }
+
+// Refresh the cached user on every route transition so plan/role changes
+// made by an admin propagate without requiring a re-login.
+window.addEventListener('hashchange', () => { if (isAuthenticated()) refreshCurrentUser(); });
 
 // Register PWA service worker
 if ('serviceWorker' in navigator) {

@@ -6,7 +6,11 @@ import { resetBranding } from '../branding.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  // Fetch fresh user from the server — plan_id and role may have been changed
+  // by an admin since login. Fall back to localStorage if the request fails.
+  let user;
+  try { user = await api.getMe(); localStorage.setItem('user', JSON.stringify(user)); }
+  catch { user = JSON.parse(localStorage.getItem('user') || '{}'); }
   const isSuperAdmin = user.role === 'superadmin';
   const isAdmin = user.role === 'admin' || isSuperAdmin;
 
@@ -325,7 +329,8 @@ async function loadWhiteLabel() {
   const token = localStorage.getItem('token');
   const headers = { Authorization: `Bearer ${token}` };
 
-  // Only show white-label for enterprise/superadmin
+  // Only show white-label for enterprise/superadmin.
+  // Use the fresh user cached by render() above, which called api.getMe().
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const section = document.getElementById('whiteLabelSection');
   if (section && user.plan_id !== 'enterprise' && user.role !== 'superadmin') {
