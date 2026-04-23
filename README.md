@@ -3,6 +3,7 @@
 Open-source digital signage management software. Control content on TVs, displays, and kiosks from anywhere.
 
 **Hosted version:** [screentinker.com](https://screentinker.com) — free tier available, no credit card required.
+**Community:** [Discord](https://discord.gg/JHWQRPaG)
 
 ## Features
 
@@ -11,13 +12,13 @@ Open-source digital signage management software. Control content on TVs, display
 - **Multi-zone layouts** — split screens into zones with drag-and-drop editor; 7 built-in templates (fullscreen, split, L-bar, PiP, grid)
 - **Video walls** — combine multiple displays into one screen with bezel compensation, device rotation, and leader-based sync
 - **Remote control** — live view, touch injection, key input, power on/off
-- **Scheduling** — visual weekly calendar with recurrence rules (daily/weekly/monthly), priority-based conflict resolution, device-level and group-level schedules, device-level overrides, timezone support
+- **Scheduling** — visual weekly calendar with recurrence rules (daily/weekly/monthly), priority-based conflict resolution, both device-level and group-level schedules (device-level overrides win over group-level), timezone support
 - **Widgets** — clocks, weather, RSS tickers, text/HTML, webpages, social feeds, and Directory Board (scrolling lobby tenant/room/staff directories with dark/light themes, category management, and anti-burn-in motion)
 - **Kiosk mode** — interactive touchscreen interfaces
 - **Proof-of-play** — per-content and per-device analytics, hourly/daily breakdowns, CSV export for ad verification
 - **Device telemetry** — battery, storage, RAM, CPU, WiFi signal strength, and uptime reported by Android players
-- **Offline resilience** — players keep displaying cached content during server or network outages (Android ContentCache, web player Service Worker); state syncs when connectivity returns
-- **Mobile-responsive dashboard** — full management UI works on phones and tablets
+- **Offline resilience** — both web and Android players keep displaying cached content during server or internet outages (Android ContentCache, web player Service Worker); state syncs when connectivity returns
+- **Mobile-responsive** — full management dashboard and landing page work on phones and tablets
 - **Alerts** — email notifications when devices go offline
 - **Teams** — multi-user with owner, editor, and viewer roles; team-based device access
 - **White-label** — custom branding, colors, logo, favicon, CSS, and domain
@@ -25,7 +26,7 @@ Open-source digital signage management software. Control content on TVs, display
 - **Export/Import** — v2 format with playlists, device groups, schedules, and optional media bundling (ZIP); backward-compatible v1 import with automatic playlist migration
 - **Device authentication** — per-device tokens for secure WebSocket connections; devices authenticate on every reconnect
 - **Account management** — in-app password change, profile editing, email-based password reset
-- **Security** — JWT auth, bcrypt hashing, parameterized SQL, rate-limited endpoints, per-user ownership checks on all resources, ongoing XSS/IDOR audits
+- **Security** — JWT auth, bcrypt hashing, parameterized SQL, rate-limited endpoints, per-user ownership checks on all resources, ongoing auth/IDOR/XSS audits
 - **Built-in billing** — Stripe integration for SaaS subscriptions (optional)
 - **Auto-update** — OTA updates pushed to devices automatically
 - **Activity log** — full audit trail of user and system actions
