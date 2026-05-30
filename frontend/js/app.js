@@ -106,6 +106,12 @@ async function consumeAcceptInvite(inviteId) {
   try {
     const result = await api.acceptInvite(inviteId);
 
+    // Stash a toast message to show after reload.
+    localStorage.setItem(PENDING_INVITE_TOAST_KEY, JSON.stringify({
+      message: t('accept.success', { workspace: result?.workspace_name || '' }),
+      type: 'success'
+    }));
+
     // Switch to the joined workspace. New JWT carries the workspace context;
     // reload picks it up for sidebar /me + socket rooms + data fetches. If
     // the switch fails, log and reload anyway - the membership was created
