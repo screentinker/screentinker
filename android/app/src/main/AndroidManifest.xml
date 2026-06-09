@@ -17,7 +17,7 @@
 
     <application
         android:name=".RemoteDisplayApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@android:drawable/ic_media_play"
         android:label="RemoteDisplay"
         android:largeHeap="true"

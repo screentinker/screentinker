@@ -5,6 +5,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -17,6 +20,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class UpdateChecker(private val context: Context) {
@@ -107,6 +111,20 @@ class UpdateChecker(private val context: Context) {
 
             Log.i(TAG, "APK downloaded: ${apkFile.absolutePath} (${apkFile.length()} bytes)")
 
+            // SECURITY (#5 review): never install an APK we didn't sign. The update
+            // is fetched from a server-supplied URL, often over cleartext with no
+            // pinning - a MITM or compromised server could otherwise return a
+            // malicious APK and get it silently installed (REQUEST_INSTALL_PACKAGES).
+            // Verify the downloaded APK is our package AND signed by the same key as
+            // the currently-installed app before installing. An attacker can't forge
+            // our signature, so this holds even over an untrusted transport.
+            if (!verifyApkSignature(apkFile)) {
+                Log.e(TAG, "Refusing update: APK signature/package verification failed (tampered or MITM'd APK)")
+                apkFile.delete()
+                return
+            }
+            Log.i(TAG, "APK signature verified against installed app - proceeding to install")
+
             // Install the APK
             handler.post {
                 installApk(apkFile)
@@ -176,6 +194,56 @@ class UpdateChecker(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Package installer failed: ${e.message}")
+        }
+    }
+
+    // True only if the downloaded APK is this same package and shares a signing
+    // certificate with the installed app. Fail-closed on any error.
+    private fun verifyApkSignature(apkFile: File): Boolean {
+        return try {
+            val pm = context.packageManager
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
+            val downloaded = pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
+            if (downloaded == null) {
+                Log.e(TAG, "Could not parse downloaded APK")
+                return false
+            }
+            if (downloaded.packageName != context.packageName) {
+                Log.e(TAG, "APK package mismatch: ${downloaded.packageName} != ${context.packageName}")
+                return false
+            }
+            val installed = pm.getPackageInfo(context.packageName, flags)
+            val downloadedSigs = signingCertHashes(downloaded)
+            val installedSigs = signingCertHashes(installed)
+            if (downloadedSigs.isEmpty() || installedSigs.isEmpty()) {
+                Log.e(TAG, "Missing signing certificates (downloaded=${downloadedSigs.size}, installed=${installedSigs.size})")
+                return false
+            }
+            // Share at least one current signing certificate.
+            val match = downloadedSigs.any { it in installedSigs }
+            if (!match) Log.e(TAG, "APK signing certificate does not match installed app")
+            match
+        } catch (e: Exception) {
+            Log.e(TAG, "Signature verification error: ${e.message}", e)
+            false
+        }
+    }
+
+    private fun signingCertHashes(info: PackageInfo): Set<String> {
+        val sigs: Array<Signature>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners
+        } else {
+            @Suppress("DEPRECATION") info.signatures
+        }
+        return sigs?.mapNotNull { sha256(it.toByteArray()) }?.toSet() ?: emptySet()
+    }
+
+    private fun sha256(bytes: ByteArray): String? {
+        return try {
+            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            null
         }
     }
 
