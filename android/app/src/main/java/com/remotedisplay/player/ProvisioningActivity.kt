@@ -34,6 +34,7 @@ class ProvisioningActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var pairingSection: View
+    private lateinit var serverSection: View
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -73,6 +74,7 @@ class ProvisioningActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         progressBar = findViewById(R.id.progressBar)
         pairingSection = findViewById(R.id.pairingSection)
+        serverSection = findViewById(R.id.serverSection)
 
         // Pre-fill if previously entered
         if (config.serverUrl.isNotEmpty()) {
@@ -135,6 +137,10 @@ class ProvisioningActivity : AppCompatActivity() {
         wsService?.onRegistered = { deviceId ->
             runOnUiThread {
                 progressBar.visibility = View.GONE
+                // Hide the server/connect controls so the pairing code has the
+                // whole screen and stays visible on short/landscape phones.
+                serverSection.visibility = View.GONE
+                connectBtn.visibility = View.GONE
                 pairingSection.visibility = View.VISIBLE
                 pairingCodeText.text = wsService?.getPairingCode() ?: "------"
                 statusText.text = "Enter this code in the dashboard to pair this display"
