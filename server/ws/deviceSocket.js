@@ -305,8 +305,13 @@ module.exports = function setupDeviceSocket(io) {
               }
             }
           } else if (device_id || pairing_code) {
+            // device_id can be stale (e.g. a reconnect after the device row was
+            // deleted). device_fingerprints.device_id has an FK to devices(id), and
+            // INSERT OR IGNORE does NOT suppress FK violations - so null out an
+            // unknown id instead of letting it throw (was a caught, noisy error).
+            const fpDeviceId = (device_id && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(device_id)) ? device_id : null;
             db.prepare("INSERT OR IGNORE INTO device_fingerprints (fingerprint, device_id) VALUES (?, ?)")
-              .run(fingerprint, device_id || null);
+              .run(fingerprint, fpDeviceId);
           }
         } catch (e) {
           console.error('Fingerprint tracking error:', e.message);
