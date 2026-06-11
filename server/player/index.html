@@ -218,6 +218,7 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/player/schedule-eval.js"></script>
   <script>
     // ==================== i18n ====================
     // Lightweight inline i18n for the player. The player is a standalone page
@@ -251,18 +252,19 @@
         info_nothing: 'Nothing',
         info_na: 'N/A',
         info_sw: 'Service Worker',
+        nothing_scheduled: 'Nothing scheduled right now',
       },
       es: {
-        web_player: 'Reproductor web', server_url: 'URL del servidor', server_url_placeholder: 'https://signage.tudominio.com', connect: 'Conectar', pairing_code: 'Código de vinculación', pairing_hint: 'Ingresa este código en el panel para vincular esta pantalla', connecting: 'Conectando...', connecting_muted: 'Conectando (audio silenciado)...', info_title: 'Reproductor web ScreenTinker', info_close_hint: 'Presiona Atrás de nuevo o haz clic para cerrar', info_device_id: 'ID del dispositivo', info_device_name: 'Nombre del dispositivo', info_server: 'Servidor', info_status: 'Estado', info_now_playing: 'Reproduciendo', info_resolution: 'Resolución', info_uptime: 'Tiempo activo', info_platform: 'Plataforma', info_cache: 'Caché', info_connected: 'Conectado', info_disconnected: 'Desconectado', info_active: 'Activo', info_inactive: 'Inactivo', info_nothing: 'Nada', info_na: 'N/D', info_sw: 'Service Worker',
+        web_player: 'Reproductor web', server_url: 'URL del servidor', server_url_placeholder: 'https://signage.tudominio.com', connect: 'Conectar', pairing_code: 'Código de vinculación', pairing_hint: 'Ingresa este código en el panel para vincular esta pantalla', connecting: 'Conectando...', connecting_muted: 'Conectando (audio silenciado)...', info_title: 'Reproductor web ScreenTinker', info_close_hint: 'Presiona Atrás de nuevo o haz clic para cerrar', info_device_id: 'ID del dispositivo', info_device_name: 'Nombre del dispositivo', info_server: 'Servidor', info_status: 'Estado', info_now_playing: 'Reproduciendo', info_resolution: 'Resolución', info_uptime: 'Tiempo activo', info_platform: 'Plataforma', info_cache: 'Caché', info_connected: 'Conectado', info_disconnected: 'Desconectado', info_active: 'Activo', info_inactive: 'Inactivo', info_nothing: 'Nada', info_na: 'N/D', info_sw: 'Service Worker', nothing_scheduled: 'No hay nada programado en este momento',
       },
       fr: {
-        web_player: 'Lecteur web', server_url: 'URL du serveur', server_url_placeholder: 'https://signage.votredomaine.com', connect: 'Connecter', pairing_code: 'Code d’appairage', pairing_hint: 'Saisissez ce code dans le tableau de bord pour apparier cet écran', connecting: 'Connexion...', connecting_muted: 'Connexion (audio coupé)...', info_title: 'Lecteur web ScreenTinker', info_close_hint: 'Appuyez à nouveau sur Retour ou cliquez pour fermer', info_device_id: 'ID de l’appareil', info_device_name: 'Nom de l’appareil', info_server: 'Serveur', info_status: 'État', info_now_playing: 'En lecture', info_resolution: 'Résolution', info_uptime: 'Disponibilité', info_platform: 'Plateforme', info_cache: 'Cache', info_connected: 'Connecté', info_disconnected: 'Déconnecté', info_active: 'Actif', info_inactive: 'Inactif', info_nothing: 'Rien', info_na: 'N/D', info_sw: 'Service Worker',
+        web_player: 'Lecteur web', server_url: 'URL du serveur', server_url_placeholder: 'https://signage.votredomaine.com', connect: 'Connecter', pairing_code: 'Code d’appairage', pairing_hint: 'Saisissez ce code dans le tableau de bord pour apparier cet écran', connecting: 'Connexion...', connecting_muted: 'Connexion (audio coupé)...', info_title: 'Lecteur web ScreenTinker', info_close_hint: 'Appuyez à nouveau sur Retour ou cliquez pour fermer', info_device_id: 'ID de l’appareil', info_device_name: 'Nom de l’appareil', info_server: 'Serveur', info_status: 'État', info_now_playing: 'En lecture', info_resolution: 'Résolution', info_uptime: 'Disponibilité', info_platform: 'Plateforme', info_cache: 'Cache', info_connected: 'Connecté', info_disconnected: 'Déconnecté', info_active: 'Actif', info_inactive: 'Inactif', info_nothing: 'Rien', info_na: 'N/D', info_sw: 'Service Worker', nothing_scheduled: 'Rien de programmé pour le moment',
       },
       de: {
-        web_player: 'Web-Player', server_url: 'Server-URL', server_url_placeholder: 'https://signage.ihredomain.com', connect: 'Verbinden', pairing_code: 'Kopplungscode', pairing_hint: 'Geben Sie diesen Code im Dashboard ein, um diesen Bildschirm zu koppeln', connecting: 'Verbindung wird hergestellt...', connecting_muted: 'Verbindung (Audio stummgeschaltet)...', info_title: 'ScreenTinker Web-Player', info_close_hint: 'Erneut Zurück drücken oder klicken zum Schließen', info_device_id: 'Geräte-ID', info_device_name: 'Gerätename', info_server: 'Server', info_status: 'Status', info_now_playing: 'Aktuelle Wiedergabe', info_resolution: 'Auflösung', info_uptime: 'Betriebszeit', info_platform: 'Plattform', info_cache: 'Cache', info_connected: 'Verbunden', info_disconnected: 'Getrennt', info_active: 'Aktiv', info_inactive: 'Inaktiv', info_nothing: 'Nichts', info_na: 'N/V', info_sw: 'Service Worker',
+        web_player: 'Web-Player', server_url: 'Server-URL', server_url_placeholder: 'https://signage.ihredomain.com', connect: 'Verbinden', pairing_code: 'Kopplungscode', pairing_hint: 'Geben Sie diesen Code im Dashboard ein, um diesen Bildschirm zu koppeln', connecting: 'Verbindung wird hergestellt...', connecting_muted: 'Verbindung (Audio stummgeschaltet)...', info_title: 'ScreenTinker Web-Player', info_close_hint: 'Erneut Zurück drücken oder klicken zum Schließen', info_device_id: 'Geräte-ID', info_device_name: 'Gerätename', info_server: 'Server', info_status: 'Status', info_now_playing: 'Aktuelle Wiedergabe', info_resolution: 'Auflösung', info_uptime: 'Betriebszeit', info_platform: 'Plattform', info_cache: 'Cache', info_connected: 'Verbunden', info_disconnected: 'Getrennt', info_active: 'Aktiv', info_inactive: 'Inaktiv', info_nothing: 'Nichts', info_na: 'N/V', info_sw: 'Service Worker', nothing_scheduled: 'Derzeit ist nichts geplant',
       },
       pt: {
-        web_player: 'Player web', server_url: 'URL do servidor', server_url_placeholder: 'https://sign.seudominio.com', connect: 'Conectar', pairing_code: 'Código de pareamento', pairing_hint: 'Digite este código no painel para parear esta tela', connecting: 'Conectando...', connecting_muted: 'Conectando (áudio mudo)...', info_title: 'Player web ScreenTinker', info_close_hint: 'Pressione Voltar novamente ou clique para fechar', info_device_id: 'ID do dispositivo', info_device_name: 'Nome do dispositivo', info_server: 'Servidor', info_status: 'Status', info_now_playing: 'Reproduzindo', info_resolution: 'Resolução', info_uptime: 'Tempo ativo', info_platform: 'Plataforma', info_cache: 'Cache', info_connected: 'Conectado', info_disconnected: 'Desconectado', info_active: 'Ativo', info_inactive: 'Inativo', info_nothing: 'Nada', info_na: 'N/D', info_sw: 'Service Worker',
+        web_player: 'Player web', server_url: 'URL do servidor', server_url_placeholder: 'https://sign.seudominio.com', connect: 'Conectar', pairing_code: 'Código de pareamento', pairing_hint: 'Digite este código no painel para parear esta tela', connecting: 'Conectando...', connecting_muted: 'Conectando (áudio mudo)...', info_title: 'Player web ScreenTinker', info_close_hint: 'Pressione Voltar novamente ou clique para fechar', info_device_id: 'ID do dispositivo', info_device_name: 'Nome do dispositivo', info_server: 'Servidor', info_status: 'Status', info_now_playing: 'Reproduzindo', info_resolution: 'Resolução', info_uptime: 'Tempo ativo', info_platform: 'Plataforma', info_cache: 'Cache', info_connected: 'Conectado', info_disconnected: 'Desconectado', info_active: 'Ativo', info_inactive: 'Inativo', info_nothing: 'Nada', info_na: 'N/D', info_sw: 'Service Worker', nothing_scheduled: 'Nada programado no momento',
       },
     };
     const PLAYER_LANG = (() => {
@@ -326,6 +328,8 @@
     let playlist = [];
     let currentIndex = -1;
     let isPlaying = false;
+    let playerTimezone = null;      // #74/#75: device-effective IANA tz for schedule eval
+    let scheduleRetryTimer = null;  // re-check when every item is filtered out
     let heartbeatTimer = null;
     let refreshTimer = null;
     let remoteStreaming = false;
@@ -530,10 +534,8 @@
         console.log('Restored cached playlist:', cachedPlaylist.length, 'items');
         playlist = cachedPlaylist;
         layout = loadLayoutCache();
-        currentIndex = 0;
-        isPlaying = true;
         document.getElementById('setupScreen').style.display = 'none';
-        playCurrentItem();
+        startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
       }
 
       // Always show the tap overlay on cold load. Browser autoplay policy is
@@ -876,6 +878,9 @@
             wifi_ssid: 'Web Player',
             wifi_rssi: null,
             uptime_seconds: Math.floor(performance.now() / 1000),
+            // #74/#75: report OS timezone + UTC clock (effective-tz resolution + skew indicator)
+            timezone: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { return null; } })(),
+            device_utc: Date.now(),
           }
         });
       }, HEARTBEAT_INTERVAL);
@@ -1040,8 +1045,9 @@
       }
 
       const newItems = data.assignments || [];
-      // Build fingerprint from id + url + filename to detect any content change
-      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}`).join(',');
+      // Build fingerprint from id + url + filename to detect any content change.
+      // #74/#75: include schedules so a schedule edit (same content) is detected too.
+      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}`).join(',');
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
 
@@ -1075,6 +1081,7 @@
 
       layout = data.layout || null;
       saveLayoutCache(layout);
+      playerTimezone = data.timezone || null; // #74/#75: effective tz for schedule eval
 
       if (newFp === oldFp && playlist.length > 0 && !wallChanged) {
         console.log('Playlist unchanged');
@@ -1127,9 +1134,44 @@
       }
       if (nextIdx === -1) nextIdx = 0;
 
-      currentIndex = nextIdx;
-      isPlaying = true;
-      playCurrentItem();
+      startPlaybackAt(nextIdx);
+    }
+
+    // #74/#75: per-item schedule gate. No blocks = always on. Evaluated in the
+    // device's effective timezone via the shared evaluator. Never let a scheduling
+    // hiccup stop playback.
+    function scheduleAllows(item) {
+      if (!item || !item.schedules || !item.schedules.length) return true;
+      try { return window.ScheduleEval ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), playerTimezone) : true; }
+      catch (e) { return true; }
+    }
+    function nextActiveIndex(from) {
+      if (!playlist.length) return -1;
+      for (let i = 1; i <= playlist.length; i++) {
+        const idx = (from + i) % playlist.length;
+        if (scheduleAllows(playlist[idx])) return idx;
+      }
+      return -1;
+    }
+    // Every item filtered out: show the idle screen and re-check shortly (a daypart
+    // may begin). Re-evaluated at item boundaries otherwise, per the locked design.
+    function showNothingScheduled() {
+      teardownCurrentMedia();
+      showStatus(_t('nothing_scheduled'));
+      isPlaying = false;
+      clearTimeout(scheduleRetryTimer);
+      scheduleRetryTimer = setTimeout(() => {
+        const idx = nextActiveIndex(currentIndex);
+        if (idx !== -1) { currentIndex = idx; isPlaying = true; playCurrentItem(); }
+        else showNothingScheduled();
+      }, 30000);
+    }
+    function startPlaybackAt(idx) {
+      clearTimeout(scheduleRetryTimer);
+      if (scheduleAllows(playlist[idx])) { currentIndex = idx; isPlaying = true; playCurrentItem(); return; }
+      const a = nextActiveIndex(idx);
+      if (a !== -1) { currentIndex = a; isPlaying = true; playCurrentItem(); }
+      else { currentIndex = idx; showNothingScheduled(); }
     }
 
     function playCurrentItem() {
@@ -1177,7 +1219,11 @@
         });
       }
 
-      currentIndex = (currentIndex + 1) % playlist.length;
+      // #74/#75: advance to the next item whose schedule allows it now (skip
+      // filtered items); idle if none are active.
+      const idx = nextActiveIndex(currentIndex);
+      if (idx === -1) { showNothingScheduled(); return; }
+      currentIndex = idx;
       playCurrentItem();
     }
 
@@ -1479,6 +1525,20 @@
       }
     }
 
+    // #74/#75 zone-level schedule helpers.
+    function zoneNextActive(items, from) {
+      for (let i = 0; i < items.length; i++) {
+        const idx = (from + i) % items.length;
+        if (scheduleAllows(items[idx])) return idx;
+      }
+      return -1;
+    }
+    function showZoneEmpty(zone, div, items) {
+      div.querySelectorAll('video').forEach(v => { try { v.pause(); } catch (e) {} });
+      div.innerHTML = '';
+      zoneTimers[zone.id] = setTimeout(() => showZoneItem(zone, div, items, 0), 30000);
+    }
+
     function renderZones(container, defaultItem) {
       clearZoneTimers();
       // Group assignments by zone, ordered by sort_order so each zone rotates its
@@ -1513,8 +1573,14 @@
     // loop / don't advance.
     function showZoneItem(zone, div, items, index) {
       if (zoneTimers[zone.id]) { clearTimeout(zoneTimers[zone.id]); delete zoneTimers[zone.id]; }
+      // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
+      const activeIdx = zoneNextActive(items, index);
+      if (activeIdx === -1) { showZoneEmpty(zone, div, items); return; }
+      index = activeIdx;
       const a = items[index % items.length];
-      const multi = items.length > 1;
+      // Scheduled zones must cycle (even a lone active item) so windows re-evaluate
+      // at each transition rather than a loop ignoring the window end.
+      const multi = items.length > 1 || items.some(it => it.schedules && it.schedules.length);
       const advance = () => showZoneItem(zone, div, items, index + 1);
       // Tear down any prior media in this zone before swapping.
       div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });

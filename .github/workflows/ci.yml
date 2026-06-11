@@ -33,6 +33,23 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  android-test:
+    name: Android unit tests (Kotlin schedule evaluator vectors)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      # ScheduleEvalTest reads the SHARED shared/schedule-vectors.json (wired via
+      # the test task in app/build.gradle.kts), so a ScheduleEval.kt change that
+      # breaks the contract fails here.
+      - name: Kotlin evaluator vector conformance
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
   smoke:
     name: Boot smoke + version check
     runs-on: ubuntu-latest

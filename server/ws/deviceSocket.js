@@ -75,7 +75,7 @@ function logDeviceStatus(deviceId, status) {
 // Build playlist payload with layout and zones
 // Reads from published_snapshot (Phase 3) so draft edits don't affect live devices
 function buildPlaylistPayload(deviceId) {
-  const device = db.prepare('SELECT playlist_id, layout_id, orientation, wall_id FROM devices WHERE id = ?').get(deviceId);
+  const device = db.prepare('SELECT playlist_id, layout_id, orientation, wall_id, timezone, reported_timezone FROM devices WHERE id = ?').get(deviceId);
 
   let assignments = [];
   if (device?.playlist_id) {
@@ -164,7 +164,12 @@ function buildPlaylistPayload(deviceId) {
     assignments = assignments.map(a => (a && a.zone_id != null ? { ...a, zone_id: null } : a));
   }
 
-  return { assignments, layout, orientation: device?.orientation || 'landscape', wall_config };
+  // #74/#75: the effective IANA timezone the player evaluates schedule blocks in.
+  // An explicit (non-default) devices.timezone override wins; otherwise the player's
+  // last OS-reported zone; otherwise null = the player trusts its own OS clock.
+  const tzOverride = (device?.timezone && device.timezone !== 'UTC') ? device.timezone : null;
+  const timezone = tzOverride || device?.reported_timezone || null;
+  return { assignments, layout, orientation: device?.orientation || 'landscape', wall_config, timezone };
 }
 
 // Check if a device should show trial expired screen
@@ -484,6 +489,13 @@ module.exports = function setupDeviceSocket(io) {
           telemetry.uptime_seconds ?? null
         );
         pruneTelemetry(device_id);
+
+        // #74/#75: capture the player's reported clock (OS IANA zone + its UTC time)
+        // for effective-timezone resolution and the dashboard clock-skew indicator.
+        if (telemetry.timezone || telemetry.device_utc != null) {
+          db.prepare("UPDATE devices SET reported_timezone = COALESCE(?, reported_timezone), reported_utc = ?, reported_at = strftime('%s','now') WHERE id = ?")
+            .run(telemetry.timezone || null, telemetry.device_utc ?? null, device_id);
+        }
 
         emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', {
           device_id,

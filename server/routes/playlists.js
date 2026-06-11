@@ -65,8 +65,8 @@ function requirePlaylistWrite(req, res, next) {
 
 // Build the snapshot item list for a playlist (denormalized for device payload)
 function buildSnapshotItems(playlistId) {
-  return db.prepare(`
-    SELECT pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec,
+  const items = db.prepare(`
+    SELECT pi.id AS _iid, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec,
            COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
            c.duration_sec as content_duration, c.remote_url,
            w.name as widget_name, w.widget_type, w.config as widget_config
@@ -76,6 +76,29 @@ function buildSnapshotItems(playlistId) {
     WHERE pi.playlist_id = ?
     ORDER BY pi.sort_order ASC
   `).all(playlistId);
+  // #74/#75: attach per-item schedule blocks (the player honours these in its own
+  // local time via the shared evaluator). An item with zero blocks gets no
+  // `schedules` field -> always on. Additive: old players ignore the field. _iid is
+  // only used here to fetch blocks and is then dropped (snapshot stays id-free).
+  for (const it of items) {
+    const blocks = schedulesForItem(it._iid);
+    if (blocks.length) it.schedules = blocks;
+    delete it._iid;
+  }
+  return items;
+}
+
+// Map an item's schedule rows into the evaluator's block shape.
+function schedulesForItem(itemId) {
+  return db.prepare(
+    'SELECT active_days, start_time, end_time, start_date, end_date FROM playlist_item_schedules WHERE playlist_item_id = ? ORDER BY sort_order ASC, created_at ASC'
+  ).all(itemId).map(r => ({
+    days: String(r.active_days || '').split(',').filter(s => s !== '').map(Number),
+    start: r.start_time,
+    end: r.end_time,
+    start_date: r.start_date || null,
+    end_date: r.end_date || null,
+  }));
 }
 
 // Mark playlist as draft (called after item mutations from the playlist detail UI)
@@ -273,7 +296,50 @@ router.get('/:id/items', requirePlaylistRead, (req, res) => {
     WHERE pi.playlist_id = ?
     ORDER BY pi.sort_order ASC
   `).all(req.params.id);
+  for (const it of items) it.schedules = schedulesForItem(it.id); // #74/#75: editor needs the blocks
   res.json(items);
+});
+
+// --- Per-item schedule blocks (#74 dayparting + #75 expiry) ---
+// Same permission as editing items (requirePlaylistWrite). Block shape mirrors the
+// evaluator: { days:[0-6], start:"HH:MM", end:"HH:MM"|"24:00", start_date, end_date }.
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+function validateBlocks(blocks) {
+  if (!Array.isArray(blocks)) return 'blocks must be an array';
+  for (const b of blocks) {
+    if (!b || typeof b !== 'object') return 'each block must be an object';
+    if (!Array.isArray(b.days) || b.days.length === 0 || !b.days.every(d => Number.isInteger(d) && d >= 0 && d <= 6)) return 'days must be a non-empty array of integers 0-6';
+    if (!TIME_RE.test(b.start)) return 'start must be HH:MM (00:00-23:59)';
+    if (!(TIME_RE.test(b.end) || b.end === '24:00')) return 'end must be HH:MM or 24:00';
+    for (const k of ['start_date', 'end_date']) if (b[k] != null && !DATE_RE.test(b[k])) return `${k} must be YYYY-MM-DD or null`;
+  }
+  return null;
+}
+function itemInPlaylist(itemId, playlistId) {
+  return db.prepare('SELECT id FROM playlist_items WHERE id = ? AND playlist_id = ?').get(itemId, playlistId);
+}
+
+router.get('/:id/items/:itemId/schedules', requirePlaylistRead, (req, res) => {
+  const item = itemInPlaylist(req.params.itemId, req.params.id);
+  if (!item) return res.status(404).json({ error: 'Item not found' });
+  res.json(schedulesForItem(item.id));
+});
+
+// Replace an item's schedule blocks wholesale ([] = no schedule = always on).
+router.put('/:id/items/:itemId/schedules', requirePlaylistWrite, (req, res) => {
+  const item = itemInPlaylist(req.params.itemId, req.params.id);
+  if (!item) return res.status(404).json({ error: 'Item not found' });
+  const blocks = req.body.blocks;
+  const err = validateBlocks(blocks);
+  if (err) return res.status(400).json({ error: err });
+  const ins = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
+  db.transaction(() => {
+    db.prepare('DELETE FROM playlist_item_schedules WHERE playlist_item_id = ?').run(item.id);
+    blocks.forEach((b, i) => ins.run(uuidv4(), item.id, b.days.join(','), b.start, b.end, b.start_date || null, b.end_date || null, i));
+  })();
+  markDraft(req.params.id); // schedule changes affect playback -> draft until re-published
+  res.json(schedulesForItem(item.id));
 });
 
 // Phase 2.2k: add item closes 2 pre-existing cross-tenant leaks:

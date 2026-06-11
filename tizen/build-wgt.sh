@@ -14,6 +14,10 @@ FILES="config.xml index.html icon.png css js"
 [ -d "$HOME/tizen-studio/tools/ide/bin" ] && export PATH="$HOME/tizen-studio/tools/ide/bin:$PATH"
 rm -f "$OUT"
 
+# #74/#75: refresh the bundled schedule evaluator from the single source so the
+# .wgt always ships the canonical (byte-identical) copy, never a stale duplicate.
+cp ../server/lib/schedule-eval.js js/schedule-eval.js
+
 if command -v tizen >/dev/null 2>&1; then
   PROFILE="${1:-ScreenTinker}"
   echo "Tizen CLI found — signing with profile '$PROFILE'…"

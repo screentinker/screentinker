@@ -19,7 +19,8 @@ data class PlaylistItem(
     val remoteUrl: String? = null,
     val muted: Boolean = false,
     val widgetId: String? = null,
-    val widgetType: String? = null
+    val widgetType: String? = null,
+    val schedules: List<ScheduleEval.Block> = emptyList()
 ) {
     val isRemote: Boolean get() = !remoteUrl.isNullOrEmpty()
     // Widget assignments have a widget_id and no downloadable content file.
@@ -29,15 +30,22 @@ data class PlaylistItem(
 class PlaylistController(
     private val onItemChanged: (PlaylistItem?) -> Unit,
     private val onPlaylistEmpty: () -> Unit,
-    private val onRequestRefresh: (() -> Unit)? = null
+    private val onRequestRefresh: (() -> Unit)? = null,
+    private val onNothingScheduled: (() -> Unit)? = null
 ) {
     private val items = mutableListOf<PlaylistItem>()
     private var currentIndex = -1
     private val handler = Handler(Looper.getMainLooper())
     private var advanceRunnable: Runnable? = null
     private var isRunning = false
+    // #74/#75: per-item scheduling state
+    @Volatile private var effectiveTimezone: String? = null
+    private var retryRunnable: Runnable? = null
 
     val isPlaying: Boolean get() = isRunning && currentIndex >= 0
+
+    /** #74/#75: device-effective IANA timezone for per-item schedule evaluation. */
+    fun setTimezone(tz: String?) { effectiveTimezone = tz }
 
     val currentItem: PlaylistItem?
         get() = if (currentIndex in items.indices) items[currentIndex] else null
@@ -67,15 +75,22 @@ class PlaylistController(
                     remoteUrl = if (obj.isNull("remote_url")) null else obj.optString("remote_url", "").ifEmpty { null },
                     muted = obj.optInt("muted", 0) == 1,
                     widgetId = if (obj.isNull("widget_id")) null else obj.optString("widget_id", "").ifEmpty { null },
-                    widgetType = if (obj.isNull("widget_type")) null else obj.optString("widget_type", "").ifEmpty { null }
+                    widgetType = if (obj.isNull("widget_type")) null else obj.optString("widget_type", "").ifEmpty { null },
+                    schedules = parseSchedules(obj.optJSONArray("schedules"))
                 )
             )
         }
 
         // Check if playlist actually changed (key on content OR widget id, since
         // widget items share an empty contentId).
-        val oldContentIds = items.map { it.contentId + "|" + (it.widgetId ?: "") }
-        val newContentIds = newItems.map { it.contentId + "|" + (it.widgetId ?: "") }
+        // #74/#75: a schedule edit changes playback even when content is identical, so
+        // the change signature must include schedules (else updated blocks are dropped).
+        fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" +
+            it.schedules.joinToString(";") { b ->
+                b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
+            }
+        val oldContentIds = items.map(::sig)
+        val newContentIds = newItems.map(::sig)
         val playlistChanged = oldContentIds != newContentIds
 
         if (!playlistChanged && items.isNotEmpty()) {
@@ -106,9 +121,10 @@ class PlaylistController(
                     return
                 }
             }
-            // Current item was removed or nothing was playing - start from beginning
-            currentIndex = 0
-            playCurrentItem()
+            // Current item was removed or nothing was playing - start from the first
+            // schedule-active item; idle if none are active right now.
+            val idx = firstActiveIndex()
+            if (idx >= 0) { currentIndex = idx; playCurrentItem() } else showNothingScheduled()
         } else {
             currentIndex = 0
         }
@@ -130,12 +146,12 @@ class PlaylistController(
 
     fun start() {
         isRunning = true
-        if (items.isNotEmpty()) {
-            if (currentIndex < 0) currentIndex = 0
-            playCurrentItem()
-        } else {
-            onPlaylistEmpty()
-        }
+        if (items.isEmpty()) { onPlaylistEmpty(); return }
+        // #74/#75: begin on the first schedule-active item; idle if none.
+        val idx = firstActiveIndex()
+        if (idx < 0) { showNothingScheduled(); return }
+        currentIndex = idx
+        playCurrentItem()
     }
 
     fun startIfNeeded() {
@@ -156,13 +172,17 @@ class PlaylistController(
     fun stop() {
         isRunning = false
         cancelAdvance()
+        cancelRetry()
     }
 
     fun next() {
         if (items.isEmpty()) return
-        currentIndex = (currentIndex + 1) % items.size
         // Request a playlist refresh between plays so new content gets picked up
         onRequestRefresh?.invoke()
+        // #74/#75: advance to the next item the schedule allows now; idle if none.
+        val idx = nextActiveIndex(currentIndex)
+        if (idx < 0) { showNothingScheduled(); return }
+        currentIndex = idx
         playCurrentItem()
     }
 
@@ -173,6 +193,7 @@ class PlaylistController(
 
     private fun playCurrentItem() {
         cancelAdvance()
+        cancelRetry()
         val item = currentItem ?: return
         Log.i("PlaylistController", "Playing: ${item.filename} (index $currentIndex)")
         onItemChanged(item)
@@ -193,5 +214,65 @@ class PlaylistController(
     private fun cancelAdvance() {
         advanceRunnable?.let { handler.removeCallbacks(it) }
         advanceRunnable = null
+    }
+
+    private fun cancelRetry() {
+        retryRunnable?.let { handler.removeCallbacks(it) }
+        retryRunnable = null
+    }
+
+    // #74/#75 schedule helpers ---------------------------------------------------
+    private fun scheduleAllows(item: PlaylistItem): Boolean =
+        item.schedules.isEmpty() ||
+            ScheduleEval.isItemActiveNow(item.schedules, System.currentTimeMillis(), effectiveTimezone)
+
+    private fun firstActiveIndex(): Int {
+        for (i in items.indices) if (scheduleAllows(items[i])) return i
+        return -1
+    }
+
+    private fun nextActiveIndex(from: Int): Int {
+        if (items.isEmpty()) return -1
+        for (i in 1..items.size) {
+            val idx = (from + i) % items.size
+            if (scheduleAllows(items[idx])) return idx
+        }
+        return -1
+    }
+
+    // Every item filtered out: show the idle screen and re-check shortly, since a
+    // daypart may open. (Boundary re-evaluation otherwise happens on advance.)
+    private fun showNothingScheduled() {
+        cancelAdvance()
+        (onNothingScheduled ?: onPlaylistEmpty)()
+        cancelRetry()
+        retryRunnable = Runnable {
+            if (isRunning && items.isNotEmpty()) {
+                val idx = firstActiveIndex()
+                if (idx >= 0) { currentIndex = idx; playCurrentItem() } else showNothingScheduled()
+            }
+        }
+        handler.postDelayed(retryRunnable!!, 30_000L)
+    }
+
+    private fun parseSchedules(arr: JSONArray?): List<ScheduleEval.Block> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<ScheduleEval.Block>(arr.length())
+        for (j in 0 until arr.length()) {
+            val s = arr.getJSONObject(j)
+            val d = s.getJSONArray("days")
+            val days = HashSet<Int>(d.length())
+            for (k in 0 until d.length()) days.add(d.getInt(k))
+            out.add(
+                ScheduleEval.Block(
+                    days = days,
+                    start = s.getString("start"),
+                    end = s.getString("end"),
+                    startDate = if (s.isNull("start_date")) null else s.optString("start_date").ifEmpty { null },
+                    endDate = if (s.isNull("end_date")) null else s.optString("end_date").ifEmpty { null }
+                )
+            )
+        }
+        return out
     }
 }

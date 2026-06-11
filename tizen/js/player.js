@@ -7,6 +7,17 @@
  *   widget       -> iframe of {server}/api/widgets/{id}/render for duration_sec
  * Content file URL: {server}/api/content/{content_id}/file  (public)
  */
+// Minimal i18n for the Tizen player (no shared i18n module here). Falls back to en.
+var TIZEN_I18N = {
+  en: { nothing_scheduled: 'Nothing scheduled right now', no_content: 'No content assigned yet' },
+  es: { nothing_scheduled: 'No hay nada programado en este momento', no_content: 'Aún no hay contenido asignado' },
+  fr: { nothing_scheduled: 'Rien de programmé pour le moment', no_content: 'Aucun contenu attribué pour l’instant' },
+  de: { nothing_scheduled: 'Derzeit ist nichts geplant', no_content: 'Noch kein Inhalt zugewiesen' },
+  pt: { nothing_scheduled: 'Nada programado no momento', no_content: 'Nenhum conteúdo atribuído ainda' }
+};
+var TZ_LANG = (function () { try { return (localStorage.getItem('rd_lang') || navigator.language || 'en').split('-')[0]; } catch (e) { return 'en'; } })();
+function tzt(k) { return (TIZEN_I18N[TZ_LANG] && TIZEN_I18N[TZ_LANG][k]) || TIZEN_I18N.en[k] || k; }
+
 function PlaylistPlayer(stageEl, getBase) {
   this.stage = stageEl;
   this.getBase = getBase;
@@ -14,6 +25,7 @@ function PlaylistPlayer(stageEl, getBase) {
   this.index = 0;
   this.timer = null;
   this.sig = '';
+  this.timezone = null; // #74/#75: device-effective IANA tz for schedule eval
   this.DEFAULT_DURATION = 10;
   this.MIN_DURATION = 3;
 }
@@ -26,14 +38,15 @@ PlaylistPlayer.prototype.load = function (assignments) {
   items.sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); });
 
   var sig = JSON.stringify(items.map(function (a) {
-    return [a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type];
+    // #74/#75: include schedules so a schedule edit (same content) re-renders.
+    return [a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.schedules || []];
   }));
   if (sig === this.sig && this.items.length) return; // unchanged, keep playing
 
   this.sig = sig;
   this.items = items;
   this.index = 0;
-  this.playCurrent();
+  this.startPlayback();
 };
 
 PlaylistPlayer.prototype.stop = function () {
@@ -52,7 +65,7 @@ PlaylistPlayer.prototype.idle = function () {
   this.clearStage();
   this.stage.innerHTML =
     '<div class="card" style="position:relative"><h1>ScreenTinker</h1>' +
-    '<p class="sub">No content assigned yet</p></div>';
+    '<p class="sub">' + tzt('no_content') + '</p></div>';
 };
 
 PlaylistPlayer.prototype.durationMs = function (item) {
@@ -69,7 +82,10 @@ PlaylistPlayer.prototype.contentUrl = function (item) {
 
 PlaylistPlayer.prototype.advance = function () {
   if (!this.items.length) return;
-  this.index = (this.index + 1) % this.items.length;
+  // #74/#75: advance to the next schedule-active item; idle if none.
+  var idx = this.nextActiveIndex(this.index);
+  if (idx < 0) { this.nothingScheduled(); return; }
+  this.index = idx;
   this.playCurrent();
 };
 
@@ -79,12 +95,65 @@ PlaylistPlayer.prototype.schedule = function (ms) {
   this.timer = setTimeout(function () { self.advance(); }, ms);
 };
 
+// #74/#75: per-item schedule gating (mirrors the web/Android players). No blocks =
+// always on. Fails open: any evaluator error means the item plays.
+PlaylistPlayer.prototype.setTimezone = function (tz) { this.timezone = tz || null; };
+
+PlaylistPlayer.prototype.scheduleAllows = function (item) {
+  if (!item || !item.schedules || !item.schedules.length) return true;
+  try {
+    return (typeof ScheduleEval !== 'undefined')
+      ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), this.timezone) : true;
+  } catch (e) { return true; }
+};
+
+PlaylistPlayer.prototype.anyScheduled = function () {
+  for (var i = 0; i < this.items.length; i++) {
+    if (this.items[i].schedules && this.items[i].schedules.length) return true;
+  }
+  return false;
+};
+
+PlaylistPlayer.prototype.firstActiveIndex = function () {
+  for (var i = 0; i < this.items.length; i++) if (this.scheduleAllows(this.items[i])) return i;
+  return -1;
+};
+
+PlaylistPlayer.prototype.nextActiveIndex = function (from) {
+  if (!this.items.length) return -1;
+  for (var i = 1; i <= this.items.length; i++) {
+    var idx = (from + i) % this.items.length;
+    if (this.scheduleAllows(this.items[idx])) return idx;
+  }
+  return -1;
+};
+
+PlaylistPlayer.prototype.startPlayback = function () {
+  if (!this.items.length) { this.idle(); return; }
+  var idx = this.firstActiveIndex();
+  if (idx < 0) { this.nothingScheduled(); return; }
+  this.index = idx;
+  this.playCurrent();
+};
+
+// Every item filtered out: idle and re-check shortly (a daypart may open).
+PlaylistPlayer.prototype.nothingScheduled = function () {
+  if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  this.clearStage();
+  this.stage.innerHTML =
+    '<div class="card" style="position:relative"><h1>ScreenTinker</h1>' +
+    '<p class="sub">' + tzt('nothing_scheduled') + '</p></div>';
+  var self = this;
+  this.timer = setTimeout(function () { self.startPlayback(); }, 30000);
+};
+
 PlaylistPlayer.prototype.playCurrent = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
   if (!this.items.length) { this.idle(); return; }
 
   var item = this.items[this.index];
-  var single = this.items.length === 1;
+  // Scheduled playlists cycle even with one active item so windows re-evaluate.
+  var single = this.items.length === 1 && !this.anyScheduled();
   var mime = item.mime_type || '';
   this.clearStage();
 

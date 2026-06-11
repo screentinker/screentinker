@@ -228,6 +228,14 @@ app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
   });
 });
 
+// #74/#75: serve the canonical schedule evaluator to the web player from the
+// single source (server/lib/schedule-eval.js) so it can never drift from the
+// server/Node-test copy. Registered before the static handler so it wins.
+app.get('/player/schedule-eval.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'schedule-eval.js'));
+});
+
 // Serve web player at /player (same no-cache for JS/HTML). The index.html
 // route above intercepts the HTML requests; everything else still falls
 // through to this static handler (debug-overlay.js, sw.js, manifest, etc).

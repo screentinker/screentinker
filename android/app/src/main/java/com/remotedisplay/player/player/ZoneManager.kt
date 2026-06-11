@@ -51,6 +51,10 @@ class ZoneManager(
         private set
     var lastAssignmentSig: String? = null
 
+    // #74/#75: device-effective IANA timezone for per-item schedule evaluation.
+    @Volatile private var effectiveTimezone: String? = null
+    fun setTimezone(tz: String?) { effectiveTimezone = tz }
+
     fun hasZones(): Boolean = zones.isNotEmpty()
 
     fun setupZones(zonesJson: JSONArray, layoutId: String? = null) {
@@ -120,6 +124,35 @@ class ZoneManager(
         Log.i(TAG, "Rendered ${zoneViews.size} zone views")
     }
 
+    // #74/#75 zone schedule helpers.
+    private fun assignmentAllows(a: JSONObject): Boolean {
+        val arr = a.optJSONArray("schedules") ?: return true
+        if (arr.length() == 0) return true
+        val blocks = ArrayList<ScheduleEval.Block>(arr.length())
+        for (j in 0 until arr.length()) {
+            val s = arr.getJSONObject(j)
+            val d = s.getJSONArray("days")
+            val days = HashSet<Int>(d.length())
+            for (k in 0 until d.length()) days.add(d.getInt(k))
+            blocks.add(
+                ScheduleEval.Block(
+                    days, s.getString("start"), s.getString("end"),
+                    if (s.isNull("start_date")) null else s.optString("start_date").ifEmpty { null },
+                    if (s.isNull("end_date")) null else s.optString("end_date").ifEmpty { null }
+                )
+            )
+        }
+        return ScheduleEval.isItemActiveNow(blocks, System.currentTimeMillis(), effectiveTimezone)
+    }
+
+    private fun zoneNextActive(assignments: List<JSONObject>, from: Int): Int {
+        for (i in assignments.indices) {
+            val idx = (from + i) % assignments.size
+            if (assignmentAllows(assignments[idx])) return idx
+        }
+        return -1
+    }
+
     // Render assignment[index] in a zone, replacing its current view. If the zone
     // has more than one assignment it rotates: images/widgets advance on a duration
     // timer; videos advance when they end (single-item zones loop the video).
@@ -128,9 +161,17 @@ class ZoneManager(
         zoneViews.remove(zone.id)?.let { container.removeView(it) }
         zoneExoPlayers.remove(zone.id)?.release()
 
-        val a = assignments[index % assignments.size]
-        val multi = assignments.size > 1
-        val advance: () -> Unit = { showZoneItem(zone, assignments, index + 1, params) }
+        // #74/#75: skip items whose schedule excludes them now; blank-idle the zone
+        // and re-check shortly (a daypart may open) if none are active.
+        val activeIdx = zoneNextActive(assignments, index)
+        if (activeIdx < 0) {
+            scheduleZoneAdvance(zone.id, 30_000L) { showZoneItem(zone, assignments, 0, params) }
+            return
+        }
+        val a = assignments[activeIdx]
+        // Scheduled zones cycle even with one active item so windows re-evaluate.
+        val multi = assignments.size > 1 || assignments.any { (it.optJSONArray("schedules")?.length() ?: 0) > 0 }
+        val advance: () -> Unit = { showZoneItem(zone, assignments, activeIdx + 1, params) }
 
         val mimeType = a.optString("mime_type", "")
         val remoteUrl = if (a.isNull("remote_url")) null else a.optString("remote_url", null)
@@ -143,7 +184,7 @@ class ZoneManager(
         // Per-zone content switch log (fires on initial render AND each rotation), so
         // the live debug panel shows each zone advancing on its own interval.
         val label = a.optString("filename", "").ifEmpty { widgetType?.let { "widget:$it" } ?: mimeType.ifEmpty { "item" } }
-        com.remotedisplay.player.util.DebugLog.i("Zone", "'${zone.name}' [${(index % assignments.size) + 1}/${assignments.size}] -> $label (${durationMs / 1000}s)")
+        com.remotedisplay.player.util.DebugLog.i("Zone", "'${zone.name}' [${activeIdx + 1}/${assignments.size}] -> $label (${durationMs / 1000}s)")
 
         when {
             // Widget - render in WebView

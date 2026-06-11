@@ -137,8 +137,10 @@ class MainActivity : AppCompatActivity() {
         // Setup playlist controller
         playlistController = PlaylistController(
             onItemChanged = { item -> item?.let { playItem(it) } },
-            onPlaylistEmpty = { showStatus("Waiting for content...") },
-            onRequestRefresh = { wsService?.requestPlaylistRefresh() }
+            // #74/#75: clear the last frame when going idle (else a now-filtered item lingers on screen)
+            onPlaylistEmpty = { if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
+            onRequestRefresh = { wsService?.requestPlaylistRefresh() },
+            onNothingScheduled = { if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.nothing_scheduled)) }
         )
 
         // Setup media player
@@ -166,6 +168,8 @@ class MainActivity : AppCompatActivity() {
                 val assignments = cached.getJSONArray("assignments")
                 if (assignments.length() > 0) {
                     Log.i("MainActivity", "Restoring cached playlist: ${assignments.length()} items")
+                    // #74/#75: restore the cached effective timezone too (offline schedules)
+                    playlistController.setTimezone(if (cached.isNull("timezone")) null else cached.optString("timezone", "").ifEmpty { null })
                     playlistController.updatePlaylist(assignments)
                     playlistController.startIfNeeded()
                 }
@@ -244,6 +248,11 @@ class MainActivity : AppCompatActivity() {
             } else {
 
             val assignments = data.getJSONArray("assignments")
+
+            // #74/#75: device-effective IANA timezone for per-item schedule evaluation
+            val effectiveTz = if (data.isNull("timezone")) null else data.optString("timezone", "").ifEmpty { null }
+            playlistController.setTimezone(effectiveTz)
+            zoneManager?.setTimezone(effectiveTz)
 
             // Cache playlist JSON for offline cold-start
             config.cachedPlaylist = data.toString()

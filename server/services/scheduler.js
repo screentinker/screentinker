@@ -1,4 +1,5 @@
 const { db } = require('../db/database');
+const { _localParts } = require('../lib/schedule-eval');
 
 let io = null;
 
@@ -36,7 +37,7 @@ function evaluateSchedules() {
         s.created_at ASC
     `).all(device.id, device.id);
 
-    const active = schedules.find(s => isScheduleActiveNow(s, now));
+    const active = schedules.find(s => isScheduleActiveNow(s, now, deviceTz(device)));
     const override = activeOverrides.get(device.id);
     let changed = false;
 
@@ -65,28 +66,42 @@ function evaluateSchedules() {
   }
 }
 
-function isScheduleActiveNow(schedule, now) {
-  const start = new Date(schedule.start_time);
-  const end = new Date(schedule.end_time);
+// #74/#75 Part B: device-level schedules are evaluated in the DEVICE's effective
+// timezone, not the server's. We reuse the canonical UTC->local conversion
+// (_localParts from schedule-eval.js) - no second conversion path. start_time/end_time
+// are stored as device-local wall-clock datetimes, so we compare them to a device-local
+// "now". tz === null (no override AND no reported zone) falls back to the server clock,
+// preserving the pre-existing behaviour for un-migrated / non-reporting devices.
+function deviceTz(device) {
+  const override = (device.timezone && device.timezone !== 'UTC') ? device.timezone : null;
+  return override || device.reported_timezone || null;
+}
+
+function localStamp(parts) {
+  const p2 = (n) => (n < 10 ? '0' : '') + n;
+  const hh = Math.floor(parts.min / 60), mm = parts.min % 60;
+  return `${parts.y}-${p2(parts.mo)}-${p2(parts.day)}T${p2(hh)}:${p2(mm)}`;
+}
+
+function isScheduleActiveNow(schedule, now, tz) {
+  const L = _localParts(now, tz);
+  const nowStamp = localStamp(L);                   // device-local "YYYY-MM-DDTHH:MM"
+  const startStamp = String(schedule.start_time).slice(0, 16);
+  const endStamp = String(schedule.end_time).slice(0, 16);
 
   if (!schedule.recurrence) {
-    return now >= start && now <= end;
+    return nowStamp >= startStamp && nowStamp <= endStamp;
   }
 
-  // For recurring schedules, check if current time-of-day falls within range
-  // and current day matches recurrence pattern
   const rule = parseSimpleRRule(schedule.recurrence);
-  if (!rule) return now >= start && now <= end;
+  if (!rule) return nowStamp >= startStamp && nowStamp <= endStamp;
 
-  // Check day of week
-  if (rule.byDay && !rule.byDay.includes(now.getDay())) return false;
+  // Day-of-week in the device's local zone.
+  if (rule.byDay && !rule.byDay.includes(L.dow)) return false;
 
-  // Check time of day
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const startMinutes = start.getHours() * 60 + start.getMinutes();
-  const endMinutes = end.getHours() * 60 + end.getMinutes();
-
-  return nowMinutes >= startMinutes && nowMinutes <= endMinutes;
+  // Time-of-day window in the device's local zone (HH:MM string compare).
+  const nowHM = nowStamp.slice(11), startHM = startStamp.slice(11), endHM = endStamp.slice(11);
+  return nowHM >= startHM && nowHM <= endHM;
 }
 
 function parseSimpleRRule(rrule) {

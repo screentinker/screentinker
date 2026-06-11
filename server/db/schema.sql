@@ -354,6 +354,26 @@ CREATE TABLE IF NOT EXISTS playlist_items (
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 
+-- Per-playlist-item schedule blocks (#74 dayparting + #75 expiry). 1-to-many:
+-- an item with ZERO rows here is always on; otherwise it shows when device-local
+-- "now" matches at least one block. Wall-clock rules (local HH:MM + local dates),
+-- evaluated on the device via the shared evaluator (server/lib/schedule-eval.js).
+-- Pure child of playlist_items: cascade-deleted, and tenant isolation flows
+-- through the parent item/playlist, so no workspace_id is needed here.
+CREATE TABLE IF NOT EXISTS playlist_item_schedules (
+    id               TEXT PRIMARY KEY,
+    playlist_item_id INTEGER NOT NULL REFERENCES playlist_items(id) ON DELETE CASCADE,
+    active_days      TEXT NOT NULL DEFAULT '0,1,2,3,4,5,6',  -- comma-separated 0(Sun)-6(Sat)
+    start_time       TEXT NOT NULL DEFAULT '00:00',          -- local HH:MM
+    end_time         TEXT NOT NULL DEFAULT '24:00',          -- local HH:MM ("24:00" = end of day)
+    start_date       TEXT,                                   -- local YYYY-MM-DD, nullable = no lower bound
+    end_date         TEXT,                                   -- local YYYY-MM-DD, nullable = no upper bound
+    sort_order       INTEGER NOT NULL DEFAULT 0,
+    created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_item_schedules_item ON playlist_item_schedules(playlist_item_id);
+
 -- ===================== ACTIVITY LOG =====================
 
 CREATE TABLE IF NOT EXISTS activity_log (

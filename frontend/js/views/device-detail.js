@@ -28,6 +28,24 @@ function formatUptime(seconds) {
   return `${m}m`;
 }
 
+// #74/#75: device clock + skew indicator. Compares the device's reported UTC to the
+// server's receipt time; a gap > 2 min means the device clock is wrong, so per-item
+// schedules will fire at the wrong local time — surface it instead of a support mystery.
+function renderDeviceClock(device) {
+  const tz = device.reported_timezone || device.timezone || '--';
+  if (!device.reported_utc || !device.reported_at) return tz;
+  const skewSec = Math.abs(Math.round(device.reported_utc / 1000) - device.reported_at);
+  let local = '';
+  try {
+    local = new Date(device.reported_utc).toLocaleString(undefined,
+      { timeZone: device.reported_timezone || undefined, hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' });
+  } catch (e) { /* bad tz id -> skip local render */ }
+  const warn = skewSec > 120
+    ? `<div style="color:#f59e0b;font-size:11px;margin-top:2px">${t('device.clock.skew', { amount: skewSec >= 3600 ? Math.round(skewSec / 3600) + 'h' : Math.round(skewSec / 60) + 'm' })}</div>`
+    : '';
+  return `${tz}${local ? `<div style="font-size:11px;color:var(--text-muted)">${t('device.clock.reported', { time: local })}</div>` : ''}${warn}`;
+}
+
 export function render(container, deviceId) {
   container.innerHTML = `
     <div class="device-detail">
@@ -287,6 +305,10 @@ async function loadDevice(deviceId, activeTab = null) {
           <div class="info-card">
             <div class="info-card-label">${t('device.info.screen_resolution')}</div>
             <div class="info-card-value small">${device.screen_width && device.screen_height ? device.screen_width + 'x' + device.screen_height : '--'}</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-label">${t('device.clock.label')}</div>
+            <div class="info-card-value small">${renderDeviceClock(device)}</div>
           </div>
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">

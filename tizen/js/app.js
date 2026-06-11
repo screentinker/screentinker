@@ -95,6 +95,9 @@
 
   function telemetry() {
     var t = { uptime_seconds: Math.floor(performance.now() / 1000) };
+    // #74/#75: OS timezone + UTC clock (effective-tz resolution + skew indicator)
+    try { t.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { t.timezone = null; }
+    t.device_utc = Date.now();
     try {
       tizen.systeminfo.getPropertyValue('BATTERY', function (b) {
         t.battery_level = Math.round((b.level || 0) * 100);
@@ -227,6 +230,7 @@
     // If we have content + we're paired, make sure we're on the stage.
     if (elPairing.classList.contains('hidden') === false) show(elStage);
     else if (elStage.classList.contains('hidden')) show(elStage);
+    player.setTimezone(payload.timezone || null); // #74/#75: effective tz for schedule eval
     player.load(payload.assignments || []);
   }
 

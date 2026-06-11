@@ -146,6 +146,9 @@ export const api = {
   updatePlaylistItem: (id, itemId, data) => request(`/playlists/${id}/items/${itemId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePlaylistItem: (id, itemId) => request(`/playlists/${id}/items/${itemId}`, { method: 'DELETE' }),
   reorderPlaylistItems: (id, order) => request(`/playlists/${id}/items/reorder`, { method: 'POST', body: JSON.stringify({ order }) }),
+  // #74/#75 per-item schedule blocks
+  getItemSchedules: (id, itemId) => request(`/playlists/${id}/items/${itemId}/schedules`),
+  setItemSchedules: (id, itemId, blocks) => request(`/playlists/${id}/items/${itemId}/schedules`, { method: 'PUT', body: JSON.stringify({ blocks }) }),
   assignPlaylistToDevice: (playlistId, device_id) => request(`/playlists/${playlistId}/assign`, { method: 'POST', body: JSON.stringify({ device_id }) }),
   publishPlaylist: (id) => request(`/playlists/${id}/publish`, { method: 'POST' }),
   discardPlaylistDraft: (id) => request(`/playlists/${id}/discard`, { method: 'POST' }),

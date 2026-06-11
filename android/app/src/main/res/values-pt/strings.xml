@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">RemoteDisplay</string>
     <string name="accessibility_description">RemoteDisplay usa acessibilidade para habilitar controles remotos de energia e navegação do sistema.</string>
+    <string name="nothing_scheduled">Nada programado no momento</string>
+    <string name="waiting_for_content">Aguardando conteúdo…</string>
 </resources>

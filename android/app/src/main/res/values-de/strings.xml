@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">RemoteDisplay</string>
     <string name="accessibility_description">RemoteDisplay nutzt die Bedienungshilfen, um Fernsteuerung der Stromzufuhr und Systemnavigation zu ermöglichen.</string>
+    <string name="nothing_scheduled">Derzeit ist nichts geplant</string>
+    <string name="waiting_for_content">Warte auf Inhalte…</string>
 </resources>

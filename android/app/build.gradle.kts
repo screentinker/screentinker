@@ -75,4 +75,15 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // #74/#75: unit tests for the Kotlin schedule evaluator (vector drift guard)
+    testImplementation("junit:junit:4.13.2")
+}
+
+// #74/#75: point the evaluator drift-guard test at the SHARED vector contract
+// (shared/schedule-vectors.json, the single source - no snapshot). rootProject is
+// the android/ Gradle root; its parent is the repo root. Any ScheduleEval.kt edit
+// that breaks a vector fails ScheduleEvalTest in CI.
+tasks.withType<Test> {
+    systemProperty("scheduleVectors", File(rootProject.projectDir.parentFile, "shared/schedule-vectors.json").absolutePath)
 }

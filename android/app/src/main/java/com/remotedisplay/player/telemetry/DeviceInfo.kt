@@ -30,6 +30,9 @@ class DeviceInfo(private val context: Context) {
             put("wifi_ssid", getWifiSSID())
             put("wifi_rssi", getWifiRSSI())
             put("uptime_seconds", getUptimeSeconds())
+            // #74/#75: OS timezone + UTC clock (effective-tz resolution + dashboard skew indicator)
+            put("timezone", java.util.TimeZone.getDefault().id)
+            put("device_utc", System.currentTimeMillis())
         }
     }
 

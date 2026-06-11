@@ -73,6 +73,12 @@ const migrations = [
   // Layout & zone support on devices and assignments
   'ALTER TABLE devices ADD COLUMN layout_id TEXT',
   'ALTER TABLE devices ADD COLUMN timezone TEXT DEFAULT \'UTC\'',
+  // #74/#75: player-reported clock, for effective-timezone resolution + the
+  // dashboard clock-skew indicator. reported_timezone = player OS IANA zone;
+  // reported_utc = device's claimed UTC (ms); reported_at = server receipt (s).
+  'ALTER TABLE devices ADD COLUMN reported_timezone TEXT',
+  'ALTER TABLE devices ADD COLUMN reported_utc INTEGER',
+  'ALTER TABLE devices ADD COLUMN reported_at INTEGER',
   'ALTER TABLE devices ADD COLUMN wall_id TEXT',
   'ALTER TABLE devices ADD COLUMN team_id TEXT',
   'ALTER TABLE assignments ADD COLUMN zone_id TEXT',
@@ -204,6 +210,11 @@ for (const sql of migrations) {
   }
 }
 if (_migApplied > 0) console.log(`[migrate] applied ${_migApplied} new column migration(s)`);
+
+// #74/#75 per-item schedules: the playlist_item_schedules table is created
+// idempotently by schema.sql (CREATE TABLE IF NOT EXISTS, run every boot, so it
+// self-applies on upgrade). Record it in schema_migrations for observability.
+try { db.prepare("INSERT OR IGNORE INTO schema_migrations (id) VALUES ('phase7_playlist_item_schedules')").run(); } catch { /* schema_migrations not ready yet */ }
 
 // Fix assignments table: make content_id nullable (SQLite requires table rebuild)
 try {
