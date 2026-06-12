@@ -352,7 +352,7 @@ router.put('/:id/items/:itemId/schedules', requirePlaylistWrite, (req, res) => {
 //      playlist's workspace (or be a platform-template).
 router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
   try {
-    const { content_id, widget_id, sort_order } = req.body;
+    const { content_id, widget_id, sort_order, zone_id } = req.body;
     let { duration_sec } = req.body;
 
     if (!content_id && !widget_id) return res.status(400).json({ error: 'content_id or widget_id required' });
@@ -380,6 +380,13 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
       }
     }
 
+    // #public-api: optional multi-zone placement. Validate the zone belongs to a
+    // template or a layout in this playlist's workspace (the agency portal needs this).
+    if (zone_id) {
+      const zone = db.prepare('SELECT lz.id FROM layout_zones lz JOIN layouts l ON l.id = lz.layout_id WHERE lz.id = ? AND (l.is_template = 1 OR l.workspace_id = ?)').get(zone_id, req.playlist.workspace_id);
+      if (!zone) return res.status(400).json({ error: 'zone_id not found in this workspace' });
+    }
+
     // Auto-increment sort_order if not specified
     let order = sort_order;
     if (order === undefined || order === null) {
@@ -389,9 +396,9 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
     }
 
     const result = db.prepare(`
-      INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(req.params.id, content_id || null, widget_id || null, order, duration_sec);
+      INSERT INTO playlist_items (playlist_id, content_id, widget_id, zone_id, sort_order, duration_sec)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(req.params.id, content_id || null, widget_id || null, zone_id || null, order, duration_sec);
 
     // Mark as draft (items changed since last publish)
     markDraft(req.params.id);
@@ -421,11 +428,19 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
     .get(req.params.itemId, req.params.id);
   if (!item) return res.status(404).json({ error: 'item not found' });
 
-  const { sort_order, duration_sec } = req.body;
+  const { sort_order, duration_sec, zone_id } = req.body;
   const updates = [];
   const values = [];
 
   if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
+  // #public-api: multi-zone placement (zone_id null clears it). Undefined = no change.
+  if (zone_id !== undefined) {
+    if (zone_id !== null) {
+      const zone = db.prepare('SELECT lz.id FROM layout_zones lz JOIN layouts l ON l.id = lz.layout_id WHERE lz.id = ? AND (l.is_template = 1 OR l.workspace_id = ?)').get(zone_id, req.playlist.workspace_id);
+      if (!zone) return res.status(400).json({ error: 'zone_id not found in this workspace' });
+    }
+    updates.push('zone_id = ?'); values.push(zone_id || null);
+  }
   if (duration_sec !== undefined) {
     if (typeof duration_sec !== 'number' || duration_sec < 1) {
       return res.status(400).json({ error: 'duration_sec must be a positive integer' });

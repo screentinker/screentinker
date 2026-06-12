@@ -146,7 +146,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, default_content_id } = req.body;
+  const { name, notes, timezone, orientation, default_content_id, layout_id } = req.body;
   // Whitelist allowed fields to prevent SQL injection via field names
   const ALLOWED_FIELDS = ['name', 'notes', 'timezone', 'orientation', 'default_content_id'];
   const updates = [];
@@ -157,6 +157,16 @@ router.put('/:id', (req, res) => {
       values.push(val);
     }
   });
+  // #public-api: allow setting the device's layout here too (symmetry with
+  // PUT /api/layouts/device/:id). Validate it's a template or in the device's
+  // workspace; null clears it (fullscreen).
+  if (layout_id !== undefined) {
+    if (layout_id !== null) {
+      const layout = db.prepare('SELECT id FROM layouts WHERE id = ? AND (is_template = 1 OR workspace_id = ?)').get(layout_id, device.workspace_id);
+      if (!layout) return res.status(400).json({ error: 'layout_id not found in this workspace' });
+    }
+    updates.push('layout_id = ?'); values.push(layout_id || null);
+  }
   if (updates.length > 0) {
     values.push(req.params.id);
     db.prepare(`UPDATE devices SET ${updates.join(', ')}, updated_at = strftime('%s','now') WHERE id = ?`).run(...values);
