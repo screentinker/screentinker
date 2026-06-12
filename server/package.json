@@ -27,6 +27,7 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "js-yaml": "^4.2.0",
     "socket.io-client": "^4.8.3"
   }
 }

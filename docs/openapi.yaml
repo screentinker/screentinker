@@ -1559,8 +1559,8 @@ paths:
     post:
       tags: [widgets]
       summary: Render an unsaved widget config to HTML (non-persisting)
-      description: 'Requires scope: read. Returns rendered HTML; does not create anything.'
-      x-required-scope: read
+      description: 'Requires scope: write (any POST needs write under the scope ladder); renders to HTML without persisting anything.'
+      x-required-scope: write
       requestBody:
         required: true
         content:
