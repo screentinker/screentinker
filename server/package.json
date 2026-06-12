@@ -25,5 +25,8 @@
     "stripe": "^20.4.1",
     "unzipper": "^0.12.3",
     "uuid": "^14.0.0"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
   }
 }
