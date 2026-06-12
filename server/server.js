@@ -283,8 +283,12 @@ app.use('/api/auth/register', rateLimit(60000, 5)); // 5 registrations per minut
 // path prefix first, so this fires before /api/auth catches the request.
 app.use('/api/auth/users', rateLimit(60000, 20));
 app.use('/api/auth', require('./routes/auth'));
-// Rate limit pairing to prevent brute force (5 attempts per minute per IP)
-app.use('/api/provision/pair', rateLimit(60000, 5));
+// Rate limit pairing to prevent brute force (5 attempts per minute per IP).
+// #88: bind this to the whole /api/provision surface, not just /pair - the bare
+// POST /api/provision (routes/provisioning.js) is a second pairing endpoint that
+// was unthrottled, letting an authed user brute-force pairing codes. /api/provision
+// matches both /api/provision and /api/provision/pair.
+app.use('/api/provision', rateLimit(60000, 5));
 // Rate limit expensive operations
 app.use('/api/status/export', rateLimit(60000, 5)); // 5 exports per minute
 app.use('/api/status/import', rateLimit(60000, 3)); // 3 imports per minute
