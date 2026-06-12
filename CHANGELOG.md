@@ -33,6 +33,15 @@
     unaffected. A device with no timezone set and not reporting one falls back to the
     server clock (unchanged from before).
 
+### Fixed
+- **#81 — release APK is now v1 + v2 + v3 signed.** With `minSdk 26`, the Android Gradle
+  Plugin defaulted the v1 (JAR) signature *off*, producing a v2-only APK that some
+  MDM-managed commercial signage (e.g. MAXHUB via the Pivot MDM) silently removes on the
+  next reboot — so screens that power-cycle nightly lost the app and fell back to the
+  setup screen. Setting `enableV1Signing = true` had no effect at minSdk ≥ 24; the release
+  build now re-signs with `apksigner` and a low `--min-sdk-version` to emit the JAR
+  signature alongside v2/v3. Verified to install and run on Android 14+/API 36 as well.
+
 ### Notes
 - **Scheduling fails open.** If the on-device evaluator ever errors (bad timezone id,
   malformed block), the item **plays** rather than being hidden. A blank screen is worse

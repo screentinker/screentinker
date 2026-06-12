@@ -403,6 +403,13 @@ The APK will be at `android/app/build/outputs/apk/debug/app-debug.apk`. Copy it 
 cp android/app/build/outputs/apk/debug/app-debug.apk ScreenTinker.apk
 ```
 
+> **Release builds & MDM signage (#81):** `./gradlew assembleRelease` is automatically
+> re-signed to carry a **v1 (JAR) signature alongside v2/v3** (the `resignReleaseV1` task in
+> `app/build.gradle.kts`). At `minSdk 26` the Gradle plugin omits v1, and some MDM-managed
+> commercial displays (e.g. MAXHUB/Pivot) **strip a v2-only APK on reboot** — screens that
+> power-cycle nightly then lose the app. v1+v2+v3 installs everywhere from API 19 to the
+> latest Android. (`enableV1Signing = true` alone does not work at minSdk ≥ 24.)
+
 To generate a new signing keystore:
 
 ```bash

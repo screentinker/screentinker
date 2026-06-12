@@ -21,6 +21,9 @@ android {
             storePassword = System.getenv("KEYSTORE_PASSWORD") ?: findProperty("KEYSTORE_PASSWORD") as String? ?: ""
             keyAlias = System.getenv("KEY_ALIAS") ?: findProperty("KEY_ALIAS") as String? ?: "remotedisplay"
             keyPassword = System.getenv("KEY_PASSWORD") ?: findProperty("KEY_PASSWORD") as String? ?: ""
+            // #81: AGP ignores enableV1Signing at minSdk>=24, so assembleRelease emits a
+            // v2-only APK. The v1 (JAR) signature that some MDM-managed signage (MAXHUB)
+            // requires is added by the `resignReleaseV1` task below (apksigner re-sign).
         }
     }
 
@@ -87,3 +90,38 @@ dependencies {
 tasks.withType<Test> {
     systemProperty("scheduleVectors", File(rootProject.projectDir.parentFile, "shared/schedule-vectors.json").absolutePath)
 }
+
+// #81: AGP ignores enableV1Signing at minSdk>=24, so `assembleRelease` produces a
+// v2-only APK - and some MDM-managed signage (MAXHUB/Pivot) silently removes a v2-only
+// app on the next reboot because its boot integrity check expects a v1 (JAR) signature.
+// Re-sign the assembled release APK with apksigner, forcing a low --min-sdk-version so
+// the v1 signature is emitted alongside v2/v3. v1+v2+v3 verifies on every Android
+// version (legacy MDM hardware via v1, modern Android via v2/v3).
+tasks.register<Exec>("resignReleaseV1") {
+    val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+    onlyIf { apk.exists() }
+    doFirst {
+        val sdkDir = System.getenv("ANDROID_HOME")
+            ?: System.getenv("ANDROID_SDK_ROOT")
+            ?: rootProject.file("local.properties").takeIf { it.exists() }
+                ?.readLines()?.firstOrNull { it.startsWith("sdk.dir=") }?.substringAfter("=")?.trim()
+            ?: throw GradleException("#81 resign: set ANDROID_HOME or sdk.dir in local.properties")
+        val buildTools = File(sdkDir, "build-tools").listFiles()
+            ?.filter { it.isDirectory }?.maxByOrNull { it.name }
+            ?: throw GradleException("#81 resign: no build-tools found under $sdkDir")
+        commandLine(
+            File(buildTools, "apksigner").absolutePath, "sign",
+            "--ks", file("../release-key.jks").absolutePath,
+            "--ks-key-alias", (System.getenv("KEY_ALIAS") ?: "remotedisplay"),
+            "--ks-pass", "pass:" + (System.getenv("KEYSTORE_PASSWORD") ?: ""),
+            "--key-pass", "pass:" + (System.getenv("KEY_PASSWORD") ?: ""),
+            "--v1-signing-enabled", "true",
+            "--v2-signing-enabled", "true",
+            "--v3-signing-enabled", "true",
+            "--min-sdk-version", "19",
+            apk.absolutePath
+        )
+    }
+}
+// AGP registers assembleRelease lazily, so match it when/after it's created.
+tasks.matching { it.name == "assembleRelease" }.configureEach { finalizedBy("resignReleaseV1") }
