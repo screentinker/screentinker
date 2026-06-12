@@ -17,6 +17,11 @@ export async function render(container) {
   // org/workspace membership, gated in the members views, not users.role.)
   const isAdmin = isSuperAdmin;
 
+  // #83: the "About" version was hardcoded (showed v1.4.1 regardless of the build).
+  // Read it from the server (/api/version) the same way the admin view does.
+  let appVersion = '';
+  try { appVersion = ((await fetch('/api/version').then(r => r.json())).version) || ''; } catch { /* leave blank on failure */ }
+
   container.innerHTML = `
     <div class="page-header">
       <div>
@@ -151,7 +156,7 @@ export async function render(container) {
     <div class="settings-section">
       <h3>${t('settings.about')}</h3>
       <div style="color:var(--text-secondary);font-size:13px">
-        <p><strong>ScreenTinker</strong> v1.4.1</p>
+        <p><strong>ScreenTinker</strong>${appVersion ? ` v${esc(appVersion)}` : ''}</p>
         <p style="margin-top:4px">${t('settings.about_tagline')}</p>
         <p style="margin-top:12px">
           <a href="/legal/terms.html" target="_blank" style="color:var(--accent);font-size:12px">${t('auth.terms')}</a>
