@@ -156,6 +156,11 @@ export const api = {
   // Device Groups - Playlist
   groupAssignPlaylist: (groupId, playlist_id) => request(`/groups/${groupId}/assign-playlist`, { method: 'POST', body: JSON.stringify({ playlist_id }) }),
 
+  // API Tokens (personal access tokens, workspace-scoped)
+  getTokens: () => request('/tokens'),
+  createToken: (data) => request('/tokens', { method: 'POST', body: JSON.stringify(data) }),
+  revokeToken: (id) => request('/tokens/' + id, { method: 'DELETE' }),
+
   // Current user
   getMe: () => request('/auth/me'),
   updateMe: (data) => request('/auth/me', { method: 'PUT', body: JSON.stringify(data) }),

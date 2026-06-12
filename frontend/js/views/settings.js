@@ -60,6 +60,28 @@ export async function render(container) {
       `}
     </div>
 
+    <div class="settings-section">
+      <h3>${t('apitoken.title')}</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:16px">${t('apitoken.desc')}</p>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px">
+        <div class="form-group" style="margin-bottom:0;flex:1;min-width:180px">
+          <label>${t('apitoken.col_name')}</label>
+          <input type="text" id="tokName" class="input" placeholder="${esc(t('apitoken.name_placeholder'))}">
+        </div>
+        <div class="form-group" style="margin-bottom:0;min-width:200px">
+          <label>${t('apitoken.col_scope')}</label>
+          <select id="tokScope" class="input" style="background:var(--bg-input)">
+            <option value="read">${esc(t('apitoken.scope_read'))}</option>
+            <option value="write">${esc(t('apitoken.scope_write'))}</option>
+            <option value="full">${esc(t('apitoken.scope_full'))}</option>
+          </select>
+        </div>
+        <button class="btn btn-primary btn-sm" id="createTokenBtn">${t('apitoken.create')}</button>
+      </div>
+      <div id="tokenSecretBox" style="display:none"></div>
+      <div id="tokenList"><p style="color:var(--text-muted);font-size:13px">${t('settings.loading_users')}</p></div>
+    </div>
+
     ${isAdmin ? `
     <div class="settings-section">
       <h3>${t('settings.license')}</h3>
@@ -295,6 +317,110 @@ export async function render(container) {
     // setLanguage dispatches hashchange so the router re-renders the current
     // view (including this settings page) with new strings — no refresh needed.
     setLanguage(e.target.value);
+  });
+
+  // API Tokens — available to every user (manages their own, workspace-scoped).
+  const fmtTokenDate = (ts) => {
+    if (!ts) return '';
+    try { return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch { return String(ts); }
+  };
+  const scopeLabel = (s) => ({
+    read: t('apitoken.scope_read'),
+    write: t('apitoken.scope_write'),
+    full: t('apitoken.scope_full'),
+  }[s] || s);
+
+  async function loadTokens() {
+    const el = document.getElementById('tokenList');
+    if (!el) return;
+    const tokens = await api.getTokens().catch(() => []);
+    if (!tokens.length) {
+      el.innerHTML = `<p style="color:var(--text-muted);font-size:13px">${t('apitoken.none')}</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <div class="table-wrap">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:560px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);text-align:left">
+            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('apitoken.col_token')}</th>
+            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('apitoken.col_name')}</th>
+            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('apitoken.col_scope')}</th>
+            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('apitoken.col_created')}</th>
+            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('apitoken.col_last_used')}</th>
+            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tokens.map(tok => `
+            <tr style="border-bottom:1px solid var(--border)${tok.revoked_at ? ';opacity:0.55' : ''}">
+              <td style="padding:10px 12px;font-family:monospace">${esc(tok.prefix)}&hellip;</td>
+              <td style="padding:10px 12px">${esc(tok.name || '')}</td>
+              <td style="padding:10px 12px">${esc(scopeLabel(tok.scope))}</td>
+              <td style="padding:10px 12px">${esc(fmtTokenDate(tok.created_at))}</td>
+              <td style="padding:10px 12px">${tok.last_used_at ? esc(fmtTokenDate(tok.last_used_at)) : t('apitoken.never')}</td>
+              <td style="padding:10px 12px;white-space:nowrap;text-align:right">
+                ${tok.revoked_at
+                  ? `<span style="color:var(--text-muted);font-size:12px">${t('apitoken.revoked')}</span>`
+                  : `<button class="btn btn-secondary btn-sm revoke-token-btn" data-id="${esc(String(tok.id))}">${t('apitoken.revoke')}</button>`}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      </div>
+    `;
+
+    el.querySelectorAll('.revoke-token-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(t('apitoken.revoke_confirm'))) return;
+        try {
+          await api.revokeToken(btn.dataset.id);
+          showToast(t('apitoken.revoked_toast'), 'success');
+          loadTokens();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
+  }
+
+  loadTokens();
+
+  document.getElementById('createTokenBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('tokName').value.trim();
+    const scope = document.getElementById('tokScope').value;
+    const btn = document.getElementById('createTokenBtn');
+    btn.disabled = true;
+    try {
+      const r = await api.createToken({ name, scope });
+      const box = document.getElementById('tokenSecretBox');
+      box.style.display = 'block';
+      box.innerHTML = `
+        <div style="background:var(--bg-secondary);border:1px solid var(--accent);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+          <h4 style="font-size:14px;margin-bottom:8px">${t('apitoken.secret_title')}</h4>
+          <p style="color:var(--danger);font-size:12px;margin-bottom:12px"><strong>${t('apitoken.secret_warning')}</strong></p>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" class="input" readonly value="${esc(r.token)}" style="font-family:monospace;flex:1" onclick="this.select()">
+            <button class="btn btn-secondary btn-sm" id="copyTokenBtn">${t('apitoken.copy')}</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('copyTokenBtn')?.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(r.token);
+          showToast(t('apitoken.copied'), 'success');
+        } catch { /* clipboard may be unavailable; the field is selectable */ }
+      });
+      document.getElementById('tokName').value = '';
+      showToast(t('apitoken.created_toast'), 'success');
+      loadTokens();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   document.getElementById('saveAcctBtn')?.addEventListener('click', async () => {
