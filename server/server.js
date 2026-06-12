@@ -99,6 +99,7 @@ app.use(helmet({
 app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/landing.html') return next();
   if (req.path.startsWith('/player')) return next();
+  if (req.path === '/docs') return next(); // Redoc API reference needs a relaxed CSP
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return next();
   if (req.path.startsWith('/api/kiosk/') && req.path.endsWith('/render')) return next();
   return dashboardCsp(req, res, next);
@@ -186,6 +187,19 @@ app.get('/robots.txt', (req, res) => {
   res.type('text/plain');
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.sendFile(path.join(config.frontendDir, 'robots.txt'));
+});
+
+// Public API reference. /openapi.yaml is the machine-readable contract (served from
+// docs/); /docs is the Redoc viewer (frontend/api-docs.html + the vendored standalone
+// bundle under /vendor, no CDN so it works air-gapped). /docs is CSP-exempt above
+// because Redoc needs a relaxed policy.
+app.get('/openapi.yaml', (req, res) => {
+  res.type('text/yaml');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.sendFile(path.join(__dirname, '..', 'docs', 'openapi.yaml'));
+});
+app.get('/docs', (req, res) => {
+  res.sendFile(path.join(config.frontendDir, 'api-docs.html'));
 });
 
 // Serve frontend static files

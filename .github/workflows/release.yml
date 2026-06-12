@@ -87,7 +87,7 @@ jobs:
             --exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' --exclude='*.db.*' \
             --exclude='server/uploads' --exclude='server/certs' --exclude='server/test' \
             --exclude='*.apk' \
-            server frontend scripts VERSION README.md LICENSE .env.example ScreenTinker.wgt
+            server frontend scripts docs VERSION README.md LICENSE .env.example ScreenTinker.wgt
           echo "TARBALL=$OUT" >> "$GITHUB_ENV"
           ls -la "$OUT"
 

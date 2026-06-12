@@ -1,0 +1,1728 @@
+openapi: 3.1.0
+info:
+  title: ScreenTinker Public API
+  version: 1.9.0
+  description: |
+    Public, token-scoped REST API for ScreenTinker digital signage.
+
+    ## Authentication
+    Every endpoint (except the two unauthenticated device-render endpoints) accepts a
+    **scoped personal access token** presented as `Authorization: Bearer st_...`. The
+    dashboard's session JWT is also accepted, but this contract targets token consumers.
+
+    ## Scope ladder (read < write < full)
+    Tokens carry one of three scopes; higher scopes subsume lower ones:
+    - `read`  — all `GET` endpoints.
+    - `write` — all resource mutations (`POST` / `PUT` / `PATCH` / `DELETE`).
+    - `full`  — operational fleet commands (currently only
+      `POST /groups/{id}/command`: reboot / shutdown / screen on/off).
+
+    Each operation advertises its minimum scope via the `x-required-scope` extension
+    and restates it in the operation description. A token with insufficient scope is
+    rejected with `403`.
+
+    All resources are scoped to the token's workspace; cross-workspace access is not
+    available to tokens.
+servers:
+  - url: /api
+
+tags:
+  - name: content
+    description: Media library items (uploads, remote URLs, YouTube).
+  - name: folders
+    description: Content folder hierarchy.
+  - name: playlists
+    description: Playlists and their items / per-item schedules.
+  - name: assignments
+    description: Device playlist items (per-device assignment helpers).
+  - name: devices
+    description: Registered display devices.
+  - name: layouts
+    description: Multi-zone screen layouts and zones.
+  - name: groups
+    description: Device groups and bulk operations.
+  - name: schedules
+    description: Time-based content scheduling.
+  - name: walls
+    description: Video walls (multi-device grids).
+  - name: reports
+    description: Proof-of-play and uptime reporting.
+  - name: widgets
+    description: Dynamic widgets (clock, weather, RSS, etc.) and their render output.
+  - name: activity
+    description: Activity log.
+  - name: kiosk
+    description: Interactive kiosk pages and their render output.
+
+security:
+  - ApiToken: []
+  - SessionJWT: []
+
+components:
+  securitySchemes:
+    ApiToken:
+      type: http
+      scheme: bearer
+      bearerFormat: "st_<token>"
+      description: |
+        Scoped personal access token. Send as `Authorization: Bearer st_...`.
+        The token's scope (`read`, `write`, or `full`) gates which operations
+        it may call (see the scope ladder in the API description).
+    SessionJWT:
+      type: http
+      scheme: bearer
+      description: |
+        Dashboard session JWT. Also accepted on every authenticated endpoint,
+        but this spec targets scoped-token consumers.
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        workspace_id:
+          type: [string, "null"]
+        playlist_id:
+          type: [string, "null"]
+        layout_id:
+          type: [string, "null"]
+          description: Assigned layout (null = fullscreen). Recently added.
+        timezone:
+          type: string
+        orientation:
+          type: string
+        notes:
+          type: string
+        created_at:
+          type: integer
+
+    Playlist:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          description: draft | published
+        workspace_id:
+          type: [string, "null"]
+        item_count:
+          type: integer
+        display_count:
+          type: integer
+
+    PlaylistItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        playlist_id:
+          type: string
+        content_id:
+          type: [string, "null"]
+        widget_id:
+          type: [string, "null"]
+        zone_id:
+          type: [string, "null"]
+          description: Optional layout-zone placement. Recently added.
+        sort_order:
+          type: integer
+        duration_sec:
+          type: integer
+
+    Content:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        mime_type:
+          type: string
+        file_size:
+          type: integer
+        duration_sec:
+          type: [number, "null"]
+        remote_url:
+          type: [string, "null"]
+        thumbnail_path:
+          type: [string, "null"]
+        folder_id:
+          type: [string, "null"]
+        workspace_id:
+          type: [string, "null"]
+
+    Layout:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        is_template:
+          type: integer
+        workspace_id:
+          type: [string, "null"]
+        zones:
+          type: array
+          items:
+            $ref: '#/components/schemas/Zone'
+
+    Zone:
+      type: object
+      properties:
+        id:
+          type: string
+        layout_id:
+          type: string
+        name:
+          type: string
+        x_percent:
+          type: number
+        y_percent:
+          type: number
+        width_percent:
+          type: number
+        height_percent:
+          type: number
+        z_index:
+          type: integer
+        zone_type:
+          type: string
+        fit_mode:
+          type: string
+        background_color:
+          type: string
+
+    Widget:
+      type: object
+      properties:
+        id:
+          type: string
+        widget_type:
+          type: string
+          description: clock | weather | rss | text | webpage | social | directory-board
+        name:
+          type: string
+        config:
+          type: object
+        workspace_id:
+          type: [string, "null"]
+
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+          description: "#RRGGBB"
+        playlist_id:
+          type: [string, "null"]
+        device_count:
+          type: integer
+        workspace_id:
+          type: [string, "null"]
+
+    Schedule:
+      type: object
+      properties:
+        id:
+          type: string
+        device_id:
+          type: [string, "null"]
+        group_id:
+          type: [string, "null"]
+        zone_id:
+          type: [string, "null"]
+        content_id:
+          type: [string, "null"]
+        widget_id:
+          type: [string, "null"]
+        layout_id:
+          type: [string, "null"]
+        playlist_id:
+          type: [string, "null"]
+        title:
+          type: string
+        start_time:
+          type: string
+        end_time:
+          type: string
+        timezone:
+          type: string
+        recurrence:
+          type: [string, "null"]
+        priority:
+          type: integer
+        enabled:
+          type: integer
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+      description: Max rows to return.
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+      description: Row offset for pagination.
+
+paths:
+  # ------------------------------------------------------------------ content
+  /content:
+    get:
+      tags: [content]
+      summary: List content in the current workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - name: folder
+          in: query
+          schema: { type: string }
+        - name: folder_id
+          in: query
+          schema: { type: string }
+          description: '"root"/"" = root-level only; UUID = that folder.'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Array of content items.
+    post:
+      tags: [content]
+      summary: Upload a content file (multipart)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201': { description: Created content item. }
+  /content/folders:
+    get:
+      tags: [content]
+      summary: List distinct content folder names with counts
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: 'Array of { folder, count }.'
+  /content/remote:
+    post:
+      tags: [content]
+      summary: Add a remote-URL content item
+      description: 'Requires scope: write. SSRF-gated (http/https, no internal hosts).'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+                name: { type: string }
+                mime_type: { type: string }
+      responses:
+        '201': { description: Created content item. }
+  /content/youtube:
+    post:
+      tags: [content]
+      summary: Add a YouTube video as content
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+                name: { type: string }
+      responses:
+        '201': { description: Created content item. }
+  /content/{id}:
+    get:
+      tags: [content]
+      summary: Get content metadata
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Content item. }
+        '404': { description: Not found. }
+    put:
+      tags: [content]
+      summary: Update content metadata
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename: { type: string }
+                mime_type: { type: string }
+                remote_url: { type: string }
+                folder: { type: string }
+                folder_id: { type: string }
+      responses:
+        '200': { description: Updated content item. }
+    delete:
+      tags: [content]
+      summary: Delete content
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success, affectedDevices }.' }
+  /content/{id}/replace:
+    put:
+      tags: [content]
+      summary: Replace the content file (multipart)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200': { description: Updated content item. }
+  /content/{id}/file:
+    get:
+      tags: [content]
+      summary: Download the content file
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Binary file stream. }
+  /content/{id}/thumbnail:
+    get:
+      tags: [content]
+      summary: Download the content thumbnail
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Binary image stream. }
+
+  # ------------------------------------------------------------------ folders
+  /folders:
+    get:
+      tags: [folders]
+      summary: List content folders in the current workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: Array of folders. }
+    post:
+      tags: [folders]
+      summary: Create a folder
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                parent_id: { type: string }
+      responses:
+        '201': { description: Created folder. }
+  /folders/{id}:
+    put:
+      tags: [folders]
+      summary: Rename or move a folder
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                parent_id: { type: [string, "null"] }
+      responses:
+        '200': { description: Updated folder. }
+    delete:
+      tags: [folders]
+      summary: Delete a folder
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+
+  # ---------------------------------------------------------------- playlists
+  /playlists:
+    get:
+      tags: [playlists]
+      summary: List playlists in the current workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: Array of playlists. }
+    post:
+      tags: [playlists]
+      summary: Create a playlist
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        '201': { description: Created playlist. }
+  /playlists/{id}:
+    get:
+      tags: [playlists]
+      summary: Get a playlist with its items
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Playlist with items. }
+    put:
+      tags: [playlists]
+      summary: Update playlist name/description
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        '200': { description: Updated playlist. }
+    delete:
+      tags: [playlists]
+      summary: Delete a playlist
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+  /playlists/{id}/publish:
+    post:
+      tags: [playlists]
+      summary: Publish a playlist (snapshot + push to devices)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Published playlist with items. }
+  /playlists/{id}/discard:
+    post:
+      tags: [playlists]
+      summary: Discard draft changes (revert to published snapshot)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Reverted playlist with items. }
+  /playlists/{id}/items:
+    get:
+      tags: [playlists]
+      summary: List a playlist's items
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Array of playlist items. }
+    post:
+      tags: [playlists]
+      summary: Add a content or widget item to a playlist
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content_id: { type: string }
+                widget_id: { type: string }
+                zone_id: { type: string }
+                sort_order: { type: integer }
+                duration_sec: { type: integer }
+      responses:
+        '201': { description: Created playlist item. }
+  /playlists/{id}/items/reorder:
+    post:
+      tags: [playlists]
+      summary: Reorder playlist items
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order]
+              properties:
+                order:
+                  type: array
+                  items: { type: integer }
+      responses:
+        '200': { description: Reordered items. }
+  /playlists/{id}/items/{itemId}:
+    put:
+      tags: [playlists]
+      summary: Update a playlist item
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: itemId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sort_order: { type: integer }
+                duration_sec: { type: integer }
+                zone_id: { type: [string, "null"] }
+      responses:
+        '200': { description: Updated item. }
+    delete:
+      tags: [playlists]
+      summary: Delete a playlist item
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: itemId, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: '{ success }.' }
+  /playlists/{id}/items/{itemId}/schedules:
+    get:
+      tags: [playlists]
+      summary: Get a playlist item's schedule blocks
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: itemId, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Array of schedule blocks. }
+    put:
+      tags: [playlists]
+      summary: Replace a playlist item's schedule blocks
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: itemId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blocks]
+              properties:
+                blocks:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      days:
+                        type: array
+                        items: { type: integer }
+                      start: { type: string }
+                      end: { type: string }
+                      start_date: { type: [string, "null"] }
+                      end_date: { type: [string, "null"] }
+      responses:
+        '200': { description: Stored schedule blocks. }
+  /playlists/{id}/assign:
+    post:
+      tags: [playlists]
+      summary: Assign the playlist to a device
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id]
+              properties:
+                device_id: { type: string }
+      responses:
+        '200': { description: '{ success }.' }
+
+  # -------------------------------------------------------------- assignments
+  /assignments/device/{deviceId}:
+    get:
+      tags: [assignments]
+      summary: List a device's playlist items
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Array of items. }
+    post:
+      tags: [assignments]
+      summary: Add a content/widget item to a device's playlist
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content_id: { type: string }
+                widget_id: { type: string }
+                zone_id: { type: string }
+                duration_sec: { type: integer }
+                sort_order: { type: integer }
+      responses:
+        '201': { description: Created item. }
+  /assignments/device/{deviceId}/reorder:
+    post:
+      tags: [assignments]
+      summary: Reorder a device's playlist items
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order]
+              properties:
+                order:
+                  type: array
+                  items: { type: integer }
+      responses:
+        '200': { description: Reordered items. }
+  /assignments/device/{deviceId}/copy-to/{targetDeviceId}:
+    post:
+      tags: [assignments]
+      summary: Copy a device's playlist to another device
+      description: 'Requires scope: write. Both devices must share a workspace.'
+      x-required-scope: write
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+        - { name: targetDeviceId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                replace: { type: boolean }
+      responses:
+        '200': { description: '{ success, copied }.' }
+  /assignments/{id}:
+    put:
+      tags: [assignments]
+      summary: Update a playlist item
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sort_order: { type: integer }
+                duration_sec: { type: integer }
+                zone_id: { type: [string, "null"] }
+      responses:
+        '200': { description: Updated item. }
+    delete:
+      tags: [assignments]
+      summary: Delete a playlist item
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: '{ success, content_id }.' }
+
+  # ------------------------------------------------------------------ devices
+  /devices:
+    get:
+      tags: [devices]
+      summary: List devices in the current workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Array of devices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Device' }
+  /devices/{id}:
+    get:
+      tags: [devices]
+      summary: Get a device with telemetry and assignments
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Device detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '404': { description: Not found. }
+    put:
+      tags: [devices]
+      summary: Update a device
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                notes: { type: string }
+                timezone: { type: string }
+                orientation: { type: string }
+                default_content_id: { type: string }
+                layout_id: { type: [string, "null"] }
+      responses:
+        '200':
+          description: Updated device.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+    delete:
+      tags: [devices]
+      summary: Delete a device
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+
+  # ------------------------------------------------------------------ layouts
+  /layouts:
+    get:
+      tags: [layouts]
+      summary: List layouts (workspace + templates)
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - name: templates
+          in: query
+          schema: { type: string }
+          description: '"true" to list only templates.'
+      responses:
+        '200':
+          description: Array of layouts with zones.
+    post:
+      tags: [layouts]
+      summary: Create a layout
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                width: { type: integer }
+                height: { type: integer }
+                zones:
+                  type: array
+                  items: { $ref: '#/components/schemas/Zone' }
+      responses:
+        '201':
+          description: Created layout.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Layout' }
+  /layouts/{id}:
+    get:
+      tags: [layouts]
+      summary: Get a layout with zones
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Layout with zones.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Layout' }
+    put:
+      tags: [layouts]
+      summary: Update a layout (and optionally replace zones)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                width: { type: integer }
+                height: { type: integer }
+                zones:
+                  type: array
+                  items: { $ref: '#/components/schemas/Zone' }
+      responses:
+        '200': { description: Updated layout. }
+    delete:
+      tags: [layouts]
+      summary: Delete a layout
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+  /layouts/{id}/zones:
+    post:
+      tags: [layouts]
+      summary: Add a zone to a layout
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Zone' }
+      responses:
+        '201':
+          description: Created zone.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Zone' }
+  /layouts/{id}/zones/{zoneId}:
+    put:
+      tags: [layouts]
+      summary: Update a zone
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: zoneId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Zone' }
+      responses:
+        '200': { description: Updated zone. }
+    delete:
+      tags: [layouts]
+      summary: Delete a zone
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: zoneId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+  /layouts/{id}/duplicate:
+    post:
+      tags: [layouts]
+      summary: Duplicate a layout into the current workspace
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+      responses:
+        '201': { description: Duplicated layout. }
+  /layouts/device/{deviceId}:
+    put:
+      tags: [layouts]
+      summary: Assign a layout to a device
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                layout_id: { type: [string, "null"] }
+      responses:
+        '200': { description: '{ success }.' }
+
+  # ------------------------------------------------------------------- groups
+  /groups:
+    get:
+      tags: [groups]
+      summary: List device groups in the current workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: Array of groups.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Group' }
+    post:
+      tags: [groups]
+      summary: Create a device group
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                color: { type: string }
+      responses:
+        '201':
+          description: Created group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+  /groups/{id}:
+    put:
+      tags: [groups]
+      summary: Update a group
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                color: { type: string }
+      responses:
+        '200': { description: Updated group. }
+    delete:
+      tags: [groups]
+      summary: Delete a group (converts group schedules to per-device)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success, schedules_converted, devices }.' }
+  /groups/{id}/devices:
+    get:
+      tags: [groups]
+      summary: List devices in a group
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Array of devices. }
+    post:
+      tags: [groups]
+      summary: Add a device to a group
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id]
+              properties:
+                device_id: { type: string }
+      responses:
+        '201': { description: '{ success, playlist_id }.' }
+  /groups/{id}/devices/{deviceId}:
+    delete:
+      tags: [groups]
+      summary: Remove a device from a group
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+  /groups/{id}/assign-content:
+    post:
+      tags: [groups]
+      summary: Add content to every device in a group
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_id]
+              properties:
+                content_id: { type: string }
+                duration_sec: { type: integer }
+      responses:
+        '200': { description: '{ success, devices_updated }.' }
+  /groups/{id}/assign-playlist:
+    post:
+      tags: [groups]
+      summary: Assign a playlist to every device in a group
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [playlist_id]
+              properties:
+                playlist_id: { type: string }
+      responses:
+        '200': { description: '{ success, devices_updated }.' }
+  /groups/{id}/command:
+    post:
+      tags: [groups]
+      summary: Send an operational command to every device in a group
+      description: |
+        Sends reboot / shutdown / screen on/off / launch / update to all devices
+        in the group. Requires scope: full (the highest scope; tokens with only
+        read or write are rejected).
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [screen_on, screen_off, launch, update, reboot, shutdown]
+                payload: { type: object }
+      responses:
+        '200': { description: '{ success, sent, offline, total, results }.' }
+
+  # ---------------------------------------------------------------- schedules
+  /schedules:
+    get:
+      tags: [schedules]
+      summary: List schedules (filterable)
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, schema: { type: string } }
+        - { name: group_id, in: query, schema: { type: string } }
+        - { name: start, in: query, schema: { type: string } }
+        - { name: end, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Array of schedules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Schedule' }
+    post:
+      tags: [schedules]
+      summary: Create a schedule (targets one device OR one group)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [start_time, end_time]
+              properties:
+                device_id: { type: string }
+                group_id: { type: string }
+                zone_id: { type: string }
+                content_id: { type: string }
+                widget_id: { type: string }
+                layout_id: { type: string }
+                playlist_id: { type: string }
+                title: { type: string }
+                start_time: { type: string }
+                end_time: { type: string }
+                timezone: { type: string }
+                recurrence: { type: string }
+                recurrence_end: { type: string }
+                priority: { type: integer }
+                color: { type: string }
+      responses:
+        '201':
+          description: Created schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+  /schedules/device/{deviceId}:
+    get:
+      tags: [schedules]
+      summary: Get schedules for a device (device + group level)
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Array of schedules. }
+  /schedules/week:
+    get:
+      tags: [schedules]
+      summary: Expanded week view for a device (resolves recurrences)
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, required: true, schema: { type: string } }
+        - { name: date, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Array of schedule instances. }
+  /schedules/{id}:
+    put:
+      tags: [schedules]
+      summary: Update a schedule
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Schedule' }
+      responses:
+        '200': { description: Updated schedule. }
+    delete:
+      tags: [schedules]
+      summary: Delete a schedule
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+
+  # -------------------------------------------------------------------- walls
+  /walls:
+    get:
+      tags: [walls]
+      summary: List video walls (with attached devices)
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: Array of walls. }
+    post:
+      tags: [walls]
+      summary: Create a video wall
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                grid_cols: { type: integer }
+                grid_rows: { type: integer }
+                bezel_h_mm: { type: number }
+                bezel_v_mm: { type: number }
+                playlist_id: { type: string }
+      responses:
+        '201': { description: Created wall. }
+  /walls/{id}:
+    get:
+      tags: [walls]
+      summary: Get a video wall with devices
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Wall with devices. }
+    put:
+      tags: [walls]
+      summary: Update a video wall
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                grid_cols: { type: integer }
+                grid_rows: { type: integer }
+                bezel_h_mm: { type: number }
+                bezel_v_mm: { type: number }
+                sync_mode: { type: string }
+                leader_device_id: { type: string }
+                content_id: { type: string }
+                playlist_id: { type: string }
+      responses:
+        '200': { description: Updated wall. }
+    delete:
+      tags: [walls]
+      summary: Delete a video wall
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+  /walls/{id}/devices:
+    put:
+      tags: [walls]
+      summary: Set the wall's device grid positions (replaces member set)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [devices]
+              properties:
+                devices:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      device_id: { type: string }
+                      grid_col: { type: integer }
+                      grid_row: { type: integer }
+                      rotation: { type: integer }
+                      canvas_x: { type: number }
+                      canvas_y: { type: number }
+                      canvas_width: { type: number }
+                      canvas_height: { type: number }
+      responses:
+        '200': { description: Updated wall with devices. }
+  /walls/{id}/content:
+    put:
+      tags: [walls]
+      summary: Set wall content (legacy single-video path)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content_id: { type: string }
+      responses:
+        '200': { description: '{ success }.' }
+  /walls/{id}/device-config/{deviceId}:
+    get:
+      tags: [walls]
+      summary: Get wall config for a specific member device
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Per-device wall config. }
+
+  # ------------------------------------------------------------------ reports
+  /reports/plays:
+    get:
+      tags: [reports]
+      summary: Query play logs
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, schema: { type: string } }
+        - { name: content_id, in: query, schema: { type: string } }
+        - { name: start, in: query, schema: { type: string } }
+        - { name: end, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Array of play-log rows. }
+  /reports/summary:
+    get:
+      tags: [reports]
+      summary: Aggregated play summary report
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, schema: { type: string } }
+        - { name: start, in: query, schema: { type: string } }
+        - { name: end, in: query, schema: { type: string } }
+        - { name: group_by, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: 'Summary object: overall, by_content, by_device, by_hour, by_day.'
+  /reports/export:
+    get:
+      tags: [reports]
+      summary: Export proof-of-play as CSV
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, schema: { type: string } }
+        - { name: start, in: query, schema: { type: string } }
+        - { name: end, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: CSV file.
+          content:
+            text/csv:
+              schema: { type: string }
+  /reports/uptime:
+    get:
+      tags: [reports]
+      summary: Device uptime report
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, schema: { type: string } }
+        - { name: start, in: query, schema: { type: string } }
+        - { name: end, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Array of per-device uptime rows. }
+
+  # ------------------------------------------------------------------ widgets
+  /widgets:
+    get:
+      tags: [widgets]
+      summary: List widgets in the current workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: Array of widgets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Widget' }
+    post:
+      tags: [widgets]
+      summary: Create a widget
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [widget_type, name]
+              properties:
+                widget_type: { type: string }
+                name: { type: string }
+                config: { type: object }
+      responses:
+        '201':
+          description: Created widget.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Widget' }
+  /widgets/preview:
+    post:
+      tags: [widgets]
+      summary: Render an unsaved widget config to HTML (non-persisting)
+      description: 'Requires scope: read. Returns rendered HTML; does not create anything.'
+      x-required-scope: read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [widget_type]
+              properties:
+                widget_type: { type: string }
+                config: { type: object }
+      responses:
+        '200':
+          description: Rendered widget HTML.
+          content:
+            text/html:
+              schema: { type: string }
+  /widgets/{id}:
+    get:
+      tags: [widgets]
+      summary: Get a widget
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Widget.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Widget' }
+    put:
+      tags: [widgets]
+      summary: Update a widget
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                config: { type: object }
+      responses:
+        '200': { description: Updated widget. }
+    delete:
+      tags: [widgets]
+      summary: Delete a widget
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+  /widgets/{id}/render:
+    get:
+      tags: [widgets]
+      summary: Render a widget as an HTML page (public)
+      description: |
+        Unauthenticated device-render endpoint. Players fetch this HTML directly,
+        so no token or scope is required.
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Rendered widget HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
+  # -------------------------------------------------------------------- kiosk
+  /kiosk:
+    get:
+      tags: [kiosk]
+      summary: List kiosk pages in the current workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: Array of kiosk pages. }
+    post:
+      tags: [kiosk]
+      summary: Create a kiosk page
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                config: { type: object }
+      responses:
+        '201': { description: Created kiosk page. }
+  /kiosk/{id}:
+    get:
+      tags: [kiosk]
+      summary: Get a kiosk page
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Kiosk page. }
+    put:
+      tags: [kiosk]
+      summary: Update a kiosk page
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                config: { type: object }
+      responses:
+        '200': { description: Updated kiosk page. }
+    delete:
+      tags: [kiosk]
+      summary: Delete a kiosk page
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success }.' }
+  /kiosk/{id}/render:
+    get:
+      tags: [kiosk]
+      summary: Render a kiosk page as an HTML page (public)
+      description: |
+        Unauthenticated device-render endpoint. Devices fetch this HTML directly,
+        so no token or scope is required.
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Rendered kiosk HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
+  # ----------------------------------------------------------------- activity
+  /activity:
+    get:
+      tags: [activity]
+      summary: Get the activity log
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200': { description: Array of activity entries. }

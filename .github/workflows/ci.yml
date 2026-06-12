@@ -33,6 +33,27 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  openapi:
+    name: OpenAPI spec lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Lint the public API spec
+        run: npx --yes @redocly/cli@latest lint docs/openapi.yaml
+      # Contract integrity: the spec documents ONLY the token-reachable public surface.
+      # A JWT-only router (admin/auth/provision/...) appearing here is a security flag,
+      # not a convenience - fail loudly. (The runtime partition test is a separate suite
+      # that will cross-check the spec against the live mount list.)
+      - name: Assert spec is public-only
+        run: |
+          BAD=$(grep -oE '^  /(admin|auth|workspaces|ai|provision|white-label|status|subscription|stripe|teams|player-debug|contact|tokens)\b' docs/openapi.yaml || true)
+          if [ -n "$BAD" ]; then echo "::error::JWT-only path(s) leaked into the public spec:"; echo "$BAD"; exit 1; fi
+          if grep -qE 'unassigned|/prune' docs/openapi.yaml; then echo "::error::token-denied endpoint present in public spec"; exit 1; fi
+          echo "OK: spec is public-only"
+
   android-test:
     name: Android unit tests (Kotlin schedule evaluator vectors)
     runs-on: ubuntu-latest
