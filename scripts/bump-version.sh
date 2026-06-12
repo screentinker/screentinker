@@ -47,7 +47,12 @@ sed -i -E "s/(versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1$((CODE + 1))/" andr
 #    has a leading space before version= so the guard below would otherwise hit
 #    it (issue #77). The leading-space guard still excludes tizen:application
 #    required_version="..." (that's "...d_version", no preceding space).
-sed -i -E "/^<\?xml/! s/([[:space:]]version=\")[0-9][^\"]*(\")/\1${NEW}\2/" tizen/config.xml
+#    #80: Tizen requires a strictly-numeric x.y.z widget version, so a pre-release
+#    suffix (e.g. 1.9.0-rc1) is invalid and the .wgt fails to sign/install. Strip
+#    the suffix for config.xml only - the full VERSION (with -rc1/-beta.N) still
+#    drives the server/Android/package.json version.
+NUMERIC="${NEW%%-*}"
+sed -i -E "/^<\?xml/! s/([[:space:]]version=\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" tizen/config.xml
 
 # 5) commit + annotated tag (no push)
 git add VERSION server/package.json server/package-lock.json android/app/build.gradle.kts tizen/config.xml

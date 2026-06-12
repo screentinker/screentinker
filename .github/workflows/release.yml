@@ -62,11 +62,15 @@ jobs:
       - name: Resolve version + previous tag
         id: ver
         run: |
-          echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          VERSION="$(cat VERSION)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           PREV="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
           echo "prev=$PREV" >> "$GITHUB_OUTPUT"
-          echo "Releasing ${GITHUB_REF_NAME} (version $(cat VERSION)); previous tag: ${PREV:-<none>}"
+          # #80: a version carrying a -suffix (e.g. 1.9.0-rc1) is a pre-release.
+          case "$VERSION" in *-*) PRE=true ;; *) PRE=false ;; esac
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${GITHUB_REF_NAME} (version $VERSION, prerelease=$PRE); previous tag: ${PREV:-<none>}"
 
       - name: Build Tizen .wgt (unsigned in CI)
         run: |
@@ -107,7 +111,11 @@ jobs:
             echo "  Sign it with your own Samsung certificate (Tizen Studio + a profile that includes"
             echo "  your TV's DUID) to install, or - easiest - point a Tizen TV browser / URL Launcher"
             echo "  at \`https://<your-instance>/player\` (no signing needed)."
-            echo "- Docker image: \`ghcr.io/screentinker/screentinker:${{ steps.ver.outputs.version }}\` (also \`:latest\`)."
+            if [ "${{ steps.ver.outputs.prerelease }}" = "true" ]; then
+              echo "- Docker image: \`ghcr.io/screentinker/screentinker:${{ steps.ver.outputs.version }}\` (pre-release - \`:latest\` is NOT moved)."
+            else
+              echo "- Docker image: \`ghcr.io/screentinker/screentinker:${{ steps.ver.outputs.version }}\` (also \`:latest\`)."
+            fi
             echo "- \`ScreenTinker.apk\` - signed Android player (attached during release finalization)."
           } > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
@@ -116,7 +124,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # #80: pre-release tags publish as a GitHub *pre-release* (not "Latest"),
+          # which also keeps the /releases/latest API pointing at the last stable.
+          PRERELEASE_FLAG=""
+          [ "${{ steps.ver.outputs.prerelease }}" = "true" ] && PRERELEASE_FLAG="--prerelease"
           gh release create "${{ steps.ver.outputs.tag }}" \
+            $PRERELEASE_FLAG \
             --title "ScreenTinker ${{ steps.ver.outputs.tag }}" \
             --notes-file RELEASE_NOTES.md \
             "${TARBALL}" \
@@ -129,7 +142,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - id: ver
-        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION="$(cat VERSION)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # #80: move :latest only for final releases - a pre-release (1.9.0-rc1) must
+          # not repoint :latest onto untested code (anyone on :latest pulls it on restart).
+          TAGS="ghcr.io/screentinker/screentinker:$VERSION"
+          case "$VERSION" in
+            *-*) echo "Pre-release $VERSION: :latest will NOT be moved" ;;
+            *)   TAGS="${TAGS}"$'\n'"ghcr.io/screentinker/screentinker:latest" ;;
+          esac
+          { echo "tags<<__EOF__"; printf '%s\n' "$TAGS"; echo "__EOF__"; } >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -142,9 +165,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/screentinker/screentinker:${{ steps.ver.outputs.version }}
-            ghcr.io/screentinker/screentinker:latest
+          tags: ${{ steps.ver.outputs.tags }}
 
   # TODO (deferred): build + sign the Android APK in CI. Requires the release
   # keystore + passwords as encrypted Actions secrets. For now the maintainer

@@ -21,8 +21,11 @@ BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
 echo "==> Fetching tags"
 git fetch --tags origin
 
-# Target tag: explicit arg, or the highest semver v* tag.
-TARGET="${1:-$(git tag -l 'v*' | sort -V | tail -1)}"
+# Target tag: explicit arg, or the highest semver v* tag. #80: exclude pre-release
+# tags (-rc/-beta/-alpha) from the default - GNU `sort -V` ranks 1.9.0-rc1 ABOVE the
+# final 1.9.0, so an unfiltered default would silently pick an RC. An explicit arg
+# still lets you target a pre-release deliberately (scripts/upgrade.sh v1.9.0-rc1).
+TARGET="${1:-$(git tag -l 'v*' | grep -vE -- '-(rc|beta|alpha|pre)' | sort -V | tail -1)}"
 if [ -z "$TARGET" ] || ! git rev-parse -q --verify "refs/tags/$TARGET^{commit}" >/dev/null; then
   echo "ERROR: no such release tag: '${TARGET:-<none found>}'" >&2
   exit 1
