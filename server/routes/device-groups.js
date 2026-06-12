@@ -5,6 +5,9 @@ const { db } = require('../db/database');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2i: workspace-aware access. Same pattern as devices/content/widgets.
 const { accessContext } = require('../lib/tenancy');
+// #public-api: operational fleet commands (reboot/shutdown/...) need the 'full' token
+// scope. No-op for JWT sessions; for tokens a read/write scope is rejected.
+const { requireScope } = require('../middleware/apiToken');
 
 const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
 const ALLOWED_COMMANDS = ['screen_on', 'screen_off', 'launch', 'update', 'reboot', 'shutdown'];
@@ -288,7 +291,7 @@ router.post('/:id/assign-playlist', requireGroupWrite, (req, res) => {
 });
 
 // Send command to all devices in a group (reboot/shutdown/screen on/off etc.)
-router.post('/:id/command', requireGroupWrite, (req, res) => {
+router.post('/:id/command', requireScope('full'), requireGroupWrite, (req, res) => {
   const { type, payload } = req.body;
   if (!type) return res.status(400).json({ error: 'command type required' });
   if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });

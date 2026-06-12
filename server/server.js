@@ -422,6 +422,8 @@ app.get('/api/content/:id/thumbnail', (req, res) => {
 // yet (they still filter by user_id); 2.2 will migrate them one route at a time.
 const { requireAuth } = require('./middleware/auth');
 const { resolveTenancy } = require('./lib/tenancy');
+// Public API token front door (Phase 1). Attached ONLY to the public routers below.
+const { bearerAuth, tokenScopeGate } = require('./middleware/apiToken');
 
 // activityLogger wraps res.json on every subsequent route to auto-log
 // successful POST/PUT/DELETE mutations. Mount it BEFORE the workspace routes
@@ -432,47 +434,34 @@ const { resolveTenancy } = require('./lib/tenancy');
 const { activityLogger } = require('./services/activity');
 app.use(activityLogger);
 
-// /api/workspaces: management endpoints that operate on a target workspace
-// (URL param), not the caller's currently active one. Hence requireAuth only,
-// no resolveTenancy. Permission gated per-handler via canAdminWorkspace().
-app.use('/api/workspaces', requireAuth, require('./routes/workspaces'));
+// #public-api Phase 1: the router partition is data-driven from config/api-surface.js
+// so server.js and the partition firewall test (test/api.test.js) read the SAME list
+// and cannot drift. PUBLIC routers get the token front door (bearerAuth + resolveTenancy
+// + tokenScopeGate); JWT-ONLY routers keep requireAuth, so a Bearer st_... token fails
+// their jwt.verify and is unreachable (secure by exclusion). Tokens act as a workspace
+// member with platform powers stripped, so in-handler ELEVATED/PLATFORM checks (e.g.
+// GET /api/devices/unassigned) still deny.
+const { PUBLIC_ROUTERS, JWT_ONLY_ROUTERS } = require('./config/api-surface');
 
-// /api/admin: admin-provisioned user creation (#10). Like /api/workspaces it
-// targets a workspace by body param (not the caller's active one), so
-// requireAuth only - per-handler canAdminWorkspace() gates it. Mounted after
-// activityLogger so creations are auto-logged.
-app.use('/api/admin', requireAuth, require('./routes/admin'));
-
-app.use('/api/devices', requireAuth, resolveTenancy, require('./routes/devices'));
-app.use('/api/content', requireAuth, resolveTenancy, require('./routes/content'));
-app.use('/api/ai', requireAuth, resolveTenancy, require('./routes/ai')); // #41 AI design (BYOK)
-app.use('/api/folders', requireAuth, resolveTenancy, require('./routes/folders'));
-app.use('/api/assignments', requireAuth, resolveTenancy, require('./routes/assignments'));
-app.use('/api/provision', requireAuth, resolveTenancy, require('./routes/provisioning'));
-app.use('/api/layouts', requireAuth, resolveTenancy, require('./routes/layouts'));
-// Widget render is public (accessed by devices)
+// Public device-render endpoints + the memory-heavy preview limiter must be registered
+// BEFORE their parent router mount so the _skipAuth bypass / the limiter fire first.
 app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
-// Rate limit preview endpoint — it inlines user content as base64 which is memory-intensive
-app.use('/api/widgets/preview', rateLimit(60000, 30));
-app.use('/api/widgets', (req, res, next) => { if (req._skipAuth) return next(); requireAuth(req, res, next); }, resolveTenancy, require('./routes/widgets'));
-app.use('/api/schedules', requireAuth, resolveTenancy, require('./routes/schedules'));
-app.use('/api/walls', requireAuth, resolveTenancy, require('./routes/video-walls'));
-app.use('/api/teams', requireAuth, resolveTenancy, require('./routes/teams'));
-app.use('/api/reports', requireAuth, resolveTenancy, require('./routes/reports'));
-app.use('/api/groups', requireAuth, resolveTenancy, require('./routes/device-groups'));
-app.use('/api/playlists', requireAuth, resolveTenancy, require('./routes/playlists'));
-app.use('/api/activity', requireAuth, resolveTenancy, require('./routes/activity'));
-app.use('/api/white-label', requireAuth, resolveTenancy, require('./routes/white-label'));
-// Kiosk render is public (accessed by devices), CRUD is protected
-app.get('/api/kiosk/:id/render', (req, res, next) => {
-  // Let it through to the kiosk route without auth
-  req._skipAuth = true;
-  next();
-});
-app.use('/api/kiosk', (req, res, next) => {
-  if (req._skipAuth) return next();
-  requireAuth(req, res, next);
-}, resolveTenancy, require('./routes/kiosk'));
+app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
+app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
+
+for (const r of PUBLIC_ROUTERS) {
+  // renderBypass routers let the public /:id/render through (req._skipAuth) before bearerAuth.
+  const front = r.renderBypass
+    ? (req, res, next) => { if (req._skipAuth) return next(); bearerAuth(req, res, next); }
+    : bearerAuth;
+  app.use(r.path, front, resolveTenancy, tokenScopeGate, require(r.mod));
+}
+for (const r of JWT_ONLY_ROUTERS) {
+  // tenancy routers act on the caller's active workspace; the rest (workspaces, admin)
+  // target a workspace by URL/body param and are gated per-handler (canAdminWorkspace).
+  if (r.tenancy) app.use(r.path, requireAuth, resolveTenancy, require(r.mod));
+  else app.use(r.path, requireAuth, require(r.mod));
+}
 
 // Frontend version hash (changes when files are modified, triggers soft reload)
 const crypto = require('crypto');

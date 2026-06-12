@@ -500,6 +500,27 @@ CREATE TABLE IF NOT EXISTS player_debug_logs (
 CREATE INDEX IF NOT EXISTS idx_player_debug_fingerprint ON player_debug_logs(error_fingerprint);
 CREATE INDEX IF NOT EXISTS idx_player_debug_created_at ON player_debug_logs(created_at);
 
+-- ===================== API TOKENS (public API, Phase 1) =====================
+-- Scoped personal access tokens for the public API. The full token (st_...) is
+-- shown to its owner exactly once at creation; only its SHA-256 hash is stored.
+-- A token is bound to ONE workspace and a scope (read|write|full) and always acts
+-- with the owner's workspace role - never platform/cross-org powers (apiTokenAuth
+-- forces the effective platform role to 'user').
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id              TEXT PRIMARY KEY,
+    token_hash      TEXT NOT NULL UNIQUE,                     -- SHA-256 hex of the full token
+    prefix          TEXT NOT NULL,                            -- e.g. 'st_a1b2c3d4' (display only)
+    name            TEXT NOT NULL,                            -- user-given label
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    scope           TEXT NOT NULL DEFAULT 'read',             -- 'read' | 'write' | 'full'
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    last_used_at    INTEGER,
+    revoked_at      INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
 -- ===================== SCHEMA MIGRATIONS =====================
 
 CREATE TABLE IF NOT EXISTS schema_migrations (

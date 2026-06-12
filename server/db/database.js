@@ -216,6 +216,9 @@ if (_migApplied > 0) console.log(`[migrate] applied ${_migApplied} new column mi
 // self-applies on upgrade). Record it in schema_migrations for observability.
 try { db.prepare("INSERT OR IGNORE INTO schema_migrations (id) VALUES ('phase7_playlist_item_schedules')").run(); } catch { /* schema_migrations not ready yet */ }
 
+// Public API tokens: api_tokens table is created idempotently by schema.sql.
+try { db.prepare("INSERT OR IGNORE INTO schema_migrations (id) VALUES ('phase8_api_tokens')").run(); } catch { /* schema_migrations not ready yet */ }
+
 // Fix assignments table: make content_id nullable (SQLite requires table rebuild)
 try {
   const colInfo = db.prepare("PRAGMA table_info(assignments)").all();
