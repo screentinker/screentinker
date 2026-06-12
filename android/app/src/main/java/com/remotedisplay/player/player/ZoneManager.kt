@@ -252,17 +252,26 @@ class ZoneManager(
                     } else {
                         Log.w(TAG, "Zone ${zone.name}: skipping unloadable image $contentId")
                     }
-                } else if (!remoteUrl.isNullOrEmpty()) {
-                    Thread {
-                        val bitmap = com.remotedisplay.player.util.ImageLoader.decodeUrl(remoteUrl, targetW, targetH)
-                        if (bitmap != null) {
-                            imageView.post {
-                                try { imageView.setImageBitmap(bitmap) } catch (e: Throwable) { Log.e(TAG, "setImageBitmap failed: ${e.message}") }
+                } else {
+                    // #78: not in the local cache yet (first-sync download still in flight, or a
+                    // zone whose content the preloader hasn't fetched). Load straight from the
+                    // server - mirrors how the video branch above falls back to a server URL -
+                    // so the zone isn't blank until a restart populates the cache.
+                    val imgUrl = if (!remoteUrl.isNullOrEmpty()) remoteUrl
+                                 else if (contentId != null) "$renderServerUrl/api/content/$contentId/file"
+                                 else null
+                    if (imgUrl != null) {
+                        Thread {
+                            val bitmap = com.remotedisplay.player.util.ImageLoader.decodeUrl(imgUrl, targetW, targetH)
+                            if (bitmap != null) {
+                                imageView.post {
+                                    try { imageView.setImageBitmap(bitmap) } catch (e: Throwable) { Log.e(TAG, "setImageBitmap failed: ${e.message}") }
+                                }
+                            } else {
+                                Log.w(TAG, "Zone ${zone.name}: unloadable image $contentId via $imgUrl")
                             }
-                        } else {
-                            Log.w(TAG, "Zone ${zone.name}: skipping unloadable remote image")
-                        }
-                    }.start()
+                        }.start()
+                    }
                 }
                 container.addView(imageView); zoneViews[zone.id] = imageView
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
