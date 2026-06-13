@@ -575,7 +575,14 @@ const originalProvisionRoute = require('./routes/provisioning');
 
 // Override provision to also notify device via WS
 const { checkDeviceLimit } = require('./middleware/subscription');
+const pairLockout = require('./lib/pair-lockout');
 app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (req, res) => {
+  // #87: lock out an IP after repeated failed pairing-code guesses (brute-force defense
+  // beyond the 5/min rate-limit on /api/provision).
+  const ip = getClientIp(req);
+  if (pairLockout.isLocked(ip)) {
+    return res.status(429).json({ error: 'Too many failed pairing attempts. Try again in a few minutes.' });
+  }
   const { pairing_code, name } = req.body;
   if (!pairing_code) return res.status(400).json({ error: 'pairing_code required' });
   // Phase 2.2a: pair into the caller's current workspace. Refusing on no
@@ -584,7 +591,18 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before pairing.' });
 
   const device = db.prepare('SELECT * FROM devices WHERE pairing_code = ?').get(pairing_code);
-  if (!device) return res.status(404).json({ error: 'No device found with that pairing code' });
+  // #87: an UNKNOWN code is a brute-force guess - count it toward the per-IP lockout.
+  if (!device) {
+    pairLockout.recordFailure(ip);
+    return res.status(404).json({ error: 'No device found with that pairing code' });
+  }
+  // An EXPIRED code is a legitimate-but-stale code (a slow rollout, not an attack), so it
+  // does NOT count toward the lockout - it just asks the display to regenerate. This keeps
+  // a bulk rollout from one office/NAT IP from locking itself out on expired codes.
+  if (pairLockout.isCodeExpired(device.created_at)) {
+    return res.status(410).json({ error: 'Pairing code expired - restart the display to get a new code' });
+  }
+  pairLockout.reset(ip); // a valid claim forgives prior failed attempts from this IP
 
   const deviceName = name || 'Display ' + (db.prepare('SELECT COUNT(*) as count FROM devices WHERE user_id = ?').get(req.user.id).count + 1);
   db.prepare("UPDATE devices SET pairing_code = NULL, name = ?, user_id = ?, workspace_id = ?, status = 'online', updated_at = strftime('%s','now') WHERE id = ?")
