@@ -1,23 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../db/database');
 
-// Provision (pair) a device by entering its pairing code
+// #90: the bare POST /api/provision was a vestigial SECOND pairing endpoint. It paired a
+// device by pairing code but - unlike POST /api/provision/pair (server.js) - did NOT
+// assign the device to a workspace, did NOT enforce checkDeviceLimit, and did NOT emit
+// device:paired / dashboard:device-added. A silently-diverging duplicate of /pair that
+// no client ever called (verified). Consolidated to /pair (the single, fully-protected
+// pairing endpoint); this path now returns 410 Gone and points callers at the right one.
+//
+// The mount stays in the JWT-only partition (config/api-surface.js), so a Bearer st_
+// token still gets 401 from requireAuth before ever reaching this handler.
 router.post('/', (req, res) => {
-  const { pairing_code } = req.body;
-  if (!pairing_code) return res.status(400).json({ error: 'pairing_code required' });
-
-  const device = db.prepare('SELECT * FROM devices WHERE pairing_code = ?').get(pairing_code);
-  if (!device) return res.status(404).json({ error: 'No device found with that pairing code' });
-
-  // Clear pairing code and set online
-  db.prepare(`
-    UPDATE devices SET pairing_code = NULL, status = 'online', updated_at = strftime('%s','now')
-    WHERE id = ?
-  `).run(device.id);
-
-  const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
-  res.json(require('../lib/device-sanitize').stripDeviceSecrets(updated));
+  res.status(410).json({ error: 'This endpoint has been removed. Pair a device with POST /api/provision/pair.' });
 });
 
 module.exports = router;
