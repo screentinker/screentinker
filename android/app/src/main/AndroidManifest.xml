@@ -110,6 +110,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- #96: relaunch the player after a self-update (OTA). MY_PACKAGE_REPLACED is
+             delivered to the freshly-installed app; the receiver relaunches via the same
+             cascade as boot so the screen doesn't drop to the launcher after an update. -->
+        <receiver
+            android:name=".service.PackageReplacedReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- FileProvider for APK updates -->
         <provider
             android:name="androidx.core.content.FileProvider"
