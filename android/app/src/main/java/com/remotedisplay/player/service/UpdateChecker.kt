@@ -221,9 +221,15 @@ class UpdateChecker(private val context: Context) {
                     }
                 }
 
+                // #96 (install bug): the status PendingIntent must stay FLAG_MUTABLE so
+                // PackageInstaller can write EXTRA_STATUS back into it - but on Android 14+
+                // (target SDK 34+) a FLAG_MUTABLE PendingIntent with an *implicit* intent is
+                // disallowed and getBroadcast() throws, silently aborting every OTA on 14+.
+                // Make the intent explicit (setPackage) so mutable is allowed; it also keeps
+                // the broadcast to our own RECEIVER_NOT_EXPORTED receiver.
                 val pendingIntent = android.app.PendingIntent.getBroadcast(
                     context, sessionId,
-                    Intent("com.remotedisplay.player.INSTALL_COMPLETE"),
+                    Intent("com.remotedisplay.player.INSTALL_COMPLETE").setPackage(context.packageName),
                     android.app.PendingIntent.FLAG_MUTABLE
                 )
                 session.commit(pendingIntent.intentSender)
