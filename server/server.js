@@ -521,6 +521,11 @@ app.get('/api/update/check', (req, res) => {
   const latestVersion = VERSION;
   const updateAvailable = currentVersion && currentVersion !== latestVersion;
 
+  // #96: log every version check so the OTA is observable - which devices check in, their
+  // version, and whether they'll update. This diagnosability gap is part of why the 1.9.0
+  // relaunch failure went unseen.
+  console.log(`[ota] update check from ${getClientIp(req)}: client=${currentVersion || 'unknown'} latest=${latestVersion} update_available=${!!updateAvailable} apk=${apkExists ? 'present' : 'MISSING'}`);
+
   res.json({
     latest_version: latestVersion,
     current_version: currentVersion || 'unknown',
@@ -638,11 +643,15 @@ function resolveApkPath() {
 app.get('/download/apk', (req, res) => {
   const apkPath = resolveApkPath();
   if (apkPath) {
+    // #96: an APK download means a device is actually applying an OTA - log it so the
+    // update is observable end to end (check -> download -> [relaunch]).
+    console.log(`[ota] APK download by ${getClientIp(req)} (${fs.statSync(apkPath).size} bytes) - OTA update in progress`);
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="ScreenTinker.apk"');
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(apkPath);
   } else {
+    console.warn(`[ota] APK download requested by ${getClientIp(req)} but no APK is available (404)`);
     res.status(404).send(`<!DOCTYPE html><html><head><title>APK Not Found</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:500px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet. To build it from source:</p><p><code>cd android</code><br><code>./gradlew assembleDebug</code><br><code>cp app/build/outputs/apk/debug/app-debug.apk ../ScreenTinker.apk</code></p><p>See the <a href="/" style="color:#3b82f6">README</a> for full build instructions.</p><p>In Docker, mount a built APK at <code>/data/ScreenTinker.apk</code> (the data dir).</p><p>Alternatively, use the <a href="/player" style="color:#3b82f6">web player</a> in any browser.</p></div></body></html>`);
   }
 });
