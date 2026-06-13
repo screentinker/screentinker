@@ -73,6 +73,14 @@ before(async () => {
   S.groupId = (await jfetch('/api/groups', post(S.jwt, { name: 'G' }))).body.id;
   S.widgetId = (await jfetch('/api/widgets', post(S.jwt, { name: 'W', widget_type: 'clock', config: {} }))).body.id;
 
+  // layouts + zones in workspace A (user1) and workspace B (user2) - for the gap-fix
+  // assertions and the cross-tenant rejection (the is_template OR workspace_id guard).
+  const zone = (n) => ({ name: n, x_percent: 0, y_percent: 0, width_percent: 100, height_percent: 100 });
+  const layA = await jfetch('/api/layouts', post(S.jwt, { name: 'LA', zones: [zone('ZA')] }));
+  S.layoutA = layA.body.id; S.zoneA = layA.body.zones[0].id;
+  const layB = await jfetch('/api/layouts', post(S.jwt2, { name: 'LB', zones: [zone('ZB')] }));
+  S.layoutB = layB.body.id; S.zoneB = layB.body.zones[0].id;
+
   // a paired device with a known token (for the WS round-trip) - inserted into the
   // server's live DB (WAL: a second connection's commit is visible to the server).
   const db = new (require('better-sqlite3'))(path.join(DATA_DIR, 'db', 'remote_display.db'), { timeout: 5000 });
@@ -243,4 +251,64 @@ test('device WS: wrong device_token is rejected (auth-error, never registered)',
   const got = await deviceRegister({ device_id: S.deviceId, device_token: 'WRONG-TOKEN', device_info: {} });
   assert.ok(got.authError, 'wrong token should emit device:auth-error');
   assert.ok(!got.registered, 'wrong token must not register');
+});
+
+// ───────────────────────── TIER 4: #92 FOLLOW-UP COVERAGE ─────────────────────────
+// The non-security gaps named in the self-review (issue #92): the gap-fix fields + the
+// cross-tenant guard (the security-relevant one), docs serving, and the token lifecycle
+// branches the suite didn't exercise.
+
+test('gap: playlist item accepts zone_id and returns it on read', async () => {
+  const created = await jfetch(`/api/playlists/${S.playlistA}/items`, post(S.jwt, { widget_id: S.widgetId, zone_id: S.zoneA }));
+  assert.equal(created.status, 201);
+  assert.equal(created.body.zone_id, S.zoneA);
+  const items = await jfetch(`/api/playlists/${S.playlistA}/items`, auth(S.jwt));
+  assert.ok(items.body.some(i => i.zone_id === S.zoneA), 'GET items must return zone_id');
+});
+test('gap: playlist item REJECTS a cross-tenant zone_id (400, is_template OR workspace_id guard)', async () => {
+  const res = await jfetch(`/api/playlists/${S.playlistA}/items`, post(S.jwt, { widget_id: S.widgetId, zone_id: S.zoneB }));
+  assert.equal(res.status, 400, 'a zone from another workspace must be rejected');
+});
+test('gap: device PUT accepts layout_id and returns it on read', async () => {
+  const put = await jfetch(`/api/devices/${S.deviceId}`, { method: 'PUT', ...auth(S.jwt), body: JSON.stringify({ layout_id: S.layoutA }) });
+  assert.equal(put.status, 200);
+  assert.equal(put.body.layout_id, S.layoutA);
+  const dev = await jfetch(`/api/devices/${S.deviceId}`, auth(S.jwt));
+  assert.equal(dev.body.layout_id, S.layoutA, 'GET device must return layout_id');
+});
+test('gap: device PUT REJECTS a cross-tenant layout_id (400)', async () => {
+  const res = await jfetch(`/api/devices/${S.deviceId}`, { method: 'PUT', ...auth(S.jwt), body: JSON.stringify({ layout_id: S.layoutB }) });
+  assert.equal(res.status, 400, 'a layout from another workspace must be rejected');
+});
+
+test('docs: /openapi.yaml serves the spec document', async () => {
+  const res = await fetch(BASE + '/openapi.yaml');
+  assert.equal(res.status, 200);
+  assert.ok((await res.text()).includes('openapi: 3.1'), 'must serve the OpenAPI document');
+});
+test('docs: /docs serves the Redoc viewer wired to the spec', async () => {
+  const res = await fetch(BASE + '/docs');
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.ok(html.includes('<redoc') && html.includes('/openapi.yaml'), 'must serve the Redoc page pointing at /openapi.yaml');
+});
+
+test('token-create: rejects a workspace the caller is not a member of (400)', async () => {
+  // user1 is platform_admin (resolveTenancy lets them into wsB via the header) but is NOT
+  // a member of wsB; the create endpoint checks accessContext with the platform role
+  // stripped to 'user', so it must refuse to bind a token there.
+  const res = await jfetch('/api/tokens', post(S.jwt, { name: 'x', scope: 'read' }, { 'X-Workspace-Id': S.wsB }));
+  assert.equal(res.status, 400);
+  assert.equal((await jfetch('/api/tokens', post(S.jwt, { name: 'x2', scope: 'read' }))).status, 201, 'own workspace still works');
+});
+// The must_change_password gate is middleware logic and is unit-tested with an injected
+// in-memory DB in test/apitoken-unit.test.js (cross-process DB visibility against the
+// subprocess server is unreliable for asserting that specific branch).
+test('token-auth: last_used_at is stamped on first use', async () => {
+  const created = await jfetch('/api/tokens', post(S.jwt, { name: 'lu', scope: 'read' }));
+  const before = (await jfetch('/api/tokens', auth(S.jwt))).body.find(t => t.id === created.body.id);
+  assert.equal(before.last_used_at, null, 'a fresh token has no last_used_at');
+  await jfetch('/api/playlists', auth(created.body.token)); // use it once
+  const after = (await jfetch('/api/tokens', auth(S.jwt))).body.find(t => t.id === created.body.id);
+  assert.ok(after.last_used_at, 'last_used_at is set after first use');
 });
