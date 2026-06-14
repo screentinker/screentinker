@@ -271,7 +271,12 @@ app.use('/socket.io-client', express.static(
 const rateLimits = new Map();
 function rateLimit(windowMs, maxRequests) {
   return (req, res, next) => {
-    const key = getClientIp(req) + req.path;
+    // #100: key on the FULL path, not req.path. These limiters are mounted via
+    // app.use('/api/auth/login', ...) etc., and Express strips the mount path, so
+    // req.path was '/' for ALL of them - i.e. /login, /register, /totp/verify shared
+    // ONE per-IP counter (coupled limits; the /totp/verify brute-force limit wasn't
+    // actually independent). originalUrl keeps each endpoint's limit separate.
+    const key = getClientIp(req) + (req.originalUrl || req.url || req.path).split('?')[0];
     const now = Date.now();
     const windowStart = now - windowMs;
     let hits = rateLimits.get(key) || [];
@@ -292,6 +297,10 @@ function rateLimit(windowMs, maxRequests) {
 // Auth routes (public, rate limited)
 app.use('/api/auth/login', rateLimit(60000, 10)); // 10 attempts per minute
 app.use('/api/auth/register', rateLimit(60000, 5)); // 5 registrations per minute
+// #100 (tightening #2): the TOTP verify endpoint is the brute-force surface for a
+// 6-digit code. Cap attempts/min here; the per-user lockout (lib/totp-lockout) sits
+// on top in the handler.
+app.use('/api/auth/totp/verify', rateLimit(60000, 10));
 // Admin password-reset endpoint: even if an admin's session is compromised,
 // cap the blast radius to 20 resets/min/IP. Express matches the longest
 // path prefix first, so this fires before /api/auth catches the request.
