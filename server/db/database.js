@@ -187,6 +187,12 @@ const migrations = [
   "ALTER TABLE ai_settings ADD COLUMN image_provider TEXT",
   // #41: optional separate key for the image endpoint (for local-LLM + cloud-image setups).
   "ALTER TABLE ai_settings ADD COLUMN image_api_key_enc TEXT",
+  // #100: TOTP MFA. Columns default to "off" so every existing account is unaffected.
+  "ALTER TABLE users ADD COLUMN totp_secret_enc TEXT",
+  "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0",
+  "CREATE TABLE IF NOT EXISTS totp_recovery_codes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), used_at INTEGER)",
+  "CREATE INDEX IF NOT EXISTS idx_totp_recovery_user ON totp_recovery_codes(user_id)",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

@@ -37,9 +37,26 @@ CREATE TABLE IF NOT EXISTS users (
     stripe_subscription_id TEXT,
     subscription_status TEXT DEFAULT 'active',
     subscription_ends  INTEGER,
+    -- #100: TOTP MFA (opt-in, local accounts only). totp_secret_enc is secretbox-
+    -- encrypted (REVERSIBLE - the server recomputes codes). totp_last_step blocks
+    -- intra-window replay (a code from an already-consumed 30s step is rejected).
+    totp_secret_enc TEXT,
+    totp_enabled    INTEGER NOT NULL DEFAULT 0,
+    totp_last_step  INTEGER NOT NULL DEFAULT 0,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
+
+-- #100: single-use TOTP recovery codes. SHA-256 hashed (same discipline as
+-- api_tokens.token_hash); plaintext shown once at enrollment. used_at NULL = available.
+CREATE TABLE IF NOT EXISTS totp_recovery_codes (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash   TEXT NOT NULL,
+    created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    used_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_totp_recovery_user ON totp_recovery_codes(user_id);
 
 CREATE TABLE IF NOT EXISTS devices (
     id              TEXT PRIMARY KEY,
