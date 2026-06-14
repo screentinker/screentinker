@@ -5,9 +5,11 @@ const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { OAuth2Client } = require('google-auth-library');
 const { db } = require('../db/database');
-const { generateToken, requireAuth, requireAdmin, requireSuperAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES } = require('../middleware/auth');
+const { generateToken, generateMfaPendingToken, verifyToken, requireAuth, requireAdmin, requireSuperAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES } = require('../middleware/auth');
 const { resolveTenancy } = require('../lib/tenancy');
 const { logActivity, getClientIp } = require('../services/activity');
+const totp = require('../lib/totp');
+const totpLockout = require('../lib/totp-lockout');
 const { sendSignupEmails } = require('../services/signupEmails');
 const { deleteUserCascade, OrgHasOtherMembersError } = require('../lib/user-deletion');
 const config = require('../config');
@@ -147,11 +149,147 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  logSuccessfulLogin(user.id, email, getClientIp(req));
+  // #100: password OK. If TOTP is enabled, DON'T issue a session yet - return an
+  // mfa_pending token; the client completes via POST /api/auth/totp/verify. This is
+  // the ONLY place TOTP gates (interactive password login). The SSO routes and the
+  // API-token path never reach here, so both bypass TOTP by construction.
+  if (user.totp_enabled) {
+    return res.json({ mfa_required: true, mfa_token: generateMfaPendingToken(user) });
+  }
+  issueSession(req, res, user);
+});
+
+// #100: finish an interactive login - shared by /login (no TOTP) and /totp/verify
+// (after TOTP). Logs the successful login + issues the full session JWT.
+function issueSession(req, res, user, extra = {}) {
+  logSuccessfulLogin(user.id, user.email, getClientIp(req));
   const workspaceId = ensureDefaultOrgForUser(user, { allowCreate: config.autoCreateOrgOnSignup });
   const token = generateToken(user, workspaceId);
   const { password_hash, ...safeUser } = user;
-  res.json({ token, user: safeUser, current_workspace_id: workspaceId });
+  res.json({ token, user: safeUser, current_workspace_id: workspaceId, ...extra });
+}
+
+// ==================== TOTP MFA (#100) ====================
+// Opt-in per-user, LOCAL accounts only (SSO IdPs own MFA). Enrollment is a two-step
+// confirm (setup -> enable) so a mistyped secret can't lock anyone out. Recovery
+// codes are shown ONCE at enable, stored SHA-256-hashed, single-use.
+
+const RECOVERY_CODE_COUNT = 10;
+
+function recoveryCodesRemaining(userId) {
+  return db.prepare('SELECT COUNT(*) AS n FROM totp_recovery_codes WHERE user_id = ? AND used_at IS NULL').get(userId).n;
+}
+
+// Atomically replace a user's recovery codes - no window where old + new both verify
+// (tightening #3). Returns the plaintext set (shown ONCE).
+function resetRecoveryCodes(userId) {
+  const { plain, hashes } = totp.generateRecoveryCodes(RECOVERY_CODE_COUNT);
+  db.transaction(() => {
+    db.prepare('DELETE FROM totp_recovery_codes WHERE user_id = ?').run(userId);
+    const ins = db.prepare('INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES (?, ?, ?)');
+    for (const h of hashes) ins.run(uuidv4(), userId, h);
+  })();
+  return plain;
+}
+
+// Consume one single-use recovery code (mark used). True if a fresh code matched.
+function consumeRecoveryCode(userId, input) {
+  if (!input) return false;
+  const row = db.prepare('SELECT id FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ? AND used_at IS NULL')
+    .get(userId, totp.hashRecoveryCode(input));
+  if (!row) return false;
+  db.prepare("UPDATE totp_recovery_codes SET used_at = strftime('%s','now') WHERE id = ?").run(row.id);
+  return true;
+}
+
+router.get('/totp/status', requireAuth, (req, res) => {
+  const u = db.prepare('SELECT totp_enabled, auth_provider FROM users WHERE id = ?').get(req.user.id);
+  res.json({
+    enabled: !!u.totp_enabled,
+    eligible: u.auth_provider === 'local',
+    recovery_codes_remaining: u.totp_enabled ? recoveryCodesRemaining(req.user.id) : 0,
+  });
+});
+
+// Step 1: mint a pending secret + return the otpauth:// URI (frontend renders the QR).
+router.post('/totp/setup', requireAuth, (req, res) => {
+  const u = db.prepare('SELECT auth_provider, totp_enabled, email FROM users WHERE id = ?').get(req.user.id);
+  if (u.auth_provider !== 'local') return res.status(400).json({ error: 'TOTP is only for password accounts; your identity provider manages MFA.' });
+  if (u.totp_enabled) return res.status(409).json({ error: 'TOTP already enabled. Disable it first to re-enroll.' });
+  const secret = totp.generateSecret();
+  db.prepare("UPDATE users SET totp_secret_enc = ?, totp_enabled = 0, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(totp.encryptSecret(secret), req.user.id);
+  res.json({ otpauth_uri: totp.keyuri(u.email, secret), secret });
+});
+
+// Step 2: confirm a code from the user's app, THEN enable + issue recovery codes (once).
+router.post('/totp/enable', requireAuth, (req, res) => {
+  const u = db.prepare('SELECT totp_secret_enc, totp_enabled, totp_last_step, auth_provider FROM users WHERE id = ?').get(req.user.id);
+  if (u.auth_provider !== 'local') return res.status(400).json({ error: 'TOTP unavailable for SSO accounts.' });
+  if (u.totp_enabled) return res.status(409).json({ error: 'TOTP already enabled.' });
+  if (!u.totp_secret_enc) return res.status(400).json({ error: 'Start with POST /api/auth/totp/setup.' });
+  const step = totp.verifyCode(req.body.code, totp.decryptSecret(u.totp_secret_enc), u.totp_last_step);
+  if (!step) return res.status(400).json({ error: 'Invalid code' });
+  db.prepare("UPDATE users SET totp_enabled = 1, totp_last_step = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(step, req.user.id);
+  res.json({ enabled: true, recovery_codes: resetRecoveryCodes(req.user.id) }); // shown ONCE
+});
+
+// Disable: re-auth with a current code (or a recovery code) so a hijacked session
+// can't silently strip MFA. Clears the secret + all recovery codes.
+router.post('/totp/disable', requireAuth, (req, res) => {
+  const u = db.prepare('SELECT totp_secret_enc, totp_enabled, totp_last_step FROM users WHERE id = ?').get(req.user.id);
+  if (!u.totp_enabled) return res.status(400).json({ error: 'TOTP is not enabled.' });
+  const ok = !!totp.verifyCode(req.body.code, totp.decryptSecret(u.totp_secret_enc), u.totp_last_step)
+    || consumeRecoveryCode(req.user.id, req.body.code);
+  if (!ok) return res.status(400).json({ error: 'Invalid code' });
+  db.transaction(() => {
+    db.prepare("UPDATE users SET totp_enabled = 0, totp_secret_enc = NULL, totp_last_step = 0, updated_at = strftime('%s','now') WHERE id = ?").run(req.user.id);
+    db.prepare('DELETE FROM totp_recovery_codes WHERE user_id = ?').run(req.user.id);
+  })();
+  res.json({ enabled: false });
+});
+
+// Regenerate recovery codes: re-auth (current code) + ATOMIC replace (tightening #3).
+router.post('/totp/recovery-codes/regenerate', requireAuth, (req, res) => {
+  const u = db.prepare('SELECT totp_secret_enc, totp_enabled, totp_last_step FROM users WHERE id = ?').get(req.user.id);
+  if (!u.totp_enabled) return res.status(400).json({ error: 'TOTP is not enabled.' });
+  const step = totp.verifyCode(req.body.code, totp.decryptSecret(u.totp_secret_enc), u.totp_last_step);
+  if (!step) return res.status(400).json({ error: 'Invalid code' });
+  db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ?').run(step, req.user.id);
+  res.json({ recovery_codes: resetRecoveryCodes(req.user.id) });
+});
+
+// Second login step: exchange an mfa_pending token + a code (TOTP or recovery) for a
+// full session. Per-route 10/min rate-limit (server.js) + per-user lockout (#87 model).
+router.post('/totp/verify', (req, res) => {
+  const { mfa_token, code } = req.body;
+  if (!mfa_token || !code) return res.status(400).json({ error: 'mfa_token and code required' });
+  let decoded;
+  try { decoded = verifyToken(mfa_token); } catch { return res.status(401).json({ error: 'mfa session expired' }); }
+  if (!decoded.mfa_pending || !decoded.id) return res.status(401).json({ error: 'invalid mfa token' });
+  if (totpLockout.isLocked(decoded.id)) return res.status(429).json({ error: 'Too many invalid codes. Try again later.' });
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decoded.id);
+  if (!user || !user.totp_enabled) return res.status(401).json({ error: 'invalid mfa token' });
+
+  // TOTP first (with intra-window replay block via totp_last_step), then a recovery code.
+  const step = totp.verifyCode(code, totp.decryptSecret(user.totp_secret_enc), user.totp_last_step);
+  let viaRecovery = false;
+  if (step) {
+    db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ?').run(step, user.id);
+  } else if (consumeRecoveryCode(user.id, code)) {
+    viaRecovery = true;
+  } else {
+    totpLockout.recordFailure(decoded.id);
+    logFailedLogin(user.email, getClientIp(req), 'Bad TOTP/recovery code');
+    return res.status(401).json({ error: 'Invalid code' });
+  }
+  totpLockout.reset(decoded.id);
+  issueSession(req, res, user, {
+    via_recovery: viaRecovery,
+    recovery_codes_remaining: recoveryCodesRemaining(user.id),
+  });
 });
 
 // ==================== Google OAuth ====================

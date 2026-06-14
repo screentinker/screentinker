@@ -15,6 +15,19 @@ function generateToken(user, currentWorkspaceId) {
   );
 }
 
+// #100: issued after password verification but BEFORE the TOTP step, so the client
+// can complete MFA. It is NOT a session token - it carries mfa_pending:true and is
+// accepted ONLY by POST /api/auth/totp/verify. requireAuth/optionalAuth reject it
+// (see below) - otherwise password-alone would yield a usable token and TOTP would
+// be decorative. Short-lived.
+function generateMfaPendingToken(user) {
+  return jwt.sign(
+    { id: user.id, mfa_pending: true },
+    config.jwtSecret,
+    { algorithm: 'HS256', expiresIn: '5m' }
+  );
+}
+
 function verifyToken(token) {
   return jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
 }
@@ -48,6 +61,11 @@ function requireAuth(req, res, next) {
       req.jwtWorkspaceId = null;
       return next();
     }
+    // #100 (tightening #1): an mfa_pending token has cleared the password but NOT the
+    // TOTP step. It must never authorize a protected route - only /api/auth/totp/verify
+    // accepts it. If this check is removed, password-alone yields a working session and
+    // TOTP is bypassed. (Covered by the mfa_pending bite-test.)
+    if (decoded.mfa_pending) return res.status(401).json({ error: 'mfa_required' });
     const user = db.prepare('SELECT id, email, name, role, auth_provider, avatar_url, plan_id, email_alerts, must_change_password FROM users WHERE id = ?').get(decoded.id);
     if (!user) return res.status(401).json({ error: 'User not found' });
     req.user = user;
@@ -76,6 +94,7 @@ function optionalAuth(req, res, next) {
     try {
       const token = authHeader.split(' ')[1];
       const decoded = verifyToken(token);
+      if (decoded.mfa_pending) return next(); // #100: pre-TOTP token is not a session
       req.user = decoded.recovery
         ? recoveryUser(decoded)
         : db.prepare('SELECT id, email, name, role, auth_provider, avatar_url, plan_id FROM users WHERE id = ?').get(decoded.id);
@@ -144,4 +163,4 @@ function requireSuperAdmin(req, res, next) {
 // Preferred alias for new code.
 const requirePlatformAdmin = requireSuperAdmin;
 
-module.exports = { generateToken, verifyToken, requireAuth, optionalAuth, requireAdmin, requireSuperAdmin, requirePlatformAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES, PLATFORM_STAFF, ELEVATED_ROLES };
+module.exports = { generateToken, generateMfaPendingToken, verifyToken, requireAuth, optionalAuth, requireAdmin, requireSuperAdmin, requirePlatformAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES, PLATFORM_STAFF, ELEVATED_ROLES };
