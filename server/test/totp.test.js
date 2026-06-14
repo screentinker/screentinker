@@ -81,6 +81,10 @@ test('/totp/verify completes login via recovery code; single-use; surfaces remai
   assert.ok(v1.body.token, 'recovery code yields a full session token');
   assert.equal(v1.body.via_recovery, true);
   assert.equal(v1.body.recovery_codes_remaining, 9, 'one code consumed');
+  // "secrets never in responses": the encrypted TOTP secret + replay counter must not leak
+  assert.ok(!JSON.stringify(v1.body).includes('totp_secret_enc'), 'no encrypted TOTP secret in the response body');
+  assert.equal(v1.body.user.totp_secret_enc, undefined, 'user object carries no totp_secret_enc');
+  assert.equal(v1.body.user.totp_last_step, undefined, 'user object carries no totp_last_step');
   assert.equal((await jfetch('/api/auth/me', auth(v1.body.token))).status, 200, 'full token works');
   // reuse the SAME recovery code -> rejected (single-use)
   const l2 = await jfetch('/api/auth/login', post(null, { email: u.email, password: PW }));

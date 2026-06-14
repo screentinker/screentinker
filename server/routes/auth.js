@@ -165,7 +165,10 @@ function issueSession(req, res, user, extra = {}) {
   logSuccessfulLogin(user.id, user.email, getClientIp(req));
   const workspaceId = ensureDefaultOrgForUser(user, { allowCreate: config.autoCreateOrgOnSignup });
   const token = generateToken(user, workspaceId);
-  const { password_hash, ...safeUser } = user;
+  // #100: callers pass a SELECT * row. Strip password_hash AND the TOTP internals
+  // (the encrypted secret + the replay counter) so no secret/internal rides in the
+  // response body - "secrets never in responses", same as the API token work.
+  const { password_hash, totp_secret_enc, totp_last_step, ...safeUser } = user;
   res.json({ token, user: safeUser, current_workspace_id: workspaceId, ...extra });
 }
 
