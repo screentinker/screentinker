@@ -18,6 +18,15 @@ rm -f "$OUT"
 # .wgt always ships the canonical (byte-identical) copy, never a stale duplicate.
 cp ../server/lib/schedule-eval.js js/schedule-eval.js
 
+# #119: stamp the player version from the single source (config.xml) so the .wgt's
+# reported app_version always matches what is installed — same idea as the copy above.
+VER="$(grep -v '<?xml' config.xml | grep -oE 'version="[0-9][^"]*"' | head -1 | sed -E 's/version="([^"]+)"/\1/')"
+if [ -n "$VER" ]; then
+  sed -i.bak "s/var APP_VERSION_FALLBACK = '[^']*';/var APP_VERSION_FALLBACK = '$VER';/" js/app.js
+  rm -f js/app.js.bak
+  echo "Stamped APP_VERSION_FALLBACK = $VER from config.xml."
+fi
+
 if command -v tizen >/dev/null 2>&1; then
   PROFILE="${1:-ScreenTinker}"
   echo "Tizen CLI found — signing with profile '$PROFILE'…"

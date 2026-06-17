@@ -63,6 +63,11 @@ button.ghost { background: transparent; color: #64748b; font-size: 18px; margin-
 .stage img.cover,   .stage video.cover   { object-fit: cover; }
 .stage img.fill,    .stage video.fill    { object-fit: fill; }
 
+/* Video wall mode: the stage is positioned (in vw/vh) as this screen's slice of the
+   wall's player rect; media stretches to fill (object-fit:fill) so a given source row
+   lands on the same physical line across every screen that shares a viewport height. */
+.stage.wall-mode img, .stage.wall-mode video, .stage.wall-mode iframe { object-fit: fill; }
+
 /* Toast */
 .toast {
     position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
