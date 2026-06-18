@@ -167,6 +167,7 @@
       authenticated = true; // #118: this socket may now send post-register events
       clearToast();         // #118: drop any stale "Not authenticated…" banner
       startHeartbeat();
+      reportCapabilities(); // #125: surface the fleet-control backend to the dashboard
       if (data.status === 'provisioning') showPairing();
     });
 
@@ -195,36 +196,41 @@
 
     socket.on('device:playlist-update', onPlaylist);
 
-    // ---- remote control from the dashboard (#120 / #121) ----
+    // ---- remote control from the dashboard (#120 / #121 / #125) ----
     // Mirror the web/Android player. The server emits device:command with the set in
     // server/routes/device-groups.js (ALLOWED_COMMANDS) plus 'refresh', and the
     // screenshot/remote events below. (The old device:reload listener was dead — the
     // server never emits it — so 'refresh' replaces it.)
+    //
+    // #125: reboot / screen power / shutdown now go through STDeviceControl, which
+    // drives the real Samsung b2bcontrol/systemcontrol surface on a partner-signed
+    // panel. Where that surface is absent (web / URL-Launcher / consumer TV), it
+    // resolves { supported:false } and we fall back to the local black overlay for
+    // screen_off so the command still does something visible.
     socket.on('device:command', function (data) {
-      switch (data && data.type) {
-        case 'refresh':
-          location.reload();
-          break;
-        case 'launch':
-        case 'screen_on':
-          clearScreenOff();
-          keepAwake();
-          break;
-        case 'screen_off':
+      var type = (data && data.type) ? String(data.type).toLowerCase() : '';
+      var payload = (data && data.payload) ? data.payload : null;
+      if (!type) return;
+
+      // "Wake" intents always clear any black overlay and re-assert screen-awake,
+      // independent of (and in addition to) the panel API.
+      if (type === 'screen_on' || type === 'launch') { clearScreenOff(); keepAwake(); }
+
+      if (!window.STDeviceControl) { reportCmd('error', type, 'device-control unavailable'); return; }
+      STDeviceControl.run(type, payload).then(function (res) {
+        var note = res.note;
+        // No real panel-power surface: keep the pre-#125 behaviour — a black overlay
+        // (content keeps running behind it) — so screen_off isn't a silent no-op.
+        if (type === 'screen_off' && res.supported === false) {
           showScreenOff();
-          break;
-        case 'update':
-          // #122: a sideloaded, signed .wgt has no in-app OTA path. Surface it rather
-          // than dropping it silently — real updates are a re-sideload / B2B-MDM push.
-          toast('Update must be re-installed (.wgt sideload / MDM)', false);
-          break;
-        case 'reboot':
-        case 'shutdown':
-          tryPowerControl(data.type);
-          break;
-        default:
-          break;
-      }
+          res = { ok: true, supported: true, reload: false };
+          note = 'no panel API — black overlay fallback';
+        }
+        var level = res.ok ? 'info' : (res.supported === false ? 'warn' : 'error');
+        reportCmd(level, type, note || (res.ok ? 'ok' : 'failed'));
+        // Delay the reload so the log/result emit reaches the server first.
+        if (res.reload) setTimeout(function () { location.reload(); }, 1200);
+      });
     });
 
     // #120: dashboard preview — single shot and start/stop streaming.
@@ -279,11 +285,28 @@
     var o = document.getElementById('screenOffOverlay');
     if (o && o.parentNode) o.parentNode.removeChild(o);
   }
-  // #121: reboot/shutdown need privileged B2B/MDM control that a sideloaded web app
-  // does not have. Signage firmware exposes these via the Samsung B2B (b2bapis) API,
-  // whose methods vary by firmware — so document it rather than failing silently.
-  function tryPowerControl(type) {
-    toast(type + ' is MDM-only on Tizen (see tizen/README.md)', false);
+  // #125: report a command outcome to the dashboard. device:log surfaces live as
+  // dashboard:device-log on the open device-detail screen; device:command-result is
+  // a structured echo (harmless if the server doesn't handle it).
+  function reportCmd(level, type, msg) {
+    var message = '[' + type + '] ' + msg;
+    try {
+      if (socket && deviceId) {
+        socket.emit('device:log', { device_id: deviceId, tag: 'command', level: level, message: message });
+        socket.emit('device:command-result', { device_id: deviceId, type: type, level: level, message: msg });
+      }
+    } catch (e) {}
+  }
+
+  // #125: log the panel's control surface at startup so the dashboard shows whether
+  // fleet control is actually wired (backend "none" on web / consumer TV / unsigned).
+  function reportCapabilities() {
+    try {
+      var caps = (window.STDeviceControl && STDeviceControl.capabilities)
+        ? STDeviceControl.capabilities() : { backend: 'none', reboot: false, panel: false };
+      reportCmd('info', 'capabilities',
+        'fleet control backend=' + caps.backend + ' reboot=' + caps.reboot + ' panel=' + caps.panel);
+    } catch (e) {}
   }
 
   // #120: best-effort dashboard preview. The Tizen TV runtime decodes <video> onto a

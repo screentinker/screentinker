@@ -31,6 +31,7 @@ config.xml          Tizen TV web-app manifest (privileges, profile, icon)
 index.html          setup / pairing / stage screens
 css/style.css
 js/app.js           device protocol client (register, pair, heartbeat, state)
+js/device-control.js Samsung B2B/system fleet control (device:command) — #125
 js/player.js        fullscreen playlist renderer
 js/socket.io.min.js socket.io-client v4.7.5 (bundled)
 icon.png
@@ -87,30 +88,37 @@ lives in `~/tizen-studio-data`, password `screentinker`).
 - **Runtime**: loads + renders in Chromium with no JS errors (setup screen verified).
 - Not yet on real Tizen hardware — needs signing + a TV (or URL Launcher).
 
-## Remote control & preview (#120 / #121)
-The Tizen player now listens for the same dashboard events as the web/Android player.
-What it can actually do depends on what a **sideloaded web app** is allowed to do on
-the TV runtime:
+## Remote control & preview (#120 / #121 / #125)
+The Tizen player listens for the same dashboard events as the web/Android player.
+`device:command` is handled by `js/device-control.js`, which drives the real Samsung
+fleet-control surface (`webapis.systemcontrol` on Tizen 6.5/7, else `b2bapis.b2bcontrol`
+on SSSP/Tizen 4) and reports each outcome back via `device:log` (tag `command`, shown
+live on the device-detail screen) plus a structured `device:command-result`:
 
-| Command (`device:command` type)   | Tizen behaviour                                            |
-|-----------------------------------|-----------------------------------------------------------|
-| `refresh`                         | `location.reload()`                                       |
-| `launch` / `screen_on`            | clears the screen-off overlay + re-requests screen-awake  |
-| `screen_off`                      | black full-screen overlay (content keeps running behind)  |
-| `update`                          | toast: must re-install the `.wgt` (see **Updates** below) |
-| `reboot` / `shutdown`             | MDM-only — not reachable from a sideloaded app (toast)    |
-| `device:screenshot-request`       | best-effort capture (see note)                            |
-| `device:remote-start` / `-stop`   | start/stop ~1 fps preview streaming                       |
+| Command (`device:command` type)   | Tizen behaviour                                                        |
+|-----------------------------------|------------------------------------------------------------------------|
+| `refresh` / `reload`              | `location.reload()`                                                    |
+| `launch` / `screen_on`            | clears the screen-off overlay + re-asserts wake; `setPanelMute("OFF")` when the B2B surface is present |
+| `screen_off`                      | `setPanelMute("ON")` (backlight off) on a B2B panel; **black overlay fallback** otherwise |
+| `update`                          | reload to re-pull URL-Launcher content (no in-app OTA — see **Updates**) |
+| `reboot`                          | `rebootDevice()` on a B2B panel; `unsupported` otherwise               |
+| `shutdown`                        | `setPanelMute("ON")` + note (SSSP web API has no true power-off)        |
+| _unknown_                         | reported as `unsupported`                                              |
+| `device:screenshot-request`       | best-effort capture (see note)                                         |
+| `device:remote-start` / `-stop`   | start/stop ~1 fps preview streaming                                    |
+
+> **Partner-signing caveat (#125):** the `b2bcontrol` / `systemcontrol` privileges in
+> `config.xml` only take effect on a **partner-signed `.wgt` on a real SSSP panel**. On
+> the dev/URL-Launcher/web build (or a consumer TV) those surfaces are absent, so reboot
+> returns `unsupported`, `screen_off` uses the black overlay, and the startup capability
+> log reports `backend=none`. Only a partner-signed build on real hardware fully
+> validates reboot / panel power.
 
 > **Screenshot/preview note:** the TV decodes `<video>` onto a hardware overlay plane
 > and plays YouTube in a cross-origin `<iframe>`, neither of which can be read back into
 > a `<canvas>`. So **images capture for real; video/YouTube fall back to a status card**
 > (device + timestamp). The dashboard preview shows a truthful frame rather than a dead
 > button. Full-fidelity video preview isn't feasible on the sideloaded Tizen runtime.
-
-> **`screen_off`** uses an overlay, not a real panel power-off — a sideloaded app has no
-> clean panel-power API. On B2B/MDM (SSSP) firmware, true power and `reboot`/`shutdown`
-> go through Samsung's device-management channel, not this app.
 
 ## Updates (#122)
 There is **no in-app OTA** for a sideloaded, signed `.wgt`. Updating a screen means
