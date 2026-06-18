@@ -446,6 +446,28 @@ app.get('/api/content/:id/file', (req, res) => {
   res.sendFile(safePath);
 });
 
+// Proxy a remote thumbnail (e.g. YouTube's img.youtube.com/.../hqdefault.jpg, which
+// content.js stores as thumbnail_path) server-side, SAME-ORIGIN, so the dashboard CSP
+// img-src is unaffected. Never throws into the process: any upstream/network failure
+// becomes a clean 404/502. Restricted to image/* responses (modest SSRF hardening; the
+// URL is server-set at ingest, not caller-supplied). Thumbnails are small, so buffering
+// is fine and avoids partial-stream error handling.
+async function proxyRemoteThumbnail(url, res) {
+  try {
+    const upstream = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(8000) });
+    if (upstream.status === 404) return res.status(404).json({ error: 'Thumbnail not found' });
+    if (!upstream.ok) return res.status(502).json({ error: 'Thumbnail upstream error' });
+    const ct = upstream.headers.get('content-type') || 'image/jpeg';
+    if (!/^image\//i.test(ct)) return res.status(502).json({ error: 'Thumbnail upstream is not an image' });
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.set('Content-Type', ct);
+    res.set('Cache-Control', 'public, max-age=86400');
+    return res.send(buf);
+  } catch (e) {
+    return res.status(502).json({ error: 'Thumbnail fetch failed' });
+  }
+}
+
 // Public thumbnail serving (must be BEFORE protected routes)
 app.get('/api/content/:id/thumbnail', (req, res) => {
   const { db } = require('./db/database');
@@ -458,6 +480,11 @@ app.get('/api/content/:id/thumbnail', (req, res) => {
   const inPlaylist = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
   const inWidget = inPlaylist ? null : db.prepare('SELECT id FROM widgets WHERE workspace_id = ? AND config LIKE ? LIMIT 1').get(content.workspace_id, `%/api/content/${req.params.id}/%`);
   if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
+  // YouTube (and any future remote-sourced) content stores thumbnail_path as a remote
+  // http(s) URL, not a local file. Proxy it instead of resolving it to a local path that
+  // doesn't exist (contentDir/hqdefault.jpg -> ENOENT spam). Local thumbnails are
+  // unchanged. Access gating above already ran identically for both branches.
+  if (/^https?:\/\//i.test(content.thumbnail_path)) return proxyRemoteThumbnail(content.thumbnail_path, res);
   const safePath = path.resolve(config.contentDir, path.basename(content.thumbnail_path));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
   res.sendFile(safePath);

@@ -25,6 +25,11 @@ function inlineUserContent(html, workspaceId) {
     if (c.workspace_id && c.workspace_id !== workspaceId) return match;
     const filename = kind === 'thumbnail' ? c.thumbnail_path : c.filepath;
     if (!filename) return match;
+    // YouTube (and other remote-sourced) content stores thumbnail_path as a remote
+    // http(s) URL, not a local file. Don't try to read it from disk (would ENOENT the
+    // same way the serving route did) — leave the /api/content/:id/thumbnail reference
+    // in place; the thumbnail route proxies it same-origin and CSP img-src allows https:.
+    if (/^https?:\/\//i.test(filename)) return match;
     const mime = kind === 'thumbnail' ? 'image/jpeg' : c.mime_type;
     if (!mime || !MIME_RE.test(mime)) return match;
     const safe = path.resolve(appConfig.contentDir, path.basename(filename));
