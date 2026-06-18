@@ -44,7 +44,7 @@ function ensureDevicePlaylist(deviceId, userId) {
 
 // Standard item query with joined content/widget info
 const ITEM_SELECT = `
-  SELECT pi.id, pi.playlist_id, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec,
+  SELECT pi.id, pi.playlist_id, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
          pi.created_at, pi.updated_at,
          COALESCE(c.filename, w.name) as filename,
          c.mime_type, c.filepath, c.thumbnail_path,
@@ -139,12 +139,28 @@ function checkItemWrite(req, res) {
   return item;
 }
 
+// #129: real-time mute. Tell every device on this playlist to toggle the volume of the
+// matching currently-playing item NOW (decoupled from publish — the device matches by
+// content_id/widget_id and applies it live). The new value is also written to the row, so
+// it lands in the next published snapshot and persists across playlist reloads.
+function emitMuteChanged(req, item, muted) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const deviceNs = io.of('/device');
+    const devices = db.prepare('SELECT id FROM devices WHERE playlist_id = ?').all(item.playlist_id);
+    const payload = { content_id: item.content_id || null, widget_id: item.widget_id || null, muted: !!muted };
+    for (const d of devices) deviceNs.to(d.id).emit('device:mute-changed', payload);
+    console.log(`[mute] item ${item.id} (content ${item.content_id || item.widget_id}) -> ${muted ? 'MUTED' : 'unmuted'}; notified ${devices.length} device(s)`);
+  } catch (e) { /* best-effort live toggle; the published snapshot is the source of truth */ }
+}
+
 // Update playlist item
 router.put('/:id', (req, res) => {
   const item = checkItemWrite(req, res);
   if (!item) return;
 
-  const { sort_order, duration_sec, zone_id } = req.body;
+  const { sort_order, duration_sec, zone_id, muted } = req.body;
   const updates = [];
   const values = [];
 
@@ -153,12 +169,17 @@ router.put('/:id', (req, res) => {
   // zone_id can be null (clear the zone) - treat undefined as "no change",
   // any other value (including null) as "write this".
   if (zone_id !== undefined) { updates.push('zone_id = ?'); values.push(zone_id || null); }
+  // #129: per-item mute (coerced to 0/1). Was silently dropped here before, so the
+  // dashboard toggle did nothing.
+  const mutedChanged = muted !== undefined && (item.muted ? 1 : 0) !== (muted ? 1 : 0);
+  if (muted !== undefined) { updates.push('muted = ?'); values.push(muted ? 1 : 0); }
 
   if (updates.length > 0) {
     updates.push("updated_at = strftime('%s','now')");
     values.push(req.params.id);
     db.prepare(`UPDATE playlist_items SET ${updates.join(', ')} WHERE id = ?`).run(...values);
     markDraft(item.playlist_id);
+    if (mutedChanged) emitMuteChanged(req, item, muted ? 1 : 0);
   }
 
   const updated = db.prepare(`${ITEM_SELECT} WHERE pi.id = ?`).get(req.params.id);

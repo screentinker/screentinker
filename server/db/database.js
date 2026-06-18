@@ -148,6 +148,10 @@ const migrations = [
   // playlist_items conversion (migrateAssignmentsToPlaylists) dropped this
   // column. Column ADD is idempotent via the surrounding try/catch loop.
   "ALTER TABLE playlist_items ADD COLUMN zone_id TEXT REFERENCES layout_zones(id) ON DELETE SET NULL",
+  // #129: per-item mute. The legacy `assignments` table had a muted column, but the
+  // active device payload is built from playlist_items -> published_snapshot, which never
+  // carried it, so the dashboard mute toggle was a no-op end to end.
+  "ALTER TABLE playlist_items ADD COLUMN muted INTEGER NOT NULL DEFAULT 0",
   // Slice 1: idempotency guard for the one-time signup welcome/admin emails.
   // Non-null = this user has already been handled, so we never double-send.
   // New signups are stamped with the real unix-seconds time the send block ran

@@ -367,6 +367,7 @@ CREATE TABLE IF NOT EXISTS playlist_items (
     zone_id         TEXT REFERENCES layout_zones(id) ON DELETE SET NULL,
     sort_order      INTEGER NOT NULL DEFAULT 0,
     duration_sec    INTEGER NOT NULL DEFAULT 10,
+    muted           INTEGER NOT NULL DEFAULT 0,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
