@@ -40,6 +40,8 @@ class WebSocketService : Service() {
     var onRemoteTouch: ((Float, Float, String) -> Unit)? = null
     var onRemoteKey: ((String) -> Unit)? = null
     var onCommand: ((String, JSONObject?) -> Unit)? = null
+    var onWallSync: ((JSONObject) -> Unit)? = null
+    var onWallSyncRequest: ((JSONObject) -> Unit)? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): WebSocketService = this@WebSocketService
@@ -220,6 +222,18 @@ class WebSocketService : Service() {
                     if (keycode.isEmpty()) return@safeOn
                     injectKey(keycode)
                     handler.post { try { onRemoteKey?.invoke(keycode) } catch (e: Throwable) { Log.e("WebSocketService", "onRemoteKey cb: ${e.message}") } }
+                }
+
+                // Video wall. Post to the main thread: the handlers drive ExoPlayer
+                // (seek/speed/position), which is main-thread-only.
+                safeOn("wall:sync") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    handler.post { try { onWallSync?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onWallSync cb: ${e.message}") } }
+                }
+
+                safeOn("wall:sync-request") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    handler.post { try { onWallSyncRequest?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onWallSyncRequest cb: ${e.message}") } }
                 }
 
                 safeOn("device:command") { args ->
@@ -523,6 +537,29 @@ class WebSocketService : Service() {
             }
             socket?.emit("device:playback-state", data)
         } catch (e: Throwable) { Log.w("WebSocketService", "sendPlaybackState: ${e.message}") }
+    }
+
+    // Video-wall senders. Guarded on socket.connected() like sendPlaybackState, so a
+    // pre-register tick is a no-op (the server would reject it as unauthenticated).
+    fun emitWallSync(wallId: String, currentIndex: Int, contentId: String?, positionSec: Float) {
+        if (socket?.connected() != true) return
+        try {
+            socket?.emit("wall:sync", JSONObject().apply {
+                put("wall_id", wallId)
+                put("device_id", config.deviceId)
+                put("current_index", currentIndex)
+                put("content_id", contentId ?: JSONObject.NULL)
+                put("position_sec", positionSec.toDouble())
+                put("sent_at", System.currentTimeMillis())
+            })
+        } catch (e: Throwable) { Log.w("WebSocketService", "emitWallSync: ${e.message}") }
+    }
+
+    fun emitWallSyncRequest(wallId: String) {
+        if (socket?.connected() != true) return
+        try {
+            socket?.emit("wall:sync-request", JSONObject().apply { put("wall_id", wallId) })
+        } catch (e: Throwable) { Log.w("WebSocketService", "emitWallSyncRequest: ${e.message}") }
     }
 
     fun disconnect() {

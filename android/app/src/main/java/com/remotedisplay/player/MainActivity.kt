@@ -14,6 +14,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import android.widget.ImageView
@@ -25,6 +26,7 @@ import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.player.MediaPlayerManager
 import com.remotedisplay.player.player.PlaylistController
 import com.remotedisplay.player.player.PlaylistItem
+import com.remotedisplay.player.player.WallController
 import com.remotedisplay.player.player.ZoneManager
 import com.remotedisplay.player.remote.ScreenshotCapture
 import com.remotedisplay.player.remote.TouchInjector
@@ -46,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playlistController: PlaylistController
     private lateinit var updateChecker: UpdateChecker
     private var zoneManager: ZoneManager? = null
+    private lateinit var wallController: WallController
 
     private lateinit var playerView: PlayerView
     private lateinit var imageView: ImageView
@@ -157,6 +160,17 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
+        // Video-wall controller. The emit lambdas read wsService lazily (it's bound after
+        // onCreate), and they no-op until the socket is connected (guarded in the service).
+        wallController = WallController(
+            media = mediaPlayer,
+            playlist = playlistController,
+            deviceId = { config.deviceId },
+            emitSync = { wallId, idx, contentId, posSec -> wsService?.emitWallSync(wallId, idx, contentId, posSec) },
+            emitSyncRequest = { wallId -> wsService?.emitWallSyncRequest(wallId) },
+            applyTransform = { cfg -> applyWallTransform(cfg) }
+        )
+
         // Restore cached playlist for offline cold-start (play immediately from disk cache).
         // Catch Throwable (not just Exception) so an OOM or corrupt entry can't kill the app
         // before the WebSocket connects — that's the crash-loop scenario. If the cache is
@@ -233,10 +247,75 @@ class MainActivity : AppCompatActivity() {
         Log.i("MainActivity", "Applied orientation: $orientation (rotation=$rot, swap=$swap)")
     }
 
+    private fun parseWallConfig(wc: JSONObject): WallController.WallConfig {
+        fun rect(key: String): WallController.Rect {
+            val o = wc.optJSONObject(key)
+            return WallController.Rect(
+                x = o?.optDouble("x", 0.0)?.toFloat() ?: 0f,
+                y = o?.optDouble("y", 0.0)?.toFloat() ?: 0f,
+                w = o?.optDouble("w", 0.0)?.toFloat() ?: 0f,
+                h = o?.optDouble("h", 0.0)?.toFloat() ?: 0f
+            )
+        }
+        return WallController.WallConfig(
+            wallId = wc.optString("wall_id", ""),
+            screen = rect("screen_rect"),
+            player = rect("player_rect"),
+            isLeader = wc.optBoolean("is_leader", false),
+            rotation = wc.optInt("rotation", 0)
+        )
+    }
+
+    // Video-wall slice transform. The content view represents the whole wall (player_rect);
+    // size + offset rootView so this screen's screen_rect fills the device viewport, content
+    // stretched to fill (object-fit:fill parity, set on the views via MediaPlayerManager).
+    // Mirrors the web player's vw/vh stage math. Per-tile rotation is intentionally not
+    // applied (web/Tizen parity). cfg == null restores full screen.
+    private fun applyWallTransform(cfg: WallController.WallConfig?) {
+        val lp = rootView.layoutParams
+        if (cfg == null) {
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+            lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+            rootView.layoutParams = lp
+            rootView.translationX = 0f
+            rootView.translationY = 0f
+            rootView.rotation = 0f
+            rootView.scaleX = 1f
+            rootView.scaleY = 1f
+            rootView.requestLayout()
+            // Force the next playlist update to re-apply orientation (applyOrientation
+            // early-returns when the value is unchanged).
+            currentOrientation = null
+            Log.i("MainActivity", "Wall transform cleared (restored full screen)")
+            return
+        }
+        val s = cfg.screen
+        val p = cfg.player
+        if (s.w == 0f || s.h == 0f) {
+            Log.w("MainActivity", "Wall screen_rect has zero size; skipping transform")
+            return
+        }
+        val dw = resources.displayMetrics.widthPixels.toFloat()
+        val dh = resources.displayMetrics.heightPixels.toFloat()
+        lp.width = ((p.w / s.w) * dw).toInt()
+        lp.height = ((p.h / s.h) * dh).toInt()
+        rootView.layoutParams = lp
+        rootView.translationX = ((p.x - s.x) / s.w) * dw   // negative for right/lower tiles
+        rootView.translationY = ((p.y - s.y) / s.h) * dh
+        rootView.rotation = 0f                              // per-tile rotation: TODO (parity = none)
+        rootView.scaleX = 1f
+        rootView.scaleY = 1f
+        rootView.requestLayout()
+        // Orientation no longer reflects reality; ensure it re-applies after wall exit.
+        currentOrientation = null
+        Log.i("MainActivity", "Wall transform: size=${lp.width}x${lp.height} tx=${rootView.translationX} ty=${rootView.translationY}")
+    }
+
     private fun setupServiceCallbacks() {
         wsService?.onPlaylistUpdate = { data ->
             try {
-            applyOrientation(data.optString("orientation", "landscape"))
+            // Orientation is applied in the non-wall branch below; wall mode owns the
+            // root-view transform itself and must not be rotated.
             // Check if device is suspended (trial expired / over limit)
             if (data.optBoolean("suspended", false)) {
                 val message = data.optString("message", "Account Suspended")
@@ -256,6 +335,20 @@ class MainActivity : AppCompatActivity() {
 
             // Cache playlist JSON for offline cold-start
             config.cachedPlaylist = data.toString()
+
+            // Video-wall mode takes precedence over orientation + multi-zone: the wall is
+            // fullscreen, and WallController owns the root-view slice transform and the
+            // leader/follower role. (We're on the main thread here — onPlaylistUpdate is
+            // posted to the main looper by WebSocketService.)
+            val wallObj = if (data.isNull("wall_config")) null else data.optJSONObject("wall_config")
+            if (wallObj != null) {
+                com.remotedisplay.player.util.DebugLog.i("Player", "Layout: VIDEO-WALL (${assignments.length()} assignments)")
+                if (zoneManager?.hasZones() == true) zoneManager?.cleanup()
+                wallController.apply(parseWallConfig(wallObj))
+                playlistController.updatePlaylist(assignments)
+            } else {
+            wallController.exit()
+            applyOrientation(data.optString("orientation", "landscape"))
 
             // Check for multi-zone layout
             val layoutObj = if (data.isNull("layout")) null else data.optJSONObject("layout")
@@ -301,8 +394,11 @@ class MainActivity : AppCompatActivity() {
                 if (zoneManager?.hasZones() == true) handler.post { zoneManager?.cleanup() }
                 playlistController.updatePlaylist(assignments)
             }
+            } // end else (not a video wall)
 
-            // Download any missing local content (skip remote URLs)
+            // Download any missing local content (skip remote URLs).
+            // Runs for wall + single-zone; multi-zone drives its own rendering via ZoneManager
+            // (the startIfNeeded below is guarded so it won't run behind zones).
             thread {
                 for (i in 0 until assignments.length()) {
                     val item = assignments.getJSONObject(i)
@@ -450,6 +546,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        wsService?.onWallSync = { data -> if (::wallController.isInitialized) wallController.onSync(data) }
+        wsService?.onWallSyncRequest = { data -> if (::wallController.isInitialized) wallController.onSyncRequest(data) }
 
         wsService?.onRegistered = { _ ->
             hideStatus()

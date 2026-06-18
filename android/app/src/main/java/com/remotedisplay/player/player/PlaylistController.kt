@@ -42,7 +42,31 @@ class PlaylistController(
     @Volatile private var effectiveTimezone: String? = null
     private var retryRunnable: Runnable? = null
 
+    // Video wall: followers don't self-advance — the leader's wall:sync drives the index.
+    private var wallFollower = false
+    // Wall-clock at which the current item started playing, for non-video sync position.
+    private var itemStartedAt = 0L
+
     val isPlaying: Boolean get() = isRunning && currentIndex >= 0
+
+    /** Video wall: true on followers (suppress auto-advance; leader drives the index). */
+    fun setWallFollower(b: Boolean) { wallFollower = b }
+
+    /** Current playlist index (-1 if nothing is playing). */
+    fun getIndex(): Int = currentIndex
+
+    /** Wall-clock ms when the current item started; used for non-video sync position. */
+    fun itemStartedAtMs(): Long = itemStartedAt
+
+    /** Jump to an absolute index (wraps); used by wall followers tracking the leader. */
+    fun gotoIndex(idx: Int) {
+        if (items.isEmpty()) return
+        val n = items.size
+        val target = ((idx % n) + n) % n
+        if (target == currentIndex) return
+        currentIndex = target
+        playCurrentItem()
+    }
 
     /** #74/#75: device-effective IANA timezone for per-item schedule evaluation. */
     fun setTimezone(tz: String?) { effectiveTimezone = tz }
@@ -187,7 +211,9 @@ class PlaylistController(
     }
 
     fun onVideoComplete() {
-        // Called when a video finishes naturally
+        // Called when a video finishes naturally. Wall followers don't self-advance —
+        // they hold (and loop) the leader's item until a wall:sync changes the index.
+        if (wallFollower) return
         next()
     }
 
@@ -195,12 +221,14 @@ class PlaylistController(
         cancelAdvance()
         cancelRetry()
         val item = currentItem ?: return
+        itemStartedAt = System.currentTimeMillis()
         Log.i("PlaylistController", "Playing: ${item.filename} (index $currentIndex)")
         onItemChanged(item)
 
         // For images and widgets, auto-advance after duration. For videos, wait
-        // for the completion callback.
-        if (item.mimeType.startsWith("image/") || item.isWidget) {
+        // for the completion callback. Wall followers never auto-advance — the
+        // leader's wall:sync index drives every switch.
+        if (!wallFollower && (item.mimeType.startsWith("image/") || item.isWidget)) {
             scheduleAdvance(item.durationSec * 1000L)
         }
     }

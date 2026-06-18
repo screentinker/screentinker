@@ -7,9 +7,12 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.ImageView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.remotedisplay.player.util.ImageLoader
 import java.io.File
@@ -24,6 +27,9 @@ class MediaPlayerManager(
 ) {
     private var exoPlayer: ExoPlayer? = null
     private var currentType: MediaType = MediaType.NONE
+    // Wall mode: followers must stay muted even as the leader's sync switches them
+    // to a new (possibly unmuted) item, so the mute has to survive each playVideo.
+    private var wallMute = false
 
     enum class MediaType { NONE, VIDEO, IMAGE, YOUTUBE, WIDGET }
 
@@ -91,7 +97,7 @@ class MediaPlayerManager(
         youtubeWebView?.visibility = android.view.View.GONE
 
         exoPlayer?.apply {
-            volume = if (muted) 0f else 1f
+            volume = if (muted || wallMute) 0f else 1f
             setMediaItem(MediaItem.fromUri(Uri.parse(url)))
             prepare()
             playWhenReady = true
@@ -132,7 +138,7 @@ class MediaPlayerManager(
         youtubeWebView?.visibility = android.view.View.GONE
 
         exoPlayer?.apply {
-            volume = if (muted) 0f else 1f
+            volume = if (muted || wallMute) 0f else 1f
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             prepare()
             playWhenReady = true
@@ -177,4 +183,55 @@ class MediaPlayerManager(
     }
 
     fun isPlayingVideo(): Boolean = currentType == MediaType.VIDEO && (exoPlayer?.isPlaying == true)
+
+    // ---- Video-wall (wall:sync) accessors. All must be called on the main thread. ----
+
+    /** Current video position in ms (0 when no video). */
+    fun currentPositionMs(): Long = exoPlayer?.currentPosition ?: 0L
+
+    /** Video duration in ms, or -1 when unknown/unprepared. */
+    fun durationMs(): Long {
+        val d = exoPlayer?.duration ?: C.TIME_UNSET
+        return if (d == C.TIME_UNSET) -1L else d
+    }
+
+    /** Exact (frame-accurate) seek for the follower drift controller's hard-seek path. */
+    fun seekExact(positionMs: Long) {
+        exoPlayer?.apply {
+            setSeekParameters(SeekParameters.EXACT)
+            seekTo(positionMs)
+        }
+    }
+
+    /** Playback rate — followers nudge ±3% to converge on the leader's clock. */
+    fun setSpeed(rate: Float) { exoPlayer?.setPlaybackSpeed(rate) }
+
+    /**
+     * Wall follower mute. Persists across item switches (the leader's sync can move a
+     * follower to an unmuted item, and N copies of the same audio out of phase flange),
+     * and enforces the mute on whatever is playing right now.
+     */
+    fun setWallMute(mute: Boolean) {
+        wallMute = mute
+        if (mute) exoPlayer?.volume = 0f
+    }
+
+    /**
+     * Loop the current video for wall followers so they never freeze on the last frame
+     * if the leader's next index sync is slightly late; the leader plays through normally.
+     */
+    fun setVideoLooping(loop: Boolean) {
+        exoPlayer?.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
+
+    /**
+     * In wall mode the content fills its slice (object-fit:fill parity with the web/Tizen
+     * players); restore the default fit on exit.
+     */
+    fun setWallMode(enabled: Boolean) {
+        playerView.resizeMode =
+            if (enabled) AspectRatioFrameLayout.RESIZE_MODE_FILL else AspectRatioFrameLayout.RESIZE_MODE_FIT
+        imageView.scaleType =
+            if (enabled) ImageView.ScaleType.FIT_XY else ImageView.ScaleType.FIT_CENTER
+    }
 }
