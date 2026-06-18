@@ -109,7 +109,10 @@ class PlaylistController(
         // widget items share an empty contentId).
         // #74/#75: a schedule edit changes playback even when content is identical, so
         // the change signature must include schedules (else updated blocks are dropped).
-        fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" +
+        // #129: include muted too, so a mute-only change (same content) re-renders with the
+        // new flag instead of being de-duped (the real-time event handles the live toggle;
+        // this makes a published mute persist across reloads).
+        fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + (if (it.muted) "m" else "") + "|" +
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
             }

@@ -932,6 +932,15 @@
         if (data.type === 'screen_on') { document.getElementById('screenOffOverlay')?.remove(); }
       });
 
+      // #129: real-time mute. Apply immediately if the toggled item is the one playing now;
+      // the value is also persisted in the snapshot so it sticks on the next playlist load.
+      socket.on('device:mute-changed', (data) => {
+        const item = playlist[currentIndex];
+        if (data && item && data.content_id && item.content_id === data.content_id && currentVideoEl) {
+          try { currentVideoEl.muted = !!data.muted; } catch (_) {}
+        }
+      });
+
       // #109: PiP overlay — a pushed floating layer above the playlist. The player
       // fetches uri itself (same trust model as remote_url content).
       socket.on('device:pip-show', (data) => pipShow(data));
@@ -1637,7 +1646,8 @@
           video.autoplay = true;
           // Followers stay muted unconditionally (leader-only audio); leaders
           // start muted only if the user hasn't gestured yet (autoplay policy).
-          video.muted = isFollower ? true : !userHasInteracted;
+          // #129: a per-item mute (set in the admin console) also forces muted.
+          video.muted = isFollower ? true : (!userHasInteracted || !!item.muted);
           // Explicit max volume on the leader so audio is at full level when
           // unmute happens (default is 1.0 but make it visible in logs).
           if (!isFollower) video.volume = 1.0;

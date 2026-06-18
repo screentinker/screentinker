@@ -562,6 +562,16 @@ class MainActivity : AppCompatActivity() {
         wsService?.onPipShow = { data -> if (::pipOverlay.isInitialized) pipOverlay.show(data) }
         wsService?.onPipClear = { data -> if (::pipOverlay.isInitialized) pipOverlay.clearFrom(data) }
 
+        // #129: real-time mute. Apply immediately if the toggled item is the one playing now;
+        // otherwise it's already persisted server-side and lands via the next playlist update.
+        wsService?.onMuteChanged = { data ->
+            val contentId = if (data.isNull("content_id")) "" else data.optString("content_id", "")
+            val current = playlistController.currentContentId ?: ""
+            if (contentId.isNotEmpty() && contentId == current && ::mediaPlayer.isInitialized) {
+                mediaPlayer.setVideoMuted(data.optBoolean("muted", false))
+            }
+        }
+
         wsService?.onRegistered = { _ ->
             hideStatus()
         }

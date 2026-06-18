@@ -44,6 +44,7 @@ class WebSocketService : Service() {
     var onWallSyncRequest: ((JSONObject) -> Unit)? = null
     var onPipShow: ((JSONObject) -> Unit)? = null
     var onPipClear: ((JSONObject) -> Unit)? = null
+    var onMuteChanged: ((JSONObject) -> Unit)? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): WebSocketService = this@WebSocketService
@@ -246,6 +247,12 @@ class WebSocketService : Service() {
                 safeOn("device:pip-clear") { args ->
                     val data = (args.firstOrNull() as? JSONObject) ?: JSONObject()
                     handler.post { try { onPipClear?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onPipClear cb: ${e.message}") } }
+                }
+
+                // #129: real-time mute toggle. Post to the main thread — it touches the player.
+                safeOn("device:mute-changed") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    handler.post { try { onMuteChanged?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onMuteChanged cb: ${e.message}") } }
                 }
 
                 safeOn("device:command") { args ->

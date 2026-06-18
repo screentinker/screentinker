@@ -184,6 +184,15 @@ class MediaPlayerManager(
 
     fun isPlayingVideo(): Boolean = currentType == MediaType.VIDEO && (exoPlayer?.isPlaying == true)
 
+    // #129: live per-item mute. Applies a dashboard mute toggle to the CURRENTLY playing
+    // video in real time (decoupled from a playlist reload). Only video carries audio here
+    // — YouTube embeds autoplay muted and images/widgets are silent — so this targets the
+    // ExoPlayer volume. Persistence across the next play comes from the playlist payload's
+    // per-item `muted` (honored in playVideo). Main thread only.
+    fun setVideoMuted(muted: Boolean) {
+        if (currentType == MediaType.VIDEO) exoPlayer?.volume = if (muted) 0f else 1f
+    }
+
     // ---- Video-wall (wall:sync) accessors. All must be called on the main thread. ----
 
     /** Current video position in ms (0 when no video). */
