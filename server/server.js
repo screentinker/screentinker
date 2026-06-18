@@ -742,7 +742,7 @@ const protocol = hasSsl ? 'https' : 'http';
 server.listen(listenPort, '0.0.0.0', () => {
   console.log(`
 ╔══════════════════════════════════════════════════╗
-║       ScreenTinker Server v1.2.0                ║
+║       ScreenTinker Server v${VERSION.padEnd(22).slice(0, 22)}║
 ║──────────────────────────────────────────────────║
 ║  Dashboard: ${protocol}://localhost:${String(listenPort).padEnd(5)}              ║
 ║  API:       ${protocol}://localhost:${String(listenPort).padEnd(5)}/api          ║
