@@ -143,6 +143,7 @@
       deviceId = data.device_id; deviceToken = data.device_token;
       set(LS.id, deviceId); set(LS.token, deviceToken);
       startHeartbeat();
+      reportCapabilities(); // #125: surface the fleet-control backend to the dashboard
       if (data.status === 'provisioning') showPairing();
     });
 
@@ -168,6 +169,46 @@
 
     // Optional remote commands the dashboard may send (best-effort)
     socket.on('device:reload', function () { location.reload(); });
+
+    // #125: Samsung B2B fleet control — parity with the Android player. The server
+    // emits device:command { type, payload }; STDeviceControl maps it onto the
+    // panel's b2bcontrol/systemcontrol surface and reports the outcome back.
+    socket.on('device:command', function (data) {
+      var type = (data && data.type) ? String(data.type) : '';
+      var payload = (data && data.payload) ? data.payload : null;
+      if (!type) return;
+      if (!window.STDeviceControl) { reportCmd('error', type, 'device-control unavailable'); return; }
+      STDeviceControl.run(type, payload).then(function (res) {
+        var level = res.ok ? 'info' : (res.supported === false ? 'warn' : 'error');
+        reportCmd(level, type, res.note || (res.ok ? 'ok' : 'failed'));
+        // Delay the reload so the log/result emit reaches the server before we navigate away.
+        if (res.reload) setTimeout(function () { location.reload(); }, 1200);
+      });
+    });
+  }
+
+  // #125: report a command outcome to the dashboard. device:log surfaces live as
+  // dashboard:device-log on the open device-detail screen; device:command-result is
+  // a structured echo (harmless if the server doesn't handle it).
+  function reportCmd(level, type, msg) {
+    var message = '[' + type + '] ' + msg;
+    try {
+      if (socket && deviceId) {
+        socket.emit('device:log', { device_id: deviceId, tag: 'command', level: level, message: message });
+        socket.emit('device:command-result', { device_id: deviceId, type: type, level: level, message: msg });
+      }
+    } catch (e) {}
+  }
+
+  // #125: log the panel's control surface at startup so the dashboard shows whether
+  // fleet control is actually wired (backend "none" on web / consumer TV / unsigned).
+  function reportCapabilities() {
+    try {
+      var caps = (window.STDeviceControl && STDeviceControl.capabilities)
+        ? STDeviceControl.capabilities() : { backend: 'none', reboot: false, panel: false };
+      reportCmd('info', 'capabilities',
+        'fleet control backend=' + caps.backend + ' reboot=' + caps.reboot + ' panel=' + caps.panel);
+    } catch (e) {}
   }
 
   function register() {

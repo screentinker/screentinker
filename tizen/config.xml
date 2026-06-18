@@ -24,4 +24,13 @@
     <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
     <tizen:privilege name="http://tizen.org/privilege/display"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
+
+    <!-- #125: Samsung B2B fleet control (reboot / panel power via b2bcontrol /
+         systemcontrol). These are PARTNER-level privileges: they only take effect
+         when the .wgt is signed with a Samsung Partner distributor certificate on a
+         real SSSP panel. On unsigned / URL-Launcher / web / consumer-TV builds they
+         are ignored (not fatal) — the APIs are simply absent and device-control.js
+         reports "unsupported". -->
+    <tizen:privilege name="http://developer.samsung.com/privilege/b2bcontrol"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/systemcontrol"/>
 </widget>

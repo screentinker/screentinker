@@ -23,11 +23,43 @@ config.xml          Tizen TV web-app manifest (privileges, profile, icon)
 index.html          setup / pairing / stage screens
 css/style.css
 js/app.js           device protocol client (register, pair, heartbeat, state)
+js/device-control.js Samsung B2B/system fleet control (device:command) — #125
 js/player.js        fullscreen playlist renderer
 js/socket.io.min.js socket.io-client v4.7.5 (bundled)
 icon.png
 build-wgt.sh        package (signed if Tizen CLI present, else unsigned)
 ```
+
+## Fleet control / `device:command` (#125)
+The dashboard can send `device:command { type, payload }`; `js/device-control.js`
+maps it onto a Samsung panel-control surface and reports the outcome back via
+`device:log` (tag `command`, shown live on the device-detail screen) plus a
+structured `device:command-result`. If a command needs a content re-pull, the
+player reloads ~1.2s after reporting.
+
+| `type`              | Action on a Samsung panel                                              |
+|---------------------|------------------------------------------------------------------------|
+| `reboot`            | `rebootDevice()`                                                       |
+| `screen_off`        | `setPanelMute("ON")` — **mute ON = backlight OFF** (note the inversion)|
+| `screen_on`         | `setPanelMute("OFF")`                                                  |
+| `shutdown`          | `setPanelMute("ON")` + note: SSSP web API has **no true power-off**     |
+| `update`            | reload to re-pull URL-Launcher content (no in-app OTA)                  |
+| `launch`            | no-op (already foreground)                                             |
+| `reload` / `refresh`| reload                                                                 |
+| _unknown_           | reported as `unsupported`                                              |
+
+Two surfaces are feature-detected, newest first: **`webapis.systemcontrol.*`**
+(Tizen 6.5/7, synchronous) then **`b2bapis.b2bcontrol.*`** (SSSP/Tizen 4, async).
+For panel power, `setPanelMute` is tried first, falling back to `setDisplayPanel` /
+`setPanelStatus` on older firmware before declaring it unsupported. `run()` never
+throws — it always resolves a uniform `{ ok, supported, action, note, reload }`.
+
+> **Partner-signing caveat.** The `b2bcontrol` / `systemcontrol` privileges in
+> `config.xml` only take effect on a **partner-signed `.wgt` running on a real SSSP
+> panel**. On the dev/URL-Launcher/web build (or a consumer TV) the surfaces are
+> absent, so every command returns **"unsupported"** and the startup capability log
+> reports `backend=none`. Only a partner-signed build on real hardware fully
+> validates reboot / panel power.
 
 ## Build
 ```bash
@@ -80,6 +112,8 @@ lives in `~/tizen-studio-data`, password `screentinker`).
 - Not yet on real Tizen hardware — needs signing + a TV (or URL Launcher).
 
 ## Not yet ported (Android player has these; fullscreen single-zone covers most signage)
-Multi-zone layouts, video walls (`wall:sync`), screenshots, remote touch/control,
-and self-OTA (Tizen apps update via Samsung's store / URL Launcher refresh, not the
-Android `PackageInstaller` flow).
+Multi-zone layouts, video walls (`wall:sync`), screenshots, and remote touch.
+Self-OTA is N/A (Tizen apps update via Samsung's store / URL Launcher refresh, not
+the Android `PackageInstaller` flow). **Fleet control (`device:command`: reboot /
+screen on-off / shutdown / update / launch) is now wired** — see the section above
+(needs a partner-signed build on real SSSP hardware to fully take effect).
