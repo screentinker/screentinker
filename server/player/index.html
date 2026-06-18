@@ -179,6 +179,16 @@
     .wall-mode #playerContainer > iframe,
     .wall-mode #playerContainer > div > iframe { position: static !important; width: 100% !important; height: 100% !important; }
 
+    /* #109: PiP overlay layer — a fixed full-viewport layer ABOVE #playerContainer that
+       the playlist never touches. The same orientation transform is applied to it as to
+       #playerContainer, so corner positions track the visible content in every orientation.
+       Pointer-transparent and empty (invisible) until an overlay is shown. */
+    #pipContainer { position: fixed; inset: 0; pointer-events: none; z-index: 9000; }
+    #pipContainer > .pip-box { position: absolute; overflow: hidden; box-sizing: border-box; box-shadow: 0 6px 28px rgba(0,0,0,0.55); }
+    #pipContainer > .pip-box > .pip-title { font: 600 16px sans-serif; padding: 6px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #pipContainer > .pip-box > img,
+    #pipContainer > .pip-box > iframe { display: block; width: 100%; border: 0; }
+
     /* Status overlay */
     #statusOverlay {
       position: fixed; inset: 0; background: #000; display: flex; flex-direction: column;
@@ -209,6 +219,9 @@
 
   <!-- Player Container -->
   <div id="playerContainer" style="display:none"></div>
+
+  <!-- #109: PiP overlay layer (above the player; never touched by playlist render) -->
+  <div id="pipContainer"></div>
 
   <!-- Status Overlay -->
   <div id="statusOverlay" style="display:none">
@@ -918,6 +931,88 @@
         if (data.type === 'screen_off') toggleScreenOff();
         if (data.type === 'screen_on') { document.getElementById('screenOffOverlay')?.remove(); }
       });
+
+      // #109: PiP overlay — a pushed floating layer above the playlist. The player
+      // fetches uri itself (same trust model as remote_url content).
+      socket.on('device:pip-show', (data) => pipShow(data));
+      socket.on('device:pip-clear', (data) => pipClear(data && data.pip_id));
+    }
+
+    // ==================== PiP overlay (#109) ====================
+    // Single overlay slot, last-show-wins; duration timer (0 = until cleared); pip-clear
+    // (id-aware) or timer tears down. Renders into #pipContainer, never the player. Mirrors
+    // the Tizen PipOverlay (tizen/js/pip-overlay.js). Teardown is wrapped so a malformed
+    // payload can't wedge the layer.
+    let pipTimer = null, pipCurrent = null;
+    const PIP_POS = {
+      'top-left': { top: '4%', left: '4%' }, 'top-right': { top: '4%', right: '4%' },
+      'bottom-left': { bottom: '4%', left: '4%' }, 'bottom-right': { bottom: '4%', right: '4%' },
+      'center': { top: '50%', left: '50%', transform: 'translate(-50%,-50%)' },
+    };
+    const pipColor = (c) => (typeof c === 'string' && /^#[0-9A-Fa-f]{6}$/.test(c)) ? c : null;
+    const pipPx = (v, d) => { const n = Number(v); return (isFinite(n) && n > 0 ? n : d) + 'px'; };
+    function pipReport(level, msg) {
+      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'pip', level, message: msg }); } catch (e) {}
+    }
+    function pipTeardown() {
+      try { if (pipTimer) clearTimeout(pipTimer); } catch (e) {}
+      pipTimer = null; pipCurrent = null;
+      const c = document.getElementById('pipContainer'); if (c) c.innerHTML = '';
+    }
+    function pipShow(p) {
+      const container = document.getElementById('pipContainer');
+      if (!p || !container) return;
+      try {
+        pipTeardown(); // single slot, last-show-wins
+        const box = document.createElement('div');
+        box.className = 'pip-box';
+        box.style.width = pipPx(p.width, 480);
+        box.style.height = pipPx(p.height, 360);
+        box.style.background = pipColor(p.background_color) || '#000000';
+        if (p.opacity != null && isFinite(Number(p.opacity))) box.style.opacity = String(Math.max(0, Math.min(1, Number(p.opacity))));
+        if (p.border_radius != null && isFinite(Number(p.border_radius))) box.style.borderRadius = pipPx(p.border_radius, 0);
+        const pos = PIP_POS[p.position] || PIP_POS['top-right'];
+        Object.keys(pos).forEach((k) => { box.style[k] = pos[k]; });
+
+        const hasTitle = p.title != null && p.title !== '';
+        if (hasTitle) {
+          const bar = document.createElement('div');
+          bar.className = 'pip-title';
+          bar.textContent = String(p.title);
+          bar.style.color = pipColor(p.title_color) || '#ffffff';
+          bar.style.background = 'rgba(0,0,0,0.45)';
+          box.appendChild(bar);
+        }
+        let media;
+        if (p.type === 'web') {
+          media = document.createElement('iframe');
+          media.setAttribute('frameborder', '0');
+          media.setAttribute('scrolling', 'no');
+          media.setAttribute('allow', ''); // mute web audio by default (deny autoplay)
+          media.src = p.uri;
+        } else {
+          media = document.createElement('img');
+          media.src = p.uri;
+        }
+        media.style.height = hasTitle ? 'calc(100% - 32px)' : '100%';
+        media.style.objectFit = 'cover';
+        box.appendChild(media);
+        container.appendChild(box);
+        pipCurrent = p.pip_id || '(anon)';
+        const dur = Number(p.duration);
+        if (isFinite(dur) && dur > 0) pipTimer = setTimeout(() => pipClear(pipCurrent), dur * 1000);
+        pipReport('info', `pip show ${p.type || '?'} ${p.pip_id || ''} pos=${p.position || 'top-right'} dur=${isFinite(dur) ? dur : 0}`);
+      } catch (e) {
+        pipTeardown();
+        pipReport('warn', 'pip show failed: ' + (e && e.message ? e.message : e));
+      }
+    }
+    function pipClear(pipId) {
+      // A clear carrying a pip_id only clears if it matches the showing overlay.
+      if (pipId && pipCurrent && pipId !== pipCurrent) return;
+      const had = !!pipCurrent;
+      pipTeardown();
+      if (had) pipReport('info', 'pip cleared' + (pipId ? ' ' + pipId : ''));
     }
 
     function register() {
@@ -1134,15 +1229,23 @@
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
 
-      // Apply orientation
+      // Apply orientation. #109: the PiP layer gets the SAME transform as the player so a
+      // corner overlay tracks the visible content (not the physical panel) in every orientation.
       if (data.orientation) {
         const rotations = { 'landscape': '0deg', 'portrait': '90deg', 'landscape-flipped': '180deg', 'portrait-flipped': '270deg' };
-        document.getElementById('playerContainer').style.transform = `rotate(${rotations[data.orientation] || '0deg'})`;
-        if (data.orientation.includes('portrait')) {
-          document.getElementById('playerContainer').style.transformOrigin = 'center center';
-          document.getElementById('playerContainer').style.width = '100vh';
-          document.getElementById('playerContainer').style.height = '100vw';
-        }
+        const portrait = data.orientation.includes('portrait');
+        [document.getElementById('playerContainer'), document.getElementById('pipContainer')].forEach((el) => {
+          if (!el) return;
+          el.style.transform = `rotate(${rotations[data.orientation] || '0deg'})`;
+          if (portrait) {
+            el.style.transformOrigin = 'center center';
+            el.style.width = '100vh';
+            el.style.height = '100vw';
+          } else {
+            el.style.width = '';
+            el.style.height = '';
+          }
+        });
       }
 
       // Apply (or clear) wall mode. Force re-render when wall config changes

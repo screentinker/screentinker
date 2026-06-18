@@ -42,6 +42,8 @@ class WebSocketService : Service() {
     var onCommand: ((String, JSONObject?) -> Unit)? = null
     var onWallSync: ((JSONObject) -> Unit)? = null
     var onWallSyncRequest: ((JSONObject) -> Unit)? = null
+    var onPipShow: ((JSONObject) -> Unit)? = null
+    var onPipClear: ((JSONObject) -> Unit)? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): WebSocketService = this@WebSocketService
@@ -234,6 +236,16 @@ class WebSocketService : Service() {
                 safeOn("wall:sync-request") { args ->
                     val data = args.firstOrNull() as? JSONObject ?: return@safeOn
                     handler.post { try { onWallSyncRequest?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onWallSyncRequest cb: ${e.message}") } }
+                }
+
+                // #109: PiP overlay. Post to the main thread — the handlers build Views.
+                safeOn("device:pip-show") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    handler.post { try { onPipShow?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onPipShow cb: ${e.message}") } }
+                }
+                safeOn("device:pip-clear") { args ->
+                    val data = (args.firstOrNull() as? JSONObject) ?: JSONObject()
+                    handler.post { try { onPipClear?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onPipClear cb: ${e.message}") } }
                 }
 
                 safeOn("device:command") { args ->
@@ -525,6 +537,20 @@ class WebSocketService : Service() {
             }
             socket?.emit("device:content-ack", data)
         } catch (e: Throwable) { Log.w("WebSocketService", "sendContentAck: ${e.message}") }
+    }
+
+    // #109: surface a log line to the dashboard device-detail screen (dashboard:device-log).
+    // Used for PiP show/clear (tag "pip"); guarded like the other emitters.
+    fun sendLog(tag: String, level: String, message: String) {
+        if (socket?.connected() != true) return
+        try {
+            socket?.emit("device:log", JSONObject().apply {
+                put("device_id", config.deviceId)
+                put("tag", tag)
+                put("level", level)
+                put("message", message)
+            })
+        } catch (e: Throwable) { Log.w("WebSocketService", "sendLog: ${e.message}") }
     }
 
     fun sendPlaybackState(contentId: String, positionSec: Float) {

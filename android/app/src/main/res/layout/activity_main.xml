@@ -76,4 +76,14 @@
             android:indeterminate="true" />
     </LinearLayout>
 
+    <!-- #109: PiP overlay layer. Last child = drawn on top of the playlist content.
+         It lives INSIDE rootLayout, so the orientation rotation/translation applied to
+         rootView covers it too — corner positions track the visible content. PipOverlay
+         renders the overlay box into this (otherwise-transparent, empty) layer; the
+         playlist renderers never touch it. -->
+    <FrameLayout
+        android:id="@+id/pipLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
 </FrameLayout>

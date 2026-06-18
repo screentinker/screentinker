@@ -26,6 +26,7 @@ import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.player.MediaPlayerManager
 import com.remotedisplay.player.player.PlaylistController
 import com.remotedisplay.player.player.PlaylistItem
+import com.remotedisplay.player.player.PipOverlay
 import com.remotedisplay.player.player.WallController
 import com.remotedisplay.player.player.ZoneManager
 import com.remotedisplay.player.remote.ScreenshotCapture
@@ -49,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var updateChecker: UpdateChecker
     private var zoneManager: ZoneManager? = null
     private lateinit var wallController: WallController
+    private lateinit var pipOverlay: PipOverlay // #109: PiP overlay layer
 
     private lateinit var playerView: PlayerView
     private lateinit var imageView: ImageView
@@ -131,6 +133,12 @@ class MainActivity : AppCompatActivity() {
 
         // Hide player controls
         playerView.useController = false
+
+        // #109: PiP overlay layer (top child of rootLayout; inherits the orientation
+        // transform). Reports show/clear over device:log (tag "pip").
+        pipOverlay = PipOverlay(this, findViewById(R.id.pipLayout)) { level, message ->
+            wsService?.sendLog("pip", level, message)
+        }
 
         // Setup zone manager for multi-zone layouts
         zoneManager = ZoneManager(this, rootView as FrameLayout) {
@@ -550,6 +558,10 @@ class MainActivity : AppCompatActivity() {
         wsService?.onWallSync = { data -> if (::wallController.isInitialized) wallController.onSync(data) }
         wsService?.onWallSyncRequest = { data -> if (::wallController.isInitialized) wallController.onSyncRequest(data) }
 
+        // #109: PiP overlay show/clear (posted to the main thread by the service).
+        wsService?.onPipShow = { data -> if (::pipOverlay.isInitialized) pipOverlay.show(data) }
+        wsService?.onPipClear = { data -> if (::pipOverlay.isInitialized) pipOverlay.clearFrom(data) }
+
         wsService?.onRegistered = { _ ->
             hideStatus()
         }
@@ -734,6 +746,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         remoteStreaming = false
         zoneManager?.cleanup()
+        if (::pipOverlay.isInitialized) pipOverlay.clear(null) // #109: tear down overlay WebView
         if (::mediaPlayer.isInitialized) {
             stopScreenshotStreaming()
             mediaPlayer.release()
