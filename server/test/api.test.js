@@ -88,6 +88,12 @@ before(async () => {
   S.deviceToken = 'devtok_' + crypto.randomBytes(16).toString('hex');
   db.prepare("INSERT INTO devices (id,name,user_id,workspace_id,device_token,status,created_at) VALUES (?,?,?,?,?,'offline',strftime('%s','now'))")
     .run(S.deviceId, 'WS-dev', S.user1, S.wsA, S.deviceToken);
+  // #109 PiP fixtures: a device in workspace B (cross-tenant isolation) and the wsA
+  // device as a member of the wsA group (group-targeting expansion).
+  S.deviceIdB = crypto.randomUUID();
+  db.prepare("INSERT INTO devices (id,name,user_id,workspace_id,device_token,status,created_at) VALUES (?,?,?,?,?,'offline',strftime('%s','now'))")
+    .run(S.deviceIdB, 'WS-dev-B', S.user1, S.wsB, 'devtok_' + crypto.randomBytes(16).toString('hex'));
+  db.prepare('INSERT INTO device_group_members (group_id, device_id) VALUES (?, ?)').run(S.groupId, S.deviceId);
   db.close();
 });
 
@@ -133,7 +139,7 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
   const EXPECTED_PUBLIC = [
     '/api/devices', '/api/content', '/api/folders', '/api/assignments', '/api/layouts',
     '/api/widgets', '/api/schedules', '/api/walls', '/api/reports', '/api/groups',
-    '/api/playlists', '/api/activity', '/api/kiosk',
+    '/api/playlists', '/api/activity', '/api/kiosk', '/api/pip',
   ].sort();
   assert.deepEqual(PUBLIC_ROUTERS.map(r => r.path).sort(), EXPECTED_PUBLIC);
 });
@@ -311,4 +317,60 @@ test('token-auth: last_used_at is stamped on first use', async () => {
   await jfetch('/api/playlists', auth(created.body.token)); // use it once
   const after = (await jfetch('/api/tokens', auth(S.jwt))).body.find(t => t.id === created.body.id);
   assert.ok(after.last_used_at, 'last_used_at is set after first use');
+});
+
+// ───────────────────────── TIER 5: #109 PiP OVERLAY (POST /api/pip) ─────────────────────────
+// MVP: image/web overlay pushed to a device/group, full-scope, workspace-isolated.
+const pipBody = (over = {}) => ({ device_id: S.deviceId, type: 'image', uri: 'https://example.com/x.png', position: 'top-right', width: 480, height: 360, duration: 30, ...over });
+
+// authz: requireScope('full')
+test('pip: read/write tokens are rejected (403, needs full)', async () => {
+  assert.equal((await jfetch('/api/pip', post(S.tok.read, pipBody()))).status, 403);
+  assert.equal((await jfetch('/api/pip', post(S.tok.write, pipBody()))).status, 403);
+});
+test('pip: full token is accepted (offline device reported, not queued)', async () => {
+  const res = await jfetch('/api/pip', post(S.tok.full, pipBody()));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.target, 'device');
+  assert.ok(res.body.pip_id, 'server generates a pip_id');
+  assert.equal(res.body.total, 1);
+  assert.equal(res.body.offline, 1, 'the offline device is reported offline');
+  assert.equal(res.body.sent, 0);
+});
+
+// workspace isolation: a wsA token cannot address a wsB device, nor a non-existent id.
+test('pip: workspace isolation — wsA token cannot target a wsB device (404)', async () => {
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ device_id: S.deviceIdB }))).then(r => r.status)), 404);
+});
+test('pip: unknown device/group id is 404', async () => {
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ device_id: crypto.randomUUID() })))).status, 404);
+});
+
+// group targeting: device_id resolves to a group and expands to its members.
+test('pip: group id expands to members (group with 1 member)', async () => {
+  const res = await jfetch('/api/pip', post(S.tok.full, pipBody({ device_id: S.groupId })));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.target, 'group');
+  assert.equal(res.body.total, 1, 'the group has one member device');
+});
+
+// payload validation
+test('pip: payload validation (type / uri / position / bounds / color)', async () => {
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ type: 'video' })))).status, 400);   // not in allowlist
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ uri: 'ftp://x/y' })))).status, 400); // bad scheme
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ uri: 'not a url' })))).status, 400);
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ position: 'middle' })))).status, 400);
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ width: 5 })))).status, 400);          // below DIM_MIN
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ duration: -1 })))).status, 400);
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ opacity: 2 })))).status, 400);
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ background_color: 'red' })))).status, 400);
+  assert.equal((await jfetch('/api/pip', post(S.tok.full, pipBody({ device_id: '' })))).status, 400);
+});
+
+// clear: POST /api/pip/clear and DELETE /api/pip, both full-scope.
+test('pip clear: full token clears (POST /clear and DELETE), read token rejected', async () => {
+  assert.equal((await jfetch('/api/pip/clear', post(S.tok.full, { device_id: S.deviceId }))).status, 200);
+  assert.equal((await jfetch('/api/pip/clear', post(S.tok.read, { device_id: S.deviceId }))).status, 403);
+  const del = await jfetch('/api/pip', { method: 'DELETE', ...auth(S.tok.full), body: JSON.stringify({ device_id: S.deviceId }) });
+  assert.equal(del.status, 200);
 });

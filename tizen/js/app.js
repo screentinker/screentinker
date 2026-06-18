@@ -61,6 +61,7 @@
   var elSetup = document.getElementById('setup');
   var elPairing = document.getElementById('pairing');
   var elStage = document.getElementById('stage');
+  var elPip = document.getElementById('pip'); // #109: PiP overlay layer (above #stage)
   var elUrl = document.getElementById('serverUrl');
   var elConnect = document.getElementById('connectBtn');
   var elSetupStatus = document.getElementById('setupStatus');
@@ -242,6 +243,11 @@
     // Leader broadcasts position; followers align index + drift-correct their video.
     socket.on('wall:sync', function (d) { wallController.onSync(d); });
     socket.on('wall:sync-request', function (d) { wallController.onSyncRequest(d); });
+
+    // #109: PiP overlay — a pushed floating layer above the playlist. The player
+    // fetches the uri itself (same trust model as remote_url content).
+    socket.on('device:pip-show', function (d) { pipOverlay.show(d); });
+    socket.on('device:pip-clear', function (d) { pipOverlay.clear(d && d.pip_id); });
   }
 
   function register() {
@@ -285,6 +291,14 @@
     var o = document.getElementById('screenOffOverlay');
     if (o && o.parentNode) o.parentNode.removeChild(o);
   }
+  // #109: report PiP show/clear over the existing device:log channel (tag 'pip') so it
+  // surfaces in the dashboard device log. Used as the PipOverlay log callback.
+  function reportPip(level, msg) {
+    try {
+      if (socket && deviceId) socket.emit('device:log', { device_id: deviceId, tag: 'pip', level: level, message: msg });
+    } catch (e) {}
+  }
+
   // #125: report a command outcome to the dashboard. device:log surfaces live as
   // dashboard:device-log on the open device-detail screen; device:command-result is
   // a structured echo (harmless if the server doesn't handle it).
@@ -361,26 +375,34 @@
     function () { return deviceId; },
     function () { return authenticated && !!socket && socket.connected; }
   );
+  // #109: PiP overlay layer. Renders into #pip (above #stage); never touches the
+  // playlist. Reports show/clear over device:log (tag 'pip').
+  var pipOverlay = new PipOverlay(elPip, { log: reportPip });
 
   // Rotate the playback stage in software for portrait / flipped signage. Tizen TVs
   // are fixed-landscape, so we rotate the CONTENT (not the panel). Values mirror the
   // dashboard: landscape / portrait / landscape-flipped / portrait-flipped.
   function applyOrientation(o) {
-    var s = elStage;
+    // #109: apply the SAME transform to #stage AND #pip so the overlay's corner
+    // positions track the visible CONTENT, not the physical panel, in every orientation.
+    orientEl(elStage.style, o);
+    if (elPip) orientEl(elPip.style, o);
+  }
+  function orientEl(s, o) {
     if (!o || o === 'landscape') {
-      s.style.position = ''; s.style.top = ''; s.style.left = '';
-      s.style.width = ''; s.style.height = ''; s.style.transform = ''; s.style.transformOrigin = '';
+      s.position = ''; s.top = ''; s.left = '';
+      s.width = ''; s.height = ''; s.transform = ''; s.transformOrigin = '';
       return;
     }
     var deg = o === 'portrait' ? 90 : o === 'portrait-flipped' ? 270 : o === 'landscape-flipped' ? 180 : 0;
     var swap = (deg === 90 || deg === 270);
-    s.style.position = 'absolute';
-    s.style.top = '50%';
-    s.style.left = '50%';
-    s.style.width = swap ? '100vh' : '100vw';
-    s.style.height = swap ? '100vw' : '100vh';
-    s.style.transformOrigin = 'center center';
-    s.style.transform = 'translate(-50%, -50%) rotate(' + deg + 'deg)';
+    s.position = 'absolute';
+    s.top = '50%';
+    s.left = '50%';
+    s.width = swap ? '100vh' : '100vw';
+    s.height = swap ? '100vw' : '100vh';
+    s.transformOrigin = 'center center';
+    s.transform = 'translate(-50%, -50%) rotate(' + deg + 'deg)';
   }
 
   function onPlaylist(payload) {

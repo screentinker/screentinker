@@ -410,6 +410,29 @@ async function loadDevice(deviceId, activeTab = null) {
             ${t('device.ctl.shutdown')}
           </button>
         </div>
+
+        <!-- #109: PiP overlay tester. Pushes device:pip-show/clear via POST /api/pip
+             (real triggers are external via the API token; this is for testing). -->
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+          <div style="font-weight:600;margin-bottom:8px">Overlay (PiP) — test</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="pipType" class="btn btn-secondary btn-sm" style="min-width:90px">
+              <option value="image">image</option>
+              <option value="web">web</option>
+            </select>
+            <input id="pipUri" type="url" placeholder="https://… (image or page URL)" style="flex:1;min-width:240px;padding:6px 8px;background:#0b0f1a;border:1px solid var(--border);border-radius:6px;color:var(--text)">
+            <select id="pipPosition" class="btn btn-secondary btn-sm" style="min-width:120px">
+              <option value="top-right">top-right</option>
+              <option value="top-left">top-left</option>
+              <option value="bottom-right">bottom-right</option>
+              <option value="bottom-left">bottom-left</option>
+              <option value="center">center</option>
+            </select>
+            <input id="pipDuration" type="number" min="0" value="30" title="seconds (0 = until cleared)" style="width:90px;padding:6px 8px;background:#0b0f1a;border:1px solid var(--border);border-radius:6px;color:var(--text)">
+            <button class="btn btn-primary btn-sm" id="sendPipBtn">Send overlay</button>
+            <button class="btn btn-secondary btn-sm" id="clearPipBtn">Clear overlay</button>
+          </div>
+        </div>
       </div>
 
       <!-- Remote Control Tab -->
@@ -867,6 +890,25 @@ async function setupActions(device) {
   // Force Update
   document.getElementById('forceUpdateBtn')?.addEventListener('click', () => {
     sendWithFeedback('update', 'Update', 'device.toast.update_triggered');
+  });
+
+  // #109: PiP overlay tester — pushes/clears an overlay via the public API (POST /api/pip).
+  document.getElementById('sendPipBtn')?.addEventListener('click', async () => {
+    const uri = (document.getElementById('pipUri')?.value || '').trim();
+    if (!uri) { showToast('Enter an overlay URL', 'error'); return; }
+    try {
+      const res = await api.sendPip(device.id, {
+        type: document.getElementById('pipType').value,
+        uri,
+        position: document.getElementById('pipPosition').value,
+        duration: Number(document.getElementById('pipDuration').value) || 0,
+      });
+      showToast(`Overlay sent (${res.sent} sent, ${res.offline} offline)`, res.sent ? 'success' : 'warning');
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+  document.getElementById('clearPipBtn')?.addEventListener('click', async () => {
+    try { await api.clearPip(device.id); showToast('Overlay cleared', 'success'); }
+    catch (err) { showToast(err.message, 'error'); }
   });
 }
 

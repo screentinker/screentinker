@@ -35,6 +35,10 @@
     <!-- Playback stage -->
     <div id="stage" class="screen stage hidden"></div>
 
+    <!-- #109: PiP overlay layer — a sibling ABOVE #stage that the playlist never
+         touches. app.js mirrors the orientation transform onto it. -->
+    <div id="pip"></div>
+
     <!-- Tiny on-screen status (offline / errors), auto-hides -->
     <div id="toast" class="toast hidden"></div>
 
@@ -47,6 +51,7 @@
     <script src="js/schedule-eval.js"></script>
     <script src="js/player.js"></script>
     <script src="js/device-control.js"></script>
+    <script src="js/pip-overlay.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

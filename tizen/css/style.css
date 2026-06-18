@@ -68,6 +68,18 @@ button.ghost { background: transparent; color: #64748b; font-size: 18px; margin-
    lands on the same physical line across every screen that shares a viewport height. */
 .stage.wall-mode img, .stage.wall-mode video, .stage.wall-mode iframe { object-fit: fill; }
 
+/* #109: PiP overlay layer. Sits above #stage and fills the same viewport box so a
+   child positioned to a corner lands in the corner of the visible content. app.js
+   applies the SAME orientation transform here as on #stage (portrait/flipped). It is
+   pointer-transparent and empty (invisible) until PipOverlay renders into it. */
+#pip {
+    position: fixed; top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    pointer-events: none;
+    z-index: 50;
+}
+#pip > div { box-shadow: 0 6px 28px rgba(0,0,0,0.55); }
+
 /* Toast */
 .toast {
     position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);

@@ -33,6 +33,11 @@ export const api = {
   updateDevice: (id, data) => request(`/devices/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDevice: (id) => request(`/devices/${id}`, { method: 'DELETE' }),
 
+  // #109 PiP overlay: push/clear a floating overlay on a device or group. `id` may be a
+  // device id OR a group id (the server resolves + expands). Needs full scope (no-op for JWT).
+  sendPip: (id, opts) => request('/pip', { method: 'POST', body: JSON.stringify({ device_id: id, ...opts }) }),
+  clearPip: (id, pipId) => request('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id, pip_id: pipId || undefined }) }),
+
   // Provisioning
   pairDevice: (pairing_code, name) => request('/provision/pair', {
     method: 'POST',
