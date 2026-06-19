@@ -74,7 +74,7 @@ router.get('/unassigned', (req, res) => {
   }
   const devices = db.prepare(`
     SELECT id, pairing_code, status, ip_address, android_version, app_version,
-      screen_width, screen_height, created_at, last_heartbeat
+      screen_width, screen_height, render_width, render_height, created_at, last_heartbeat
     FROM devices WHERE user_id IS NULL
     ORDER BY created_at DESC
   `).all();

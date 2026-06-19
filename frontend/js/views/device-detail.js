@@ -305,7 +305,14 @@ async function loadDevice(deviceId, activeTab = null) {
           ` : ''}
           <div class="info-card">
             <div class="info-card-label">${t('device.info.screen_resolution')}</div>
-            <div class="info-card-value small">${device.screen_width && device.screen_height ? device.screen_width + 'x' + device.screen_height : '--'}</div>
+            <div class="info-card-value small">${device.screen_width && device.screen_height
+              ? device.screen_width + 'x' + device.screen_height +
+                // #134: show the UI render surface alongside the HDMI output when they differ
+                // (TV boxes that render at 720p and upscale to a 1080p signal).
+                (device.render_width && device.render_height &&
+                 (device.render_width !== device.screen_width || device.render_height !== device.screen_height)
+                  ? ` (UI ${device.render_width}x${device.render_height})` : '')
+              : '--'}</div>
           </div>
           <div class="info-card">
             <div class="info-card-label">${t('device.clock.label')}</div>

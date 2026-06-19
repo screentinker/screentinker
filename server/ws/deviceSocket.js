@@ -338,6 +338,14 @@ module.exports = function setupDeviceSocket(io) {
         // Reconnecting known device — require valid token
         const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(device_id);
         if (device) {
+          // A re-register on the SAME socket is a playlist REFRESH, not a reconnect: the
+          // player re-emits device:register every ~45-60s (requestPlaylistRefresh) to pull a
+          // fresh playlist, and the socket never dropped. currentDeviceId is still null on a
+          // genuinely new socket and already === device_id on a same-socket refresh. Tracking
+          // this stops a healthy device (~2000 re-registers/day) from spamming "Device
+          // reconnected" and reading as connection instability (#134 — there were 1415
+          // "reconnected" logs against only ~30 real socket connects and 0 heartbeat timeouts).
+          const isPlaylistRefresh = currentDeviceId === device_id;
           // Validate device token (skip for legacy devices that don't have a token yet)
           if (device.device_token && !validateDeviceToken(device_id, device_token)) {
             console.warn(`Invalid device token for ${device_id} from ${getClientIp(socket)} — received_len=${(device_token || '').length}, stored_len=${device.device_token.length}, received_prefix=${(device_token || '').substring(0, 8)}, stored_prefix=${device.device_token.substring(0, 8)}`);
@@ -364,8 +372,8 @@ module.exports = function setupDeviceSocket(io) {
           }
 
           if (device_info) {
-            db.prepare('UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ? WHERE id = ?')
-              .run(device_info.android_version, device_info.app_version, device_info.screen_width, device_info.screen_height, device_id);
+            db.prepare('UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ?, render_width = ?, render_height = ? WHERE id = ?')
+              .run(device_info.android_version, device_info.app_version, device_info.screen_width, device_info.screen_height, device_info.render_width ?? null, device_info.render_height ?? null, device_id);
           }
 
           heartbeat.registerConnection(device_id, socket.id);
@@ -418,7 +426,9 @@ module.exports = function setupDeviceSocket(io) {
           }
 
           emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', { device_id, status: 'online' });
-          console.log(`Device reconnected: ${device_id}`);
+          // Only log a genuine reconnect (new socket). Same-socket periodic refreshes stay
+          // quiet so the log reflects real connection events, not the 45s refresh cadence.
+          if (!isPlaylistRefresh) console.log(`Device reconnected: ${device_id}`);
           return;
         }
 
@@ -436,14 +446,16 @@ module.exports = function setupDeviceSocket(io) {
         authenticated = true;
 
         db.prepare(`
-          INSERT INTO devices (id, pairing_code, device_token, status, ip_address, android_version, app_version, screen_width, screen_height, last_heartbeat)
-          VALUES (?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, strftime('%s','now'))
+          INSERT INTO devices (id, pairing_code, device_token, status, ip_address, android_version, app_version, screen_width, screen_height, render_width, render_height, last_heartbeat)
+          VALUES (?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
         `).run(
           id, pairing_code, newToken, getClientIp(socket),
           device_info?.android_version || null,
           device_info?.app_version || null,
           device_info?.screen_width || null,
-          device_info?.screen_height || null
+          device_info?.screen_height || null,
+          device_info?.render_width || null,
+          device_info?.render_height || null
         );
 
         heartbeat.registerConnection(id, socket.id);

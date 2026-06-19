@@ -37,12 +37,18 @@ class DeviceInfo(private val context: Context) {
     }
 
     fun getDeviceInfo(): JSONObject {
-        val display = getDisplayMetrics()
+        // Report BOTH: screen_* = the HDMI/panel OUTPUT resolution (Display.Mode), render_* =
+        // the UI render surface (getRealMetrics). On TV boxes that render at 720p and upscale
+        // to a 1080p signal these differ — surfacing both explains the discrepancy (#134).
+        val (outW, outH) = getOutputResolution()
+        val (renW, renH) = renderSurfaceSize()
         return JSONObject().apply {
             put("android_version", Build.VERSION.RELEASE)
             put("app_version", getAppVersion())
-            put("screen_width", display.widthPixels)
-            put("screen_height", display.heightPixels)
+            put("screen_width", outW)
+            put("screen_height", outH)
+            put("render_width", renW)
+            put("render_height", renH)
         }
     }
 
@@ -126,12 +132,37 @@ class DeviceInfo(private val context: Context) {
         return SystemClock.elapsedRealtime() / 1000
     }
 
-    private fun getDisplayMetrics(): DisplayMetrics {
+    /**
+     * The display's actual OUTPUT resolution — the HDMI / panel signal — taken from the
+     * active [android.view.Display.Mode]. This is deliberately NOT getRealMetrics(): many
+     * Android TV boxes/sticks (and TV-OS builds like YaOS) render the UI into a lower
+     * surface — commonly 1280x720 — and let the hardware scaler upscale it to a 1920x1080
+     * (or 4K) HDMI signal. getRealMetrics() reports that 720p RENDER SURFACE, so a panel
+     * receiving a real 1080p signal was being reported as 720p. Display.Mode.physicalWidth/
+     * Height reports the true output mode (orientation-independent — the panel doesn't rotate
+     * when we software-rotate the stage). Falls back to the render surface if no mode is
+     * available. (#134 follow-up: "device reports 720p while the monitor shows a 1080 signal".)
+     */
+    private fun getOutputResolution(): Pair<Int, Int> {
+        return try {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            @Suppress("DEPRECATION")
+            val mode = wm.defaultDisplay?.mode
+            val pw = mode?.physicalWidth ?: 0
+            val ph = mode?.physicalHeight ?: 0
+            if (pw > 0 && ph > 0) pw to ph else renderSurfaceSize()
+        } catch (e: Throwable) {
+            renderSurfaceSize()
+        }
+    }
+
+    /** Fallback: the UI render-surface size (getRealMetrics). May be < the output mode. */
+    private fun renderSurfaceSize(): Pair<Int, Int> {
         val dm = DisplayMetrics()
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         @Suppress("DEPRECATION")
         wm.defaultDisplay.getRealMetrics(dm)
-        return dm
+        return dm.widthPixels to dm.heightPixels
     }
 
     private fun getAppVersion(): String {

@@ -210,6 +210,12 @@ const migrations = [
   // #106: cosmetic per-workspace display ordering for the Displays view (drag-to-
   // reorder). Default 0 -> existing devices fall back to the created_at tiebreak.
   "ALTER TABLE devices ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+  // #134: distinguish the HDMI/panel OUTPUT resolution (screen_width/height, from
+  // Display.Mode) from the UI RENDER SURFACE (render_width/height, from getRealMetrics).
+  // TV boxes/sticks often render the UI at 1280x720 and scale it up to a 1080p/4K HDMI
+  // signal, so the two differ — surfacing both explains "reports 720 but monitor sees 1080".
+  "ALTER TABLE devices ADD COLUMN render_width INTEGER",
+  "ALTER TABLE devices ADD COLUMN render_height INTEGER",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
