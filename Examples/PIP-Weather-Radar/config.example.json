@@ -1,0 +1,23 @@
+{
+  "mode": "on_warning",
+
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/radar-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "area_label": "Milwaukee County, WI",
+  "lat": 43.0389,
+  "lon": -87.9065,
+  "zoom": 8,
+  "states": ["WI"],
+  "events": ["Tornado Warning", "Severe Thunderstorm Warning", "Flash Flood Warning", "Flood Warning"],
+
+  "poll_interval_sec": 60,
+  "position": "bottom-right",
+  "width": 760,
+  "height": 540,
+  "border_radius": 12,
+
+  "noaa_user_agent": "ScreenTinker-Weather-Radar (you@example.com)"
+}

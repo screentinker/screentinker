@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Weather Radar</title>
+<!-- Vendored Leaflet, served same-origin so the server CSP (script-src 'self') allows it. -->
+<link rel="stylesheet" href="/leaflet.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; }
+  #map { position: absolute; inset: 0; background: #0b0d10; }
+  /* darker, calmer Leaflet attribution to match the TV look */
+  .leaflet-control-attribution { background: rgba(10,12,16,.6) !important; color: #9aa3ad !important; font-size: 10px; }
+  .leaflet-control-attribution a { color: #c9d2db !important; }
+
+  .hud { position: absolute; left: 0; right: 0; top: 0; z-index: 1000; pointer-events: none;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; }
+  .bar { display: flex; align-items: center; gap: 14px; padding: 12px 18px;
+    background: linear-gradient(180deg, rgba(8,10,13,.92), rgba(8,10,13,0)); }
+  .live { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: .06em;
+    text-transform: uppercase; font-size: clamp(15px, 2.4vw, 24px); }
+  .dot { width: 13px; height: 13px; border-radius: 50%; background: #FF2D2D;
+    box-shadow: 0 0 0 0 rgba(255,45,45,.7); animation: pulse 1.2s ease-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,45,45,.7) } 70% { box-shadow: 0 0 0 12px rgba(255,45,45,0) } 100% { box-shadow: 0 0 0 0 rgba(255,45,45,0) } }
+  .area { font-weight: 600; font-size: clamp(13px, 2vw, 20px); opacity: .92; }
+  .spacer { flex: 1; }
+  .clock { font-variant-numeric: tabular-nums; font-weight: 600; font-size: clamp(12px, 1.8vw, 18px);
+    color: #cfe8ff; opacity: .9; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 10px; }
+  .chip { pointer-events: none; font-size: clamp(11px, 1.6vw, 15px); font-weight: 700; color: #0b0d10;
+    padding: 4px 10px; border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+  .chip.none { background: #2c3340; color: #aeb6c0; font-weight: 600; }
+
+  .legend { position: absolute; right: 12px; bottom: 26px; z-index: 1000; pointer-events: none;
+    background: rgba(10,12,16,.72); border-radius: 10px; padding: 8px 10px; font-family: system-ui, sans-serif;
+    color: #dfe6ee; font-size: 11px; line-height: 1.5; }
+  .legend .row { display: flex; align-items: center; gap: 7px; }
+  .legend .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+</style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="hud">
+    <div class="bar">
+      <span class="live"><span class="dot"></span>Live Radar</span>
+      <span class="area" id="area"></span>
+      <span class="spacer"></span>
+      <span class="clock" id="clock"></span>
+    </div>
+    <div class="chips" id="chips"></div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <script src="/leaflet.js"></script>
+  <script src="/radar-overlay.js"></script>
+</body>
+</html>

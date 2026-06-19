@@ -1,0 +1,12 @@
+{
+  "name": "pip-weather-radar",
+  "version": "0.1.0",
+  "description": "Example: a TV-news-style live weather radar PiP overlay (Leaflet + RainViewer + NWS warning polygons) that can cut to radar during severe weather.",
+  "type": "commonjs",
+  "main": "radar.js",
+  "scripts": {
+    "start": "node radar.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}
