@@ -52,7 +52,10 @@ needed.
 
 ## Setup
 
-1. **Vendor Leaflet:**
+> **Note:** Leaflet is **not** committed to this repo (it's third-party, BSD-2-licensed).
+> The script below downloads it locally — run it once before deploying. Nothing else to install.
+
+1. **Vendor Leaflet** (downloads `leaflet.js` + `leaflet.css` into this dir):
    ```bash
    ./vendor-leaflet.sh
    ```
