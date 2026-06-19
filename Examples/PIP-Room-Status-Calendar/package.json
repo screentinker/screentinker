@@ -1,0 +1,12 @@
+{
+  "name": "pip-room-status-calendar",
+  "version": "0.1.0",
+  "description": "Example: turn a ScreenTinker display into a meeting-room Available/Busy sign driven by an ICS calendar feed, via the PiP API.",
+  "type": "commonjs",
+  "main": "room.js",
+  "scripts": {
+    "start": "node room.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

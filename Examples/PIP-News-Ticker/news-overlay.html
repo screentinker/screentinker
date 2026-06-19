@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>News Ticker</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .strip { flex: 1; display: flex; align-items: stretch; background: #1a1a1a; color: #fff;
+    border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.45); }
+  .chip { display: flex; align-items: center; gap: 10px; padding: 0 18px; background: #CC0000;
+    font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+    font-size: clamp(14px, 2.4vw, 22px); white-space: nowrap; flex: 0 0 auto; }
+  .chip .pulse { width: 12px; height: 12px; border-radius: 50%; background: rgba(255,255,255,.95);
+    animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { transform: scale(.7); opacity:.6 } 50% { transform: scale(1.15); opacity:1 } }
+  .viewport { position: relative; flex: 1; overflow: hidden; display: flex; align-items: center; }
+  .track { position: absolute; white-space: nowrap; will-change: transform;
+    font-size: clamp(16px, 2.8vw, 26px); font-weight: 600; line-height: 1; }
+  .track .sep { color: #CC0000; padding: 0 2px; font-weight: 800; }
+</style>
+</head>
+<body>
+  <div class="strip">
+    <div class="chip"><span class="pulse"></span><span id="label">NEWS</span></div>
+    <div class="viewport"><div class="track" id="track"></div></div>
+  </div>
+  <script src="news-overlay.js"></script>
+</body>
+</html>

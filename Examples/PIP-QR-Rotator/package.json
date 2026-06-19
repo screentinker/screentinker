@@ -1,0 +1,12 @@
+{
+  "name": "pip-qr-rotator",
+  "version": "0.1.0",
+  "description": "Example: rotate scannable QR codes (Wi-Fi, menu, survey, links) on ScreenTinker screens via the PiP API. QR codes are generated client-side — no network, no dependencies.",
+  "type": "commonjs",
+  "main": "qr.js",
+  "scripts": {
+    "start": "node qr.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

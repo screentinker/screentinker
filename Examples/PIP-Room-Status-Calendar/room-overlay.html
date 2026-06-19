@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Room Status</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; background: #1a1a1a; color: #fff;
+    border-radius: 16px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  .band { padding: 18px 26px; display: flex; align-items: center; gap: 16px; font-weight: 800;
+    letter-spacing: .05em; text-transform: uppercase; font-size: clamp(28px, 7vw, 64px); }
+  .band .dot { width: 18px; height: 18px; border-radius: 50%; background: rgba(255,255,255,.95);
+    box-shadow: 0 0 14px rgba(255,255,255,.7); }
+  .body { padding: 20px 26px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+  .room { font-size: clamp(18px, 3.4vw, 28px); font-weight: 600; color: #e8e8e8; }
+  .detail { font-size: clamp(20px, 4.4vw, 34px); font-weight: 700; line-height: 1.15; }
+  .sub { margin-top: auto; font-size: clamp(15px, 3vw, 22px); color: #b9b9b9; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="band" id="band"><span class="dot"></span><span id="state">—</span></div>
+    <div class="body">
+      <div class="room" id="room"></div>
+      <div class="detail" id="detail"></div>
+      <div class="sub" id="sub"></div>
+    </div>
+  </div>
+  <script src="room-overlay.js"></script>
+</body>
+</html>

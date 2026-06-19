@@ -1,0 +1,17 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/message-overlay.html",
+
+  "device_id": "DEVICE_OR_GROUP_ID",
+  "default_title": "NOTICE",
+
+  "overlay": {
+    "position": "center",
+    "width": 900,
+    "height": 300,
+    "border_radius": 16,
+    "color": "#CC0000",
+    "duration": 0
+  }
+}

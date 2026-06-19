@@ -1,0 +1,18 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/news-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "feed_url": "https://feeds.bbci.co.uk/news/rss.xml",
+  "label": null,
+  "max_items": 12,
+  "separator": " • ",
+  "poll_interval_sec": 300,
+
+  "position": "bottom-right",
+  "width": 1200,
+  "height": 90,
+  "border_radius": 12,
+  "opacity": 1
+}

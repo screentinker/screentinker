@@ -1,0 +1,15 @@
+{
+  "name": "cap-alert-monitor-noaa",
+  "version": "0.1.0",
+  "description": "Example: monitor a CAP feed (NSW RFS CAP-AU or US NWS / api.weather.gov) and push emergency alerts to ScreenTinker screens via the PiP API.",
+  "type": "commonjs",
+  "main": "monitor.js",
+  "scripts": {
+    "start": "node monitor.js",
+    "test": "node test-parse.js && node test-noaa.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.0"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "latitude": 45.52,
+  "longitude": -122.68,
+  "timezone": "America/Los_Angeles",
+  "current_units": {
+    "temperature_2m": "°F",
+    "relative_humidity_2m": "%",
+    "apparent_temperature": "°F",
+    "wind_speed_10m": "mph"
+  },
+  "current": {
+    "time": "2026-06-18T10:00",
+    "temperature_2m": 58.3,
+    "relative_humidity_2m": 81,
+    "apparent_temperature": 56.1,
+    "is_day": 1,
+    "weather_code": 61,
+    "wind_speed_10m": 7.4
+  },
+  "daily_units": {
+    "temperature_2m_max": "°F",
+    "temperature_2m_min": "°F"
+  },
+  "daily": {
+    "time": ["2026-06-18"],
+    "temperature_2m_max": [67.8],
+    "temperature_2m_min": [51.2]
+  }
+}

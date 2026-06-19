@@ -1,0 +1,12 @@
+{
+  "name": "pip-news-ticker",
+  "version": "0.1.0",
+  "description": "Example: scroll RSS/Atom headlines across a ScreenTinker screen via the PiP API.",
+  "type": "commonjs",
+  "main": "news.js",
+  "scripts": {
+    "start": "node news.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

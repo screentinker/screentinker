@@ -1,0 +1,16 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/thermo-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "source_file": "progress.example.json",
+  "_source_url_alt": "https://example.com/fundraiser.json",
+
+  "currency": "USD",
+  "poll_interval_sec": 60,
+
+  "position": "bottom-left",
+  "width": 460,
+  "height": 360
+}

@@ -1,0 +1,17 @@
+{
+  "room_name": "Aspen Room",
+  "poll_interval_sec": 120,
+
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/room-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "ics_url": "https://calendar.google.com/calendar/ical/your-room%40group.calendar.google.com/private-xxxxxxxx/basic.ics",
+
+  "colors": { "available": "1f9d55", "busy": "CC0000" },
+  "overlay": { "position": "center", "width": 900, "height": 360, "border_radius": 16 },
+
+  "_offline_demo": "to test against the bundled fixture instead of a live calendar, drop ics_url and add:",
+  "ics_file": null
+}

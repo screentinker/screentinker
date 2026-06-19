@@ -1,0 +1,11 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/countdown-overlay.html",
+
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "target": "2026-12-31T23:59:59-06:00",
+  "title": "Happy New Year",
+  "position": "center"
+}

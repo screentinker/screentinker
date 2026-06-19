@@ -1,0 +1,12 @@
+{
+  "name": "pip-announce-broadcast",
+  "version": "0.1.0",
+  "description": "Example: flash a one-off announcement onto a ScreenTinker screen or group via the PiP overlay API.",
+  "type": "commonjs",
+  "main": "announce.js",
+  "scripts": {
+    "start": "node announce.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

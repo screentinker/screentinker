@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome Board</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 8px; background: #1a1a1a; color: #fff; border-radius: 18px; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45); padding: 22px; position: relative; }
+  .accent { position: absolute; top: 0; left: 0; right: 0; height: 8px; background: #1F9D55; }
+  .kind { font-size: clamp(12px, 2.4vw, 16px); font-weight: 700; letter-spacing: .18em;
+    text-transform: uppercase; color: #cfcfcf; }
+  .emoji { font-size: clamp(44px, 11vw, 88px); line-height: 1; animation: pop 1.6s ease-in-out infinite; }
+  @keyframes pop { 0%,100% { transform: scale(1) } 50% { transform: scale(1.12) } }
+  .greeting { font-size: clamp(18px, 4.4vw, 30px); font-weight: 600; color: #eaeaea; }
+  .name { font-size: clamp(26px, 7vw, 52px); font-weight: 800; line-height: 1.1; }
+  .note { font-size: clamp(13px, 2.8vw, 18px); color: #b9b9b9; max-width: 90%; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="accent" id="accent"></div>
+    <div class="kind" id="kind"></div>
+    <div class="emoji" id="emoji">👋</div>
+    <div class="greeting" id="greeting"></div>
+    <div class="name" id="name"></div>
+    <div class="note" id="note"></div>
+  </div>
+  <script src="welcome-overlay.js"></script>
+</body>
+</html>

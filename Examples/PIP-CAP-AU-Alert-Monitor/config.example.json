@@ -1,0 +1,29 @@
+{
+  "feed_url": "https://www.rfs.nsw.gov.au/feeds/majorIncidentsCAP.xml",
+  "poll_interval_sec": 120,
+
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+
+  "overlay_base_url": "https://signage.example.com/alerts/alert-overlay.html",
+
+  "alert_levels": ["Watch and Act", "Emergency Warning"],
+
+  "screens": [
+    { "name": "Foyer TV",   "lat": -33.8688, "lon": 151.2093, "device_id": "DEVICE_OR_GROUP_ID_1" },
+    { "name": "Cafe board", "lat": -33.7969, "lon": 151.2870, "device_id": "DEVICE_OR_GROUP_ID_2" }
+  ],
+
+  "overlay": {
+    "position": "center",
+    "width": 900,
+    "height": 320,
+    "opacity": 1,
+    "border_radius": 16,
+    "colors": {
+      "Emergency Warning": "CC0000",
+      "Watch and Act": "E8730C",
+      "Advice": "F2C200"
+    }
+  }
+}

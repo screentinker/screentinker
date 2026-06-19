@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emergency Alert</title>
+<style>
+  /* Rendered inside the PiP box; transparent behind the card. Inline <style> is allowed
+     by the server CSP (styleSrc 'self' 'unsafe-inline'); the SCRIPT is external because
+     scriptSrc is 'self' with no 'unsafe-inline' — inline <script> would be blocked. */
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; background: #1a1a1a; color: #fff;
+    border-radius: 16px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  .band { padding: 14px 22px; display: flex; align-items: center; gap: 14px; font-weight: 800;
+    letter-spacing: .04em; text-transform: uppercase; font-size: clamp(18px, 4vw, 30px); }
+  .band .pulse { width: 16px; height: 16px; border-radius: 50%; background: rgba(255,255,255,.95);
+    animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { transform: scale(.7); opacity:.6 } 50% { transform: scale(1.15); opacity:1 } }
+  .body { padding: 18px 24px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .headline { font-size: clamp(20px, 5vw, 38px); font-weight: 700; line-height: 1.15; }
+  .meta { font-size: clamp(13px, 2.6vw, 18px); color: #cfcfcf; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  .meta b { color: #fff; font-weight: 600; }
+  .footer { margin-top: auto; font-size: clamp(12px, 2.2vw, 16px); color: #9a9a9a; }
+  .agency { opacity: .8; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="band" id="band"><span class="pulse"></span><span id="level">ALERT</span></div>
+    <div class="body">
+      <div class="headline" id="headline"></div>
+      <div class="meta" id="meta"></div>
+      <div class="footer"><span class="agency">NSW Rural Fire Service</span> <span id="updated"></span></div>
+    </div>
+  </div>
+  <!-- external, same-origin: satisfies scriptSrc 'self' -->
+  <script src="overlay.js"></script>
+</body>
+</html>

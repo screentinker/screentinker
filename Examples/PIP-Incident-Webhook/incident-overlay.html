@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; background: #1a1a1a; color: #fff;
+    border-radius: 16px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  .band { padding: 14px 22px; display: flex; align-items: center; gap: 14px; font-weight: 800;
+    letter-spacing: .04em; text-transform: uppercase; font-size: clamp(16px, 3.4vw, 26px); }
+  .band .pulse { width: 15px; height: 15px; border-radius: 50%; background: rgba(255,255,255,.95);
+    animation: pulse 1.1s ease-in-out infinite; flex: none; }
+  @keyframes pulse { 0%,100% { transform: scale(.7); opacity:.6 } 50% { transform: scale(1.15); opacity:1 } }
+  .band .badge { margin-left: auto; font-size: clamp(11px, 2vw, 14px); font-weight: 700;
+    letter-spacing: .08em; padding: 3px 10px; border-radius: 999px; background: rgba(0,0,0,.28); }
+  .body { padding: 16px 24px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .title { font-size: clamp(19px, 4.4vw, 34px); font-weight: 700; line-height: 1.15; }
+  .detail { font-size: clamp(14px, 2.8vw, 20px); color: #d6d6d6; line-height: 1.3;
+    overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
+  .footer { margin-top: auto; font-size: clamp(12px, 2.2vw, 16px); color: #9a9a9a; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="band" id="band">
+      <span class="pulse"></span><span id="level">INCIDENT</span>
+      <span class="badge" id="badge"></span>
+    </div>
+    <div class="body">
+      <div class="title" id="title"></div>
+      <div class="detail" id="detail"></div>
+      <div class="footer"><span id="source"></span> <span id="updated"></span></div>
+    </div>
+  </div>
+  <script src="incident-overlay.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "latitude": 45.5,
+  "longitude": -122.5,
+  "timezone": "America/Los_Angeles",
+  "current_units": {
+    "time": "iso8601",
+    "us_aqi": "USAQI",
+    "pm2_5": "μg/m³",
+    "pm10": "μg/m³",
+    "ozone": "μg/m³",
+    "nitrogen_dioxide": "μg/m³"
+  },
+  "current": {
+    "time": "2026-06-18T10:00",
+    "us_aqi": 72,
+    "pm2_5": 23.4,
+    "pm10": 31.2,
+    "ozone": 88.0,
+    "nitrogen_dioxide": 12.4
+  }
+}

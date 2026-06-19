@@ -1,0 +1,6 @@
+{
+  "bitcoin":  { "usd": 64012.34,  "usd_24h_change": 1.2345 },
+  "ethereum": { "usd": 3380.1,    "usd_24h_change": -0.4567 },
+  "solana":   { "usd": 152.4,     "usd_24h_change": 0.002 },
+  "cardano":  { "usd": 0.3821,    "usd_24h_change": -2.8 }
+}

@@ -1,0 +1,18 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/weather-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "location_name": "Portland, OR",
+  "lat": 45.5152,
+  "lon": -122.6784,
+  "units": "imperial",
+
+  "poll_interval_sec": 600,
+  "position": "top-right",
+  "width": 360,
+  "height": 190,
+  "border_radius": 16,
+  "opacity": 1
+}

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?><?xml-stylesheet href="lib/RFS_EDXL_simple.xsl" type="text/xsl"?>
+<EDXLDistribution xmlns="urn:oasis:names:tc:emergency:EDXL:DE:1.0">
+  <distributionID>RFSUniqueID:2026-06-18T00:00:00Z</distributionID>
+  <senderID>webmaster@rfs.nsw.gov.au</senderID>
+  <dateTimeSent>2026-06-18T10:00:00+10:00</dateTimeSent>
+  <distributionStatus>Actual</distributionStatus>
+  <distributionType>Report</distributionType>
+  <contentObject>
+    <contentDescription>Information on Aberdeen HR</contentDescription>
+    <xmlContent><embeddedXMLContent>
+      <alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+        <identifier>2026-06-17T14:46:00.0000000:662900</identifier>
+        <sender>webmaster@rfs.nsw.gov.au</sender><sent>2026-06-17T14:46:00+10:00</sent>
+        <status>Actual</status><msgType>Alert</msgType><scope>Public</scope>
+        <info>
+          <category>Fire</category><event>Fire</event><responseType>Monitor</responseType>
+          <urgency>Unknown</urgency><severity>Unknown</severity><certainty>Observed</certainty>
+          <expires>2026-06-30T21:25:21+10:00</expires>
+          <headline>Aberdeen HR</headline>
+          <parameter><valueName>AlertLevel</valueName><value>Planned Burn</value></parameter>
+          <parameter><valueName>IncidentType</valueName><value>Hazard Reduction</value></parameter>
+          <parameter><valueName>Status</valueName><value>Under control</value></parameter>
+          <parameter><valueName>IsFire</valueName><value>Yes</value></parameter>
+          <area>
+            <areaDesc>STANBOROUGH</areaDesc>
+            <polygon>-29.974,151.103 -29.984,151.103 -29.984,151.108 -29.974,151.108 -29.974,151.103</polygon>
+            <circle>-29.978,151.105 0</circle>
+          </area>
+        </info>
+      </alert>
+    </embeddedXMLContent></xmlContent>
+  </contentObject>
+  <contentObject>
+    <contentDescription>Emergency Warning - Test Ridge</contentDescription>
+    <xmlContent><embeddedXMLContent>
+      <alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+        <identifier>2026-06-18T09:30:00.0000000:670001</identifier>
+        <sender>webmaster@rfs.nsw.gov.au</sender><sent>2026-06-18T09:30:00+10:00</sent>
+        <status>Actual</status><msgType>Alert</msgType><scope>Public</scope>
+        <info>
+          <category>Fire</category><event>Bushfire</event><responseType>Evacuate</responseType>
+          <urgency>Immediate</urgency><severity>Extreme</severity><certainty>Observed</certainty>
+          <expires>2026-06-30T21:00:00+10:00</expires>
+          <headline>Test Ridge Road Fire</headline>
+          <parameter><valueName>AlertLevel</valueName><value>Emergency Warning</value></parameter>
+          <parameter><valueName>IncidentType</valueName><value>Bush Fire</value></parameter>
+          <parameter><valueName>Status</valueName><value>Out of control</value></parameter>
+          <parameter><valueName>CouncilArea</valueName><value>Testshire</value></parameter>
+          <parameter><valueName>IsFire</valueName><value>Yes</value></parameter>
+          <area>
+            <areaDesc>Test Ridge - 5km around the screen</areaDesc>
+            <polygon>-33.90,151.10 -33.90,151.30 -33.80,151.30 -33.80,151.10 -33.90,151.10</polygon>
+            <circle>-33.85,151.20 8</circle>
+          </area>
+        </info>
+      </alert>
+    </embeddedXMLContent></xmlContent>
+  </contentObject>
+  <contentObject>
+    <contentDescription>Watch and Act - far away</contentDescription>
+    <xmlContent><embeddedXMLContent>
+      <alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+        <identifier>2026-06-18T09:45:00.0000000:670002</identifier>
+        <sender>webmaster@rfs.nsw.gov.au</sender><sent>2026-06-18T09:45:00+10:00</sent>
+        <status>Actual</status><msgType>Alert</msgType><scope>Public</scope>
+        <info>
+          <category>Fire</category><event>Bushfire</event><responseType>Prepare</responseType>
+          <urgency>Expected</urgency><severity>Severe</severity><certainty>Likely</certainty>
+          <expires>2026-06-30T21:00:00+10:00</expires>
+          <headline>Distant Valley Fire</headline>
+          <parameter><valueName>AlertLevel</valueName><value>Watch and Act</value></parameter>
+          <parameter><valueName>IsFire</valueName><value>Yes</value></parameter>
+          <area>
+            <areaDesc>Distant Valley (far from screen)</areaDesc>
+            <polygon>-31.00,150.00 -31.00,150.10 -30.90,150.10 -30.90,150.00 -31.00,150.00</polygon>
+            <circle>-30.95,150.05 0</circle>
+          </area>
+        </info>
+      </alert>
+    </embeddedXMLContent></xmlContent>
+  </contentObject>
+</EDXLDistribution>

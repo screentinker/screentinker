@@ -1,0 +1,14 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/welcome-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "csv_file": "people.example.csv",
+  "rotate_interval_sec": 12,
+  "show_all_when_empty": true,
+
+  "position": "center",
+  "width": 820,
+  "height": 300
+}

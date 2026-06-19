@@ -1,0 +1,21 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/ticker-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "vs_currency": "usd",
+  "coins": [
+    { "id": "bitcoin",  "symbol": "BTC" },
+    { "id": "ethereum", "symbol": "ETH" },
+    { "id": "solana",   "symbol": "SOL" },
+    { "id": "cardano",  "symbol": "ADA" }
+  ],
+
+  "poll_interval_sec": 120,
+  "position": "bottom-right",
+  "width": 1100,
+  "height": 110,
+  "border_radius": 14,
+  "opacity": 1
+}

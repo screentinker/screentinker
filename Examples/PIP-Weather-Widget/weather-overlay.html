@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; color: #fff; border-radius: 16px;
+    overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.45);
+    background: linear-gradient(135deg, #1b2735 0%, #2c3e50 100%); padding: 14px 18px; box-sizing: border-box; }
+  .card.day { background: linear-gradient(135deg, #2980b9 0%, #6dd5fa 100%); color: #08263b; }
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .loc { font-size: clamp(13px, 3.2vw, 18px); font-weight: 600; opacity: .92;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .emoji { font-size: clamp(26px, 7vw, 44px); line-height: 1; }
+  .mid { display: flex; align-items: baseline; gap: 8px; margin-top: 2px; }
+  .temp { font-size: clamp(34px, 11vw, 60px); font-weight: 800; line-height: 1; }
+  .unit { font-size: clamp(16px, 4vw, 24px); font-weight: 700; opacity: .8; }
+  .cond { font-size: clamp(13px, 3.2vw, 18px); font-weight: 600; opacity: .9; }
+  .hilo { font-size: clamp(12px, 2.8vw, 16px); opacity: .85; margin-top: 2px; }
+  .footer { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 16px;
+    font-size: clamp(11px, 2.4vw, 14px); opacity: .8; padding-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="top">
+      <span class="loc" id="loc"></span>
+      <span class="emoji" id="emoji"></span>
+    </div>
+    <div class="mid"><span class="temp" id="temp"></span><span class="unit" id="unit"></span></div>
+    <div class="cond" id="cond"></div>
+    <div class="hilo" id="hilo"></div>
+    <div class="footer">
+      <span id="extra"></span>
+      <span id="updated"></span>
+    </div>
+  </div>
+  <script src="weather-overlay.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/qr-overlay.html",
+
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "rotate_interval_sec": 15,
+  "position": "bottom-right",
+  "width": 360,
+  "height": 420,
+
+  "entries": [
+    { "label": "Guest Wi-Fi", "data": "WIFI:T:WPA;S:Lobby-Guest;P:welcome123;;" },
+    { "label": "Today's Lunch Menu", "data": "https://example.com/menu" },
+    { "label": "Tell us how we're doing", "data": "https://example.com/survey" }
+  ]
+}

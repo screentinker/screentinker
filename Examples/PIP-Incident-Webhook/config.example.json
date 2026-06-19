@@ -1,0 +1,15 @@
+{
+  "listen_port": 8088,
+
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/incident-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "position": "top-right",
+  "source_label": "Monitoring",
+
+  "shared_secret": null,
+
+  "overlay": { "width": 760, "height": 280, "border_radius": 16, "opacity": 1 }
+}

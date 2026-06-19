@@ -1,0 +1,21 @@
+{
+  "source": "noaa",
+  "poll_interval_sec": 60,
+
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/alert-overlay.html",
+
+  "min_severity": "Severe",
+  "urgencies": null,
+  "noaa_user_agent": "ScreenTinker-CAP-Alert-Monitor (you@example.com)",
+
+  "screens": [
+    { "name": "OKC lobby", "lat": 35.4676, "lon": -97.5164, "device_id": "DEVICE_OR_GROUP_ID" }
+  ],
+
+  "overlay": { "position": "center", "width": 900, "height": 320, "border_radius": 16 },
+
+  "_demo": "to watch show->expire-removal deterministically: run `node make-demo-alert.js 90`, then add the next line:",
+  "test_feed_file": null
+}

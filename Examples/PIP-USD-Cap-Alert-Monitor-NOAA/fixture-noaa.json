@@ -1,0 +1,90 @@
+{
+  "type": "FeatureCollection",
+  "title": "Fixture: NWS active alerts (offline test for noaa-parse)",
+  "features": [
+    {
+      "id": "NWS-TEST-TORNADO-1",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "NWS-TEST-TORNADO-1",
+        "event": "Tornado Warning",
+        "severity": "Extreme",
+        "urgency": "Immediate",
+        "certainty": "Observed",
+        "messageType": "Alert",
+        "status": "Actual",
+        "sent": "2026-06-18T10:00:00-05:00",
+        "effective": "2026-06-18T10:00:00-05:00",
+        "expires": "2026-06-18T10:01:00-05:00",
+        "headline": "Tornado Warning issued June 18 at 10:00AM CDT",
+        "areaDesc": "Test County, ST",
+        "senderName": "NWS Test Office",
+        "response": "Shelter"
+      }
+    },
+    {
+      "id": "NWS-TEST-WINTER-3",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "NWS-TEST-WINTER-3",
+        "event": "Winter Storm Warning",
+        "severity": "Severe",
+        "urgency": "Expected",
+        "certainty": "Likely",
+        "messageType": "Alert",
+        "status": "Actual",
+        "sent": "2026-06-18T09:30:00-05:00",
+        "effective": "2026-06-18T09:30:00-05:00",
+        "expires": "2026-06-18T20:00:00-05:00",
+        "headline": "Winter Storm Warning in effect",
+        "areaDesc": "Test County, ST",
+        "senderName": "NWS Test Office",
+        "response": "Prepare"
+      }
+    },
+    {
+      "id": "NWS-TEST-FLOOD-2",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "NWS-TEST-FLOOD-2",
+        "event": "Flood Advisory",
+        "severity": "Minor",
+        "urgency": "Expected",
+        "certainty": "Likely",
+        "messageType": "Alert",
+        "status": "Actual",
+        "sent": "2026-06-18T09:45:00-05:00",
+        "effective": "2026-06-18T09:45:00-05:00",
+        "expires": "2026-06-18T20:00:00-05:00",
+        "headline": "Flood Advisory in effect",
+        "areaDesc": "Test County, ST",
+        "senderName": "NWS Test Office",
+        "response": "Avoid"
+      }
+    },
+    {
+      "id": "NWS-TEST-CANCEL-4",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "NWS-TEST-CANCEL-4",
+        "event": "Severe Thunderstorm Warning",
+        "severity": "Severe",
+        "urgency": "Immediate",
+        "certainty": "Observed",
+        "messageType": "Cancel",
+        "status": "Actual",
+        "sent": "2026-06-18T09:55:00-05:00",
+        "effective": "2026-06-18T09:55:00-05:00",
+        "expires": "2026-06-18T20:00:00-05:00",
+        "headline": "Severe Thunderstorm Warning cancelled",
+        "areaDesc": "Test County, ST",
+        "senderName": "NWS Test Office",
+        "response": "AllClear"
+      }
+    }
+  ]
+}

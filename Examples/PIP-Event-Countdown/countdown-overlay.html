@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Countdown</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; background: #14161c; color: #fff; border-radius: 16px; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45); padding: 20px 24px; box-sizing: border-box; }
+  .title { font-size: clamp(20px, 5vw, 40px); font-weight: 800; letter-spacing: .02em; text-align: center;
+    line-height: 1.1; }
+  .clock { display: flex; gap: clamp(10px, 3vw, 28px); align-items: flex-start; }
+  .unit { display: flex; flex-direction: column; align-items: center; min-width: clamp(48px, 12vw, 96px); }
+  .num { font-variant-numeric: tabular-nums; font-weight: 800; font-size: clamp(34px, 11vw, 88px);
+    line-height: 1; color: #fff; }
+  .lbl { margin-top: 8px; font-size: clamp(11px, 2.4vw, 16px); text-transform: uppercase; letter-spacing: .12em;
+    color: #9aa0aa; }
+  .sep { font-weight: 800; font-size: clamp(28px, 9vw, 70px); line-height: 1; color: #4b5160; padding-top: 2px; }
+  .done .num, .done .sep { color: #58d68d; }
+  .celebrate { font-size: clamp(30px, 8vw, 68px); font-weight: 800; text-align: center; color: #fff; }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="title" id="title">Countdown</div>
+    <div class="clock" id="clock">
+      <div class="unit"><span class="num" id="d">00</span><span class="lbl">Days</span></div>
+      <span class="sep">:</span>
+      <div class="unit"><span class="num" id="h">00</span><span class="lbl">Hours</span></div>
+      <span class="sep">:</span>
+      <div class="unit"><span class="num" id="m">00</span><span class="lbl">Min</span></div>
+      <span class="sep">:</span>
+      <div class="unit"><span class="num" id="s">00</span><span class="lbl">Sec</span></div>
+    </div>
+  </div>
+  <script src="countdown-overlay.js"></script>
+</body>
+</html>

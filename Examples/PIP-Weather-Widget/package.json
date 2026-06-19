@@ -1,0 +1,12 @@
+{
+  "name": "pip-weather-widget",
+  "version": "0.1.0",
+  "description": "Example: a persistent corner weather widget pushed to a ScreenTinker screen via the PiP API (Open-Meteo, no API key).",
+  "type": "commonjs",
+  "main": "weather.js",
+  "scripts": {
+    "start": "node weather.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

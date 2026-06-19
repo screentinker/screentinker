@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto Ticker</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: stretch; }
+  .strip { flex: 1; display: flex; align-items: center; gap: 10px;
+    background: #14161a; color: #fff; border-radius: 14px; overflow: hidden;
+    padding: 0 16px; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+  .row { display: flex; align-items: center; gap: clamp(14px, 3vw, 34px);
+    overflow: hidden; white-space: nowrap; width: 100%; }
+  .chip { display: inline-flex; align-items: baseline; gap: 8px; }
+  .sym { font-weight: 800; letter-spacing: .04em; font-size: clamp(15px, 3.2vw, 26px); }
+  .price { font-weight: 600; font-variant-numeric: tabular-nums; font-size: clamp(15px, 3.2vw, 26px); }
+  .chg { font-weight: 700; font-variant-numeric: tabular-nums; font-size: clamp(13px, 2.6vw, 20px); }
+  .up   { color: #2ecc71; }
+  .down { color: #ff5b5b; }
+  .flat { color: #9aa0a6; }
+  .dot { color: #3a3f47; }
+  .empty { color: #9aa0a6; font-size: clamp(14px, 3vw, 22px); }
+</style>
+</head>
+<body>
+  <div class="strip"><div class="row" id="row"></div></div>
+  <script src="ticker-overlay.js"></script>
+</body>
+</html>

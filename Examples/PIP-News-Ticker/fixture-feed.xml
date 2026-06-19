@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Demo Newsroom</title>
+    <link>https://example.com/</link>
+    <description>Fixture feed for the news ticker offline test</description>
+    <item>
+      <title>City council approves new transit line</title>
+      <link>https://example.com/1</link>
+    </item>
+    <item>
+      <title><![CDATA[Markets rally as <b>tech</b> shares climb]]></title>
+      <link>https://example.com/2</link>
+    </item>
+    <item>
+      <title>Storms &amp; flooding expected this weekend</title>
+      <link>https://example.com/3</link>
+    </item>
+    <item>
+      <title>Local team wins championship 3&#8211;2</title>
+      <link>https://example.com/4</link>
+    </item>
+    <item>
+      <title>Library extends weekend hours</title>
+      <link>https://example.com/5</link>
+    </item>
+  </channel>
+</rss>

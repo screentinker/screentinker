@@ -1,0 +1,12 @@
+{
+  "name": "pip-air-quality",
+  "version": "0.1.0",
+  "description": "Example: a persistent ScreenTinker PiP air-quality widget driven by the keyless Open-Meteo Air Quality API.",
+  "type": "commonjs",
+  "main": "aqi.js",
+  "scripts": {
+    "start": "node aqi.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

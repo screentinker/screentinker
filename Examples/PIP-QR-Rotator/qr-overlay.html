@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scan Me</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; background: #14161c; color: #fff; border-radius: 16px; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45); padding: 22px; box-sizing: border-box; }
+  .panel { background: #fff; border-radius: 14px; padding: 14px; line-height: 0;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  .panel canvas { display: block; width: clamp(160px, 46vh, 360px); height: auto; image-rendering: pixelated; }
+  .label { font-size: clamp(16px, 4.5vw, 28px); font-weight: 700; text-align: center; line-height: 1.15;
+    max-width: 95%; }
+  .hint { font-size: clamp(11px, 2.6vw, 15px); color: #9aa0aa; letter-spacing: .14em; text-transform: uppercase; }
+  .placeholder { color: #9aa0aa; font-size: clamp(14px, 4vw, 22px); text-align: center; padding: 30px;
+    display: flex; align-items: center; justify-content: center; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="panel"><canvas id="qr"></canvas></div>
+    <div class="label" id="label"></div>
+    <div class="hint">📷 Scan with your camera</div>
+    <div class="placeholder" id="placeholder" style="display:none">No QR data</div>
+  </div>
+  <script src="qr-overlay.js"></script>
+</body>
+</html>

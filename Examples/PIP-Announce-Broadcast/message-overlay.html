@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Announcement</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; }
+  .card { flex: 1; display: flex; flex-direction: column; background: #1a1a1a; color: #fff;
+    border-radius: 16px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  .band { padding: 12px 22px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+    font-size: clamp(14px, 2.8vw, 22px); display: none; }
+  .band.show { display: block; }
+  .body { padding: 22px 26px; display: flex; flex-direction: column; gap: 12px; flex: 1; justify-content: center; }
+  .message { font-size: clamp(22px, 5.5vw, 44px); font-weight: 700; line-height: 1.18; }
+  .footer { margin-top: auto; font-size: clamp(12px, 2.2vw, 16px); color: #9a9a9a; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="band" id="band"></div>
+    <div class="body">
+      <div class="message" id="message"></div>
+      <div class="footer"><span id="updated"></span></div>
+    </div>
+  </div>
+  <script src="message-overlay.js"></script>
+</body>
+</html>

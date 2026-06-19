@@ -1,0 +1,12 @@
+{
+  "name": "pip-crypto-ticker",
+  "version": "0.1.0",
+  "description": "Example: poll CoinGecko (keyless) and push a live crypto price ticker to ScreenTinker screens via the PiP API.",
+  "type": "commonjs",
+  "main": "ticker.js",
+  "scripts": {
+    "start": "node ticker.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

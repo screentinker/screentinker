@@ -1,0 +1,12 @@
+{
+  "name": "pip-welcome-board",
+  "version": "0.1.0",
+  "description": "Example: rotate welcome / birthday / work-anniversary cards onto ScreenTinker screens via the PiP API, driven by a local CSV.",
+  "type": "commonjs",
+  "main": "welcome.js",
+  "scripts": {
+    "start": "node welcome.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

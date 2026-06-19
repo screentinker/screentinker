@@ -1,0 +1,16 @@
+{
+  "api_base": "https://signage.example.com",
+  "api_token": "st_REPLACE_WITH_A_FULL_SCOPE_TOKEN",
+  "overlay_base_url": "https://signage.example.com/aqi-overlay.html",
+  "device_id": "DEVICE_OR_GROUP_ID",
+
+  "lat": 45.5152,
+  "lon": -122.6784,
+  "location_name": "Portland, OR",
+
+  "poll_interval_sec": 900,
+  "position": "top-right",
+  "width": 360,
+  "height": 200,
+  "border_radius": 16
+}
