@@ -125,6 +125,7 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/player')) return next();
   if (req.path === '/docs') return next(); // Redoc API reference needs a relaxed CSP
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return next();
+  if (req.path.startsWith('/api/widgets/preview-session/')) return next();
   if (req.path.startsWith('/api/kiosk/') && req.path.endsWith('/render')) return next();
   return dashboardCsp(req, res, next);
 });
@@ -532,6 +533,7 @@ const { PUBLIC_ROUTERS, JWT_ONLY_ROUTERS, AGENCY_ROUTERS } = require('./config/a
 // Public device-render endpoints + the memory-heavy preview limiter must be registered
 // BEFORE their parent router mount so the _skipAuth bypass / the limiter fire first.
 app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
+app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth = true; next(); });
 app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 

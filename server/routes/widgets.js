@@ -212,6 +212,42 @@ router.post('/preview', (req, res) => {
   res.send(html);
 });
 
+// Preview sessions — ephemeral store so the preview iframe loads via src (not srcdoc)
+// and bypasses the dashboard CSP that would block the widget's inline scripts.
+const previewStore = new Map();
+const PREVIEW_TTL = 5 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of previewStore) {
+    if (now - entry.created > PREVIEW_TTL) previewStore.delete(key);
+  }
+}, 60 * 1000).unref();
+
+router.post('/preview-session', (req, res) => {
+  const { widget_type, config } = req.body || {};
+  if (!widget_type || typeof widget_type !== 'string') return res.status(400).json({ error: 'widget_type required' });
+  if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
+  const id = uuidv4();
+  const html = renderWidgetHtml(widget_type, config || {});
+  previewStore.set(id, { html, widget_type, created: Date.now() });
+  res.json({ id, url: `/api/widgets/preview-session/${id}` });
+});
+
+router.get('/preview-session/:id', (req, res) => {
+  const entry = previewStore.get(req.params.id);
+  if (!entry) return res.status(410).send('Preview expired');
+  if (Date.now() - entry.created > PREVIEW_TTL) {
+    previewStore.delete(req.params.id);
+    return res.status(410).send('Preview expired');
+  }
+  let html = entry.html;
+  if (req.workspaceId) html = inlineUserContent(html, req.workspaceId);
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
 function renderClock(c) {
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }

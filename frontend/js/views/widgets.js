@@ -105,7 +105,7 @@ function openContentPicker({ multiple = false, title } = {}) {
   });
 }
 
-function showPreviewModal(html, widgetType) {
+function showPreviewModal(sessionId, widgetType) {
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px';
   // #104: webpage widgets pointing at frame-denying sites (X-Frame-Options) can't be
@@ -124,12 +124,7 @@ function showPreviewModal(html, widgetType) {
       ${webpageNote}
     </div>`;
   document.body.appendChild(overlay);
-  // srcdoc resolves relative URLs against about:srcdoc, so inject <base> pointing to our origin
-  const baseTag = `<base href="${window.location.origin}/">`;
-  const withBase = /<head[^>]*>/i.test(html)
-    ? html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`)
-    : html.replace(/<html([^>]*)>/i, `<html$1><head>${baseTag}</head>`);
-  overlay.querySelector('#pvIframe').srcdoc = withBase;
+  overlay.querySelector('#pvIframe').src = '/api/widgets/preview-session/' + sessionId;
   const close = () => overlay.remove();
   overlay.querySelector('#pvClose').onclick = close;
   overlay.onclick = (e) => { if (e.target === overlay) close(); };
@@ -551,14 +546,14 @@ export async function render(container) {
     if (!type) return;
     const config = getConfigFromForm(type);
     try {
-      const res = await fetch('/api/widgets/preview', {
+      const res = await fetch('/api/widgets/preview-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
         body: JSON.stringify({ widget_type: type, config }),
       });
       if (!res.ok) throw new Error(t('widget.toast.preview_failed'));
-      const html = await res.text();
-      showPreviewModal(html, type);
+      const { id } = await res.json();
+      showPreviewModal(id, type);
     } catch (err) { showToast(err.message, 'error'); }
   };
 
