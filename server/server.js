@@ -535,6 +535,7 @@ const { PUBLIC_ROUTERS, JWT_ONLY_ROUTERS, AGENCY_ROUTERS } = require('./config/a
 app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth = true; next(); });
 app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
+app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview session creation retains rendered HTML in memory for 5min
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 
 for (const r of PUBLIC_ROUTERS) {
