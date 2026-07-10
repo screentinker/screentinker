@@ -377,8 +377,10 @@ router.put('/status-debug', requirePlatformAdmin, (req, res) => {
 });
 
 // ===================== Version update indicator =====================
-// requireAdmin (admin, superadmin, platform_admin) — operational endpoints,
-// not restricted to platform-owner level.
+// check-update = requireAdmin — a read-only GHCR poll, operational.
+// trigger-update = requirePlatformAdmin — it runs `docker compose up -d` on the
+// HOST via docker.sock (root-equivalent), so it's restricted to platform-owner
+// level; DOCKER_UPDATE_ENABLED gates it further (off by default).
 
 const ghcrCheck = require('../lib/ghcr-check');
 const VERSION = require('../version');
@@ -400,7 +402,7 @@ router.post('/check-update', requireAdmin, async (req, res) => {
 
 // POST /api/admin/trigger-update — run docker compose pull && up -d,
 // or return manual instructions when docker is disabled.
-router.post('/trigger-update', requireAdmin, async (req, res) => {
+router.post('/trigger-update', requirePlatformAdmin, async (req, res) => {
   const { exec } = require('child_process');
   const composeFile = require('../config').composeFilePath;
   const cmd = `docker compose -f ${composeFile} pull && docker compose -f ${composeFile} up -d`;

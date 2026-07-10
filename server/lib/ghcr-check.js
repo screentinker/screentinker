@@ -55,6 +55,22 @@ function getLatestVersion() {
   return latestVersion;
 }
 
+// Hard per-request cap. Node's global fetch has NO default timeout, so a hung GHCR
+// connection would otherwise never settle — leaving `inFlight` set forever (the finally
+// never runs) and wedging BOTH the background poller and any awaited checkNow (e.g.
+// /api/admin/check-update). AbortController makes a stalled fetch reject so the outer
+// try/catch/finally always fire and the cache keeps serving.
+const FETCH_TIMEOUT_MS = 10000;
+async function fetchWithTimeout(url, opts) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...(opts || {}), signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Force a fresh GHCR poll (bypasses cache), fetch tags, extract the highest
 // semver, and update the cache. Returns { latest, update_available }.
 async function checkNow(currentVersion) {
@@ -65,7 +81,7 @@ async function checkNow(currentVersion) {
   inFlight = (async () => {
     try {
       // Step 1: get anonymous OAuth token for GHCR public repo access
-      const tokenRes = await fetch(
+      const tokenRes = await fetchWithTimeout(
         'https://ghcr.io/token?scope=repository:screentinker/screentinker:pull'
       );
       if (!tokenRes.ok) throw new Error(`GHCR token endpoint returned ${tokenRes.status}`);
@@ -74,7 +90,7 @@ async function checkNow(currentVersion) {
 
       // Step 2: list tags with Bearer auth
       const tagsUrl = 'https://ghcr.io/v2/screentinker/screentinker/tags/list';
-      const tagsRes = await fetch(tagsUrl, {
+      const tagsRes = await fetchWithTimeout(tagsUrl, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
