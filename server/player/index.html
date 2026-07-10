@@ -1178,14 +1178,25 @@
 
     function register() {
       const data = {};
-      if (config.deviceId && config.paired) {
+      // #163: always send device identity when we have it, regardless of paired
+      // status. Before this fix, a reconnect before pairing would omit device_id
+      // and device_token, causing the server's fingerprint reclaim guard to fire
+      // device:auth-error ("Authentication failed. Please re-pair this device.")
+      // because the same browser fingerprint looked like a reinstall attack.
+      if (config.deviceId) {
         data.device_id = config.deviceId;
         if (config.deviceToken) data.device_token = config.deviceToken;
-      } else {
-        const code = String(Math.floor(100000 + Math.random() * 900000));
-        config.pairingCode = code;
-        saveConfig(config);
-        data.pairing_code = code;
+      }
+      if (!config.paired) {
+        // Reuse the existing pairing code across reconnects so the operator
+        // doesn't see a new code every time the socket flaps. Only generate a
+        // fresh one on the very first registration when no code exists yet.
+        if (!config.pairingCode) {
+          const code = String(Math.floor(100000 + Math.random() * 900000));
+          config.pairingCode = code;
+          saveConfig(config);
+        }
+        data.pairing_code = config.pairingCode;
       }
       data.device_info = {
         android_version: 'Web/' + navigator.userAgent.split(' ').pop(),
