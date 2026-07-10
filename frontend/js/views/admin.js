@@ -406,16 +406,128 @@ async function loadSystem() {
   try {
     const version = await fetch('/api/version').then(r => r.json());
     const token = localStorage.getItem('token');
+
+    const versionComparison = version.latest_version
+      ? `<div class="info-card">
+           <div class="info-card-label">${t('admin.latest_version') || 'Latest Version'}</div>
+           <div class="info-card-value small">${esc(version.latest_version)}</div>
+         </div>
+         <div class="info-card">
+           <div class="info-card-label">${t('admin.status') || 'Status'}</div>
+           <div class="info-card-value small" style="color:${version.update_available ? 'var(--warning)' : 'var(--success)'}">${version.update_available ? (t('admin.update_available') || 'Update Available') : (t('admin.up_to_date') || 'Up to Date')}</div>
+         </div>`
+      : `<div class="info-card">
+           <div class="info-card-label">${t('admin.latest_version') || 'Latest Version'}</div>
+           <div class="info-card-value small" style="color:var(--text-muted)">${t('admin.checking') || 'Checking...'}</div>
+         </div>`;
+
     el.innerHTML = `
       <div class="info-grid">
-        <div class="info-card"><div class="info-card-label">${t('admin.version')}</div><div class="info-card-value small">${version.version}</div></div>
-        <div class="info-card"><div class="info-card-label">${t('admin.frontend_hash')}</div><div class="info-card-value small">${version.hash}</div></div>
+        <div class="info-card"><div class="info-card-label">${t('admin.version')}</div><div class="info-card-value small">${esc(version.version)}</div></div>
+        ${versionComparison}
       </div>
-      <div style="display:flex;gap:8px;margin-top:16px">
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" id="checkUpdateBtn">${t('admin.check_now') || 'Check Now'}</button>
+        <button class="btn btn-primary btn-sm" id="triggerUpdateBtn"${!version.update_available ? ' style="display:none"' : ''}>${t('admin.update_now') || 'Update Now'}</button>
         <a href="/api/status/backup?token=${token}" class="btn btn-secondary btn-sm" style="text-decoration:none">${t('admin.download_db_backup')}</a>
         <a href="/api/status" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">${t('admin.server_status')}</a>
       </div>
+      <div id="updateResult" style="margin-top:12px"></div>
     `;
+
+    // Check Now button
+    document.getElementById('checkUpdateBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('checkUpdateBtn');
+      btn.disabled = true;
+      btn.textContent = t('admin.checking') || 'Checking...';
+      try {
+        const res = await fetch('/api/admin/check-update', { method: 'POST', headers: headers() });
+        const data = await res.json();
+        const updBtn = document.getElementById('triggerUpdateBtn');
+        if (data.update_available && updBtn) {
+          updBtn.style.display = '';
+        }
+        loadSystem(); // refresh the whole card
+      } catch (err) {
+        showToast(err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = t('admin.check_now') || 'Check Now';
+      }
+    });
+
+    // Update Now button
+    document.getElementById('triggerUpdateBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('triggerUpdateBtn');
+      const resultEl = document.getElementById('updateResult');
+      btn.disabled = true;
+      btn.textContent = t('admin.updating') || 'Updating...';
+      try {
+        const res = await fetch('/api/admin/trigger-update', { method: 'POST', headers: headers() });
+        const data = await res.json();
+        if (data.docker_enabled) {
+          // Docker executed — show output with Copy button
+          resultEl.innerHTML = `
+            <div style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--bg-card)">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <strong style="font-size:13px">${data.success ? (t('admin.update_success') || 'Update Successful') : (t('admin.update_failed') || 'Update Failed')}</strong>
+                <button class="btn btn-secondary btn-sm" id="copyOutputBtn">${t('admin.copy') || 'Copy'}</button>
+              </div>
+              <pre style="max-height:300px;overflow:auto;font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">${esc(data.output || '')}</pre>
+            </div>`;
+          document.getElementById('copyOutputBtn')?.addEventListener('click', () => {
+            const pre = resultEl.querySelector('pre');
+            const text = pre ? pre.textContent : '';
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(text).then(() => showToast(t('admin.copied') || 'Copied!', 'success'));
+            } else {
+              // Fallback for older browsers
+              const ta = document.createElement('textarea');
+              ta.value = text;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              showToast(t('admin.copied') || 'Copied!', 'success');
+            }
+          });
+        } else if (data.instructions) {
+          // Docker disabled — show manual instructions with Copy button
+          resultEl.innerHTML = `
+            <div style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--bg-secondary)">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <strong style="font-size:13px">${t('admin.manual_update') || 'Manual Update Required'}</strong>
+                <button class="btn btn-secondary btn-sm" id="copyCmdBtn">${t('admin.copy_command') || 'Copy'}</button>
+              </div>
+              <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${t('admin.manual_update_desc') || 'Run this command on the server:'}</p>
+              <pre style="font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">${esc(data.instructions)}</pre>
+            </div>`;
+          document.getElementById('copyCmdBtn')?.addEventListener('click', () => {
+            const pre = resultEl.querySelector('pre');
+            const text = pre ? pre.textContent : '';
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(text).then(() => showToast(t('admin.copied') || 'Copied!', 'success'));
+            } else {
+              const ta = document.createElement('textarea');
+              ta.value = text;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              showToast(t('admin.copied') || 'Copied!', 'success');
+            }
+          });
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = t('admin.update_now') || 'Update Now';
+      }
+    });
   } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
 

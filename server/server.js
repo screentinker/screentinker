@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const config = require('./config');
 const VERSION = require('./version');
+const ghcrCheck = require('./lib/ghcr-check');
 
 // #114: last-resort crash safety net. better-sqlite3 is SYNCHRONOUS, so a constraint
 // violation (e.g. a FK write) inside a socket.io handler with no local try/catch
@@ -586,7 +587,9 @@ updateFrontendHash();
 // Recheck every 30 seconds
 setInterval(updateFrontendHash, 30000);
 app.get('/api/version', (req, res) => {
-  res.json({ hash: frontendHash, version: VERSION });
+  const latest = ghcrCheck.getLatestVersion();
+  const updateAvailable = latest ? ghcrCheck.compareVersions(latest, VERSION) > 0 : false;
+  res.json({ hash: frontendHash, version: VERSION, latest_version: latest, update_available: updateAvailable });
 });
 
 // Public status page
@@ -724,6 +727,10 @@ startAgencyDigest();
 // (escalating to TRUNCATE if starved) from a worker thread. Started AFTER the DB is open+migrated.
 const { startWalCheckpointer, stopWalCheckpointer } = require('./db/wal-checkpointer');
 startWalCheckpointer(require('./db/database').db, config.dbPath);
+
+// Version update indicator: poll GHCR for latest image tag, cache in memory.
+// First poll fires after 30s to let the server stabilize.
+ghcrCheck.startPolling(config.ghcrCheckIntervalHours, VERSION);
 
 // Graceful shutdown: stop the checkpointer worker (closes its own DB handle) + flush + close.
 let _shuttingDown = false;

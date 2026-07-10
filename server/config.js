@@ -298,6 +298,12 @@ module.exports = {
   contentAckMaxPerWindow: parseInt(process.env.CONTENT_ACK_MAX_PER_WINDOW) || 20,
   contentAckRateWindowMs: parseInt(process.env.CONTENT_ACK_RATE_WINDOW_MS) || 10000,
 
+  // Version update indicator — polls GHCR for the latest Docker image tag via
+  // anonymous token flow. All optional with safe defaults.
+  dockerUpdateEnabled: process.env.DOCKER_UPDATE_ENABLED === 'true',
+  ghcrCheckIntervalHours: parseInt(process.env.GHCR_CHECK_INTERVAL_HOURS) || 36,
+  composeFilePath: process.env.COMPOSE_FILE_PATH || '/opt/screentinker/docker-compose.yml',
+
   // #143 fingerprint-reclaim liveness. A reinstalled app (same fingerprint, no
   // device_id, has pairing_code) may reclaim its old device's identity once that
   // device is gone by RUNTIME signals: no live socket AND last heartbeat older than

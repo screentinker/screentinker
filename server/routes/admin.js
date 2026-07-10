@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { canAdminWorkspace } = require('../lib/permissions');
-const { requirePlatformAdmin } = require('../middleware/auth');
+const { requirePlatformAdmin, requireAdmin } = require('../middleware/auth');
 const { logActivity, getClientIp } = require('../services/activity');
 const { deleteWorkspaceCascade, deleteOrgCascade } = require('../lib/user-deletion');
 const { platformDefaultRow, HARDCODED_BRANDING, PLATFORM_DEFAULT_ID } = require('../lib/branding');
@@ -374,6 +374,52 @@ router.put('/status-debug', requirePlatformAdmin, (req, res) => {
   appSettings.setBool('status_debug_enabled', enabled);   // persists + refreshes the cache
   logActivity(req.user.id, 'admin_set_status_debug', `enabled: ${enabled}`, null, getClientIp(req), null);
   res.json({ enabled });
+});
+
+// ===================== Version update indicator =====================
+// requireAdmin (admin, superadmin, platform_admin) — operational endpoints,
+// not restricted to platform-owner level.
+
+const ghcrCheck = require('../lib/ghcr-check');
+const VERSION = require('../version');
+
+// POST /api/admin/check-update — force a fresh GHCR poll (bypasses cache)
+// and return version comparison.
+router.post('/check-update', requireAdmin, async (req, res) => {
+  try {
+    const result = await ghcrCheck.checkNow(VERSION);
+    res.json({
+      current: VERSION,
+      latest: result.latest,
+      update_available: result.update_available,
+    });
+  } catch (err) {
+    res.status(502).json({ error: 'GHCR poll failed', detail: err.message });
+  }
+});
+
+// POST /api/admin/trigger-update — run docker compose pull && up -d,
+// or return manual instructions when docker is disabled.
+router.post('/trigger-update', requireAdmin, async (req, res) => {
+  const { exec } = require('child_process');
+  const composeFile = require('../config').composeFilePath;
+  const cmd = `docker compose -f ${composeFile} pull && docker compose -f ${composeFile} up -d`;
+
+  if (!require('../config').dockerUpdateEnabled) {
+    return res.json({
+      docker_enabled: false,
+      instructions: cmd,
+    });
+  }
+
+  exec(cmd, { timeout: 60000 }, (err, stdout, stderr) => {
+    const output = (stdout || '') + (stderr || '');
+    if (err) {
+      return res.json({ success: false, output, docker_enabled: true, error: err.message });
+    }
+    logActivity(req.user.id, 'admin_trigger_update', `docker compose up -d`, null, getClientIp(req), null);
+    res.json({ success: true, output, docker_enabled: true });
+  });
 });
 
 module.exports = router;

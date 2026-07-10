@@ -400,3 +400,40 @@ test('pip clear: full token clears (POST /clear and DELETE), read token rejected
   const del = await jfetch('/api/pip', { method: 'DELETE', ...auth(S.tok.full), body: JSON.stringify({ device_id: S.deviceId }) });
   assert.equal(del.status, 200);
 });
+
+// ───────────────────────── TIER 6: VERSION & UPDATE INDICATOR ─────────────────────────
+
+test('version: GET /api/version includes latest_version and update_available', async () => {
+  const res = await fetch(`${BASE}/api/version`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  // Fields must exist (type presence, not specific value — server may or
+  // may not have polled GHCR yet).
+  assert.ok('latest_version' in body, '/api/version must include latest_version');
+  assert.ok('update_available' in body, '/api/version must include update_available');
+  assert.ok(typeof body.update_available === 'boolean', 'update_available must be boolean');
+});
+
+test('version: POST /api/admin/check-update returns version comparison (admin)', async () => {
+  // user1 is platform_admin — must be able to check-update
+  const res = await jfetch('/api/admin/check-update', post(S.jwt, {}));
+  assert.equal(res.status, 200);
+  assert.ok(res.body, 'check-update must return a body');
+  assert.ok('current' in res.body, 'must include current');
+  assert.ok('latest' in res.body, 'must include latest');
+  assert.ok('update_available' in res.body, 'must include update_available');
+});
+
+test('version: POST /api/admin/check-update rejects non-admin (403)', async () => {
+  // user2 is a regular user, not platform_admin — must be rejected
+  const res = await jfetch('/api/admin/check-update', post(S.jwt2, {}));
+  assert.equal(res.status, 403, 'non-admin must get 403 on check-update');
+});
+
+test('version: POST /api/admin/trigger-update (docker disabled) returns instructions', async () => {
+  const res = await jfetch('/api/admin/trigger-update', post(S.jwt, {}));
+  assert.equal(res.status, 200);
+  assert.ok(res.body, 'trigger-update must return a body');
+  assert.ok('instructions' in res.body || 'docker_enabled' in res.body,
+    'must return instructions or docker_enabled flag');
+});

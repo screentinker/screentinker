@@ -567,13 +567,19 @@ window.addEventListener('keydown', (e) => {
 
 // Auto-reload on frontend update (no more hard refresh needed)
 let knownHash = null;
+export function updateVersionIndicator({ version, latest_version, update_available }) {
+  const label = document.getElementById('versionLabel');
+  const badge = document.getElementById('versionBadge');
+  if (label) label.textContent = version ? 'v' + version : '';
+  if (badge) badge.hidden = !update_available;
+}
 setInterval(async () => {
   try {
     const res = await fetch('/api/version');
-    const { hash } = await res.json();
-    if (knownHash === null) { knownHash = hash; return; }
-    if (hash !== knownHash) {
-      knownHash = hash;
+    const data = await res.json();
+    if (knownHash === null) { knownHash = data.hash; }
+    else if (data.hash !== knownHash) {
+      knownHash = data.hash;
       const toast = document.getElementById('toastContainer');
       if (toast) {
         const notice = document.createElement('div');
@@ -582,6 +588,7 @@ setInterval(async () => {
         toast.appendChild(notice);
       }
     }
+    updateVersionIndicator(data);
   } catch {}
 }, 15000);
 
