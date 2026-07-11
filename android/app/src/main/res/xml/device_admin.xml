@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- #161 device-owner foundation. Admin-level policies we rely on when enrolled as a plain device
+     admin (not full owner): FORCE_LOCK powers lockNow(); disable-keyguard-features supports the
+     keyguard controls. A full device owner has these (and the broader owner-only APIs) inherently. -->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <force-lock />
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>

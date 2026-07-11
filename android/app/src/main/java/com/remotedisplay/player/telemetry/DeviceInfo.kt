@@ -58,6 +58,15 @@ class DeviceInfo(private val context: Context) {
             put("ota_status", OtaThrottle.statusFor(ota, System.currentTimeMillis()))
             put("ota_target_version", cfg.otaTargetVersion)
             put("ota_attempts", cfg.otaAttempts)
+            // #161: privilege tier so the dashboard can show provisioning guidance + gate Tier-2
+            // controls. 0 unprivileged / 1 device-admin / 2 owner-or-delegated-install.
+            try {
+                val policy = com.remotedisplay.player.admin.STPolicy(context)
+                put("tier", policy.tier())
+                put("device_owner", policy.isDeviceOwner())
+                put("can_install_silently", policy.canInstallSilently())
+                put("foreign_device_owner", policy.hasForeignDeviceOwner())
+            } catch (_: Throwable) { put("tier", 0) }
         }
     }
 

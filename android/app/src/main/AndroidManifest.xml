@@ -122,6 +122,21 @@
             </intent-filter>
         </receiver>
 
+        <!-- #161 device-owner foundation. Enrolled via `adb dpm set-device-owner` or QR provisioning.
+             Optional power-up: absent it the app runs fully at Tier 0/1 (STPolicy degrades safely). -->
+        <receiver
+            android:name=".admin.STDeviceAdminReceiver"
+            android:description="@string/device_admin_description"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
         <!-- FileProvider for APK updates -->
         <provider
             android:name="androidx.core.content.FileProvider"

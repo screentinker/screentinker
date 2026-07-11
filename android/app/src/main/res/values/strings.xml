@@ -2,6 +2,7 @@
 <resources>
     <string name="app_name">RemoteDisplay</string>
     <string name="accessibility_description">RemoteDisplay uses accessibility to enable remote power controls and system navigation.</string>
+    <string name="device_admin_description">Lets ScreenTinker run as an unattended kiosk: silent updates, scheduled reboot, lock-task, and time/display control. Optional — the app works without it.</string>
     <string name="nothing_scheduled">Nothing scheduled right now</string>
     <string name="waiting_for_content">Waiting for content…</string>
 
