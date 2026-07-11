@@ -227,6 +227,16 @@ function renderGroupSection(group, devices, playlists) {
             ${GROUP_COMMANDS.map(c => `<option value="${c.type}" ${c.destructive ? 'style="color:var(--danger)"' : ''}>${t(CMD_LABEL_KEY[c.type])}</option>`).join('')}
           </select>
           ` : ''}
+          ${devices.length > 0 ? `
+          <label class="group-sync-label" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);cursor:pointer;white-space:nowrap" title="${esc(t('dashboard.group_sync.hint'))}">
+            <input type="checkbox" class="group-sync-cb" data-group-id="${group.id}" ${group.sync_enabled ? 'checked' : ''}> ${t('dashboard.group_sync.label')}
+          </label>
+          ${group.sync_enabled ? `
+          <select class="input group-leader-select" data-group-id="${group.id}" style="width:130px;padding:4px 8px;font-size:12px;background:var(--bg-input)" title="${esc(t('dashboard.group_sync.leader_hint'))}">
+            <option value="">${t('dashboard.group_sync.leader_auto')}</option>
+            ${devices.map(d => `<option value="${esc(d.id)}" ${group.leader_device_id === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
+          </select>` : ''}
+          ` : ''}
           <button class="btn" data-group-manage="${group.id}" style="padding:4px 10px;font-size:12px" title="${t('dashboard.manage_tooltip')}">${t('dashboard.manage')}</button>
           <button class="btn" data-group-delete="${group.id}" style="padding:4px 8px;font-size:12px;color:var(--danger)" title="${t('dashboard.delete_group_tooltip')}">&#x2715;</button>
         </div>
@@ -792,6 +802,36 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
         showToast(err.message, 'error');
       }
       e.target.value = '';
+    });
+  });
+
+  // #group-sync: toggle synchronized playback for a group.
+  document.querySelectorAll('.group-sync-cb').forEach(cb => {
+    cb.addEventListener('change', async (e) => {
+      const groupId = e.target.dataset.groupId;
+      const enabled = e.target.checked;
+      try {
+        await api.updateGroup(groupId, { sync_enabled: enabled });
+        showToast(enabled ? t('dashboard.group_sync.toast_on') : t('dashboard.group_sync.toast_off'), 'success');
+        loadDashboard(); // re-render so the leader picker shows/hides
+      } catch (err) {
+        showToast(err.message, 'error');
+        e.target.checked = !enabled;
+      }
+    });
+  });
+
+  // #group-sync: pin (or auto-elect) the sync leader.
+  document.querySelectorAll('.group-leader-select').forEach(select => {
+    select.addEventListener('change', async (e) => {
+      const groupId = e.target.dataset.groupId;
+      const leaderId = e.target.value || null; // '' -> auto-elect
+      try {
+        await api.updateGroup(groupId, { leader_device_id: leaderId });
+        showToast(leaderId ? t('dashboard.group_sync.toast_leader') : t('dashboard.group_sync.toast_leader_auto'), 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     });
   });
 
