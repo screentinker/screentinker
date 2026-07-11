@@ -369,6 +369,9 @@
     // Leader broadcasts position; followers align index + drift-correct their video.
     socket.on('wall:sync', function (d) { wallController.onSync(d); });
     socket.on('wall:sync-request', function (d) { wallController.onSyncRequest(d); });
+    // #group-sync: same controller, group mode.
+    socket.on('group:sync', function (d) { wallController.onSync(d); });
+    socket.on('group:sync-request', function (d) { wallController.onSyncRequest(d); });
 
     // #109: PiP overlay — a pushed floating layer above the playlist. The player
     // fetches the uri itself (same trust model as remote_url content).
@@ -606,7 +609,18 @@
       return;
     }
 
-    wallController.exit(); // leave wall mode if we were in it
+    // #group-sync: not a wall — enter group sync (fullscreen synchronized playback) if the payload
+    // carries a group_sync block, else leave sync mode. Content renders through the normal path
+    // below; the controller only drives leader/follower timing (no transform, per-item mute).
+    if (payload.group_sync) {
+      wallController.apply({
+        group_id: payload.group_sync.group_id,
+        is_leader: !!payload.group_sync.is_leader,
+        mode: 'group'
+      });
+    } else {
+      wallController.exit(); // leave sync mode if we were in it
+    }
     applyOrientation(payload.orientation || 'landscape');
     var layout = payload.layout;
     if (layout && Array.isArray(layout.zones) && layout.zones.length) { // B3: non-array zones would throw in zoneRenderer

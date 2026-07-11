@@ -414,6 +414,10 @@
     // video position to whatever the leader is playing.
     let wallConfig = null;
     let wallSyncTimer = null;
+    // #group-sync: synchronized group playback — same leader/follower timing as a wall, but
+    // full-screen (no CSS transform) and per-item mute honored (no forced follower mute).
+    let groupSync = null;
+    let groupSyncTimer = null;
     let lastWallSync = null;
     let currentVideoEl = null;
     let currentItemStartedAt = 0;
@@ -1008,6 +1012,37 @@
         emitWallSync();
       });
 
+      // #group-sync: follower aligns to the leader's index + video position. Same drift maths as
+      // wall:sync, but no audio policy here (per-item mute is honored by the normal render path).
+      socket.on('group:sync', (data) => {
+        if (!groupSync || groupSync.is_leader) return;
+        if (data.group_id !== groupSync.group_id) return;
+        if (typeof data.current_index === 'number' && data.current_index !== currentIndex && playlist.length > 0) {
+          currentIndex = ((data.current_index % playlist.length) + playlist.length) % playlist.length;
+          playCurrentItem();
+        }
+        if (currentVideoEl && typeof data.position_sec === 'number') {
+          const latency = data.sent_at ? Math.max(0, (Date.now() - data.sent_at) / 1000) : 0;
+          const target = data.position_sec + latency;
+          const drift = (currentVideoEl.currentTime || 0) - target;
+          const absDrift = Math.abs(drift);
+          if (absDrift > 0.3 && isFinite(currentVideoEl.duration) && target < currentVideoEl.duration) {
+            try { currentVideoEl.currentTime = target; } catch (_) {}
+            try { currentVideoEl.playbackRate = 1.0; } catch (_) {}
+          } else if (absDrift > 0.05) {
+            try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (_) {}
+          } else if (currentVideoEl.playbackRate !== 1.0) {
+            try { currentVideoEl.playbackRate = 1.0; } catch (_) {}
+          }
+        }
+      });
+
+      socket.on('group:sync-request', (data) => {
+        if (!groupSync?.is_leader) return;
+        if (data?.group_id && data.group_id !== groupSync.group_id) return;
+        emitGroupSync();
+      });
+
       socket.on('device:screenshot-request', () => { console.log('Screenshot requested'); captureAndSend(); });
       socket.on('device:remote-start', () => { console.log('Remote start received'); remoteStreaming = true; startStreaming(); });
       socket.on('device:remote-stop', () => { console.log('Remote stop received'); remoteStreaming = false; stopStreaming(); });
@@ -1349,6 +1384,39 @@
       });
     }
 
+    // #group-sync: leader broadcasts index+position (server relays to eligible group members).
+    function emitGroupSync() {
+      if (!groupSync?.is_leader || !socket?.connected || playlist.length === 0) return;
+      const item = playlist[currentIndex];
+      if (!item) return;
+      const position = currentVideoEl
+        ? (currentVideoEl.currentTime || 0)
+        : Math.max(0, (Date.now() - currentItemStartedAt) / 1000);
+      socket.emit('group:sync', {
+        group_id: groupSync.group_id,
+        device_id: config.deviceId,
+        current_index: currentIndex,
+        content_id: item.content_id || null,
+        position_sec: position,
+        sent_at: Date.now(),
+      });
+    }
+
+    // Enter/leave group sync. Unlike applyWallMode there's NO CSS transform and NO forced mute —
+    // content renders full-screen through the normal path; the leader/follower timing is all this does.
+    function applyGroupSync(cfg) {
+      if (groupSyncTimer) { clearInterval(groupSyncTimer); groupSyncTimer = null; }
+      if (!cfg) { groupSync = null; console.log('[group-sync] exited'); return; }
+      groupSync = cfg;
+      console.log('[group-sync] group=' + cfg.group_id + ' is_leader=' + cfg.is_leader);
+      if (cfg.is_leader) {
+        groupSyncTimer = setInterval(emitGroupSync, 250);   // 4Hz, same as the wall
+        setTimeout(emitGroupSync, 100);                     // immediate first align
+      } else if (socket?.connected) {
+        socket.emit('group:sync-request', { group_id: cfg.group_id }); // align now
+      }
+    }
+
     // Map the player rect into this device's viewport using vw/vh so the
     // viewport fills edge-to-edge (no pillarbox at the seam between adjacent
     // screens). With object-fit:fill on the video, the source stretches to
@@ -1441,6 +1509,14 @@
       // the wall config itself didn't change. Cheap, debounced server-side.
       if (!wallChanged && wallConfig && !wallConfig.is_leader && socket?.connected) {
         socket.emit('wall:sync-request', { wall_id: wallConfig.wall_id });
+      }
+      // #group-sync: same treatment for group sync (mutually exclusive with wall — server sends
+      // group_sync=null for a wall member).
+      const groupKey = (g) => (g ? `${g.group_id}:${g.is_leader}` : '');
+      const groupChanged = groupKey(groupSync) !== groupKey(data.group_sync);
+      if (groupChanged) applyGroupSync(data.group_sync || null);
+      else if (groupSync && !groupSync.is_leader && socket?.connected) {
+        socket.emit('group:sync-request', { group_id: groupSync.group_id });
       }
 
       layout = data.layout || null;
@@ -1601,6 +1677,7 @@
       // Push an immediate sync so followers don't have to wait up to 1s for
       // the next periodic tick before snapping to the new item.
       if (wallConfig?.is_leader) emitWallSync();
+      if (groupSync?.is_leader) emitGroupSync();
     }
 
     function nextItem() {
@@ -1837,7 +1914,8 @@
 
       // Followers don't run their own advance timers — the leader's wall:sync
       // dictates index transitions. Single-screen and leader behave normally.
-      const isFollower = !!wallConfig && !wallConfig.is_leader;
+      // #group-sync: a group follower also must not self-advance — the leader drives the index.
+      const isFollower = (!!wallConfig && !wallConfig.is_leader) || (!!groupSync && !groupSync.is_leader);
 
       const isYoutube = item.mime_type === 'video/youtube';
       const isVideo = !isYoutube && item.mime_type?.startsWith('video/');

@@ -557,15 +557,28 @@ WallController.prototype.styleStage = function (config) {
   st.transform = ''; st.transformOrigin = '';
 };
 
+// #group-sync: the sync id is wall_id (WALL) or group_id (GROUP mode).
+WallController.prototype.syncId = function (c) { return c && (c.mode === 'group' ? c.group_id : c.wall_id); };
+WallController.prototype.clearStageStyle = function () {
+  this.stage.classList.remove('wall-mode');
+  var st = this.stage.style;
+  st.position = ''; st.left = ''; st.top = ''; st.width = ''; st.height = '';
+  st.transform = ''; st.transformOrigin = '';
+};
+
 WallController.prototype.apply = function (config) {
+  var isGroup = config.mode === 'group';
+  var id = this.syncId(config);
   var roleChanged = !this.config ||
     this.config.is_leader !== config.is_leader ||
-    this.config.wall_id !== config.wall_id;
+    this.syncId(this.config) !== id;
   this.config = config;
 
-  this.styleStage(config);
+  // WALL: map this screen's slice (transform). GROUP: full-screen — clear any wall styling; the
+  // normal render path honors per-item mute (no forced follower mute).
+  if (isGroup) this.clearStageStyle(); else this.styleStage(config);
   this.player.setWallFollower(!config.is_leader);
-  // Entering wall mode or flipping role: force a fresh render so leader/follower
+  // Entering sync mode or flipping role: force a fresh render so leader/follower
   // semantics take effect (otherwise an unchanged signature de-dupes the load).
   if (roleChanged) this.player.invalidate();
 
@@ -580,7 +593,9 @@ WallController.prototype.apply = function (config) {
     // Follower: ask the leader for its position now so we don't show the item start
     // until the next periodic tick (up to ~250ms of visible drift on a fresh join).
     var s = this.getSocket();
-    if (s && this.canEmit()) s.emit('wall:sync-request', { wall_id: config.wall_id });
+    if (s && this.canEmit()) {
+      s.emit(isGroup ? 'group:sync-request' : 'wall:sync-request', isGroup ? { group_id: id } : { wall_id: id });
+    }
   }
 };
 
@@ -590,11 +605,8 @@ WallController.prototype.exit = function () {
   this.config = null;
   this.player.setWallFollower(false);
   if (wasActive) {
-    this.stage.classList.remove('wall-mode');
-    var st = this.stage.style;
-    st.position = ''; st.left = ''; st.top = ''; st.width = ''; st.height = '';
-    st.transform = ''; st.transformOrigin = '';
-    this.player.invalidate(); // re-render cleanly back into normal (non-wall) mode
+    this.clearStageStyle();
+    this.player.invalidate(); // re-render cleanly back into normal (non-sync) mode
   }
 };
 
@@ -606,19 +618,22 @@ WallController.prototype.emitSync = function () {
   var v = this.player.getCurrentVideo();
   var pos = v ? (v.currentTime || 0)
               : Math.max(0, (Date.now() - this.player.getItemStartedAt()) / 1000);
-  s.emit('wall:sync', {
-    wall_id: this.config.wall_id,
+  var msg = {
     device_id: this.getDeviceId(),
     current_index: this.player.getIndex(),
     content_id: item.content_id || null,
     position_sec: pos,
     sent_at: Date.now()
-  });
+  };
+  if (this.config.mode === 'group') { msg.group_id = this.config.group_id; s.emit('group:sync', msg); }
+  else { msg.wall_id = this.config.wall_id; s.emit('wall:sync', msg); }
 };
 
 WallController.prototype.onSync = function (data) {
   var c = this.config;
-  if (!c || c.is_leader || !data || data.wall_id !== c.wall_id) return;
+  if (!c || c.is_leader || !data) return;
+  var isG = c.mode === 'group';
+  if ((isG ? data.group_id : data.wall_id) !== this.syncId(c)) return;
   // Align to the leader's current item.
   if (typeof data.current_index === 'number' && data.current_index !== this.player.getIndex()) {
     this.player.gotoIndex(data.current_index);
@@ -642,7 +657,10 @@ WallController.prototype.onSync = function (data) {
 };
 
 WallController.prototype.onSyncRequest = function (data) {
-  if (!this.config || !this.config.is_leader) return;
-  if (data && data.wall_id && data.wall_id !== this.config.wall_id) return;
+  var c = this.config;
+  if (!c || !c.is_leader) return;
+  var isG = c.mode === 'group';
+  var dataId = data && (isG ? data.group_id : data.wall_id);
+  if (dataId && dataId !== this.syncId(c)) return;
   this.emitSync();
 };
