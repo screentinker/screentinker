@@ -235,8 +235,13 @@ class MainActivity : AppCompatActivity() {
             media = mediaPlayer,
             playlist = playlistController,
             deviceId = { config.deviceId },
-            emitSync = { wallId, idx, contentId, posSec -> wsService?.emitWallSync(wallId, idx, contentId, posSec) },
-            emitSyncRequest = { wallId -> wsService?.emitWallSyncRequest(wallId) },
+            emitSync = { isGroup, id, idx, contentId, posSec ->
+                if (isGroup) wsService?.emitGroupSync(id, idx, contentId, posSec)
+                else wsService?.emitWallSync(id, idx, contentId, posSec)
+            },
+            emitSyncRequest = { isGroup, id ->
+                if (isGroup) wsService?.emitGroupSyncRequest(id) else wsService?.emitWallSyncRequest(id)
+            },
             applyTransform = { cfg -> applyWallTransform(cfg) }
         )
 
@@ -372,6 +377,17 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // #group-sync: fullscreen synchronized playback — no tile geometry, just id + leader role.
+    private fun parseGroupConfig(gs: JSONObject): WallController.WallConfig {
+        val zero = WallController.Rect(0f, 0f, 0f, 0f)
+        return WallController.WallConfig(
+            wallId = gs.optString("group_id", ""),
+            screen = zero, player = zero, rotation = 0,
+            isLeader = gs.optBoolean("is_leader", false),
+            mode = WallController.Mode.GROUP
+        )
+    }
+
     // Video-wall slice transform. The content view represents the whole wall (player_rect);
     // size + offset rootView so this screen's screen_rect fills the device viewport, content
     // stretched to fill (object-fit:fill parity, set on the views via MediaPlayerManager).
@@ -455,7 +471,11 @@ class MainActivity : AppCompatActivity() {
                 wallController.apply(parseWallConfig(wallObj))
                 playlistController.updatePlaylist(assignments)
             } else {
-            wallController.exit()
+            // #group-sync: not a wall — enter group sync (fullscreen synchronized playback) if the
+            // payload carries a group_sync block, else leave sync mode. Content still renders through
+            // the normal path below; the controller only drives the leader/follower timing.
+            val groupObj = if (data.isNull("group_sync")) null else data.optJSONObject("group_sync")
+            if (groupObj != null) wallController.apply(parseGroupConfig(groupObj)) else wallController.exit()
             applyOrientation(data.optString("orientation", "landscape"))
 
             // Check for multi-zone layout
@@ -663,6 +683,8 @@ class MainActivity : AppCompatActivity() {
 
         wsService?.onWallSync = { data -> if (::wallController.isInitialized) wallController.onSync(data) }
         wsService?.onWallSyncRequest = { data -> if (::wallController.isInitialized) wallController.onSyncRequest(data) }
+        wsService?.onGroupSync = { data -> if (::wallController.isInitialized) wallController.onSync(data) }
+        wsService?.onGroupSyncRequest = { data -> if (::wallController.isInitialized) wallController.onSyncRequest(data) }
 
         // #109: PiP overlay show/clear (posted to the main thread by the service).
         wsService?.onPipShow = { data -> if (::pipOverlay.isInitialized) pipOverlay.show(data) }

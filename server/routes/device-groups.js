@@ -68,10 +68,26 @@ router.post('/', (req, res) => {
 
 // Update group
 router.put('/:id', requireGroupWrite, (req, res) => {
-  const { name, color } = req.body;
+  const { name, color, sync_enabled, leader_device_id } = req.body;
   if (color && !VALID_COLOR.test(color)) return res.status(400).json({ error: 'invalid color format, use #RRGGBB' });
   if (name) db.prepare('UPDATE device_groups SET name = ? WHERE id = ?').run(name, req.params.id);
   if (color) db.prepare('UPDATE device_groups SET color = ? WHERE id = ?').run(color, req.params.id);
+  // #group-sync: enable synchronized playback + optional pinned leader.
+  if (sync_enabled !== undefined) {
+    db.prepare('UPDATE device_groups SET sync_enabled = ? WHERE id = ?').run(sync_enabled ? 1 : 0, req.params.id);
+  }
+  if (leader_device_id !== undefined) {
+    if (leader_device_id !== null) {
+      const isMember = db.prepare('SELECT 1 FROM device_group_members WHERE group_id = ? AND device_id = ?').get(req.params.id, leader_device_id);
+      if (!isMember) return res.status(400).json({ error: 'leader_device_id must be a member of this group' });
+    }
+    db.prepare('UPDATE device_groups SET leader_device_id = ? WHERE id = ?').run(leader_device_id || null, req.params.id);
+  }
+  // Re-push to every member so they enter/exit sync mode and refresh their is_leader flag.
+  if (sync_enabled !== undefined || leader_device_id !== undefined) {
+    const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(req.params.id);
+    for (const m of members) pushPlaylistToDevice(req, m.device_id);
+  }
   res.json(db.prepare('SELECT * FROM device_groups WHERE id = ?').get(req.params.id));
 });
 

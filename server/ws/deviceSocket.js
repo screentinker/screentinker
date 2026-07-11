@@ -104,6 +104,52 @@ function logDeviceStatus(deviceId, status) {
 
 // Build playlist payload with layout and zones
 // Reads from published_snapshot (Phase 3) so draft edits don't affect live devices
+// #group-sync: membership is the device_group_members m2m table (a device can be in several
+// groups). Sync-eligible members = the group's members whose playlist MATCHES the group's shared
+// playlist. A member on a different playlist is ignored (never synced) — index sync would be
+// meaningless. Ordered by id for a stable auto-election.
+function groupSyncMembers(group) {
+  if (!group || !group.playlist_id) return [];
+  return db.prepare(`
+    SELECT d.id, d.status FROM devices d
+    JOIN device_group_members dgm ON dgm.device_id = d.id
+    WHERE dgm.group_id = ? AND d.playlist_id = ? ORDER BY d.id
+  `).all(group.id, group.playlist_id);
+}
+
+// Elect the group's sync leader: the pinned leader if it's an online, playlist-matching member;
+// else the first online matching member; else the first matching member (stable id while all
+// offline). null if the group has no eligible members.
+function resolveGroupLeader(group) {
+  const members = groupSyncMembers(group);
+  if (!members.length) return null;
+  const online = members.filter(m => m.status === 'online');
+  if (group.leader_device_id && online.some(m => m.id === group.leader_device_id)) return group.leader_device_id;
+  if (online.length) return online[0].id;
+  return members[0].id;
+}
+
+// The device's sync group: a sync-enabled group it belongs to (m2m) whose shared playlist THIS
+// device is on. Deterministic pick if it's somehow in several. Returns the group row or null.
+function deviceSyncGroup(deviceId, devicePlaylistId) {
+  if (!devicePlaylistId) return null;
+  return db.prepare(`
+    SELECT g.id, g.sync_enabled, g.playlist_id, g.leader_device_id
+    FROM device_groups g JOIN device_group_members dgm ON dgm.group_id = g.id
+    WHERE dgm.device_id = ? AND g.sync_enabled = 1 AND g.playlist_id = ?
+    ORDER BY g.name ASC, g.id ASC LIMIT 1
+  `).get(deviceId, devicePlaylistId) || null;
+}
+
+// Build the group_sync block for a device, or null (the playlist-match guard lives in deviceSyncGroup).
+function resolveGroupSync(device, deviceId) {
+  const group = deviceSyncGroup(deviceId, device?.playlist_id);
+  if (!group) return null;
+  const leaderId = resolveGroupLeader(group);
+  if (!leaderId) return null;
+  return { group_id: group.id, is_leader: leaderId === deviceId };
+}
+
 function buildPlaylistPayload(deviceId) {
   const device = db.prepare('SELECT playlist_id, layout_id, orientation, wall_id, timezone, reported_timezone FROM devices WHERE id = ?').get(deviceId);
 
@@ -189,9 +235,12 @@ function buildPlaylistPayload(deviceId) {
   // last OS-reported zone; otherwise null = the player trusts its own OS clock.
   const tzOverride = (device?.timezone && device.timezone !== 'UTC') ? device.timezone : null;
   const timezone = tzOverride || device?.reported_timezone || null;
+  // #group-sync: synchronized group playback (wall takes precedence — a wall member is never
+  // also group-synced). Null unless the device is on a sync-enabled group's matching playlist.
+  const group_sync = wall_config ? null : resolveGroupSync(device, deviceId);
   // #104: shared shape + zone-reset tail so the device payload and the dashboard
   // preview payload (GET /api/playlists/:id/preview-payload) can never drift.
-  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', wall_config, timezone });
+  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', wall_config, group_sync, timezone });
 }
 
 // #104: the canonical player payload shape, shared by the device path
@@ -199,7 +248,7 @@ function buildPlaylistPayload(deviceId) {
 // Zone reset: if this isn't a real multi-zone layout (single zone or no layout),
 // strip any leftover zone_id so content falls back to the fullscreen renderer
 // instead of binding to a now-gone left/right zone and never playing.
-function assemblePayload({ assignments, layout, orientation, wall_config, timezone }) {
+function assemblePayload({ assignments, layout, orientation, wall_config, group_sync, timezone }) {
   let a = Array.isArray(assignments) ? assignments : [];
   const zoneCount = layout?.zones?.length || 0;
   if (zoneCount < 2) a = a.map(x => (x && x.zone_id != null ? { ...x, zone_id: null } : x));
@@ -208,6 +257,7 @@ function assemblePayload({ assignments, layout, orientation, wall_config, timezo
     layout: layout || null,
     orientation: orientation || 'landscape',
     wall_config: wall_config || null,
+    group_sync: group_sync || null,
     timezone: timezone || null,
   };
 }
@@ -607,6 +657,24 @@ module.exports = function setupDeviceSocket(io) {
             } catch (e) { console.error('Wall leader reclaim failed:', e.message); }
           }
 
+          // #group-sync: on (re)connect of a sync-group member, re-push the payload to the OTHER
+          // sync-eligible members so their is_leader flag refreshes — this self-heals leadership
+          // when the pinned leader returns or a first-online fallback takes over. The effective
+          // leader is COMPUTED (resolveGroupLeader), never persisted, so the operator's pin is
+          // preserved. The connecting device gets its own payload below.
+          try {
+            const syncGroups = db.prepare(`
+              SELECT g.id, g.sync_enabled, g.playlist_id FROM device_groups g
+              JOIN device_group_members dgm ON dgm.group_id = g.id
+              WHERE dgm.device_id = ? AND g.sync_enabled = 1 AND g.playlist_id IS NOT NULL
+            `).all(device_id);
+            for (const group of syncGroups) {
+              for (const m of groupSyncMembers(group)) {
+                if (m.id !== device_id) commandQueue.queueOrEmitPlaylistUpdate(deviceNs, m.id, buildPlaylistPayload);
+              }
+            }
+          } catch (e) { console.error('Group sync re-push failed:', e.message); }
+
           // Check subscription/trial status before sending playlist
           const access = checkDeviceAccess(device_id);
           if (!access.allowed) {
@@ -937,6 +1005,41 @@ module.exports = function setupDeviceSocket(io) {
         wall_id: data.wall_id,
         requested_by: currentDeviceId,
       });
+    });
+
+    // #group-sync: leader broadcasts its index+position; relay to the OTHER sync-eligible members
+    // (same group_id AND on the group's shared playlist — the playlist-match guard). Mirrors
+    // wall:sync. The device_id is stamped with the authenticated id so followers can trust it.
+    // Sender must be an eligible member: in the group (m2m) AND on the group's shared playlist.
+    function groupSenderEligible(group) {
+      if (!group || !group.sync_enabled || !group.playlist_id) return false;
+      return !!db.prepare(`
+        SELECT 1 FROM device_group_members dgm JOIN devices d ON d.id = dgm.device_id
+        WHERE dgm.group_id = ? AND dgm.device_id = ? AND d.playlist_id = ?
+      `).get(group.id, currentDeviceId, group.playlist_id);
+    }
+
+    socket.on('group:sync', (data) => {
+      if (!requireDeviceAuth()) return;
+      if (!data?.group_id) return;
+      const group = db.prepare('SELECT id, sync_enabled, playlist_id FROM device_groups WHERE id = ?').get(data.group_id);
+      if (!groupSenderEligible(group)) return;
+      const payload = { ...data, device_id: currentDeviceId };
+      for (const m of groupSyncMembers(group)) {
+        if (m.id !== currentDeviceId) deviceNs.to(m.id).emit('group:sync', payload);
+      }
+    });
+
+    // A follower asks the current leader for an immediate position update (on (re)connect, so it
+    // doesn't drift a tick). Forwarded only to the group's elected leader, only from an eligible member.
+    socket.on('group:sync-request', (data) => {
+      if (!requireDeviceAuth()) return;
+      if (!data?.group_id) return;
+      const group = db.prepare('SELECT id, sync_enabled, playlist_id, leader_device_id FROM device_groups WHERE id = ?').get(data.group_id);
+      if (!groupSenderEligible(group)) return;
+      const leaderId = resolveGroupLeader(group);
+      if (!leaderId || leaderId === currentDeviceId) return;
+      deviceNs.to(leaderId).emit('group:sync-request', { group_id: group.id, requested_by: currentDeviceId });
     });
 
     socket.on('disconnect', () => {

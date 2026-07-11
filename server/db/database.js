@@ -142,6 +142,12 @@ const migrations = [
   "CREATE INDEX IF NOT EXISTS idx_content_folder ON content(folder_id)",
   // Group-level playlist: when set, devices added to the group inherit it.
   "ALTER TABLE device_groups ADD COLUMN playlist_id TEXT REFERENCES playlists(id) ON DELETE SET NULL",
+  // Group synchronized playback: when sync_enabled, members on the group's playlist play it
+  // in lockstep (leader broadcasts index+position; followers align). Reuses the video-wall
+  // sync primitive, minus the spatial transform. leader_device_id is an optional pin; if unset
+  // or offline the server auto-elects the first online member on the matching playlist.
+  "ALTER TABLE device_groups ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE device_groups ADD COLUMN leader_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL",
   // Wall-level playlist: video walls now play a playlist (not just one content).
   "ALTER TABLE video_walls ADD COLUMN playlist_id TEXT REFERENCES playlists(id) ON DELETE SET NULL",
   // Free-form canvas layout: walls store a player rect; member devices store

@@ -74,6 +74,8 @@ class WebSocketService : Service() {
     var onCommand: ((String, JSONObject?) -> Unit)? = null
     var onWallSync: ((JSONObject) -> Unit)? = null
     var onWallSyncRequest: ((JSONObject) -> Unit)? = null
+    var onGroupSync: ((JSONObject) -> Unit)? = null
+    var onGroupSyncRequest: ((JSONObject) -> Unit)? = null
     var onPipShow: ((JSONObject) -> Unit)? = null
     var onPipClear: ((JSONObject) -> Unit)? = null
     var onMuteChanged: ((JSONObject) -> Unit)? = null
@@ -337,6 +339,16 @@ class WebSocketService : Service() {
                 safeOn("wall:sync-request") { args ->
                     val data = args.firstOrNull() as? JSONObject ?: return@safeOn
                     handler.post { try { onWallSyncRequest?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onWallSyncRequest cb: ${e.message}") } }
+                }
+
+                safeOn("group:sync") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    handler.post { try { onGroupSync?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onGroupSync cb: ${e.message}") } }
+                }
+
+                safeOn("group:sync-request") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    handler.post { try { onGroupSyncRequest?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onGroupSyncRequest cb: ${e.message}") } }
                 }
 
                 // #109: PiP overlay. Post to the main thread — the handlers build Views.
@@ -855,6 +867,28 @@ class WebSocketService : Service() {
         try {
             socket?.emit("wall:sync-request", JSONObject().apply { put("wall_id", wallId) })
         } catch (e: Throwable) { Log.w("WebSocketService", "emitWallSyncRequest: ${e.message}") }
+    }
+
+    // #group-sync: same payload as wall sync, keyed by group_id (server relays to group members).
+    fun emitGroupSync(groupId: String, currentIndex: Int, contentId: String?, positionSec: Float) {
+        if (socket?.connected() != true) return
+        try {
+            socket?.emit("group:sync", JSONObject().apply {
+                put("group_id", groupId)
+                put("device_id", config.deviceId)
+                put("current_index", currentIndex)
+                put("content_id", contentId ?: JSONObject.NULL)
+                put("position_sec", positionSec.toDouble())
+                put("sent_at", System.currentTimeMillis())
+            })
+        } catch (e: Throwable) { Log.w("WebSocketService", "emitGroupSync: ${e.message}") }
+    }
+
+    fun emitGroupSyncRequest(groupId: String) {
+        if (socket?.connected() != true) return
+        try {
+            socket?.emit("group:sync-request", JSONObject().apply { put("group_id", groupId) })
+        } catch (e: Throwable) { Log.w("WebSocketService", "emitGroupSyncRequest: ${e.message}") }
     }
 
     fun disconnect() {
