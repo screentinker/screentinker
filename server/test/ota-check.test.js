@@ -68,3 +68,35 @@ test('(e) device_id looping is throttled per-device; another device on the same 
   const bOk = await check(v, 'devB');                         // devB first check -> offered
   assert.equal(bOk.update_available, true, 'devB (same version, different device) unaffected');
 });
+
+// #155/#161 self-update kill switch
+test('per-device OTA off (devices.ota_enabled=0) -> never offered (reason ota_disabled_device); an enabled device still is', async () => {
+  const Database = require('better-sqlite3');
+  const db = new Database(path.join(DATA_DIR, 'db', 'remote_display.db'), { timeout: 5000 });
+  db.prepare('INSERT INTO devices (id, ota_enabled) VALUES (?, 0)').run('ota-off-dev');
+  db.prepare('INSERT INTO devices (id, ota_enabled) VALUES (?, 1)').run('ota-on-dev');
+  db.close();
+  const off = await check('1.4.0', 'ota-off-dev');
+  assert.equal(off.update_available, false, 'OTA-disabled device is not offered an update');
+  assert.equal(off.reason, 'ota_disabled_device');
+  const on = await check('1.4.1', 'ota-on-dev');
+  assert.equal(on.update_available, true, 'OTA-enabled device is still offered');
+});
+
+test('global OTA off (OTA_ENABLED=false) -> no device is offered (reason ota_disabled_global)', async () => {
+  const P2 = 3992;
+  const DD2 = path.join(os.tmpdir(), 'st-ota2-' + crypto.randomBytes(4).toString('hex'));
+  fs.mkdirSync(DD2, { recursive: true });
+  fs.writeFileSync(path.join(DD2, 'ScreenTinker.apk'), Buffer.alloc(1024, 1));
+  const p2 = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: DD2, SELF_HOSTED: 'true', PORT: String(P2), NODE_ENV: 'test', OTA_ENABLED: 'false' }, stdio: 'ignore' });
+  try {
+    let up = false;
+    for (let i = 0; i < 80; i++) { try { const r = await fetch(`http://127.0.0.1:${P2}/api/status`); if (r.ok) { up = true; break; } } catch { /* */ } await sleep(250); }
+    assert.ok(up, 'OTA_ENABLED=false server booted');
+    const r = await (await fetch(`http://127.0.0.1:${P2}/api/update/check?version=1.0.0`)).json();
+    assert.equal(r.update_available, false, 'global-off: no update offered');
+    assert.equal(r.reason, 'ota_disabled_global');
+  } finally {
+    try { p2.kill('SIGKILL'); } catch { /* */ }
+  }
+});

@@ -210,7 +210,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, default_content_id, layout_id } = req.body;
+  const { name, notes, timezone, orientation, default_content_id, layout_id, ota_enabled } = req.body;
   // #150: validate orientation against the known enum (previously accepted any string, which
   // let a bad value reach the player -> unknown rotation falls back to landscape silently).
   if (orientation !== undefined && !deviceSettings.ORIENTATIONS.has(orientation)) {
@@ -235,6 +235,10 @@ router.put('/:id', (req, res) => {
       if (!layout) return res.status(400).json({ error: 'layout_id not found in this workspace' });
     }
     updates.push('layout_id = ?'); values.push(layout_id || null);
+  }
+  // #155/#161: per-device self-update (OTA) toggle. Coerce to 0/1.
+  if (ota_enabled !== undefined) {
+    updates.push('ota_enabled = ?'); values.push(ota_enabled ? 1 : 0);
   }
   if (updates.length > 0) {
     values.push(req.params.id);

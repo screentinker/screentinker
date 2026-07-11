@@ -617,6 +617,30 @@ app.get('/api/update/check', (req, res) => {
   const deviceId = req.query.device_id || null;   // #144: optional; beta4+ clients send it for per-device keying
   const latestVersion = VERSION;
 
+  // #155/#161: self-update kill switch, enforced SERVER-SIDE so it covers EVERY client
+  // version (not just ones with the client-side stand-down). If OTA is off globally
+  // (config.otaEnabled) or for this device (devices.ota_enabled=0), never offer an update
+  // — an MDM/operator owns updates instead. Checked before the breaker so a disabled device
+  // does zero further work.
+  {
+    const otaGloballyOff = !config.otaEnabled;
+    let otaDeviceOff = false;
+    if (deviceId) {
+      try {
+        const row = require('./db/database').db.prepare('SELECT ota_enabled FROM devices WHERE id = ?').get(deviceId);
+        otaDeviceOff = !!row && row.ota_enabled === 0;
+      } catch (_) { /* device unknown / pre-migration — treat as enabled */ }
+    }
+    if (otaGloballyOff || otaDeviceOff) {
+      const reason = otaGloballyOff ? 'ota_disabled_global' : 'ota_disabled_device';
+      logOtaCheck(deviceId, currentVersion, latestVersion, false, reason);
+      return res.json({
+        latest_version: latestVersion, current_version: currentVersion || 'unknown',
+        update_available: false, reason, download_url: '/download/apk', apk_size: 0, apk_modified: 0,
+      });
+    }
+  }
+
   // #144: circuit-breaker + phantom-version guard. Keys per device_id when present, else
   // per reported version (NOT IP — SNAT). Rate-trips a looping client in seconds.
   const verdict = otaBreaker.decide(currentVersion, latestVersion, deviceId);

@@ -376,6 +376,12 @@ async function loadDevice(deviceId, activeTab = null) {
             <label>${t('device.form.notes_label')}</label>
             <textarea id="deviceNotes" class="input" rows="3" placeholder="${t('device.form.notes_placeholder')}" style="resize:vertical">${esc(device.notes || '')}</textarea>
           </div>
+          <div style="margin:12px 0">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="otaToggle" ${device.ota_enabled === 0 ? '' : 'checked'}> ${t('device.ota.toggle')}
+            </label>
+            <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ota.hint')}</div>
+          </div>
           <button class="btn btn-secondary btn-sm" id="saveNotesBtn">${t('device.form.save_settings')}</button>
           <button class="btn btn-secondary btn-sm" id="reAdoptBtn" style="margin-left:8px" title="${t('device.readopt.button_hint')}">${t('device.readopt.button')}</button>
         </div>
@@ -802,6 +808,7 @@ function setupActions(device) {
         notes: document.getElementById('deviceNotes').value,
         orientation: document.getElementById('deviceOrientation').value,
         default_content_id: document.getElementById('deviceDefaultContent').value || null,
+        ota_enabled: document.getElementById('otaToggle')?.checked ? 1 : 0,
       });
       showToast(t('device.toast.settings_saved'), 'success');
     } catch (err) {

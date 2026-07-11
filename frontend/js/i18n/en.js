@@ -322,6 +322,8 @@ export default {
   'device.form.notes_placeholder': 'Location, setup details, etc.',
   'device.debug.toggle': 'Debug logging (live)',
   'device.debug.hint': 'Streams player/zone logs from this device in real time. Turns off on its own when the device reconnects.',
+  'device.ota.toggle': 'Self-update (OTA)',
+  'device.ota.hint': 'When off, this device is never offered an update — an MDM or operator owns its updates instead. Turn OFF for MDM-managed panels (e.g. Pivot/MAXHUB) so the app never shows a self-install dialog.',
   'device.form.save_settings': 'Save Settings',
   // #150 re-adopt: restore a removed device's saved settings onto this one
   'device.readopt.button': 'Restore from removed device…',

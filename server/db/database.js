@@ -267,6 +267,10 @@ const migrations = [
   // settings_pin: 6-digit PIN for the in-app hidden settings menu, provisioned by
   // the server during pairing so each device gets a unique PIN (never a hardcoded default).
   "ALTER TABLE devices ADD COLUMN settings_pin TEXT",
+  // #155/#161: per-device self-update (OTA) switch. 0 => the server never offers this
+  // device an update (an MDM/operator owns its updates). Default 1 (self-update on).
+  //   UPDATE devices SET ota_enabled = 0 WHERE id = '<device_id>';  (1 to re-enable)
+  "ALTER TABLE devices ADD COLUMN ota_enabled INTEGER NOT NULL DEFAULT 1",
   // Backfill a unique 6-digit PIN for already-paired devices that predate the
   // settings_pin column (their next reconnect re-sends device:paired with it, so
   // the existing fleet isn't locked out of the on-device menu). Idempotent: the

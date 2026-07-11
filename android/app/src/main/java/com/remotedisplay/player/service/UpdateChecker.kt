@@ -115,6 +115,14 @@ class UpdateChecker(private val context: Context) {
 
     fun checkForUpdate() {
         if (config.serverUrl.isEmpty()) return
+        // #155/#161: if a foreign device owner (an MDM/DPC) manages this panel, IT owns updates.
+        // Stand down — never self-install: on a managed device the self-install confirm dialog
+        // can't be reliably auto-dismissed and ends up over customer content. The MDM pushes the
+        // APK instead. Pure client-side safety net, independent of the server-side OTA switch.
+        if (isManagedByForeignDeviceOwner()) {
+            Log.i(TAG, "Managed by a foreign device owner (MDM) — self-OTA stands down; MDM owns updates")
+            return
+        }
 
         Thread {
             try {
@@ -419,6 +427,22 @@ class UpdateChecker(private val context: Context) {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
         } catch (e: Exception) {
             "1.0.0"
+        }
+    }
+
+    // #155/#161: true when an MDM / foreign device owner manages this device — i.e. a device
+    // admin belonging to ANOTHER package is active and we are NOT the device owner ourselves.
+    // A normal app can't read the device-owner component directly, so we use the public
+    // getActiveAdmins() signal: any active admin outside our package means a DPC owns the box.
+    // Errs safe (managed => stand down) on a signage panel. Never throws.
+    private fun isManagedByForeignDeviceOwner(): Boolean {
+        return try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE)
+                as? android.app.admin.DevicePolicyManager ?: return false
+            if (dpm.isDeviceOwnerApp(context.packageName)) return false // WE own it — not foreign
+            dpm.activeAdmins?.any { it.packageName != context.packageName } == true
+        } catch (_: Throwable) {
+            false
         }
     }
 }

@@ -30,6 +30,12 @@ module.exports = {
   screenshotsDir: path.join(uploadsDir, 'screenshots'),
   certsDir,
   frontendDir: path.join(__dirname, '..', 'frontend'),
+  // #155/#161: self-update (OTA) master switch. When false, the server offers NO update
+  // to ANY device (/api/update/check returns update_available:false), so an MDM/operator
+  // owns updates instead of the app self-installing (which prompts a confirm dialog on
+  // managed panels). Per-device override lives on devices.ota_enabled; the app additionally
+  // stands down on its own when a foreign device owner (MDM) manages it.
+  otaEnabled: process.env.OTA_ENABLED !== 'false',
   // App-level heartbeat. Checker runs every heartbeatInterval and marks
   // devices offline if last_heartbeat is older than heartbeatTimeout.
   // Env override for self-hosters on slow/jittery networks (issue #3:
