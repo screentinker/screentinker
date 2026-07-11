@@ -171,6 +171,15 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
       </div>
 
+      ${device.tier === 2 ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 0 4px" title="${t('device.tier2.tip')}">
+        <span style="font-size:12px;color:var(--text-muted)">${t('device.tier2.label')}</span>
+        <button class="btn btn-secondary btn-sm" id="t2Reboot">${t('device.tier2.reboot')}</button>
+        <button class="btn btn-secondary btn-sm" id="t2Lock">${t('device.tier2.lock')}</button>
+        <button class="btn btn-secondary btn-sm" id="t2KioskOn">${t('device.tier2.kiosk_on')}</button>
+        <button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>
+      </div>` : ''}
+
       <div class="tabs">
         <div class="tab active" data-tab="nowplaying">${t('device.tab.now_playing')} <span class="help-tip" data-tip="${t('device.tab.now_playing_tip')}">?</span></div>
         <div class="tab" data-tab="playlist">${t('device.tab.playlist')} <span class="help-tip" data-tip="${t('device.tab.playlist_tip')}">?</span></div>
@@ -952,6 +961,17 @@ function setupActions(device) {
   // #146 Item D: operator block/unblock — takes effect on the device's next register,
   // no restart. Server enforces even a device_id-less reconnect via the identity chain.
   document.getElementById('deviceOwnerBtn')?.addEventListener('click', () => showDeviceOwnerModal());
+
+  // #161 Tier-2 controls (rendered only for device-owner panels).
+  const t2 = (type, confirm) => {
+    if (confirm && !window.confirm(confirm)) return;
+    sendCommand(device.id, type, {});
+    showToast(t('device.tier2.sent'), 'success');
+  };
+  document.getElementById('t2Reboot')?.addEventListener('click', () => t2('reboot', t('device.tier2.reboot_confirm')));
+  document.getElementById('t2Lock')?.addEventListener('click', () => t2('lock_now'));
+  document.getElementById('t2KioskOn')?.addEventListener('click', () => t2('kiosk_lock'));
+  document.getElementById('t2KioskOff')?.addEventListener('click', () => t2('kiosk_unlock'));
 
   const blockBtn = document.getElementById('blockDeviceBtn');
   blockBtn?.addEventListener('click', async () => {

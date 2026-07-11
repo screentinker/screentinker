@@ -10,7 +10,12 @@ const { accessContext } = require('../lib/tenancy');
 const { requireScope } = require('../middleware/apiToken');
 
 const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
-const ALLOWED_COMMANDS = ['screen_on', 'screen_off', 'launch', 'update', 'reboot', 'shutdown'];
+const ALLOWED_COMMANDS = [
+  'screen_on', 'screen_off', 'launch', 'update', 'reboot', 'shutdown',
+  // #161 Tier-2 (owner-gated on the panel; STPolicy no-ops off-tier so a stray send is inert):
+  'power_menu', 'lock_now', 'kiosk_lock', 'kiosk_unlock',
+  'set_time', 'set_timezone', 'status_bar', 'block_uninstall', 'unblock_uninstall',
+];
 
 // Phase 2.2i: split read/write access checks. Both attach req.group on success.
 function loadGroupAccessCtx(req, res) {

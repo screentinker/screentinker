@@ -653,36 +653,43 @@ class MainActivity : AppCompatActivity() {
         wsService?.onCommand = { type, payload ->
             Log.i("MainActivity", "Command received: $type")
             when (type) {
+                // #161 Tier-2: real reboot on a device owner. The `input keyevent`/power-dialog hacks
+                // are retired — off-owner we best-effort the accessibility power dialog, else report
+                // unsupported (never the denied exec, which was theater on a non-rooted panel).
                 "reboot", "shutdown", "power_menu" -> {
-                    val svc = com.remotedisplay.player.service.PowerAccessibilityService.instance
-                    if (svc != null) {
-                        svc.showPowerDialog()
-                        Log.i("MainActivity", "Power dialog shown via accessibility")
+                    if (stPolicy().reboot()) {
+                        Log.i("MainActivity", "Reboot via device owner")
                     } else {
-                        Log.w("MainActivity", "Accessibility service not enabled - trying fallback")
-                        thread {
-                            try { Runtime.getRuntime().exec(arrayOf("input", "keyevent", "--longpress", "26")).waitFor() } catch (_: Exception) {}
-                        }
+                        val svc = com.remotedisplay.player.service.PowerAccessibilityService.instance
+                        if (svc != null) svc.showPowerDialog()
+                        else Log.w("MainActivity", "reboot: not device owner and no accessibility — unsupported on this panel")
                     }
                 }
-                "screen_off" -> {
-                    thread {
-                        try {
-                            Runtime.getRuntime().exec(arrayOf("input", "keyevent", "26")).waitFor() // POWER key
-                        } catch (e: Exception) {
-                            Log.e("MainActivity", "Screen off failed: ${e.message}")
-                        }
+                // Screen off = real lock on owner/admin (FORCE_LOCK), else accessibility lock. Exec retired.
+                "screen_off", "lock_now" -> {
+                    if (!stPolicy().lockNow()) {
+                        com.remotedisplay.player.service.PowerAccessibilityService.instance?.lockScreen()
+                            ?: Log.w("MainActivity", "screen_off/lock_now: no owner/admin/accessibility — unsupported")
                     }
                 }
-                "screen_on" -> {
-                    thread {
-                        try {
-                            Runtime.getRuntime().exec(arrayOf("input", "keyevent", "224")).waitFor() // WAKEUP key
-                        } catch (e: Exception) {
-                            Log.e("MainActivity", "Screen on failed: ${e.message}")
-                        }
-                    }
+                // No reliable privileged wake on a non-rooted panel (the old keyevent 224 was denied);
+                // retired to a logged no-op.
+                "screen_on" -> Log.w("MainActivity", "screen_on: no privileged wake path on a non-rooted panel — no-op")
+                // #161 Tier-2 (all no-op off-owner via STPolicy): kiosk lock-task, time/tz, status bar,
+                // uninstall block. Device owner enters lock-task silently; others get screen-pinning.
+                "kiosk_lock" -> {
+                    stPolicy().setLockTaskAllowed(true)
+                    try { startLockTask() } catch (e: Throwable) { Log.w("MainActivity", "startLockTask: ${e.message}") }
                 }
+                "kiosk_unlock" -> {
+                    try { stopLockTask() } catch (e: Throwable) { Log.w("MainActivity", "stopLockTask: ${e.message}") }
+                    stPolicy().setLockTaskAllowed(false)
+                }
+                "set_time" -> { val ms = payload?.optLong("millis", 0L) ?: 0L; if (ms > 0) stPolicy().setTime(ms) }
+                "set_timezone" -> { val tz = payload?.optString("timezone", "") ?: ""; if (tz.isNotEmpty()) stPolicy().setTimeZone(tz) }
+                "status_bar" -> stPolicy().setStatusBarDisabled(payload?.optBoolean("disabled", true) ?: true)
+                "block_uninstall" -> stPolicy().setUninstallBlocked(true)
+                "unblock_uninstall" -> stPolicy().setUninstallBlocked(false)
                 "launch" -> {
                     val intent = android.content.Intent(this@MainActivity, MainActivity::class.java).apply {
                         addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -999,6 +1006,9 @@ class MainActivity : AppCompatActivity() {
             .setOnCancelListener { /* dismissed, back to kiosk */ }
             .show()
     }
+
+    // #161: device-policy wrapper (degrades safely off-tier — every Tier-2 call no-ops when not owner).
+    private fun stPolicy() = com.remotedisplay.player.admin.STPolicy(this)
 
     // #161: one-line tier label for the settings list.
     private fun hwTierShort(tier: Int): String = when (tier) {

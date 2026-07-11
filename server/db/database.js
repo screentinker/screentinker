@@ -277,6 +277,11 @@ const migrations = [
   // device an update (an MDM/operator owns its updates). Default 1 (self-update on).
   //   UPDATE devices SET ota_enabled = 0 WHERE id = '<device_id>';  (1 to re-enable)
   "ALTER TABLE devices ADD COLUMN ota_enabled INTEGER NOT NULL DEFAULT 1",
+  // #161: privilege tier reported by the player (0 unprivileged / 1 device-admin / 2 owner-or-
+  // delegated-install) + whether a foreign device owner (MDM) manages it. Drives dashboard gating
+  // of Tier-2 controls (reboot/kiosk/time) — shown only for owned panels.
+  "ALTER TABLE devices ADD COLUMN tier INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE devices ADD COLUMN foreign_device_owner INTEGER NOT NULL DEFAULT 0",
   // Backfill a unique 6-digit PIN for already-paired devices that predate the
   // settings_pin column (their next reconnect re-sends device:paired with it, so
   // the existing fleet isn't locked out of the on-device menu). Idempotent: the

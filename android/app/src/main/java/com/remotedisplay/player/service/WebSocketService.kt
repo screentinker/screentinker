@@ -410,17 +410,18 @@ class WebSocketService : Service() {
                                 } catch (e: Throwable) { Log.e("WebSocketService", "enable_system_capture: ${e.message}") }
                             }
                         }
-                        "screen_off" -> {
-                            val a11y = PowerAccessibilityService.instance
-                            if (a11y != null) {
-                                handler.post { try { a11y.lockScreen() } catch (e: Throwable) { Log.e("WebSocketService", "lockScreen: ${e.message}") } }
-                            } else {
-                                Thread { try { Runtime.getRuntime().exec(arrayOf("input", "keyevent", "26")).waitFor() } catch (_: Exception) {} }.start()
-                            }
+                        // #161: real lock on owner/admin (FORCE_LOCK), else accessibility lock. The
+                        // `input keyevent 26` exec (denied for an unprivileged UID) is retired.
+                        "screen_off" -> handler.post {
+                            try {
+                                if (!com.remotedisplay.player.admin.STPolicy(this@WebSocketService).lockNow()) {
+                                    PowerAccessibilityService.instance?.lockScreen()
+                                        ?: Log.w("WebSocketService", "screen_off: no owner/admin/accessibility — unsupported")
+                                }
+                            } catch (e: Throwable) { Log.e("WebSocketService", "screen_off: ${e.message}") }
                         }
-                        "screen_on" -> {
-                            Thread { try { Runtime.getRuntime().exec(arrayOf("input", "keyevent", "224")).waitFor() } catch (_: Exception) {} }.start()
-                        }
+                        // No privileged wake on a non-rooted panel (keyevent 224 was denied); retired.
+                        "screen_on" -> Log.w("WebSocketService", "screen_on: no privileged wake path — no-op")
                         "set_debug" -> {
                             val on = payload?.optBoolean("enabled", false) ?: false
                             // Point the sink at this socket, then flip the flag. When on,
