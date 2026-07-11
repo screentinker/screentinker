@@ -774,6 +774,39 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 const { db } = require('./db/database');
 const originalProvisionRoute = require('./routes/provisioning');
 
+// #161: device-owner QR provisioning. Returns the AOSP provisioning payload (DPC component + APK
+// download URL + signing-cert checksum), a rendered QR data-URL, and the ADB one-liner — so an
+// operator can enroll a fresh/factory-reset panel by scanning (tap the setup-wizard welcome 6x) or
+// by cable. Checksum = URL-safe base64 SHA-256 of the SIGNING CERT (constant per key; env-overridable
+// if you re-sign). Auth-gated (operator only); the DPC component + public APK URL aren't secrets.
+const QRCode = require('qrcode');
+const DEVICE_ADMIN_COMPONENT = 'com.remotedisplay.player/.admin.STDeviceAdminReceiver';
+const DEVICE_ADMIN_SIGNATURE_CHECKSUM =
+  process.env.DEVICE_ADMIN_SIGNATURE_CHECKSUM || 's9ZOWAvn3qFYJxaaR0j41ZttQK1r6_XgaTMcB7rIqqI';
+app.get('/api/provision/device-owner-qr', requireAuth, async (req, res) => {
+  try {
+    const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+    const apkUrl = `${base}/download/apk`;
+    const payload = {
+      'android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME': DEVICE_ADMIN_COMPONENT,
+      'android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION': apkUrl,
+      'android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM': DEVICE_ADMIN_SIGNATURE_CHECKSUM,
+      'android.app.extra.PROVISIONING_SKIP_ENCRYPTION': true,
+    };
+    const qr = await QRCode.toDataURL(JSON.stringify(payload), { errorCorrectionLevel: 'M', margin: 2, width: 360 });
+    res.json({
+      component: DEVICE_ADMIN_COMPONENT,
+      apk_url: apkUrl,
+      signature_checksum: DEVICE_ADMIN_SIGNATURE_CHECKSUM,
+      payload,
+      qr_data_url: qr,
+      adb_command: `adb shell dpm set-device-owner ${DEVICE_ADMIN_COMPONENT}`,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to generate provisioning QR', detail: e.message });
+  }
+});
+
 // Override provision to also notify device via WS
 const { checkDeviceLimit } = require('./middleware/subscription');
 const pairLockout = require('./lib/pair-lockout');

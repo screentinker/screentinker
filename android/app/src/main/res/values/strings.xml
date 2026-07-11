@@ -14,6 +14,16 @@
     <string name="settings_change_server">Change server URL</string>
     <string name="settings_reconfigure">Reconfigure device (re-pair)</string>
     <string name="settings_device_info">Device info</string>
+    <string name="settings_hardware_control">Hardware control</string>
+    <string name="hw_tier_owner">Tier 2 — device owner (full control)</string>
+    <string name="hw_tier_admin">Tier 1 — device admin (screen lock only)</string>
+    <string name="hw_tier_none">Tier 0 — standard (no system control)</string>
+    <string name="hw_tier_managed">Managed by another device owner (MDM)</string>
+    <string name="hw_owner_note">This panel is device owner: silent updates, reboot, kiosk lock-task, and time control are available.</string>
+    <string name="hw_managed_note">Another app (an MDM/DPC) is the device owner, so ScreenTinker runs at Tier 0/1. The MDM owns updates and system control.</string>
+    <string name="hw_enroll_intro">To unlock silent updates, reboot, kiosk, and time control, enroll this panel as device owner over ADB (fresh / factory-reset device, no accounts, USB debugging on):</string>
+    <string name="hw_enroll_constraints">Or scan the provisioning QR from the dashboard after a factory reset (tap the setup-wizard Welcome screen 6×). Device owner is optional — the app works fully without it.</string>
+    <string name="hw_recheck">Re-check</string>
     <string name="settings_info_device">Device</string>
     <string name="settings_exit">Exit app</string>
     <string name="settings_save">Save</string>

@@ -970,10 +970,13 @@ class MainActivity : AppCompatActivity() {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
         } catch (_: Exception) { "?" }
 
+        // #161: live privilege tier for the Hardware control entry.
+        val tier = try { com.remotedisplay.player.admin.STPolicy(this).tier() } catch (_: Throwable) { 0 }
         val items = arrayOf(
             "${getString(R.string.settings_change_server)}\n  ${if (serverUrl.isEmpty()) "—" else serverUrl}",
             getString(R.string.settings_reconfigure),
             getString(R.string.settings_permissions),
+            "${getString(R.string.settings_hardware_control)}\n  ${hwTierShort(tier)}",
             "${getString(R.string.settings_device_info)}\n  ${getString(R.string.settings_info_device)}: ${config.deviceId.take(8)}…  |  v$version  |  ${if (connected) "●" else "○"}",
             getString(R.string.settings_exit)
         )
@@ -988,11 +991,47 @@ class MainActivity : AppCompatActivity() {
                         navigateToProvisioning(serverUrl)
                     }
                     2 -> showPermissionsDialog()
-                    4 -> showExitDialog()
-                    // 3 = info (read-only, dismiss)
+                    3 -> showHardwareControlDialog()
+                    5 -> showExitDialog()
+                    // 4 = info (read-only, dismiss)
                 }
             }
             .setOnCancelListener { /* dismissed, back to kiosk */ }
+            .show()
+    }
+
+    // #161: one-line tier label for the settings list.
+    private fun hwTierShort(tier: Int): String = when (tier) {
+        2 -> getString(R.string.hw_tier_owner)
+        1 -> getString(R.string.hw_tier_admin)
+        else -> getString(R.string.hw_tier_none)
+    }
+
+    // #161 first-run/guidance surface: show the live privilege tier and, when not owner (and not
+    // MDM-managed), the exact ADB enrollment one-liner. "Re-check" re-reads the tier live, so it
+    // flips as soon as `dpm set-device-owner` succeeds.
+    private fun showHardwareControlDialog() {
+        val policy = com.remotedisplay.player.admin.STPolicy(this)
+        val tier = policy.tier()
+        val foreign = policy.hasForeignDeviceOwner()
+        val component = "com.remotedisplay.player/.admin.STDeviceAdminReceiver"
+        val msg = buildString {
+            append(hwTierShort(tier)); append("\n\n")
+            when {
+                policy.isDeviceOwner() -> append(getString(R.string.hw_owner_note))
+                foreign -> append(getString(R.string.hw_managed_note))
+                else -> {
+                    append(getString(R.string.hw_enroll_intro)); append("\n\n")
+                    append("adb shell dpm set-device-owner\n  $component\n\n")
+                    append(getString(R.string.hw_enroll_constraints))
+                }
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.settings_hardware_control))
+            .setMessage(msg)
+            .setPositiveButton(getString(R.string.hw_recheck)) { _, _ -> showHardwareControlDialog() }
+            .setNegativeButton(android.R.string.ok, null)
             .show()
     }
 

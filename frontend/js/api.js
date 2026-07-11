@@ -30,6 +30,7 @@ export const api = {
   getDevices: () => request('/devices'),
   reorderDevices: (order) => request('/devices/reorder', { method: 'POST', body: JSON.stringify({ order }) }),
   getDevice: (id) => request(`/devices/${id}`),
+  getDeviceOwnerQR: () => request('/provision/device-owner-qr'),   // #161: device-owner provisioning
   updateDevice: (id, data) => request(`/devices/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDevice: (id) => request(`/devices/${id}`, { method: 'DELETE' }),
   // #146 Item D: operator block/unblock — refuses the device at its next register with
