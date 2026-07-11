@@ -137,6 +137,7 @@ export const api = {
   getGroups: () => request('/groups'),
   createGroup: (name, color) => request('/groups', { method: 'POST', body: JSON.stringify({ name, color }) }),
   updateGroup: (id, data) => request(`/groups/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  resyncGroup: (id) => request(`/groups/${id}/resync`, { method: 'POST' }),
   deleteGroup: (id) => request(`/groups/${id}`, { method: 'DELETE' }),
   getGroupDevices: (id) => request(`/groups/${id}/devices`),
   addDeviceToGroup: (groupId, device_id) => request(`/groups/${groupId}/devices`, { method: 'POST', body: JSON.stringify({ device_id }) }),

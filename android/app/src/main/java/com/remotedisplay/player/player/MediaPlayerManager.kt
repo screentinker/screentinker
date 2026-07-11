@@ -1,8 +1,10 @@
 package com.remotedisplay.player.player
 
 import android.content.Context
+import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.util.Log
+import android.view.Surface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -30,6 +32,19 @@ class MediaPlayerManager(
     // Wall mode: followers must stay muted even as the leader's sync switches them
     // to a new (possibly unmuted) item, so the mute has to survive each playVideo.
     private var wallMute = false
+    // #group-sync loop state, tracked so it can be applied to a freshly-swapped double-buffer player.
+    private var videoLooping = false
+    // #group-sync double buffer: a second ExoPlayer that pre-opens/pre-buffers the NEXT clip so the
+    // boundary switch is a warm swap (~100-300ms) instead of a cold prepare (~1-2s black hold). Only
+    // engaged when preloadVideo() is called ahead of a boundary (group sync); the wall/solo paths are
+    // untouched (they never preload, so playVideo takes the normal cold path).
+    private var preloadPlayer: ExoPlayer? = null
+    private var preloadedFile: File? = null
+    // Throwaway offscreen surface for the preload player: it forces the preload clip to decode frame 0
+    // and populate its video size BEFORE the swap, so PlayerView doesn't reset the aspect to "fill"
+    // (a one-frame landscape stretch) while it waits for the new player's first video-size report.
+    private var warmTexture: SurfaceTexture? = null
+    private var warmSurface: Surface? = null
 
     enum class MediaType { NONE, VIDEO, IMAGE, YOUTUBE, WIDGET }
 
@@ -37,25 +52,31 @@ class MediaPlayerManager(
         setupExoPlayer()
     }
 
+    // Build a player with the shared end/error listener so BOTH the active and the preload player
+    // advance/self-heal identically once either is the visible one.
+    private fun buildPlayer(): ExoPlayer = ExoPlayer.Builder(context).build().also { player ->
+        player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                // Only the ACTIVE (view-attached) player drives advance; ignore the preload player's
+                // own state changes (it's parked with playWhenReady=false and never ENDs while parked).
+                if (playbackState == Player.STATE_ENDED && player === exoPlayer) onVideoComplete()
+            }
+            // Root-2: a corrupt/undecodable video used to freeze the playlist forever — only
+            // STATE_ENDED advanced, and an error goes to STATE_IDLE, so onVideoComplete never
+            // fired. Treat a playback error like a completion so the loop moves on instead of
+            // wedging on the broken item (mirrors the web/.wgt onerror -> advance).
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Log.e("MediaPlayerManager", "Playback error (${error.errorCodeName}) — advancing: ${error.message}")
+                if (player === exoPlayer) onVideoComplete()
+            }
+        })
+    }
+
     private fun setupExoPlayer() {
-        exoPlayer = ExoPlayer.Builder(context).build().also { player ->
-            playerView.player = player
-            player.addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState == Player.STATE_ENDED) {
-                        onVideoComplete()
-                    }
-                }
-                // Root-2: a corrupt/undecodable video used to freeze the playlist forever — only
-                // STATE_ENDED advanced, and an error goes to STATE_IDLE, so onVideoComplete never
-                // fired. Treat a playback error like a completion so the loop moves on instead of
-                // wedging on the broken item (mirrors the web/.wgt onerror -> advance).
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    Log.e("MediaPlayerManager", "Playback error (${error.errorCodeName}) — advancing: ${error.message}")
-                    onVideoComplete()
-                }
-            })
-        }
+        // Hold the last frame instead of flashing black during a reset/prepare — turns any residual
+        // switch gap into a brief freeze-frame rather than a black hold.
+        try { playerView.setKeepContentOnPlayerReset(true) } catch (e: Throwable) {}
+        exoPlayer = buildPlayer().also { playerView.player = it }
     }
 
     // #129: remembered so the live device:mute-changed toggle knows YouTube's current
@@ -154,8 +175,28 @@ class MediaPlayerManager(
         }.start()
     }
 
+    /**
+     * #group-sync double buffer: pre-open/pre-buffer the NEXT clip on the parked second player so the
+     * upcoming boundary switch (playVideo of the same file) is a warm swap instead of a cold prepare.
+     * Cheap to call every tick — it no-ops if this file is already the preloaded one. Main thread only.
+     */
+    fun preloadVideo(file: File) {
+        if (preloadedFile?.absolutePath == file.absolutePath) return
+        val p = preloadPlayer ?: buildPlayer().also { preloadPlayer = it }
+        if (warmSurface == null) { warmTexture = SurfaceTexture(0).apply { setDefaultBufferSize(16, 16) }; warmSurface = Surface(warmTexture) }
+        p.apply {
+            setVideoSurface(warmSurface)                  // decode frame 0 offscreen -> video size known pre-swap
+            volume = 0f                                   // silent while parked; real volume set on swap
+            repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+            setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+            playWhenReady = false                         // buffer/parse/decode-frame-0 now, don't start
+            prepare()
+        }
+        preloadedFile = file
+        Log.i("MediaPlayerManager", "Preloaded next video: ${file.name}")
+    }
+
     fun playVideo(file: File, muted: Boolean = false) {
-        Log.i("MediaPlayerManager", "Playing video: ${file.absolutePath} (muted=$muted)")
         currentType = MediaType.VIDEO
 
         // Show player, hide image
@@ -163,6 +204,27 @@ class MediaPlayerManager(
         imageView.visibility = android.view.View.GONE
         youtubeWebView?.visibility = android.view.View.GONE
 
+        // Warm swap: if this exact file was preloaded, promote the parked player instead of a cold
+        // prepare — the container is already open/buffered so the first frame renders near-instantly.
+        val pp = preloadPlayer
+        if (pp != null && preloadedFile?.absolutePath == file.absolutePath) {
+            Log.i("MediaPlayerManager", "Playing video (warm swap): ${file.name}")
+            val old = exoPlayer
+            exoPlayer = pp
+            preloadPlayer = old
+            preloadedFile = null
+            pp.apply {
+                volume = if (muted || wallMute) 0f else 1f
+                repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                playWhenReady = true
+            }
+            playerView.player = pp
+            // Park the previous active player as the new preload slot (idle until the next preloadVideo).
+            old?.apply { playWhenReady = false; clearMediaItems() }
+            return
+        }
+
+        Log.i("MediaPlayerManager", "Playing video: ${file.absolutePath} (muted=$muted)")
         exoPlayer?.apply {
             volume = if (muted || wallMute) 0f else 1f
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
@@ -206,6 +268,11 @@ class MediaPlayerManager(
     fun release() {
         exoPlayer?.release()
         exoPlayer = null
+        preloadPlayer?.release()
+        preloadPlayer = null
+        preloadedFile = null
+        warmSurface?.release(); warmSurface = null
+        warmTexture?.release(); warmTexture = null
     }
 
     fun isPlayingVideo(): Boolean = currentType == MediaType.VIDEO && (exoPlayer?.isPlaying == true)
@@ -261,7 +328,9 @@ class MediaPlayerManager(
      * if the leader's next index sync is slightly late; the leader plays through normally.
      */
     fun setVideoLooping(loop: Boolean) {
+        videoLooping = loop
         exoPlayer?.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        preloadPlayer?.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 
     /**

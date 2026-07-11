@@ -78,6 +78,22 @@ class WallController(
         }
     }
 
+    /**
+     * Hard teardown for Activity destruction. Kills the 4Hz leader tick and drops the config so any
+     * still-queued tick no-ops (emitNow bails on a null config). Unlike [exit] this touches NO views
+     * or media — the Activity is going away (its MediaPlayer is about to be released), and restoring
+     * wall-mode/transform on a dying Activity is both pointless and unsafe.
+     *
+     * MUST be called from MainActivity.onDestroy(): the Handler runs on the MAIN looper, which
+     * outlives the Activity, so a leader tick left running becomes a zombie that keeps broadcasting
+     * `group:sync`/`wall:sync` forever against a released player — producing split-brain (two live
+     * "leaders") and garbage positions. This is the teardown that prevents that leak.
+     */
+    fun shutdown() {
+        stopTimer()
+        config = null
+    }
+
     /** Leave wall mode and restore full-screen playback. */
     fun exit() {
         stopTimer()

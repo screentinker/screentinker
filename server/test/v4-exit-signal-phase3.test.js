@@ -50,21 +50,21 @@ test('B/player IDEMPOTENT: crash then pagehide -> only crashed (crash not relabe
   assert.equal(h.beacons.length, 1); assert.equal(h.beacons[0].reason, 'crashed');
 });
 
-// ============ PART B — .wgt classification (real source, lines 663-697) ============
+// ============ PART B — .wgt classification (real source, lines 723-751) ============
 const TIZEN = path.join(__dirname, '../../tizen/js/app.js');
 test('B/wgt CRASH: error/rejection -> crashed (socket AND beacon; server dedups)', () => {
-  const h = harness(TIZEN, 696, 730); h.fire('error', { error: { message: 'boom' } });
+  const h = harness(TIZEN, 723, 751); h.fire('error', { error: { message: 'boom' } });
   assert.equal(h.beacons[0].reason, 'crashed');
   assert.equal(h.socketSends[0].reason, 'crashed'); assert.equal(h.socketSends[0].ev, 'device:exit');
 });
 test('B/wgt NO-MISCLASSIFY: resource error is not a crash', () => {
-  const h = harness(TIZEN, 696, 730); h.fire('error', { target: { src: 'x.png' } });
+  const h = harness(TIZEN, 723, 751); h.fire('error', { target: { src: 'x.png' } });
   assert.equal(h.beacons.length, 0); assert.equal(h.socketSends.length, 0);
 });
 test('B/wgt CLEAN-CLOSE: pagehide(false) -> clean_exit; BACKGROUNDING pagehide(true) -> NO exit', () => {
-  let h = harness(TIZEN, 696, 730); h.fire('pagehide', { persisted: false });
+  let h = harness(TIZEN, 723, 751); h.fire('pagehide', { persisted: false });
   assert.equal(h.beacons[0].reason, 'clean_exit');
-  h = harness(TIZEN, 696, 730); h.fire('pagehide', { persisted: true });
+  h = harness(TIZEN, 723, 751); h.fire('pagehide', { persisted: true });
   assert.equal(h.beacons.length, 0, 'suspend must NOT emit clean_exit');
   assert.equal((h.handlers['visibilitychange'] || []).length, 0, 'no visibilitychange in the exit block');
 });

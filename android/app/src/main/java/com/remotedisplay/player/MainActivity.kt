@@ -34,6 +34,7 @@ import com.remotedisplay.player.player.PlaylistController
 import com.remotedisplay.player.player.PlaylistItem
 import com.remotedisplay.player.player.PipOverlay
 import com.remotedisplay.player.player.WallController
+import com.remotedisplay.player.player.GroupScheduleController
 import com.remotedisplay.player.player.ZoneManager
 import com.remotedisplay.player.remote.ScreenshotCapture
 import com.remotedisplay.player.remote.TouchInjector
@@ -57,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var updateChecker: UpdateChecker
     private var zoneManager: ZoneManager? = null
     private lateinit var wallController: WallController
+    private lateinit var groupSchedule: GroupScheduleController
     private lateinit var pipOverlay: PipOverlay // #109: PiP overlay layer
 
     private lateinit var playerView: PlayerView
@@ -245,6 +247,23 @@ class MainActivity : AppCompatActivity() {
             applyTransform = { cfg -> applyWallTransform(cfg) }
         )
 
+        // #group-sync: clock/schedule group sync (no leader, offline-native). Reads the disciplined
+        // clock from the bound service; streams diagnostics to the dashboard live-log (tag 'sync').
+        groupSchedule = GroupScheduleController(
+            playlist = playlistController,
+            media = mediaPlayer,
+            syncedNow = { wsService?.syncedNowMs() ?: System.currentTimeMillis() },
+            report = { msg -> wsService?.sendLog("sync", "info", msg) },
+            // Double buffer: warm the NEXT clip's second player if it's a locally-cached video, so the
+            // boundary switch is a warm swap (no black hold). Non-video / uncached items just skip it.
+            onPreloadNext = { idx ->
+                val next = playlistController.itemAt(idx)
+                if (next != null && !next.isRemote && next.mimeType.startsWith("video/")) {
+                    contentCache.getCachedFile(next.contentId)?.let { mediaPlayer.preloadVideo(it) }
+                }
+            }
+        )
+
         // Restore cached playlist for offline cold-start (play immediately from disk cache).
         // Catch Throwable (not just Exception) so an OOM or corrupt entry can't kill the app
         // before the WebSocket connects — that's the crash-loop scenario. If the cache is
@@ -260,6 +279,10 @@ class MainActivity : AppCompatActivity() {
                     playlistController.setTimezone(if (cached.isNull("timezone")) null else cached.optString("timezone", "").ifEmpty { null })
                     playlistController.updatePlaylist(assignments)
                     playlistController.startIfNeeded()
+                    // #group-sync: if this device was in a sync group, resume the schedule immediately
+                    // from the cached clock offset — a reboot mid-outage comes back aligned, no server.
+                    val cg = if (cached.isNull("group_sync")) null else cached.optJSONObject("group_sync")
+                    if (cg != null) groupSchedule.apply(cg.optString("group_id"))
                 }
             } catch (e: Throwable) {
                 Log.w("MainActivity", "Failed to restore cached playlist, clearing cache: ${e.message}")
@@ -468,14 +491,16 @@ class MainActivity : AppCompatActivity() {
             if (wallObj != null) {
                 com.remotedisplay.player.util.DebugLog.i("Player", "Layout: VIDEO-WALL (${assignments.length()} assignments)")
                 if (zoneManager?.hasZones() == true) zoneManager?.cleanup()
+                groupSchedule.exit()                 // wall and group are mutually exclusive
                 wallController.apply(parseWallConfig(wallObj))
                 playlistController.updatePlaylist(assignments)
             } else {
-            // #group-sync: not a wall — enter group sync (fullscreen synchronized playback) if the
-            // payload carries a group_sync block, else leave sync mode. Content still renders through
-            // the normal path below; the controller only drives the leader/follower timing.
+            // #group-sync: not a wall — enter clock/schedule group sync if the payload carries a
+            // group_sync block, else leave it. No leader/relay: the schedule tick drives index +
+            // position locally (offline-native). Content renders through the normal path below.
+            wallController.exit()                    // never in wall mode here
             val groupObj = if (data.isNull("group_sync")) null else data.optJSONObject("group_sync")
-            if (groupObj != null) wallController.apply(parseGroupConfig(groupObj)) else wallController.exit()
+            if (groupObj != null) groupSchedule.apply(groupObj.optString("group_id")) else groupSchedule.exit()
             applyOrientation(data.optString("orientation", "landscape"))
 
             // Check for multi-zone layout
@@ -683,8 +708,9 @@ class MainActivity : AppCompatActivity() {
 
         wsService?.onWallSync = { data -> if (::wallController.isInitialized) wallController.onSync(data) }
         wsService?.onWallSyncRequest = { data -> if (::wallController.isInitialized) wallController.onSyncRequest(data) }
-        wsService?.onGroupSync = { data -> if (::wallController.isInitialized) wallController.onSync(data) }
-        wsService?.onGroupSyncRequest = { data -> if (::wallController.isInitialized) wallController.onSyncRequest(data) }
+        // #group-sync is clock/schedule now (no leader relay). The server only nudges an immediate
+        // re-align (dashboard "Resync now"); the schedule tick otherwise runs entirely locally.
+        wsService?.onGroupResync = { if (::groupSchedule.isInitialized) groupSchedule.resync() }
 
         // #109: PiP overlay show/clear (posted to the main thread by the service).
         wsService?.onPipShow = { data -> if (::pipOverlay.isInitialized) pipOverlay.show(data) }
@@ -1087,6 +1113,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         remoteStreaming = false
+        // Kill the wall/group leader tick BEFORE releasing media. The Handler is on the main looper
+        // (outlives this Activity), so a surviving tick would keep broadcasting sync frames against
+        // the released player forever — the zombie-leader / split-brain / garbage-position leak.
+        if (::wallController.isInitialized) wallController.shutdown()
+        if (::groupSchedule.isInitialized) groupSchedule.shutdown()
         if (::downloadCoordinator.isInitialized) downloadCoordinator.shutdown() // cancel in-flight downloads (no orphan/leak)
         zoneManager?.cleanup()
         if (::pipOverlay.isInitialized) pipOverlay.clear(null) // #109: tear down overlay WebView

@@ -91,6 +91,19 @@ router.put('/:id', requireGroupWrite, (req, res) => {
   res.json(db.prepare('SELECT * FROM device_groups WHERE id = ?').get(req.params.id));
 });
 
+// #group-sync: manual "Resync now" — nudge every member to re-snap to the shared schedule
+// immediately. Sync is clock/schedule based (no leader), so this just forces an instant re-align
+// (handy after a content change or if an operator wants to eyeball alignment).
+router.post('/:id/resync', requireGroupWrite, (req, res) => {
+  const io = req.app.get('io');
+  const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(req.params.id);
+  if (io) {
+    const deviceNs = io.of('/device');
+    for (const m of members) deviceNs.to(m.device_id).emit('group:resync', { group_id: req.params.id });
+  }
+  res.json({ ok: true, notified: members.length });
+});
+
 // Delete group — converts group schedules to per-device schedules first
 router.delete('/:id', requireGroupWrite, (req, res) => {
   const groupId = req.params.id;

@@ -87,6 +87,9 @@ class PlaylistController(
     val currentItem: PlaylistItem?
         get() = if (currentIndex in items.indices) items[currentIndex] else null
 
+    // #group-sync double buffer: resolve an item by index (for preloading the next clip).
+    fun itemAt(index: Int): PlaylistItem? = if (index in items.indices) items[index] else null
+
     val currentContentId: String?
         get() = currentItem?.contentId
 
@@ -125,6 +128,10 @@ class PlaylistController(
         // #129: include muted too, so a mute-only change (same content) re-renders with the
         // new flag instead of being de-duped (the real-time event handles the live toggle;
         // this makes a published mute persist across reloads).
+        // Signature is STRUCTURAL only — content/widget identity, order, mute, schedules. durationSec is
+        // deliberately EXCLUDED so a duration-only edit does NOT force a restart; instead it's applied
+        // IN PLACE below (the #group-sync schedule tick + the solo advance timer read durationSec live),
+        // so timing edits take effect without interrupting playback or resetting the index.
         fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + (if (it.muted) "m" else "") + "|" +
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
@@ -134,7 +141,16 @@ class PlaylistController(
         val playlistChanged = oldContentIds != newContentIds
 
         if (!playlistChanged && items.isNotEmpty()) {
-            Log.i("PlaylistController", "Playlist unchanged (${items.size} items), not interrupting playback")
+            // In-place duration refresh: patch durationSec on the existing items so a duration edit
+            // takes effect immediately without a restart. For a sync group this re-anchors the shared
+            // schedule (all members recompute the new period together); for solo it's picked up on the
+            // next advance. No index reset, no video reload.
+            var durChanged = false
+            for (i in items.indices) {
+                val ni = newItems.getOrNull(i) ?: continue
+                if (items[i].durationSec != ni.durationSec) { items[i] = items[i].copy(durationSec = ni.durationSec); durChanged = true }
+            }
+            Log.i("PlaylistController", if (durChanged) "Durations updated in place (${items.size} items), not interrupting" else "Playlist unchanged (${items.size} items), not interrupting playback")
             return
         }
 
@@ -287,6 +303,34 @@ class PlaylistController(
     private fun scheduleAllows(item: PlaylistItem): Boolean =
         item.schedules.isEmpty() ||
             ScheduleEval.isItemActiveNow(item.schedules, System.currentTimeMillis(), effectiveTimezone)
+
+    // #group-sync schedule engine. Lay the deterministic playlist (each active item occupies a
+    // CANONICAL slot, dayparted items skipped) on the server-disciplined clock and derive the target
+    // (index, position). The slot formula MUST be byte-identical to the web and Tizen players
+    // (max(1, duration_sec||10)*1000) or a mixed-platform group would diverge — so it deliberately
+    // does NOT use this player's solo-playback duration clamp.
+    // nextIndex + secToBoundary let the double buffer preload the upcoming clip a few seconds early.
+    // For a single active slot, nextIndex == index (the caller skips preloading a self-loop).
+    data class GroupTarget(val index: Int, val posSec: Float, val nextIndex: Int, val secToBoundary: Float)
+    private fun slotMs(it: PlaylistItem): Long = (if (it.durationSec > 0) it.durationSec else 10).toLong() * 1000L
+    fun groupScheduleTarget(syncedNowMs: Long): GroupTarget? {
+        if (items.isEmpty()) return null
+        var acc = 0L
+        val slots = ArrayList<Triple<Int, Long, Long>>()   // index, startMs, durMs
+        for (i in items.indices) {
+            if (!scheduleAllows(items[i])) continue
+            val d = slotMs(items[i]); slots.add(Triple(i, acc, d)); acc += d
+        }
+        if (slots.isEmpty() || acc <= 0L) return null
+        val period = acc
+        val phase = ((syncedNowMs % period) + period) % period
+        var chosenIdx = slots.size - 1
+        for (k in slots.indices) { val s = slots[k]; if (phase >= s.second && phase < s.second + s.third) { chosenIdx = k; break } }
+        val chosen = slots[chosenIdx]
+        val next = slots[(chosenIdx + 1) % slots.size]
+        val secToBoundary = (chosen.second + chosen.third - phase) / 1000f
+        return GroupTarget(chosen.first, (phase - chosen.second) / 1000f, next.first, secToBoundary)
+    }
 
     // Playable NOW = schedule-active AND its content is downloaded/available.
     private fun playableNow(i: Int): Boolean =

@@ -31,7 +31,36 @@ function PlaylistPlayer(stageEl, getBase) {
   this.itemStartedAt = 0;      // wall position fallback for non-video items
   this.DEFAULT_DURATION = 10;
   this.MIN_DURATION = 3;
+  this.preloadEl = null;       // #group-sync double buffer: pre-buffered next <video>
+  this.preloadIdx = -1;
 }
+
+// Double buffer: build a hidden, buffering <video> for the next clip (in document.body so clearStage
+// won't wipe it) so renderVideo can mount it instantly at the boundary (no black hold). Videos only.
+PlaylistPlayer.prototype.preloadVideo = function (idx) {
+  if (this.preloadIdx === idx) return;   // already handled this boundary
+  var item = this.items[idx];
+  if (!item) return;
+  if ((item.mime_type || '').indexOf('video/') !== 0) { this.preloadIdx = idx; this.preloadEl = null; return; }
+  try {
+    if (this.preloadEl && this.preloadEl.parentNode) this.preloadEl.parentNode.removeChild(this.preloadEl);
+    var v = document.createElement('video');
+    v.muted = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+    v.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;left:-9999px';
+    v.src = this.contentUrl(item);
+    v.load();
+    document.body.appendChild(v);
+    this.preloadEl = v; this.preloadIdx = idx;
+  } catch (e) { this.preloadEl = null; this.preloadIdx = -1; }
+};
+PlaylistPlayer.prototype._takePreload = function (idx) {
+  if (this.preloadIdx === idx && this.preloadEl) {
+    var el = this.preloadEl; this.preloadEl = null; this.preloadIdx = -1;
+    if (el.parentNode) el.parentNode.removeChild(el);
+    return el;
+  }
+  return null;
+};
 
 PlaylistPlayer.prototype.load = function (assignments) {
   // B3: a malformed device:playlist-update with a non-array `assignments` used to throw
@@ -43,10 +72,18 @@ PlaylistPlayer.prototype.load = function (assignments) {
   items.sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); });
 
   var sig = JSON.stringify(items.map(function (a) {
-    // #74/#75: include schedules so a schedule edit (same content) re-renders.
-    return [a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.schedules || []];
+    // STRUCTURAL only. #74/#75: include schedules so a schedule edit (same content) re-renders.
+    // duration_sec is EXCLUDED so a duration edit applies in place (below), not as a restart.
+    return [a.content_id, a.widget_id, a.remote_url, a.mime_type, a.schedules || []];
   }));
-  if (sig === this.sig && this.items.length) return; // unchanged, keep playing
+  if (sig === this.sig && this.items.length) {
+    // In-place duration refresh: patch duration_sec on the live items so a duration edit takes effect
+    // (group schedule tick re-anchors; solo advance uses it next) WITHOUT restarting playback.
+    for (var k = 0; k < this.items.length && k < items.length; k++) {
+      if (this.items[k].duration_sec !== items[k].duration_sec) this.items[k].duration_sec = items[k].duration_sec;
+    }
+    return;
+  }
 
   this.sig = sig;
   this.items = items;
@@ -238,14 +275,18 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
 
 PlaylistPlayer.prototype.renderVideo = function (item, single) {
   var self = this;
-  var v = document.createElement('video');
+  // Double buffer: reuse the pre-buffered element for this index if warmed (no black hold); its src
+  // is already set + buffering, so playback starts near-instantly.
+  var pre = this._takePreload(this.index);
+  var v = pre || document.createElement('video');
   this.currentVideoEl = v; // wall: leader reads currentTime; follower drift-corrects this
   this.fit(v, item);
   v.autoplay = true; v.muted = true; v.setAttribute('playsinline', '');
   v.loop = single; // single item loops; multi advances on end
   v.onended = function () { if (!single) self.advance(); };
   v.onerror = function () { self.skipSoon(); };
-  v.src = this.contentUrl(item);
+  if (!pre) v.src = this.contentUrl(item);
+  v.style.cssText = ''; // clear the offscreen-hide style if reused
   this.stage.appendChild(v);
   var p = v.play(); if (p && p.catch) p.catch(function () {});
   // Safety net: if 'ended' never fires (rare), advance after the known
@@ -663,4 +704,105 @@ WallController.prototype.onSyncRequest = function (data) {
   var dataId = data && (isG ? data.group_id : data.wall_id);
   if (dataId && dataId !== this.syncId(c)) return;
   this.emitSync();
+};
+
+/* GroupSyncController — clock/schedule group sync for the Tizen player. Mirrors the WEB player's
+ * groupScheduleTick (server/player/index.html). Unlike WallController there is NO leader and NO
+ * server relay: every same-playlist member lays the deterministic playlist schedule (each item
+ * occupies durationMs, in order, dayparted items skipped) on a server-DISCIPLINED clock and derives
+ * the identical (index, position) locally. That is offline-native (no server at play-time) and
+ * cannot go split-brain. Reuses the player's wallFollower mode (loop + no auto-advance).
+ */
+function GroupSyncController(player, getOffsetMs, report) {
+  this.player = player;
+  this.getOffsetMs = getOffsetMs;   // () -> smoothed clock offset in ms (server is the time authority)
+  this.report = report;             // (level, msg) -> dashboard live-log
+  this.groupId = null;
+  this.timer = null;
+  this.dbgLast = 0;
+  // A fresh item snaps ONCE to the exact schedule position (load-and-hold) instead of nudging away
+  // the ~0.3s load offset over ~10s. Steady-state drift rides the gentle nudge afterward.
+  this.alignPending = true;
+  this.lastAlignedIndex = -1;
+}
+GroupSyncController.prototype.active = function () { return !!this.groupId; };
+GroupSyncController.prototype.syncedNow = function () { return Date.now() + (this.getOffsetMs() || 0); };
+GroupSyncController.prototype.slots = function () {
+  var p = this.player, items = p.items, acc = 0, s = [];
+  for (var i = 0; i < items.length; i++) {
+    if (!p.scheduleAllows(items[i])) continue;   // same daypart filter as solo playback
+    // CANONICAL slot length — MUST match the web + Android engines exactly (max(1,dur||10)*1000).
+    // Deliberately NOT durationMs() (its MIN_DURATION=3 clamp would diverge from the other players).
+    var d = Math.max(1, Number(items[i].duration_sec) || 10) * 1000;
+    s.push({ index: i, start: acc, dur: d }); acc += d;
+  }
+  return { slots: s, period: acc };
+};
+GroupSyncController.prototype.target = function () {
+  var r = this.slots();
+  if (!r.slots.length || r.period <= 0) return null;
+  var phase = ((this.syncedNow() % r.period) + r.period) % r.period;
+  var ci = -1;
+  for (var i = 0; i < r.slots.length; i++) { var x = r.slots[i]; if (phase >= x.start && phase < x.start + x.dur) { ci = i; break; } }
+  if (ci < 0) ci = r.slots.length - 1;
+  var s = r.slots[ci], nx = r.slots[(ci + 1) % r.slots.length];
+  // nextIndex + secToBoundary drive the double buffer (preload the upcoming clip a few s early).
+  return { index: s.index, posSec: (phase - s.start) / 1000, nextIndex: nx.index, secToBoundary: (s.start + s.dur - phase) / 1000 };
+};
+GroupSyncController.prototype.tick = function () {
+  if (!this.groupId || !this.player.items.length) return;
+  var t = this.target(); if (!t) return;
+  // Double buffer: warm the next clip ~6s before the boundary (once per boundary).
+  if (t.nextIndex !== t.index && t.secToBoundary >= 0 && t.secToBoundary <= 6) this.player.preloadVideo(t.nextIndex);
+  var action = 'hold';
+  if (t.index !== this.player.getIndex()) {
+    this.player.gotoIndex(t.index); action = 'jump>' + t.index;
+  } else {
+    var v = this.player.getCurrentVideo();
+    if (v && isFinite(v.duration) && v.duration > 0) {
+      var target = t.posSec % v.duration;                        // loop-safe when slot > clip length
+      var drift = (v.currentTime || 0) - target, ad = Math.abs(drift);
+      if (this.player.getIndex() !== this.lastAlignedIndex) this.alignPending = true;
+      try {
+        if (this.alignPending) {
+          if (ad > 0.05) v.currentTime = target;
+          v.playbackRate = 1.0; this.alignPending = false; this.lastAlignedIndex = this.player.getIndex();
+          action = 'align ' + drift.toFixed(2);
+        }
+        else if (ad > 0.3) { v.currentTime = target; v.playbackRate = 1.0; action = 'seek ' + drift.toFixed(2); }
+        else if (ad > 0.05) { v.playbackRate = drift > 0 ? 0.97 : 1.03; action = 'nudge ' + drift.toFixed(2); }
+        else if (v.playbackRate !== 1.0) { v.playbackRate = 1.0; }
+      } catch (e) {}
+    }
+  }
+  // Log discrete corrections (jump/align/seek) immediately so the transition is visible; only the
+  // routine steady-state line (hold/nudge) is throttled — else the one-tick "align" on load reads
+  // misleadingly (sampled over by a later hold/nudge).
+  var now = Date.now();
+  var discrete = action.indexOf('jump') === 0 || action.indexOf('align') === 0 || action.indexOf('seek') === 0;
+  if ((discrete || now - this.dbgLast > 1000) && this.report) {
+    this.dbgLast = now;
+    this.report('info', 'idx=' + this.player.getIndex() + ' tgt=' + t.index + ' pos=' + t.posSec.toFixed(2) + ' off=' + (this.getOffsetMs() || 0) + 'ms ' + action);
+  }
+};
+GroupSyncController.prototype.apply = function (groupId) {
+  var first = !this.groupId;
+  this.groupId = groupId;
+  this.alignPending = true; this.lastAlignedIndex = -1;   // snap the first item into sync on entry
+  this.player.setWallFollower(true);   // group member: loop + no local auto-advance (schedule drives)
+  this.player.invalidate();            // force a clean re-render into follower semantics
+  this.tick();                         // align immediately from the cached clock offset
+  if (this.timer) clearInterval(this.timer);
+  var self = this;
+  this.timer = setInterval(function () { self.tick(); }, 250);   // 4Hz local correction
+  if (this.report) this.report('info', 'group-sync ' + (first ? 'entered' : 'refresh') + ' group=' + String(groupId).slice(0, 8) + ' off=' + (this.getOffsetMs() || 0) + 'ms');
+};
+GroupSyncController.prototype.exit = function () {
+  if (!this.groupId && !this.timer) return;
+  if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  this.groupId = null;
+  this.player.setWallFollower(false);
+  this.player.invalidate();
+  this.player._takePreload(this.player.preloadIdx);   // drop any warmed next-clip element
+  if (this.report) this.report('info', 'group-sync exited');
 };

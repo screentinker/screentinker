@@ -414,10 +414,45 @@
     // video position to whatever the leader is playing.
     let wallConfig = null;
     let wallSyncTimer = null;
-    // #group-sync: synchronized group playback — same leader/follower timing as a wall, but
-    // full-screen (no CSS transform) and per-item mute honored (no forced follower mute).
+    // #group-sync: synchronized group playback. NOT leader/follower — every member derives its
+    // tick locally from a server-disciplined clock + the shared playlist schedule. Works offline.
     let groupSync = null;
     let groupSyncTimer = null;
+    let groupDbgLast = 0;
+    // A fresh item snaps ONCE to the exact schedule position (load-and-hold) instead of nudging away
+    // the ~0.3s load offset over ~10s. Steady-state drift still rides the gentle nudge afterward.
+    let groupAlignPending = true;
+    let groupLastAlignedIndex = -1;
+    // Double buffer: a hidden <video> for the NEXT clip, buffered/decoded ahead of the boundary so the
+    // switch is instant (no black hold). Reused by renderContent when it reaches that index.
+    let groupPreloadEl = null;
+    let groupPreloadIdx = -1;
+
+    // #group-sync clock discipline. The server is the time authority (see heartbeat-ack). We keep a
+    // smoothed offset so synced_now = Date.now() + clockOffsetMs, and CACHE it in localStorage so a
+    // player that has synced even once stays aligned through an internet outage (RTC drift is tiny).
+    let clockOffsetMs = 0;
+    let clockRttMs = null;
+    try { const c = localStorage.getItem('st_clock_offset'); if (c != null && isFinite(Number(c))) clockOffsetMs = Number(c); } catch (e) {}
+    function syncedNow() { return Date.now() + clockOffsetMs; }
+    function ingestClockSample(serverMs, clientMs) {
+      if (!serverMs || !clientMs) return;
+      const t4 = Date.now();
+      const rtt = Math.max(0, t4 - clientMs);
+      if (rtt > 5000) return;                          // absurd RTT (sleep/GC stall) — don't poison the offset
+      const sample = serverMs - (clientMs + t4) / 2;   // NTP-style: offset = server - (t1+t4)/2
+      // Snap on the first sample or a big jump (clock step); otherwise EMA-smooth out jitter.
+      if (clockRttMs === null || Math.abs(sample - clockOffsetMs) > 1000) clockOffsetMs = Math.round(sample);
+      else clockOffsetMs = Math.round(clockOffsetMs * 0.8 + sample * 0.2);
+      clockRttMs = Math.round(rtt);
+      try { localStorage.setItem('st_clock_offset', String(clockOffsetMs)); } catch (e) {}
+    }
+
+    // Stream a group-sync diagnostic to the dashboard live-log (tag 'sync') + the in-page overlay.
+    function groupReport(level, msg) {
+      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'sync', level, message: msg }); } catch (e) {}
+      try { window.__debugLog_push && window.__debugLog_push({ type: 'sync', level: level, msg: msg }); } catch (e) {}
+    }
     let lastWallSync = null;
     let currentVideoEl = null;
     let currentItemStartedAt = 0;
@@ -609,6 +644,9 @@
         layout = loadLayoutCache();
         document.getElementById('setupScreen').style.display = 'none';
         startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
+        // #group-sync: if this device was in a sync group, resume the schedule immediately from the
+        // cached clock offset — so a reboot mid-outage comes back aligned WITHOUT waiting for a server.
+        try { const cg = localStorage.getItem('st_group_sync'); if (cg) applyGroupSync(JSON.parse(cg)); } catch (e) {}
       }
 
       // Always show the tap overlay on cold load. Browser autoplay policy is
@@ -876,7 +914,7 @@
       socket.onAny(markAlive);
       socket.io.on('ping', markAlive);
       // v4 degrade-safe ARM: the watchdog arms ONLY after the first app-level device:heartbeat-ack.
-      socket.on('device:heartbeat-ack', () => { livenessConfirmed = true; });
+      socket.on('device:heartbeat-ack', (data) => { livenessConfirmed = true; if (data) ingestClockSample(data.server_ms, data.client_ms); });
 
       socket.on('connect', () => {
         console.log('Connected');
@@ -1012,35 +1050,16 @@
         emitWallSync();
       });
 
-      // #group-sync: follower aligns to the leader's index + video position. Same drift maths as
-      // wall:sync, but no audio policy here (per-item mute is honored by the normal render path).
-      socket.on('group:sync', (data) => {
-        if (!groupSync || groupSync.is_leader) return;
-        if (data.group_id !== groupSync.group_id) return;
-        if (typeof data.current_index === 'number' && data.current_index !== currentIndex && playlist.length > 0) {
-          currentIndex = ((data.current_index % playlist.length) + playlist.length) % playlist.length;
-          playCurrentItem();
-        }
-        if (currentVideoEl && typeof data.position_sec === 'number') {
-          const latency = data.sent_at ? Math.max(0, (Date.now() - data.sent_at) / 1000) : 0;
-          const target = data.position_sec + latency;
-          const drift = (currentVideoEl.currentTime || 0) - target;
-          const absDrift = Math.abs(drift);
-          if (absDrift > 0.3 && isFinite(currentVideoEl.duration) && target < currentVideoEl.duration) {
-            try { currentVideoEl.currentTime = target; } catch (_) {}
-            try { currentVideoEl.playbackRate = 1.0; } catch (_) {}
-          } else if (absDrift > 0.05) {
-            try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (_) {}
-          } else if (currentVideoEl.playbackRate !== 1.0) {
-            try { currentVideoEl.playbackRate = 1.0; } catch (_) {}
-          }
-        }
-      });
-
-      socket.on('group:sync-request', (data) => {
-        if (!groupSync?.is_leader) return;
+      // #group-sync: index+position are computed LOCALLY from the disciplined clock + the shared
+      // schedule (see groupScheduleTick). There is deliberately NO leader and NO server relay of
+      // positions — every member derives the same tick from the same clock, so sync survives an
+      // internet outage and there is no leader to go split-brain. The server only (a) disciplines
+      // the clock via the heartbeat-ack and (b) can nudge an immediate re-align on demand:
+      socket.on('group:resync', (data) => {
+        if (!groupSync) return;
         if (data?.group_id && data.group_id !== groupSync.group_id) return;
-        emitGroupSync();
+        groupReport('info', 'manual resync requested');
+        groupScheduleTick();   // recompute + snap to the schedule target right now
       });
 
       socket.on('device:screenshot-request', () => { console.log('Screenshot requested'); captureAndSend(); });
@@ -1258,6 +1277,7 @@
         if (!socket?.connected || !config.deviceId) return;
         socket.emit('device:heartbeat', {
           device_id: config.deviceId,
+          client_ms: Date.now(),   // #group-sync: t1 for NTP-style clock discipline (echoed in the ack)
           telemetry: {
             battery_level: null,
             battery_charging: false,
@@ -1384,37 +1404,115 @@
       });
     }
 
-    // #group-sync: leader broadcasts index+position (server relays to eligible group members).
-    function emitGroupSync() {
-      if (!groupSync?.is_leader || !socket?.connected || playlist.length === 0) return;
-      const item = playlist[currentIndex];
-      if (!item) return;
-      const position = currentVideoEl
-        ? (currentVideoEl.currentTime || 0)
-        : Math.max(0, (Date.now() - currentItemStartedAt) / 1000);
-      socket.emit('group:sync', {
-        group_id: groupSync.group_id,
-        device_id: config.deviceId,
-        current_index: currentIndex,
-        content_id: item.content_id || null,
-        position_sec: position,
-        sent_at: Date.now(),
-      });
+    // #group-sync schedule engine. The shared, deterministic playlist schedule (each item occupies
+    // duration_sec, in order, skipping dayparted-out items) is laid on the synced clock: phase =
+    // syncedNow mod totalPeriod. Every same-playlist member computes the identical (index, position)
+    // — no leader, no relay, no split-brain — and it keeps running with no server at all.
+    function groupScheduleSlots() {
+      const slots = []; let acc = 0;
+      for (let i = 0; i < playlist.length; i++) {
+        if (!scheduleAllows(playlist[i])) continue;                       // same daypart filter as solo playback
+        const dur = Math.max(1, Number(playlist[i].duration_sec) || 10) * 1000;
+        slots.push({ index: i, start: acc, dur }); acc += dur;
+      }
+      return { slots, period: acc };
+    }
+    function groupScheduleTarget() {
+      const { slots, period } = groupScheduleSlots();
+      if (!slots.length || period <= 0) return null;
+      const phase = ((syncedNow() % period) + period) % period;
+      let ci = slots.findIndex(x => phase >= x.start && phase < x.start + x.dur);
+      if (ci < 0) ci = slots.length - 1;
+      const s = slots[ci];
+      const next = slots[(ci + 1) % slots.length];
+      // nextIndex + secToBoundary drive the double buffer (preload the upcoming clip a few s early).
+      return { index: s.index, posSec: (phase - s.start) / 1000, nextIndex: next.index, secToBoundary: (s.start + s.dur - phase) / 1000 };
+    }
+    // Runs at 4Hz while in a group: snap the index to the schedule, and for video correct drift with
+    // the same seek/nudge maths the wall uses — but toward the SCHEDULE target, not a leader broadcast.
+    function groupScheduleTick() {
+      if (!groupSync || playlist.length === 0) return;
+      const t = groupScheduleTarget();
+      if (!t) return;
+      // Double buffer: warm the next clip ~6s before the boundary (once per boundary).
+      if (t.nextIndex !== t.index && t.secToBoundary >= 0 && t.secToBoundary <= 6 && groupPreloadIdx !== t.nextIndex) {
+        groupPreloadNext(t.nextIndex);
+      }
+      let action = 'hold';
+      if (t.index !== currentIndex) {
+        currentIndex = t.index;
+        playCurrentItem();
+        action = 'jump>' + t.index;
+      } else if (currentVideoEl && isFinite(currentVideoEl.duration) && currentVideoEl.duration > 0) {
+        const dur = currentVideoEl.duration;
+        const target = t.posSec % dur;                                    // loop-safe when duration_sec > clip length
+        const drift = (currentVideoEl.currentTime || 0) - target;
+        const ad = Math.abs(drift);
+        if (currentIndex !== groupLastAlignedIndex) groupAlignPending = true;
+        if (groupAlignPending) {
+          if (ad > 0.05) { try { currentVideoEl.currentTime = target; } catch (e) {} }
+          try { currentVideoEl.playbackRate = 1.0; } catch (e) {}
+          groupAlignPending = false; groupLastAlignedIndex = currentIndex;
+          action = 'align ' + drift.toFixed(2);
+        }
+        else if (ad > 0.3) { try { currentVideoEl.currentTime = target; } catch (e) {} try { currentVideoEl.playbackRate = 1.0; } catch (e) {} action = 'seek ' + drift.toFixed(2); }
+        else if (ad > 0.05) { try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (e) {} action = 'nudge ' + drift.toFixed(2); }
+        else if (currentVideoEl.playbackRate !== 1.0) { try { currentVideoEl.playbackRate = 1.0; } catch (e) {} }
+      }
+      // Log discrete corrections (jump/align/seek) immediately so the transition is visible; only the
+      // routine steady-state line (hold/nudge) is throttled — else the one-tick "align" on load is
+      // sampled over by a later "hold"/"nudge" and reads misleadingly.
+      const now = Date.now();
+      const discrete = action.indexOf('jump') === 0 || action.indexOf('align') === 0 || action.indexOf('seek') === 0;
+      if (discrete || now - groupDbgLast > 1000) {
+        groupDbgLast = now;
+        groupReport('info', 'idx=' + currentIndex + ' tgt=' + t.index + ' pos=' + t.posSec.toFixed(2) + ' off=' + clockOffsetMs + 'ms rtt=' + clockRttMs + 'ms ' + action);
+      }
     }
 
-    // Enter/leave group sync. Unlike applyWallMode there's NO CSS transform and NO forced mute —
-    // content renders full-screen through the normal path; the leader/follower timing is all this does.
+    // Double buffer: build a hidden, buffering <video> for the next clip so renderContent can mount it
+    // instantly at the boundary (no black hold). Only for videos; images/widgets/youtube skip it.
+    function groupPreloadNext(idx) {
+      const item = playlist[idx];
+      if (!item) return;
+      const isVid = item.mime_type && item.mime_type.indexOf('video/') === 0 && item.mime_type !== 'video/youtube';
+      if (!isVid) { groupPreloadIdx = idx; groupPreloadEl = null; return; }   // mark handled, nothing to warm
+      const url = item.remote_url || (config.serverUrl + '/uploads/content/' + item.filepath);
+      try {
+        if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) {} }
+        const v = document.createElement('video');
+        v.src = url; v.muted = true; v.playsInline = true; v.preload = 'auto';
+        v.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px';
+        v.load();
+        document.body.appendChild(v);
+        groupPreloadEl = v; groupPreloadIdx = idx;
+        groupReport('info', 'preload>' + idx);
+      } catch (e) { groupPreloadEl = null; groupPreloadIdx = -1; }
+    }
+    // Hand off the preloaded element for `idx` (or null). Caller re-parents + plays it; src is already
+    // set and buffered, so playback starts near-instantly with no reload.
+    function takeGroupPreload(idx) {
+      if (groupPreloadIdx === idx && groupPreloadEl) { const el = groupPreloadEl; groupPreloadEl = null; groupPreloadIdx = -1; return el; }
+      return null;
+    }
+
+    // Enter/leave group sync. No CSS transform, no forced mute (per-item mute honored), no leader —
+    // just start the schedule tick. Idempotent across refreshes/role churn (there is no role now).
     function applyGroupSync(cfg) {
       if (groupSyncTimer) { clearInterval(groupSyncTimer); groupSyncTimer = null; }
-      if (!cfg) { groupSync = null; console.log('[group-sync] exited'); return; }
-      groupSync = cfg;
-      console.log('[group-sync] group=' + cfg.group_id + ' is_leader=' + cfg.is_leader);
-      if (cfg.is_leader) {
-        groupSyncTimer = setInterval(emitGroupSync, 250);   // 4Hz, same as the wall
-        setTimeout(emitGroupSync, 100);                     // immediate first align
-      } else if (socket?.connected) {
-        socket.emit('group:sync-request', { group_id: cfg.group_id }); // align now
+      try { if (cfg) localStorage.setItem('st_group_sync', JSON.stringify(cfg)); else localStorage.removeItem('st_group_sync'); } catch (e) {}
+      if (!cfg) {
+        if (groupSync) groupReport('info', 'group-sync exited'); groupSync = null; console.log('[group-sync] exited');
+        if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) {} groupPreloadEl = null; groupPreloadIdx = -1; }
+        return;
       }
+      const first = !groupSync;
+      groupSync = cfg;
+      groupAlignPending = true; groupLastAlignedIndex = -1;   // snap the first item into sync on entry
+      console.log('[group-sync] group=' + cfg.group_id + ' (clock/schedule, offset=' + clockOffsetMs + 'ms)');
+      groupReport('info', 'group-sync ' + (first ? 'entered' : 'refresh') + ' group=' + String(cfg.group_id).slice(0, 8) + ' off=' + clockOffsetMs + 'ms');
+      groupScheduleTick();                                    // align immediately
+      groupSyncTimer = setInterval(groupScheduleTick, 250);   // 4Hz local correction
     }
 
     // Map the player rect into this device's viewport using vw/vh so the
@@ -1471,6 +1569,9 @@
       const newItems = data.assignments || [];
       // Build fingerprint from id + url + filename to detect any content change.
       // #74/#75: include schedules so a schedule edit (same content) is detected too.
+      // STRUCTURAL fingerprint only (identity + order + schedules). duration_sec is deliberately
+      // EXCLUDED so a duration-only edit is not treated as a full change/restart — it's applied IN
+      // PLACE in the unchanged branch below (the schedule tick + advance timer read duration_sec live).
       const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}`).join(',');
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
@@ -1510,14 +1611,13 @@
       if (!wallChanged && wallConfig && !wallConfig.is_leader && socket?.connected) {
         socket.emit('wall:sync-request', { wall_id: wallConfig.wall_id });
       }
-      // #group-sync: same treatment for group sync (mutually exclusive with wall — server sends
-      // group_sync=null for a wall member).
-      const groupKey = (g) => (g ? `${g.group_id}:${g.is_leader}` : '');
+      // #group-sync: enter/leave on group membership change (mutually exclusive with wall — the
+      // server sends group_sync=null for a wall member). There's no leader role, so the key is just
+      // the group id; a plain refresh re-aligns the schedule locally (no server round-trip needed).
+      const groupKey = (g) => (g ? String(g.group_id) : '');
       const groupChanged = groupKey(groupSync) !== groupKey(data.group_sync);
       if (groupChanged) applyGroupSync(data.group_sync || null);
-      else if (groupSync && !groupSync.is_leader && socket?.connected) {
-        socket.emit('group:sync-request', { group_id: groupSync.group_id });
-      }
+      else if (groupSync) groupScheduleTick();
 
       layout = data.layout || null;
       saveLayoutCache(layout);
@@ -1525,6 +1625,12 @@
 
       if (newFp === oldFp && playlist.length > 0 && !wallChanged) {
         console.log('Playlist unchanged');
+        // In-place duration refresh: a duration-only edit keeps the structural fingerprint identical,
+        // so patch duration_sec onto the live items here. The group schedule tick re-anchors on the
+        // new period next tick; solo advance uses it on the next item. No restart, no reload.
+        for (let i = 0; i < playlist.length && i < newItems.length; i++) {
+          if (playlist[i].duration_sec !== newItems[i].duration_sec) playlist[i].duration_sec = newItems[i].duration_sec;
+        }
         // #146 fix: a no-change refresh used to blindly return — so if the <video> surface
         // had been lost (detached from the DOM while its element kept decoding audio: video
         // gone, audio still playing), the re-attach (which lives ONLY in the content-changed
@@ -1677,7 +1783,7 @@
       // Push an immediate sync so followers don't have to wait up to 1s for
       // the next periodic tick before snapping to the new item.
       if (wallConfig?.is_leader) emitWallSync();
-      if (groupSync?.is_leader) emitGroupSync();
+      // (group members need no emit — the schedule tick drives them locally)
     }
 
     function nextItem() {
@@ -1912,10 +2018,15 @@
         mount = stage;
       }
 
-      // Followers don't run their own advance timers — the leader's wall:sync
-      // dictates index transitions. Single-screen and leader behave normally.
-      // #group-sync: a group follower also must not self-advance — the leader drives the index.
-      const isFollower = (!!wallConfig && !wallConfig.is_leader) || (!!groupSync && !groupSync.is_leader);
+      // Two independent concerns, previously conflated as "isFollower":
+      //  - forceMuted:      wall followers stay silent (N flanged copies across an adjacent wall).
+      //                     Group members honor per-item mute instead (displays are spread out).
+      //  - scheduleDriven:  who does NOT run a local advance timer. Wall followers (leader drives the
+      //                     index) AND all group members (the clock/schedule tick drives the index).
+      const isWallFollower_ = (!!wallConfig && !wallConfig.is_leader);
+      const scheduleDriven  = isWallFollower_ || !!groupSync;
+      const forceMuted      = isWallFollower_;
+      const isFollower      = scheduleDriven;   // keep the old name for the branches below (advance gating)
 
       const isYoutube = item.mime_type === 'video/youtube';
       const isVideo = !isYoutube && item.mime_type?.startsWith('video/');
@@ -1931,16 +2042,19 @@
         if (isYoutube) {
           createYoutubeEmbed(src, item, mount);
         } else if (isVideo) {
-          const video = document.createElement('video');
-          video.src = src;
+          // Double buffer: reuse the pre-buffered element for this index if we warmed it (no black
+          // hold). Its src is already set + buffered; a fresh element otherwise.
+          const preloaded = scheduleDriven ? takeGroupPreload(currentIndex) : null;
+          const video = preloaded || document.createElement('video');
+          if (!preloaded) video.src = src;
           video.autoplay = true;
           // Followers stay muted unconditionally (leader-only audio); leaders
           // start muted only if the user hasn't gestured yet (autoplay policy).
           // #129: a per-item mute (set in the admin console) also forces muted.
-          video.muted = isFollower ? true : (!userHasInteracted || !!item.muted);
-          // Explicit max volume on the leader so audio is at full level when
+          video.muted = forceMuted ? true : (!userHasInteracted || !!item.muted);
+          // Explicit max volume when audio is allowed so it's at full level when
           // unmute happens (default is 1.0 but make it visible in logs).
-          if (!isFollower) video.volume = 1.0;
+          if (!forceMuted) video.volume = 1.0;
           video.playsInline = true;
           video.crossOrigin = 'anonymous';
           // Wall mode uses object-fit:fill so the source stretches to the
@@ -1952,7 +2066,9 @@
           video.style.cssText = wallConfig
             ? 'width:100%;height:100%;object-fit:fill;background:#000'
             : 'width:100%;height:100%;object-fit:contain;background:#000';
-          video.loop = (playlist.length === 1);
+          // Group members loop so a clip shorter than its schedule slot holds until the schedule
+          // advances the index (and the tick seeks position % duration to stay aligned).
+          video.loop = (playlist.length === 1) || !!groupSync;
           video.onended = () => { if (!video.loop && !isFollower) nextItem(); };
           video.onerror = (e) => {
             console.error('Video error:', src, e);
@@ -1961,10 +2077,11 @@
           video.onloadeddata = () => {
             console.log('[wall/audio] video loaded file=' + item.filename + ' role=' + (wallConfig ? (wallConfig.is_leader ? 'leader' : 'follower') : 'solo') + ' muted=' + video.muted + ' volume=' + video.volume);
           };
-          // If anything (browser, scripts, the user) tries to unmute a
+          // If anything (browser, scripts, the user) tries to unmute a WALL
           // follower, snap it back. This is the safety net for the audio
-          // bug — without it, a single stray unmute call causes echo.
-          if (isFollower) {
+          // bug — without it, a single stray unmute call causes echo. Group
+          // members are NOT force-muted (per-item mute governs them).
+          if (forceMuted) {
             video.addEventListener('volumechange', () => {
               if (!video.muted) { video.muted = true; }
             });

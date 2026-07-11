@@ -778,7 +778,12 @@ module.exports = function setupDeviceSocket(io) {
       // finishes re-registering). Anonymous / never-authenticated sockets are NOT acked (degrade-safe
       // covers them). Old clients simply ignore the ack — harmless.
       if (liveness.ackableHeartbeat(currentDeviceId, device_id, deviceExists)) {
-        socket.emit('device:heartbeat-ack', {}); // cheap, to the emitting socket only
+        // #group-sync clock discipline: the server is the time authority. Echo the client's send
+        // time (t1) and stamp the server's clock (t2≈t3, synchronous handler) so the client can do
+        // NTP-style offset+RTT correction: offset = server_ms - (t1 + t4)/2. The offset is CACHED by
+        // the client and used at play-time (local + offset), so schedule-based group sync keeps
+        // working through an internet outage. Absent/old clients just ignore the extra fields.
+        socket.emit('device:heartbeat-ack', { server_ms: Date.now(), client_ms: data?.client_ms ?? null });
       }
       if (!requireDeviceAuth()) return;
       if (!device_id || device_id !== currentDeviceId) return;

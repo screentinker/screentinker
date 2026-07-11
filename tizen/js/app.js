@@ -33,7 +33,8 @@
     token: 'st_device_token',
     fp: 'st_fingerprint',
     code: 'st_pairing_code',
-    payload: 'st_payload_cache' // A2: last renderable playlist-update, replayed on cold-start/offline
+    payload: 'st_payload_cache', // A2: last renderable playlist-update, replayed on cold-start/offline
+    clock: 'st_clock_offset'     // #group-sync: cached server-clock offset (survives reboot/outage)
   };
 
   // ---- persistent state ----
@@ -199,6 +200,26 @@
   var authenticated = false; // #118: true only between device:registered and disconnect/auth-error
   var streamTimer = null;    // #120: dashboard preview streaming interval
 
+  // #group-sync clock discipline. Server is the time authority (heartbeat-ack). Cache a smoothed
+  // offset so synced_now = Date.now() + clockOffsetMs keeps schedule sync aligned through an outage.
+  var clockOffsetMs = (function () { var v = Number(get(LS.clock)); return isFinite(v) ? v : 0; })();
+  var clockRttMs = null;
+  function syncedNow() { return Date.now() + clockOffsetMs; }
+  function ingestClockSample(serverMs, clientMs) {
+    if (!serverMs || !clientMs) return;
+    var t4 = Date.now(), rtt = Math.max(0, t4 - clientMs);
+    if (rtt > 5000) return;                            // absurd RTT (GC/sleep stall) — don't poison offset
+    var sample = serverMs - (clientMs + t4) / 2;       // NTP-style: offset = server - (t1+t4)/2
+    if (clockRttMs === null || Math.abs(sample - clockOffsetMs) > 1000) clockOffsetMs = Math.round(sample);
+    else clockOffsetMs = Math.round(clockOffsetMs * 0.8 + sample * 0.2);
+    clockRttMs = Math.round(rtt);
+    set(LS.clock, String(clockOffsetMs));
+  }
+  // Stream a group-sync diagnostic to the dashboard live-log (tag 'sync').
+  function reportSync(level, msg) {
+    try { if (socket && socket.connected && deviceId) socket.emit('device:log', { device_id: deviceId, tag: 'sync', level: level, message: msg }); } catch (e) {}
+  }
+
   function deviceInfo() {
     return {
       android_version: 'Tizen ' + (tizenVersion() || ''),
@@ -293,7 +314,7 @@
     // A server that sends engine pings but no app-ack (old/pre-contract server) never arms us, so the
     // watchdog can't false-fire — markAlive (onAny) still refreshed lastServerMsgAt for the silence
     // check, but ARMING is gated on the ack specifically.
-    socket.on('device:heartbeat-ack', function () { livenessConfirmed = true; });
+    socket.on('device:heartbeat-ack', function (d) { livenessConfirmed = true; if (d) ingestClockSample(d.server_ms, d.client_ms); });
 
     socket.on('device:paired', function () {
       del(LS.code); clearToast(); show(elStage);
@@ -369,9 +390,12 @@
     // Leader broadcasts position; followers align index + drift-correct their video.
     socket.on('wall:sync', function (d) { wallController.onSync(d); });
     socket.on('wall:sync-request', function (d) { wallController.onSyncRequest(d); });
-    // #group-sync: same controller, group mode.
-    socket.on('group:sync', function (d) { wallController.onSync(d); });
-    socket.on('group:sync-request', function (d) { wallController.onSyncRequest(d); });
+    // #group-sync: clock/schedule — no leader relay. Server only nudges an immediate re-align.
+    socket.on('group:resync', function (d) {
+      if (!groupSync.active()) return;
+      if (d && d.group_id && d.group_id !== groupSync.groupId) return;
+      reportSync('info', 'manual resync requested'); groupSync.tick();
+    });
 
     // #109: PiP overlay — a pushed floating layer above the playlist. The player
     // fetches the uri itself (same trust model as remote_url content).
@@ -403,7 +427,7 @@
       // #118: only beat on a socket that finished device:register, or the server's
       // requireDeviceAuth() rejects the beat with device:auth-error.
       if (!socket || !socket.connected || !deviceId || !authenticated) return;
-      socket.emit('device:heartbeat', { device_id: deviceId, telemetry: telemetry() });
+      socket.emit('device:heartbeat', { device_id: deviceId, client_ms: Date.now(), telemetry: telemetry() });
       // FIX C — every 4th beat (~60s) ask for a fresh playlist by re-emitting device:register;
       // the server responds with a fresh device:playlist-update (deviceSocket.js). This was
       // previously a duplicate device:heartbeat (comment != code), so the .wgt had NO working
@@ -544,6 +568,8 @@
     function () { return deviceId; },
     function () { return authenticated && !!socket && socket.connected; }
   );
+  // #group-sync: clock/schedule group sync (no leader, offline-native). Separate from WallController.
+  var groupSync = new GroupSyncController(player, function () { return clockOffsetMs; }, reportSync);
   // #109: PiP overlay layer. Renders into #pip (above #stage); never touches the
   // playlist. Reports show/clear over device:log (tag 'pip').
   var pipOverlay = new PipOverlay(elPip, { log: reportPip });
@@ -602,6 +628,7 @@
       // #162: only blank the zone renderer when switching away from it, and invalidate the
       // player's sig so it repaints (see the single-zone branch for the full rationale).
       if (stageOwner !== 'player') { zoneRenderer.clear(); player.invalidate(); }
+      groupSync.exit();                 // wall and group are mutually exclusive
       wallController.apply(payload.wall_config);
       player.setTimezone(payload.timezone || null);
       player.load(payload.assignments || []);
@@ -609,18 +636,12 @@
       return;
     }
 
-    // #group-sync: not a wall — enter group sync (fullscreen synchronized playback) if the payload
-    // carries a group_sync block, else leave sync mode. Content renders through the normal path
-    // below; the controller only drives leader/follower timing (no transform, per-item mute).
-    if (payload.group_sync) {
-      wallController.apply({
-        group_id: payload.group_sync.group_id,
-        is_leader: !!payload.group_sync.is_leader,
-        mode: 'group'
-      });
-    } else {
-      wallController.exit(); // leave sync mode if we were in it
-    }
+    // #group-sync: not a wall — enter clock/schedule group sync if the payload carries a group_sync
+    // block, else leave it. No leader/relay: the schedule tick drives index+position locally, so it
+    // keeps running offline. Content renders through the normal path below (per-item mute honored).
+    wallController.exit();   // never in wall mode here
+    if (payload.group_sync) groupSync.apply(payload.group_sync.group_id);
+    else groupSync.exit();
     applyOrientation(payload.orientation || 'landscape');
     var layout = payload.layout;
     if (layout && Array.isArray(layout.zones) && layout.zones.length) { // B3: non-array zones would throw in zoneRenderer
