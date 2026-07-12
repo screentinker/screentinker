@@ -57,7 +57,15 @@ class SetupActivity : AppCompatActivity() {
         if (ownerPolicy.isDeviceOwner()) {
             ownerPolicy.applyOnboardingPolicy()
             prefs.edit().putBoolean("setup_complete", true).apply()
-            proceedToNext()
+            // Remote control needs the accessibility service, and it's the one thing no policy can
+            // enable — so on an MDM deploy, route the installer through the guided enable screen when
+            // it's still off (it auto-advances once on). Already on -> straight to pairing.
+            if (isAccessibilityEnabled()) {
+                proceedToNext()
+            } else {
+                startActivity(Intent(this, OwnerAccessibilityActivity::class.java))
+                finish()
+            }
             return
         }
 

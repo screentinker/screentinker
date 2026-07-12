@@ -62,6 +62,14 @@
             android:screenOrientation="landscape"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
 
+        <!-- #device-owner: MDM-deploy-only guided screen to enable the accessibility service
+             (remote control). Self-guards to owner; a normal install never routes here. -->
+        <activity
+            android:name=".OwnerAccessibilityActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
+
         <!-- Provisioning/setup activity -->
         <activity
             android:name=".ProvisioningActivity"
