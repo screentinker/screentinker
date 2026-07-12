@@ -245,7 +245,7 @@ router.put('/:id', (req, res) => {
   if (reboot_schedule !== undefined) {
     let val = null;
     if (reboot_schedule !== null && reboot_schedule !== '') {
-      if (!/^([0-2]\d):([0-5]\d)$/.test(String(reboot_schedule))) {
+      if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(String(reboot_schedule))) {
         return res.status(400).json({ error: 'reboot_schedule must be "HH:MM" (24h) or null' });
       }
       val = String(reboot_schedule);

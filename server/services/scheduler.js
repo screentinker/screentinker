@@ -105,7 +105,7 @@ const REBOOT_WINDOW_MIN = 5;
 // fire. Extracted so it's unit-testable with no DB / socket. Invalid/off schedule -> not due.
 function rebootDue(schedule, tz, now, lastDate) {
   if (!schedule) return { due: false, today: null };
-  const m = /^([0-2]\d):([0-5]\d)$/.exec(String(schedule).trim());
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(schedule).trim());
   if (!m) return { due: false, today: null };
   const schedMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
   if (schedMin > 1439) return { due: false, today: null };
