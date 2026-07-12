@@ -3,6 +3,8 @@ package com.remotedisplay.player.admin
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.util.Log
 
@@ -85,6 +87,55 @@ class STPolicy(context: Context) {
 
     fun setUninstallBlocked(blocked: Boolean): Boolean = owned("setUninstallBlocked") {
         dpm!!.setUninstallBlocked(admin, pkg, blocked); true
+    }
+
+    // ---- onboarding policy: the zero-touch first-run setup a device owner CAN do itself -----------
+
+    /** Make ourselves the persistent HOME/launcher with NO user tap (the kiosk boot requirement). */
+    fun setSelfHomeLauncher(enable: Boolean): Boolean = owned("setSelfHomeLauncher") {
+        if (enable) {
+            val filter = IntentFilter(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            // MainActivity by name to avoid the admin package depending on the activity class.
+            dpm!!.addPersistentPreferredActivity(admin, filter, ComponentName(pkg, "$pkg.MainActivity"))
+        } else {
+            dpm!!.clearPackagePersistentPreferredActivities(admin, pkg)
+        }
+        true
+    }
+
+    /** Silently grant one of OUR runtime permissions (e.g. POST_NOTIFICATIONS). API 23+. */
+    fun grantSelfPermission(permission: String): Boolean = owned("grantSelfPermission") {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            dpm!!.setPermissionGrantState(admin, pkg, permission, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+        else false
+    }
+
+    /**
+     * Policy-PERMIT our accessibility service (system services stay allowed regardless). This does NOT
+     * enable it — enabling is gated by the user / ECM, which no DPM API can bypass — it only guarantees
+     * a later fleet-wide restriction can't accidentally exclude us.
+     */
+    fun permitOwnAccessibilityService(): Boolean = owned("permitOwnAccessibilityService") {
+        dpm!!.setPermittedAccessibilityServices(admin, listOf(pkg))
+    }
+
+    /**
+     * Applied on enrollment (and re-applied when the setup screen sees an owner). Best-effort: each step
+     * degrades to false off-tier / on error, so it can never block enrollment. Lets a freshly-provisioned
+     * panel skip the manual first-run wizard. Accessibility still needs the one-time manual/ADB enable.
+     */
+    fun applyOnboardingPolicy() {
+        if (!isDeviceOwner()) return
+        setSelfHomeLauncher(true)                    // become HOME — no overlay/full-screen-intent boot path needed
+        setLockTaskAllowed(true)                     // pre-whitelist kiosk lock-task
+        permitOwnAccessibilityService()              // whitelist our a11y (still a manual enable)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            grantSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        Log.i(TAG, "onboarding policy applied (device owner)")
     }
 
     /** Run [body] only when we are the device owner; log + degrade to false otherwise or on error. */

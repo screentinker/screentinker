@@ -24,7 +24,11 @@ class STDeviceAdminReceiver : DeviceAdminReceiver() {
     }
 
     override fun onEnabled(context: Context, intent: Intent) {
-        Log.i(TAG, "device admin enabled (deviceOwner=${STPolicy(context).isDeviceOwner()})")
+        val policy = STPolicy(context)
+        Log.i(TAG, "device admin enabled (deviceOwner=${policy.isDeviceOwner()})")
+        // Zero-touch onboarding for a fresh owner: set ourselves HOME, whitelist kiosk + a11y, grant
+        // notifications — so the panel skips the manual first-run wizard. No-op when not owner.
+        policy.applyOnboardingPolicy()
     }
 
     // Fires when device-owner provisioning completes. The intent carries the optional admin-extras
