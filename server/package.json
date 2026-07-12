@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --watch --env-file-if-exists=.env server.js",
-    "test": "node --test"
+    "test": "node --test --test-concurrency=2"
   },
   "dependencies": {
     "@azure/msal-node": "^5.2.1",
