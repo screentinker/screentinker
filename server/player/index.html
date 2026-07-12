@@ -352,6 +352,7 @@
     let deferredSuccessorId = null;
     function itemIdentity(x) { return x ? `${x.content_id || ''}|${x.widget_id || ''}|${x.remote_url || ''}|${x.filepath || ''}` : ''; }
 
+    // @exit-signal-slice:start — v4-exit-signal-phase3.test.js evals the lines between these markers.
     // ==================== Exit-signal contract v1 (best-effort last gasp) ====================
     // Announce manner-of-death via navigator.sendBeacon (reliable-on-unload — survives the socket
     // teardown). crashed: real uncaught SCRIPT error / unhandled rejection. clean_exit: pagehide with
@@ -389,6 +390,7 @@
       if (ev && ev.persisted) return;   // bfcache SUSPEND (may restore) — NOT a death; watchdog owns it
       sendExitBeacon('clean_exit', 'pagehide');
     });
+    // @exit-signal-slice:end
     let isPlaying = false;
     let playerTimezone = null;      // #74/#75: device-effective IANA tz for schedule eval
     let scheduleRetryTimer = null;  // re-check when every item is filtered out
