@@ -114,12 +114,14 @@ class STPolicy(context: Context) {
     }
 
     /**
-     * Policy-PERMIT our accessibility service (system services stay allowed regardless). This does NOT
-     * enable it — enabling is gated by the user / ECM, which no DPM API can bypass — it only guarantees
-     * a later fleet-wide restriction can't accidentally exclude us.
+     * Reset the permitted-accessibility policy to the DEFAULT (null = all services allowed). We used to
+     * whitelist just our own service here, but a restrictive list gave no real benefit (default already
+     * permits us) and risked interacting badly with ECM / OEM Settings UIs — so we now explicitly clear
+     * any prior restriction instead. Runs on device-owner startup too, so panels enrolled by an older
+     * build that DID set the restrictive list get it undone. Does NOT enable a11y (no DPM API can).
      */
-    fun permitOwnAccessibilityService(): Boolean = owned("permitOwnAccessibilityService") {
-        dpm!!.setPermittedAccessibilityServices(admin, listOf(pkg))
+    fun clearAccessibilityRestriction(): Boolean = owned("clearAccessibilityRestriction") {
+        dpm!!.setPermittedAccessibilityServices(admin, null); true
     }
 
     /**
@@ -131,7 +133,7 @@ class STPolicy(context: Context) {
         if (!isDeviceOwner()) return
         setSelfHomeLauncher(true)                    // become HOME — no overlay/full-screen-intent boot path needed
         setLockTaskAllowed(true)                     // pre-whitelist kiosk lock-task
-        permitOwnAccessibilityService()              // whitelist our a11y (still a manual enable)
+        clearAccessibilityRestriction()              // ensure a11y is NOT policy-restricted (undo the old whitelist)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             grantSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
         }

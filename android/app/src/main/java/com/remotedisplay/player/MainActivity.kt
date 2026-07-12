@@ -113,6 +113,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         config = ServerConfig(this)
+        // #device-owner: undo any prior restrictive permitted-accessibility policy set by an older
+        // build. Runs on every launch (cheap, idempotent, owner-guarded) so a panel enrolled before
+        // this change gets the restriction cleared after it OTA-updates — no re-provision needed.
+        try { com.remotedisplay.player.admin.STPolicy(this).clearAccessibilityRestriction() } catch (_: Throwable) {}
         val prefs = getSharedPreferences("remote_display", MODE_PRIVATE)
 
         // Show setup wizard if not completed yet
