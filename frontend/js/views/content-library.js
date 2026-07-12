@@ -11,6 +11,29 @@ function formatFileSize(bytes) {
   return `${bytes} B`;
 }
 
+// #157: classify a content item's expiry state for the card. `expired` when the server
+// deactivated it (is_active===0) or its expires_at has passed; `dateLabel` is the local
+// expiry date/time (present whenever expires_at is set, past or future).
+function expiryInfo(c) {
+  const hasExpiry = c.expires_at != null && c.expires_at !== '';
+  const ts = hasExpiry ? Number(c.expires_at) * 1000 : null;
+  const past = ts != null && ts <= Date.now();
+  const expired = c.is_active === 0 || past;
+  const dateLabel = ts != null
+    ? new Date(ts).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '';
+  return { expired, dateLabel };
+}
+
+// Epoch seconds -> a <input type="datetime-local"> value in the viewer's LOCAL wall-clock
+// (YYYY-MM-DDTHH:MM). Empty string for no expiry.
+function toLocalDatetimeInput(epochSec) {
+  if (epochSec == null || epochSec === '') return '';
+  const d = new Date(Number(epochSec) * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // Lazy-load authenticated thumbnails/previews. A plain <img> can't send the
 // Bearer token, and the content thumbnail/file endpoints require auth (or a
 // playlist/widget reference) - so a just-uploaded item's thumbnail 403'd. We fetch
@@ -105,6 +128,9 @@ export function render(container) {
     <div style="display:flex;gap:12px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
       <input type="text" id="contentSearch" class="input" placeholder="${t('content.search_placeholder')}" style="max-width:250px;width:100%">
       <button class="btn btn-secondary btn-sm" id="newFolderBtn">${t('content.new_folder_btn')}</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;margin-left:auto">
+        <input type="checkbox" id="showExpiredToggle" ${state.showExpired ? 'checked' : ''}> ${t('content.show_expired')}
+      </label>
     </div>
     <div id="folderBreadcrumb" style="display:flex;gap:6px;align-items:center;margin-bottom:12px;font-size:13px;flex-wrap:wrap"></div>
     <div id="folderGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px"></div>
@@ -192,6 +218,13 @@ export function render(container) {
   }
   document.getElementById('contentSearch').oninput = filterContent;
 
+  // #157: "Show expired" — reloads the grid including deactivated / past-expiry items so
+  // they can be inspected and restored (clear/extend expiry in the edit modal).
+  document.getElementById('showExpiredToggle').onchange = (e) => {
+    state.showExpired = e.target.checked;
+    loadContent();
+  };
+
   // Create folder in the current folder.
   document.getElementById('newFolderBtn').onclick = async () => {
     const name = prompt(t('content.prompt_folder_name'));
@@ -211,6 +244,7 @@ export function render(container) {
 const state = {
   currentFolderId: null, // null = root
   folders: [],           // all folders for this user (flat tree)
+  showExpired: false,    // #157: include is_active=0 / past-expiry items in the library view
 };
 
 async function handleFiles(files) {
@@ -246,7 +280,7 @@ async function loadContent() {
 
   try {
     const [content, folders] = await Promise.all([
-      api.getContent(state.currentFolderId === null ? null : state.currentFolderId),
+      api.getContent(state.currentFolderId === null ? null : state.currentFolderId, state.showExpired),
       api.getFolders(),
     ]);
     state.folders = folders;
@@ -377,8 +411,10 @@ async function loadContent() {
       return;
     }
 
-    grid.innerHTML = content.map(c => `
-      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${c.folder || ''}">
+    grid.innerHTML = content.map(c => {
+      const exp = expiryInfo(c);
+      return `
+      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${c.folder || ''}" style="${exp.expired ? 'opacity:.55' : ''}">
         <div class="content-item-preview">
           ${c.mime_type === 'video/youtube'
             ? `<div style="position:relative;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center">
@@ -417,6 +453,9 @@ async function loadContent() {
             ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
             ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}
           </div>
+          ${exp.expired
+            ? `<div style="font-size:11px;color:var(--danger,#e5484d);font-weight:600;margin-top:4px">${t('content.expired_badge')}${exp.dateLabel ? ` &middot; ${exp.dateLabel}` : ''}</div>`
+            : (exp.dateLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_label', { date: exp.dateLabel })}</div>` : '')}
         </div>
         <div class="content-item-actions">
           <button class="btn btn-secondary btn-sm" data-edit-content="${c.id}" title="${t('content.btn_edit')}">
@@ -435,7 +474,8 @@ async function loadContent() {
           </button>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
     hydrateAuthImages(grid);
 
     // Drag-to-move: each content item exposes its id; folder cards are the drop targets.
@@ -556,6 +596,11 @@ function showEditModal(contentItem, onSave) {
             ${state.folders.map(f => `<option value="${f.id}" ${contentItem.folder_id === f.id ? 'selected' : ''}>${esc(folderPath(f, state.folders))}</option>`).join('')}
           </select>
         </div>
+        <div class="form-group">
+          <label>${t('content.label_expires_at')}</label>
+          <input type="datetime-local" id="editExpiresAt" class="input" style="background:var(--bg-input)" value="${toLocalDatetimeInput(contentItem.expires_at)}">
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_hint')}</p>
+        </div>
         ${!isRemote ? `
         <div class="form-group">
           <label>${t('content.label_replace_file')}</label>
@@ -593,6 +638,11 @@ function showEditModal(contentItem, onSave) {
       if (mimeType !== contentItem.mime_type) updateData.mime_type = mimeType;
       if (remoteUrl !== undefined && remoteUrl !== contentItem.remote_url) updateData.remote_url = remoteUrl;
       if ((contentItem.folder_id || '') !== folderId) updateData.folder_id = folderId || null;
+      // #157: expiry (datetime-local local wall-clock -> epoch seconds; empty = never).
+      const expiryRaw = overlay.querySelector('#editExpiresAt')?.value || '';
+      const newExpiry = expiryRaw ? Math.floor(new Date(expiryRaw).getTime() / 1000) : null;
+      const curExpiry = contentItem.expires_at != null ? Number(contentItem.expires_at) : null;
+      if (newExpiry !== curExpiry) updateData.expires_at = newExpiry;
 
       if (Object.keys(updateData).length > 0) {
         await fetch('/api/content/' + contentItem.id, {

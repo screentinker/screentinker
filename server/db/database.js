@@ -290,6 +290,15 @@ const migrations = [
   "ALTER TABLE devices ADD COLUMN reboot_schedule TEXT",
   "ALTER TABLE devices ADD COLUMN reboot_last_date TEXT",
   "ALTER TABLE device_groups ADD COLUMN reboot_schedule TEXT",
+  // #157 auto-deactivate expired content. expires_at = epoch-seconds after which the item
+  // stops serving (null = never expires, current behaviour). is_active is the stored flag
+  // the expiry sweep flips to 0 once expires_at passes — it's ALSO the sweep's once-only
+  // marker (already-processed) so a republish fires exactly once per expiry, not every tick.
+  // A manual archive later can reuse is_active. Publish-time filtering checks the LIVE
+  // condition (is_active=0 OR expires_at<=now), so a publish between expiry and the next
+  // sweep tick still drops the item.
+  "ALTER TABLE content ADD COLUMN expires_at INTEGER",
+  "ALTER TABLE content ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
   // Backfill a unique 6-digit PIN for already-paired devices that predate the
   // settings_pin column (their next reconnect re-sends device:paired with it, so
   // the existing fleet isn't locked out of the on-device menu). Idempotent: the

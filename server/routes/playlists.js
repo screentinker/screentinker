@@ -74,6 +74,14 @@ function buildSnapshotItems(playlistId) {
     LEFT JOIN content c ON pi.content_id = c.id
     LEFT JOIN widgets w ON pi.widget_id = w.id
     WHERE pi.playlist_id = ?
+      -- #157: a content-backed item is dropped from the snapshot once it's deactivated
+      -- (is_active=0) or past its expiry (expires_at<=now). Widget items (content_id NULL)
+      -- and dangling content (deleted row -> c.* NULL) are unaffected via COALESCE. This is
+      -- the LIVE check so a publish between expiry and the next sweep tick already excludes it.
+      AND (
+        pi.content_id IS NULL
+        OR (COALESCE(c.is_active, 1) = 1 AND (c.expires_at IS NULL OR c.expires_at > strftime('%s','now')))
+      )
     ORDER BY pi.sort_order ASC
   `).all(playlistId);
   // #74/#75: attach per-item schedule blocks (the player honours these in its own
@@ -135,10 +143,11 @@ function markDraft(playlistId) {
   db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(playlistId);
 }
 
-// Push playlist update to all devices using this playlist
-function pushToDevices(playlistId, req) {
+// Push playlist update to all devices using this playlist. Accepts either an Express `req`
+// (route path) or a raw Socket.IO `io` (background sweep path — #157 has no request).
+function pushToDevices(playlistId, reqOrIo) {
   try {
-    const io = req.app.get('io');
+    const io = reqOrIo && reqOrIo.app ? reqOrIo.app.get('io') : reqOrIo;
     if (!io) return;
     const { buildPlaylistPayload } = require('../ws/deviceSocket');
     const commandQueue = require('../lib/command-queue');
@@ -154,11 +163,11 @@ function pushToDevices(playlistId, req) {
 // devices actually consume) + push to devices. POST /:id/publish AND the agency
 // auto-publish path both call this, so they can never drift (a "published" playlist that
 // wasn't snapshotted would be live-on-no-screen).
-function publishPlaylist(playlistId, req) {
+function publishPlaylist(playlistId, reqOrIo) {
   const snapshotItems = buildSnapshotItems(playlistId);
   db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, updated_at = strftime('%s','now') WHERE id = ?")
     .run(JSON.stringify(snapshotItems), playlistId);
-  pushToDevices(playlistId, req);
+  pushToDevices(playlistId, reqOrIo);
 }
 
 // Phase 2.2k: list scoped to caller's current workspace. No platform_admin

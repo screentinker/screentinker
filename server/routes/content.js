@@ -63,6 +63,11 @@ router.get('/', (req, res) => {
   const folderId = req.query.folder_id;
   let sql = 'SELECT * FROM content WHERE (workspace_id = ? OR workspace_id IS NULL)';
   const params = [req.workspaceId];
+  // #157: by default hide expired/deactivated content (the "live" set). ?include_expired=1
+  // returns everything so the library's "Show expired" view can surface + restore them.
+  if (req.query.include_expired !== '1' && req.query.include_expired !== 'true') {
+    sql += " AND is_active = 1 AND (expires_at IS NULL OR expires_at > strftime('%s','now'))";
+  }
   if (folder) { sql += ' AND folder = ?'; params.push(folder); }
   if (folderId !== undefined) {
     if (folderId === 'root' || folderId === '') {
@@ -231,7 +236,7 @@ router.put('/:id', (req, res) => {
   const content = checkContentWrite(req, res);
   if (!content) return;
 
-  const { filename, mime_type, remote_url, folder, folder_id } = req.body;
+  const { filename, mime_type, remote_url, folder, folder_id, expires_at } = req.body;
   const updates = [];
   const values = [];
   if (filename !== undefined) { updates.push('filename = ?'); values.push(safeFilename(filename)); }
@@ -260,6 +265,23 @@ router.put('/:id', (req, res) => {
     }
     updates.push('folder_id = ?');
     values.push(folder_id || null);
+  }
+  // #157: set/clear expiry (epoch seconds, or null = never). Whenever expiry changes we
+  // reset is_active=1 — the expiry sweep's once-only marker. That means: clearing/extending
+  // to a future time reactivates the item immediately; setting a PAST time leaves it "active"
+  // for the sweep to flip to 0 AND republish the playlists that carried it (the immediate-
+  // expiry path). Publish-time filtering already excludes past-expiry items regardless.
+  if (expires_at !== undefined) {
+    let val = null;
+    if (expires_at !== null && expires_at !== '') {
+      val = Number(expires_at);
+      if (!Number.isFinite(val) || val <= 0) {
+        return res.status(400).json({ error: 'expires_at must be epoch seconds (positive integer) or null' });
+      }
+      val = Math.floor(val);
+    }
+    updates.push('expires_at = ?'); values.push(val);
+    updates.push('is_active = 1');
   }
 
   if (updates.length > 0) {

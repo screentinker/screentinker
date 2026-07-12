@@ -734,6 +734,10 @@ commandQueue.startSweep();
 const { startScheduler } = require('./services/scheduler');
 startScheduler(io);
 
+// #157: auto-deactivate expired content + republish affected playlists
+const { startContentExpiry } = require('./services/content-expiry');
+startContentExpiry(io);
+
 // Start alert service
 const { startAlertService } = require('./services/alerts');
 startAlertService(io);

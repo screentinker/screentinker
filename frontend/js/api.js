@@ -54,10 +54,11 @@ export const api = {
   }),
 
   // Content
-  getContent: (folderId) => {
-    if (folderId === undefined) return request('/content');
+  getContent: (folderId, includeExpired = false) => {
+    const exp = includeExpired ? '&include_expired=1' : '';
+    if (folderId === undefined) return request(`/content${exp ? '?' + exp.slice(1) : ''}`);
     const q = folderId === null ? 'root' : encodeURIComponent(folderId);
-    return request(`/content?folder_id=${q}`);
+    return request(`/content?folder_id=${q}${exp}`);
   },
   getContentItem: (id) => request(`/content/${id}`),
   deleteContent: (id) => request(`/content/${id}`, { method: 'DELETE' }),
