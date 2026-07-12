@@ -273,7 +273,7 @@ export default {
   'device.terminal.placeholder': 'command, e.g. getprop ro.product.model',
   'device.terminal.run': 'Run',
   'device.terminal.clear': 'Clear',
-  'device.terminal.uid_note': 'Runs as the app UID (untrusted_app), not root — device owner grants no privileged shell. dumpsys/settings are OS-denied.',
+  'device.terminal.uid_note': 'Runs as the app UID (untrusted_app), not root — device owner grants no privileged shell. dumpsys/settings/ip/battery are OS-denied here; IP address & battery are on the Info tab (reported by the app).',
   'device.terminal.push_apk': 'Push an APK',
   'device.terminal.push_apk_hint': 'Downloads the URL and installs it silently (device owner). Any signing key — not just ours.',
   // Draft banner

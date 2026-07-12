@@ -22,9 +22,9 @@ const TERMINAL_PRESETS = [
   { label: 'CPU', cmd: 'grep -iE "hardware|processor" /proc/cpuinfo | head; echo "cores=$(cat /proc/cpuinfo | grep -c ^processor)"' },
   { label: 'Storage', cmd: 'df -h /data 2>/dev/null; df -h /storage/emulated/0 2>/dev/null' },
   { label: 'Uptime', cmd: 'echo "up $(cut -d. -f1 /proc/uptime)s"' },
-  { label: 'Network', cmd: 'ip -o addr 2>/dev/null | grep -vE " lo " || getprop | grep -iE "dhcp.*ipaddress|net.dns"' },
-  { label: 'Battery', cmd: 'for f in /sys/class/power_supply/*/; do c=$(cat "$f/capacity" 2>/dev/null); s=$(cat "$f/status" 2>/dev/null); [ -n "$c" ] && echo "$(basename $f): $c% $s"; done' },
-  { label: '3rd-party apps', cmd: 'pm list packages -3 2>/dev/null | head -40 || echo "pm list denied at app uid"' },
+  { label: 'Date / TZ', cmd: 'date; echo "tz=$(getprop persist.sys.timezone)"' },
+  { label: 'Display', cmd: 'getprop | grep -iE "lcd_density|ro.sf.lcd|ro.hwui|ro.surface_flinger" | head' },
+  { label: '3rd-party apps', cmd: 'pm list packages -3 2>/dev/null | sed s/package:// | head -40 || echo "pm list denied at app uid"' },
   { label: 'Props', cmd: 'getprop | grep -iE "model|version.release|serialno|wifi.interface|timezone"' },
   { label: 'Whoami', cmd: 'id' },
 ];
