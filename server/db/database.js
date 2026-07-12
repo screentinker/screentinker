@@ -282,6 +282,14 @@ const migrations = [
   // of Tier-2 controls (reboot/kiosk/time) — shown only for owned panels.
   "ALTER TABLE devices ADD COLUMN tier INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE devices ADD COLUMN foreign_device_owner INTEGER NOT NULL DEFAULT 0",
+  // #12 scheduled reboot: a device-local "HH:MM" wall-clock time (null = off). The
+  // scheduler fires a reboot command once per device-local day when the clock crosses
+  // this time. reboot_last_date (device-local YYYY-MM-DD) is the once-per-day guard so a
+  // 60s tick landing anywhere in the catch window fires exactly once. Group-level default
+  // lives on device_groups.reboot_schedule; a device's own value overrides the group's.
+  "ALTER TABLE devices ADD COLUMN reboot_schedule TEXT",
+  "ALTER TABLE devices ADD COLUMN reboot_last_date TEXT",
+  "ALTER TABLE device_groups ADD COLUMN reboot_schedule TEXT",
   // Backfill a unique 6-digit PIN for already-paired devices that predate the
   // settings_pin column (their next reconnect re-sends device:paired with it, so
   // the existing fleet isn't locked out of the on-device menu). Idempotent: the

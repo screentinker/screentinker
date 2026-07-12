@@ -21,6 +21,9 @@ function evaluateSchedules() {
   const onlineDevices = db.prepare("SELECT * FROM devices WHERE status = 'online'").all();
 
   for (const device of onlineDevices) {
+    // #12 scheduled reboot — evaluated independently of playlist/layout overrides.
+    maybeRebootDevice(device, now, deviceNs);
+
     const schedules = db.prepare(`
       SELECT s.*
       FROM schedules s
@@ -77,6 +80,51 @@ function deviceTz(device) {
   return override || device.reported_timezone || null;
 }
 
+// #12 scheduled reboot: resolve the device's effective nightly-reboot time. A device's
+// own reboot_schedule wins; otherwise the first group it belongs to that sets one. null = off.
+function effectiveRebootSchedule(device) {
+  if (device.reboot_schedule) return device.reboot_schedule;
+  const row = db.prepare(`
+    SELECT g.reboot_schedule
+    FROM device_groups g
+    JOIN device_group_members m ON m.group_id = g.id
+    WHERE m.device_id = ? AND g.reboot_schedule IS NOT NULL AND g.reboot_schedule != ''
+    ORDER BY g.created_at ASC
+    LIMIT 1
+  `).get(device.id);
+  return row?.reboot_schedule || null;
+}
+
+// Fires at most once per device-local day. The 5-minute catch window makes the fire
+// robust to 60s-tick drift (a tick that lands at :59 then :59 next minute never skips the
+// target minute). reboot_last_date (device-local YYYY-MM-DD) is the once-per-day guard.
+const REBOOT_WINDOW_MIN = 5;
+
+// Pure decision: given a "HH:MM" schedule, the device-local `now`, the device's tz, and the
+// last fired date, return { due, today }. `today` is the device-local YYYY-MM-DD to stamp on
+// fire. Extracted so it's unit-testable with no DB / socket. Invalid/off schedule -> not due.
+function rebootDue(schedule, tz, now, lastDate) {
+  if (!schedule) return { due: false, today: null };
+  const m = /^([0-2]\d):([0-5]\d)$/.exec(String(schedule).trim());
+  if (!m) return { due: false, today: null };
+  const schedMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  if (schedMin > 1439) return { due: false, today: null };
+
+  const L = _localParts(now, tz);
+  const p2 = (n) => (n < 10 ? '0' : '') + n;
+  const today = `${L.y}-${p2(L.mo)}-${p2(L.day)}`;
+  const inWindow = L.min >= schedMin && L.min < schedMin + REBOOT_WINDOW_MIN;
+  return { due: inWindow && lastDate !== today, today };
+}
+
+function maybeRebootDevice(device, now, deviceNs) {
+  const { due, today } = rebootDue(effectiveRebootSchedule(device), deviceTz(device), now, device.reboot_last_date);
+  if (!due) return;
+  db.prepare('UPDATE devices SET reboot_last_date = ? WHERE id = ?').run(today, device.id);
+  deviceNs.to(device.id).emit('device:command', { type: 'reboot', payload: { scheduled: true } });
+  console.log(`[reboot] scheduled reboot fired for device ${device.id} (${device.name || 'unnamed'}) at local ${today}`);
+}
+
 function localStamp(parts) {
   const p2 = (n) => (n < 10 ? '0' : '') + n;
   const hh = Math.floor(parts.min / 60), mm = parts.min % 60;
@@ -125,4 +173,4 @@ function pushPlaylistToDevice(deviceId, deviceNs) {
   commandQueue.queueOrEmitPlaylistUpdate(deviceNs, deviceId, buildPlaylistPayload);
 }
 
-module.exports = { startScheduler, pushPlaylistToDevice };
+module.exports = { startScheduler, pushPlaylistToDevice, rebootDue };

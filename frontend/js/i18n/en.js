@@ -358,6 +358,8 @@ export default {
   'device.debug.hint': 'Streams player/zone logs from this device in real time. Turns off on its own when the device reconnects.',
   'device.ota.toggle': 'Self-update (OTA)',
   'device.ota.hint': 'When off, this device is never offered an update — an MDM or operator owns its updates instead. Turn OFF for MDM-managed panels (e.g. Pivot/MAXHUB) so the app never shows a self-install dialog.',
+  'device.reboot_schedule.label': 'Nightly reboot',
+  'device.reboot_schedule.hint': 'Reboot this panel once a day at this device-local time (leave blank for off). A clean nightly reboot clears memory leaks and re-syncs the clock. Silent on device-owner panels; a no-op on panels that can\'t self-reboot.',
   'device.form.save_settings': 'Save Settings',
   // #150 re-adopt: restore a removed device's saved settings onto this one
   'device.readopt.button': 'Restore from removed device…',
@@ -1271,6 +1273,7 @@ export default {
   'wall.grid_config': 'Grid Configuration',
   'wall.columns': 'Columns',
   'wall.rows': 'Rows',
+  'wall.render_note': 'Tile is render size {render} (panel reports {panel} — rotated mount)',
   'wall.h_bezel': 'H Bezel (px)',
   'wall.v_bezel': 'V Bezel (px)',
   'wall.update': 'Update',

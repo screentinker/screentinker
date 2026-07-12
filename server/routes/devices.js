@@ -210,7 +210,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, default_content_id, layout_id, ota_enabled } = req.body;
+  const { name, notes, timezone, orientation, default_content_id, layout_id, ota_enabled, reboot_schedule } = req.body;
   // #150: validate orientation against the known enum (previously accepted any string, which
   // let a bad value reach the player -> unknown rotation falls back to landscape silently).
   if (orientation !== undefined && !deviceSettings.ORIENTATIONS.has(orientation)) {
@@ -239,6 +239,19 @@ router.put('/:id', (req, res) => {
   // #155/#161: per-device self-update (OTA) toggle. Coerce to 0/1.
   if (ota_enabled !== undefined) {
     updates.push('ota_enabled = ?'); values.push(ota_enabled ? 1 : 0);
+  }
+  // #12 scheduled reboot: device-local "HH:MM" (null/'' clears -> off). Reset the
+  // once-per-day guard on any change so a newly-set time can still fire later today.
+  if (reboot_schedule !== undefined) {
+    let val = null;
+    if (reboot_schedule !== null && reboot_schedule !== '') {
+      if (!/^([0-2]\d):([0-5]\d)$/.test(String(reboot_schedule))) {
+        return res.status(400).json({ error: 'reboot_schedule must be "HH:MM" (24h) or null' });
+      }
+      val = String(reboot_schedule);
+    }
+    updates.push('reboot_schedule = ?'); values.push(val);
+    updates.push('reboot_last_date = ?'); values.push(null);
   }
   if (updates.length > 0) {
     values.push(req.params.id);

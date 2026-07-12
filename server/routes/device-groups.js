@@ -75,8 +75,20 @@ router.post('/', (req, res) => {
 
 // Update group
 router.put('/:id', requireGroupWrite, (req, res) => {
-  const { name, color, sync_enabled, leader_device_id } = req.body;
+  const { name, color, sync_enabled, leader_device_id, reboot_schedule } = req.body;
   if (color && !VALID_COLOR.test(color)) return res.status(400).json({ error: 'invalid color format, use #RRGGBB' });
+  // #12 scheduled reboot: group-level default nightly-reboot time ("HH:MM" or null/'' = off).
+  // A member device's own reboot_schedule overrides this in the scheduler.
+  if (reboot_schedule !== undefined) {
+    let val = null;
+    if (reboot_schedule !== null && reboot_schedule !== '') {
+      if (!/^([0-2]\d):([0-5]\d)$/.test(String(reboot_schedule))) {
+        return res.status(400).json({ error: 'reboot_schedule must be "HH:MM" (24h) or null' });
+      }
+      val = String(reboot_schedule);
+    }
+    db.prepare('UPDATE device_groups SET reboot_schedule = ? WHERE id = ?').run(val, req.params.id);
+  }
   if (name) db.prepare('UPDATE device_groups SET name = ? WHERE id = ?').run(name, req.params.id);
   if (color) db.prepare('UPDATE device_groups SET color = ? WHERE id = ?').run(color, req.params.id);
   // #group-sync: enable synchronized playback + optional pinned leader.

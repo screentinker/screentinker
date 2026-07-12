@@ -13,6 +13,14 @@ let shellHandler = null;
 let screenshotInterval = null;
 let remoteActive = false;
 
+// Belt for the orphaned-stream fix: if the tab is hidden/closed/backgrounded while a Remote session
+// is live, stop it (the server also auto-stops on socket drop, but bfcache keeps the socket alive).
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (remoteActive && currentDevice) { remoteActive = false; try { stopRemote(currentDevice.id); } catch (e) {} }
+  });
+}
+
 // #161 device-owner Terminal presets. Commands chosen to work at the APP UID (not root) — getprop,
 // /proc + /sys reads, df, pm list, ip. dumpsys/settings are deliberately avoided (OS-denied to apps).
 const TERMINAL_PRESETS = [
@@ -410,6 +418,11 @@ async function loadDevice(deviceId, activeTab = null) {
               <input type="checkbox" id="otaToggle" ${device.ota_enabled === 0 ? '' : 'checked'}> ${t('device.ota.toggle')}
             </label>
             <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ota.hint')}</div>
+          </div>
+          <div class="form-group" style="max-width:280px">
+            <label>${t('device.reboot_schedule.label')}</label>
+            <input type="time" id="rebootSchedule" class="input" style="background:var(--bg-input)" value="${esc(device.reboot_schedule || '')}">
+            <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 0">${t('device.reboot_schedule.hint')}</div>
           </div>
           <button class="btn btn-secondary btn-sm" id="saveNotesBtn">${t('device.form.save_settings')}</button>
           <button class="btn btn-secondary btn-sm" id="reAdoptBtn" style="margin-left:8px" title="${t('device.readopt.button_hint')}">${t('device.readopt.button')}</button>
@@ -937,6 +950,7 @@ function setupActions(device) {
         orientation: document.getElementById('deviceOrientation').value,
         default_content_id: document.getElementById('deviceDefaultContent').value || null,
         ota_enabled: document.getElementById('otaToggle')?.checked ? 1 : 0,
+        reboot_schedule: document.getElementById('rebootSchedule')?.value || null,
       });
       showToast(t('device.toast.settings_saved'), 'success');
     } catch (err) {

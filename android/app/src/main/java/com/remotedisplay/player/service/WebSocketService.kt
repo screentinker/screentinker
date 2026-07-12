@@ -783,18 +783,26 @@ class WebSocketService : Service() {
     private fun streamLoop() {
         if (!streaming) { Log.w("WebSocketService", "streamLoop called but not streaming"); return }
         Thread {
+            var captureMs = 0L
             try {
+                val start = SystemClock.elapsedRealtime()
                 val b64 = captureScreen()
+                captureMs = SystemClock.elapsedRealtime() - start
                 if (b64 != null) {
                     sendScreenshot(b64)
-                    Log.d("WebSocketService", "Screenshot streamed: ${b64.length} chars")
+                    Log.d("WebSocketService", "Screenshot streamed: ${b64.length} chars in ${captureMs}ms")
                 } else {
                     Log.w("WebSocketService", "Screenshot capture returned null")
                 }
             } catch (e: Exception) {
                 Log.e("WebSocketService", "Stream error: ${e.message}")
             }
-            if (streaming) handler.postDelayed(streamRunnable ?: return@Thread, 1000)
+            // Adaptive throttle: on a weak panel a slow capture (e.g. accessibility takeScreenshot while
+            // a video decodes) competes with playback and can starve the decoder. Back off proportional
+            // to how long this capture took — base 1s, but ~3× a slow capture, capped at 5s — so the
+            // stream self-throttles under load instead of pinning the device at 1fps and going black.
+            val next = (captureMs * 3).coerceIn(1000L, 5000L)
+            if (streaming) handler.postDelayed(streamRunnable ?: return@Thread, next)
         }.start()
     }
 

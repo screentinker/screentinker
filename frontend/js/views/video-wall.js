@@ -95,6 +95,29 @@ async function renderWallEditor(container, wallId) {
   const bezelH = wall.bezel_h_mm || 0;
   const bezelV = wall.bezel_v_mm || 0;
 
+  const deviceById = (id) => devices.find(d => d.id === id);
+  // #14: a freshly-added screen's canvas size defaults to the device's RENDER resolution
+  // (what it actually draws) instead of a fixed 320x180 — so a wall of 1080p panels looks
+  // 1080p and a rotated panel that renders 1332x800 lands at 1332x800. Falls back to the
+  // 320x180 default when the device hasn't reported a render size yet.
+  const renderSizeFor = (id) => {
+    const d = deviceById(id);
+    if (d && d.render_width > 0 && d.render_height > 0) return { w: d.render_width, h: d.render_height };
+    return { w: DEFAULT_SCREEN_W, h: DEFAULT_SCREEN_H };
+  };
+  // When the panel's physical resolution differs from what it renders (rotated mount:
+  // the box reports 800x1332 but draws 1332x800), the tile size can look "wrong". Return a
+  // short note making explicit that the tile is sized to the RENDER surface, not the panel.
+  const renderNoteFor = (id) => {
+    const d = deviceById(id);
+    if (!d || !d.render_width || !d.render_height) return '';
+    const sw = d.screen_width, sh = d.screen_height;
+    if (sw && sh && (sw !== d.render_width || sh !== d.render_height)) {
+      return t('wall.render_note', { render: `${d.render_width}×${d.render_height}`, panel: `${sw}×${sh}` });
+    }
+    return '';
+  };
+
   let screens = (wall.devices || []).map(d => ({
     device_id: d.device_id,
     device_name: d.device_name,
@@ -104,8 +127,8 @@ async function renderWallEditor(container, wallId) {
     rotation: d.rotation || 0,
     x: d.canvas_x ?? (d.grid_col * (baseW + bezelH)),
     y: d.canvas_y ?? (d.grid_row * (baseH + bezelV)),
-    w: d.canvas_width ?? baseW,
-    h: d.canvas_height ?? baseH,
+    w: d.canvas_width ?? renderSizeFor(d.device_id).w,
+    h: d.canvas_height ?? renderSizeFor(d.device_id).h,
   }));
 
   // Default player covers the bounding box of all screens; if there are no
@@ -362,6 +385,7 @@ async function renderWallEditor(container, wallId) {
           <span class="status-dot ${s.device_status}" style="display:inline-block"></span>
           <span style="font-size:10px;color:var(--text-muted)">${Math.round(s.w)}×${Math.round(s.h)}</span>
         </div>
+        ${renderNoteFor(s.device_id) ? `<div class="wall-screen-rendernote" style="font-size:9px;color:var(--warning,#e0a800);margin-top:2px;line-height:1.2">${esc(renderNoteFor(s.device_id))}</div>` : ''}
       </div>
       <button class="wall-screen-remove" title="Remove from wall">×</button>
       ${resizeHandlesHtml()}
@@ -554,15 +578,17 @@ async function renderWallEditor(container, wallId) {
     try { data = JSON.parse(e.dataTransfer.getData('text/plain') || '{}'); } catch { return; }
     if (data.type !== 'sidebar-device' || !data.device_id) return;
     const vpRect = viewport.getBoundingClientRect();
+    // #14: size the new tile to the device's render resolution (centered on the drop point).
+    const sz = renderSizeFor(data.device_id);
     // Drop pixel → canvas-data coord: undo viewport offset, pan, and zoom.
-    const x = (e.clientX - vpRect.left - pan.x) / zoom - DEFAULT_SCREEN_W / 2;
-    const y = (e.clientY - vpRect.top - pan.y) / zoom - DEFAULT_SCREEN_H / 2;
+    const x = (e.clientX - vpRect.left - pan.x) / zoom - sz.w / 2;
+    const y = (e.clientY - vpRect.top - pan.y) / zoom - sz.h / 2;
     screens.push({
       device_id: data.device_id,
       device_name: data.device_name || 'Display',
       device_status: data.device_status || 'offline',
       grid_col: 0, grid_row: 0, rotation: 0,
-      x, y, w: DEFAULT_SCREEN_W, h: DEFAULT_SCREEN_H,
+      x, y, w: sz.w, h: sz.h,
     });
     markDirty();
     renderAll();
@@ -576,8 +602,11 @@ async function renderWallEditor(container, wallId) {
     const rows = Math.max(1, parseInt(document.getElementById('gridRows').value) || 1);
     const bH = Math.max(0, parseInt(document.getElementById('bezelH').value) || 0);
     const bV = Math.max(0, parseInt(document.getElementById('bezelV').value) || 0);
-    const w = DEFAULT_SCREEN_W;
-    const h = DEFAULT_SCREEN_H;
+    // #14: grid pitch = the largest tile dimension across the wall (tiles keep their own
+    // render size). For a homogeneous wall this is just the panel size; for a mixed wall it
+    // guarantees no overlap. Empty wall falls back to the 320x180 default.
+    const w = Math.max(DEFAULT_SCREEN_W, ...screens.map(s => s.w || 0));
+    const h = Math.max(DEFAULT_SCREEN_H, ...screens.map(s => s.h || 0));
     let i = 0;
     for (const s of screens) {
       if (i >= cols * rows) break;
@@ -585,8 +614,6 @@ async function renderWallEditor(container, wallId) {
       const r = Math.floor(i / cols);
       s.x = c * (w + bH);
       s.y = r * (h + bV);
-      s.w = w;
-      s.h = h;
       s.grid_col = c;
       s.grid_row = r;
       i++;

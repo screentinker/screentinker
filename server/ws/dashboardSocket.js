@@ -81,11 +81,17 @@ module.exports = function setupDashboardSocket(io) {
       deviceNs.to(device_id).emit('device:remote-key', { keycode });
     });
 
+    // Track which devices THIS dashboard socket has a live remote (screenshot-stream) session on, so
+    // we can stop them if the tab closes / the socket drops — an orphaned stream keeps the device
+    // capturing every second and can starve a weak panel's decoder (the black-screen we hit).
+    socket.remoteSessions = new Set();
+
     socket.on('dashboard:remote-start', (data) => {
       const { device_id } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
       const room = deviceNs.adapter.rooms.get(device_id);
       console.log(`Remote start for ${device_id}, room has ${room?.size || 0} socket(s)`);
+      socket.remoteSessions.add(device_id);
       deviceNs.to(device_id).emit('device:remote-start', {});
       console.log(`Remote session started for device ${device_id}`);
     });
@@ -93,6 +99,7 @@ module.exports = function setupDashboardSocket(io) {
     socket.on('dashboard:remote-stop', (data) => {
       const { device_id } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
+      socket.remoteSessions.delete(device_id);
       deviceNs.to(device_id).emit('device:remote-stop', {});
       console.log(`Remote session stopped for device ${device_id}`);
     });
@@ -125,6 +132,13 @@ module.exports = function setupDashboardSocket(io) {
 
     socket.on('disconnect', () => {
       console.log(`Dashboard client disconnected: ${socket.id}`);
+      // Stop any remote screenshot streams this socket left running (tab closed / navigated away),
+      // so the device isn't left capturing forever.
+      for (const device_id of socket.remoteSessions) {
+        deviceNs.to(device_id).emit('device:remote-stop', {});
+        console.log(`Auto-stopped orphaned remote session for ${device_id} (dashboard socket ${socket.id} gone)`);
+      }
+      socket.remoteSessions.clear();
     });
   });
 
