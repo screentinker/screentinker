@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendKey, sendCommand } from '../socket.js';
+import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand } from '../socket.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge } from '../utils.js';
 import { t, tn } from '../i18n.js';
@@ -9,6 +9,7 @@ let statusHandler = null;
 let screenshotHandler = null;
 let playbackHandler = null;
 let logHandler = null;
+let shellHandler = null;
 let screenshotInterval = null;
 let remoteActive = false;
 
@@ -492,8 +493,9 @@ async function loadDevice(deviceId, activeTab = null) {
             <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_VOLUME_UP')">${t('device.remote.vol_up')}</button>
             <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_VOLUME_DOWN')">${t('device.remote.vol_down')}</button>
             <hr style="border-color:var(--border);margin:8px 0">
-            <!-- System View controls (disabled until enabled) -->
-            <div id="systemViewControls" style="opacity:0.4;pointer-events:none">
+            <!-- System View controls — auto-unlocked on a device owner (#161: full-screen via the
+                 accessibility path, no MediaProjection consent); locked until enabled otherwise. -->
+            <div id="systemViewControls" style="opacity:${device.tier === 2 ? '1' : '0.4'};pointer-events:${device.tier === 2 ? 'auto' : 'none'}">
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_HOME')">${t('device.remote.home')}</button>
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_BACK')">${t('device.remote.back')}</button>
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_APP_SWITCH')">${t('device.remote.recents')}</button>
@@ -514,10 +516,26 @@ async function loadDevice(deviceId, activeTab = null) {
                 <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._sendCmd('screen_on')">${t('device.remote.scrn_on')}</button>
               </div>
             </div>
+            ${device.tier === 2 ? `
+            <span style="font-size:10px;color:var(--success);line-height:1.2;display:block;margin-top:8px">${t('device.remote.system_view_owner')}</span>
+            ` : `
             <button class="btn btn-primary btn-sm" id="enableSystemCaptureBtn" onclick="window._enableSystemView()" title="${t('device.remote.system_view_tooltip')}" style="margin-top:8px">
               ${t('device.remote.enable_system_view')}
             </button>
-            <span id="systemViewHint" style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.remote.system_view_hint')}</span>
+            <span id="systemViewHint" style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.remote.system_view_hint')}</span>`}
+            ${device.tier === 2 ? `
+            <hr style="border-color:var(--border);margin:10px 0">
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${t('device.owner_tools.label')}</div>
+            <div style="display:flex;gap:4px;margin-bottom:4px">
+              <input id="shellCmd" class="input" placeholder="${t('device.owner_tools.shell_ph')}" style="flex:1;font-family:monospace;font-size:12px"/>
+              <button class="btn btn-secondary btn-sm" id="shellRun">${t('device.owner_tools.run')}</button>
+            </div>
+            <pre id="shellOut" style="background:var(--bg-input,#1e293b);padding:8px;border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;margin:0 0 8px;color:var(--text-secondary)">—</pre>
+            <div style="display:flex;gap:4px">
+              <input id="apkUrl" class="input" placeholder="${t('device.owner_tools.apk_ph')}" style="flex:1;font-size:12px"/>
+              <button class="btn btn-secondary btn-sm" id="apkInstall">${t('device.owner_tools.install')}</button>
+            </div>
+            <span style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.owner_tools.hint')}</span>` : ''}
           </div>
         </div>
       </div>
@@ -546,6 +564,32 @@ async function loadDevice(deviceId, activeTab = null) {
       }, 5000);
     };
 
+    // #161 device-owner tools (tier 2 only): remote shell + push an APK.
+    if (device.tier === 2) {
+      const shellOut = document.getElementById('shellOut');
+      const runShell = () => {
+        const cmd = document.getElementById('shellCmd')?.value?.trim();
+        if (!cmd) return;
+        if (shellOut) shellOut.textContent = '$ ' + cmd + '\n…';
+        sendCommand(device.id, 'shell', { cmd });
+      };
+      document.getElementById('shellRun')?.addEventListener('click', runShell);
+      document.getElementById('shellCmd')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runShell(); });
+      document.getElementById('apkInstall')?.addEventListener('click', () => {
+        const url = document.getElementById('apkUrl')?.value?.trim();
+        if (!url) return;
+        if (!/^https?:\/\//.test(url)) { showToast(t('device.owner_tools.bad_url'), 'error'); return; }
+        sendCommand(device.id, 'install_apk', { url });
+        showToast(t('device.owner_tools.apk_sent'), 'success');
+      });
+      if (shellHandler) off('shell-result', shellHandler);
+      shellHandler = (data) => {
+        if (data.device_id !== device.id || !shellOut) return;
+        shellOut.textContent = '$ ' + (data.cmd || '') + '\n' + (data.output || '') + (data.exit != null ? '\n[exit ' + data.exit + ']' : '');
+      };
+      on('shell-result', shellHandler);
+    }
+
     // Render uptime timeline
     renderUptimeTimeline(device.uptimeData || [], device.statusLog || []);
 
@@ -564,9 +608,16 @@ async function loadDevice(deviceId, activeTab = null) {
       if (content) content.classList.add('active');
     }
 
-    // Request a fresh screenshot on page load
+    // Request a fresh screenshot on page load + poll periodically. #159: the preview used to go stale
+    // because nothing re-requested it — the device only sends a frame on an explicit request or during
+    // a live Remote session. Poll every 5s while this page is open so the Now Playing preview stays
+    // current (cleared on view teardown). A Remote session streams at its own faster rate on top.
     if (device.status === 'online') {
       requestScreenshot(deviceId);
+      if (screenshotInterval) clearInterval(screenshotInterval);
+      screenshotInterval = setInterval(() => {
+        if (!document.hidden) requestScreenshot(deviceId);
+      }, 5000);
     }
 
   } catch (err) {
@@ -1139,24 +1190,41 @@ function setupRemote(device) {
     overlay.style.display = 'flex';
   });
 
-  // Touch forwarding on canvas
-  canvas?.addEventListener('click', (e) => {
-    if (!remoteActive) return;
+  // #159: mouse-as-finger. A click = tap; a drag = swipe (scroll). Pointer events so a press-move-
+  // release maps to a gesture with the same normalized start/end + duration the device replays.
+  let drag = null;
+  const norm = (e) => {
     const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    sendTouch(device.id, x, y, 'tap');
-
-    // Visual feedback
+    return { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height, cx: e.clientX - rect.left, cy: e.clientY - rect.top };
+  };
+  const feedback = (cx, cy) => {
     const ctx = canvas.getContext('2d');
-    ctx.beginPath();
-    ctx.arc(e.clientX - rect.left, e.clientY - rect.top, 10, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.5)';
-    ctx.fill();
-    setTimeout(() => {
-      // Redraw will happen on next screenshot
-    }, 200);
+    ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.5)'; ctx.fill();
+  };
+  canvas?.addEventListener('pointerdown', (e) => {
+    if (!remoteActive) return;
+    const p = norm(e);
+    drag = { ...p, t: Date.now() };
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    feedback(p.cx, p.cy);
   });
+  canvas?.addEventListener('pointerup', (e) => {
+    if (!remoteActive || !drag) return;
+    const p = norm(e);
+    const dist = Math.hypot(p.x - drag.x, p.y - drag.y);
+    const dur = Math.min(1200, Math.max(120, Date.now() - drag.t));
+    if (dist > 0.02) {
+      sendSwipe(device.id, drag.x, drag.y, p.x, p.y, dur);   // drag → scroll
+      const ctx = canvas.getContext('2d');
+      ctx.strokeStyle = 'rgba(59,130,246,0.6)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(drag.cx, drag.cy); ctx.lineTo(p.cx, p.cy); ctx.stroke();
+    } else {
+      sendTouch(device.id, drag.x, drag.y, 'tap');
+    }
+    drag = null;
+  });
+  canvas?.addEventListener('pointercancel', () => { drag = null; });
 }
 
 async function setupPlaylistActions(device) {
@@ -1620,6 +1688,7 @@ export function cleanup() {
   if (screenshotHandler) off('screenshot-ready', screenshotHandler);
   if (playbackHandler) off('playback-state', playbackHandler);
   if (logHandler) off('device-log', logHandler);
+  if (shellHandler) off('shell-result', shellHandler);   // #161 owner-tools listener
   if (screenshotInterval) clearInterval(screenshotInterval);
   if (remoteActive && currentDevice) stopRemote(currentDevice.id);
   remoteActive = false;

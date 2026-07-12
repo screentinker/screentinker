@@ -88,24 +88,30 @@ class ScreenshotCapture {
         }
     }
 
-    private fun encodeBitmap(bitmap: Bitmap, quality: Int): String {
-        val toEncode = if (bitmap.width > 960) {
-            val scale = 960f / bitmap.width
-            val h = (bitmap.height * scale).toInt()
-            val scaled = Bitmap.createScaledBitmap(bitmap, 960, h, true)
-            if (scaled !== bitmap) bitmap.recycle()
-            scaled
-        } else {
-            bitmap
+    private fun encodeBitmap(bitmap: Bitmap, quality: Int): String = encode(bitmap, quality)
+
+    companion object {
+        // Downscale to max width 960 + JPEG + base64. Shared by the view-capture path and the #161
+        // accessibility full-screen path (PowerAccessibilityService.takeScreenshot). Recycles inputs.
+        fun encode(bitmap: Bitmap, quality: Int): String {
+            val toEncode = if (bitmap.width > 960) {
+                val scale = 960f / bitmap.width
+                val h = (bitmap.height * scale).toInt()
+                val scaled = Bitmap.createScaledBitmap(bitmap, 960, h, true)
+                if (scaled !== bitmap) bitmap.recycle()
+                scaled
+            } else {
+                bitmap
+            }
+            val stream = ByteArrayOutputStream()
+            toEncode.compress(Bitmap.CompressFormat.JPEG, quality, stream)
+            val w = toEncode.width
+            val h = toEncode.height
+            toEncode.recycle()
+            val result = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+            Log.i("ScreenshotCapture", "Encoded ${w}x${h}, size=${result.length} chars")
+            return result
         }
-        val stream = ByteArrayOutputStream()
-        toEncode.compress(Bitmap.CompressFormat.JPEG, quality, stream)
-        val w = toEncode.width
-        val h = toEncode.height
-        toEncode.recycle()
-        val result = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-        Log.i("ScreenshotCapture", "Encoded ${w}x${h}, size=${result.length} chars")
-        return result
     }
 
     private fun findAllTextureViews(view: View, result: MutableList<TextureView>) {

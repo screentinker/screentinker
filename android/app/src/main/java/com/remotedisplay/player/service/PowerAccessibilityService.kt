@@ -2,13 +2,19 @@ package com.remotedisplay.player.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
 import android.graphics.Path
 import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.remotedisplay.player.remote.ScreenshotCapture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class PowerAccessibilityService : AccessibilityService() {
 
@@ -21,6 +27,43 @@ class PowerAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Log.i(TAG, "Service connected")
+    }
+
+    private val screenshotExecutor by lazy { Executors.newSingleThreadExecutor() }
+
+    /**
+     * #161 "see everything": capture the WHOLE display (system UI + whatever is foreground), base64
+     * JPEG, with NO MediaProjection consent dialog — via the AccessibilityService screenshot API
+     * (needs canTakeScreenshot in the config + the service enabled; API 30+). Returns null when
+     * unavailable (older OS, rate-limited, or failure) so the caller falls back to app-content capture.
+     * Blocks up to 2s for the async result (called from the 1fps background stream loop).
+     */
+    fun captureFullScreen(quality: Int = 40): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return try {
+            var out: String? = null
+            val latch = CountDownLatch(1)
+            takeScreenshot(Display.DEFAULT_DISPLAY, screenshotExecutor, object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    try {
+                        val hw = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                        result.hardwareBuffer.close()
+                        if (hw != null) {
+                            // wrapHardwareBuffer yields a HARDWARE bitmap; copy to software so it can compress.
+                            val soft = hw.copy(Bitmap.Config.ARGB_8888, false)
+                            hw.recycle()
+                            if (soft != null) out = ScreenshotCapture.encode(soft, quality)
+                        }
+                    } catch (e: Throwable) { Log.w(TAG, "takeScreenshot decode: ${e.message}") }
+                    latch.countDown()
+                }
+                override fun onFailure(errorCode: Int) {
+                    Log.w(TAG, "takeScreenshot failed: $errorCode"); latch.countDown()
+                }
+            })
+            latch.await(2, TimeUnit.SECONDS)
+            out
+        } catch (e: Throwable) { Log.w(TAG, "captureFullScreen: ${e.message}"); null }
     }
 
     private var lastConfirm = 0L

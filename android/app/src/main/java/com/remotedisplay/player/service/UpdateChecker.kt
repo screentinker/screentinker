@@ -283,6 +283,26 @@ class UpdateChecker(private val context: Context) {
         }
     }
 
+    // #161 device-owner tooling: push + install an ARBITRARY APK from an operator-supplied URL. Unlike
+    // the self-update path this does NOT require our signing key — a device owner can install any
+    // package, silently (installApk → tryPackageInstaller → USER_ACTION_NOT_REQUIRED on an owner). Off
+    // owner it degrades to the normal confirm-dialog install. Gated to admins server-side.
+    fun installFromUrl(url: String) {
+        Thread {
+            try {
+                val base = url.substringAfterLast('/').substringBefore('?').ifBlank { "app.apk" }
+                val fileName = "pushed-" + (if (base.endsWith(".apk")) base else "$base.apk")
+                val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
+                if (apkFile.exists()) apkFile.delete()
+                val response = client.newCall(Request.Builder().url(url).build()).execute()
+                if (!response.isSuccessful) { Log.e(TAG, "installFromUrl: download failed ${response.code}"); return@Thread }
+                response.body?.byteStream()?.use { input -> apkFile.outputStream().use { input.copyTo(it) } }
+                Log.i(TAG, "Pushed APK downloaded: ${apkFile.name} (${apkFile.length()} bytes)")
+                handler.post { installApk(apkFile) }
+            } catch (e: Throwable) { Log.e(TAG, "installFromUrl: ${e.message}") }
+        }.start()
+    }
+
     private fun installApk(apkFile: File) {
         // Try silent session install first (no Play Protect dialog)
         try {

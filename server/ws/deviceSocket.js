@@ -856,6 +856,16 @@ module.exports = function setupDeviceSocket(io) {
       }
     });
 
+    // #161 device-owner tooling: relay a remote-shell result back to the operator's dashboard.
+    socket.on('device:shell-result', (data) => {
+      if (!requireDeviceAuth()) return;
+      const { device_id, cmd, output, exit } = data || {};
+      if (!device_id || device_id !== currentDeviceId) return;
+      emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:shell-result', {
+        device_id, cmd: String(cmd || '').slice(0, 500), output: String(output || '').slice(0, 8000), exit,
+      });
+    });
+
     // Content download acknowledgement
     socket.on('device:content-ack', (data) => {
       if (!requireDeviceAuth()) return;

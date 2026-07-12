@@ -15,6 +15,8 @@ const ALLOWED_COMMANDS = [
   // #161 Tier-2 (owner-gated on the panel; STPolicy no-ops off-tier so a stray send is inert):
   'power_menu', 'lock_now', 'kiosk_lock', 'kiosk_unlock',
   'set_time', 'set_timezone', 'status_bar', 'block_uninstall', 'unblock_uninstall',
+  // #161 device-owner tooling: remote shell (app-UID diagnostics) + push/install an APK from a URL.
+  'shell', 'install_apk',
 ];
 
 // Phase 2.2i: split read/write access checks. Both attach req.group on success.

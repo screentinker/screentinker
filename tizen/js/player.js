@@ -765,11 +765,12 @@ GroupSyncController.prototype.tick = function () {
       if (this.player.getIndex() !== this.lastAlignedIndex) this.alignPending = true;
       try {
         if (this.alignPending) {
-          if (ad > 0.05) v.currentTime = target;
+          if (ad > 0.05) { v.currentTime = target; this.lastSeekAt = Date.now(); }
           v.playbackRate = 1.0; this.alignPending = false; this.lastAlignedIndex = this.player.getIndex();
           action = 'align ' + drift.toFixed(2);
         }
-        else if (ad > 0.3) { v.currentTime = target; v.playbackRate = 1.0; action = 'seek ' + drift.toFixed(2); }
+        // Seek cooldown: don't hard-seek every tick (decoder-thrash guard); nudge within the window.
+        else if (ad > 0.3 && Date.now() - (this.lastSeekAt || 0) > 1200) { v.currentTime = target; v.playbackRate = 1.0; this.lastSeekAt = Date.now(); action = 'seek ' + drift.toFixed(2); }
         else if (ad > 0.05) { v.playbackRate = drift > 0 ? 0.97 : 1.03; action = 'nudge ' + drift.toFixed(2); }
         else if (v.playbackRate !== 1.0) { v.playbackRate = 1.0; }
       } catch (e) {}

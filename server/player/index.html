@@ -423,6 +423,7 @@
     // the ~0.3s load offset over ~10s. Steady-state drift still rides the gentle nudge afterward.
     let groupAlignPending = true;
     let groupLastAlignedIndex = -1;
+    let groupLastSeekAt = 0;   // seek cooldown — don't hard-seek every tick (decoder-thrash guard)
     // Double buffer: a hidden <video> for the NEXT clip, buffered/decoded ahead of the boundary so the
     // switch is instant (no black hold). Reused by renderContent when it reaches that index.
     let groupPreloadEl = null;
@@ -1450,12 +1451,12 @@
         const ad = Math.abs(drift);
         if (currentIndex !== groupLastAlignedIndex) groupAlignPending = true;
         if (groupAlignPending) {
-          if (ad > 0.05) { try { currentVideoEl.currentTime = target; } catch (e) {} }
+          if (ad > 0.05) { try { currentVideoEl.currentTime = target; } catch (e) {} groupLastSeekAt = Date.now(); }
           try { currentVideoEl.playbackRate = 1.0; } catch (e) {}
           groupAlignPending = false; groupLastAlignedIndex = currentIndex;
           action = 'align ' + drift.toFixed(2);
         }
-        else if (ad > 0.3) { try { currentVideoEl.currentTime = target; } catch (e) {} try { currentVideoEl.playbackRate = 1.0; } catch (e) {} action = 'seek ' + drift.toFixed(2); }
+        else if (ad > 0.3 && Date.now() - groupLastSeekAt > 1200) { try { currentVideoEl.currentTime = target; } catch (e) {} try { currentVideoEl.playbackRate = 1.0; } catch (e) {} groupLastSeekAt = Date.now(); action = 'seek ' + drift.toFixed(2); }
         else if (ad > 0.05) { try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (e) {} action = 'nudge ' + drift.toFixed(2); }
         else if (currentVideoEl.playbackRate !== 1.0) { try { currentVideoEl.playbackRate = 1.0; } catch (e) {} }
       }

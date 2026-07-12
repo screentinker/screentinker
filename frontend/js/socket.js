@@ -37,6 +37,11 @@ export function connectSocket() {
     emit('screenshot-ready', data);
   });
 
+  // #161 device-owner tooling: remote-shell output
+  dashboardSocket.on('dashboard:shell-result', (data) => {
+    emit('shell-result', data);
+  });
+
   // Device added
   dashboardSocket.on('dashboard:device-added', (data) => {
     emit('device-added', data);
@@ -123,6 +128,11 @@ export function stopRemote(deviceId) {
 
 export function sendTouch(deviceId, x, y, action) {
   if (dashboardSocket) dashboardSocket.emit('dashboard:remote-touch', { device_id: deviceId, x, y, action });
+}
+
+// #159: a drag → swipe gesture (scroll). Normalized start+end + duration (ms).
+export function sendSwipe(deviceId, x1, y1, x2, y2, duration) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:remote-touch', { device_id: deviceId, x: x1, y: y1, x2, y2, duration, action: 'swipe' });
 }
 
 export function sendKey(deviceId, keycode) {

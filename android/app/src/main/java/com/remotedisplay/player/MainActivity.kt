@@ -700,6 +700,14 @@ class MainActivity : AppCompatActivity() {
                     Log.i("MainActivity", "Force update check triggered")
                     if (::updateChecker.isInitialized) updateChecker.checkForUpdate()
                 }
+                // #161 device-owner tooling: push + silently install an arbitrary APK from a URL.
+                "install_apk" -> {
+                    val url = payload?.optString("url", "") ?: ""
+                    if (url.isNotBlank() && ::updateChecker.isInitialized) {
+                        Log.i("MainActivity", "install_apk from $url")
+                        updateChecker.installFromUrl(url)
+                    }
+                }
                 "refresh" -> {
                     wsService?.connect()
                 }

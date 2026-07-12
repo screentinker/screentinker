@@ -68,9 +68,10 @@ module.exports = function setupDashboardSocket(io) {
     });
 
     socket.on('dashboard:remote-touch', (data) => {
-      const { device_id, x, y, action } = data;
+      const { device_id, x, y, x2, y2, duration, action } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
-      deviceNs.to(device_id).emit('device:remote-touch', { x, y, action });
+      // #159: a swipe/drag carries an end point + duration (for scrolling); tap is just x/y.
+      deviceNs.to(device_id).emit('device:remote-touch', { x, y, x2, y2, duration, action });
     });
 
     socket.on('dashboard:remote-key', (data) => {

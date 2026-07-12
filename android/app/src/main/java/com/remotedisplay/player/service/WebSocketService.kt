@@ -31,6 +31,7 @@ class WebSocketService : Service() {
     @Volatile private var socketActive = false
     @Volatile private var currentUrl: String? = null
     private var reopenRunnable: Runnable? = null
+    private var reconnectWatchdog: Runnable? = null
     private lateinit var config: ServerConfig
     private lateinit var deviceInfo: DeviceInfo
     private val handler = Handler(Looper.getMainLooper())
@@ -55,6 +56,11 @@ class WebSocketService : Service() {
         // #148: backoff before re-opening the single socket after a disconnect that Socket.IO
         // does NOT auto-reconnect (io server/client disconnect) — never a blind immediate re-open.
         private const val RECONNECT_AFTER_EVICT_MS = 3000L
+        // Reconnect backstop: tick period + how long a disconnect/silence must persist before we FORCE
+        // a fresh socket. Long enough to let Socket.IO reconnect on its own first; short enough that a
+        // wedged manager (network change, stuck reconnect) can't strand a panel offline for good.
+        private const val RECONNECT_WATCHDOG_TICK_MS = 20_000L
+        private const val RECONNECT_WATCHDOG_STALL_MS = 45_000L
         // Fix 2: re-pair re-register backoff bounds (see handleServerRejection / scheduleRepairRegister).
         private const val REPAIR_BACKOFF_MIN_MS = 3000L
         private const val REPAIR_BACKOFF_MAX_MS = 60_000L
@@ -108,6 +114,33 @@ class WebSocketService : Service() {
         val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
         wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "RemoteDisplay:WebSocket")
         wakeLock?.acquire()
+
+        startReconnectWatchdog()
+    }
+
+    /**
+     * App-level reconnect backstop. Runs continuously (independent of the heartbeat, which STOPS on
+     * disconnect — so the #146 half-open watchdog can't cover a disconnected socket). If we've been
+     * disconnected + silent past the stall threshold, Socket.IO's own reconnect has likely wedged, so
+     * reset the guard and force ONE fresh socket. Idempotent while connected (does nothing).
+     */
+    private fun startReconnectWatchdog() {
+        reconnectWatchdog?.let { handler.removeCallbacks(it) }
+        reconnectWatchdog = object : Runnable {
+            override fun run() {
+                try {
+                    val connected = socket?.connected() == true
+                    val silenceMs = SystemClock.elapsedRealtime() - lastServerMessageAt
+                    if (!connected && silenceMs > RECONNECT_WATCHDOG_STALL_MS && config.serverUrl.isNotEmpty()) {
+                        Log.w("WebSocketService", "reconnect backstop: disconnected+silent ${silenceMs}ms — forcing a fresh socket")
+                        socketActive = false        // let ConnectionGuard permit a new socket over the wedged one
+                        connect()
+                    }
+                } catch (e: Throwable) { Log.w("WebSocketService", "reconnect backstop: ${e.message}") }
+                handler.postDelayed(this, RECONNECT_WATCHDOG_TICK_MS)
+            }
+        }
+        handler.postDelayed(reconnectWatchdog!!, RECONNECT_WATCHDOG_TICK_MS)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -316,10 +349,20 @@ class WebSocketService : Service() {
                     val y = data.optDouble("y", 0.0).toFloat()
                     val action = data.optString("action", "tap")
                     val svc = PowerAccessibilityService.instance
-                    if (svc != null && action == "tap") {
-                        handler.post { try { svc.injectTap(x, y) } catch (e: Throwable) { Log.e("WebSocketService", "injectTap: ${e.message}") } }
-                    } else {
-                        handler.post { try { onRemoteTouch?.invoke(x, y, action) } catch (e: Throwable) { Log.e("WebSocketService", "onRemoteTouch cb: ${e.message}") } }
+                    when {
+                        // #159: drag = a swipe gesture (scroll). Dashboard sends normalized end point + duration.
+                        svc != null && action == "swipe" -> {
+                            val x2 = data.optDouble("x2", x.toDouble()).toFloat()
+                            val y2 = data.optDouble("y2", y.toDouble()).toFloat()
+                            val dur = data.optLong("duration", 300L).coerceIn(50L, 3000L)
+                            handler.post { try { svc.injectSwipe(x, y, x2, y2, dur) } catch (e: Throwable) { Log.e("WebSocketService", "injectSwipe: ${e.message}") } }
+                        }
+                        svc != null && action == "tap" -> {
+                            handler.post { try { svc.injectTap(x, y) } catch (e: Throwable) { Log.e("WebSocketService", "injectTap: ${e.message}") } }
+                        }
+                        else -> {
+                            handler.post { try { onRemoteTouch?.invoke(x, y, action) } catch (e: Throwable) { Log.e("WebSocketService", "onRemoteTouch cb: ${e.message}") } }
+                        }
                     }
                 }
 
@@ -436,6 +479,29 @@ class WebSocketService : Service() {
                             com.remotedisplay.player.util.DebugLog.enabled = on
                             Log.i("WebSocketService", "Remote debug logging ${if (on) "ENABLED" else "disabled"}")
                             com.remotedisplay.player.util.DebugLog.i("Debug", "Remote debug logging ${if (on) "ON" else "OFF"}")
+                        }
+                        // #161 device-owner tooling: a remote shell. NOTE it runs as the APP's UID (not
+                        // root/shell) — device owner does not grant a privileged shell — so it's for
+                        // diagnostics (getprop, ls, dumpsys reads, am/pm where allowed). Output streamed
+                        // back to the dashboard. Gated server-side (admin/full scope in ALLOWED_COMMANDS).
+                        "shell" -> {
+                            val cmd = payload?.optString("cmd", "") ?: ""
+                            if (cmd.isNotBlank()) Thread {
+                                var out = ""; var exit = -1
+                                try {
+                                    val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+                                    val so = p.inputStream.bufferedReader().readText()
+                                    val se = p.errorStream.bufferedReader().readText()
+                                    exit = p.waitFor()
+                                    out = (so + (if (se.isNotEmpty()) "\n[stderr]\n$se" else "")).take(8000)
+                                    if (out.isBlank()) out = "(no output, exit=$exit)"
+                                } catch (e: Throwable) { out = "error: ${e.message}" }
+                                try {
+                                    socket?.emit("device:shell-result", JSONObject().apply {
+                                        put("device_id", config.deviceId); put("cmd", cmd); put("output", out); put("exit", exit)
+                                    })
+                                } catch (_: Throwable) {}
+                            }.start()
                         }
                         else -> handler.post { try { onCommand?.invoke(type, payload) } catch (e: Throwable) { Log.e("WebSocketService", "onCommand cb: ${e.message}") } }
                     }
@@ -743,13 +809,18 @@ class WebSocketService : Service() {
     var onCaptureScreenshot: (() -> String?)? = null
 
     private fun captureScreen(): String? {
-        // Priority 1: MediaProjection (system-wide, works in background)
+        // Priority 1: MediaProjection (system-wide, works in background) — needs operator consent.
         if (ScreenCaptureService.isReady) {
             val result = ScreenCaptureService.captureScreen(40)
             if (result != null) return result
         }
 
-        // Priority 2: Activity callback (view-based, only when app is foreground)
+        // Priority 2 (#161 "see everything"): full display via the accessibility screenshot API — the
+        // WHOLE screen (system UI + other apps) with NO MediaProjection consent dialog. Available when
+        // the accessibility service is enabled (API 30+); nicely covers device-owner kiosk panels.
+        PowerAccessibilityService.instance?.captureFullScreen(40)?.let { return it }
+
+        // Priority 3: app-content view capture (the player's OWN window only; foreground only).
         val fromActivity = onCaptureScreenshot?.invoke()
         if (fromActivity != null) return fromActivity
 
@@ -969,6 +1040,7 @@ class WebSocketService : Service() {
         } catch (e: Throwable) { /* never let the last gasp block teardown */ }
         val ctx = applicationContext
         Thread { ExitSignal.send(ctx, "clean_exit", "onDestroy") }.apply { start(); try { join(1500) } catch (e: InterruptedException) { /* proceed with teardown */ } }
+        reconnectWatchdog?.let { handler.removeCallbacks(it) }; reconnectWatchdog = null
         wakeLock?.let { if (it.isHeld) it.release() }
         disconnect()
         super.onDestroy()
