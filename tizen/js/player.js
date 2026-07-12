@@ -33,7 +33,27 @@ function PlaylistPlayer(stageEl, getBase) {
   this.MIN_DURATION = 3;
   this.preloadEl = null;       // #group-sync double buffer: pre-buffered next <video>
   this.preloadIdx = -1;
+  // #157: schedule-driven (group-sync) mode — set by app.js. Group-sync advances via its own tick,
+  // not the solo timer, and Tizen group-sync doesn't use wallFollower, so this gates the deferral.
+  this.scheduleDriven = false;
+  // #157 deferred rotation-out: when a removed-but-live item should finish before we swap in the list.
+  this._deferredRotation = false;
+  this._deferredSuccessorId = null;
 }
+
+// #157 continuity helpers (mirror the web/Android players).
+PlaylistPlayer.prototype.setScheduleDriven = function (b) { this.scheduleDriven = !!b; };
+PlaylistPlayer.prototype.itemIdentity = function (x) {
+  return x ? [x.content_id || '', x.widget_id || '', x.remote_url || '', x.filepath || ''].join('|') : '';
+};
+PlaylistPlayer.prototype.indexOfIdentity = function (arr, id) {
+  for (var i = 0; i < arr.length; i++) if (this.itemIdentity(arr[i]) === id) return i;
+  return -1;
+};
+PlaylistPlayer.prototype.hasContentOnScreen = function () {
+  return !!(this.stage && this.stage.querySelector &&
+    (this.stage.querySelector('video') || this.stage.querySelector('img') || this.stage.querySelector('iframe')));
+};
 
 // Double buffer: build a hidden, buffering <video> for the next clip (in document.body so clearStage
 // won't wipe it) so renderVideo can mount it instantly at the boundary (no black hold). Videos only.
@@ -85,10 +105,46 @@ PlaylistPlayer.prototype.load = function (assignments) {
     return;
   }
 
+  // Structural change. Preserve continuity like the web/Android players instead of always
+  // restarting from the top: if the on-screen item survives, keep playing it; if it was removed
+  // while live in SOLO playback (#157 e.g. an expiry), let it finish then rotate to the successor.
+  var oldItems = this.items;
+  var oldIndex = this.index;
+  var curId = this.itemIdentity(oldItems[oldIndex]);
   this.sig = sig;
   this.items = items;
-  this.index = 0;
-  this.startPlayback();
+  this._deferredRotation = false;
+  this._deferredSuccessorId = null;
+
+  if (!items.length) { this.index = 0; this.startPlayback(); return; }
+
+  // Current item survives -> keep playing it, just retarget the index (no restart).
+  if (curId) {
+    var stay = this.indexOfIdentity(items, curId);
+    if (stay >= 0 && this.hasContentOnScreen()) { this.index = stay; return; }
+  }
+
+  // Anchor gone: walk forward from the OLD position to the first item that still exists.
+  var nextIdx = 0;
+  if (oldItems.length) {
+    for (var w = 1; w <= oldItems.length; w++) {
+      var pid = this.itemIdentity(oldItems[(oldIndex + w) % oldItems.length]);
+      if (!pid || pid === curId) continue;
+      var f = this.indexOfIdentity(items, pid);
+      if (f >= 0) { nextIdx = f; break; }
+    }
+  }
+
+  // #157: removed-but-live in solo playback -> don't interrupt; rotate out on the next advance
+  // (the current item's video onended / image timer still fires advance()). Group-sync (schedule-
+  // driven) and wall followers reconcile via their own tick, so play through immediately as before.
+  if (this.hasContentOnScreen() && !this.wallFollower && !this.scheduleDriven) {
+    this._deferredRotation = true;
+    this._deferredSuccessorId = this.itemIdentity(items[nextIdx]);
+    return;
+  }
+
+  this.startPlaybackAt(nextIdx);
 };
 
 PlaylistPlayer.prototype.stop = function () {
@@ -126,12 +182,30 @@ PlaylistPlayer.prototype.contentUrl = function (item) {
 };
 
 PlaylistPlayer.prototype.advance = function () {
+  // #157: apply a deferred rotation-out — the removed-but-live item just finished, so swap in the
+  // stashed list and continue at the preserved successor instead of interrupting/restarting.
+  if (this._deferredRotation) {
+    this._deferredRotation = false;
+    var sid = this._deferredSuccessorId; this._deferredSuccessorId = null;
+    var to = sid ? this.indexOfIdentity(this.items, sid) : -1;
+    this.startPlaybackAt(to >= 0 ? to : 0);
+    return;
+  }
   if (!this.items.length) return;
   // #74/#75: advance to the next schedule-active item; idle if none.
   var idx = this.nextActiveIndex(this.index);
   if (idx < 0) { this.nothingScheduled(); return; }
   this.index = idx;
   this.playCurrent();
+};
+
+// Play a specific index (schedule-permitting); mirrors the web player's startPlaybackAt.
+PlaylistPlayer.prototype.startPlaybackAt = function (idx) {
+  if (!this.items.length) { this.idle(); return; }
+  if (idx < 0 || idx >= this.items.length) idx = 0;
+  if (this.scheduleAllows(this.items[idx])) { this.index = idx; this.playCurrent(); return; }
+  var a = this.nextActiveIndex(idx);
+  if (a >= 0) { this.index = a; this.playCurrent(); } else this.nothingScheduled();
 };
 
 PlaylistPlayer.prototype.schedule = function (ms) {

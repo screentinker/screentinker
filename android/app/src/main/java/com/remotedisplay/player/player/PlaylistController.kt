@@ -47,6 +47,14 @@ class PlaylistController(
     @Volatile private var effectiveTimezone: String? = null
     private var retryRunnable: Runnable? = null
 
+    // #157: when a playlist update REMOVES the item currently on screen (e.g. it just expired),
+    // we don't yank it off / restart — the current item plays out and we rotate into this stashed
+    // list on the next advance. pendingSuccessorId is the item that followed the removed one (old
+    // order) and still exists, so rotation continues where it left off instead of jumping to the top.
+    // Solo playback only (never wallFollower/group-sync, whose advance isn't driven by next()).
+    private var pendingItems: List<PlaylistItem>? = null
+    private var pendingSuccessorId: String? = null
+
     // Screen-resilience: an item is playable only when its content is actually AVAILABLE
     // (widget / remote-stream / fully-downloaded local file). Injected by MainActivity (which owns
     // the cache); the default keeps every item playable so behavior is unchanged until it's set.
@@ -159,6 +167,28 @@ class PlaylistController(
         // Remember what's currently playing
         val currentlyPlayingId = currentItem?.contentId
 
+        // #157: the item on screen was REMOVED (its only change is removal — e.g. it just expired).
+        // In solo playback, don't interrupt it: keep it up, stash the new list, and rotate out on the
+        // next natural advance (video end / image duration). Excludes wallFollower + group-sync, whose
+        // advance is driven by their tick, not next() — deferring there would strand the swap.
+        if (isRunning && !wallFollower && hasContentOnScreen && currentlyPlayingId != null &&
+            newItems.none { it.contentId == currentlyPlayingId }) {
+            var succ: String? = null
+            if (items.isNotEmpty()) {
+                for (k in 1..items.size) {
+                    val cid = items[(currentIndex + k) % items.size].contentId
+                    if (cid != currentlyPlayingId && newItems.any { it.contentId == cid }) { succ = cid; break }
+                }
+            }
+            pendingItems = newItems
+            pendingSuccessorId = succ
+            Log.i("PlaylistController", "Current item removed but still live — deferring rotation-out (successor=$succ)")
+            return
+        }
+        // A non-deferred structural update supersedes any pending swap.
+        pendingItems = null
+        pendingSuccessorId = null
+
         items.clear()
         items.addAll(newItems)
 
@@ -243,9 +273,25 @@ class PlaylistController(
         cancelAdvance()
         cancelRetry()
         hasContentOnScreen = false
+        pendingItems = null
+        pendingSuccessorId = null
     }
 
     fun next() {
+        // #157: a deferred rotation-out — the just-finished item was removed (expired) while live.
+        // Swap in the stashed list now and continue at the preserved successor (or first playable).
+        pendingItems?.let { p ->
+            pendingItems = null
+            val succ = pendingSuccessorId; pendingSuccessorId = null
+            items.clear(); items.addAll(p)
+            if (items.isEmpty()) { currentIndex = -1; cancelAdvance(); onPlaylistEmpty(); return }
+            onRequestRefresh?.invoke()
+            if (firstActiveIndex() < 0) { showNothingScheduled(); return }
+            var idx = if (succ != null) items.indexOfFirst { it.contentId == succ } else -1
+            if (idx < 0 || !playableNow(idx)) idx = PlaylistSelection.firstPlayableIndex(items.size) { playableNow(it) }
+            if (idx >= 0) { currentIndex = idx; playCurrentItem() } else onContentNotReady()
+            return
+        }
         if (items.isEmpty()) return
         // Request a playlist refresh between plays so new content gets picked up
         onRequestRefresh?.invoke()

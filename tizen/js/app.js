@@ -629,6 +629,7 @@
       // player's sig so it repaints (see the single-zone branch for the full rationale).
       if (stageOwner !== 'player') { zoneRenderer.clear(); player.invalidate(); }
       groupSync.exit();                 // wall and group are mutually exclusive
+      player.setScheduleDriven(false);  // #157: wall gates on wallFollower, not scheduleDriven
       wallController.apply(payload.wall_config);
       player.setTimezone(payload.timezone || null);
       player.load(payload.assignments || []);
@@ -642,6 +643,8 @@
     wallController.exit();   // never in wall mode here
     if (payload.group_sync) groupSync.apply(payload.group_sync.group_id);
     else groupSync.exit();
+    // #157: group-sync advances via its own tick, so suppress the solo deferred-rotation there.
+    player.setScheduleDriven(!!payload.group_sync);
     applyOrientation(payload.orientation || 'landscape');
     var layout = payload.layout;
     if (layout && Array.isArray(layout.zones) && layout.zones.length) { // B3: non-array zones would throw in zoneRenderer

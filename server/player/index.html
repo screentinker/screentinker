@@ -345,6 +345,12 @@
     let config = getConfig();
     let playlist = [];
     let currentIndex = -1;
+    // #157: deferred rotation-out. When a playlist update removes the item currently on screen
+    // (e.g. it just expired) in solo playback, we keep it up and rotate to deferredSuccessorId on
+    // the next natural advance instead of interrupting/restarting.
+    let deferredRotation = false;
+    let deferredSuccessorId = null;
+    function itemIdentity(x) { return x ? `${x.content_id || ''}|${x.widget_id || ''}|${x.remote_url || ''}|${x.filepath || ''}` : ''; }
 
     // ==================== Exit-signal contract v1 (best-effort last gasp) ====================
     // Announce manner-of-death via navigator.sendBeacon (reliable-on-unload — survives the socket
@@ -1669,13 +1675,17 @@
 
       console.log('Playlist changed, updating');
       // Capture old state BEFORE mutating so continuity logic can find what was playing.
-      const identityOf = (x) => x ? `${x.content_id || ''}|${x.widget_id || ''}|${x.remote_url || ''}|${x.filepath || ''}` : '';
+      const identityOf = itemIdentity;
       const oldPlaylist = playlist;
       const oldAnchorIdx = currentIndex;
       const oldAnchorId = identityOf(oldPlaylist[oldAnchorIdx]);
 
       playlist = newItems;
       savePlaylistCache(playlist);
+      // #157: a fresh structural update supersedes any pending deferred rotation; the branches
+      // below re-arm it only if the current item was removed while live in solo playback.
+      deferredRotation = false;
+      deferredSuccessorId = null;
 
       if (playlist.length === 0) {
         teardownCurrentMedia();
@@ -1712,6 +1722,18 @@
         }
       }
       if (nextIdx === -1) nextIdx = 0;
+
+      // #157: if the removed item is still live on screen in SOLO playback, don't interrupt it —
+      // keep it up and rotate to the successor on the next natural advance (its advanceTimer /
+      // video onended still fires nextItem). Schedule-driven modes (wall follower / group-sync)
+      // advance via their own tick, so they reconcile immediately as before.
+      const scheduleDriven = isWallFollower() || !!groupSync;
+      if (isPlaying && !scheduleDriven) {
+        deferredRotation = true;
+        deferredSuccessorId = itemIdentity(playlist[nextIdx]);
+        console.log('#157: current item removed but still live — deferring rotation-out');
+        return;
+      }
 
       startPlaybackAt(nextIdx);
     }
@@ -1788,6 +1810,16 @@
     }
 
     function nextItem() {
+      // #157: apply a deferred rotation-out — the removed-but-live item has finished, so rotate
+      // into the (already-swapped) list at the preserved successor instead of interrupting.
+      if (deferredRotation) {
+        deferredRotation = false;
+        const sid = deferredSuccessorId; deferredSuccessorId = null;
+        let idx = sid ? playlist.findIndex(x => itemIdentity(x) === sid) : -1;
+        if (idx < 0) idx = 0;
+        startPlaybackAt(idx);
+        return;
+      }
       // Send play_end for current
       if (playlist[currentIndex] && socket?.connected) {
         socket.emit('device:play-event', {
