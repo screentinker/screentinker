@@ -137,6 +137,22 @@
             </intent-filter>
         </receiver>
 
+        <!-- #device-owner: Android 10+ fully-managed provisioning handshake. REQUIRED for QR/NFC
+             enrollment on Android 12+ — without a GET_PROVISIONING_MODE / ADMIN_POLICY_COMPLIANCE
+             handler the platform aborts provisioning after install ("something went wrong").
+             System-only (BIND_DEVICE_ADMIN); translucent + finishes immediately (no visible UI). -->
+        <activity
+            android:name=".admin.ProvisioningActivity"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- FileProvider for APK updates -->
         <provider
             android:name="androidx.core.content.FileProvider"

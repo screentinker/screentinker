@@ -3,6 +3,7 @@ import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge } from '../utils.js';
 import { t, tn } from '../i18n.js';
+import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 
 const DESTRUCTIVE_COMMANDS = ['reboot', 'shutdown'];
 // Command types only — labels resolved through t('dashboard.cmd.<type>')
@@ -297,6 +298,9 @@ export function render(container) {
     document.getElementById('deviceNameInput').value = '';
     document.getElementById('pairingCodeInput').focus();
   });
+
+  // #device-owner: provision a fresh/factory-reset Android panel straight from Add Display.
+  document.getElementById('deviceOwnerQrBtn')?.addEventListener('click', () => showDeviceOwnerQRModal());
 
   // Search and filter
   document.getElementById('deviceSearch').oninput = () => filterDevices();

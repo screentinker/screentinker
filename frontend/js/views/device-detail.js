@@ -3,6 +3,7 @@ import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwi
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge } from '../utils.js';
 import { t, tn } from '../i18n.js';
+import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 
 let currentDevice = null;
 let statusHandler = null;
@@ -774,42 +775,6 @@ const fmtTs = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '—');
 
 // #161: device-owner provisioning helper — QR (scan after factory-reset, tap welcome 6×) + the ADB
 // one-liner. Device owner is optional; it unlocks silent updates, reboot, kiosk, time control.
-async function showDeviceOwnerModal() {
-  let info;
-  try { info = await api.getDeviceOwnerQR(); }
-  catch (e) { showToast(e.message || t('device.owner_provision.error'), 'error'); return; }
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.style.display = 'flex';
-  overlay.innerHTML = `
-    <div class="modal" style="max-width:560px;width:95vw">
-      <div class="modal-header">
-        <h3>${t('device.owner_provision.title')}</h3>
-        <button class="modal-close" id="doClose">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p style="color:var(--text-muted);font-size:13px;line-height:1.5">${t('device.owner_provision.intro')}</p>
-        <div style="text-align:center;margin:14px 0">
-          <img src="${info.qr_data_url}" alt="provisioning QR" style="width:280px;height:280px;background:#fff;border-radius:8px;padding:8px"/>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">${t('device.owner_provision.qr_hint')}</div>
-        </div>
-        <div style="font-size:13px;font-weight:600;margin-bottom:4px">${t('device.owner_provision.adb_label')}</div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <code style="flex:1;background:var(--bg-input,#1e293b);padding:8px 10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:nowrap">${esc(info.adb_command)}</code>
-          <button class="btn btn-secondary btn-sm" id="doCopy">${t('device.owner_provision.copy')}</button>
-        </div>
-        <p style="font-size:12px;color:var(--text-muted);margin-top:12px;line-height:1.5">${t('device.owner_provision.constraints')}</p>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector('#doClose').onclick = close;
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  overlay.querySelector('#doCopy').onclick = () => {
-    navigator.clipboard?.writeText(info.adb_command)
-      .then(() => showToast(t('device.owner_provision.copied'), 'success')).catch(() => {});
-  };
-}
 
 async function showReAdoptModal(device) {
   let snapshots, playlists;
@@ -1052,7 +1017,7 @@ function setupActions(device) {
 
   // #146 Item D: operator block/unblock — takes effect on the device's next register,
   // no restart. Server enforces even a device_id-less reconnect via the identity chain.
-  document.getElementById('deviceOwnerBtn')?.addEventListener('click', () => showDeviceOwnerModal());
+  document.getElementById('deviceOwnerBtn')?.addEventListener('click', () => showDeviceOwnerQRModal());
 
   // #161 Tier-2 controls (rendered only for device-owner panels).
   const t2 = (type, confirm) => {

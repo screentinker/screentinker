@@ -55,6 +55,16 @@ class ServerConfig(context: Context) {
         }
         set(value) = prefs.edit().putString("settings_pin", value).apply()
 
+    // #device-owner: set when a provisioned server URL was pre-seeded (QR admin-extras bundle), so the
+    // setup screen can auto-advance to the pairing code instead of waiting for a manual "Connect" tap.
+    // Consumed once. Absent on a normal install -> setup behaves exactly as before.
+    fun setPendingAutoConnect(v: Boolean) { prefs.edit().putBoolean("pending_auto_connect", v).apply() }
+    fun consumePendingAutoConnect(): Boolean {
+        val v = prefs.getBoolean("pending_auto_connect", false)
+        if (v) prefs.edit().remove("pending_auto_connect").apply()
+        return v
+    }
+
     val isProvisioned: Boolean
         get() = deviceId.isNotEmpty() && serverUrl.isNotEmpty()
 

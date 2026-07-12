@@ -127,6 +127,13 @@ class ProvisioningActivity : AppCompatActivity() {
             startRepairTicker()
         }
 
+        // #device-owner: when the server URL was seeded by device-owner provisioning, skip the manual
+        // "Connect" tap and go straight to registering + showing the pairing code. One-shot flag; only
+        // when not re-pairing and a URL is actually present. Normal installs never set it -> unchanged.
+        if (!repairMode && config.serverUrl.isNotEmpty() && config.consumePendingAutoConnect()) {
+            connectToServer(config.serverUrl)
+        }
+
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)

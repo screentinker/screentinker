@@ -27,6 +27,13 @@ class STDeviceAdminReceiver : DeviceAdminReceiver() {
         Log.i(TAG, "device admin enabled (deviceOwner=${STPolicy(context).isDeviceOwner()})")
     }
 
+    // Fires when device-owner provisioning completes. The intent carries the optional admin-extras
+    // bundle (server URL) — apply it so the panel self-configures. No bundle -> harmless no-op.
+    override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
+        Log.i(TAG, "provisioning complete — applying admin extras (if any)")
+        ProvisioningExtras.apply(context, intent)
+    }
+
     override fun onDisabled(context: Context, intent: Intent) {
         Log.i(TAG, "device admin disabled")
     }

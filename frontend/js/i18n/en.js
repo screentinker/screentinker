@@ -246,6 +246,8 @@ export default {
   'device.owner_provision.copied': 'Command copied',
   'device.owner_provision.constraints': 'Requires a freshly set-up / factory-reset device with no accounts, done before other device-owner apps enroll. If an MDM already owns the device, ScreenTinker stays at Tier 0/1 and the MDM owns updates.',
   'device.owner_provision.error': 'Failed to load provisioning info',
+  'device.owner_provision.verified_from_apk': 'Signature verified from the current server APK — always matches the build it installs.',
+  'device.owner_provision.fallback_checksum': 'No APK on the server yet — using the fallback checksum. Upload the player APK before provisioning.',
   'device.tier2.label': 'Device owner:',
   'device.tier2.tip': 'Privileged controls available because this panel is device owner',
   'device.tier2.reboot': 'Reboot',
@@ -1401,6 +1403,8 @@ export default {
   'add_display.raspberry_pi': 'Raspberry Pi',
   'add_display.windows': 'Windows',
   'add_display.smart_tv_note': 'Smart TVs (LG/Samsung): open the built-in browser and navigate to <code style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px">/player</code>',
+  'add_display.owner_prompt': 'Provisioning a fresh / factory-reset Android panel? Enroll it as device owner for silent updates, reboot & kiosk:',
+  'add_display.owner_qr_btn': 'Show device-owner QR',
   'add_display.pair_btn': 'Pair Display',
 
   // Workspace switcher (Phase 3 MVP). devices_count is the only count exposed
