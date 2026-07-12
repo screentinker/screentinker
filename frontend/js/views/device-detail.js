@@ -13,6 +13,22 @@ let shellHandler = null;
 let screenshotInterval = null;
 let remoteActive = false;
 
+// #161 device-owner Terminal presets. Commands chosen to work at the APP UID (not root) — getprop,
+// /proc + /sys reads, df, pm list, ip. dumpsys/settings are deliberately avoided (OS-denied to apps).
+const TERMINAL_PRESETS = [
+  { label: 'Device info', cmd: 'getprop ro.product.manufacturer; getprop ro.product.model; echo "Android $(getprop ro.build.version.release) (sdk $(getprop ro.build.version.sdk))"' },
+  { label: 'Build', cmd: 'getprop ro.build.fingerprint; echo "serial=$(getprop ro.serialno)"' },
+  { label: 'Memory', cmd: 'head -3 /proc/meminfo' },
+  { label: 'CPU', cmd: 'grep -iE "hardware|processor" /proc/cpuinfo | head; echo "cores=$(cat /proc/cpuinfo | grep -c ^processor)"' },
+  { label: 'Storage', cmd: 'df -h /data 2>/dev/null; df -h /storage/emulated/0 2>/dev/null' },
+  { label: 'Uptime', cmd: 'echo "up $(cut -d. -f1 /proc/uptime)s"' },
+  { label: 'Network', cmd: 'ip -o addr 2>/dev/null | grep -vE " lo " || getprop | grep -iE "dhcp.*ipaddress|net.dns"' },
+  { label: 'Battery', cmd: 'for f in /sys/class/power_supply/*/; do c=$(cat "$f/capacity" 2>/dev/null); s=$(cat "$f/status" 2>/dev/null); [ -n "$c" ] && echo "$(basename $f): $c% $s"; done' },
+  { label: '3rd-party apps', cmd: 'pm list packages -3 2>/dev/null | head -40 || echo "pm list denied at app uid"' },
+  { label: 'Props', cmd: 'getprop | grep -iE "model|version.release|serialno|wifi.interface|timezone"' },
+  { label: 'Whoami', cmd: 'id' },
+];
+
 function formatBytes(mb) {
   if (mb === null || mb === undefined) return '--';
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
@@ -186,6 +202,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <div class="tab" data-tab="playlist">${t('device.tab.playlist')} <span class="help-tip" data-tip="${t('device.tab.playlist_tip')}">?</span></div>
         <div class="tab" data-tab="info">${t('device.tab.info')} <span class="help-tip" data-tip="${t('device.tab.info_tip')}">?</span></div>
         <div class="tab" data-tab="remote">${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>
+        ${device.tier === 2 ? `<div class="tab" data-tab="terminal">${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
       </div>
 
       <!-- Now Playing Tab -->
@@ -523,22 +540,32 @@ async function loadDevice(deviceId, activeTab = null) {
               ${t('device.remote.enable_system_view')}
             </button>
             <span id="systemViewHint" style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.remote.system_view_hint')}</span>`}
-            ${device.tier === 2 ? `
-            <hr style="border-color:var(--border);margin:10px 0">
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${t('device.owner_tools.label')}</div>
-            <div style="display:flex;gap:4px;margin-bottom:4px">
-              <input id="shellCmd" class="input" placeholder="${t('device.owner_tools.shell_ph')}" style="flex:1;font-family:monospace;font-size:12px"/>
-              <button class="btn btn-secondary btn-sm" id="shellRun">${t('device.owner_tools.run')}</button>
-            </div>
-            <pre id="shellOut" style="background:var(--bg-input,#1e293b);padding:8px;border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;margin:0 0 8px;color:var(--text-secondary)">—</pre>
-            <div style="display:flex;gap:4px">
-              <input id="apkUrl" class="input" placeholder="${t('device.owner_tools.apk_ph')}" style="flex:1;font-size:12px"/>
-              <button class="btn btn-secondary btn-sm" id="apkInstall">${t('device.owner_tools.install')}</button>
-            </div>
-            <span style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.owner_tools.hint')}</span>` : ''}
           </div>
         </div>
       </div>
+
+      ${device.tier === 2 ? `
+      <!-- Terminal Tab (device owner) -->
+      <div class="tab-content" id="tab-terminal">
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
+          ${TERMINAL_PRESETS.map(p => `<button class="btn btn-secondary btn-sm term-preset" data-cmd="${esc(p.cmd)}" title="${esc(p.cmd)}">${esc(p.label)}</button>`).join('')}
+        </div>
+        <div id="termOut" style="background:#0b1020;color:#c8e1ff;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;padding:12px;border-radius:8px;height:360px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border)">${t('device.terminal.welcome')}\n</div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+          <span style="color:var(--success);font-family:monospace;font-weight:700">$</span>
+          <input id="termCmd" class="input" style="flex:1;font-family:monospace;font-size:13px" placeholder="${t('device.terminal.placeholder')}" autocomplete="off" spellcheck="false"/>
+          <button class="btn btn-primary btn-sm" id="termRun">${t('device.terminal.run')}</button>
+          <button class="btn btn-secondary btn-sm" id="termClear">${t('device.terminal.clear')}</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${t('device.terminal.uid_note')}</div>
+        <hr style="border-color:var(--border);margin:14px 0 10px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${t('device.terminal.push_apk')}</div>
+        <div style="display:flex;gap:6px">
+          <input id="apkUrl" class="input" placeholder="${t('device.owner_tools.apk_ph')}" style="flex:1;font-size:12px"/>
+          <button class="btn btn-secondary btn-sm" id="apkInstall">${t('device.owner_tools.install')}</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${t('device.terminal.push_apk_hint')}</div>
+      </div>` : ''}
     `;
 
     // Global key/command handlers for remote
@@ -564,28 +591,28 @@ async function loadDevice(deviceId, activeTab = null) {
       }, 5000);
     };
 
-    // #161 device-owner tools (tier 2 only): remote shell + push an APK.
+    // #161 device-owner Terminal tab (tier 2 only): a real scrollback shell + preset commands + push-APK.
     if (device.tier === 2) {
-      const shellOut = document.getElementById('shellOut');
-      const runShell = () => {
-        const cmd = document.getElementById('shellCmd')?.value?.trim();
-        if (!cmd) return;
-        if (shellOut) shellOut.textContent = '$ ' + cmd + '\n…';
-        sendCommand(device.id, 'shell', { cmd });
-      };
-      document.getElementById('shellRun')?.addEventListener('click', runShell);
-      document.getElementById('shellCmd')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runShell(); });
+      const termOut = document.getElementById('termOut');
+      const append = (text) => { if (!termOut) return; termOut.textContent += text; termOut.scrollTop = termOut.scrollHeight; };
+      const runCmd = (cmd) => { if (!cmd) return; append('\n$ ' + cmd + '\n'); sendCommand(device.id, 'shell', { cmd }); };
+      const termCmd = document.getElementById('termCmd');
+      document.getElementById('termRun')?.addEventListener('click', () => { const c = termCmd?.value?.trim(); if (c) { runCmd(c); termCmd.value = ''; } });
+      termCmd?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const c = e.target.value.trim(); if (c) { runCmd(c); e.target.value = ''; } } });
+      document.querySelectorAll('.term-preset').forEach(b => b.addEventListener('click', () => runCmd(b.dataset.cmd)));
+      document.getElementById('termClear')?.addEventListener('click', () => { if (termOut) termOut.textContent = ''; });
       document.getElementById('apkInstall')?.addEventListener('click', () => {
         const url = document.getElementById('apkUrl')?.value?.trim();
         if (!url) return;
         if (!/^https?:\/\//.test(url)) { showToast(t('device.owner_tools.bad_url'), 'error'); return; }
         sendCommand(device.id, 'install_apk', { url });
+        append('\n# push apk → ' + url + '  (installs silently on a device owner)\n');
         showToast(t('device.owner_tools.apk_sent'), 'success');
       });
       if (shellHandler) off('shell-result', shellHandler);
       shellHandler = (data) => {
-        if (data.device_id !== device.id || !shellOut) return;
-        shellOut.textContent = '$ ' + (data.cmd || '') + '\n' + (data.output || '') + (data.exit != null ? '\n[exit ' + data.exit + ']' : '');
+        if (data.device_id !== device.id) return;
+        append((data.output || '') + (data.exit != null && data.exit !== 0 ? '\n[exit ' + data.exit + ']\n' : '\n'));
       };
       on('shell-result', shellHandler);
     }
