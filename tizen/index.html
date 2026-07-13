@@ -32,6 +32,12 @@
         </div>
     </div>
 
+    <!-- #170: Tizen AVPlay video surface. HTML5 <video> lives on a hardware plane that ignores
+         CSS rotate, so portrait/flipped VIDEO blacks out; AVPlay's setDisplayRotation rotates the
+         hardware plane. Hidden until a portrait/flipped video plays; off-hardware (no webapis) it
+         stays unused. Sits above the (empty-during-AV) stage so the hole-punched plane is visible. -->
+    <object id="avPlayer" type="application/avplayer" style="position:fixed;inset:0;width:100%;height:100%;z-index:5;display:none"></object>
+
     <!-- Playback stage -->
     <div id="stage" class="screen stage hidden"></div>
 

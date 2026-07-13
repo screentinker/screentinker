@@ -15,7 +15,7 @@
   // packaged config.xml via the Tizen application API; fall back to a constant that
   // build-wgt.sh stamps from config.xml's version="" so the dashboard always shows the
   // version that is actually installed (never the old hardcoded '1.0.0').
-  var APP_VERSION_FALLBACK = '1.9.2'; // st:app-version — stamped by build-wgt.sh
+  var APP_VERSION_FALLBACK = '1.9.5'; // st:app-version — stamped by build-wgt.sh
   var APP_VERSION = (function () {
     try {
       var v = tizen.application.getCurrentApplication().appInfo.version;
@@ -582,6 +582,9 @@
     // positions track the visible CONTENT, not the physical panel, in every orientation.
     orientEl(elStage.style, o);
     if (elPip) orientEl(elPip.style, o);
+    // #170: the player needs the orientation so portrait/flipped VIDEO routes through AVPlay
+    // (hardware-plane rotation) instead of the CSS-rotated <video> that Tizen blacks out.
+    try { if (player && player.setOrientation) player.setOrientation(o); } catch (e) {}
   }
   function orientEl(s, o) {
     if (!o || o === 'landscape') {

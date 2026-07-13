@@ -9,11 +9,11 @@
  */
 // Minimal i18n for the Tizen player (no shared i18n module here). Falls back to en.
 var TIZEN_I18N = {
-  en: { nothing_scheduled: 'Nothing scheduled right now', no_content: 'No content assigned yet' },
-  es: { nothing_scheduled: 'No hay nada programado en este momento', no_content: 'Aún no hay contenido asignado' },
-  fr: { nothing_scheduled: 'Rien de programmé pour le moment', no_content: 'Aucun contenu attribué pour l’instant' },
-  de: { nothing_scheduled: 'Derzeit ist nichts geplant', no_content: 'Noch kein Inhalt zugewiesen' },
-  pt: { nothing_scheduled: 'Nada programado no momento', no_content: 'Nenhum conteúdo atribuído ainda' }
+  en: { nothing_scheduled: 'Nothing scheduled right now', no_content: 'No content assigned yet', portrait_video_unsupported: 'Portrait video isn’t supported on this TV — use landscape, or pre-rotate the file and mark it Landscape.' },
+  es: { nothing_scheduled: 'No hay nada programado en este momento', no_content: 'Aún no hay contenido asignado', portrait_video_unsupported: 'El vídeo en vertical no es compatible con este televisor: usa horizontal o rota el archivo y márcalo como Horizontal.' },
+  fr: { nothing_scheduled: 'Rien de programmé pour le moment', no_content: 'Aucun contenu attribué pour l’instant', portrait_video_unsupported: 'La vidéo en portrait n’est pas prise en charge sur ce téléviseur — utilisez le paysage, ou faites pivoter le fichier et marquez-le Paysage.' },
+  de: { nothing_scheduled: 'Derzeit ist nichts geplant', no_content: 'Noch kein Inhalt zugewiesen', portrait_video_unsupported: 'Hochformat-Video wird auf diesem TV nicht unterstützt – nutze Querformat oder drehe die Datei und markiere sie als Querformat.' },
+  pt: { nothing_scheduled: 'Nada programado no momento', no_content: 'Nenhum conteúdo atribuído ainda', portrait_video_unsupported: 'Vídeo em retrato não é suportado nesta TV — use paisagem ou gire o arquivo e marque-o como Paisagem.' }
 };
 var TZ_LANG = (function () { try { return (localStorage.getItem('rd_lang') || navigator.language || 'en').split('-')[0]; } catch (e) { return 'en'; } })();
 function tzt(k) { return (TIZEN_I18N[TZ_LANG] && TIZEN_I18N[TZ_LANG][k]) || TIZEN_I18N.en[k] || k; }
@@ -29,6 +29,10 @@ function PlaylistPlayer(stageEl, getBase) {
   this.wallFollower = false;   // video-wall: a follower holds the leader's item, no auto-advance
   this.currentVideoEl = null;  // current <video> (wall leader reads position; follower drift-corrects)
   this.itemStartedAt = 0;      // wall position fallback for non-video items
+  // #170: current device orientation. Portrait/flipped VIDEO must rotate the Tizen hardware video
+  // plane via AVPlay (CSS rotate can't touch it -> black screen). Set by app.js applyOrientation.
+  this.orientation = 'landscape';
+  this.avActive = false;       // an AVPlay session is live (portrait video)
   this.DEFAULT_DURATION = 10;
   this.MIN_DURATION = 3;
   this.preloadEl = null;       // #group-sync double buffer: pre-buffered next <video>
@@ -153,6 +157,7 @@ PlaylistPlayer.prototype.stop = function () {
 };
 
 PlaylistPlayer.prototype.clearStage = function () {
+  if (this.avActive) this.avStop(); // #170: tear down any AVPlay session (portrait video)
   // Pause any video before removing so audio doesn't linger.
   var v = this.stage.querySelector('video');
   if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} }
@@ -347,7 +352,79 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
   if (!single) this.schedule(this.durationMs(item));
 };
 
+PlaylistPlayer.prototype.setOrientation = function (o) { this.orientation = o || 'landscape'; };
+PlaylistPlayer.prototype.avAvailable = function () { return !!(window.webapis && webapis.avplay); };
+
+// #170: on Tizen the HTML5 <video> is composited on a hardware plane that ignores CSS rotate,
+// so portrait/portrait-flipped orientation blacks the video out. AVPlay's setDisplayRotation
+// rotates the hardware plane itself. We use it ONLY for portrait/flipped video — landscape keeps
+// the proven <video> path (double-buffer + group-sync drift). Any AVPlay failure degrades to an
+// honest note, never a silent black screen.
+PlaylistPlayer.prototype.renderVideoAv = function (item, single) {
+  var self = this;
+  var url = this.contentUrl(item);
+  if (!url) { this.skipSoon(); return; }
+  var deg = this.orientation === 'portrait-flipped' ? 270 : 90;
+  var rot = deg === 270 ? 'PLAYER_DISPLAY_ROTATION_270' : 'PLAYER_DISPLAY_ROTATION_90';
+  var obj = document.getElementById('avPlayer');
+  var w = window.innerWidth || (window.screen && screen.width) || 1920;
+  var h = window.innerHeight || (window.screen && screen.height) || 1080;
+  // currentVideoEl stays null: wall/group-sync per-frame drift needs an HTML5 element; portrait
+  // signage is solo-first, and the schedule engine still drives index/position via gotoIndex.
+  this.currentVideoEl = null;
+  try { webapis.avplay.close(); } catch (e) {}            // reset any prior session
+  try {
+    webapis.avplay.open(url);
+    if (obj) obj.style.display = 'block';
+    webapis.avplay.setDisplayRect(0, 0, w, h);
+    try { webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX'); } catch (e) {}
+    webapis.avplay.setDisplayRotation(rot);
+    webapis.avplay.setListener({
+      onstreamcompleted: function () {
+        if (single) { try { webapis.avplay.seekTo(0); webapis.avplay.play(); } catch (e) { self.avStop(); self.skipSoon(); } }
+        else { self.advance(); }
+      },
+      onerror: function () { self.avFallback(item); }
+    });
+    this.avActive = true;
+    webapis.avplay.prepareAsync(
+      function () { try { webapis.avplay.play(); } catch (e) { self.avFallback(item); } },
+      function () { self.avFallback(item); }
+    );
+    // Safety net (mirrors the <video> path): advance after the known duration if
+    // onstreamcompleted never fires.
+    if (!single) {
+      var secs = Number(item.content_duration || item.duration_sec) || this.DEFAULT_DURATION;
+      this.schedule((secs + 5) * 1000);
+    }
+  } catch (e) { this.avFallback(item); }
+};
+
+// AVPlay missing/failed on this device -> honest note (never a silent black), then move on.
+PlaylistPlayer.prototype.avFallback = function (item) {
+  this.avStop();
+  this.stage.innerHTML =
+    '<div class="card" style="position:relative"><h1>ScreenTinker</h1>' +
+    '<p class="sub">' + tzt('portrait_video_unsupported') + '</p></div>';
+  // Don't wedge on a single looping item; re-check after a beat (or the item's duration).
+  this.schedule(Math.max(this.durationMs(item), 30000));
+};
+
+PlaylistPlayer.prototype.avStop = function () {
+  if (!this.avActive) return;
+  try { webapis.avplay.stop(); } catch (e) {}
+  try { webapis.avplay.close(); } catch (e) {}
+  var obj = document.getElementById('avPlayer');
+  if (obj) obj.style.display = 'none';
+  this.avActive = false;
+};
+
 PlaylistPlayer.prototype.renderVideo = function (item, single) {
+  // #170: portrait/flipped video must rotate the Tizen HARDWARE video plane, which a CSS transform
+  // on #stage can't do (black screen). Route it through AVPlay; landscape stays on <video>.
+  if ((this.orientation === 'portrait' || this.orientation === 'portrait-flipped') && this.avAvailable()) {
+    return this.renderVideoAv(item, single);
+  }
   var self = this;
   // Double buffer: reuse the pre-buffered element for this index if warmed (no black hold); its src
   // is already set + buffering, so playback starts near-instantly.
