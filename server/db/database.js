@@ -221,6 +221,9 @@ const migrations = [
   "CREATE TABLE IF NOT EXISTS api_token_targets (token_id TEXT NOT NULL REFERENCES api_tokens(id) ON DELETE CASCADE, playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE, created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), PRIMARY KEY (token_id, playlist_id))",
   // #73: per-agency-token auto-publish (DEFAULT 0 = draft, the fail-safe).
   "ALTER TABLE api_tokens ADD COLUMN auto_publish INTEGER NOT NULL DEFAULT 0",
+  // #158: agency uploads land in this bound folder (and its subtree). NULL = root (pre-#158
+  // tokens, or admin unbound). ON DELETE SET NULL so deleting the folder falls back to root.
+  "ALTER TABLE api_tokens ADD COLUMN upload_folder_id TEXT REFERENCES content_folders(id) ON DELETE SET NULL",
   // #73: agency-upload notification queue (batched digest).
   "CREATE TABLE IF NOT EXISTS agency_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, token_id TEXT NOT NULL, playlist_id TEXT NOT NULL, action TEXT NOT NULL, content_id TEXT, created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), sent_at INTEGER)",
   "CREATE INDEX IF NOT EXISTS idx_agency_notifications_unsent ON agency_notifications(sent_at)",

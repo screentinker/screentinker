@@ -88,6 +88,9 @@ export async function render(container) {
           <input type="checkbox" id="tokAutoPublish"> ${t('apitoken.auto_publish_label')}
         </label>
         <p style="color:var(--text-muted);font-size:12px;margin:4px 0 0">${t('apitoken.auto_publish_hint')}</p>
+        <label style="display:block;font-weight:500;margin-top:12px;margin-bottom:4px">${t('apitoken.agency_folder_label')}</label>
+        <p style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${t('apitoken.agency_folder_hint')}</p>
+        <select id="tokUploadFolder" class="input" style="width:100%"><option value="">${t('apitoken.agency_folder_auto')}</option></select>
       </div>
       <div id="tokenSecretBox" style="display:none"></div>
       <div id="tokenList"><p style="color:var(--text-muted);font-size:13px">${t('settings.loading_users')}</p></div>
@@ -372,14 +375,14 @@ export async function render(container) {
               <td style="padding:10px 12px">${esc(tok.name || '')}</td>
               <td style="padding:10px 12px">${esc(scopeLabel(tok.scope))}${
                 tok.scope === 'agency' && Array.isArray(tok.targets)
-                  ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('apitoken.targets_label')} ${tok.targets.length ? tok.targets.map(p => esc(p.name)).join(', ') : '—'}${tok.auto_publish ? ' · ' + esc(t('apitoken.auto_publish_on')) : ''}</div>`
+                  ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('apitoken.targets_label')} ${tok.targets.length ? tok.targets.map(p => esc(p.name)).join(', ') : '—'}${tok.auto_publish ? ' · ' + esc(t('apitoken.auto_publish_on')) : ''}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('apitoken.folder_label')} ${tok.upload_folder ? esc(tok.upload_folder) : esc(t('apitoken.folder_root'))}</div>`
                   : ''}</td>
               <td style="padding:10px 12px">${esc(fmtTokenDate(tok.created_at))}</td>
               <td style="padding:10px 12px">${tok.last_used_at ? esc(fmtTokenDate(tok.last_used_at)) : t('apitoken.never')}</td>
               <td style="padding:10px 12px;white-space:nowrap;text-align:right">
                 ${tok.revoked_at
                   ? `<span style="color:var(--text-muted);font-size:12px">${t('apitoken.revoked')}</span>`
-                  : `${tok.scope === 'agency' ? `<button class="btn btn-secondary btn-sm edit-targets-btn" data-id="${esc(String(tok.id))}" data-targets="${esc((tok.targets || []).map(p => p.id).join(','))}">${t('apitoken.edit_targets')}</button> ` : ''}<button class="btn btn-secondary btn-sm revoke-token-btn" data-id="${esc(String(tok.id))}">${t('apitoken.revoke')}</button>`}
+                  : `${tok.scope === 'agency' ? `<button class="btn btn-secondary btn-sm edit-targets-btn" data-id="${esc(String(tok.id))}" data-targets="${esc((tok.targets || []).map(p => p.id).join(','))}">${t('apitoken.edit_targets')}</button> <button class="btn btn-secondary btn-sm edit-folder-btn" data-id="${esc(String(tok.id))}" data-folder="${esc(String(tok.upload_folder_id || ''))}">${t('apitoken.edit_folder')}</button> ` : ''}<button class="btn btn-secondary btn-sm revoke-token-btn" data-id="${esc(String(tok.id))}">${t('apitoken.revoke')}</button>`}
               </td>
             </tr>
           `).join('')}
@@ -433,6 +436,35 @@ export async function render(container) {
       };
       document.getElementById('cancelTargetsBtn').onclick = () => { panel.style.display = 'none'; };
     }));
+
+    // #158: rebind an agency token's upload folder -> PUT /:id/upload-folder (null = root).
+    el.querySelectorAll('.edit-folder-btn').forEach(btn => btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const current = btn.dataset.folder || '';
+      const panel = document.getElementById('tokenEditPanel');
+      const folders = await api.getFolders().catch(() => []);
+      panel.style.display = 'block';
+      panel.innerHTML = `
+        <div style="border:1px solid var(--accent);border-radius:var(--radius);padding:16px;margin-top:12px">
+          <h4 style="font-size:14px;margin-bottom:8px">${t('apitoken.edit_folder')}</h4>
+          <p style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${t('apitoken.agency_folder_hint')}</p>
+          <select id="rebindFolder" class="input" style="width:100%;margin-bottom:12px">
+            <option value="">${t('apitoken.folder_root')}</option>
+            ${folders.map(f => `<option value="${esc(String(f.id))}"${String(f.id) === current ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-sm" id="saveFolderBtn">${t('common.save')}</button>
+          <button class="btn btn-secondary btn-sm" id="cancelFolderBtn">${t('common.cancel')}</button>
+        </div>`;
+      document.getElementById('saveFolderBtn').onclick = async () => {
+        try {
+          await api.setTokenUploadFolder(id, document.getElementById('rebindFolder').value || null);
+          showToast(t('apitoken.folder_updated'), 'success');
+          panel.style.display = 'none';
+          loadTokens();
+        } catch (err) { showToast(err.message, 'error'); }
+      };
+      document.getElementById('cancelFolderBtn').onclick = () => { panel.style.display = 'none'; };
+    }));
   }
 
   loadTokens();
@@ -453,6 +485,10 @@ export async function render(container) {
             ? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;opacity:.5"><input type="checkbox" disabled> ${esc(p.name)} <span style="font-size:11px;color:var(--text-muted)">— ${esc(t('apitoken.zoned_playlist_reason'))}</span></label>`
             : `<label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" class="agency-pl" value="${esc(String(p.id))}"> ${esc(p.name)}</label>`).join('')
         : `<p style="color:var(--text-muted);font-size:12px">${t('apitoken.agency_no_playlists')}</p>`;
+      // #158: offer existing folders to bind, or leave on the auto-create default.
+      const folders = await api.getFolders().catch(() => []);
+      const fsel = document.getElementById('tokUploadFolder');
+      if (fsel && folders.length) fsel.insertAdjacentHTML('beforeend', folders.map(f => `<option value="${esc(String(f.id))}">${esc(f.name)}</option>`).join(''));
     }
   });
 
@@ -465,6 +501,9 @@ export async function render(container) {
       if (!ids.length) return showToast(t('apitoken.agency_needs_playlists'), 'error');
       payload.target_playlist_ids = ids;
       payload.auto_publish = !!document.getElementById('tokAutoPublish')?.checked;
+      // #158: blank = auto-create "Agency — <name>"; a value binds that existing folder.
+      const fv = document.getElementById('tokUploadFolder')?.value;
+      if (fv) payload.upload_folder_id = fv;
     }
     const btn = document.getElementById('createTokenBtn');
     btn.disabled = true;

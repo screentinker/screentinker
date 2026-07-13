@@ -59,6 +59,25 @@
     // #73: the placement card reacts to the playlist selector - "where does THIS playlist go?"
     sel.onchange = () => loadLayoutForPlaylist(sel.value);
     loadLayoutForPlaylist(sel.value); // initial selection
+    loadFolders();
+  }
+
+  // #158 (Hybrid-C): the folders this token may drop into = its bound folder + descendants.
+  // Only offer the picker when there's a real choice (a subfolder exists); with just the bound
+  // folder, uploads default to it server-side and the picker stays hidden. The bound "root" is
+  // the one node whose parent isn't in the returned set, so we can label it "Main folder"
+  // (default, value="") and list the descendants under it — without the portal ever learning
+  // the token's folder id.
+  async function loadFolders() {
+    const row = $('folderRow'), sel = $('folderSelect');
+    let folders;
+    try { folders = await (await agencyFetch('/folders')).json(); } catch (e) { return; }
+    const ids = new Set(folders.map(f => f.id));
+    const descendants = folders.filter(f => f.parent_id && ids.has(f.parent_id)); // exclude the root
+    if (!descendants.length) { row.style.display = 'none'; return; }
+    sel.innerHTML = '<option value="">Main folder</option>'
+      + descendants.map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`).join('');
+    row.style.display = 'block';
   }
 
   // Visual placement guide for the SELECTED playlist: draw its layout to scale, highlight the
@@ -115,6 +134,8 @@
     try {
       const fd = new FormData();
       fd.append('file', file);
+      const folderId = $('folderSelect') && $('folderSelect').value;
+      if (folderId) fd.append('folder_id', folderId); // #158: a subfolder of the bound folder; empty = the bound default
       const res = await agencyFetch('/content', { method: 'POST', body: fd });
       if (!res.ok) { portalMsg('Upload failed. Try again.', 'err'); return; }
       const content = await res.json();

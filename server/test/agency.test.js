@@ -191,3 +191,57 @@ test('#73 full-screen guardrail holds at UPLOAD time too (auto-publish has no dr
   const reDesig = await jfetch('/api/tokens', jpost(jwt, { name: 'AP2', scope: 'agency', target_playlist_ids: [plFS.id] }));
   assert.equal(reDesig.status, 400, 'already-zoned playlist rejected at designation');
 });
+
+test('#158 agency upload folder: auto-create, pick, subtree confinement, rebind', async () => {
+  const email = 'af' + crypto.randomBytes(4).toString('hex') + '@x.local';
+  const jwt = (await jfetch('/api/auth/register', reg({ email, password: 'Passw0rd123' }))).body.token;
+  const jwtAuth = { headers: { Authorization: 'Bearer ' + jwt } };
+  const jput = (o) => ({ method: 'PUT', headers: { Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' }, body: JSON.stringify(o) });
+  const pl = (await jfetch('/api/playlists', jpost(jwt, { name: 'FolderTarget' }))).body;
+
+  // (1) AUTO-CREATE: no upload_folder_id -> a folder "Agency — <name>" is created and bound
+  const tokRes = await jfetch('/api/tokens', jpost(jwt, { name: 'Acme', scope: 'agency', target_playlist_ids: [pl.id] }));
+  assert.equal(tokRes.status, 201, 'agency token created');
+  const boundId = tokRes.body.upload_folder_id;
+  assert.ok(boundId, 'a folder was auto-created and its id returned');
+  const bound = (await jfetch('/api/folders', jwtAuth)).body.find(f => f.id === boundId);
+  assert.ok(bound && bound.name === 'Agency — Acme', 'auto-created folder is named after the token');
+  const atok = tokRes.body.token;
+
+  const up = async (folderId) => {
+    const fd = new FormData();
+    fd.append('file', new Blob([Buffer.from('x')], { type: 'image/png' }), 't.png');
+    if (folderId) fd.append('folder_id', folderId);
+    return fetch(BASE + '/api/agency/content', { method: 'POST', headers: { Authorization: 'Bearer ' + atok }, body: fd });
+  };
+
+  // default upload (no folder_id) -> lands in the bound folder
+  const c1 = await (await up()).json();
+  assert.equal(c1.folder_id, boundId, 'default upload lands in the bound folder');
+
+  // (2) subtree confinement: a subfolder is targetable; a sibling is not
+  const sub = (await jfetch('/api/folders', jpost(jwt, { name: 'Q1', parent_id: boundId }))).body;
+  const sibling = (await jfetch('/api/folders', jpost(jwt, { name: 'Internal' }))).body;
+  const listIds = (await jfetch('/api/agency/folders', { headers: { Authorization: 'Bearer ' + atok } })).body.map(f => f.id).sort();
+  assert.deepEqual(listIds, [boundId, sub.id].sort(), 'GET /agency/folders returns ONLY the bound subtree, never the sibling');
+
+  const c2 = await (await up(sub.id)).json();
+  assert.equal(c2.folder_id, sub.id, 'upload targeting an in-subtree folder lands there');
+  const blocked = await up(sibling.id);
+  assert.equal(blocked.status, 403, 'upload to a sibling folder outside the bound subtree -> 403');
+
+  // (3) PICK an existing folder at creation (no auto-create); unknown pick -> 400
+  const picked = (await jfetch('/api/folders', jpost(jwt, { name: 'Chosen' }))).body;
+  const tok2 = await jfetch('/api/tokens', jpost(jwt, { name: 'Picky', scope: 'agency', target_playlist_ids: [pl.id], upload_folder_id: picked.id }));
+  assert.equal(tok2.body.upload_folder_id, picked.id, 'admin-picked folder is bound as-is');
+  const badPick = await jfetch('/api/tokens', jpost(jwt, { name: 'BadPick', scope: 'agency', target_playlist_ids: [pl.id], upload_folder_id: 'nonexistent' }));
+  assert.equal(badPick.status, 400, 'binding an unknown/cross-workspace folder at issuance -> 400');
+
+  // (4) REBIND to root -> uploads land at root, subtree goes empty
+  const rebind = await jfetch(`/api/tokens/${tokRes.body.id}/upload-folder`, jput({ upload_folder_id: null }));
+  assert.equal(rebind.status, 200, 'rebind ok');
+  assert.equal(rebind.body.upload_folder_id, null, 'rebind cleared the binding (root)');
+  const c3 = await (await up()).json();
+  assert.equal(c3.folder_id, null, 'after unbinding, uploads land at library root');
+  assert.deepEqual((await jfetch('/api/agency/folders', { headers: { Authorization: 'Bearer ' + atok } })).body, [], 'no bound folder -> empty subtree (portal shows no picker)');
+});

@@ -13,7 +13,7 @@ const { db } = require('../db/database');
 const upload = require('../middleware/upload');
 const { checkStorageLimit } = require('../middleware/subscription');
 const { ingestUploadedFile } = require('../lib/content-ingest');
-const { listDesignatedPlaylists, isZonedPlaylist } = require('../lib/agency-targets');
+const { listDesignatedPlaylists, isZonedPlaylist, folderSubtree } = require('../lib/agency-targets');
 const { listLayoutGeometry } = require('../lib/agency-layouts');
 const { publishPlaylist } = require('./playlists'); // #73: shared publish path for auto-publish
 const { isConfigured } = require('../services/email'); // #73: gate digest enqueue on SMTP being set
@@ -52,12 +52,31 @@ router.param('playlistId', (req, res, next, playlistId) => {
   next();
 });
 
+// #158: the folders THIS token may drop uploads into = its bound upload_folder_id + descendants
+// (Hybrid-C). No bound folder -> [] (portal shows no picker, uploads go to root). The subtree
+// query in lib/agency-targets.js is the confinement, shared with the upload check below so the
+// list and the writable set can't drift. No :playlistId, so router.param doesn't apply.
+router.get('/folders', (req, res) => {
+  res.json(folderSubtree(db, req.apiToken.upload_folder_id, req.workspaceId));
+});
+
 // Upload to the bound workspace via the SHARED ingest -> first-class content (identical
-// thumbnail/dimensions/duration to a dashboard upload).
+// thumbnail/dimensions/duration to a dashboard upload). #158: the file lands in the token's
+// bound folder by default; the agency may target a SUBFOLDER of it via folder_id, but nothing
+// outside that subtree (folder_id read from the multipart body, then confined to folderSubtree).
 router.post('/content', checkStorageLimit, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const content = await ingestUploadedFile({ file: req.file, userId: req.user.id, workspaceId: req.workspaceId });
+    // Default target = the bound folder (or root if none bound). A supplied folder_id must be
+    // WITHIN the bound subtree — never a sibling, a parent, or another workspace's folder.
+    let folderId = req.apiToken.upload_folder_id || null;
+    const requested = req.body && req.body.folder_id;
+    if (requested) {
+      const allowed = new Set(folderSubtree(db, req.apiToken.upload_folder_id, req.workspaceId).map(f => f.id));
+      if (!allowed.has(requested)) return res.status(403).json({ error: 'folder is not in this agency token\'s upload area' });
+      folderId = requested;
+    }
+    const content = await ingestUploadedFile({ file: req.file, userId: req.user.id, workspaceId: req.workspaceId, folderId });
     res.status(201).json(content);
   } catch (e) {
     console.error('agency upload error:', e.message);

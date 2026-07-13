@@ -180,6 +180,7 @@ export const api = {
   createToken: (data) => request('/tokens', { method: 'POST', body: JSON.stringify(data) }),
   revokeToken: (id) => request('/tokens/' + id, { method: 'DELETE' }),
   setTokenTargets: (id, target_playlist_ids) => request('/tokens/' + id + '/targets', { method: 'PUT', body: JSON.stringify({ target_playlist_ids }) }), // #73: re-designate agency token playlists
+  setTokenUploadFolder: (id, upload_folder_id) => request('/tokens/' + id + '/upload-folder', { method: 'PUT', body: JSON.stringify({ upload_folder_id }) }), // #158: rebind agency token upload folder (null = root)
 
   // Current user
   getMe: () => request('/auth/me'),

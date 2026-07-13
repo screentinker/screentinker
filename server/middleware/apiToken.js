@@ -71,7 +71,9 @@ function apiTokenAuth(req, res, next) {
   req.tokenScope = row.scope;
   // #73: auto_publish read from the TOKEN ROW (admin-set), so the agency endpoint can
   // never take it from the request body. `|| 0` keeps it fail-safe for any row predating it.
-  req.apiToken = { id: row.id, prefix: row.prefix, name: row.name, workspace_id: row.workspace_id, auto_publish: row.auto_publish || 0 };
+  // #158: upload_folder_id (admin-set) confines agency uploads to a folder subtree; read from
+  // the token row, never the request body. `|| null` keeps it fail-safe for pre-#158 rows.
+  req.apiToken = { id: row.id, prefix: row.prefix, name: row.name, workspace_id: row.workspace_id, auto_publish: row.auto_publish || 0, upload_folder_id: row.upload_folder_id || null };
   touchLastUsed(row.id);
   next();
 }

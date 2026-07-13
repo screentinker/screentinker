@@ -23,7 +23,7 @@ function safeFilename(name) {
 // Process a multer-uploaded file (thumbnail + dimensions + duration) and insert a content
 // row. Returns the content row. Throws on a hard failure (the caller maps to 500);
 // thumbnail/metadata failures are best-effort (logged, non-fatal) exactly as before.
-async function ingestUploadedFile({ file, userId, workspaceId }) {
+async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }) {
   const id = uuidv4();
   const filepath = file.filename;
   let width = null, height = null, durationSec = null, thumbnailPath = null;
@@ -67,9 +67,9 @@ async function ingestUploadedFile({ file, userId, workspaceId }) {
   }
 
   db.prepare(`
-    INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, workspaceId, safeFilename(file.originalname), filepath, file.mimetype, file.size, durationSec, thumbnailPath, width, height);
+    INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, workspaceId, safeFilename(file.originalname), filepath, file.mimetype, file.size, durationSec, thumbnailPath, width, height, folderId || null);
 
   return db.prepare('SELECT * FROM content WHERE id = ?').get(id);
 }
