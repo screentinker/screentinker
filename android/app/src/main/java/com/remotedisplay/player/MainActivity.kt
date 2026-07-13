@@ -154,6 +154,8 @@ class MainActivity : AppCompatActivity() {
             View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
         )
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // #160: re-apply the persisted per-window brightness so it survives a relaunch.
+        try { systemControl.applyPersistedWindowBrightness(window) } catch (_: Throwable) {}
 
         contentCache = ContentCache(this)
         // Coordinated background downloads (single-flight + bounded pool + backoff) — reconnect-safe.
@@ -723,7 +725,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 "set_brightness" -> {                                    // per-window (Tier 0); -1 = follow system
                     val f = payload?.optDouble("level", -1.0) ?: -1.0
-                    runOnUiThread { systemControl.setWindowBrightness(window, f) }
+                    runOnUiThread { systemControl.setWindowBrightness(window, f); wsService?.reportInfoNow() }
                 }
                 // Tier 1: system-wide brightness. WRITE_SETTINGS OR a device owner (setSystemSetting).
                 "set_system_brightness" -> {
@@ -732,7 +734,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 "set_screen_timeout" -> {                                // ms; <=0 = never
                     val ms = payload?.optInt("ms", -1) ?: -1
-                    if (ms != -1) systemControl.setScreenOffTimeout(ms)
+                    if (ms != -1) { systemControl.setScreenOffTimeout(ms); wsService?.reportInfoNow() }
                 }
                 // #109 debug: toggle the PiP magenta-box + geometry logging (default off).
                 // device:command {type:"pip_debug", payload:{enabled:true}}.

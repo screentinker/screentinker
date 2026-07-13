@@ -45,13 +45,20 @@ class SystemControl(private val context: Context) {
      * value restores "follow system". Needs the Activity [window]; safe to call from the UI thread.
      */
     fun setWindowBrightness(window: Window, fraction: Double): Boolean = try {
+        val v = if (fraction < 0) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else fraction.coerceIn(0.0, 1.0).toFloat()
         val lp = window.attributes
-        lp.screenBrightness =
-            if (fraction < 0) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            else fraction.coerceIn(0.0, 1.0).toFloat()
+        lp.screenBrightness = v
         window.attributes = lp
+        // Persist so it survives a relaunch + the dashboard slider reflects it (#160 remember).
+        com.remotedisplay.player.data.ServerConfig(context).windowBrightness = if (fraction < 0) -1f else v
         true
     } catch (e: Throwable) { Log.w(TAG, "setWindowBrightness: ${e.message}"); false }
+
+    /** Re-apply the persisted per-window brightness on launch (no-op if never set / follow-system). */
+    fun applyPersistedWindowBrightness(window: Window) {
+        val b = com.remotedisplay.player.data.ServerConfig(context).windowBrightness
+        if (b in 0f..1f) setWindowBrightness(window, b.toDouble())
+    }
 
     // ---- Tier 1 — WRITE_SETTINGS ----------------------------------------------------------------
 

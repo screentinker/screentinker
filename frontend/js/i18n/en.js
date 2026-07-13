@@ -282,6 +282,8 @@ export default {
   'device.tab.info_tip': 'Hardware telemetry, orientation settings, notes, and device controls.',
   'device.tab.remote': 'Remote Control',
   'device.tab.remote_tip': 'View the device screen in real-time and send key presses. Works on Android APK and web player.',
+  'device.tab.controls': 'Controls',
+  'device.tab.controls_tip': 'Volume, brightness and sleep timeout — no device owner needed. System brightness + sleep need the panel to grant "System settings" (or be a device owner).',
   'device.tab.terminal': 'Terminal',
   'device.tab.terminal_tip': 'Device-owner shell (runs as the app UID) + push an APK. Preset commands for quick diagnostics.',
   'device.terminal.welcome': 'ScreenTinker shell — runs as the app UID (not root). Type a command or tap a preset.',

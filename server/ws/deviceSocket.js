@@ -72,14 +72,16 @@ let lastScreenshots = {};
 // lightweight #160 device:info event (which re-reports after a volume/brightness change so the
 // dashboard reflects it without a full re-register / playlist push). Older APKs omit newer fields.
 function applyDeviceInfo(deviceId, di) {
+  const num = (v) => (typeof v === 'number' ? v : null);
   db.prepare(`UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ?, render_width = ?, render_height = ?,
     ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
-    can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, media_volume = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
+    can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?,
+    media_volume = ?, system_brightness = ?, window_brightness = ?, screen_off_timeout_ms = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
     .run(di.android_version, di.app_version, di.screen_width, di.screen_height, di.render_width ?? null, di.render_height ?? null,
       di.ota_status ?? 'none', di.ota_target_version ?? null, di.ota_attempts ?? 0,
       Number.isInteger(di.tier) ? di.tier : 0, di.foreign_device_owner ? 1 : 0,
       di.can_write_settings ? 1 : 0, di.accessibility_enabled ? 1 : 0, di.overlay_granted ? 1 : 0,
-      (typeof di.media_volume === 'number') ? di.media_volume : null,
+      num(di.media_volume), num(di.system_brightness), num(di.window_brightness), num(di.screen_off_timeout_ms),
       deviceId);
 }
 

@@ -206,39 +206,12 @@ async function loadDevice(deviceId, activeTab = null) {
         <button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>
       </div>` : ''}
 
-      ${(device.client_type === 'apk' || device.android_version) ? `
-      <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin:8px 0">
-        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
-          <span style="font-size:13px;font-weight:600">${t('device.sysctl.title')}</span>
-          <span style="font-size:11px;color:var(--text-muted)">${t('device.sysctl.subtitle')}</span>
-        </div>
-        <div style="display:grid;grid-template-columns:130px 1fr;gap:10px 14px;align-items:center;font-size:12px;max-width:460px">
-          <label>${t('device.sysctl.volume')}</label>
-          <input type="range" min="0" max="100" value="${Math.round((device.media_volume != null ? device.media_volume : 0.5) * 100)}" id="sysVolume" style="width:100%">
-          <label>${t('device.sysctl.brightness_window')}</label>
-          <input type="range" min="5" max="100" value="100" id="sysWinBrightness" style="width:100%">
-          ${(device.can_write_settings || device.tier === 2) ? `
-          <label>${t('device.sysctl.brightness_system')}</label>
-          <input type="range" min="5" max="100" value="80" id="sysBrightness" style="width:100%">
-          <label>${t('device.sysctl.sleep')}</label>
-          <select id="sysTimeout" class="input" style="background:var(--bg-input);max-width:160px">
-            <option value="0">${t('device.sysctl.never')}</option>
-            <option value="60000">1 min</option>
-            <option value="300000">5 min</option>
-            <option value="900000">15 min</option>
-            <option value="1800000">30 min</option>
-          </select>
-          ` : `
-          <div style="grid-column:1/-1;font-size:11px;color:var(--text-muted);line-height:1.4">${t('device.sysctl.write_hint')}</div>
-          `}
-        </div>
-      </div>` : ''}
-
       <div class="tabs">
         <div class="tab active" data-tab="nowplaying">${t('device.tab.now_playing')} <span class="help-tip" data-tip="${t('device.tab.now_playing_tip')}">?</span></div>
         <div class="tab" data-tab="playlist">${t('device.tab.playlist')} <span class="help-tip" data-tip="${t('device.tab.playlist_tip')}">?</span></div>
         <div class="tab" data-tab="info">${t('device.tab.info')} <span class="help-tip" data-tip="${t('device.tab.info_tip')}">?</span></div>
         <div class="tab" data-tab="remote">${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>
+        ${(device.client_type === 'apk' || device.android_version) ? `<div class="tab" data-tab="controls">${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
         ${device.tier === 2 ? `<div class="tab" data-tab="terminal">${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
       </div>
 
@@ -585,6 +558,32 @@ async function loadDevice(deviceId, activeTab = null) {
           </div>
         </div>
       </div>
+
+      ${(device.client_type === 'apk' || device.android_version) ? `
+      <!-- Controls Tab (#160 Track-A system control — no device owner needed) -->
+      <div class="tab-content" id="tab-controls">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">${t('device.sysctl.subtitle')}</div>
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:14px 14px;align-items:center;font-size:13px;max-width:480px">
+          <label>${t('device.sysctl.volume')}</label>
+          <input type="range" min="0" max="100" value="${Math.round((device.media_volume != null ? device.media_volume : 0.5) * 100)}" id="sysVolume" style="width:100%">
+          <label>${t('device.sysctl.brightness_window')}</label>
+          <input type="range" min="5" max="100" value="${Math.round((device.window_brightness != null && device.window_brightness >= 0 ? device.window_brightness : 1) * 100)}" id="sysWinBrightness" style="width:100%">
+          ${(device.can_write_settings || device.tier === 2) ? `
+          <label>${t('device.sysctl.brightness_system')}</label>
+          <input type="range" min="5" max="100" value="${Math.round((device.system_brightness != null ? device.system_brightness : 0.8) * 100)}" id="sysBrightness" style="width:100%">
+          <label>${t('device.sysctl.sleep')}</label>
+          <select id="sysTimeout" class="input" style="background:var(--bg-input);max-width:160px">
+            <option value="0" ${(!device.screen_off_timeout_ms || device.screen_off_timeout_ms > 3600000) ? 'selected' : ''}>${t('device.sysctl.never')}</option>
+            <option value="60000" ${device.screen_off_timeout_ms === 60000 ? 'selected' : ''}>1 min</option>
+            <option value="300000" ${device.screen_off_timeout_ms === 300000 ? 'selected' : ''}>5 min</option>
+            <option value="900000" ${device.screen_off_timeout_ms === 900000 ? 'selected' : ''}>15 min</option>
+            <option value="1800000" ${device.screen_off_timeout_ms === 1800000 ? 'selected' : ''}>30 min</option>
+          </select>
+          ` : `
+          <div style="grid-column:1/-1;font-size:11px;color:var(--text-muted);line-height:1.4">${t('device.sysctl.write_hint')}</div>
+          `}
+        </div>
+      </div>` : ''}
 
       ${device.tier === 2 ? `
       <!-- Terminal Tab (device owner) -->

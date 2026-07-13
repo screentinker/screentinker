@@ -65,6 +65,12 @@ class ServerConfig(context: Context) {
         return v
     }
 
+    // #160: last-set per-window brightness (0..1; -1 = follow system). Persisted so it survives an
+    // app relaunch and the dashboard slider reflects it. (System brightness/timeout live in the OS.)
+    var windowBrightness: Float
+        get() = prefs.getFloat("window_brightness", -1f)
+        set(value) = prefs.edit().putFloat("window_brightness", value).apply()
+
     val isProvisioned: Boolean
         get() = deviceId.isNotEmpty() && serverUrl.isNotEmpty()
 

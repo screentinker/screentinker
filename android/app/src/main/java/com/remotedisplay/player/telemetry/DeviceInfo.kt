@@ -73,9 +73,13 @@ class DeviceInfo(private val context: Context) {
                 put("can_write_settings", Settings.System.canWrite(context))
                 put("overlay_granted", Settings.canDrawOverlays(context))
                 put("accessibility_enabled", isAccessibilityEnabled())
-                // #160: current media volume (0..1) so the dashboard slider REFLECTS reality instead of
-                // resetting to a default — "remembers" what it's set to across dashboard reloads.
+                // #160: current values so the dashboard sliders REFLECT reality instead of resetting
+                // to a default — "remember" what they're set to across dashboard reloads. Reading these
+                // needs no WRITE_SETTINGS (only writing does).
                 put("media_volume", getMediaVolumeFraction())
+                put("system_brightness", getSystemBrightnessFraction())
+                put("screen_off_timeout_ms", getScreenOffTimeout())
+                put("window_brightness", ServerConfig(context).windowBrightness)   // -1 = follow system
             } catch (_: Throwable) { /* leave flags absent -> dashboard treats as false */ }
         }
     }
@@ -86,6 +90,17 @@ class DeviceInfo(private val context: Context) {
         val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
         if (max > 0) am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toDouble() / max else 0.0
     } catch (_: Throwable) { 0.0 }
+
+    /** #160: current system brightness as a 0..1 fraction (read-only; no permission needed). */
+    private fun getSystemBrightnessFraction(): Double = try {
+        val v = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, -1)
+        if (v >= 0) v / 255.0 else 0.0
+    } catch (_: Throwable) { 0.0 }
+
+    /** #160: current screen-off timeout in ms (read-only). */
+    private fun getScreenOffTimeout(): Int = try {
+        Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 0)
+    } catch (_: Throwable) { 0 }
 
     /** #160: is OUR accessibility service currently enabled (drives remote-control availability). */
     private fun isAccessibilityEnabled(): Boolean = try {
