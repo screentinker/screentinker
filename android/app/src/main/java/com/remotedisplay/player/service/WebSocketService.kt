@@ -566,6 +566,22 @@ class WebSocketService : Service() {
         }
     }
 
+    /**
+     * #160: re-report device_info (capability flags + current media volume) WITHOUT a full
+     * re-register — used right after a volume/brightness change so the dashboard reflects it.
+     * No-op if not yet paired/connected. Never throws.
+     */
+    fun reportInfoNow() {
+        try {
+            val id = config.deviceId
+            if (id.isEmpty() || socket?.connected() != true) return
+            socket?.emit("device:info", org.json.JSONObject().apply {
+                put("device_id", id)
+                put("device_info", deviceInfo.getDeviceInfo())
+            })
+        } catch (e: Throwable) { Log.w("WebSocketService", "reportInfoNow: ${e.message}") }
+    }
+
     fun getPairingCode(): String {
         return getSharedPreferences("remote_display", MODE_PRIVATE)
             .getString("pairing_code", "") ?: ""

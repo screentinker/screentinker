@@ -73,9 +73,19 @@ class DeviceInfo(private val context: Context) {
                 put("can_write_settings", Settings.System.canWrite(context))
                 put("overlay_granted", Settings.canDrawOverlays(context))
                 put("accessibility_enabled", isAccessibilityEnabled())
+                // #160: current media volume (0..1) so the dashboard slider REFLECTS reality instead of
+                // resetting to a default — "remembers" what it's set to across dashboard reloads.
+                put("media_volume", getMediaVolumeFraction())
             } catch (_: Throwable) { /* leave flags absent -> dashboard treats as false */ }
         }
     }
+
+    /** #160: current STREAM_MUSIC volume as a 0..1 fraction (for the dashboard volume slider). */
+    private fun getMediaVolumeFraction(): Double = try {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        if (max > 0) am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toDouble() / max else 0.0
+    } catch (_: Throwable) { 0.0 }
 
     /** #160: is OUR accessibility service currently enabled (drives remote-control availability). */
     private fun isAccessibilityEnabled(): Boolean = try {

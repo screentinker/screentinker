@@ -68,6 +68,21 @@ function emitToDeviceWorkspace(dashboardNs, deviceId, event, payload) {
 let lastScreenshots = {};
 
 // Generate a random device token
+// Persist the panel-reported device_info onto the devices row. Shared by device:register and the
+// lightweight #160 device:info event (which re-reports after a volume/brightness change so the
+// dashboard reflects it without a full re-register / playlist push). Older APKs omit newer fields.
+function applyDeviceInfo(deviceId, di) {
+  db.prepare(`UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ?, render_width = ?, render_height = ?,
+    ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
+    can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, media_volume = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
+    .run(di.android_version, di.app_version, di.screen_width, di.screen_height, di.render_width ?? null, di.render_height ?? null,
+      di.ota_status ?? 'none', di.ota_target_version ?? null, di.ota_attempts ?? 0,
+      Number.isInteger(di.tier) ? di.tier : 0, di.foreign_device_owner ? 1 : 0,
+      di.can_write_settings ? 1 : 0, di.accessibility_enabled ? 1 : 0, di.overlay_granted ? 1 : 0,
+      (typeof di.media_volume === 'number') ? di.media_volume : null,
+      deviceId);
+}
+
 function generateDeviceToken() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -589,19 +604,7 @@ module.exports = function setupDeviceSocket(io) {
           // null-token device" path is removed — that was the re-provisioning vector.
           const tokenToSend = device.device_token;
 
-          if (device_info) {
-            db.prepare(`UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ?, render_width = ?, render_height = ?,
-              ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
-              can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
-              .run(device_info.android_version, device_info.app_version, device_info.screen_width, device_info.screen_height, device_info.render_width ?? null, device_info.render_height ?? null,
-                // #139 Phase 2: older APKs don't send these — default to a clean 'none' state.
-                device_info.ota_status ?? 'none', device_info.ota_target_version ?? null, device_info.ota_attempts ?? 0,
-                // #161: privilege tier (older APKs omit these — default Tier 0 / not-managed).
-                Number.isInteger(device_info.tier) ? device_info.tier : 0, device_info.foreign_device_owner ? 1 : 0,
-                // #160 Track-A capability flags (older APKs omit -> default 0/false).
-                device_info.can_write_settings ? 1 : 0, device_info.accessibility_enabled ? 1 : 0, device_info.overlay_granted ? 1 : 0,
-                device_id);
-          }
+          if (device_info) applyDeviceInfo(device_id, device_info);
 
           heartbeat.registerConnection(device_id, socket.id);
           // #134: a same-socket re-register is a playlist REFRESH (~45-60s), NOT a reconnect and NOT
@@ -773,6 +776,14 @@ module.exports = function setupDeviceSocket(io) {
       }
       return true;
     }
+
+    // #160: lightweight device_info refresh (e.g. after a volume/brightness change) — updates the
+    // reported fields WITHOUT a full re-register (no playlist re-push / no reconnect side effects).
+    socket.on('device:info', (data) => {
+      if (!requireDeviceAuth()) return;
+      const di = data && data.device_info;
+      if (di) { try { applyDeviceInfo(currentDeviceId, di); } catch (e) { /* never crash the socket on a bad info blob */ } }
+    });
 
     // Heartbeat with telemetry
     socket.on('device:heartbeat', (data) => {

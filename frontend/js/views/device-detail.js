@@ -214,10 +214,10 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
         <div style="display:grid;grid-template-columns:130px 1fr;gap:10px 14px;align-items:center;font-size:12px;max-width:460px">
           <label>${t('device.sysctl.volume')}</label>
-          <input type="range" min="0" max="100" value="50" id="sysVolume" style="width:100%">
+          <input type="range" min="0" max="100" value="${Math.round((device.media_volume != null ? device.media_volume : 0.5) * 100)}" id="sysVolume" style="width:100%">
           <label>${t('device.sysctl.brightness_window')}</label>
           <input type="range" min="5" max="100" value="100" id="sysWinBrightness" style="width:100%">
-          ${device.can_write_settings ? `
+          ${(device.can_write_settings || device.tier === 2) ? `
           <label>${t('device.sysctl.brightness_system')}</label>
           <input type="range" min="5" max="100" value="80" id="sysBrightness" style="width:100%">
           <label>${t('device.sysctl.sleep')}</label>

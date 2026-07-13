@@ -89,6 +89,14 @@ class STPolicy(context: Context) {
         dpm!!.setUninstallBlocked(admin, pkg, blocked); true
     }
 
+    /**
+     * #160: a device owner can write a whitelisted SYSTEM setting (screen brightness / mode /
+     * screen-off timeout) with NO WRITE_SETTINGS grant. API 28+. No-op/false off-owner.
+     */
+    fun setSystemSetting(setting: String, value: String): Boolean = owned("setSystemSetting") {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) { dpm!!.setSystemSetting(admin, setting, value); true } else false
+    }
+
     // ---- onboarding policy: the zero-touch first-run setup a device owner CAN do itself -----------
 
     /** Make ourselves the persistent HOME/launcher with NO user tap (the kiosk boot requirement). */

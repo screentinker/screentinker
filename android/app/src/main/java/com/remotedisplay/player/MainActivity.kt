@@ -719,16 +719,16 @@ class MainActivity : AppCompatActivity() {
                 // unsupported at this panel's tier). Tier 0: media volume + per-window brightness.
                 "set_volume" -> {
                     val f = payload?.optDouble("level", -1.0) ?: -1.0   // 0..1 of media stream
-                    if (f >= 0) systemControl.setMediaVolume(f)
+                    if (f >= 0) { systemControl.setMediaVolume(f); wsService?.reportInfoNow() }
                 }
                 "set_brightness" -> {                                    // per-window (Tier 0); -1 = follow system
                     val f = payload?.optDouble("level", -1.0) ?: -1.0
                     runOnUiThread { systemControl.setWindowBrightness(window, f) }
                 }
-                // Tier 1 (WRITE_SETTINGS): system-wide brightness + screen-off timeout.
+                // Tier 1: system-wide brightness. WRITE_SETTINGS OR a device owner (setSystemSetting).
                 "set_system_brightness" -> {
                     val f = payload?.optDouble("level", -1.0) ?: -1.0
-                    if (f >= 0) systemControl.setSystemBrightness(f)
+                    if (f >= 0) { systemControl.setSystemBrightness(f); wsService?.reportInfoNow() }
                 }
                 "set_screen_timeout" -> {                                // ms; <=0 = never
                     val ms = payload?.optInt("ms", -1) ?: -1
