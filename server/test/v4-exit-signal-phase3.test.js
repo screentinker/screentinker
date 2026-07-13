@@ -83,10 +83,13 @@ test('B/wgt CLEAN-CLOSE: pagehide(false) -> clean_exit; BACKGROUNDING pagehide(t
 });
 
 // ============ PART A — server-side socket / #148 / reconnect-vs-exit safety ============
-const PORT = 3975; const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-exit3-' + crypto.randomBytes(4).toString('hex'));
 let proc, JWT;
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(path.join(os.tmpdir(), 'st-exit3.log'), 'w');
   proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' }, stdio: ['ignore', logFd, logFd] });
   let up = false; for (let i = 0; i < 80; i++) { try { if ((await fetch(BASE + '/api/status')).ok) { up = true; break; } } catch {} await sleep(250); }

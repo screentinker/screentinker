@@ -13,13 +13,15 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 
-const PORT = 3982;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-lag-int-' + crypto.randomBytes(4).toString('hex'));
 const LOG = path.join(os.tmpdir(), 'st-lag-int-' + crypto.randomBytes(4).toString('hex') + '.log');
 let proc;
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),

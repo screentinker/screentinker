@@ -78,14 +78,16 @@ test('cross-client conformance FINDING: APK socket.io TRANSPORT backoff diverges
 });
 
 // ============================ E2E: MIXED FLEET against the real server ============================
-const PORT = 3968;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-v4core-' + crypto.randomBytes(4).toString('hex'));
 const LOG = path.join(os.tmpdir(), 'st-v4core.log');
 let proc, JWT;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' }, stdio: ['ignore', logFd, logFd] });
   let up = false;

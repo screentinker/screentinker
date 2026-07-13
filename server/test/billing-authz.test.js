@@ -14,8 +14,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 
-const PORT = 4011;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-billauthz-' + crypto.randomBytes(4).toString('hex'));
 let proc, db;
 
@@ -30,6 +30,8 @@ const setRole = (email, role) => db.prepare('UPDATE users SET role = ? WHERE ema
 let adminJwt, userJwt, billingToken, billingTokenId, readToken;
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(path.join(os.tmpdir(), 'st-billauthz.log'), 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),

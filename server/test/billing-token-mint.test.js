@@ -14,8 +14,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 
-const PORT = 4021;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-billmint-' + crypto.randomBytes(4).toString('hex'));
 process.env.DATA_DIR = DATA_DIR;   // so requiring lib/billing-token's deps resolves this db too
 
@@ -25,6 +25,8 @@ const { hashToken } = require('../middleware/apiToken');
 let proc, db, minted;
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(path.join(os.tmpdir(), 'st-billmint.log'), 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),

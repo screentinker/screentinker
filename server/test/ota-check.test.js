@@ -12,8 +12,8 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 
-const PORT = 3991;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-ota-' + crypto.randomBytes(4).toString('hex'));
 const LOG = path.join(os.tmpdir(), 'st-ota-' + crypto.randomBytes(4).toString('hex') + '.log');
 let proc, LATEST;
@@ -25,6 +25,8 @@ const check = async (version, deviceId) => {
 };
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   // the breaker only reports update_available when an APK actually exists — give the
   // test server a dummy one (resolveApkPath checks DATA_DIR/ScreenTinker.apk).
   fs.mkdirSync(DATA_DIR, { recursive: true });

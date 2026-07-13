@@ -16,8 +16,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { authenticator } = require('otplib');
 
-const PORT = 3980;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-totp-rot-' + crypto.randomBytes(4).toString('hex'));
 
 function bootServer(jwtSecret) {
@@ -44,6 +44,8 @@ const post = (o) => ({ method: 'POST', headers: { 'Content-Type': 'application/j
 const postAuth = (tok, o) => ({ method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' }, body: JSON.stringify(o || {}) });
 
 test('#100 key rotation does NOT brick TOTP: recovery survives; TOTP fails cleanly (no 500)', async () => {
+  PORT = await freePort();
+  BASE = `http://127.0.0.1:${PORT}`;
   let proc = bootServer('keyA-' + crypto.randomBytes(8).toString('hex'));
   try {
     await waitUp();

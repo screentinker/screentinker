@@ -13,12 +13,14 @@ const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 const ioClient = require('socket.io-client');
 
-const PORT = 3998;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-statusdbg-' + crypto.randomBytes(4).toString('hex'));
 let proc, db;
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(path.join(os.tmpdir(), 'st-statusdbg.log'), 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),

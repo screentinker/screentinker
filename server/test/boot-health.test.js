@@ -14,17 +14,19 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
+const { freePort } = require('./helpers/free-port');
 
-const PORT = 3995;
-const BASE = `http://127.0.0.1:${PORT}`;
 const DATA_DIR = path.join(os.tmpdir(), 'st-boot-' + crypto.randomBytes(4).toString('hex'));
 const DBPATH = path.join(DATA_DIR, 'db', 'remote_display.db');
 
 test('boots + serves /api/status quickly against a pre-bloated table; prune drains in background', async () => {
+  const PORT = await freePort();
+  const BASE = `http://127.0.0.1:${PORT}`;
+  const SEED_PORT = await freePort();
   // 1) Create + migrate the DB in a throwaway boot, then seed a large backlog.
   {
-    const p = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: '3894', NODE_ENV: 'test' }, stdio: 'ignore' });
-    for (let i = 0; i < 60; i++) { try { const r = await fetch('http://127.0.0.1:3894/api/status'); if (r.ok) break; } catch { /* */ } await new Promise(r => setTimeout(r, 200)); }
+    const p = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(SEED_PORT), NODE_ENV: 'test' }, stdio: 'ignore' });
+    for (let i = 0; i < 60; i++) { try { const r = await fetch(`http://127.0.0.1:${SEED_PORT}/api/status`); if (r.ok) break; } catch { /* */ } await new Promise(r => setTimeout(r, 200)); }
     p.kill('SIGKILL');
     await new Promise(r => setTimeout(r, 300));
   }

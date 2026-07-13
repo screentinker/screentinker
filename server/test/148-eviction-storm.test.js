@@ -10,13 +10,16 @@ const { spawn } = require('node:child_process');
 const ioClient = require('socket.io-client');
 const path = require('node:path'); const os = require('node:os'); const fs = require('node:fs'); const crypto = require('node:crypto');
 
-const PORT = 3955;
-const base = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT;
+let base;
 const DATA_DIR = path.join(os.tmpdir(), 'st-storm-' + crypto.randomBytes(4).toString('hex'));
 let proc;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 before(async () => {
+    PORT = await freePort();
+    base = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(path.join(os.tmpdir(), 'st-storm.log'), 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),

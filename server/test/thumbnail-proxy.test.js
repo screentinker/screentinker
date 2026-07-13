@@ -18,8 +18,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 
-const PORT = 3990;
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-thumb-test-' + crypto.randomBytes(4).toString('hex'));
 const CONTENT_DIR = path.join(DATA_DIR, 'uploads', 'content');
 const LOG = path.join(os.tmpdir(), 'st-thumb-' + crypto.randomBytes(4).toString('hex') + '.log');
@@ -47,6 +47,8 @@ function makeContent(thumbnailPath, { mime = 'image/png' } = {}) {
 }
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   // Mock upstream standing in for img.youtube.com. /missing/* -> 404 to exercise the
   // clean-failure path; everything else -> a 200 image/png.
   upstream = http.createServer((req, res) => {

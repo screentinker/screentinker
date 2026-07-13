@@ -23,8 +23,9 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 
-const PORT = 3900 + (crypto.randomBytes(1)[0] % 90); // avoid clashes with sibling subprocess suites
-const BASE = `http://127.0.0.1:${PORT}`;
+const { freePort } = require('./helpers/free-port');
+let PORT; // avoid clashes with sibling subprocess suites
+let BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-156-test-' + crypto.randomBytes(4).toString('hex'));
 const LOG = path.join(os.tmpdir(), 'st-156-test-' + crypto.randomBytes(4).toString('hex') + '.log');
 
@@ -60,6 +61,8 @@ async function loadItem(itemId) {
 }
 
 before(async () => {
+    PORT = await freePort();
+    BASE = `http://127.0.0.1:${PORT}`;
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
