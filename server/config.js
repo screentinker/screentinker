@@ -96,6 +96,20 @@ module.exports = {
   // to Graph). Intended for local dev that pulls fresh prod DB copies - keeps
   // us from accidentally emailing real prod users. UNSET on prod systemd unit.
   graphDevRestrictTo: process.env.GRAPH_DEV_RESTRICT_TO || '',
+  // Email transport selector for services/email.js: "graph" (default, Microsoft
+  // Graph) or "smtp" (nodemailer). Lets self-hosters without an Azure/M365 setup
+  // use a standard mail server (Postfix, Gmail, Mailgun, SendGrid, corp relay).
+  emailTransport: process.env.EMAIL_TRANSPORT || 'graph',
+  // SMTP transport (used when EMAIL_TRANSPORT=smtp). SMTP_SECURE=true is implicit
+  // TLS on 465; false is STARTTLS on 587. User/password are optional so an
+  // unauthenticated localhost relay works; if SMTP_USER is set, SMTP_PASSWORD is
+  // required. SMTP_FROM is the envelope/display From ("Name <addr>" or "addr").
+  smtpHost: process.env.SMTP_HOST || '',
+  smtpPort: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 0,
+  smtpSecure: process.env.SMTP_SECURE === 'true',
+  smtpUser: process.env.SMTP_USER || '',
+  smtpPassword: process.env.SMTP_PASSWORD || '',
+  smtpFrom: process.env.SMTP_FROM || '',
   // Self-hosted mode: if true, first user gets enterprise plan and no billing
   selfHosted: process.env.SELF_HOSTED === 'true',
   // #116: opt-in UI gate. When true, hides the Subscription nav item + billing view

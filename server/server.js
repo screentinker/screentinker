@@ -954,6 +954,25 @@ server.listen(listenPort, '0.0.0.0', () => {
 ║  Listening on all interfaces (0.0.0.0)           ║
 ╚══════════════════════════════════════════════════╝
   `);
+
+  // Email transport diagnostics — a partially-configured transport is a real
+  // misconfiguration (some fields set, others missing) and gets a loud line;
+  // a fully-unset transport just falls back to the stdout logger silently.
+  try {
+    const es = require('./services/email').emailConfigStatus();
+    if (es.invalidTransport) {
+      console.error(`[EMAIL] EMAIL_TRANSPORT="${es.rawTransport}" is invalid — expected "graph" or "smtp". Falling back to graph.`);
+    }
+    if (es.partiallyConfigured) {
+      console.error(`[EMAIL] ${es.transport.toUpperCase()} transport selected but MISCONFIGURED — missing: ${es.missing.join(', ')}. Email delivery is DISABLED until these are set.`);
+    } else if (es.configured) {
+      console.log(`[EMAIL] transport: ${es.transport} (configured)`);
+    } else {
+      console.log(`[EMAIL] transport: ${es.transport} (not configured — emails log to stdout only)`);
+    }
+  } catch (e) {
+    console.error(`[EMAIL] config check failed: ${e.message}`);
+  }
 });
 
 // If SSL is enabled, also start an HTTP server that redirects to HTTPS

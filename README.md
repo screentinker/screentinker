@@ -77,7 +77,7 @@ Schema migrations run automatically the first time the server starts after a git
 - **Android / web players** → device-namespace WebSocket → server. Authenticated per-device with a long-lived device token. Each device joins a room keyed on its `device_id`.
 - **Admin dashboard** → dashboard-namespace WebSocket → server. Authenticated with the user's JWT. Each socket joins one room per accessible workspace so outbound events (device status, screenshots, playback progress) only reach dashboards that should see them.
 - **Admin REST** → `/api/*` HTTPS → Express → SQLite. Everything scoped by `workspace_id` from JWT `current_workspace_id` claim.
-- **Email** → Microsoft Graph `sendMail` via client-credentials OAuth flow. In-memory token cache. Sequential send pattern through alert backlogs to respect Graph's per-app concurrency limits.
+- **Email** → pluggable transport (`EMAIL_TRANSPORT`): Microsoft Graph `sendMail` via client-credentials OAuth (in-memory token cache) **or** SMTP via nodemailer. Sequential send pattern through alert backlogs to respect per-app concurrency limits.
 
 ## Supported Platforms
 
@@ -190,9 +190,19 @@ Let users sign in with Microsoft/Azure AD.
 | `MICROSOFT_CLIENT_ID` | Your Azure AD application client ID |
 | `MICROSOFT_TENANT_ID` | Tenant ID (`common` for multi-tenant) |
 
-#### Email Alerts (Microsoft Graph)
+#### Email (Microsoft Graph or SMTP)
 
-Send email notifications when devices go offline. Backed by Microsoft Graph Mail.Send via the client-credentials flow.
+Email powers offline alerts, welcome/signup mail, admin notifications, and password reset. Two interchangeable transports are supported, selected by `EMAIL_TRANSPORT`:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EMAIL_TRANSPORT` | `graph` (Microsoft Graph) or `smtp` (any mail server) | `graph` |
+
+Configure the variables for whichever transport you pick (below). If the selected transport is left blank, email is disabled and delivery is logged to stdout instead. If it is **partially** configured (some fields set, others missing), the server logs a clear `[EMAIL] … MISCONFIGURED — missing: …` error at startup.
+
+##### Option A — Microsoft Graph (`EMAIL_TRANSPORT=graph`, default)
+
+Microsoft Graph `Mail.Send` via the client-credentials flow. Best if you already run Microsoft 365 / Azure.
 
 | Variable | Description |
 |----------|-------------|
@@ -211,13 +221,40 @@ Send email notifications when devices go offline. Backed by Microsoft Graph Mail
 5. Capture the **Directory (tenant) ID** and **Application (client) ID** from the Overview page
 6. Set the five env vars above in your deployment (systemd unit, `.env` file, etc.)
 
-**Local dev fallback:** if any of `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, or `GRAPH_SENDER_EMAIL` is unset, `sendEmail()` short-circuits and logs `[EMAIL] not configured - would send to ...` to stdout instead of calling Graph. The app keeps running normally; only delivery is suppressed. This means a minimal local-dev install with no M365 access works fine — email-triggering features (device-offline alerts, future invite emails) just won't deliver anything externally.
+##### Option B — SMTP (`EMAIL_TRANSPORT=smtp`)
+
+Send via any standard mail server (Postfix, Gmail, Mailgun, SendGrid, a corporate relay, …) using [nodemailer](https://nodemailer.com). Ideal for self-hosters without an Azure/M365 setup.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SMTP_HOST` | Mail server hostname (e.g. `mail.example.com`) | _(required)_ |
+| `SMTP_PORT` | Port — `587` for STARTTLS, `465` for implicit TLS | _(required)_ |
+| `SMTP_SECURE` | `true` = implicit TLS (465); `false` = STARTTLS (587) | `false` |
+| `SMTP_USER` | Auth username. Omit (with `SMTP_PASSWORD`) for an unauthenticated relay | _(none)_ |
+| `SMTP_PASSWORD` | Auth password. Required **if** `SMTP_USER` is set | _(none)_ |
+| `SMTP_FROM` | From address — `Name <addr@example.com>` or `addr@example.com` | _(required; falls back to `SMTP_USER`)_ |
+
+Example (Gmail app password):
+
+```
+EMAIL_TRANSPORT=smtp
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=you@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM=ScreenTinker <you@gmail.com>
+```
+
+The Docker image bundles nodemailer, so no extra steps are needed for a self-hosted container — just set the `SMTP_*` vars in your `env_file` / compose `environment`.
+
+**Local dev fallback:** if the selected transport is unconfigured (e.g. no `GRAPH_*`, or no `SMTP_*`), `sendEmail()` short-circuits and logs `[EMAIL] not configured - would send to ...` to stdout instead of sending. The app keeps running normally; only delivery is suppressed. A minimal local-dev install with no mail access works fine — email-triggering features just won't deliver anything externally.
 
 **Dev safety allow-list:**
 
 | Variable | Description |
 |----------|-------------|
-| `GRAPH_DEV_RESTRICT_TO` | Comma-separated allow-list of recipient emails. When set, sends to addresses **not** in the list are suppressed (logged but never posted to Graph). |
+| `GRAPH_DEV_RESTRICT_TO` | Comma-separated allow-list of recipient emails (applies to **both** transports). When set, sends to addresses **not** in the list are suppressed (logged but never delivered). |
 
 Use this in local dev when running against a fresh production database clone to prevent accidental emails to real users. Leave it **unset in production** so emails flow to everyone normally.
 
