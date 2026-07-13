@@ -35,11 +35,29 @@ test('connectivity: link_lost true -> reason network, link-lost detail', () => {
   assert.match(c.detail, /link lost/);
 });
 
-test('connectivity: link_lost false -> reason network, router/upstream detail', () => {
+test('connectivity: link_lost false, no probe -> reason network, router/upstream detail', () => {
   const c = classifyConnectivity({ link_lost: false });
   assert.equal(c.reason, 'network');
   assert.equal(c.type, 'network');
   assert.match(c.detail, /server unreachable \(router\/internet\/upstream\)/);
+});
+
+test('connectivity: link up + internet_ok true -> server_down (OUR server, not the site)', () => {
+  const c = classifyConnectivity({ link_lost: false, internet_ok: true });
+  assert.equal(c.reason, 'server_down');
+  assert.equal(c.type, 'network');
+  assert.match(c.detail, /Internet reachable but the ScreenTinker server was unreachable/);
+});
+
+test('connectivity: link up + internet_ok false -> no_internet (router/ISP down)', () => {
+  const c = classifyConnectivity({ link_lost: false, internet_ok: false });
+  assert.equal(c.reason, 'no_internet');
+  assert.match(c.detail, /No internet — router\/ISP down/);
+});
+
+test('connectivity: link_lost true wins over internet_ok (device link is the root cause)', () => {
+  const c = classifyConnectivity({ link_lost: true, internet_ok: false });
+  assert.match(c.detail, /Wi‑Fi\/Ethernet link lost/);
 });
 
 test('connectivity: ssid / weak-rssi / ip_changed fragments append to detail', () => {

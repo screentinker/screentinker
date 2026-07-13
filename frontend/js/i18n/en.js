@@ -367,6 +367,8 @@ export default {
   'device.incidents.down_for': 'down {dur}',
   // Friendly labels for device event / offline-reason tokens
   'device.event.network': 'Network problem',
+  'device.event.server_down': 'Our server unreachable',
+  'device.event.no_internet': 'No internet (router/ISP)',
   'device.event.transport_close': 'Connection lost',
   'device.event.ping_timeout': 'No response (network stall)',
   'device.event.transport_error': 'Connection error',

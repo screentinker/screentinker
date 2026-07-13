@@ -71,6 +71,11 @@ class WebSocketService : Service() {
     //  - sawFirstConnect: gates the one-shot cold-start report to the process's very first connect.
     @Volatile private var disconnectedAtMs = 0L
     @Volatile private var linkLostDuringGap = false
+    //  - internetOkDuringGap: a public-host reachability probe (1.1.1.1 / 8.8.8.8 :443) fired at
+    //    disconnect. When the link is UP but we're offline, this splits "OUR server is down"
+    //    (wider internet reachable) from "no internet — router/ISP down". null = probe didn't
+    //    finish / not run, in which case the server falls back to the generic router/upstream detail.
+    @Volatile private var internetOkDuringGap: Boolean? = null
     private var lastIpSnapshot: String? = null
     @Volatile private var sawFirstConnect = false
     // A connectivity-report needs device auth on the (re)connected socket, so it is ARMED at
@@ -79,6 +84,7 @@ class WebSocketService : Service() {
     private var pendingOfflineMs = 0L
     private var pendingLinkLost = false
     private var pendingColdStart = false
+    private var pendingInternetOk: Boolean? = null
     // Registered-once diagnostics plumbing; unregistered in onDestroy. Nullable so a register
     // failure (locked-down ROM) just leaves the feature dark.
     private var netCallback: ConnectivityManager.NetworkCallback? = null
@@ -320,7 +326,13 @@ class WebSocketService : Service() {
                     // feat/offline-cause-log: mark the START of an in-process offline gap. Keep the
                     // EARLIEST timestamp if several disconnects fire before we reconnect, so offline_ms
                     // spans the whole gap. elapsedRealtime = monotonic (immune to wall-clock jumps).
-                    if (disconnectedAtMs == 0L) disconnectedAtMs = SystemClock.elapsedRealtime()
+                    if (disconnectedAtMs == 0L) {
+                        disconnectedAtMs = SystemClock.elapsedRealtime()
+                        // Probe the wider internet DURING the gap so a link-up outage can be split into
+                        // "our server down" (internet reachable) vs "no internet" (router/ISP down).
+                        internetOkDuringGap = null
+                        probeInternetAsync()
+                    }
                     // Stop heartbeat while disconnected; player keeps showing cached content.
                     stopHeartbeat()
                     // #148 reconnect discipline: Socket.IO auto-reconnects the SAME socket on a
@@ -1135,14 +1147,17 @@ class WebSocketService : Service() {
             if (disconnectedAtMs != 0L) {
                 pendingOfflineMs = now - disconnectedAtMs
                 pendingLinkLost = linkLostDuringGap
+                pendingInternetOk = internetOkDuringGap   // may be null if the probe didn't finish
                 pendingColdStart = false
                 pendingReport = true
                 // Reset the gap trackers now that it's been captured for report.
                 disconnectedAtMs = 0L
                 linkLostDuringGap = false
+                internetOkDuringGap = null
             } else if (!sawFirstConnect && now < COLD_START_WINDOW_MS) {
                 pendingOfflineMs = now           // best-effort "time since boot" as the offline span
                 pendingLinkLost = false
+                pendingInternetOk = null
                 pendingColdStart = true
                 pendingReport = true
             }
@@ -1154,10 +1169,24 @@ class WebSocketService : Service() {
     private fun flushConnectivityReport() {
         if (!pendingReport) return
         pendingReport = false
-        emitConnectivityReport(pendingOfflineMs, pendingLinkLost, pendingColdStart)
+        emitConnectivityReport(pendingOfflineMs, pendingLinkLost, pendingColdStart, pendingInternetOk)
     }
 
-    private fun emitConnectivityReport(offlineMs: Long, linkLost: Boolean, coldStart: Boolean) {
+    // Fire a short public-host reachability check on a background thread (never on the socket thread).
+    // Success on EITHER 1.1.1.1 or 8.8.8.8 :443 = the wider internet is reachable. Result lands in
+    // internetOkDuringGap; if the gap ends before it finishes, the report simply omits internet_ok.
+    private fun probeInternetAsync() {
+        Thread {
+            val ok = probeHost("1.1.1.1") || probeHost("8.8.8.8")
+            // Only record if we're still in the SAME gap (not reset by a reconnect meanwhile).
+            if (disconnectedAtMs != 0L) internetOkDuringGap = ok
+        }.apply { isDaemon = true }.start()
+    }
+    private fun probeHost(host: String): Boolean = try {
+        java.net.Socket().use { s -> s.connect(java.net.InetSocketAddress(host, 443), 3000); true }
+    } catch (_: Throwable) { false }
+
+    private fun emitConnectivityReport(offlineMs: Long, linkLost: Boolean, coldStart: Boolean, internetOk: Boolean?) {
         try {
             val id = config.deviceId
             if (id.isEmpty() || socket?.connected() != true) return
@@ -1174,9 +1203,10 @@ class WebSocketService : Service() {
                 if (rssi != 0) put("rssi", rssi)
                 put("ip_changed", ipChanged)
                 put("cold_start", coldStart)
+                if (internetOk != null) put("internet_ok", internetOk)   // omitted when the probe didn't finish
             }
             socket?.emit("device:connectivity-report", data)
-            Log.i("WebSocketService", "connectivity-report offline_ms=$offlineMs link_lost=$linkLost cold_start=$coldStart ip_changed=$ipChanged")
+            Log.i("WebSocketService", "connectivity-report offline_ms=$offlineMs link_lost=$linkLost internet_ok=$internetOk cold_start=$coldStart ip_changed=$ipChanged")
         } catch (e: Throwable) { Log.w("WebSocketService", "emitConnectivityReport: ${e.message}") }
     }
 

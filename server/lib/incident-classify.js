@@ -30,9 +30,13 @@ function normalizeDisconnectReason(reason) {
 // Compose reason + detail (and the device_events type) from a device connectivity report
 // sent on reconnect after an in-process disconnect. The app SURVIVED the gap, so absent a
 // cold_start it was NOT a reboot. Rules are the offline-cause contract's:
-//   cold_start === true            -> reboot,  "Device restarted (power/reboot)"
-//   else link_lost === true        -> network, "Wi‑Fi/Ethernet link lost"
-//   else (link up, server unreach) -> network, "Local network up but server unreachable (router/internet/upstream)"
+//   cold_start === true            -> reboot,       "Device restarted (power/reboot)"
+//   else link_lost === true        -> network,      "Wi‑Fi/Ethernet link lost"
+//   else link up — split by the device's internet probe (8.8.8.8/1.1.1.1) during the gap, which
+//   pinpoints blame between the customer's internet and OUR server:
+//     internet_ok === true         -> server_down,  "Internet reachable — our server was unreachable"
+//     internet_ok === false        -> no_internet,  "No internet — router/ISP down"
+//     internet_ok absent (no probe)-> network,       "Local network up but server unreachable (router/upstream)"
 // then append, when present: SSID, weak-signal (rssi < -75), IP-changed detail fragments.
 function classifyConnectivity(report) {
   const r = report || {};
@@ -44,6 +48,13 @@ function classifyConnectivity(report) {
   } else if (r.link_lost === true) {
     reason = 'network';
     detail = 'Wi‑Fi/Ethernet link lost';
+  } else if (r.internet_ok === true) {
+    // Link up AND the wider internet was reachable, but WE weren't -> our server/hosting, not the site.
+    reason = 'server_down';
+    detail = 'Internet reachable but the ScreenTinker server was unreachable (server/hosting issue)';
+  } else if (r.internet_ok === false) {
+    reason = 'no_internet';
+    detail = 'No internet — router/ISP down (device link up, public hosts unreachable)';
   } else {
     reason = 'network';
     detail = 'Local network up but server unreachable (router/internet/upstream)';
