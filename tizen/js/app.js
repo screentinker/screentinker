@@ -199,6 +199,11 @@
   var beatCount = 0;
   var authenticated = false; // #118: true only between device:registered and disconnect/auth-error
   var streamTimer = null;    // #120: dashboard preview streaming interval
+  // feat/offline-cause-log: connectivity-report state. Track in-session disconnects so a reconnect can
+  // tell the server WHY it was gone (local link lost vs server/upstream unreachable). A browser can't
+  // see SSID/RSSI, so we send only offline_ms + link_lost + cold_start:false.
+  var disconnectedAtMono = 0;     // mono() at the first disconnect of the current gap (0 = not in a gap)
+  var linkLostDuringGap = false;  // navigator went offline at any point during the gap
 
   // #group-sync clock discipline. Server is the time authority (heartbeat-ack). Cache a smoothed
   // offset so synced_now = Date.now() + clockOffsetMs keeps schedule sync aligned through an outage.
@@ -297,6 +302,11 @@
     socket.on('disconnect', function () {
       authenticated = false; // #118
       stopHeartbeat();        // #118: no beats on a dead socket
+      // feat/offline-cause-log: open an offline gap so the next reconnect can report cause.
+      if (!disconnectedAtMono) {
+        disconnectedAtMono = mono();
+        linkLostDuringGap = (typeof navigator !== 'undefined' && navigator.onLine === false);
+      }
       toast('Reconnecting…', true);
     });
 
@@ -305,6 +315,20 @@
       set(LS.id, deviceId); set(LS.token, deviceToken);
       authenticated = true; // #118: this socket may now send post-register events
       clearToast();         // #118: drop any stale "Not authenticated…" banner
+      // feat/offline-cause-log: reconnected after an in-session disconnect -> report the gap length +
+      // whether the local link dropped. cold_start:false because the app SURVIVED the gap (a reboot
+      // would have lost this in-process state). Browser has no SSID/RSSI to add.
+      if (disconnectedAtMono) {
+        try {
+          socket.emit('device:connectivity-report', {
+            device_id: deviceId,
+            offline_ms: Math.max(0, Math.round(mono() - disconnectedAtMono)),
+            link_lost: linkLostDuringGap,
+            cold_start: false
+          });
+        } catch (e) {}
+        disconnectedAtMono = 0; linkLostDuringGap = false;
+      }
       startHeartbeat();
       reportCapabilities(); // #125: surface the fleet-control backend to the dashboard
       if (data.status === 'provisioning') showPairing();
@@ -458,6 +482,18 @@
   function reportPip(level, msg) {
     try {
       if (socket && deviceId) socket.emit('device:log', { device_id: deviceId, tag: 'pip', level: level, message: msg });
+    } catch (e) {}
+  }
+
+  // feat/offline-cause-log: typed incident feed (device:event) — server inserts a device_events row.
+  // Best-effort + auth-guarded (requireDeviceAuth rejects events on a pre-register socket).
+  function emitDeviceEvent(type, reason, detail) {
+    try {
+      if (!socket || !socket.connected || !deviceId || !authenticated) return;
+      var m = { device_id: deviceId, type: type };
+      if (reason) m.reason = reason;
+      if (detail) m.detail = detail;
+      socket.emit('device:event', m);
     } catch (e) {}
   }
 
@@ -716,6 +752,16 @@
   startKeepAwake();                                          // FIX A: assert + re-assert keep-awake on an interval
   document.addEventListener('visibilitychange', onVisibility); // FIX B: suspend/resume fast-path
   startWatchdog();                                           // FIX B (hardened): server-silence liveness backstop
+
+  // feat/offline-cause-log: display sleep / backgrounding proxy — screen off/on on a TV.
+  document.addEventListener('visibilitychange', function () {
+    emitDeviceEvent(document.hidden ? 'display_off' : 'display_on');
+  });
+  // feat/offline-cause-log: browser-side offline detection feeds link_lost on the next reconnect — if
+  // navigator goes offline during a disconnect gap, the drop was the local link (Wi‑Fi/Ethernet).
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('offline', function () { if (disconnectedAtMono) linkLostDuringGap = true; });
+  }
 
   // @exit-signal-slice:start — v4-exit-signal-phase3.test.js evals the lines between these markers.
   // Exit-signal contract v1 — best-effort last gasp. crashed: window.onerror / unhandledrejection.

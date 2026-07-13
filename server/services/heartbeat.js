@@ -106,7 +106,13 @@ function startHeartbeatChecker(io) {
 
         console.log(`Device ${device.id} marked offline (heartbeat timeout)`);
         // #146: batch through the coalescing writer (was an immediate INSERT here).
-        statusLogWriter.record(device.id, 'offline_timeout');
+        // Offline-cause log: this liveness-timeout path is the "stopped reporting" case —
+        // annotate reason/detail and record it in the unified incident feed too.
+        statusLogWriter.record(device.id, 'offline_timeout', 'heartbeat_timeout', 'Stopped sending heartbeats');
+        try {
+          db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, 'offline', 'heartbeat_timeout', 'Stopped sending heartbeats')")
+            .run(device.id);
+        } catch (_) { /* incident feed is best-effort; never perturb the heartbeat loop */ }
       }
     }
 
@@ -126,6 +132,35 @@ async function prunePlayLogs() {
   return (await chunkedDelete((lim) => _delPlayLogs.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
 }
 
+// Offline-cause log: retention sweep for the unified incident feed, mirroring the
+// device_status_log age prune (same retention window + chunked so a backlog trims across
+// many bounded DELETEs, never one blocking statement). Rides idx_device_events_device_time
+// only loosely (timestamp filter); bounded batches keep it off the loop regardless.
+const _delDeviceEvents = db.prepare('DELETE FROM device_events WHERE rowid IN (SELECT rowid FROM device_events WHERE timestamp < ? LIMIT ?)');
+async function pruneDeviceEvents() {
+  const cutoff = Math.floor(Date.now() / 1000) - Math.round(config.statusLogRetentionDays * 86400);
+  return (await chunkedDelete((lim) => _delDeviceEvents.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
+}
+
+// Per-device row cap: even within the retention window a chatty device (display on/off
+// flapping, reconnect churn) shouldn't accumulate unbounded incident rows. Trim any
+// device over the cap down to its most-recent DEVICE_EVENTS_PER_DEVICE_CAP rows. Only
+// touches devices actually over the cap (cheap HAVING scan on the index), yielding between.
+const DEVICE_EVENTS_PER_DEVICE_CAP = 500;
+const _capDeviceEvents = db.prepare(`
+  DELETE FROM device_events WHERE device_id = ? AND id NOT IN (
+    SELECT id FROM device_events WHERE device_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?
+  )`);
+async function capDeviceEvents() {
+  const over = db.prepare('SELECT device_id FROM device_events GROUP BY device_id HAVING COUNT(*) > ?').all(DEVICE_EVENTS_PER_DEVICE_CAP);
+  let trimmed = 0;
+  for (const row of over) {
+    trimmed += _capDeviceEvents.run(row.device_id, row.device_id, DEVICE_EVENTS_PER_DEVICE_CAP).changes;
+    await yieldTick();
+  }
+  return trimmed;
+}
+
 // #146 interval maintenance — band-gated (skip while loaded; runs next tick) and
 // re-entrancy-guarded (a long run never stacks with the next interval). Never throws
 // into the interval. NOT for startup (see the un-gated startup prune above).
@@ -138,6 +173,8 @@ async function runMaintenance() {
     await pruneProvisioningDevices();
     await prunePlayLogs();
     await pruneStatusLog({ bandGate: true });   // per-device chunked; own re-entrancy
+    await pruneDeviceEvents();                   // offline-cause log: incident-feed age retention (chunked)
+    await capDeviceEvents();                     // offline-cause log: per-device incident row cap
     await pruneUsageDaily();                     // #146 BILLING rollup retention (chunked)
     // Expiry sweeps on small tables — single cheap statements, bounded by table size.
     db.prepare("DELETE FROM team_invites WHERE expires_at < strftime('%s','now')").run();
@@ -243,6 +280,8 @@ module.exports = {
   recentReconnects,     // FIX 2
   livenessFor,          // FIX 2
   pruneProvisioningDevices,
+  pruneDeviceEvents,   // offline-cause log: incident-feed retention
+  capDeviceEvents,     // offline-cause log: per-device incident cap
   accrueUsage,
   pruneUsageDaily,
   __resetAccrual: () => { _lastAccrue = 0; },   // #146 test hook: reset the accrual baseline

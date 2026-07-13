@@ -23,16 +23,17 @@ const pending = new Map();      // deviceId -> latest desired status (net state)
 const lastWritten = new Map();  // deviceId -> last status actually inserted
 let timer = null;
 
-const insertStmt = () => db.prepare('INSERT INTO device_status_log (device_id, status) VALUES (?, ?)');
+const insertStmt = () => db.prepare('INSERT INTO device_status_log (device_id, status, reason, detail) VALUES (?, ?, ?, ?)');
 // Per-device age prune — the #146 fix for the old hardcoded 7-day window in
 // deviceSocket.js (now a single source of truth: config.statusLogRetentionDays).
 const pruneDeviceStmt = () =>
   db.prepare("DELETE FROM device_status_log WHERE device_id = ? AND timestamp < strftime('%s','now') - ?");
 
 // Record a transition. Cheap and allocation-light: just remembers the latest state.
-function record(deviceId, status) {
+// reason/detail (optional) annotate WHY an offline transition happened (offline-cause log).
+function record(deviceId, status, reason, detail) {
   if (!deviceId || !status) return;
-  pending.set(deviceId, status);
+  pending.set(deviceId, { status: status, reason: reason || null, detail: detail || null });
 }
 
 // Write all buffered transitions whose net state differs from what's on disk.
@@ -40,8 +41,8 @@ function record(deviceId, status) {
 function flush() {
   if (pending.size === 0) return 0;
   const batch = [];
-  for (const [deviceId, status] of pending) {
-    if (lastWritten.get(deviceId) !== status) batch.push([deviceId, status]);
+  for (const [deviceId, val] of pending) {
+    if (lastWritten.get(deviceId) !== val.status) batch.push([deviceId, val.status, val.reason, val.detail]);
   }
   pending.clear();
   if (batch.length === 0) return 0;
@@ -51,8 +52,8 @@ function flush() {
     const prune = pruneDeviceStmt();
     const ageSec = Math.round(config.statusLogRetentionDays * 86400);
     const writeAll = db.transaction((rows) => {
-      for (const [deviceId, status] of rows) {
-        ins.run(deviceId, status);
+      for (const [deviceId, status, reason, detail] of rows) {
+        ins.run(deviceId, status, reason || null, detail || null);
         lastWritten.set(deviceId, status);
         prune.run(deviceId, ageSec);
       }

@@ -3,7 +3,13 @@ package com.remotedisplay.player.service
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
@@ -12,6 +18,7 @@ import android.os.SystemClock
 import android.util.Log
 import kotlin.random.Random
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.remotedisplay.player.MainActivity
 import com.remotedisplay.player.RemoteDisplayApp
 import com.remotedisplay.player.data.ServerConfig
@@ -52,7 +59,36 @@ class WebSocketService : Service() {
 
     private fun markAlive() { lastServerMessageAt = SystemClock.elapsedRealtime() }
 
+    // feat/offline-cause-log: device-diagnostics / incident-log. All ADDITIVE and fully guarded — a
+    // panel whose ROM lacks any of these APIs must degrade to silence, never crash.
+    //  - disconnectedAtMs: elapsedRealtime of the FIRST socket 'disconnect' of the current offline
+    //    gap (0 = currently connected / no in-process gap). On 'connect' after a gap we emit a
+    //    device:connectivity-report so the server can tell "app survived the gap" (network/router)
+    //    from a reboot (the app can't report its own reboot — cold_start best-effort covers that).
+    //  - linkLostDuringGap: set by the default-network callback's onLost — "the physical link went
+    //    away at some point during the gap" (Wi-Fi/Ethernet down) vs "link up but server unreachable".
+    //  - lastIpSnapshot: last observed local IPv4, to compute ip_changed (DHCP/router change).
+    //  - sawFirstConnect: gates the one-shot cold-start report to the process's very first connect.
+    @Volatile private var disconnectedAtMs = 0L
+    @Volatile private var linkLostDuringGap = false
+    private var lastIpSnapshot: String? = null
+    @Volatile private var sawFirstConnect = false
+    // A connectivity-report needs device auth on the (re)connected socket, so it is ARMED at
+    // 'connect' but FLUSHED from device:registered (once the server knows who we are).
+    @Volatile private var pendingReport = false
+    private var pendingOfflineMs = 0L
+    private var pendingLinkLost = false
+    private var pendingColdStart = false
+    // Registered-once diagnostics plumbing; unregistered in onDestroy. Nullable so a register
+    // failure (locked-down ROM) just leaves the feature dark.
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
+    private var screenReceiver: BroadcastReceiver? = null
+
     companion object {
+        // feat/offline-cause-log: if the process's FIRST connect happens within this long of boot
+        // (elapsedRealtime, which is wall-time since boot), treat it as a cold start (power/reboot)
+        // rather than a network gap. Generous so a slow panel's boot→launch→network still counts.
+        private const val COLD_START_WINDOW_MS = 120_000L
         // #148: backoff before re-opening the single socket after a disconnect that Socket.IO
         // does NOT auto-reconnect (io server/client disconnect) — never a blind immediate re-open.
         private const val RECONNECT_AFTER_EVICT_MS = 3000L
@@ -116,6 +152,58 @@ class WebSocketService : Service() {
         wakeLock?.acquire()
 
         startReconnectWatchdog()
+
+        // feat/offline-cause-log: best-effort diagnostics plumbing (both guarded, both cleaned up in
+        // onDestroy). Failure to register either just leaves that signal dark — never fatal.
+        registerNetworkCallback()
+        registerScreenReceiver()
+    }
+
+    /**
+     * feat/offline-cause-log: watch the DEFAULT network so a connectivity-report can distinguish a
+     * lost physical link (Wi‑Fi/Ethernet down) from "link up but the server is unreachable". onLost
+     * of the default network during an offline gap flips linkLostDuringGap; it is reset after the
+     * next report. registerDefaultNetworkCallback is API 24 (== minSdk), so no version gate needed,
+     * but everything is still wrapped so a locked-down ROM can't crash the service.
+     */
+    private fun registerNetworkCallback() {
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            val cb = object : ConnectivityManager.NetworkCallback() {
+                override fun onLost(network: Network) {
+                    // Only meaningful mid-gap; if we're still connected this is a transient handoff.
+                    if (disconnectedAtMs != 0L) linkLostDuringGap = true
+                }
+            }
+            cm.registerDefaultNetworkCallback(cb)
+            netCallback = cb
+        } catch (e: Throwable) { Log.w("WebSocketService", "registerNetworkCallback: ${e.message}") }
+    }
+
+    /**
+     * feat/offline-cause-log: ACTION_SCREEN_ON/OFF can ONLY be delivered to a context-registered
+     * receiver (the framework refuses them from the manifest), so we register here and drop a
+     * device:event display_on/display_off — "the screen went black" as an incident, not an outage.
+     */
+    private fun registerScreenReceiver() {
+        try {
+            val r = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    when (intent?.action) {
+                        Intent.ACTION_SCREEN_OFF -> emitEvent("display_off", detail = "Screen off / sleep")
+                        Intent.ACTION_SCREEN_ON -> emitEvent("display_on", detail = "Screen on")
+                    }
+                }
+            }
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            }
+            // Protected system broadcasts (SCREEN_ON/OFF) are exempt from the API 34 export-flag
+            // rule, but pass RECEIVER_NOT_EXPORTED explicitly so no OEM ROM can reject the register.
+            ContextCompat.registerReceiver(this, r, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            screenReceiver = r
+        } catch (e: Throwable) { Log.w("WebSocketService", "registerScreenReceiver: ${e.message}") }
     }
 
     /**
@@ -222,12 +310,17 @@ class WebSocketService : Service() {
                 safeOn(Socket.EVENT_CONNECT) {
                     Log.i("WebSocketService", "Connected to server")
                     consecutiveFailures = 0
+                    armConnectivityReport()   // feat/offline-cause-log: capture the gap, flush post-auth
                     register()
                 }
 
                 safeOn(Socket.EVENT_DISCONNECT) { args ->
                     val reason = args.firstOrNull()?.toString() ?: "unknown"
                     Log.w("WebSocketService", "Disconnected from server: $reason")
+                    // feat/offline-cause-log: mark the START of an in-process offline gap. Keep the
+                    // EARLIEST timestamp if several disconnects fire before we reconnect, so offline_ms
+                    // spans the whole gap. elapsedRealtime = monotonic (immune to wall-clock jumps).
+                    if (disconnectedAtMs == 0L) disconnectedAtMs = SystemClock.elapsedRealtime()
                     // Stop heartbeat while disconnected; player keeps showing cached content.
                     stopHeartbeat()
                     // #148 reconnect discipline: Socket.IO auto-reconnects the SAME socket on a
@@ -269,6 +362,9 @@ class WebSocketService : Service() {
                     }
                     handler.post { try { onRegistered?.invoke(newDeviceId) } catch (e: Throwable) { Log.e("WebSocketService", "onRegistered cb: ${e.message}") } }
                     startHeartbeat()
+                    // feat/offline-cause-log: now authenticated on this socket — safe to flush the
+                    // connectivity-report armed at 'connect' (requireDeviceAuth gates it server-side).
+                    flushConnectivityReport()
                 }
 
                 // v4 degrade-safe ARM: the watchdog arms ONLY after the first heartbeat-ack, so a
@@ -1019,6 +1115,117 @@ class WebSocketService : Service() {
         } catch (e: Throwable) { Log.w("WebSocketService", "emitGroupSyncRequest: ${e.message}") }
     }
 
+    // ── feat/offline-cause-log: connectivity-report + device:event emitters ──────────────────────
+    // All guarded, all no-ops when unpaired/disconnected. See the field block near markAlive() for
+    // the state model. The server (deviceSocket.js) turns a report into a human offline reason.
+
+    /**
+     * Called from EVENT_CONNECT. Decides whether this connect warrants a connectivity-report and, if
+     * so, snapshots the gap into the pending* fields for flushConnectivityReport() to emit once we're
+     * authenticated. Two cases:
+     *   - a prior in-process disconnect (disconnectedAtMs != 0) → the app survived the gap, so this is
+     *     NOT a reboot: report offline_ms + link_lost (network vs router/upstream).
+     *   - the process's very first connect with NO prior disconnect, on a freshly-booted device
+     *     (elapsedRealtime within the cold-start window) → one-shot cold_start report (power/reboot).
+     * Never emits directly (auth isn't established yet); only arms the pending report.
+     */
+    private fun armConnectivityReport() {
+        try {
+            val now = SystemClock.elapsedRealtime()
+            if (disconnectedAtMs != 0L) {
+                pendingOfflineMs = now - disconnectedAtMs
+                pendingLinkLost = linkLostDuringGap
+                pendingColdStart = false
+                pendingReport = true
+                // Reset the gap trackers now that it's been captured for report.
+                disconnectedAtMs = 0L
+                linkLostDuringGap = false
+            } else if (!sawFirstConnect && now < COLD_START_WINDOW_MS) {
+                pendingOfflineMs = now           // best-effort "time since boot" as the offline span
+                pendingLinkLost = false
+                pendingColdStart = true
+                pendingReport = true
+            }
+            sawFirstConnect = true
+        } catch (e: Throwable) { Log.w("WebSocketService", "armConnectivityReport: ${e.message}") }
+    }
+
+    /** Emit the armed connectivity-report (from device:registered, i.e. post-auth). One-shot. */
+    private fun flushConnectivityReport() {
+        if (!pendingReport) return
+        pendingReport = false
+        emitConnectivityReport(pendingOfflineMs, pendingLinkLost, pendingColdStart)
+    }
+
+    private fun emitConnectivityReport(offlineMs: Long, linkLost: Boolean, coldStart: Boolean) {
+        try {
+            val id = config.deviceId
+            if (id.isEmpty() || socket?.connected() != true) return
+            val ssid = readWifiSsid()
+            val rssi = readWifiRssi()
+            val ip = readCurrentIp()
+            val ipChanged = lastIpSnapshot != null && ip != null && ip != lastIpSnapshot
+            if (ip != null) lastIpSnapshot = ip
+            val data = JSONObject().apply {
+                put("device_id", id)
+                put("offline_ms", offlineMs)
+                put("link_lost", linkLost)
+                if (!ssid.isNullOrEmpty() && ssid != "Unknown") put("ssid", ssid)
+                if (rssi != 0) put("rssi", rssi)
+                put("ip_changed", ipChanged)
+                put("cold_start", coldStart)
+            }
+            socket?.emit("device:connectivity-report", data)
+            Log.i("WebSocketService", "connectivity-report offline_ms=$offlineMs link_lost=$linkLost cold_start=$coldStart ip_changed=$ipChanged")
+        } catch (e: Throwable) { Log.w("WebSocketService", "emitConnectivityReport: ${e.message}") }
+    }
+
+    /** Emit a typed incident (device_events). Guarded + no-op when unpaired/disconnected. */
+    private fun emitEvent(type: String, reason: String? = null, detail: String? = null) {
+        try {
+            val id = config.deviceId
+            if (id.isEmpty() || socket?.connected() != true) return
+            socket?.emit("device:event", JSONObject().apply {
+                put("device_id", id)
+                put("type", type)
+                if (reason != null) put("reason", reason)
+                if (detail != null) put("detail", detail)
+            })
+            Log.i("WebSocketService", "device:event $type${reason?.let { " ($it)" } ?: ""}")
+        } catch (e: Throwable) { Log.w("WebSocketService", "emitEvent: ${e.message}") }
+    }
+
+    // Wi‑Fi/IP snapshot helpers — mirror telemetry's DeviceInfo.getWifiSSID/RSSI (those are private
+    // there). @Suppress DEPRECATION: WifiManager.connectionInfo is deprecated on API 31+ but is the
+    // only path that works down to minSdk 24 and still returns for a foreground/system app.
+    @Suppress("DEPRECATION")
+    private fun readWifiSsid(): String? = try {
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        wm?.connectionInfo?.ssid?.replace("\"", "")
+    } catch (e: Throwable) { null }
+
+    @Suppress("DEPRECATION")
+    private fun readWifiRssi(): Int = try {
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        wm?.connectionInfo?.rssi ?: 0
+    } catch (e: Throwable) { 0 }
+
+    /** First non-loopback IPv4 on any up interface (Wi‑Fi or Ethernet) — no extra permission needed. */
+    private fun readCurrentIp(): String? = try {
+        var found: String? = null
+        val ifaces = java.net.NetworkInterface.getNetworkInterfaces()
+        while (ifaces != null && ifaces.hasMoreElements() && found == null) {
+            val iface = ifaces.nextElement()
+            if (!iface.isUp || iface.isLoopback) continue
+            val addrs = iface.inetAddresses
+            while (addrs.hasMoreElements()) {
+                val addr = addrs.nextElement()
+                if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) { found = addr.hostAddress; break }
+            }
+        }
+        found
+    } catch (e: Throwable) { null }
+
     fun disconnect() {
         stopHeartbeat()
         cancelReopen()
@@ -1065,6 +1272,12 @@ class WebSocketService : Service() {
         val ctx = applicationContext
         Thread { ExitSignal.send(ctx, "clean_exit", "onDestroy") }.apply { start(); try { join(1500) } catch (e: InterruptedException) { /* proceed with teardown */ } }
         reconnectWatchdog?.let { handler.removeCallbacks(it) }; reconnectWatchdog = null
+        // feat/offline-cause-log: tear down the diagnostics plumbing (guarded — a never-registered
+        // receiver/callback would otherwise throw IllegalArgumentException here).
+        try { netCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.unregisterNetworkCallback(it) } } catch (e: Throwable) { Log.w("WebSocketService", "unregister netCallback: ${e.message}") }
+        netCallback = null
+        try { screenReceiver?.let { unregisterReceiver(it) } } catch (e: Throwable) { Log.w("WebSocketService", "unregister screenReceiver: ${e.message}") }
+        screenReceiver = null
         wakeLock?.let { if (it.isHeld) it.release() }
         disconnect()
         super.onDestroy()

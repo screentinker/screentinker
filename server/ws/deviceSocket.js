@@ -17,6 +17,7 @@ const { resolveIdentity } = require('../lib/device-identity');
 const logCoalescer = require('../lib/log-coalescer');
 const loopLag = require('../services/loop-lag');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings restore
+const incidentClassify = require('../lib/incident-classify'); // offline-cause log: disconnect-reason + connectivity classification
 
 // Debounce window for marking a device offline on socket disconnect. Brief
 // flap (Wi-Fi blip, Engine.IO ping miss, server-side eviction-then-reconnect)
@@ -114,8 +115,8 @@ function getClientIp(socket) {
 // writer and uses config.statusLogRetentionDays (was a hardcoded 7 days here — one
 // source of truth). devices.status is still updated immediately by callers; only
 // this audit log is deferred to the next flush.
-function logDeviceStatus(deviceId, status) {
-  statusLogWriter.record(deviceId, status);
+function logDeviceStatus(deviceId, status, reason, detail) {
+  statusLogWriter.record(deviceId, status, reason, detail);
 }
 
 
@@ -956,6 +957,47 @@ module.exports = function setupDeviceSocket(io) {
         .run(e.reason, e.detail, currentDeviceId);
     });
 
+    // Offline-cause log: a typed incident from the player (display_off/display_on, crash,
+    // app_error, ...). Just records a device_events row. Guarded by requireDeviceAuth like
+    // every other device event; unknown/forged types are dropped (never inserted).
+    socket.on('device:event', (data) => {
+      if (!requireDeviceAuth()) return;
+      const { device_id, type, reason, detail } = data || {};
+      if (device_id && device_id !== currentDeviceId) return;          // forged/mismatched -> no-op
+      if (!incidentClassify.isAllowedEventType(type)) return;          // unknown type -> ignore
+      try {
+        db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, ?, ?, ?)")
+          .run(currentDeviceId, type, reason ? String(reason).slice(0, 64) : null, detail ? String(detail).slice(0, 500) : null);
+      } catch (_) { /* incident feed is best-effort; never crash the socket */ }
+    });
+
+    // Offline-cause log: the device's ground-truth account of an in-process disconnect it
+    // just recovered from (app SURVIVED the gap -> not a reboot unless cold_start). Compose
+    // reason+detail per the contract, then UPGRADE the server's earlier guess: flush the
+    // status-log writer so the offline row exists, UPDATE that recent offline row's
+    // reason/detail, and add a device_events row (type network|reboot).
+    socket.on('device:connectivity-report', (data) => {
+      if (!requireDeviceAuth()) return;
+      const { device_id } = data || {};
+      if (device_id && device_id !== currentDeviceId) return;          // forged/mismatched -> no-op
+      const deviceId = currentDeviceId;
+      try {
+        const { reason, detail, type } = incidentClassify.classifyConnectivity(data);
+        // Ensure any buffered offline transition for this device is on disk before we
+        // reach back to annotate it (the writer coalesces on a ~1s interval otherwise).
+        statusLogWriter.flushNow();
+        // Upgrade the most-recent offline row (server guess) to the device's ground truth.
+        db.prepare(`UPDATE device_status_log SET reason = ?, detail = ?
+          WHERE id = (
+            SELECT id FROM device_status_log
+            WHERE device_id = ? AND status IN ('offline','offline_timeout')
+              AND timestamp > strftime('%s','now') - 900
+            ORDER BY timestamp DESC, id DESC LIMIT 1)`).run(reason, detail, deviceId);
+        db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, ?, ?, ?)")
+          .run(deviceId, type, reason, detail);
+      } catch (_) { /* offline-cause annotation is best-effort; never crash the socket */ }
+    });
+
     // Play event logging (proof-of-play)
     socket.on('device:play-event', (data) => {
       if (!requireDeviceAuth()) return;
@@ -1075,7 +1117,13 @@ module.exports = function setupDeviceSocket(io) {
       deviceNs.to(leaderId).emit('group:sync-request', { group_id: group.id, requested_by: currentDeviceId });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
+      // Offline-cause log: capture socket.io's disconnect reason (transport_close /
+      // ping_timeout / transport_error / ...) and normalize it to a category token now,
+      // while it's in scope; the offline transition below (deferred by the debounce
+      // timer) uses it as the fallback offline reason when the device sent no explicit
+      // exit signal this session. Falls back to 'silent' when absent.
+      const socketOfflineReason = incidentClassify.normalizeDisconnectReason(reason);
       // #146: this socket was force-evicted by a newer registration for the same
       // device. The new socket owns the device now (or is mid-register), so this
       // disconnect must NOT arm an offline timer — doing so was the self-reset race
@@ -1114,13 +1162,20 @@ module.exports = function setupDeviceSocket(io) {
         const activeNow = heartbeat.getConnection(deviceId);
         if (activeNow && activeNow.socketId !== closingSocketId) return;
 
-        // Exit-signal contract: resolve manner-of-death. If the device announced a reason before dying
-        // (offline_reason non-NULL, set by device:exit/beacon this session), keep it; else -> 'silent'
-        // (no signal arrived). COALESCE makes this a pure annotation — offline detection is unchanged.
+        // Exit-signal contract (UNCHANGED): devices.offline_reason stays the app's self-reported
+        // manner-of-death — 'crashed'/'clean_exit' if it announced one this session, else 'silent'
+        // (a violent/abrupt death is 'silent', never a socket-inferred value — Bold-critical).
         db.prepare("UPDATE devices SET status = 'offline', updated_at = strftime('%s','now'), offline_reason = COALESCE(offline_reason, 'silent'), offline_reason_at = COALESCE(offline_reason_at, strftime('%s','now')) WHERE id = ?").run(deviceId);
         heartbeat.removeConnection(deviceId);
-        logDeviceStatus(deviceId, 'offline');
         const _off = db.prepare("SELECT offline_reason, offline_detail, client_type FROM devices WHERE id = ?").get(deviceId) || {};
+        // The offline-CAUSE log (device_status_log + device_events) gets the richer signal, which is
+        // a SEPARATE axis from the exit-signal field: the app's announced reason if it gave one, else
+        // the normalized socket transport reason (transport_close/ping_timeout/...). This never touches
+        // devices.offline_reason, so the exit-signal 'silent' semantics above are preserved.
+        const finalReason = (_off.offline_reason && _off.offline_reason !== 'silent') ? _off.offline_reason : socketOfflineReason;
+        logDeviceStatus(deviceId, 'offline', finalReason, null);
+        // Offline-cause log: also record the transition in the unified incident feed.
+        try { db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, 'offline', ?, NULL)").run(deviceId, finalReason); } catch (_) { /* incident feed is best-effort */ }
         emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-status', { device_id: deviceId, status: 'offline', liveness: 'offline', offline_reason: _off.offline_reason || 'silent', offline_detail: _off.offline_detail || null, client_type: _off.client_type || null });
 
         // If this device was leading a wall, reassign leadership to the next

@@ -101,6 +101,25 @@ const migrations = [
   'ALTER TABLE devices ADD COLUMN offline_reason TEXT',
   'ALTER TABLE devices ADD COLUMN offline_reason_at INTEGER',
   'ALTER TABLE devices ADD COLUMN offline_detail TEXT',
+  // Offline-cause log: annotate each historical offline transition with WHY. `reason` = category
+  // (transport_close / ping_timeout / heartbeat_timeout / network / crashed / clean_exit / silent);
+  // `detail` = human specifics (e.g. "Wi-Fi link lost — SSID Office, -78dBm" or "LAN up, server
+  // unreachable (router/upstream)"). NULL on online rows / pre-migration.
+  'ALTER TABLE device_status_log ADD COLUMN reason TEXT',
+  'ALTER TABLE device_status_log ADD COLUMN detail TEXT',
+  // Unified device-incident log (offline-cause + display/sleep + crash + reboot). Complements
+  // device_status_log (which drives the uptime timeline): this is the human-facing "what happened
+  // and why" feed. type: offline|online|display_off|display_on|crash|reboot|network. reason =
+  // category token; detail = human specifics (Wi-Fi/router/SSID/RSSI/IP, crash msg, sleep source).
+  `CREATE TABLE IF NOT EXISTS device_events (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     device_id  TEXT NOT NULL,
+     type       TEXT NOT NULL,
+     reason     TEXT,
+     detail     TEXT,
+     timestamp  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_device_events_device_time ON device_events(device_id, timestamp)',
   // Email settings on users
   "ALTER TABLE users ADD COLUMN email_alerts INTEGER DEFAULT 1",
   // Content folders

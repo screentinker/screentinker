@@ -153,8 +153,17 @@ router.get('/:id', (req, res) => {
   let statusLog = [];
   try {
     statusLog = db.prepare(
-      'SELECT status, timestamp FROM device_status_log WHERE device_id = ? AND timestamp > ? ORDER BY timestamp ASC'
+      'SELECT status, reason, detail, timestamp FROM device_status_log WHERE device_id = ? AND timestamp > ? ORDER BY timestamp ASC'
     ).all(req.params.id, dayAgo);
+  } catch (_) {}
+
+  // Offline-cause log: the unified incident feed (offline-cause + display/sleep + crash +
+  // reboot), most-recent first. Best-effort — an old DB without the table just yields [].
+  let deviceEvents = [];
+  try {
+    deviceEvents = db.prepare(
+      'SELECT id, type, reason, detail, timestamp FROM device_events WHERE device_id = ? ORDER BY timestamp DESC, id DESC LIMIT 50'
+    ).all(req.params.id);
   } catch (_) {}
 
   // Also get telemetry timestamps as heartbeat proof (fills gaps between status events)
@@ -162,7 +171,7 @@ router.get('/:id', (req, res) => {
     'SELECT reported_at FROM device_telemetry WHERE device_id = ? AND reported_at > ? ORDER BY reported_at ASC'
   ).all(req.params.id, dayAgo).map(r => r.reported_at);
 
-  res.json({ ...stripDeviceSecrets(device), telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog });
+  res.json({ ...stripDeviceSecrets(device), telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
 });
 
 // Helper: check device write access via the workspace the device belongs to.

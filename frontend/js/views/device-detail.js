@@ -393,6 +393,12 @@ async function loadDevice(deviceId, activeTab = null) {
           </div>
         </div>
 
+        <!-- Recent incidents (device diagnostics / offline-cause log) -->
+        <div style="margin-top:20px">
+          <h4 style="font-size:13px;margin-bottom:8px">${t('device.incidents.title')}</h4>
+          <div id="incidentsPanel"></div>
+        </div>
+
         <div style="margin-top:20px">
           <div style="display:flex;gap:12px;margin-bottom:12px">
             <div class="form-group" style="flex:1;margin:0">
@@ -660,6 +666,10 @@ async function loadDevice(deviceId, activeTab = null) {
 
     // Render uptime timeline
     renderUptimeTimeline(device.uptimeData || [], device.statusLog || []);
+
+    // Render the Recent incidents panel (merges typed device_events with
+    // offline→online transitions derived from the status log).
+    renderIncidents(device.deviceEvents || [], device.statusLog || []);
 
     setupTabs();
     setupActions(device);
@@ -1659,6 +1669,9 @@ function renderUptimeTimeline(uptimeData, statusLog = []) {
 
   // Build slot status: 'online', 'offline', or 'unknown'
   const slotStatus = new Array(slots).fill('unknown');
+  // Parallel array: for offline slots, the {reason, detail} of the covering offline event
+  // (why the device was offline) — surfaced in the slot's hover title.
+  const slotReason = new Array(slots).fill(null);
 
   // First pass: mark slots that have heartbeat telemetry as online
   for (const ts of uptimeData) {
@@ -1677,8 +1690,12 @@ function renderUptimeTimeline(uptimeData, statusLog = []) {
       : (event.status === 'online' ? slots - 1 : startSlot);
 
     const isOnline = event.status === 'online';
+    const reason = isOnline ? null : { reason: event.reason || null, detail: event.detail || null };
     for (let s = startSlot; s <= endSlot && s < slots; s++) {
-      if (s >= 0) slotStatus[s] = isOnline ? 'online' : 'offline';
+      if (s >= 0) {
+        slotStatus[s] = isOnline ? 'online' : 'offline';
+        slotReason[s] = reason;
+      }
     }
   }
 
@@ -1709,7 +1726,127 @@ function renderUptimeTimeline(uptimeData, statusLog = []) {
     const time = new Date((dayAgo + i * slotDuration) * 1000);
     const label = time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     const statusLabel = status === 'unknown' ? t('device.timeline.no_data') : status === 'online' ? t('device.timeline.online') : t('device.timeline.offline');
-    return `<div style="flex:1;background:${colors[status]};opacity:${opacities[status]}" title="${label} - ${statusLabel}"></div>`;
+    let title = `${label} - ${statusLabel}`;
+    if (status === 'offline' && slotReason[i]) {
+      const r = slotReason[i];
+      title = `${label} – ${statusLabel} · ${eventLabel(r.reason)}${r.detail ? ` (${r.detail})` : ''}`;
+    }
+    return `<div style="flex:1;background:${colors[status]};opacity:${opacities[status]}" title="${esc(title)}"></div>`;
+  }).join('');
+}
+
+// Map an event/reason token to a friendly label via i18n, falling back to the raw
+// token if no translation exists. Null → "Unknown cause".
+function eventLabel(key) {
+  if (!key) return t('device.event.silent');
+  const full = t('device.event.' + key);
+  return full === ('device.event.' + key) ? key : full;
+}
+
+// Dot color by incident type. Amber (#f59e0b) matches the warning accent used
+// elsewhere in this view; the rest use the shared CSS vars.
+function incidentColor(type) {
+  if (type === 'online' || type === 'display_on') return 'var(--success)';
+  if (type === 'display_off') return 'var(--text-muted)';
+  if (type === 'reboot') return '#f59e0b';
+  return 'var(--danger)'; // offline, network, crash, app_error
+}
+
+// Compact duration ("4m", "1h 5m", "2d 3h") for an offline period.
+function formatDur(seconds) {
+  seconds = Math.max(0, Math.floor(seconds));
+  if (seconds < 60) return seconds + 's';
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  if (h < 24) return rm ? `${h}h ${rm}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+// Compact relative time ("2h ago").
+function relTime(tsSec, nowSec = Math.floor(Date.now() / 1000)) {
+  const diff = Math.max(0, nowSec - tsSec);
+  if (diff < 60) return diff + 's ago';
+  const m = Math.floor(diff / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24);
+  return d + 'd ago';
+}
+
+// "Recent incidents" panel: a newest-first, time-sorted merge of typed device_events
+// (display sleep, crash, reboot, network, app_error) with offline→online periods
+// derived from the status log (so a device with only server-side offline data still
+// shows incidents, and downtime carries a duration).
+function renderIncidents(deviceEvents = [], statusLog = []) {
+  const panel = document.getElementById('incidentsPanel');
+  if (!panel) return;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const incidents = [];
+
+  // Offline periods from the status log (server-side ground truth). Start a period
+  // on each offline transition and close it at the next 'online' row.
+  const log = (statusLog || []).slice().sort((a, b) => a.timestamp - b.timestamp);
+  for (let i = 0; i < log.length; i++) {
+    const ev = log[i];
+    if (ev.status === 'online') continue;
+    // Collapse a repeated offline row (e.g. offline followed by offline_timeout).
+    if (i > 0 && log[i - 1].status !== 'online') continue;
+    let end = null;
+    for (let j = i + 1; j < log.length; j++) {
+      if (log[j].status === 'online') { end = log[j].timestamp; break; }
+    }
+    incidents.push({
+      type: 'offline',
+      reason: ev.reason || null,
+      detail: ev.detail || null,
+      timestamp: ev.timestamp,
+      durationSec: (end != null ? end : nowSec) - ev.timestamp,
+      ongoing: end == null,
+    });
+  }
+
+  // Typed incidents from device_events. offline/online are already represented as
+  // periods above, so skip them here to avoid double-listing the same event.
+  for (const ev of (deviceEvents || [])) {
+    if (!ev || ev.type === 'offline' || ev.type === 'online') continue;
+    incidents.push({
+      type: ev.type,
+      reason: ev.reason || null,
+      detail: ev.detail || null,
+      timestamp: ev.timestamp,
+    });
+  }
+
+  if (!incidents.length) {
+    panel.innerHTML = `<div style="font-size:12px;color:var(--text-muted);padding:8px 0">${t('device.incidents.none')}</div>`;
+    return;
+  }
+
+  incidents.sort((a, b) => b.timestamp - a.timestamp);
+
+  panel.innerHTML = incidents.slice(0, 15).map(inc => {
+    const label = eventLabel(inc.reason || inc.type);
+    const detail = inc.detail
+      ? `<span style="color:var(--text-muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(inc.detail)}</span>`
+      : '';
+    const dur = (inc.durationSec != null)
+      ? `<span style="color:var(--text-muted);font-size:11px;flex:none">${esc(t('device.incidents.down_for', { dur: formatDur(inc.durationSec) }) + (inc.ongoing ? '…' : ''))}</span>`
+      : '';
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+        <span title="${esc(eventLabel(inc.type))}" style="flex:none;width:9px;height:9px;border-radius:50%;background:${incidentColor(inc.type)}"></span>
+        <span style="font-weight:600;color:var(--text-primary);flex:none">${esc(label)}</span>
+        ${detail}
+        <span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex:none">
+          ${dur}
+          <span style="color:var(--text-muted);font-size:11px">${esc(relTime(inc.timestamp, nowSec))}</span>
+        </span>
+      </div>`;
   }).join('');
 }
 

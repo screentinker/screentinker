@@ -343,6 +343,22 @@
     // ==================== State ====================
     let socket = null;
     let config = getConfig();
+    // feat/offline-cause-log: connectivity-report state — track in-session disconnects so the next
+    // reconnect can report WHY it was gone (local link lost vs server/upstream unreachable). A browser
+    // can't see SSID/RSSI, so we send only offline_ms + link_lost + cold_start:false.
+    let disconnectedAt = 0;         // Date.now() at the first disconnect of the current gap (0 = not in a gap)
+    let linkLostDuringGap = false;  // navigator went offline at any point during the gap
+    // feat/offline-cause-log: typed incident feed (device:event) — server inserts a device_events row.
+    // Best-effort + auth-guarded (the reconnected socket is authenticated by the time we emit).
+    function emitDeviceEvent(type, reason, detail) {
+      try {
+        if (!socket?.connected || !config.deviceId) return;
+        const m = { device_id: config.deviceId, type };
+        if (reason) m.reason = reason;
+        if (detail) m.detail = detail;
+        socket.emit('device:event', m);
+      } catch (e) {}
+    }
     let playlist = [];
     let currentIndex = -1;
     // #157: deferred rotation-out. When a playlist update removes the item currently on screen
@@ -934,6 +950,11 @@
         console.log('Disconnected');
         stopHeartbeat();
         stopWatchdog(); // socket.io owns the reconnect once it KNOWS it's down; watchdog is for half-open only
+        // feat/offline-cause-log: open an offline gap so the next reconnect can report cause.
+        if (!disconnectedAt) {
+          disconnectedAt = Date.now();
+          linkLostDuringGap = (typeof navigator !== 'undefined' && navigator.onLine === false);
+        }
       });
 
       socket.on('connect_error', (err) => {
@@ -947,6 +968,21 @@
         if (data.device_token) config.deviceToken = data.device_token;
         saveConfig(config);
         console.log('Registered:', data.device_id);
+
+        // feat/offline-cause-log: reconnected after an in-session disconnect -> report the gap length
+        // + whether the local link dropped. cold_start:false because the page SURVIVED the gap (a
+        // reboot/reload would have reset disconnectedAt). Browser has no SSID/RSSI to add.
+        if (disconnectedAt && config.deviceId) {
+          try {
+            socket.emit('device:connectivity-report', {
+              device_id: config.deviceId,
+              offline_ms: Math.max(0, Date.now() - disconnectedAt),
+              link_lost: linkLostDuringGap,
+              cold_start: false,
+            });
+          } catch (e) {}
+          disconnectedAt = 0; linkLostDuringGap = false;
+        }
 
         if (!config.paired) {
           // Show pairing code
@@ -2563,6 +2599,14 @@
     });
     window.addEventListener('pageshow', verifyLivenessSoon);   // sleep/resume via bfcache restore
     window.addEventListener('online', verifyLivenessSoon);     // network switch (wifi<->cellular)
+
+    // feat/offline-cause-log: display sleep / backgrounding proxy — screen off/on on a TV.
+    document.addEventListener('visibilitychange', () => {
+      emitDeviceEvent(document.hidden ? 'display_off' : 'display_on');
+    });
+    // feat/offline-cause-log: browser-side offline detection feeds link_lost on the next reconnect —
+    // if navigator goes offline during a disconnect gap, the drop was the local link (not upstream).
+    window.addEventListener('offline', () => { if (disconnectedAt) linkLostDuringGap = true; });
 
     // Register service worker for offline content caching
     if ('serviceWorker' in navigator) {
