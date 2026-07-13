@@ -74,6 +74,18 @@ let lastScreenshots = {};
 // dashboard reflects it without a full re-register / playlist push). Older APKs omit newer fields.
 function applyDeviceInfo(deviceId, di) {
   const num = (v) => (typeof v === 'number' ? v : null);
+  // Upgrade incident: if the reported app_version differs from what we had stored, log it
+  // (old → new) in the incident feed. Server-side, so it covers every client (Android/Tizen/web)
+  // with no client change. Only when we HAD a prior version (a fresh pair isn't an "upgrade").
+  try {
+    if (di.app_version) {
+      const prev = db.prepare('SELECT app_version FROM devices WHERE id = ?').get(deviceId);
+      if (prev && prev.app_version && prev.app_version !== di.app_version) {
+        db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, 'upgrade', 'upgrade', ?)")
+          .run(deviceId, `${prev.app_version} → ${di.app_version}`);
+      }
+    }
+  } catch (_) { /* incident feed is best-effort */ }
   db.prepare(`UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ?, render_width = ?, render_height = ?,
     ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
     can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?,

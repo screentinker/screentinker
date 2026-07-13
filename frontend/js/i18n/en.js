@@ -378,6 +378,7 @@ export default {
   'device.event.app_error': 'App error',
   'device.event.display_off': 'Screen off / sleep',
   'device.event.display_on': 'Screen on',
+  'device.event.upgrade': 'Upgraded',
   'device.event.silent': 'Unknown cause',
   'device.event.offline': 'Went offline',
   'device.event.online': 'Came online',
