@@ -11,6 +11,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const config = require('../config');
 const { sanitizeString } = require('../middleware/sanitize');
+const { videoDisplayDims, imageDisplayDims } = require('./media-orientation');
 
 // Multer takes file.originalname from the multipart header, bypassing sanitizeBody, so
 // HTML-escape here (renders as text in every UI sink). .normalize('NFC') first: macOS
@@ -32,10 +33,11 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
     if (file.mimetype.startsWith('image/')) {
       const sharp = require('sharp');
       const metadata = await sharp(file.path).metadata();
-      width = metadata.width;
-      height = metadata.height;
+      // #170: honor EXIF orientation so a portrait photo isn't stored as landscape.
+      ({ width, height } = imageDisplayDims(metadata));
       thumbnailPath = `thumb_${filepath}`;
       await sharp(file.path)
+        .rotate() // #170: auto-orient per EXIF (and strip the tag) so the thumbnail matches
         .resize(config.thumbnailWidth)
         .jpeg({ quality: 70 })
         .toFile(path.join(config.contentDir, thumbnailPath));
@@ -49,8 +51,9 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
         if (info.format?.duration) durationSec = parseFloat(info.format.duration);
         const videoStream = info.streams?.find(s => s.codec_type === 'video');
         if (videoStream) {
-          width = videoStream.width;
-          height = videoStream.height;
+          // #170: honor the rotation/Display-Matrix so a portrait video isn't stored landscape.
+          // (ffmpeg auto-rotates the thumbnail below by default, so only the dims need fixing.)
+          ({ width, height } = videoDisplayDims(videoStream));
         }
         thumbnailPath = `thumb_${filepath.replace(/\.[^.]+$/, '.jpg')}`;
         try {
