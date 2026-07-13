@@ -206,6 +206,34 @@ async function loadDevice(deviceId, activeTab = null) {
         <button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>
       </div>` : ''}
 
+      ${(device.client_type === 'apk' || device.android_version) ? `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin:8px 0">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
+          <span style="font-size:13px;font-weight:600">${t('device.sysctl.title')}</span>
+          <span style="font-size:11px;color:var(--text-muted)">${t('device.sysctl.subtitle')}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:10px 14px;align-items:center;font-size:12px;max-width:460px">
+          <label>${t('device.sysctl.volume')}</label>
+          <input type="range" min="0" max="100" value="50" id="sysVolume" style="width:100%">
+          <label>${t('device.sysctl.brightness_window')}</label>
+          <input type="range" min="5" max="100" value="100" id="sysWinBrightness" style="width:100%">
+          ${device.can_write_settings ? `
+          <label>${t('device.sysctl.brightness_system')}</label>
+          <input type="range" min="5" max="100" value="80" id="sysBrightness" style="width:100%">
+          <label>${t('device.sysctl.sleep')}</label>
+          <select id="sysTimeout" class="input" style="background:var(--bg-input);max-width:160px">
+            <option value="0">${t('device.sysctl.never')}</option>
+            <option value="60000">1 min</option>
+            <option value="300000">5 min</option>
+            <option value="900000">15 min</option>
+            <option value="1800000">30 min</option>
+          </select>
+          ` : `
+          <div style="grid-column:1/-1;font-size:11px;color:var(--text-muted);line-height:1.4">${t('device.sysctl.write_hint')}</div>
+          `}
+        </div>
+      </div>` : ''}
+
       <div class="tabs">
         <div class="tab active" data-tab="nowplaying">${t('device.tab.now_playing')} <span class="help-tip" data-tip="${t('device.tab.now_playing_tip')}">?</span></div>
         <div class="tab" data-tab="playlist">${t('device.tab.playlist')} <span class="help-tip" data-tip="${t('device.tab.playlist_tip')}">?</span></div>
@@ -1029,6 +1057,17 @@ function setupActions(device) {
   document.getElementById('t2Lock')?.addEventListener('click', () => t2('lock_now'));
   document.getElementById('t2KioskOn')?.addEventListener('click', () => t2('kiosk_lock'));
   document.getElementById('t2KioskOff')?.addEventListener('click', () => t2('kiosk_unlock'));
+
+  // #160 Track-A system control — send on release ('change', not 'input') so we don't spam the panel.
+  const bindLevel = (id, cmd) => {
+    const el = document.getElementById(id);
+    el?.addEventListener('change', () => sendCommand(device.id, cmd, { level: parseInt(el.value, 10) / 100 }));
+  };
+  bindLevel('sysVolume', 'set_volume');
+  bindLevel('sysWinBrightness', 'set_brightness');
+  bindLevel('sysBrightness', 'set_system_brightness');
+  document.getElementById('sysTimeout')?.addEventListener('change', (e) =>
+    sendCommand(device.id, 'set_screen_timeout', { ms: parseInt(e.target.value, 10) }));
 
   const blockBtn = document.getElementById('blockDeviceBtn');
   blockBtn?.addEventListener('click', async () => {

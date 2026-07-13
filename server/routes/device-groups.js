@@ -17,6 +17,9 @@ const ALLOWED_COMMANDS = [
   'set_time', 'set_timezone', 'status_bar', 'block_uninstall', 'unblock_uninstall',
   // #161 device-owner tooling: remote shell (app-UID diagnostics) + push/install an APK from a URL.
   'shell', 'install_apk',
+  // #160 Track-A system control (no device owner): media volume + per-window brightness (Tier 0),
+  // system brightness + screen-off timeout (Tier 1 / WRITE_SETTINGS). Panel no-ops if unsupported.
+  'set_volume', 'set_brightness', 'set_system_brightness', 'set_screen_timeout',
 ];
 
 // Phase 2.2i: split read/write access checks. Both attach req.group on success.

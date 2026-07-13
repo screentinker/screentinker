@@ -16,6 +16,9 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- #160 Track-A: system brightness + screen-off timeout (Tier 1). Requires a one-time
+         ACTION_MANAGE_WRITE_SETTINGS grant; the app degrades gracefully without it. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
 
     <application
         android:name=".RemoteDisplayApp"

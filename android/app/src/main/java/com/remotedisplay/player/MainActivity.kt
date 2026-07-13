@@ -715,6 +715,25 @@ class MainActivity : AppCompatActivity() {
                 "refresh" -> {
                     wsService?.connect()
                 }
+                // #160 Track-A system control — NO device owner required. All best-effort (no-op if
+                // unsupported at this panel's tier). Tier 0: media volume + per-window brightness.
+                "set_volume" -> {
+                    val f = payload?.optDouble("level", -1.0) ?: -1.0   // 0..1 of media stream
+                    if (f >= 0) systemControl.setMediaVolume(f)
+                }
+                "set_brightness" -> {                                    // per-window (Tier 0); -1 = follow system
+                    val f = payload?.optDouble("level", -1.0) ?: -1.0
+                    runOnUiThread { systemControl.setWindowBrightness(window, f) }
+                }
+                // Tier 1 (WRITE_SETTINGS): system-wide brightness + screen-off timeout.
+                "set_system_brightness" -> {
+                    val f = payload?.optDouble("level", -1.0) ?: -1.0
+                    if (f >= 0) systemControl.setSystemBrightness(f)
+                }
+                "set_screen_timeout" -> {                                // ms; <=0 = never
+                    val ms = payload?.optInt("ms", -1) ?: -1
+                    if (ms != -1) systemControl.setScreenOffTimeout(ms)
+                }
                 // #109 debug: toggle the PiP magenta-box + geometry logging (default off).
                 // device:command {type:"pip_debug", payload:{enabled:true}}.
                 "pip_debug" -> {
@@ -1021,6 +1040,8 @@ class MainActivity : AppCompatActivity() {
 
     // #161: device-policy wrapper (degrades safely off-tier — every Tier-2 call no-ops when not owner).
     private fun stPolicy() = com.remotedisplay.player.admin.STPolicy(this)
+    // #160 Track-A: no-device-owner system control (media volume, brightness, screen-off timeout).
+    private val systemControl by lazy { com.remotedisplay.player.system.SystemControl(this) }
 
     // #161: one-line tier label for the settings list.
     private fun hwTierShort(tier: Int): String = when (tier) {

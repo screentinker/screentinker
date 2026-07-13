@@ -67,8 +67,26 @@ class DeviceInfo(private val context: Context) {
                 put("can_install_silently", policy.canInstallSilently())
                 put("foreign_device_owner", policy.hasForeignDeviceOwner())
             } catch (_: Throwable) { put("tier", 0) }
+            // #160 Track-A capability flags (NO device-owner dependency) — let the dashboard gate the
+            // no-privilege system controls and show the operator exactly what's grantable per panel.
+            try {
+                put("can_write_settings", Settings.System.canWrite(context))
+                put("overlay_granted", Settings.canDrawOverlays(context))
+                put("accessibility_enabled", isAccessibilityEnabled())
+            } catch (_: Throwable) { /* leave flags absent -> dashboard treats as false */ }
         }
     }
+
+    /** #160: is OUR accessibility service currently enabled (drives remote-control availability). */
+    private fun isAccessibilityEnabled(): Boolean = try {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE)
+            as android.view.accessibility.AccessibilityManager
+        val mine = android.content.ComponentName(context,
+            com.remotedisplay.player.service.PowerAccessibilityService::class.java)
+        am.getEnabledAccessibilityServiceList(
+            android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK
+        ).any { it.resolveInfo.serviceInfo.let { si -> android.content.ComponentName(si.packageName, si.name) == mine } }
+    } catch (_: Throwable) { false }
 
     private fun getBatteryLevel(): Int {
         // Use broadcast intent method - more reliable on Android TV / Rockchip devices

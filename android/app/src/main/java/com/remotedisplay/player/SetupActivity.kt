@@ -36,6 +36,8 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var enableBatteryBtn: Button
     private lateinit var overlayStatus: TextView
     private lateinit var enableOverlayBtn: Button
+    private lateinit var writeSettingsStatus: TextView
+    private lateinit var enableWriteSettingsBtn: Button
     private lateinit var continueBtn: Button
 
     @SuppressLint("BatteryLife")
@@ -128,6 +130,18 @@ class SetupActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
                 data = Uri.parse("package:$packageName")
             })
+        }
+
+        // #160 Track-A: WRITE_SETTINGS — one-time grant that unlocks remote system-brightness +
+        // screen-off-timeout control. Optional; media volume + per-window brightness need no grant.
+        writeSettingsStatus = findViewById(R.id.writeSettingsStatus)
+        enableWriteSettingsBtn = findViewById(R.id.enableWriteSettingsBtn)
+        enableWriteSettingsBtn.setOnClickListener {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                })
+            } catch (e: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
         }
 
         // Default launcher / HOME: a kiosk MUST be the default launcher, else Android returns to the
@@ -238,6 +252,12 @@ class SetupActivity : AppCompatActivity() {
         overlayStatus.text = if (canOverlay) "ON" else "OFF"
         overlayStatus.setTextColor(if (canOverlay) 0xFF22C55E.toInt() else 0xFFEF4444.toInt())
         enableOverlayBtn.visibility = if (canOverlay) View.GONE else View.VISIBLE
+
+        // #160 WRITE_SETTINGS (system brightness / screen-off timeout)
+        val canWrite = Settings.System.canWrite(this)
+        writeSettingsStatus.text = if (canWrite) "ON" else "OFF"
+        writeSettingsStatus.setTextColor(if (canWrite) 0xFF22C55E.toInt() else 0xFFEF4444.toInt())
+        enableWriteSettingsBtn.visibility = if (canWrite) View.GONE else View.VISIBLE
 
         // Default launcher (HOME): kiosk foreground stability requires being the default launcher.
         val isDefaultHome = isDefaultLauncher()
