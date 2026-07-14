@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, hydrateAuthImages } from '../utils.js';
 import { t, tn } from '../i18n.js';
 
 function formatDate(ts) {
@@ -373,7 +373,7 @@ function renderItems(items) {
       <div style="color:var(--text-muted);font-size:12px;min-width:24px;text-align:center;user-select:none">${i + 1}</div>
       <div style="width:48px;height:36px;border-radius:4px;overflow:hidden;background:var(--bg-input);flex-shrink:0;display:flex;align-items:center;justify-content:center">
         ${item.thumbnail_path
-          ? `<img src="/api/content/${esc(item.content_id)}/thumbnail" style="width:100%;height:100%;object-fit:cover">`
+          ? `<img data-auth-src="/api/content/${esc(item.content_id)}/thumbnail" style="width:100%;height:100%;object-fit:cover">`
           : `<div style="color:var(--text-muted);opacity:0.5">${getTypeIcon(item)}</div>`
         }
       </div>
@@ -411,6 +411,7 @@ function renderItems(items) {
       </div>
     </div>
   `).join('');
+  hydrateAuthImages(itemsEl);
 
   itemsEl.querySelectorAll('.item-duration').forEach(input => {
     input.addEventListener('change', async (e) => {
@@ -676,7 +677,7 @@ async function showAddItemModal(playlistId, opts = {}) {
       return `
         <div class="add-item-row" data-id="${esc(item.id)}" data-type="${isWidget ? 'widget' : 'content'}" style="display:flex;align-items:center;gap:12px;padding:10px;border-radius:var(--radius);cursor:pointer;transition:background 0.1s">
           <div style="width:40px;height:30px;border-radius:4px;overflow:hidden;background:var(--bg-input);flex-shrink:0;display:flex;align-items:center;justify-content:center">
-            ${thumb ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover">` : '<div style="color:var(--text-muted);opacity:0.4"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>'}
+            ${thumb ? `<img data-auth-src="${thumb}" style="width:100%;height:100%;object-fit:cover">` : '<div style="color:var(--text-muted);opacity:0.4"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>'}
           </div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div>
@@ -686,6 +687,7 @@ async function showAddItemModal(playlistId, opts = {}) {
         </div>
       `;
     }).join('');
+    hydrateAuthImages(list);
 
     list.querySelectorAll('.add-item-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {

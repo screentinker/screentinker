@@ -70,3 +70,32 @@ export function livenessBadge(data, opts = {}) {
 export function isPlatformAdmin(user) {
   return !!(user && (user.role === 'superadmin' || user.role === 'platform_admin'));
 }
+
+// Lazy-load authenticated images. A plain <img> can't send the Bearer token,
+// and thumbnail/file endpoints require auth — a just-uploaded item's thumbnail
+// 403's without it. We fetch with the token and swap in an object URL.
+// IntersectionObserver keeps it lazy; the object URL is revoked after load.
+let _authImgObserver = null;
+export function loadAuthImage(img) {
+  const url = img.dataset.authSrc;
+  if (!url) return;
+  delete img.dataset.authSrc;
+  fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+    .then(r => (r.ok ? r.blob() : Promise.reject(r.status)))
+    .then(blob => {
+      const obj = URL.createObjectURL(blob);
+      img.addEventListener('load', () => URL.revokeObjectURL(obj), { once: true });
+      img.src = obj;
+    })
+    .catch(() => { img.style.opacity = '0.25'; });
+}
+export function hydrateAuthImages(root) {
+  const imgs = root.querySelectorAll('img[data-auth-src]');
+  if (typeof IntersectionObserver === 'undefined') { imgs.forEach(loadAuthImage); return; }
+  if (!_authImgObserver) {
+    _authImgObserver = new IntersectionObserver((entries, obs) => {
+      for (const e of entries) if (e.isIntersecting) { obs.unobserve(e.target); loadAuthImage(e.target); }
+    }, { rootMargin: '300px' });
+  }
+  imgs.forEach(img => _authImgObserver.observe(img));
+}

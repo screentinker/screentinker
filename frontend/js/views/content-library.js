@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, hydrateAuthImages } from '../utils.js';
 import { t } from '../i18n.js';
 
 function formatFileSize(bytes) {
@@ -32,36 +32,6 @@ function toLocalDatetimeInput(epochSec) {
   const d = new Date(Number(epochSec) * 1000);
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-// Lazy-load authenticated thumbnails/previews. A plain <img> can't send the
-// Bearer token, and the content thumbnail/file endpoints require auth (or a
-// playlist/widget reference) - so a just-uploaded item's thumbnail 403'd. We fetch
-// with the token and swap in an object URL. IntersectionObserver keeps it lazy so
-// we stay under the /api/content rate limit; the object URL is revoked after load.
-let _authImgObserver = null;
-function loadAuthImage(img) {
-  const url = img.dataset.authSrc;
-  if (!url) return;
-  delete img.dataset.authSrc;
-  fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-    .then(r => (r.ok ? r.blob() : Promise.reject(r.status)))
-    .then(blob => {
-      const obj = URL.createObjectURL(blob);
-      img.addEventListener('load', () => URL.revokeObjectURL(obj), { once: true });
-      img.src = obj;
-    })
-    .catch(() => { img.style.opacity = '0.25'; });
-}
-function hydrateAuthImages(root) {
-  const imgs = root.querySelectorAll('img[data-auth-src]');
-  if (typeof IntersectionObserver === 'undefined') { imgs.forEach(loadAuthImage); return; }
-  if (!_authImgObserver) {
-    _authImgObserver = new IntersectionObserver((entries, obs) => {
-      for (const e of entries) if (e.isIntersecting) { obs.unobserve(e.target); loadAuthImage(e.target); }
-    }, { rootMargin: '300px' });
-  }
-  imgs.forEach(img => _authImgObserver.observe(img));
 }
 
 export function render(container) {

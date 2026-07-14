@@ -1,5 +1,6 @@
 import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
+import { hydrateAuthImages } from '../utils.js';
 
 const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(r => r.json());
 
@@ -63,15 +64,17 @@ function openContentPicker({ multiple = false, title } = {}) {
       list.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px">${
         filtered.map(c => {
           const isSel = selected.has(c.id);
+          const isRemote = !!c.remote_url;
           const thumb = c.remote_url || `/api/content/${c.id}/thumbnail`;
           return `
             <div data-pick-id="${escAttr(c.id)}" style="position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid ${isSel ? 'var(--primary, #4a7cff)' : 'transparent'};aspect-ratio:4/3;background:var(--bg-input)">
-              <img src="${escAttr(thumb)}" style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.style.opacity='0.2'">
+              <img ${isRemote ? `src="${escAttr(thumb)}"` : `data-auth-src="${escAttr(thumb)}"`} style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.style.opacity='0.2'">
               <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.75);color:#fff;padding:4px 6px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escAttr(c.filename)}</div>
               ${isSel ? '<div style="position:absolute;top:6px;right:6px;width:22px;height:22px;background:var(--primary, #4a7cff);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;line-height:1">&#10003;</div>' : ''}
             </div>`;
         }).join('')
       }</div>`;
+      hydrateAuthImages(list);
       list.querySelectorAll('[data-pick-id]').forEach(el => el.onclick = () => {
         const id = el.dataset.pickId;
         if (multiple) {
@@ -446,7 +449,7 @@ export async function render(container) {
     if (dirState.logo_url) {
       box.innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input)">
-          <img src="${escAttr(dirState.logo_url)}" style="max-height:50px;max-width:120px;object-fit:contain;background:#0003;border-radius:3px" onerror="this.style.opacity='0.3'">
+          <img ${dirState.logo_url && dirState.logo_url.startsWith('/api/') ? `data-auth-src="${escAttr(dirState.logo_url)}"` : `src="${escAttr(dirState.logo_url)}"`} style="max-height:50px;max-width:120px;object-fit:contain;background:#0003;border-radius:3px" onerror="this.style.opacity='0.3'">
           <div style="flex:1;min-width:0;font-size:11px;color:var(--text-muted);word-break:break-all;overflow:hidden;text-overflow:ellipsis">${escAttr(dirState.logo_url)}</div>
           <button type="button" class="btn btn-secondary btn-sm" id="wLogoChange">${t('widget.dir.change')}</button>
           <button type="button" class="btn-icon" id="wLogoClear" title="${t('widget.dir.remove_logo')}" style="color:#ff6b6b;padding:4px 8px">&#215;</button>
@@ -457,6 +460,7 @@ export async function render(container) {
       box.innerHTML = `<button type="button" class="btn btn-secondary btn-sm" id="wLogoChoose">${t('widget.dir.choose_logo')}</button>`;
       document.getElementById('wLogoChoose').onclick = pickLogo;
     }
+    hydrateAuthImages(box);
   }
 
   async function pickLogo() {
@@ -474,11 +478,12 @@ export async function render(container) {
     list.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${
       dirState.background_images.map((u, i) => `
         <div style="position:relative;width:90px;height:68px;border-radius:4px;overflow:hidden;background:var(--bg-input);border:1px solid var(--border)">
-          <img src="${escAttr(u)}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">
+          <img ${u && u.startsWith('/api/') ? `data-auth-src="${escAttr(u)}"` : `src="${escAttr(u)}"`} style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">
           <button type="button" data-bg-remove="${i}" title="${t('widget.dir.remove_bg')}" style="position:absolute;top:3px;right:3px;width:22px;height:22px;border-radius:50%;border:0;background:rgba(0,0,0,0.75);color:#fff;cursor:pointer;font-size:14px;line-height:1;padding:0">&#215;</button>
         </div>
       `).join('')
     }</div>`;
+    hydrateAuthImages(list);
     list.querySelectorAll('[data-bg-remove]').forEach(b => b.onclick = () => {
       dirState.background_images.splice(+b.dataset.bgRemove, 1);
       renderBgList();
