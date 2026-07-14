@@ -1454,7 +1454,7 @@ async function setupPlaylistActions(device) {
         </div>
       `;
       document.body.appendChild(modal);
-      hydrateAuthImages(modal);
+      hydrateAuthImages(modal, { eager: true });
 
       // Tab switching
       modal.querySelectorAll('.assign-tab').forEach(tab => {

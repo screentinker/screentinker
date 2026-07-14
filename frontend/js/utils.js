@@ -73,8 +73,8 @@ export function isPlatformAdmin(user) {
 
 // Lazy-load authenticated images. A plain <img> can't send the Bearer token,
 // and thumbnail/file endpoints require auth — a just-uploaded item's thumbnail
-// 403's without it. We fetch with the token and swap in an object URL.
-// IntersectionObserver keeps it lazy; the object URL is revoked after load.
+// 403's without it. We fetch with the token and swap in an object URL, revoked
+// after load.
 let _authImgObserver = null;
 export function loadAuthImage(img) {
   const url = img.dataset.authSrc;
@@ -89,13 +89,17 @@ export function loadAuthImage(img) {
     })
     .catch(() => { img.style.opacity = '0.25'; });
 }
-export function hydrateAuthImages(root) {
+// Hydrate <img data-auth-src> under `root`. Lazy by default: an
+// IntersectionObserver loads each thumbnail only as it scrolls into view, so a
+// large grid (content library, etc.) doesn't fire a fetch per thumbnail on
+// render. Pass { eager: true } for small, transient surfaces (pickers/modals)
+// where every item is on screen and immediate load reads better.
+export function hydrateAuthImages(root, { eager = false } = {}) {
   const imgs = root.querySelectorAll('img[data-auth-src]');
   if (!imgs.length) return;
 
-  // Load all images immediately; IntersectionObserver is used below
-  // only for images that are off-screen (lazy loading).
-  if (typeof IntersectionObserver === 'undefined') {
+  // Eager path (opt-in) and the no-IntersectionObserver fallback both load now.
+  if (eager || typeof IntersectionObserver === 'undefined') {
     imgs.forEach(loadAuthImage);
     return;
   }
@@ -105,8 +109,5 @@ export function hydrateAuthImages(root) {
       for (const e of entries) if (e.isIntersecting) { obs.unobserve(e.target); loadAuthImage(e.target); }
     }, { rootMargin: '300px' });
   }
-
-  // Load every image now — the observer will also fire for them but
-  // loadAuthImage is idempotent (deletes data-auth-src on first call).
-  imgs.forEach(img => { loadAuthImage(img); _authImgObserver.observe(img); });
+  imgs.forEach(img => _authImgObserver.observe(img));
 }

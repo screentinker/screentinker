@@ -74,7 +74,7 @@ function openContentPicker({ multiple = false, title } = {}) {
             </div>`;
         }).join('')
       }</div>`;
-      hydrateAuthImages(list);
+      hydrateAuthImages(list, { eager: true });
       list.querySelectorAll('[data-pick-id]').forEach(el => el.onclick = () => {
         const id = el.dataset.pickId;
         if (multiple) {

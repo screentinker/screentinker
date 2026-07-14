@@ -687,7 +687,7 @@ async function showAddItemModal(playlistId, opts = {}) {
         </div>
       `;
     }).join('');
-    hydrateAuthImages(list);
+    hydrateAuthImages(list, { eager: true });
 
     list.querySelectorAll('.add-item-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
