@@ -31,6 +31,7 @@ export default {
   'common.edit': 'Editar',
   'common.done': 'Listo',
   'common.loading': 'Cargando...',
+  'common.checking': 'Verificando...',
   'common.connected': 'Conectado',
   'common.disconnected': 'Desconectado',
   'common.never': 'Nunca',

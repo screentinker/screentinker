@@ -35,6 +35,7 @@ export default {
   'common.saving': 'Saving...',
   'common.deleting': 'Deleting...',
   'common.loading': 'Loading...',
+  'common.checking': 'Checking...',
   'confirm_delete.type_label': 'Type "{name}" to confirm',
   'confirm_delete.failed': 'Action failed',
   'common.connected': 'Connected',

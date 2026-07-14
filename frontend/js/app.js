@@ -576,7 +576,7 @@ export function updateVersionIndicator({ version, latest_version, update_availab
 
 // Show loading state while first poll resolves
 const verLabel = document.getElementById('versionLabel');
-if (verLabel) verLabel.textContent = 'Verificando...';
+if (verLabel) verLabel.textContent = t('common.checking');
 
 async function checkVersion() {
   try {
