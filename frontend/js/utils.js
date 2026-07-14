@@ -71,11 +71,10 @@ export function isPlatformAdmin(user) {
   return !!(user && (user.role === 'superadmin' || user.role === 'platform_admin'));
 }
 
-// Lazy-load authenticated images. A plain <img> can't send the Bearer token,
+// Eager-load authenticated images. A plain <img> can't send the Bearer token,
 // and thumbnail/file endpoints require auth — a just-uploaded item's thumbnail
 // 403's without it. We fetch with the token and swap in an object URL.
-// IntersectionObserver keeps it lazy; the object URL is revoked after load.
-let _authImgObserver = null;
+// All matching images load immediately; the object URL is revoked after load.
 export function loadAuthImage(img) {
   const url = img.dataset.authSrc;
   if (!url) return;
@@ -89,24 +88,11 @@ export function loadAuthImage(img) {
     })
     .catch(() => { img.style.opacity = '0.25'; });
 }
+// Load every img[data-auth-src] inside root immediately. loadAuthImage is
+// idempotent (deletes data-auth-src on first call), so re-hydrating a
+// container after dynamic content is safe. Callers adding content
+// asynchronously should re-invoke after DOM insertion.
 export function hydrateAuthImages(root) {
   const imgs = root.querySelectorAll('img[data-auth-src]');
-  if (!imgs.length) return;
-
-  // Load all images immediately; IntersectionObserver is used below
-  // only for images that are off-screen (lazy loading).
-  if (typeof IntersectionObserver === 'undefined') {
-    imgs.forEach(loadAuthImage);
-    return;
-  }
-
-  if (!_authImgObserver) {
-    _authImgObserver = new IntersectionObserver((entries, obs) => {
-      for (const e of entries) if (e.isIntersecting) { obs.unobserve(e.target); loadAuthImage(e.target); }
-    }, { rootMargin: '300px' });
-  }
-
-  // Load every image now — the observer will also fire for them but
-  // loadAuthImage is idempotent (deletes data-auth-src on first call).
-  imgs.forEach(img => { loadAuthImage(img); _authImgObserver.observe(img); });
+  imgs.forEach(loadAuthImage);
 }
