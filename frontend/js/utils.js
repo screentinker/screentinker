@@ -91,24 +91,30 @@ export function loadAuthImage(img) {
 }
 export function hydrateAuthImages(root) {
   const imgs = root.querySelectorAll('img[data-auth-src]');
-  if (typeof IntersectionObserver === 'undefined') { imgs.forEach(loadAuthImage); return; }
+  if (!imgs.length) return;
+
+  // Load images visible in the viewport synchronously
+  // (getBoundingClientRect forces layout, so dimensions are available).
+  // Use IntersectionObserver only for lazy-loading off-screen images.
+  if (typeof IntersectionObserver === 'undefined') {
+    imgs.forEach(loadAuthImage);
+    return;
+  }
+
   if (!_authImgObserver) {
     _authImgObserver = new IntersectionObserver((entries, obs) => {
       for (const e of entries) if (e.isIntersecting) { obs.unobserve(e.target); loadAuthImage(e.target); }
     }, { rootMargin: '300px' });
   }
-  imgs.forEach(img => _authImgObserver.observe(img));
-  // Fallback: the IntersectionObserver callback fires asynchronously and may
-  // miss images on first render when layout isn't settled. After one frame,
-  // manually load any still-unloaded images that are within the viewport.
-  requestAnimationFrame(() => {
-    for (const img of imgs) {
-      if (!img.isConnected || !img.dataset.authSrc) continue;
-      const r = img.getBoundingClientRect();
-      if (r.bottom > -300 && r.top < window.innerHeight + 300 &&
-          r.right > -300 && r.left < window.innerWidth + 300) {
-        loadAuthImage(img);
-      }
+
+  const vpBottom = window.innerHeight + 300;
+  const vpRight = window.innerWidth + 300;
+  for (const img of imgs) {
+    const r = img.getBoundingClientRect();
+    if (r.bottom > -300 && r.top < vpBottom && r.right > -300 && r.left < vpRight) {
+      loadAuthImage(img);
+    } else {
+      _authImgObserver.observe(img);
     }
-  });
+  }
 }
