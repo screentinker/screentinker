@@ -229,19 +229,28 @@ fi
 # 5. Kiosk display packages
 # ============================================================
 log "Installing kiosk packages..."
+# Chromium's package name differs by distro: Raspberry Pi OS / Ubuntu ship
+# 'chromium-browser', Debian ships 'chromium'. Try the Pi/Ubuntu name first, then
+# fall back to Debian's, so a bundled apt-get can't hard-fail (set -e) on a
+# Debian-based player. No-op if a chromium is already present.
+install_chromium() {
+    if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null; then
+        return 0
+    fi
+    apt-get install -y -qq chromium-browser >> "$LOG_FILE" 2>&1 || \
+        apt-get install -y -qq chromium >> "$LOG_FILE" 2>&1
+}
 if [ "$HAS_DESKTOP" = false ]; then
-    # Lite: install X11 + Chromium from scratch
+    # Lite: install X11 + helpers, then Chromium (portable package name)
     apt-get install -y -qq \
         xserver-xorg x11-xserver-utils xinit \
-        chromium-browser \
         unclutter xdotool \
         >> "$LOG_FILE" 2>&1
+    install_chromium
 else
     # Desktop: X already running, just ensure Chromium + helpers
     apt-get install -y -qq unclutter xdotool >> "$LOG_FILE" 2>&1
-    if ! command -v chromium-browser &>/dev/null && ! command -v chromium &>/dev/null; then
-        apt-get install -y -qq chromium-browser >> "$LOG_FILE" 2>&1
-    fi
+    install_chromium
 fi
 
 # Find Chromium binary
