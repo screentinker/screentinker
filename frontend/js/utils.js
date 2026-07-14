@@ -98,4 +98,17 @@ export function hydrateAuthImages(root) {
     }, { rootMargin: '300px' });
   }
   imgs.forEach(img => _authImgObserver.observe(img));
+  // Fallback: the IntersectionObserver callback fires asynchronously and may
+  // miss images on first render when layout isn't settled. After one frame,
+  // manually load any still-unloaded images that are within the viewport.
+  requestAnimationFrame(() => {
+    for (const img of imgs) {
+      if (!img.isConnected || !img.dataset.authSrc) continue;
+      const r = img.getBoundingClientRect();
+      if (r.bottom > -300 && r.top < window.innerHeight + 300 &&
+          r.right > -300 && r.left < window.innerWidth + 300) {
+        loadAuthImage(img);
+      }
+    }
+  });
 }
