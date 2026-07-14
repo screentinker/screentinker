@@ -614,6 +614,9 @@ async function loadDevice(deviceId, activeTab = null) {
         <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${t('device.terminal.push_apk_hint')}</div>
       </div>` : ''}
     `;
+    // Hydrate authenticated thumbnail images in the playlist tab
+    const pc = document.getElementById('playlistContainer');
+    if (pc) hydrateAuthImages(pc);
 
     // Global key/command handlers for remote
     window._sendKey = (keycode) => {
