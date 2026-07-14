@@ -91,11 +91,8 @@ export function loadAuthImage(img) {
 }
 export function hydrateAuthImages(root) {
   const imgs = root.querySelectorAll('img[data-auth-src]');
-  if (!imgs.length) return;
-
-  // Load images visible in the viewport synchronously
-  // (getBoundingClientRect forces layout, so dimensions are available).
-  // Use IntersectionObserver only for lazy-loading off-screen images.
+  // Load all images immediately; IntersectionObserver is used below
+  // only for images that are off-screen (lazy loading).
   if (typeof IntersectionObserver === 'undefined') {
     imgs.forEach(loadAuthImage);
     return;
@@ -107,14 +104,7 @@ export function hydrateAuthImages(root) {
     }, { rootMargin: '300px' });
   }
 
-  const vpBottom = window.innerHeight + 300;
-  const vpRight = window.innerWidth + 300;
-  for (const img of imgs) {
-    const r = img.getBoundingClientRect();
-    if (r.bottom > -300 && r.top < vpBottom && r.right > -300 && r.left < vpRight) {
-      loadAuthImage(img);
-    } else {
-      _authImgObserver.observe(img);
-    }
-  }
+  // Load every image now — the observer will also fire for them but
+  // loadAuthImage is idempotent (deletes data-auth-src on first call).
+  imgs.forEach(img => { loadAuthImage(img); _authImgObserver.observe(img); });
 }
