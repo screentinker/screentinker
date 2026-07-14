@@ -13,8 +13,15 @@ function getUserPlan(userId) {
     WHERE u.id = ?
   `).get(userId);
 
+  // No user row (or no joinable plan) — return null so callers treat it as unrestricted
+  // (checkDeviceAccess: `if (!plan) return { allowed: true }`). Previously the else branch
+  // below dereferenced an undefined `user` ("Cannot set properties of undefined"), which — once
+  // a claimed device's reclaim runs checkDeviceAccess — was swallowed by the caller's try/catch
+  // and silently dropped the device to the provision-fresh path instead of reclaiming it.
+  if (!user) return null;
+
   // Check if trial has expired
-  if (user && user.trial_started) {
+  if (user.trial_started) {
     const trialEnd = user.trial_started + (TRIAL_DAYS * 86400);
     const now = Math.floor(Date.now() / 1000);
     user.trial_active = now < trialEnd;

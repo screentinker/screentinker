@@ -470,20 +470,41 @@ module.exports = function setupDeviceSocket(io) {
                 const liveConn = heartbeat.getConnection(existing.device_id);
                 const lastBeat = oldDevice.last_heartbeat || 0;
                 const secondsSince = Math.floor(Date.now() / 1000) - lastBeat;
-                const stillAlive = !!liveConn || secondsSince < config.reclaimSettleSeconds;
-                if (stillAlive) {
+                // Bold 1.9.3->1.9.6 upgrade fix: a reinstalled panel registers with
+                // { pairing_code, fingerprint } and NO device_id — it is asking to be
+                // PROVISIONED, not to reclaim. The ONLY grounds to reject is a genuinely
+                // LIVE socket on the old device row (stops a duplicated fingerprint from
+                // hijacking an actively-connected display). The previous guard also rejected
+                // on a merely-recent heartbeat (secondsSince < reclaimSettleSeconds), which
+                // on an in-place-reinstall upgrade is ALWAYS true — so it returned before the
+                // pairing_code INSERT and the code the player was displaying was never created,
+                // leaving the dashboard with "code does not exist" until device_fingerprints
+                // was cleared by hand. The real security boundary is the operator claiming the
+                // code in the dashboard; a cloned fingerprint that falls through only gets an
+                // unclaimed, tokenless, content-less row — harmless.
+                if (liveConn) {
                   // Log at most once per device per window so a retrying/stuck device can't flood stdout.
                   const nowMs = Date.now();
                   if (nowMs - (lastReclaimRejectLogAt.get(existing.device_id) || 0) >= config.reclaimRejectLogWindowMs) {
                     lastReclaimRejectLogAt.set(existing.device_id, nowMs);
-                    console.warn(`Fingerprint reclaim deferred for ${existing.device_id}: still settling (status=${oldDevice.status}, ${secondsSince}s since heartbeat, liveConn=${!!liveConn}); reclaimable after ${config.reclaimSettleSeconds}s offline`);
+                    console.warn(`Fingerprint reclaim rejected for ${existing.device_id}: old device has a LIVE socket (status=${oldDevice.status}, ${secondsSince}s since heartbeat)`);
                   }
                   socket.emit('device:auth-error', {
-                    error: `This display was recently active. If you reinstalled the app, retry after it has been offline for ${config.reclaimSettleSeconds} seconds.`
+                    error: 'This display is currently active on another connection.'
                   });
                   return;
                 }
-                lastReclaimRejectLogAt.delete(existing.device_id); // reclaim proceeding — clear any deferral log state
+                // No live socket from here on — the old connection is gone.
+                lastReclaimRejectLogAt.delete(existing.device_id);
+                if (oldDevice.user_id) {
+                  // The old row is CLAIMED. A reinstalled panel (MDM wiped its data, so it presents
+                  // only its stable fingerprint — no device_id, no token) must REMATCH to this row —
+                  // preserving the claim, name, playlist, and content — instead of provisioning a
+                  // stranger the operator has to re-pair across the whole fleet. device:paired below
+                  // drives the app off the pairing screen, so the fresh code it was displaying is
+                  // irrelevant. We reclaim regardless of the settle window: liveConn (checked above)
+                  // is the real anti-hijack boundary; the settle delay only postponed a
+                  // fingerprint-only reclaim the server already grants once the window elapses.
 
                 // Fingerprint matched — this is a reinstalled app reconnecting to its old device.
                 // Issue a fresh token so the app can authenticate going forward.
@@ -525,6 +546,12 @@ module.exports = function setupDeviceSocket(io) {
                   socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
                 }
                 return;
+                }
+                // The old row is UNCLAIMED (never paired). Reclaiming it would leave it carrying a
+                // stale/null pairing_code while the player shows a fresh one -> "code does not exist".
+                // Fall through to the pairing_code path below, which provisions a fresh row with the
+                // on-screen code and (#150) relinks the fingerprint to it. reclaimSettleSeconds no
+                // longer gates this path — a genuinely live socket (above) is the only rejection.
               }
             }
           } else if (device_id || pairing_code) {

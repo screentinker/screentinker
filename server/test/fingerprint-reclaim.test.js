@@ -41,9 +41,9 @@ before(async () => {
 after(() => { try { tdb && tdb.close(); } catch { /* */ } try { proc.kill('SIGKILL'); } catch { /* */ } });
 
 // Seed a device + its fingerprint link directly (no socket -> no lingering liveConn).
-function seedDevice(fp, { token, heartbeatAgo }) {
+function seedDevice(fp, { token, heartbeatAgo, userId = null }) {
   const id = crypto.randomUUID();
-  tdb.prepare("INSERT INTO devices (id, status, last_heartbeat, device_token) VALUES (?, 'offline', strftime('%s','now') - ?, ?)").run(id, heartbeatAgo, token);
+  tdb.prepare("INSERT INTO devices (id, status, last_heartbeat, device_token, user_id) VALUES (?, 'offline', strftime('%s','now') - ?, ?, ?)").run(id, heartbeatAgo, token, userId);
   tdb.prepare('INSERT INTO device_fingerprints (fingerprint, device_id) VALUES (?, ?)').run(fp, id);
   return { id, token };
 }
@@ -52,10 +52,12 @@ function staleHeartbeat(id, ago) { tdb.prepare("UPDATE devices SET last_heartbea
 function attempt(payload) { // one-shot register; resolves and closes
   return new Promise((resolve) => {
     const sock = ioClient(`${BASE}/device`, { transports: ['websocket'], reconnection: false, forceNew: true });
-    const got = { registered: false, newId: null, authError: false, errorMsg: null };
+    const got = { registered: false, newId: null, authError: false, errorMsg: null, paired: false, pairedId: null };
     const finish = () => { try { sock.close(); } catch { /* */ } resolve(got); };
     sock.on('connect', () => sock.emit('device:register', payload));
-    sock.on('device:registered', (d) => { got.registered = true; got.newId = d.device_id; setTimeout(finish, 150); });
+    // device:paired arrives right after device:registered on a claimed reclaim — wait 200ms to catch it.
+    sock.on('device:registered', (d) => { got.registered = true; got.newId = d.device_id; setTimeout(finish, 200); });
+    sock.on('device:paired', (d) => { got.paired = true; got.pairedId = d && d.device_id; });
     sock.on('device:auth-error', (e) => { got.authError = true; got.errorMsg = e && e.error; finish(); });
     setTimeout(finish, 4000);
   });
@@ -71,13 +73,15 @@ function connectLive(payload) { // keeps the socket open (live connection); call
 }
 const rnd = () => String(crypto.randomInt(100000, 1000000));
 
-test('#143 repro: a gone device (no live conn + stale heartbeat) is reclaimable', async () => {
+test('#143 no reclaim-loop: an UNCLAIMED gone device provisions fresh with the shown code', async () => {
   const fp = 'fp-gone-' + crypto.randomBytes(4).toString('hex');
-  const dev = seedDevice(fp, { token: 'tok', heartbeatAgo: 99999 }); // ~27h stale, never connected
-  const r = await attempt({ pairing_code: rnd(), fingerprint: fp }); // no device_id -> reclaim path
-  assert.ok(r.registered, 'reclaim SUCCEEDS for a gone device');
-  assert.equal(r.newId, dev.id, 'it reclaims the SAME device identity');
-  assert.ok(!r.authError, 'no rejection');
+  const dev = seedDevice(fp, { token: 'tok', heartbeatAgo: 99999 }); // unclaimed, ~27h stale, never connected
+  const code = rnd();
+  const r = await attempt({ pairing_code: code, fingerprint: fp }); // no device_id
+  assert.ok(r.registered && !r.authError, 'registers cleanly — no stuck reclaim/retry loop (#143)');
+  assert.notEqual(r.newId, dev.id, 'an UNCLAIMED old row is NOT reclaimed (its stale code would break pairing) — a fresh row is provisioned');
+  const row = tdb.prepare('SELECT status FROM devices WHERE pairing_code = ?').get(code);
+  assert.ok(row && row.status === 'provisioning', 'the on-screen code is inserted as a fresh provisioning row');
 });
 
 test('no regression: a genuinely live device REJECTS a fingerprint reclaim', async () => {
@@ -88,6 +92,60 @@ test('no regression: a genuinely live device REJECTS a fingerprint reclaim', asy
   const r = await attempt({ pairing_code: rnd(), fingerprint: fp });
   assert.ok(r.authError && !r.registered, 'reclaim of a LIVE device is rejected (abuse protection intact)');
   try { live.sock.close(); } catch { /* */ }
+});
+
+// Bold 1.9.3->1.9.6 upgrade regression: a reinstall registers { pairing_code, fingerprint,
+// no device_id } while the OLD device row heartbeat only seconds ago but has NO live socket
+// (the app was uninstalled). The old guard treated the recent heartbeat as "still alive" and
+// returned before the pairing_code INSERT, so the code the player displayed was never created
+// and the dashboard said "code does not exist". It must now PROVISION FRESH with that code.
+test('Bold upgrade: recent heartbeat + NO live socket provisions fresh with the shown code', async () => {
+  const fp = 'fp-upgrade-' + crypto.randomBytes(4).toString('hex');
+  const dev = seedDevice(fp, { token: 'tokU', heartbeatAgo: 10 }); // heartbeat 10s ago, never socket-connected
+  const code = rnd();
+  const r = await attempt({ pairing_code: code, fingerprint: fp }); // no device_id
+  assert.ok(r.registered, 'the reinstalled device provisions (device:registered), not blocked');
+  assert.ok(!r.authError, 'not rejected by the reclaim-settle guard');
+  const row = tdb.prepare('SELECT * FROM devices WHERE pairing_code = ?').get(code);
+  assert.ok(row, 'a devices row exists carrying the pairing_code the player is showing');
+  assert.equal(row.status, 'provisioning', 'provisioned as a new, unclaimed device');
+  assert.notEqual(row.id, dev.id, 'a fresh row — not a silent reclaim of the old identity');
+  assert.equal(r.newId, row.id, 'the client is told its new device_id');
+  const fpRow = tdb.prepare('SELECT device_id FROM device_fingerprints WHERE fingerprint = ?').get(fp);
+  assert.equal(fpRow.device_id, row.id, '#150: fingerprint relinked to the new device row');
+});
+
+// The security boundary must survive the fix: if the OLD device still has a genuinely LIVE
+// socket, a fingerprint clash must be rejected and NOT provision a new row.
+test('security preserved: a LIVE old socket still rejects provisioning (no new row created)', async () => {
+  const fp = 'fp-live2-' + crypto.randomBytes(4).toString('hex');
+  const dev = seedDevice(fp, { token: 'tokL', heartbeatAgo: 10 });
+  const live = await connectLive({ device_id: dev.id, device_token: 'tokL', device_info: {} });
+  assert.ok(live.registered, 'old device has a LIVE socket');
+  const code = rnd();
+  const r = await attempt({ pairing_code: code, fingerprint: fp });
+  assert.ok(r.authError && !r.registered, 'rejected while the old device is genuinely live');
+  const row = tdb.prepare('SELECT id FROM devices WHERE pairing_code = ?').get(code);
+  assert.ok(!row, 'no new device row is provisioned for a clash against a live device');
+  try { live.sock.close(); } catch { /* */ }
+});
+
+// The claim-status fix: a CLAIMED panel that reinstalls (fingerprint only, no live socket) must
+// REMATCH its existing row — preserve the claim/name/content, no operator re-pair, no orphaned
+// duplicate — regardless of the settle window. This is what keeps a fleet upgrade seamless.
+test('claimed reinstall RECLAIMS its row (no re-pair, no duplicate) regardless of the settle window', async () => {
+  const fp = 'fp-claimed-' + crypto.randomBytes(4).toString('hex');
+  // CLAIMED (user_id set), heartbeat only 10s ago (well inside the old settle window), no live socket.
+  const dev = seedDevice(fp, { token: 'tokC', heartbeatAgo: 10, userId: 'user-' + crypto.randomBytes(3).toString('hex') });
+  const before = tdb.prepare('SELECT COUNT(*) c FROM devices').get().c;
+  const code = rnd();
+  const r = await attempt({ pairing_code: code, fingerprint: fp }); // reinstall: fingerprint only
+  assert.ok(r.registered && !r.authError, 'registers');
+  assert.equal(r.newId, dev.id, 'rematches the SAME claimed device row — identity/claim preserved');
+  assert.ok(r.paired, 'a claimed row emits device:paired, so the panel returns straight to paired (no code screen)');
+  assert.equal(tdb.prepare('SELECT COUNT(*) c FROM devices').get().c, before, 'no new device row created (no fleet duplication)');
+  assert.ok(!tdb.prepare('SELECT id FROM devices WHERE pairing_code = ?').get(code), 'the on-screen code is NOT provisioned as a separate row');
+  assert.equal(tdb.prepare('SELECT device_id FROM device_fingerprints WHERE fingerprint = ?').get(fp).device_id, dev.id, 'the fingerprint stays linked to the reclaimed row');
 });
 
 test('clear-on-leave: after disconnect, liveConn is cleared so a (stale) device reclaims', async () => {
@@ -113,6 +171,6 @@ test('log noise: a retried reclaim logs at most once per device per window', asy
   for (let i = 0; i < 4; i++) { const r = await attempt({ pairing_code: rnd(), fingerprint: fp }); assert.ok(r.authError, 'each retry is deferred'); }
   try { live.sock.close(); } catch { /* */ }
   await sleep(200);
-  const lines = fs.readFileSync(LOG, 'utf8').split('\n').filter(l => l.includes('reclaim deferred for ' + dev.id)).length;
-  assert.ok(lines <= 1, `at most one deferral log per window (got ${lines}); no double-log / per-2s flood`);
+  const lines = fs.readFileSync(LOG, 'utf8').split('\n').filter(l => l.includes('reclaim rejected for ' + dev.id)).length;
+  assert.ok(lines <= 1, `at most one rejection log per window (got ${lines}); no double-log / per-2s flood`);
 });
