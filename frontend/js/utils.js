@@ -80,23 +80,17 @@ export function loadAuthImage(img) {
   const url = img.dataset.authSrc;
   if (!url) return;
   delete img.dataset.authSrc;
-  console.debug('[authImg] loading', url);
   fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-    .then(r => {
-      if (!r.ok) throw r.status;
-      return r.blob();
-    })
+    .then(r => (r.ok ? r.blob() : Promise.reject(r.status)))
     .then(blob => {
       const obj = URL.createObjectURL(blob);
       img.addEventListener('load', () => URL.revokeObjectURL(obj), { once: true });
       img.src = obj;
-      console.debug('[authImg] loaded', url);
     })
-    .catch(e => { console.debug('[authImg] failed', url, e); img.style.opacity = '0.25'; });
+    .catch(() => { img.style.opacity = '0.25'; });
 }
 export function hydrateAuthImages(root) {
   const imgs = root.querySelectorAll('img[data-auth-src]');
-  console.debug('[authImg] hydrate called, found', imgs.length, 'images in', root.id || root.className || 'root');
   if (!imgs.length) return;
 
   // Load all images immediately; IntersectionObserver is used below
@@ -115,5 +109,4 @@ export function hydrateAuthImages(root) {
   // Load every image now — the observer will also fire for them but
   // loadAuthImage is idempotent (deletes data-auth-src on first call).
   imgs.forEach(img => { loadAuthImage(img); _authImgObserver.observe(img); });
-  console.debug('[authImg] hydrate done, loaded', imgs.length);
 }
