@@ -570,10 +570,15 @@ let knownHash = null;
 export function updateVersionIndicator({ version, latest_version, update_available }) {
   const label = document.getElementById('versionLabel');
   const badge = document.getElementById('versionBadge');
-  if (label) label.textContent = version ? 'v' + version : '';
+  if (label) label.textContent = version ? 'v' + version : '-';
   if (badge) badge.hidden = !update_available;
 }
-setInterval(async () => {
+
+// Show loading state while first poll resolves
+const verLabel = document.getElementById('versionLabel');
+if (verLabel) verLabel.textContent = 'Verificando...';
+
+async function checkVersion() {
   try {
     const res = await fetch('/api/version');
     const data = await res.json();
@@ -590,7 +595,9 @@ setInterval(async () => {
     }
     updateVersionIndicator(data);
   } catch {}
-}, 15000);
+}
+checkVersion(); // Fire first poll immediately
+setInterval(checkVersion, 15000);
 
 // Session timeout warning - check JWT expiry every minute
 if (isAuthenticated()) {
