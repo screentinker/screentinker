@@ -252,6 +252,7 @@ function showPlaylistPreview(playlist) {
 }
 
 function renderDetailContent(container, playlist) {
+  console.debug('[playlist] renderDetailContent called, items:', playlist.items?.length || 0);
   const isDraft = playlist.status === 'draft';
   const hasPublished = !!playlist.published_snapshot;
 
@@ -411,6 +412,7 @@ function renderItems(items) {
       </div>
     </div>
   `).join('');
+  console.debug('[playlist] renderItems: calling hydrateAuthImages for', items.filter(i => i.thumbnail_path).length, 'items with thumbnails');
   hydrateAuthImages(itemsEl);
 
   itemsEl.querySelectorAll('.item-duration').forEach(input => {
