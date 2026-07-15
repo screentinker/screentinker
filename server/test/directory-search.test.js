@@ -87,3 +87,30 @@ test('XSS: entry/category text cannot break out of the inlined script', async ()
   assert.ok(!html.includes('</script><script>window.__pwned'), 'raw </script> breakout neutralized');
   assert.ok(html.includes('\\u003c/script>'), 'angle brackets escaped in the inlined JSON blob');
 });
+
+// ---- live sync: GET /:id/data.json feed the search page polls ----
+const fetchData = async (id) => fetch(`${base}/api/widgets/${id}/data.json`);
+
+test('data.json returns the source board categories, CORS-open for polling', async () => {
+  const r = await fetchData('board1'); // seeded in the first test
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('access-control-allow-origin'), '*', 'readable from a null-origin sandboxed iframe');
+  assert.equal(r.headers.get('cache-control'), 'no-store');
+  const body = await r.json();
+  assert.ok(Array.isArray(body.categories) && body.categories.length === 2, 'returns the categories array');
+  assert.equal(body.categories[0].entries[0].name, 'Acme Co');
+});
+
+test('data.json 404s for a missing widget (poll keeps last-good data)', async () => {
+  assert.equal((await fetchData('does-not-exist')).status, 404);
+});
+
+test('data.json 404s for a non-directory-board widget', async () => {
+  assert.equal((await fetchData('clockX')).status, 404); // clockX seeded earlier
+});
+
+test('search page wires the live-sync poll to its source board', async () => {
+  const { html } = await fetchRender('search1');
+  assert.ok(html.includes('"source_widget_id":"board1"'), 'source board id inlined into the page');
+  assert.ok(html.includes('/data.json'), 'page polls the data.json feed');
+});

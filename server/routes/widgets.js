@@ -202,6 +202,25 @@ router.get('/:id/render', (req, res) => {
   res.send(renderWidgetHtml(widget.widget_type, config));
 });
 
+// Public JSON feed of a directory board's entries. A directory-search page polls
+// this to reflect board edits without a reload. It exposes only the same data
+// already public via /render, and is CORS-open so a null-origin sandboxed widget
+// iframe can read it. 404 (not empty) on a missing/wrong-type source so the
+// polling page keeps its last-good data instead of blanking on a transient miss.
+router.get('/:id/data.json', (req, res) => {
+  const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
+  if (!widget || widget.widget_type !== 'directory-board') return res.status(404).json({ error: 'Not a directory board' });
+  let categories = [];
+  try {
+    const cfg = JSON.parse(widget.config || '{}');
+    categories = Array.isArray(cfg.categories) ? cfg.categories : [];
+  } catch (e) { categories = []; }
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ categories });
+});
+
 // Preview unsaved widget from config (used by editor Preview button)
 router.post('/preview', (req, res) => {
   const { widget_type, config } = req.body || {};
@@ -706,6 +725,7 @@ function renderDirectorySearch(c) {
   // board does. All user text is rendered via textContent below — never concat.
   const payload = {
     categories: categories,
+    source_widget_id: src.id,
     title: c.title || '',
     logo_url: c.logo_url || '',
     theme: c.theme === 'light' ? 'light' : 'dark',
@@ -812,23 +832,26 @@ function renderDirectorySearch(c) {
   if (!logoSrc && !cfg.title) header.style.display = 'none';
 
   // ----- flatten source entries (preserve category order) -----
-  var cats = Array.isArray(cfg.categories) ? cfg.categories : [];
-  var flat = [];
-  cats.forEach(function(cat){
-    var cn = cat && cat.name != null ? String(cat.name) : '';
-    var entries = cat && Array.isArray(cat.entries) ? cat.entries : [];
-    entries.forEach(function(e){
-      var item = {
-        cat: cn,
-        identifier: e && e.identifier != null ? String(e.identifier) : '',
-        name: e && e.name != null ? String(e.name) : '',
-        subtitle: e && e.subtitle != null ? String(e.subtitle) : '',
-        available: !!(e && e.available)
-      };
-      item._h = (item.identifier + ' ' + item.name + ' ' + item.subtitle).toLowerCase();
-      flat.push(item);
+  function buildFlat(categories) {
+    var out = [];
+    (Array.isArray(categories) ? categories : []).forEach(function(cat){
+      var cn = cat && cat.name != null ? String(cat.name) : '';
+      var entries = cat && Array.isArray(cat.entries) ? cat.entries : [];
+      entries.forEach(function(e){
+        var item = {
+          cat: cn,
+          identifier: e && e.identifier != null ? String(e.identifier) : '',
+          name: e && e.name != null ? String(e.name) : '',
+          subtitle: e && e.subtitle != null ? String(e.subtitle) : '',
+          available: !!(e && e.available)
+        };
+        item._h = (item.identifier + ' ' + item.name + ' ' + item.subtitle).toLowerCase();
+        out.push(item);
+      });
     });
-  });
+    return out;
+  }
+  var flat = buildFlat(cfg.categories);
 
   var input = document.getElementById('q');
   input.placeholder = cfg.placeholder_text || '';
@@ -932,10 +955,30 @@ function renderDirectorySearch(c) {
   render('');
   try { input.focus(); } catch(e){}
 
-  // TODO(directory-search live-sync): to reflect source-board edits without a
-  // reload, add GET /api/widgets/:id/data.json returning { categories } for the
-  // source board, then poll it here every N seconds and rebuild \`flat\` +
-  // re-run render(input.value). Out of scope for this branch.
+  // ----- live sync: poll the source board so edits appear without a reload -----
+  // The board's data.json sits next to this page (/api/widgets/<board>/data.json),
+  // reached with a relative URL so it works behind any proxy/base path and from a
+  // null-origin sandboxed iframe (data.json is CORS-open). We only rebuild + rerender
+  // when the data actually changed, so a mid-search view isn't disturbed every tick.
+  var SRC_ID = cfg.source_widget_id || '';
+  var POLL_MS = 30000;
+  var lastSig = JSON.stringify(cfg.categories || []);
+  if (SRC_ID) {
+    setInterval(function(){
+      if (document.hidden) return;
+      fetch('../' + encodeURIComponent(SRC_ID) + '/data.json', { cache: 'no-store' })
+        .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function(data){
+          var cats = data && Array.isArray(data.categories) ? data.categories : [];
+          var sig = JSON.stringify(cats);
+          if (sig === lastSig) return;      // unchanged -> leave the view alone
+          lastSig = sig;
+          flat = buildFlat(cats);
+          render(input.value);              // refresh results for the current query
+        })
+        .catch(function(){ /* transient error -> keep last-good data */ });
+    }, POLL_MS);
+  }
 })();
 </script>
 </body></html>`;
