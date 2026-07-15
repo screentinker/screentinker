@@ -37,6 +37,11 @@ function PlaylistPlayer(stageEl, getBase) {
   this.MIN_DURATION = 3;
   this.preloadEl = null;       // #group-sync double buffer: pre-buffered next <video>
   this.preloadIdx = -1;
+  // #187 image double buffer: pre-DECODED next <img> (detached — decode() warms the bitmap without
+  // the DOM, so clearStage can't wipe it). Mirrors preloadEl/preloadIdx. Swapped in decode-gated so
+  // the image path never clears the stage to black before the new frame is paint-ready.
+  this.preloadImgEl = null;
+  this.preloadImgIdx = -1;
   // #157: schedule-driven (group-sync) mode — set by app.js. Group-sync advances via its own tick,
   // not the solo timer, and Tizen group-sync doesn't use wallFollower, so this gates the deferral.
   this.scheduleDriven = false;
@@ -86,6 +91,43 @@ PlaylistPlayer.prototype._takePreload = function (idx) {
   return null;
 };
 
+// #187 image double buffer (mirrors preloadVideo/_takePreload for the IMAGE path). Only the NEXT
+// item, only when it's an image, ONE-ahead. Builds a DETACHED <img>, sets src, and warms the decoded
+// bitmap via HTMLImageElement.decode() (feature-detected — Tizen 5.0 / SSSP6 may lack it, so the
+// element still loads and the swap path falls back to onload/complete). At the boundary renderImage
+// _takePreloadImage()s it and swaps it in with no black hold.
+PlaylistPlayer.prototype.preloadImage = function (idx) {
+  if (this.preloadImgIdx === idx) return;   // already handled this boundary
+  this._releasePreloadImage();              // index moved off the warmed image -> drop the stale one
+  var item = this.items[idx];
+  if (!item) { this.preloadImgIdx = -1; return; }
+  // One-ahead ONLY, images only. A non-image next: mark this boundary handled, nothing to warm.
+  if ((item.mime_type || '').indexOf('image/') !== 0) { this.preloadImgIdx = idx; return; }
+  try {
+    var img = document.createElement('img');
+    this.fit(img, item);
+    img.src = this.contentUrl(item);
+    // Warm the decoded bitmap. A decode() rejection (broken URL) is swallowed here and re-surfaces at
+    // the swap (renderImage re-runs decode()/onerror -> skipSoon), so a bad image still skips.
+    if (typeof img.decode === 'function') { img.decode().catch(function () {}); }
+    this.preloadImgEl = img; this.preloadImgIdx = idx;
+  } catch (e) { this._releasePreloadImage(); }
+};
+PlaylistPlayer.prototype._takePreloadImage = function (idx) {
+  if (this.preloadImgIdx === idx && this.preloadImgEl) {
+    var el = this.preloadImgEl; this.preloadImgEl = null; this.preloadImgIdx = -1;
+    if (el.parentNode) el.parentNode.removeChild(el);   // detached in practice; defensive parity
+    return el;
+  }
+  return null;
+};
+PlaylistPlayer.prototype._releasePreloadImage = function () {
+  if (this.preloadImgEl) {
+    try { this.preloadImgEl.onload = this.preloadImgEl.onerror = null; this.preloadImgEl.src = ''; } catch (e) {}
+  }
+  this.preloadImgEl = null; this.preloadImgIdx = -1;
+};
+
 PlaylistPlayer.prototype.load = function (assignments) {
   // B3: a malformed device:playlist-update with a non-array `assignments` used to throw
   // (.filter is not a function) out of the socket handler; coerce to [] instead.
@@ -117,6 +159,9 @@ PlaylistPlayer.prototype.load = function (assignments) {
   var curId = this.itemIdentity(oldItems[oldIndex]);
   this.sig = sig;
   this.items = items;
+  // #187: the warmed image is cached BY INDEX; a structural change can repoint that index at a
+  // different item, so drop it (the next dwell re-warms the correct successor).
+  this._releasePreloadImage();
   this._deferredRotation = false;
   this._deferredSuccessorId = null;
 
@@ -153,6 +198,7 @@ PlaylistPlayer.prototype.load = function (assignments) {
 
 PlaylistPlayer.prototype.stop = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  this._releasePreloadImage();   // #187: drop any warmed next-image bitmap on teardown
   this.clearStage();
 };
 
@@ -305,7 +351,15 @@ PlaylistPlayer.prototype.playCurrent = function () {
   // (looping, no auto-advance) and only switches when wall:sync says the index moved.
   var single = this.wallFollower || (this.items.length === 1 && !this.anyScheduled());
   var mime = item.mime_type || '';
-  this.clearStage();
+  // #187: the IMAGE path decode-gates and SWAPS (it clears the stage only after the new frame is
+  // paint-ready, inside renderImage) so slow Tizen decode HW no longer black-flashes between images.
+  // Every OTHER type keeps the pre-dispatch clearStage() exactly as before — this mirrors the same
+  // branch order used in the dispatch below, so an item routed to renderImage is the only one skipped.
+  var isImage = mime !== 'video/youtube'
+    && !(item.widget_id && !item.content_id)
+    && mime.indexOf('video/') !== 0
+    && mime.indexOf('image/') === 0;
+  if (!isImage) this.clearStage();
 
   try {
     if (mime === 'video/youtube') return this.renderYouTube(item, single);
@@ -342,14 +396,49 @@ PlaylistPlayer.prototype.fit = function (el, item) {
   else el.className = 'cover';
 };
 
+// #187: decode-gated one-ahead double buffer for images (mirrors the video preloader). The stage is
+// NEVER cleared to black before the new image is paint-ready: we take the warmed pre-decoded <img>
+// (or decode a fresh one), and ONLY THEN clearStage()+append — a swap, never clear-then-load.
 PlaylistPlayer.prototype.renderImage = function (item, single) {
   var self = this;
-  var img = document.createElement('img');
-  this.fit(img, item);
-  img.onerror = function () { self.skipSoon(); };
-  img.src = this.contentUrl(item);
-  this.stage.appendChild(img);
-  if (!single) this.schedule(this.durationMs(item));
+  var targetIdx = this.index;
+  var img = this._takePreloadImage(targetIdx);   // pre-decoded from the previous item's dwell?
+  if (!img) {
+    this._releasePreloadImage();                 // any warmed image is for a different index now — drop it
+    img = document.createElement('img');
+    this.fit(img, item);
+    img.src = this.contentUrl(item);
+  }
+  var settled = false;
+  var stale = function () {
+    // A next()/gotoIndex/playlist change mid-decode must not mount a now-stale image over the current
+    // item (mirrors how renderVideo's _takePreload only fires for the still-current index).
+    return self.index !== targetIdx || self.items[targetIdx] !== item;
+  };
+  var mount = function () {
+    if (settled) return; settled = true;
+    if (stale()) { try { img.src = ''; } catch (e) {} return; }
+    self.clearStage();                 // SWAP: clear only now, with the decoded image ready to paint
+    self.stage.appendChild(img);
+    if (!single) {
+      self.schedule(self.durationMs(item));
+      self.preloadImage(self.nextActiveIndex(targetIdx));   // warm the NEXT image while THIS one dwells
+    }
+  };
+  var fail = function () {
+    if (settled) return; settled = true;
+    if (stale()) return;
+    self.skipSoon();                   // broken URL / decode reject -> skip (A1 self-heals a single item)
+  };
+  img.onerror = fail;
+  // Feature-detect decode() (Tizen 5.0 / SSSP6 may lack it) -> onload/complete fallback.
+  if (typeof img.decode === 'function') {
+    img.decode().then(mount).catch(fail);
+  } else if (img.complete) {
+    if (img.naturalWidth > 0) mount(); else fail();   // warmed element already loaded (ok) or errored
+  } else {
+    img.onload = mount;                // onerror set above routes a load error to fail
+  }
 };
 
 PlaylistPlayer.prototype.setOrientation = function (o) { this.orientation = o || 'landscape'; };
@@ -910,7 +999,10 @@ GroupSyncController.prototype.tick = function () {
   if (!this.groupId || !this.player.items.length) return;
   var t = this.target(); if (!t) return;
   // Double buffer: warm the next clip ~6s before the boundary (once per boundary).
-  if (t.nextIndex !== t.index && t.secToBoundary >= 0 && t.secToBoundary <= 6) this.player.preloadVideo(t.nextIndex);
+  if (t.nextIndex !== t.index && t.secToBoundary >= 0 && t.secToBoundary <= 6) {
+    this.player.preloadVideo(t.nextIndex);   // warm next clip (video-only; no-ops otherwise)
+    this.player.preloadImage(t.nextIndex);   // #187: warm next image (image-only; separate buffer)
+  }
   var action = 'hold';
   if (t.index !== this.player.getIndex()) {
     this.player.gotoIndex(t.index); action = 'jump>' + t.index;
@@ -962,5 +1054,6 @@ GroupSyncController.prototype.exit = function () {
   this.player.setWallFollower(false);
   this.player.invalidate();
   this.player._takePreload(this.player.preloadIdx);   // drop any warmed next-clip element
+  this.player._releasePreloadImage();                 // #187: drop any warmed next-image bitmap
   if (this.report) this.report('info', 'group-sync exited');
 };

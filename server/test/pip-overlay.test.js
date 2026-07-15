@@ -25,6 +25,13 @@ function makeEl() {
   };
   Object.defineProperty(el, 'innerHTML', { get() { return this._html; }, set(v) { this._html = v; if (v === '') this.children = []; } });
   Object.defineProperty(el, 'src', { get() { return this._src; }, set(v) { this._src = v; } });
+  // #187: renderImage is now decode-gated (swap-after-decode, never clear-then-load). This shim has
+  // no HTMLImageElement.decode() and doesn't fire onload, so mark a src'd <img> already-decoded
+  // (complete + naturalWidth>0) — renderImage then takes its synchronous complete-fallback branch and
+  // mounts, exactly as the old clear-then-load path did. The decode()/onload timing itself is proven
+  // in tizen-image-blackflash.test.js; here we only need the image to land in #stage.
+  Object.defineProperty(el, 'complete', { get() { return !!this._src; } });
+  Object.defineProperty(el, 'naturalWidth', { get() { return this._src ? 1 : 0; } });
   Object.defineProperty(el, 'textContent', { get() { return this._text; }, set(v) { this._text = v; } });
   return el;
 }
