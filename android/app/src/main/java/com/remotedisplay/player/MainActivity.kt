@@ -999,6 +999,26 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(backTapRunnable!!, TAP_WINDOW_MS)
     }
 
+    // Show a dialog containing a text field over the IMMERSIVE_STICKY fullscreen so the soft
+    // keyboard actually attaches. A dialog shown over an immersive activity otherwise doesn't gain
+    // window focus -> its EditText gets no cursor/IME, so on a kiosk with no hardware keyboard the
+    // PIN/URL can't be typed. Fix: mark the dialog NOT_FOCUSABLE *before* show() so it doesn't steal
+    // focus and reset the activity's immersive flags; mirror those flags onto the dialog; then clear
+    // NOT_FOCUSABLE *after* show() so the IME can attach to the focused field.
+    @Suppress("DEPRECATION")
+    private fun showImeDialog(dialog: AlertDialog, focus: android.view.View?) {
+        val w = dialog.window
+        w?.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        )
+        w?.decorView?.systemUiVisibility = window.decorView.systemUiVisibility
+        dialog.show()
+        w?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        w?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+        focus?.requestFocus()
+    }
+
     private fun showPinDialog() {
         val input = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
@@ -1011,7 +1031,7 @@ class MainActivity : AppCompatActivity() {
             addView(input)
         }
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(getString(R.string.settings_pin_title))
             .setView(container)
             .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -1022,7 +1042,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+        showImeDialog(dialog, input)
     }
 
     private fun showSettingsDialog() {
@@ -1115,7 +1136,7 @@ class MainActivity : AppCompatActivity() {
             addView(input)
         }
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(getString(R.string.settings_change_server))
             .setView(container)
             .setPositiveButton(getString(R.string.settings_save)) { _, _ ->
@@ -1126,7 +1147,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+        showImeDialog(dialog, input)
     }
 
     private fun showPermissionsDialog() {
