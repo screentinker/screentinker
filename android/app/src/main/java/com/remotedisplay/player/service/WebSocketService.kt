@@ -114,6 +114,9 @@ class WebSocketService : Service() {
     var onRegistered: ((String) -> Unit)? = null
     var onPlaylistUpdate: ((JSONObject) -> Unit)? = null
     var onContentDelete: ((String) -> Unit)? = null
+    // #170: fired when the default network (re)connects — the player clears stuck download backoff
+    // so items that failed to download while the link was settling retry on the next sweep.
+    var onNetworkAvailable: (() -> Unit)? = null
     var onScreenshotRequest: (() -> Unit)? = null
     var onRemoteStart: (() -> Unit)? = null
     var onRemoteStop: (() -> Unit)? = null
@@ -179,6 +182,16 @@ class WebSocketService : Service() {
                 override fun onLost(network: Network) {
                     // Only meaningful mid-gap; if we're still connected this is a transient handoff.
                     if (disconnectedAtMs != 0L) linkLostDuringGap = true
+                }
+                override fun onAvailable(network: Network) {
+                    // #170: fresh connectivity (boot Wi-Fi coming up, reconnect after a drop). Clear
+                    // any download backoff that ballooned while the link was settling, then pull the
+                    // current playlist so missing content re-downloads promptly. requestPlaylistRefresh
+                    // no-ops if the socket isn't connected yet; the normal register will follow.
+                    handler.post {
+                        onNetworkAvailable?.invoke()
+                        requestPlaylistRefresh()
+                    }
                 }
             }
             cm.registerDefaultNetworkCallback(cb)

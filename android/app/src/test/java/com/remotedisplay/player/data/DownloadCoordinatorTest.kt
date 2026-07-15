@@ -130,6 +130,31 @@ class DownloadCoordinatorTest {
         assertEquals("after backoff elapses, exactly one more attempt", after1 + 1, requests.get())
     }
 
+    // ===== #170: resetBackoff retries a stuck item NOW (genuine reassignment / toggle-back) =====
+    @Test fun `resetBackoff re-attempts a stuck item before the backoff elapses`() {
+        serve(null, null, status("404 Not Found"))
+        coord.ensure("R", "v.bin"); waitAck("R:failed")
+        val after1 = requests.get()
+        repeat(3) { coord.ensure("R", "v.bin") }; Thread.sleep(200)   // clock unchanged -> in backoff, skipped
+        assertEquals("still in backoff -> no new attempt", after1, requests.get())
+        coord.resetBackoff("R")                                      // a genuine (re)assignment clears backoff
+        coord.ensure("R", "v.bin"); Thread.sleep(300)
+        assertEquals("resetBackoff -> retries NOW despite the clock not advancing", after1 + 1, requests.get())
+    }
+
+    // ===== #170: resetAllBackoff clears every item (network just (re)connected) =====
+    @Test fun `resetAllBackoff clears backoff for all items`() {
+        serve(null, null, status("404 Not Found"))
+        coord.ensure("A", "v.bin"); waitAck("A:failed")
+        coord.ensure("B", "v.bin"); waitAck("B:failed")
+        val after = requests.get()
+        coord.ensure("A", "v.bin"); coord.ensure("B", "v.bin"); Thread.sleep(200)
+        assertEquals("both in backoff -> no new attempts", after, requests.get())
+        coord.resetAllBackoff()
+        coord.ensure("A", "v.bin"); coord.ensure("B", "v.bin"); Thread.sleep(300)
+        assertEquals("both re-attempt after resetAllBackoff", after + 2, requests.get())
+    }
+
     // ===== socket-down DEFER (ownership: watchdog owns recovery) =====
     @Test fun `socket down defers the download to the reconnect, then downloads when back`() {
         serve(null, null, full("data"))

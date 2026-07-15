@@ -48,6 +48,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var config: ServerConfig
     private lateinit var contentCache: ContentCache
     private lateinit var downloadCoordinator: com.remotedisplay.player.data.DownloadCoordinator
+    // #170: content-id signature of the last processed playlist, to detect a genuine content change
+    // (first load / reassignment / toggle-back) vs the routine 60s same-playlist refresh.
+    private var lastDownloadSig: String? = null
     private lateinit var screenshotCapture: ScreenshotCapture
     private lateinit var touchInjector: TouchInjector
 
@@ -465,6 +468,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupServiceCallbacks() {
+        // #170: on a fresh network connection, clear stuck download backoff so content that failed
+        // to download while the link was settling retries on the next sweep (the service also
+        // requests a playlist refresh). Keeps single-flight; only touches failure/backoff state.
+        wsService?.onNetworkAvailable = {
+            if (::downloadCoordinator.isInitialized) downloadCoordinator.resetAllBackoff()
+        }
+
         wsService?.onPlaylistUpdate = { data ->
             try {
             // Orientation is applied in the non-wall branch below; wall mode owns the
@@ -555,6 +565,17 @@ class MainActivity : AppCompatActivity() {
             }
             } // end else (not a video wall)
 
+            // #170: a genuine content change (first load, reassignment, toggle-back) resets any
+            // stuck download backoff below, so "download missing" isn't blocked by a backoff that
+            // ballooned during the unstable first-boot window. The routine 60s same-playlist refresh
+            // keeps the same signature -> no reset -> the retry-storm guard (backoff) stays intact.
+            val downloadSig = (0 until assignments.length()).mapNotNull { i ->
+                val a = assignments.getJSONObject(i)
+                if (a.isNull("content_id")) null else a.optString("content_id", "").ifEmpty { null }
+            }.sorted().joinToString(",")
+            val contentChanged = downloadSig != lastDownloadSig
+            lastDownloadSig = downloadSig
+
             // Download any missing local content (skip remote URLs).
             // Runs for wall + single-zone; multi-zone drives its own rendering via ZoneManager
             // (the startIfNeeded below is guarded so it won't run behind zones).
@@ -586,6 +607,7 @@ class MainActivity : AppCompatActivity() {
                     // URL. ensure() is non-blocking and idempotent: it re-acks cached content (SEED-A),
                     // defers when the socket is down (watchdog owns recovery), respects backoff, and
                     // downloads at most once. It acks ready/failed itself (deduped via onAck).
+                    if (contentChanged) downloadCoordinator.resetBackoff(contentId) // #170: retry now, don't wait out a stale backoff
                     downloadCoordinator.ensure(contentId, filename)
                 }
 

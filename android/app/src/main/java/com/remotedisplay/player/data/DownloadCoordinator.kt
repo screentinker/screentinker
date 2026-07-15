@@ -96,6 +96,22 @@ class DownloadCoordinator(
         inFlight.remove(contentId); attempts.remove(contentId); nextAttemptAt.remove(contentId)
     }
 
+    /**
+     * Clear failure backoff for [contentId] WITHOUT touching single-flight (unlike forget()).
+     * A genuine (re)assignment or a fresh network transition should retry a stuck item NOW instead
+     * of waiting out a backoff that ballooned to the 5-min cap during the unstable first-boot window
+     * (#170). Keeping inFlight means an in-progress download is never duplicated. No-op if not failing.
+     */
+    fun resetBackoff(contentId: String) {
+        attempts.remove(contentId); nextAttemptAt.remove(contentId)
+    }
+
+    /** Clear ALL failure backoff (keep single-flight) — e.g. the network just (re)connected, so any
+     *  item that backed off while the link was settling should re-attempt on the next sweep. */
+    fun resetAllBackoff() {
+        attempts.clear(); nextAttemptAt.clear()
+    }
+
     /** Teardown (onDestroy): cancel in-flight downloads so none orphan or pin the Activity. */
     fun shutdown() {
         try { executor.shutdownNow() } catch (_: Throwable) {}
