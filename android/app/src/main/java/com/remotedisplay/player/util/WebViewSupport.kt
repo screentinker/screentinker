@@ -93,9 +93,18 @@ object WebViewSupport {
     fun youtubeEmbedHtml(url: String, muted: Boolean = true): String? {
         val id = extractYoutubeId(url) ?: return null
         val mute = if (muted) 1 else 0
+        // Vertical (Shorts) content is tagged st_aspect=vertical at ingest.
+        val vertical = url.contains("st_aspect=vertical")
         val src = "$YT_BASE/embed/$id?autoplay=1&mute=$mute&controls=0&rel=0&modestbranding=1&loop=1&playlist=$id&playsinline=1&enablejsapi=1"
+        // Vertical: center a 9:16 iframe so it fills a portrait panel and pillarboxes
+        // cleanly on landscape, instead of a 100%x100% landscape frame.
+        val css = if (vertical)
+            "html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}" +
+            "iframe{display:block;height:100%;aspect-ratio:9/16;max-width:100%;border:0}"
+        else
+            "html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}"
         return "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-            "<style>html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>" +
+            "<style>$css</style>" +
             "</head><body><iframe src=\"$src\" allow=\"autoplay; encrypted-media\" allowfullscreen></iframe></body></html>"
     }
 }

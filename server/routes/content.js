@@ -144,21 +144,27 @@ router.post('/youtube', async (req, res) => {
     const videoId = extractYoutubeId(url);
     if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
-    // Fetch video title from YouTube oEmbed if no name provided
+    // Fetch title + aspect from YouTube oEmbed, queried with the ORIGINAL url so a
+    // /shorts/ link reports its true vertical dimensions. A Short is detected from
+    // the /shorts/ URL form OR portrait oEmbed dims (height > width). We persist that
+    // as st_aspect=vertical on the embed URL so every player can render it 9:16
+    // without re-querying oEmbed on each loop (remote_url is the only signal players
+    // get; the /shorts/ origin is otherwise lost after ingest). YouTube ignores the
+    // unknown param, and players read the video id — not the full URL — for the embed.
     let filename = name;
-    if (!filename) {
-      try {
-        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
-        if (oembedRes.ok) {
-          const oembed = await oembedRes.json();
-          filename = oembed.title;
-        }
-      } catch {}
-    }
+    let isVertical = /\/shorts\//i.test(url);
+    try {
+      const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+      if (oembedRes.ok) {
+        const oembed = await oembedRes.json();
+        if (!filename) filename = oembed.title;
+        if (oembed.height && oembed.width && Number(oembed.height) > Number(oembed.width)) isVertical = true;
+      }
+    } catch {}
     if (!filename) filename = `YouTube: ${videoId}`;
 
     const id = uuidv4();
-    const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=${videoId}&enablejsapi=1`;
+    const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=${videoId}&enablejsapi=1${isVertical ? '&st_aspect=vertical' : ''}`;
     // thumbnail_path is a REMOTE URL here; the /api/content/:id/thumbnail route proxies
     // remote thumbnails server-side (so this isn't a local-file path). Future option for
     // CDN independence: download the thumbnail at ingest into contentDir + backfill

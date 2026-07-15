@@ -451,9 +451,10 @@ PlaylistPlayer.prototype.renderVideo = function (item, single) {
 PlaylistPlayer.prototype.renderYouTube = function (item, single) {
   var id = this.youtubeId(item.remote_url);
   if (!id) { this.skipSoon(); return; }
+  var vertical = /st_aspect=vertical/.test(item.remote_url || '');
   var src = 'https://www.youtube.com/embed/' + id +
     '?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=' + id + '&playsinline=1';
-  this.renderFrame(src, single ? 0 : this.durationMs(item), 'autoplay; encrypted-media');
+  this.renderFrame(src, single ? 0 : this.durationMs(item), 'autoplay; encrypted-media', vertical);
 };
 
 PlaylistPlayer.prototype.renderWidget = function (item, single) {
@@ -461,11 +462,14 @@ PlaylistPlayer.prototype.renderWidget = function (item, single) {
   this.renderFrame(src, single ? 0 : this.durationMs(item));
 };
 
-PlaylistPlayer.prototype.renderFrame = function (src, advanceMs, allow) {
+PlaylistPlayer.prototype.renderFrame = function (src, advanceMs, allow, vertical) {
   var f = document.createElement('iframe');
   f.setAttribute('frameborder', '0');
   f.setAttribute('allowfullscreen', '');
   if (allow) f.setAttribute('allow', allow);
+  // Vertical (Shorts): center a 9:16 iframe on the black stage instead of the
+  // stylesheet's full-bleed 100%x100% (which pillarboxes vertical video badly).
+  if (vertical) f.style.cssText = 'position:absolute;top:0;bottom:0;left:0;right:0;margin:auto;height:100%;width:auto;aspect-ratio:9/16;max-width:100%;border:0';
   f.src = src;
   this.stage.appendChild(f);
   if (advanceMs > 0) this.schedule(advanceMs);
@@ -645,9 +649,10 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
     if (mime === 'video/youtube') {
       var yid = zrYoutubeId(a.remote_url);
       if (!yid) { if (multi) this.scheduleAdvance(zone, 2000, advance); return; }
+      var yvert = /st_aspect=vertical/.test(a.remote_url || '');
       var ysrc = 'https://www.youtube.com/embed/' + yid +
         '?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=' + yid + '&playsinline=1';
-      zone.el.appendChild(zrFrame(ysrc, 'autoplay; encrypted-media'));
+      zone.el.appendChild(zrFrame(ysrc, 'autoplay; encrypted-media', yvert));
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (a.widget_type || (a.widget_id && !a.content_id)) {
       zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render'));
@@ -695,11 +700,12 @@ function zrFitClass(fit) {
   if (f === 'fill' || f === 'stretch') return 'fill';
   return 'cover';
 }
-function zrFrame(src, allow) {
+function zrFrame(src, allow, vertical) {
   var f = document.createElement('iframe');
   f.setAttribute('frameborder', '0');
   f.setAttribute('allowfullscreen', '');
   if (allow) f.setAttribute('allow', allow);
+  if (vertical) f.style.cssText = 'position:absolute;top:0;bottom:0;left:0;right:0;margin:auto;height:100%;width:auto;aspect-ratio:9/16;max-width:100%;border:0';
   f.src = src;
   return f;
 }

@@ -1920,11 +1920,26 @@
       // Destroy old player without triggering side effects (callbacks check generation)
       if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch {} activeYtPlayer = null; }
 
+      // Vertical (Shorts) content is tagged st_aspect=vertical at ingest. Render it
+      // in a centered 9:16 box so it fills a portrait screen and pillarboxes cleanly
+      // on landscape, instead of the standard 100%x100% landscape frame.
+      const isVertical = /st_aspect=vertical/i.test(src || '') || /st_aspect=vertical/i.test((item && item.remote_url) || '');
+
       // Create a div for the YT player to replace
       const playerDiv = document.createElement('div');
       playerDiv.id = 'yt-player-' + Date.now();
       playerDiv.style.cssText = 'width:100%;height:100%;background:#000';
-      container.appendChild(playerDiv);
+      let mountEl = playerDiv;
+      if (isVertical) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center';
+        const inner = document.createElement('div');
+        inner.style.cssText = 'height:100%;aspect-ratio:9/16;max-width:100%';
+        inner.appendChild(playerDiv);
+        wrap.appendChild(inner);
+        mountEl = wrap;
+      }
+      container.appendChild(mountEl);
 
       // Add a click-to-unmute overlay on top of the YouTube iframe
       if (!userHasInteracted) {
