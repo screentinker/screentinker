@@ -38,6 +38,14 @@ object WebViewSupport {
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
         webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        // Interactive widgets (e.g. directory-search) need the WebView to take
+        // touch focus so the search field accepts a tap/cursor inside the kiosk
+        // lock-task WebView. Harmless for passive widgets (board/YouTube): they
+        // have no focusable inputs, so nothing steals focus or pops the IME. The
+        // widget's own on-screen keyboard drives the filter even when the system
+        // IME is suppressed (it mutates the input value directly, no focus needed).
+        webView.isFocusable = true
+        webView.isFocusableInTouchMode = true
         webView.webViewClient = object : WebViewClient() {
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (request?.isForMainFrame == true) {
