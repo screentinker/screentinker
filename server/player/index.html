@@ -2612,7 +2612,14 @@
       // tear down a live socket on the hidden->visible gap.
       if (document.visibilityState === 'visible') { requestWakeLock(); verifyLivenessSoon(); }
     });
-    window.addEventListener('pageshow', verifyLivenessSoon);   // sleep/resume via bfcache restore
+    // pairing-race fix: pageshow fires on EVERY load (persisted=false), not only bfcache restores.
+    // Unfiltered it ran verifyLivenessSoon() on the initial cold load, which opened the socket EARLY
+    // (if !socket -> connect) and registered a pairing code — then the intended boot path (tap-overlay
+    // / connectBtnFunc) called connect() again, tearing that socket down and recreating it (the
+    // connect->register->disconnect->reconnect flap that collided with the server's offline grace and
+    // produced the UNIQUE pairing_code collision). Only act on a REAL bfcache restore (persisted=true),
+    // mirroring the pagehide guard above; the cold-boot connect is owned solely by the boot path.
+    window.addEventListener('pageshow', (ev) => { if (ev && ev.persisted) verifyLivenessSoon(); }); // sleep/resume via bfcache restore
     window.addEventListener('online', verifyLivenessSoon);     // network switch (wifi<->cellular)
 
     // feat/offline-cause-log: display sleep / backgrounding proxy — screen off/on on a TV.

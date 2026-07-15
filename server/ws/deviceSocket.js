@@ -482,7 +482,27 @@ module.exports = function setupDeviceSocket(io) {
                 // was cleared by hand. The real security boundary is the operator claiming the
                 // code in the dashboard; a cloned fingerprint that falls through only gets an
                 // unclaimed, tokenless, content-less row — harmless.
-                if (liveConn) {
+                // Pairing-race (1.9.9): a device mid-DEFERRED-OFFLINE is NOT genuinely live.
+                // On disconnect we defer heartbeat.removeConnection() by OFFLINE_DEBOUNCE_MS
+                // (anti-flap), so heartbeat.getConnection() keeps returning a ZOMBIE entry for the
+                // just-closed socket for the whole grace window. A same-fingerprint reconnect inside
+                // that window (this branch is only reached via a device_fingerprints match, so it
+                // inherently IS the same physical display) would otherwise hit a FALSE-POSITIVE
+                // "active on another connection" reject, and for an unclaimed row the retry then
+                // collided on UNIQUE(devices.pairing_code) and wedged the player. Gate the reject on
+                // there being NO pending-offline timer for this device.
+                //
+                // ANTI-HIJACK BOUNDARY (unchanged): a DIFFERENT physical device presenting a CLONED
+                // fingerprint while the REAL device is actively connected never disconnected -> no
+                // pending-offline timer is armed -> inDeferredOffline is false -> the liveConn reject
+                // STILL fires. We ONLY relax the reject when the matched row's OWN connection is in
+                // its deferred-offline grace (i.e. it just dropped) — a legitimate reconnect of that
+                // same display. Even then, a CLAIMED row is reclaimed only because liveConn (the real
+                // anti-hijack check) already passed, and an UNCLAIMED fall-through only ever yields a
+                // tokenless, content-less row: the operator claiming the on-screen code stays the
+                // real trust boundary, so relaxing this reject grants an attacker nothing.
+                const inDeferredOffline = pendingOfflines.has(existing.device_id);
+                if (liveConn && !inDeferredOffline) {
                   // Log at most once per device per window so a retrying/stuck device can't flood stdout.
                   const nowMs = Date.now();
                   if (nowMs - (lastReclaimRejectLogAt.get(existing.device_id) || 0) >= config.reclaimRejectLogWindowMs) {
@@ -552,6 +572,50 @@ module.exports = function setupDeviceSocket(io) {
                 // Fall through to the pairing_code path below, which provisions a fresh row with the
                 // on-screen code and (#150) relinks the fingerprint to it. reclaimSettleSeconds no
                 // longer gates this path — a genuinely live socket (above) is the only rejection.
+                //
+                // IDEMPOTENCY (pairing-race 1.9.9): EXCEPT when the reconnecting player presents the
+                // SAME pairing_code this unclaimed row already holds. That is exactly the zombie case
+                // Fix A now lets through: the row is mid-deferred-offline and STILL holds the on-screen
+                // code, so the fall-through INSERT below collides on UNIQUE(devices.pairing_code) and
+                // wedges the player unclaimed with no content. The stale-code hazard in the comment
+                // above applies ONLY when the codes DIFFER; when they MATCH there is no stale code to
+                // strand, so ADOPT the existing row (mirror the claimed-reclaim refresh above) instead
+                // of re-INSERTing. Deliberately NO device:paired — the row is unclaimed and the
+                // operator must still claim the on-screen code (the real trust boundary is untouched).
+                if (pairing_code === oldDevice.pairing_code) {
+                  const newToken = generateDeviceToken();
+                  db.prepare('UPDATE devices SET device_token = ? WHERE id = ?').run(newToken, existing.device_id);
+                  console.log(`Fingerprint match: adopting UNCLAIMED same-code row ${existing.device_id} (code ${pairing_code}) instead of re-provisioning`);
+                  authenticated = true;
+                  // Cancel any pending offline timer - device is back in the grace window
+                  if (pendingOfflines.has(existing.device_id)) {
+                    clearTimeout(pendingOfflines.get(existing.device_id));
+                    pendingOfflines.delete(existing.device_id);
+                  }
+                  evictPriorSocket(existing.device_id, socket.id);
+                  db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), ip_address = ?, updated_at = strftime('%s','now'), offline_reason = NULL, offline_reason_at = NULL, offline_detail = NULL WHERE id = ?")
+                    .run(getClientIp(socket), existing.device_id);
+                  socket.emit('device:registered', { device_id: existing.device_id, device_token: newToken, status: 'online' });
+                  // No device:paired — the row is unclaimed; the player stays on the pairing screen
+                  // showing its (still-valid) code for the operator to claim.
+                  currentDeviceId = existing.device_id;
+                  heartbeat.registerConnection(existing.device_id, socket.id);
+                  heartbeat.recordReconnect(existing.device_id);
+                  persistIdentity(existing.device_id, data);
+                  socket.join(existing.device_id);
+                  logDeviceStatus(existing.device_id, 'online');
+                  emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
+                  // Flush any commands/playlist-updates queued while this device was offline.
+                  commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
+                  // Send playlist
+                  const access = checkDeviceAccess(existing.device_id);
+                  if (!access.allowed) {
+                    socket.emit('device:playlist-update', { assignments: [], suspended: true, message: access.message, detail: access.detail });
+                  } else {
+                    socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
+                  }
+                  return;
+                }
               }
             }
           } else if (device_id || pairing_code) {
