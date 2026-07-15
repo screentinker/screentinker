@@ -168,7 +168,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board']);
+const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search']);
 function renderWidgetHtml(type, config) {
   config = config || {};
   switch (type) {
@@ -179,6 +179,7 @@ function renderWidgetHtml(type, config) {
     case 'webpage': return renderWebpage(config);
     case 'social': return renderSocial(config);
     case 'directory-board': return renderDirectoryBoard(config);
+    case 'directory-search': return renderDirectorySearch(config);
     default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
   }
 }
@@ -674,6 +675,267 @@ function renderDirectoryBoard(c) {
     var dy = Math.floor(Math.random() * 7) - 3;
     page.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
   }, 5 * 60 * 1000);
+})();
+</script>
+</body></html>`;
+}
+
+// Friendly full-page fallback when a directory-search points at a missing or
+// non-directory-board source. Matches the "Unknown widget" fallback tone.
+function renderDirectorySearchMissing() {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Directory Search</title></head>
+<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box;color:#fff;background:#1a1a2e;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+<div style="max-width:640px"><h1 style="font-size:2.2em;font-weight:600;margin:0 0 14px">Directory source not found</h1><p style="opacity:0.7;font-size:1.2em;margin:0;line-height:1.4">Pick a directory board in the widget settings.</p></div>
+</body></html>`;
+}
+
+// Interactive walk-up search over an existing directory-board's entries. It
+// REFERENCES the source board by id (no data copy): the board scrolls on a main
+// screen while this lets someone find an entry instantly on a tablet.
+function renderDirectorySearch(c) {
+  c = c || {};
+  const src = db.prepare('SELECT * FROM widgets WHERE id = ?').get(c.source_widget_id);
+  if (!src || src.widget_type !== 'directory-board') return renderDirectorySearchMissing();
+  let categories = [];
+  try {
+    const sc = JSON.parse(src.config || '{}');
+    categories = Array.isArray(sc.categories) ? sc.categories : [];
+  } catch (e) { categories = []; }
+
+  // Inline everything the page needs as one JSON blob, guarded the same way the
+  // board does. All user text is rendered via textContent below — never concat.
+  const payload = {
+    categories: categories,
+    title: c.title || '',
+    logo_url: c.logo_url || '',
+    theme: c.theme === 'light' ? 'light' : 'dark',
+    placeholder_text: c.placeholder_text || 'Search…',
+    show_onscreen_keyboard: c.show_onscreen_keyboard !== false,
+  };
+  const configJson = JSON.stringify(payload).replace(/</g, '\\u003c');
+  return `<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Directory Search</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    color:#fff; background:#1a1a2e;
+    display:flex; flex-direction:column; height:100vh; overflow:hidden;
+  }
+  body.light { color:#1a1a2e; background:#f5f5f5; }
+
+  .header { flex:0 0 auto; text-align:center; padding:20px 24px 8px; }
+  .header img.logo { max-height:90px; max-width:320px; object-fit:contain; margin:0 auto 8px; display:block; }
+  .header h1 { font-size:40px; font-weight:600; letter-spacing:0.01em; }
+
+  .searchbar { flex:0 0 auto; padding:10px 24px; }
+  #q {
+    width:100%; font-size:34px; padding:18px 22px; border-radius:14px; color:inherit; outline:none;
+    border:2px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08);
+  }
+  #q:focus { border-color:#4a9eff; }
+  #q::placeholder { color:rgba(255,255,255,0.4); }
+  body.light #q { border-color:rgba(0,0,0,0.15); background:#fff; }
+  body.light #q:focus { border-color:#2563eb; }
+  body.light #q::placeholder { color:rgba(0,0,0,0.4); }
+
+  .results { flex:1 1 auto; overflow-y:auto; padding:8px 24px 16px; -webkit-overflow-scrolling:touch; }
+  .msg { text-align:center; opacity:0.55; font-size:26px; padding:48px 16px; line-height:1.4; }
+
+  .group { margin-bottom:22px; }
+  .group h2 {
+    font-size:22px; font-weight:500; letter-spacing:0.06em; text-transform:uppercase; opacity:0.6;
+    padding:14px 0 8px; border-bottom:1px solid rgba(255,255,255,0.15); margin-bottom:10px;
+  }
+  body.light .group h2 { border-bottom-color:rgba(0,0,0,0.12); }
+
+  .entry { display:flex; gap:14px; align-items:baseline; padding:10px 8px; font-size:30px; line-height:1.3; border-radius:8px; }
+  .entry:nth-child(even) { background:rgba(255,255,255,0.03); }
+  body.light .entry:nth-child(even) { background:rgba(0,0,0,0.03); }
+  .entry .id { font-weight:700; min-width:2.6em; flex-shrink:0; }
+  .entry .text { display:flex; flex-direction:column; flex:1; min-width:0; }
+  .entry .nm { font-weight:400; }
+  .entry .sub { font-size:0.6em; opacity:0.6; margin-top:3px; }
+  .entry.available, .entry.available .id { color:#00ff00; }
+  body.light .entry.available, body.light .entry.available .id { color:#059669; }
+
+  .keyboard { flex:0 0 auto; padding:8px 12px 14px; background:rgba(0,0,0,0.25); user-select:none; }
+  body.light .keyboard { background:rgba(0,0,0,0.05); }
+  .krow { display:flex; gap:6px; justify-content:center; margin-bottom:6px; }
+  .key {
+    flex:1 1 0; max-width:96px; min-width:0; height:56px; font-size:24px; text-transform:uppercase;
+    border:0; border-radius:8px; background:rgba(255,255,255,0.12); color:inherit; cursor:pointer;
+  }
+  .key:active { background:#4a9eff; color:#fff; }
+  body.light .key { background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.15); }
+  .key-space { flex:4 1 0; max-width:none; text-transform:none; }
+  .key-wide { flex:2 1 0; max-width:none; text-transform:none; }
+
+  @media (max-width:700px) {
+    .header h1 { font-size:30px; }
+    #q { font-size:26px; padding:14px 16px; }
+    .entry { font-size:24px; }
+    .key { height:46px; font-size:20px; }
+  }
+</style>
+</head>
+<body>
+  <header class="header" id="header"></header>
+  <div class="searchbar"><input id="q" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+  <div class="results" id="results"></div>
+  <div class="keyboard" id="keyboard"></div>
+<script>
+(function(){
+  var cfg = ${configJson};
+  if (cfg.theme === 'light') document.body.classList.add('light');
+
+  function safeImgUrl(u) {
+    return typeof u === 'string' && (u.indexOf('/') === 0 || /^https?:\\/\\//.test(u) || /^data:image\\//.test(u)) ? u : '';
+  }
+
+  // ----- header -----
+  var header = document.getElementById('header');
+  var logoSrc = safeImgUrl(cfg.logo_url);
+  if (logoSrc) {
+    var img = document.createElement('img');
+    img.className = 'logo'; img.src = logoSrc; img.alt = '';
+    header.appendChild(img);
+  }
+  if (cfg.title) {
+    var h1 = document.createElement('h1');
+    h1.textContent = cfg.title;
+    header.appendChild(h1);
+  }
+  if (!logoSrc && !cfg.title) header.style.display = 'none';
+
+  // ----- flatten source entries (preserve category order) -----
+  var cats = Array.isArray(cfg.categories) ? cfg.categories : [];
+  var flat = [];
+  cats.forEach(function(cat){
+    var cn = cat && cat.name != null ? String(cat.name) : '';
+    var entries = cat && Array.isArray(cat.entries) ? cat.entries : [];
+    entries.forEach(function(e){
+      var item = {
+        cat: cn,
+        identifier: e && e.identifier != null ? String(e.identifier) : '',
+        name: e && e.name != null ? String(e.name) : '',
+        subtitle: e && e.subtitle != null ? String(e.subtitle) : '',
+        available: !!(e && e.available)
+      };
+      item._h = (item.identifier + ' ' + item.name + ' ' + item.subtitle).toLowerCase();
+      flat.push(item);
+    });
+  });
+
+  var input = document.getElementById('q');
+  input.placeholder = cfg.placeholder_text || '';
+  var results = document.getElementById('results');
+  var HINT = 'Start typing to search the directory…';
+  var NO_MATCHES = 'No matches';
+
+  function showMessage(msg) {
+    results.textContent = '';
+    var d = document.createElement('div');
+    d.className = 'msg';
+    d.textContent = msg;
+    results.appendChild(d);
+  }
+
+  function render(q) {
+    q = (q || '').trim().toLowerCase();
+    if (!q) { showMessage(HINT); return; }
+    var matches = flat.filter(function(e){ return e._h.indexOf(q) !== -1; });
+    if (!matches.length) { showMessage(NO_MATCHES); return; }
+    var order = [], groups = {};
+    matches.forEach(function(e){
+      if (!groups[e.cat]) { groups[e.cat] = []; order.push(e.cat); }
+      groups[e.cat].push(e);
+    });
+    results.textContent = '';
+    order.forEach(function(cn){
+      var group = document.createElement('div');
+      group.className = 'group';
+      if (cn) {
+        var h2 = document.createElement('h2');
+        h2.textContent = cn;
+        group.appendChild(h2);
+      }
+      groups[cn].forEach(function(e){
+        var row = document.createElement('div');
+        row.className = 'entry' + (e.available ? ' available' : '');
+        var id = document.createElement('span');
+        id.className = 'id';
+        id.textContent = e.identifier;
+        var text = document.createElement('div');
+        text.className = 'text';
+        var nm = document.createElement('span');
+        nm.className = 'nm';
+        nm.textContent = e.name;
+        text.appendChild(nm);
+        if (e.subtitle) {
+          var sub = document.createElement('span');
+          sub.className = 'sub';
+          sub.textContent = e.subtitle;
+          text.appendChild(sub);
+        }
+        row.appendChild(id);
+        row.appendChild(text);
+        group.appendChild(row);
+      });
+      results.appendChild(group);
+    });
+    results.scrollTop = 0;
+  }
+
+  // ----- debounced input (~120ms) -----
+  var dT;
+  function onInput() { clearTimeout(dT); dT = setTimeout(function(){ render(input.value); }, 120); }
+  input.addEventListener('input', onInput);
+
+  // ----- on-screen keyboard (drives the same filter path as typing) -----
+  if (cfg.show_onscreen_keyboard) {
+    var kb = document.getElementById('keyboard');
+    function press(ch) { input.value += ch; try { input.focus(); } catch(e){} onInput(); }
+    ['1234567890','qwertyuiop','asdfghjkl','zxcvbnm'].forEach(function(r){
+      var rowEl = document.createElement('div');
+      rowEl.className = 'krow';
+      r.split('').forEach(function(ch){
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'key'; b.textContent = ch;
+        b.addEventListener('click', function(){ press(ch); });
+        rowEl.appendChild(b);
+      });
+      kb.appendChild(rowEl);
+    });
+    var act = document.createElement('div');
+    act.className = 'krow';
+    var back = document.createElement('button');
+    back.type = 'button'; back.className = 'key key-wide'; back.textContent = '\\u232B';
+    back.addEventListener('click', function(){ input.value = input.value.slice(0, -1); try { input.focus(); } catch(e){} onInput(); });
+    var space = document.createElement('button');
+    space.type = 'button'; space.className = 'key key-space'; space.textContent = 'space';
+    space.addEventListener('click', function(){ press(' '); });
+    var clear = document.createElement('button');
+    clear.type = 'button'; clear.className = 'key key-wide'; clear.textContent = 'clear';
+    clear.addEventListener('click', function(){ input.value = ''; try { input.focus(); } catch(e){} onInput(); });
+    act.appendChild(back); act.appendChild(space); act.appendChild(clear);
+    kb.appendChild(act);
+  } else {
+    var kbOff = document.getElementById('keyboard');
+    if (kbOff) kbOff.style.display = 'none';
+  }
+
+  // ----- initial state + autofocus -----
+  render('');
+  try { input.focus(); } catch(e){}
+
+  // TODO(directory-search live-sync): to reflect source-board edits without a
+  // reload, add GET /api/widgets/:id/data.json returning { categories } for the
+  // source board, then poll it here every N seconds and rebuild \`flat\` +
+  // re-run render(input.value). Out of scope for this branch.
 })();
 </script>
 </body></html>`;

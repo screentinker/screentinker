@@ -222,7 +222,7 @@ components:
           type: string
         widget_type:
           type: string
-          description: clock | weather | rss | text | webpage | social | directory-board
+          description: clock | weather | rss | text | webpage | social | directory-board | directory-search
         name:
           type: string
         config:

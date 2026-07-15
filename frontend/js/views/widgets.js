@@ -6,7 +6,7 @@ const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type':
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -15,6 +15,7 @@ const WIDGET_ICONS = {
   webpage: '&#127760;',
   social: '&#128172;',
   'directory-board': '&#127970;',
+  'directory-search': '&#128269;',
 };
 const widgetTypeName = (id) => t(`widget.type.${id.replace(/-/g, '_')}.name`);
 const widgetTypeDesc = (id) => t(`widget.type.${id.replace(/-/g, '_')}.desc`);
@@ -179,6 +180,9 @@ export async function render(container) {
   let editingWidget = null;
   let creatingType = null;
   let dirState = { categories: [], logo_url: '', background_images: [] };
+  // Cached widget list from the last load — used to populate the directory-search
+  // source-board dropdown without a second fetch.
+  let loadedWidgets = [];
 
   document.getElementById('newWidgetBtn').onclick = () => {
     const grid = document.getElementById('widgetTypeGrid');
@@ -279,6 +283,26 @@ export async function render(container) {
             <button type="button" class="btn btn-secondary btn-sm" id="dbAddCategory" style="margin-top:10px">${t('widget.dir.add_category')}</button>
           </div>`;
         break;
+      case 'directory-search': {
+        const boards = (loadedWidgets || []).filter(w => w.widget_type === 'directory-board');
+        const sourceField = boards.length
+          ? `<select id="wSource" class="input" style="background:var(--bg-input)">
+               ${boards.map(w => `<option value="${escAttr(w.id)}" ${config.source_widget_id === w.id ? 'selected' : ''}>${escAttr(w.name)}</option>`).join('')}
+             </select>
+             <div style="font-size:11px;color:var(--text-muted);margin-top:6px">${t('widget.dirsearch.source_hint')}</div>`
+          : `<div style="font-size:13px;color:var(--text-muted);padding:10px;border:1px dashed var(--border);border-radius:6px">${t('widget.dirsearch.source_empty')}</div>`;
+        html += `
+          <div class="form-group"><label>${t('widget.dirsearch.source_label')}</label>${sourceField}</div>
+          <div class="form-group"><label>${t('widget.dirsearch.title_label')}</label><input type="text" id="wTitle" class="input" value="${escAttr(config.title)}" placeholder="${t('widget.dirsearch.title_placeholder')}"></div>
+          <div class="form-group"><label>${t('widget.dirsearch.logo_label')}</label><div id="wLogoBox"></div></div>
+          <div class="form-group"><label>${t('widget.dirsearch.placeholder_label')}</label><input type="text" id="wPlaceholder" class="input" value="${escAttr(config.placeholder_text)}" placeholder="${t('widget.dirsearch.placeholder_hint')}"></div>
+          <div class="form-group" style="max-width:220px"><label>${t('widget.dirsearch.theme')}</label><select id="wTheme" class="input" style="background:var(--bg-input)">
+            <option value="dark" ${!config.theme || config.theme === 'dark' ? 'selected' : ''}>${t('widget.dir.theme_dark')}</option>
+            <option value="light" ${config.theme === 'light' ? 'selected' : ''}>${t('widget.dir.theme_light')}</option>
+          </select></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wKeyboard" ${config.show_onscreen_keyboard === false ? '' : 'checked'}> ${t('widget.dirsearch.keyboard_label')}</label></div>`;
+        break;
+      }
     }
 
     document.getElementById('widgetConfigForm').innerHTML = html;
@@ -307,6 +331,12 @@ export async function render(container) {
         renderDirCategories({ focusCatName: dirState.categories.length - 1 });
       };
       document.getElementById('wBgAdd').onclick = pickBgImages;
+    }
+
+    if (type === 'directory-search') {
+      // Reuse the board's logo picker box (#wLogoBox + dirState.logo_url).
+      dirState.logo_url = config.logo_url || '';
+      renderLogoPicker();
     }
   }
 
@@ -526,6 +556,14 @@ export async function render(container) {
           })),
         })),
       }); break;
+      case 'directory-search': Object.assign(config, {
+        source_widget_id: val('wSource') || '',
+        title: val('wTitle') || '',
+        logo_url: dirState.logo_url || '',
+        theme: val('wTheme') || 'dark',
+        placeholder_text: val('wPlaceholder') || '',
+        show_onscreen_keyboard: document.getElementById('wKeyboard') ? document.getElementById('wKeyboard').checked : true,
+      }); break;
     }
     return config;
   }
@@ -564,6 +602,7 @@ export async function render(container) {
 
   async function loadWidgets() {
     const widgets = await API('/widgets');
+    loadedWidgets = Array.isArray(widgets) ? widgets : [];
     const grid = document.getElementById('widgetGrid');
     if (!widgets.length) {
       grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>${t('widget.empty_title')}</h3><p>${t('widget.empty_desc')}</p></div>`;
