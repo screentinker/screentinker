@@ -1145,6 +1145,12 @@ body {
   width: 440px;
   max-width: 90vw;
   box-shadow: var(--shadow);
+  /* Cap to the viewport and lay out as a column so a tall form (e.g. the directory-board
+     widget with many entries) scrolls inside .modal-body while the header/footer stay
+     pinned — otherwise the modal grows past the screen and Save becomes unreachable. */
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-header {
@@ -1153,6 +1159,7 @@ body {
   justify-content: space-between;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .modal-header h3 {
@@ -1162,6 +1169,11 @@ body {
 
 .modal-body {
   padding: 20px;
+  /* Scroll region between the pinned header and footer. min-height:0 lets the flex item
+     shrink below its content so overflow-y actually engages inside the column. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .modal-description {
@@ -1176,6 +1188,7 @@ body {
   gap: 8px;
   padding: 16px 20px;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 /* Form Elements */
@@ -1465,7 +1478,8 @@ body {
   .info-grid { grid-template-columns: 1fr; }
   .remote-container { flex-direction: column; }
   .remote-controls { width: 100%; flex-direction: row; flex-wrap: wrap; }
-  .modal { width: 95vw; max-height: 90vh; overflow-y: auto; }
+  /* max-height + scrolling body are now on the base .modal (pinned header/footer); just widen. */
+  .modal { width: 95vw; }
   .tabs {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
