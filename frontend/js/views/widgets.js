@@ -24,6 +24,175 @@ function escAttr(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// --- Directory-board bulk import: tolerant parser for JSON, CSV/TSV/pipe/semicolon
+// tables, or a sectioned "room name" text list. Returns { meta, categories,
+// background_images, warnings, stats }. Pure (no DOM) — unit-tested in node. ---
+function _diPick(o, keys) {
+  if (!o || typeof o !== 'object') return undefined;
+  const low = {};
+  for (const k of Object.keys(o)) low[k.toLowerCase()] = o[k];
+  for (const k of keys) { const v = low[k]; if (v != null && v !== '') return v; }
+  return undefined;
+}
+function _diBool(v) {
+  if (v === true) return true;
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return s === 'true' || s === 'yes' || s === 'y' || s === '1' || s === 'available' || s === 'open' || s === 'vacant';
+}
+function _diEntry(e) {
+  if (e == null) return null;
+  if (typeof e === 'string' || typeof e === 'number') return { identifier: '', name: String(e).trim(), subtitle: '', available: false };
+  const id = _diPick(e, ['room', 'identifier', 'id', 'number', 'no', 'suite', 'unit', 'office', 'space']);
+  const name = _diPick(e, ['name', 'title', 'company', 'tenant', 'business', 'label', 'text']);
+  const sub = _diPick(e, ['subtitle', 'details', 'detail', 'description', 'desc', 'note', 'notes', 'info']);
+  const avail = _diPick(e, ['available', 'vacant', 'is_available', 'open', 'status']);
+  return {
+    identifier: id == null ? '' : String(id).trim(),
+    name: name == null ? '' : String(name).trim(),
+    subtitle: sub == null ? '' : String(sub).trim(),
+    available: avail == null ? false : _diBool(avail),
+  };
+}
+const _DI_META_ARRAY_KEYS = new Set(['advertisements', 'ads', 'announcements', 'backgroundimages', 'background_images', 'backgrounds']);
+function _diNormalizeJson(data) {
+  const meta = {}; const warnings = [];
+  const title = _diPick(data, ['company', 'title', 'name', 'building', 'property']);
+  if (title != null) meta.title = String(title).trim();
+  let footer = _diPick(data, ['footer_text', 'footer', 'footertext', 'leasing', 'contact']);
+  const ads = data.advertisements || data.ads || data.announcements;
+  if (footer == null && Array.isArray(ads)) footer = ads.map(a => (typeof a === 'string' ? a : _diPick(a, ['text', 'message', 'content']))).filter(Boolean).join('   •   ');
+  if (footer) meta.footer_text = String(footer).trim();
+  const theme = _diPick(data, ['theme']); if (theme) meta.theme = String(theme).toLowerCase();
+  const speed = _diPick(data, ['scroll_speed', 'scrollspeed', 'speed']); if (speed) meta.scroll_speed = String(speed).toLowerCase();
+  const cols = _diPick(data, ['columns', 'cols']); if (cols != null) meta.columns = String(cols).toLowerCase();
+  const logo = _diPick(data, ['logo_url', 'logo', 'logourl']); if (logo) meta.logo_url = String(logo);
+  const bgSrc = data.background_images || data.backgroundImages || data.backgrounds || [];
+  const background_images = []; let skippedBg = 0;
+  if (Array.isArray(bgSrc)) for (const b of bgSrc) {
+    const s = typeof b === 'string' ? b : _diPick(b, ['url', 'src', 'path']);
+    if (!s) continue;
+    if (/^(https?:)?\/\//i.test(s) || String(s).startsWith('/')) background_images.push(String(s)); else skippedBg++;
+  }
+  if (skippedBg) warnings.push(t('widget.dir.import_warn_bg', { n: skippedBg }));
+  let categories = [];
+  const mapCat = (c) => ({ name: String(_diPick(c, ['name', 'title', 'floor', 'category', 'section', 'label']) || '').trim(), entries: (c.entries || c.tenants || c.items || c.rooms || []).map(_diEntry).filter(Boolean) });
+  const tbf = data.tenantsByFloor || data.byfloor || data.tenantsbyfloor || data.sections;
+  if (tbf && typeof tbf === 'object' && !Array.isArray(tbf)) categories = Object.keys(tbf).map(fn => ({ name: fn, entries: (Array.isArray(tbf[fn]) ? tbf[fn] : []).map(_diEntry).filter(Boolean) }));
+  else if (Array.isArray(data.categories)) categories = data.categories.map(mapCat);
+  else if (Array.isArray(data.floors)) categories = data.floors.map(mapCat);
+  else if (Array.isArray(data)) {
+    if (data.some(x => x && typeof x === 'object' && (x.entries || x.tenants || x.items || x.rooms))) categories = data.map(mapCat);
+    else categories = [{ name: '', entries: data.map(_diEntry).filter(Boolean) }];
+  } else {
+    const floorKeys = Object.keys(data).filter(k => Array.isArray(data[k]) && !_DI_META_ARRAY_KEYS.has(k.toLowerCase()));
+    if (floorKeys.length) categories = floorKeys.map(fn => ({ name: fn, entries: data[fn].map(_diEntry).filter(Boolean) }));
+  }
+  return { meta, categories, background_images, warnings };
+}
+function _diSplit(line, delim) {
+  if (delim !== ',' && delim !== ';') return line.split(delim);
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === delim) { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur); return out;
+}
+const _DI_HEAD = {
+  floor: ['floor', 'category', 'section', 'level', 'wing', 'building', 'group'],
+  id: ['room', 'suite', 'unit', 'id', 'number', 'no', 'no.', 'office', 'space', '#'],
+  name: ['name', 'tenant', 'company', 'business', 'title', 'occupant'],
+  sub: ['subtitle', 'details', 'detail', 'description', 'desc', 'note', 'notes', 'info'],
+  avail: ['available', 'vacant', 'status', 'open'],
+};
+function _diHeaderRole(cell) {
+  const c = cell.trim().toLowerCase();
+  for (const role of Object.keys(_DI_HEAD)) if (_DI_HEAD[role].includes(c)) return role;
+  return null;
+}
+function _diParseTable(lines, delim, warnings) {
+  const rows = lines.map(l => _diSplit(l, delim).map(c => c.trim()));
+  const first = rows[0] || [];
+  const roles = first.map(_diHeaderRole);
+  const hasHeader = roles.filter(Boolean).length >= 2 || (roles.includes('name') && rows.length > 1);
+  const idx = { floor: -1, id: -1, name: -1, sub: -1, avail: -1 };
+  let body = rows;
+  if (hasHeader) { roles.forEach((r, i) => { if (r && idx[r] === -1) idx[r] = i; }); body = rows.slice(1); }
+  else {
+    const n = Math.max(...rows.map(r => r.length));
+    if (n <= 2) { idx.id = 0; idx.name = 1; }
+    else if (n === 3) { idx.id = 0; idx.name = 1; idx.sub = 2; }
+    else { idx.floor = 0; idx.id = 1; idx.name = 2; idx.sub = 3; }
+    warnings.push(t('widget.dir.import_warn_noheader'));
+  }
+  if (idx.name === -1 && idx.id === -1) { idx.id = 0; idx.name = 1; }
+  const cats = new Map();
+  const getCat = (nm) => { const k = nm || ''; if (!cats.has(k)) cats.set(k, { name: k, entries: [] }); return cats.get(k); };
+  for (const r of body) {
+    if (!r.length || r.every(c => c === '')) continue;
+    const cell = (i) => (i >= 0 && i < r.length ? r[i] : '');
+    const e = { identifier: cell(idx.id), name: idx.name >= 0 ? cell(idx.name) : '', subtitle: idx.sub >= 0 ? cell(idx.sub) : '', available: idx.avail >= 0 ? _diBool(cell(idx.avail)) : false };
+    if (!e.identifier && !e.name) continue;
+    getCat(idx.floor >= 0 ? cell(idx.floor) : '').entries.push(e);
+  }
+  return { meta: {}, categories: [...cats.values()], background_images: [], warnings };
+}
+function _diHeading(line) {
+  const l = line.trim();
+  if (/:$/.test(l)) return l.replace(/:$/, '').trim();
+  if (/^#{1,6}\s+/.test(l)) return l.replace(/^#{1,6}\s+/, '').trim();
+  if (/^\[.+\]$/.test(l)) return l.slice(1, -1).trim();
+  if (/^=+\s*(.+?)\s*=+$/.test(l)) return l.replace(/^=+\s*/, '').replace(/\s*=+$/, '').trim();
+  if (/^-{3,}\s*(.+?)\s*-{3,}$/.test(l)) return l.replace(/^-+\s*/, '').replace(/\s*-+$/, '').trim();
+  if (!/^\W*\d/.test(l) && /\b(floor|level|suite|section|wing|building)\b/i.test(l) && l.split(/\s+/).length <= 4) return l;
+  return null;
+}
+function _diParseSectioned(lines, warnings) {
+  const cats = []; let cur = null;
+  const ensure = () => { if (!cur) { cur = { name: '', entries: [] }; cats.push(cur); } return cur; };
+  for (const raw of lines) {
+    const heading = _diHeading(raw);
+    if (heading != null) { cur = { name: heading, entries: [] }; cats.push(cur); continue; }
+    const l = raw.trim();
+    const m = l.match(/^(#?\d+[A-Za-z]?)[\s.)\-:–—|]+(.+)$/);
+    const e = m ? { identifier: m[1].replace(/^#/, ''), name: m[2].trim(), subtitle: '', available: false }
+                : { identifier: '', name: l, subtitle: '', available: false };
+    if (e.identifier || e.name) ensure().entries.push(e);
+  }
+  if (!(cats.length > 1 || cats.some(c => c.name))) warnings.push(t('widget.dir.import_warn_nosections'));
+  return { meta: {}, categories: cats, background_images: [], warnings };
+}
+function _diParseDelimited(raw) {
+  const warnings = [];
+  const lines = raw.split(/\r?\n/).map(l => l.replace(/\s+$/, '')).filter(l => l.trim() !== '');
+  if (!lines.length) throw new Error(t('widget.dir.import_err_empty'));
+  const sample = lines.slice(0, 12);
+  let delim = null, best = 1;
+  for (const d of ['\t', ',', ';', '|']) {
+    const counts = sample.map(l => _diSplit(l, d).length);
+    const withCols = counts.filter(c => c >= 2).length;
+    const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
+    if (withCols >= Math.ceil(sample.length * 0.6) && avg > best) { best = avg; delim = d; }
+  }
+  return delim ? _diParseTable(lines, delim, warnings) : _diParseSectioned(lines, warnings);
+}
+function parseDirectoryImport(text) {
+  const raw = String(text == null ? '' : text).trim();
+  if (!raw) throw new Error(t('widget.dir.import_err_empty'));
+  let json = null;
+  if (/^[[{]/.test(raw)) { try { json = JSON.parse(raw); } catch (e) { /* not JSON */ } }
+  const res = (json && typeof json === 'object') ? _diNormalizeJson(json) : _diParseDelimited(raw);
+  res.categories = (res.categories || [])
+    .map(c => ({ name: String(c.name || '').trim(), entries: (c.entries || []).filter(e => (e.identifier || '').trim() || (e.name || '').trim()) }))
+    .filter(c => c.name || c.entries.length);
+  if (!res.categories.length) throw new Error(t('widget.dir.import_err_norows'));
+  res.stats = { categories: res.categories.length, entries: res.categories.reduce((n, c) => n + c.entries.length, 0) };
+  return res;
+}
+
 function openContentPicker({ multiple = false, title } = {}) {
   return new Promise(async (resolve) => {
     const overlay = document.createElement('div');
@@ -250,6 +419,10 @@ export async function render(container) {
         break;
       case 'directory-board':
         html += `
+          <div class="form-group" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:6px;background:var(--bg-input)">
+            <button type="button" class="btn btn-secondary btn-sm" id="dbImportData">${t('widget.dir.import_btn')}</button>
+            <span style="font-size:11px;color:var(--text-muted);flex:1;min-width:160px">${t('widget.dir.import_hint')}</span>
+          </div>
           <div class="form-group"><label>${t('widget.dir.title_label')}</label><input type="text" id="wTitle" class="input" value="${escAttr(config.title)}" placeholder="${t('widget.dir.title_placeholder')}"></div>
           <div class="form-group"><label>${t('widget.dir.logo_label')}</label><div id="wLogoBox"></div></div>
           <div class="form-group"><label>${t('widget.dir.footer_text_label')}</label><input type="text" id="wFooter" class="input" value="${escAttr(config.footer_text)}" placeholder="${t('widget.dir.footer_placeholder')}"></div>
@@ -331,6 +504,7 @@ export async function render(container) {
         renderDirCategories({ focusCatName: dirState.categories.length - 1 });
       };
       document.getElementById('wBgAdd').onclick = pickBgImages;
+      document.getElementById('dbImportData').onclick = openDirImport;
     }
 
     if (type === 'directory-search') {
@@ -471,6 +645,64 @@ export async function render(container) {
       const inp = cont.querySelector(`[data-entry-id="${opts.focusEntryId}"]`);
       if (inp) inp.focus();
     }
+  }
+
+  function openDirImport() {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10001;padding:16px';
+    const hasExisting = dirState.categories.length > 0;
+    overlay.innerHTML = `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;width:100%;max-width:660px;max-height:90vh;display:flex;flex-direction:column;gap:12px">
+        <h3 style="font-size:16px;font-weight:600">${t('widget.dir.import_title')}</h3>
+        <div style="font-size:12px;color:var(--text-muted)">${t('widget.dir.import_desc')}</div>
+        <textarea id="diText" class="input" style="flex:1;min-height:220px;font-family:monospace;font-size:12px;white-space:pre;overflow:auto" placeholder="${escAttr(t('widget.dir.import_placeholder'))}"></textarea>
+        <div id="diError" style="display:none;font-size:12px;color:#ff6b6b;white-space:pre-wrap"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="diReplace" ${hasExisting ? 'checked' : ''}> ${t('widget.dir.import_replace')}</label>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+          <button type="button" class="btn btn-secondary" id="diCancel">${t('common.cancel')}</button>
+          <button type="button" class="btn btn-primary" id="diGo">${t('widget.dir.import_populate')}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const ta = overlay.querySelector('#diText');
+    ta.focus();
+    const cleanup = () => overlay.remove();
+    overlay.querySelector('#diCancel').onclick = cleanup;
+    overlay.onclick = (e) => { if (e.target === overlay) cleanup(); };
+    overlay.querySelector('#diGo').onclick = () => {
+      const errBox = overlay.querySelector('#diError');
+      let result;
+      try { result = parseDirectoryImport(ta.value); }
+      catch (e) { errBox.textContent = e.message || t('widget.dir.import_err_norows'); errBox.style.display = 'block'; return; }
+      applyDirImport(result, overlay.querySelector('#diReplace').checked);
+      cleanup();
+    };
+  }
+
+  function applyDirImport(result, replace) {
+    const m = result.meta || {};
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') el.value = v; };
+    setVal('wTitle', m.title);
+    setVal('wFooter', m.footer_text);
+    const setSel = (id, v, allowed) => { if (v == null) return; const el = document.getElementById(id); if (el && allowed.includes(String(v))) el.value = String(v); };
+    setSel('wTheme', m.theme, ['dark', 'light']);
+    setSel('wSpeed', m.scroll_speed, ['slow', 'medium', 'fast']);
+    setSel('wCols', m.columns, ['auto', '1', '2', '3', '4']);
+    if (m.logo_url && (/^(https?:)?\/\//i.test(m.logo_url) || m.logo_url.startsWith('/'))) { dirState.logo_url = m.logo_url; renderLogoPicker(); }
+    if (Array.isArray(result.background_images) && result.background_images.length) {
+      const seen = new Set(dirState.background_images);
+      for (const u of result.background_images) if (!seen.has(u)) { dirState.background_images.push(u); seen.add(u); }
+      renderBgList();
+    }
+    const mapped = result.categories.map(c => ({
+      name: c.name || '', _expanded: false,
+      entries: c.entries.map(e => ({ identifier: e.identifier || '', name: e.name || '', subtitle: e.subtitle || '', available: !!e.available })),
+    }));
+    dirState.categories = replace ? mapped : dirState.categories.concat(mapped);
+    renderDirCategories();
+    const warnings = result.warnings || [];
+    const msg = [t('widget.dir.import_done', { cats: result.stats.categories, entries: result.stats.entries })].concat(warnings).join(' ');
+    showToast(msg, warnings.length ? 'info' : 'success');
   }
 
   function renderLogoPicker() {
