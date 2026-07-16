@@ -512,7 +512,8 @@ function renderDirectoryBoard(c) {
   var SPEEDS = { slow: 20, medium: 45, fast: 75 };
 
   if (cfg.theme === 'light') document.body.classList.add('light');
-  var GAP_PX = 100;
+  var GAP_PX = 120; // MUST match the .gap element height (set inline below) — the scroll loop
+                    // translates by baseH+GAP_PX, so any mismatch jumps that many px each cycle.
   var MIN_SCROLL_PX_SEC = 5; // anti-burn-in minimum when content fits
 
   // ----- header -----
@@ -629,7 +630,8 @@ function renderDirectoryBoard(c) {
     while (track.children.length > 1) track.removeChild(track.lastChild);
     var gap = document.createElement('div');
     gap.className = 'gap';
-    track.appendChild(gap);
+    gap.style.height = GAP_PX + 'px'; // MUST equal GAP_PX — the loop translates by baseH+GAP_PX;
+    track.appendChild(gap);           // a mismatch (was CSS 120 vs GAP_PX 100) jumps 20px each cycle.
 
     var baseH = baseBlock.getBoundingClientRect().height;
     var cycleH = baseH + GAP_PX; // distance to translate per loop
@@ -643,6 +645,7 @@ function renderDirectoryBoard(c) {
       if (i < cloneCount - 1) {
         var g = document.createElement('div');
         g.className = 'gap';
+        g.style.height = GAP_PX + 'px'; // keep every clone-gap == GAP_PX (seamless loop)
         track.appendChild(g);
       }
     }
