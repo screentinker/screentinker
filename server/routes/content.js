@@ -347,6 +347,12 @@ router.get('/:id/file', (req, res) => {
   // Prevent path traversal
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  // Widget boards (logo/background images) render inside the player's sandboxed
+  // (opaque-origin) widget iframe, so these image requests are cross-origin. Without
+  // CORP: cross-origin the helmet default (same-origin) blocks them (NS_ERROR_DOM_CORP_FAILED,
+  // 0 bytes). Matches the /uploads/content static route. Content already serves publicly.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.sendFile(safePath);
 });
 
@@ -357,6 +363,9 @@ router.get('/:id/thumbnail', (req, res) => {
   if (!content.thumbnail_path) return res.status(404).json({ error: 'Thumbnail not found' });
   const safePath = path.resolve(config.contentDir, path.basename(content.thumbnail_path));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  // See /:id/file — cross-origin so sandboxed widget iframes can load it.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.sendFile(safePath);
 });
 

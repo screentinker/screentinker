@@ -528,7 +528,8 @@ function renderDirectoryBoard(c) {
     img.alt = '';
     header.appendChild(img);
   }
-  if (cfg.title) {
+  // A logo replaces the title text — showing both stacks the wordmark over the name.
+  if (cfg.title && !logoSrc) {
     var h1 = document.createElement('h1');
     h1.textContent = cfg.title;
     header.appendChild(h1);
@@ -824,7 +825,8 @@ function renderDirectorySearch(c) {
     img.className = 'logo'; img.src = logoSrc; img.alt = '';
     header.appendChild(img);
   }
-  if (cfg.title) {
+  // A logo replaces the title text — showing both stacks the wordmark over the name.
+  if (cfg.title && !logoSrc) {
     var h1 = document.createElement('h1');
     h1.textContent = cfg.title;
     header.appendChild(h1);
