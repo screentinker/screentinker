@@ -469,6 +469,13 @@ app.get('/api/content/:id/file', (req, res) => {
   if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  // Widget boards (logo / background images) render inside the player's sandboxed
+  // (opaque-origin) widget iframe, so these image loads are cross-origin. The helmet
+  // default CORP: same-origin blocks them (NS_ERROR_DOM_CORP_FAILED, 0 bytes). Allow
+  // cross-origin — matches the /uploads/content static route; this content is already
+  // served here without auth (playlist/widget-gated above).
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.sendFile(safePath);
 });
 
@@ -488,6 +495,8 @@ async function proxyRemoteThumbnail(url, res) {
     const buf = Buffer.from(await upstream.arrayBuffer());
     res.set('Content-Type', ct);
     res.set('Cache-Control', 'public, max-age=86400');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin'); // load in sandboxed widget iframes
     return res.send(buf);
   } catch (e) {
     return res.status(502).json({ error: 'Thumbnail fetch failed' });
@@ -513,6 +522,9 @@ app.get('/api/content/:id/thumbnail', (req, res) => {
   if (/^https?:\/\//i.test(content.thumbnail_path)) return proxyRemoteThumbnail(content.thumbnail_path, res);
   const safePath = path.resolve(config.contentDir, path.basename(content.thumbnail_path));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  // See /file — cross-origin so sandboxed widget iframes can load it.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.sendFile(safePath);
 });
 
