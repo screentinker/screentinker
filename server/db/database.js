@@ -358,6 +358,11 @@ const migrations = [
     last_seen           INTEGER,
     removed_at          INTEGER
   )`,
+  // #widget zero-duration loop: repair any playlist_items with a non-positive duration
+  // (esp. duration_sec=0 on a widget), which made the player schedule a 0ms auto-advance
+  // -> self-loop + black screen. New writes are floored in routes/assignments.js; this
+  // fixes existing rows. Idempotent — a no-op once clean.
+  'UPDATE playlist_items SET duration_sec = 10 WHERE duration_sec IS NULL OR duration_sec < 1',
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
