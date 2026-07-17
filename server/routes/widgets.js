@@ -613,9 +613,9 @@ function renderDirectoryBoard(c) {
   var track = document.getElementById('track');
 
   // ----- WINDOWED (virtualized) marquee -----
-  // Only the categories intersecting the viewport (+ a small buffer) are ever in the DOM, each on
-  // its own small compositor layer. As the scroll advances we recycle a tiny element pool instead
-  // of translating one enormous cloned track. That keeps every composited layer ~1 screen tall no
+  // Each category is pre-built ONCE onto its own small compositor layer; the scroll only shows the
+  // ones intersecting the viewport (+ a small buffer) and moves them with a transform. Nothing is
+  // built, parsed, or laid out per frame. That keeps every composited layer ~1 screen tall no
   // matter how long the directory is, so the GPU never re-rasterizes an oversized layer — which was
   // the tile-boundary stall (~1 dropped frame every 512px-tile / speed ≈ 11s) that hitched the old
   // CSS marquee once the track grew past a few thousand px.
@@ -627,15 +627,22 @@ function renderDirectoryBoard(c) {
   document.head.appendChild(vstyle);
 
   var vlayout = [];   // [{top,h}] per category, in virtual (content) coordinates
+  var insts = [];     // pre-built display instances: [{top,h,k,el,shown}] (one el per category × wrap-copy)
   var loopH = 0;      // full scroll period = total content height + one GAP_PX (the end→repeat gap)
   var viewH = 0;      // cached scroller height, so the frame loop never forces a layout read
   var speedPxSec = 0;
   var pos = 0;        // virtual scroll offset; advances downward, wraps at loopH
-  var pool = [];      // recycled elements: { el, cat (rendered category idx), key ('i:k' or null) }
   var rafId = null, lastTs = 0;
 
-  // Measure every category's natural height once, at the true render width (hidden flow pass),
-  // and record its virtual top. Cheap: runs on first paint, resize, and real data changes only.
+  function clearInsts() {
+    for (var n = 0; n < insts.length; n++) { var e = insts[n].el; if (e.parentNode) e.parentNode.removeChild(e); }
+    insts = [];
+  }
+
+  // Measure each category once at the true render width, then PRE-BUILD every instance that can ever
+  // be on screen (each category × the -1/0/+1 wrap-copies at the loop seam). Runs ONLY on first paint,
+  // resize, and real data changes — never during scroll — so the frame loop only moves finished
+  // elements; it never parses HTML or forces layout. (That per-recycle rebuild was the irregular hitch.)
   function measureLayout() {
     viewH = scroller.getBoundingClientRect().height || window.innerHeight;
     var arr = Array.isArray(cfg.categories) ? cfg.categories : [];
@@ -654,39 +661,33 @@ function renderDirectoryBoard(c) {
     track.removeChild(meas);
     loopH = top + GAP_PX;
     speedPxSec = (top <= viewH) ? MIN_SCROLL_PX_SEC : (SPEEDS[cfg.scroll_speed] || SPEEDS.medium);
+    clearInsts();
+    for (var i = 0; i < arr.length; i++) {
+      for (var k = -1; k <= 1; k++) {
+        var cel = buildCategoryEl(arr[i]);
+        cel.className = 'category vcat';
+        cel.style.display = 'none';
+        track.appendChild(cel);
+        insts.push({ top: vlayout[i].top, h: vlayout[i].h, k: k, el: cel, shown: false });
+      }
+    }
   }
 
-  // Reconcile the visible window: figure out which (category, wrap-copy) instances are on screen,
-  // reuse pooled elements for them, and only repaint an element when its category actually changes.
+  // Per-frame: reposition the pre-built instances. Pure number math + compositor-only transform
+  // writes, zero allocations — nothing here can trigger GC or a layout, so the scroll stays smooth.
   function renderWindow() {
     if (loopH <= 0) return;
-    var buffer = 140, need = {}, i, k, p;
-    for (i = 0; i < vlayout.length; i++) {
-      var baseY = vlayout[i].top - pos;
-      for (k = -1; k <= 1; k++) { // -1/0/+1 covers the seamless wrap at the loop boundary
-        var y = baseY + k * loopH;
-        if (y + vlayout[i].h >= -buffer && y <= viewH + buffer) need[i + ':' + k] = { i: i, y: y };
+    var buffer = 140;
+    for (var n = 0; n < insts.length; n++) {
+      var it = insts[n];
+      var y = it.top - pos + it.k * loopH;
+      if (y + it.h >= -buffer && y <= viewH + buffer) {
+        it.el.style.transform = 'translate3d(0,' + y + 'px,0)';
+        if (!it.shown) { it.el.style.display = ''; it.shown = true; }
+      } else if (it.shown) {
+        it.el.style.display = 'none'; it.shown = false;
       }
     }
-    for (p = 0; p < pool.length; p++) { // release elements that scrolled out of the window
-      if (pool[p].key && !need[pool[p].key]) { pool[p].key = null; pool[p].el.style.display = 'none'; }
-    }
-    Object.keys(need).forEach(function(key){
-      var want = need[key], slot = null, q;
-      for (q = 0; q < pool.length; q++) { if (pool[q].key === key) { slot = pool[q]; break; } }
-      if (!slot) {
-        for (q = 0; q < pool.length; q++) { if (!pool[q].key) { slot = pool[q]; break; } }
-        if (!slot) { slot = { el: document.createElement('div'), cat: -1, key: null }; track.appendChild(slot.el); pool.push(slot); }
-        if (slot.cat !== want.i) { // repaint only when the pooled element takes on a new category
-          slot.el.className = 'category vcat';
-          slot.el.innerHTML = buildCategoryEl(cfg.categories[want.i]).innerHTML;
-          slot.cat = want.i;
-        }
-        slot.el.style.display = '';
-        slot.key = key;
-      }
-      slot.el.style.transform = 'translate3d(0,' + want.y + 'px,0)';
-    });
   }
 
   function frame(ts) {
@@ -699,11 +700,7 @@ function renderDirectoryBoard(c) {
     rafId = requestAnimationFrame(frame);
   }
 
-  function resetPool() { // force a full repaint (widths or data changed) on next renderWindow
-    for (var p = 0; p < pool.length; p++) { pool[p].key = null; pool[p].cat = -1; pool[p].el.style.display = 'none'; }
-  }
-
-  function remeasure(preservePhase) { // re-measure, optionally resuming at the same scroll fraction
+  function remeasure(preservePhase) { // re-measure + rebuild instances, resuming at the same fraction
     var frac = (preservePhase && loopH > 0) ? (pos / loopH) : 0;
     measureLayout();
     pos = frac * loopH;
@@ -736,7 +733,7 @@ function renderDirectoryBoard(c) {
   var rT;
   window.addEventListener('resize', function(){
     clearTimeout(rT);
-    rT = setTimeout(function(){ layoutScroller(); resetPool(); remeasure(true); }, 250);
+    rT = setTimeout(function(){ layoutScroller(); remeasure(true); }, 250);
   });
 
   // ----- live data refresh: poll data.json; re-render ONLY when the entries changed -----
@@ -754,8 +751,7 @@ function renderDirectoryBoard(c) {
         if (sig === lastSig) return;      // unchanged -> leave the scroll running untouched
         lastSig = sig;
         cfg.categories = cats;
-        resetPool();                      // new data -> pooled elements must repaint
-        remeasure(true);                  // re-measure in place; scroll resumes at the same fraction
+        remeasure(true);                  // rebuild instances in place; scroll resumes at the same fraction
       })
       .catch(function(){ /* transient error -> keep last-good board */ });
   }, REFRESH_MS);
