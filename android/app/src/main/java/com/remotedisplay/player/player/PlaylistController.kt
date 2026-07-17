@@ -36,7 +36,13 @@ class PlaylistController(
     // nothing has ever played (fresh device). Never used while content is on screen.
     private val onWaitingForContent: (() -> Unit)? = null
 ) {
-    private companion object { const val CONTENT_RECHECK_MS = 3000L }
+    private companion object {
+        const val CONTENT_RECHECK_MS = 3000L
+        // Backstop against a busy-loop: an auto-advance is never scheduled faster than
+        // this, so a bad/zero duration on any path can't peg the main thread (see #widget
+        // zero-duration self-loop — a solo fullscreen widget with duration_sec=0).
+        const val MIN_ADVANCE_MS = 500L
+    }
 
     private val items = mutableListOf<PlaylistItem>()
     private var currentIndex = -1
@@ -325,14 +331,19 @@ class PlaylistController(
         // for the completion callback. Wall followers never auto-advance — the
         // leader's wall:sync index drives every switch.
         if (!wallFollower && (item.mimeType.startsWith("image/") || item.isWidget)) {
-            scheduleAdvance(item.durationSec * 1000L)
+            // slotMs() floors a zero/negative duration to 10s (the max(1, duration||10)
+            // contract shared with the web/Tizen players). A raw durationSec*1000 here let a
+            // solo fullscreen widget with duration_sec=0 schedule a 0ms advance -> self-loop.
+            scheduleAdvance(slotMs(item))
         }
     }
 
     private fun scheduleAdvance(delayMs: Long) {
         cancelAdvance()
+        // Backstop: never busy-loop, even if a future caller passes a tiny/zero delay.
+        val safeDelayMs = maxOf(delayMs, MIN_ADVANCE_MS)
         advanceRunnable = Runnable { next() }
-        handler.postDelayed(advanceRunnable!!, delayMs)
+        handler.postDelayed(advanceRunnable!!, safeDelayMs)
     }
 
     private fun cancelAdvance() {
