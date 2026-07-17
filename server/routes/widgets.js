@@ -515,6 +515,7 @@ function renderDirectoryBoard(c) {
   var GAP_PX = 120; // MUST match the .gap element height (set inline below) — the scroll loop
                     // translates by baseH+GAP_PX, so any mismatch jumps that many px each cycle.
   var MIN_SCROLL_PX_SEC = 5; // anti-burn-in minimum when content fits
+  var REFRESH_MS = 60000;    // poll data.json this often; re-render ONLY when entries changed
 
   // ----- header -----
   var header = document.getElementById('header');
@@ -621,75 +622,104 @@ function renderDirectoryBoard(c) {
   }
 
   var track = document.getElementById('track');
-  var baseBlock = buildBlock();
-  track.appendChild(baseBlock);
 
-  // ----- measure + clone enough copies to fill (seamless loop) -----
-  function setupScroll() {
-    // remove any previous clones (on resize)
-    while (track.children.length > 1) track.removeChild(track.lastChild);
-    var gap = document.createElement('div');
-    gap.className = 'gap';
-    gap.style.height = GAP_PX + 'px'; // MUST equal GAP_PX — the loop translates by baseH+GAP_PX;
-    track.appendChild(gap);           // a mismatch (was CSS 120 vs GAP_PX 100) jumps 20px each cycle.
+  // ----- scroll engine: a JS-owned offset driven by requestAnimationFrame -----
+  // NOT a CSS @keyframes animation: a keyframe restarts from 0% whenever it's re-injected,
+  // so any live data change (or iframe reload) snapped the scroll to the top. A JS offset
+  // can be rescaled across a rebuild, so the scroll keeps its phase — no jump.
+  var offset = 0, cycleH = 0, speedPxSec = 0, rafId = null, lastTs = 0;
 
+  function computeSpeed(baseH, viewH) {
+    var s = SPEEDS[cfg.scroll_speed] || SPEEDS.medium;
+    return (baseH <= viewH) ? MIN_SCROLL_PX_SEC : s; // content fits -> slow anti-burn-in creep
+  }
+
+  // Build base + gap + enough clones for a seamless loop, re-measure cycleH, and PRESERVE
+  // the current scroll phase. Runs for the first paint, on resize, and on a live data change.
+  function rebuildTrack() {
+    var prevCycle = cycleH;
+    track.replaceChildren(); // drop all old nodes in one shot (no detached-node buildup)
+    var baseBlock = buildBlock();
+    track.appendChild(baseBlock);
     var baseH = baseBlock.getBoundingClientRect().height;
-    var cycleH = baseH + GAP_PX; // distance to translate per loop
+    cycleH = baseH + GAP_PX; // translate distance per loop; MUST equal base height + .gap (#197)
     var viewH = scroller.getBoundingClientRect().height || window.innerHeight;
-
-    // Clone enough times so track fills scroller + at least one full cycle
-    // Minimum 1 clone (so we can loop). Target: track_height >= view + cycle.
+    var gap = document.createElement('div');
+    gap.className = 'gap'; gap.style.height = GAP_PX + 'px';
+    track.appendChild(gap);
     var cloneCount = Math.max(1, Math.ceil((viewH + cycleH) / cycleH));
     for (var i = 0; i < cloneCount; i++) {
       track.appendChild(buildBlock());
       if (i < cloneCount - 1) {
         var g = document.createElement('div');
-        g.className = 'gap';
-        g.style.height = GAP_PX + 'px'; // keep every clone-gap == GAP_PX (seamless loop)
+        g.className = 'gap'; g.style.height = GAP_PX + 'px'; // every clone-gap == GAP_PX (seamless)
         track.appendChild(g);
       }
     }
-
-    // speed
-    var contentFits = baseH <= viewH;
-    var speedName = cfg.scroll_speed || 'medium';
-    var speedPxSec = SPEEDS[speedName] || SPEEDS.medium;
-    if (contentFits) speedPxSec = MIN_SCROLL_PX_SEC;
-
-    var duration = cycleH / speedPxSec;
-
-    // inject keyframes
-    var oldStyle = document.getElementById('scroll-kf');
-    if (oldStyle) oldStyle.remove();
-    var style = document.createElement('style');
-    style.id = 'scroll-kf';
-    style.textContent =
-      '@keyframes dir-scroll { from { transform: translateY(0); } to { transform: translateY(-' + cycleH + 'px); } }' +
-      '.track { animation: dir-scroll ' + duration + 's linear infinite; }';
-    document.head.appendChild(style);
+    speedPxSec = computeSpeed(baseH, viewH);
+    // keep scroll phase: map the old offset into the new cycle so a content change never jumps
+    if (prevCycle > 0 && cycleH > 0) offset = (offset / prevCycle) * cycleH;
+    if (cycleH > 0) { offset %= cycleH; if (offset < 0) offset += cycleH; }
+    track.style.transform = 'translate3d(0,' + (-offset) + 'px,0)';
   }
 
-  // wait for images (logo + bgs) to load before measuring, so heights are correct
+  function tick(ts) {
+    var dt = lastTs ? (ts - lastTs) / 1000 : 0;
+    lastTs = ts;
+    if (dt > 0.25) dt = 0; // resumed from a backgrounded/throttled tab -> skip, never jump
+    if (cycleH > 0 && speedPxSec > 0) {
+      offset += speedPxSec * dt;
+      if (offset >= cycleH) offset -= cycleH;
+      track.style.transform = 'translate3d(0,' + (-offset) + 'px,0)';
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function firstPaint() {
+    layoutScroller();
+    rebuildTrack();
+    if (rafId == null) { lastTs = 0; rafId = requestAnimationFrame(tick); }
+  }
+
+  // wait for images (logo + bgs) to load before the FIRST measure, so heights are correct
   var pendingImgs = Array.from(document.images).filter(function(i){ return !i.complete; });
   if (pendingImgs.length === 0) {
-    setupScroll();
+    firstPaint();
   } else {
-    var done = 0;
+    var built = false, build = function(){ if (!built) { built = true; firstPaint(); } };
     pendingImgs.forEach(function(i){
-      var onDone = function(){ done++; if (done === pendingImgs.length) setupScroll(); };
-      i.addEventListener('load', onDone, { once:true });
-      i.addEventListener('error', onDone, { once:true });
+      i.addEventListener('load', build, { once:true });
+      i.addEventListener('error', build, { once:true });
     });
-    // hard timeout so we never hang
-    setTimeout(function(){ if (document.getElementById('scroll-kf') == null) setupScroll(); }, 5000);
+    setTimeout(build, 5000); // hard timeout so we never hang
   }
 
-  // re-layout on resize (debounced)
+  // re-layout on resize (debounced) — rebuild preserves scroll phase
   var rT;
   window.addEventListener('resize', function(){
     clearTimeout(rT);
-    rT = setTimeout(function(){ layoutScroller(); setupScroll(); }, 250);
+    rT = setTimeout(function(){ layoutScroller(); rebuildTrack(); }, 250);
   });
+
+  // ----- live data refresh: poll data.json; re-render ONLY when the entries changed -----
+  // Mirrors the directory-search poll. data.json is THIS board's own feed (relative URL,
+  // CORS-open, no-store). Diff the categories signature and rebuild IN PLACE only on a real
+  // change, so an unchanged poll never touches the running scroll (no periodic reset).
+  var lastSig = JSON.stringify(cfg.categories || []);
+  setInterval(function(){
+    if (document.hidden) return;
+    fetch('data.json', { cache: 'no-store' })
+      .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function(data){
+        var cats = data && Array.isArray(data.categories) ? data.categories : [];
+        var sig = JSON.stringify(cats);
+        if (sig === lastSig) return;      // unchanged -> leave the scroll running untouched
+        lastSig = sig;
+        cfg.categories = cats;
+        rebuildTrack();                   // re-render rows in place; phase preserved -> no jump
+      })
+      .catch(function(){ /* transient error -> keep last-good board */ });
+  }, REFRESH_MS);
 
   // ----- pixel shift (anti-burn-in): every 5 min, shift .page 0-3px random dir -----
   var page = document.getElementById('page');

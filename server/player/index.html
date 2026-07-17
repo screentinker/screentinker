@@ -2137,6 +2137,19 @@
       pendingWidgetSwap = { iframe, timer: setTimeout(discardPendingSwap, WIDGET_SWAP_TIMEOUT_MS) };
     }
 
+    // A held widget/board is left mounted (it self-refreshes its own data in place — no iframe
+    // reload, so its scroll is never reset). This just re-checks the schedule on the slow cadence:
+    // if it's still the sole active item, leave the live iframe alone and re-arm; if its daypart
+    // closed or a sibling opened, hand off to nextItem (idle or a genuine buffered transition —
+    // schedule-awareness / Fix A preserved).
+    function reevaluateHeldWidget() {
+      if (nextActiveIndex(currentIndex) === currentIndex) {
+        advanceTimer = setTimeout(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
+        return;
+      }
+      nextItem();
+    }
+
     function renderContent(item) {
       // Cancel any pending advance/refresh timer up front so a prior item's timer (incl. a
       // self-rescheduling widget refresh) can't fire against the new content.
@@ -2150,14 +2163,15 @@
         renderWidgetBuffered(item);
         // Group members run no local timer (their schedule tick drives the index).
         if (!groupSync) {
-          // Advance via nextItem in BOTH cases so the schedule is re-evaluated every cycle
-          // (a closed daypart / newly-active sibling is honored) — never a bespoke loop that
-          // re-renders blind to the schedule. A solo/held board (nextActiveIndex === current)
-          // just does it on a slow cadence: nextItem re-selects this same item and re-renders
-          // it through the buffered swap (data refresh, no flash). A rotating playlist advances
-          // on the item's duration.
+          // A solo/held widget (e.g. a directory board) self-refreshes its own data IN PLACE,
+          // so we must NOT reload its iframe on a timer — that would reset its scroll. Instead,
+          // on the slow cadence just re-check the SCHEDULE and only transition if the active
+          // selection changed (daypart opened/closed). A rotating playlist advances normally on
+          // its duration; the first mount + every genuine transition still go through the
+          // buffered swap.
           const held = nextActiveIndex(currentIndex) === currentIndex;
-          advanceTimer = setTimeout(nextItem, held ? WIDGET_SOLO_REFRESH_MS : (item.duration_sec || 30) * 1000);
+          if (held) advanceTimer = setTimeout(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
+          else advanceTimer = setTimeout(nextItem, (item.duration_sec || 30) * 1000);
         }
         return;
       }
