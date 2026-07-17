@@ -423,6 +423,15 @@
     // playback muted).
     let userHasInteracted = false;
     let advanceTimer = null;
+    // Buffered widget swap (#directory-board black-cycle): build the next widget iframe
+    // behind the current content and reveal it only on 'load', so a widget reload never
+    // blanks the screen. WIDGET_SWAP_TIMEOUT_MS reveals anyway if 'load' never fires (a
+    // network hang must not leave a frozen/blank board). A solo/held widget re-fetches its
+    // data every WIDGET_SOLO_REFRESH_MS — decoupled from duration_sec, because a static
+    // board re-querying the DB + re-rendering every few seconds, fleet-wide, is pure waste.
+    const WIDGET_SWAP_TIMEOUT_MS = 8000;
+    const WIDGET_SOLO_REFRESH_MS = 60000;
+    let pendingWidgetSwap = null;   // { iframe, timer } while a new widget iframe loads
     // Per-zone rotation timers (multi-zone). Each zone advances independently on
     // its own interval, decoupled from the fullscreen advanceTimer/nextItem.
     let zoneTimers = {};
@@ -2035,8 +2044,16 @@
       zoneTimers = {};
     }
 
-    function teardownCurrentMedia() {
-      if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+    function teardownCurrentMedia(keep) {
+      // On a buffered widget reveal (keep set) the widget's advance/refresh timer was just
+      // armed by renderContent and must survive; only a real teardown cancels it.
+      if (!keep && advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+      // Cancel any in-flight buffered widget swap so its deferred reveal can't fire after
+      // we've torn down (which would drop the incoming content). reveal() nulls this before
+      // calling teardownCurrentMedia(iframe), so preserving `keep` is safe.
+      if (pendingWidgetSwap && pendingWidgetSwap.iframe !== keep) {
+        clearTimeout(pendingWidgetSwap.timer); pendingWidgetSwap = null;
+      }
       clearZoneTimers();
       const container = document.getElementById('playerContainer');
       if (container) {
@@ -2048,7 +2065,13 @@
             v.load();
           } catch (e) { /* element may already be detached */ }
         });
-        container.innerHTML = '';
+        if (keep) {
+          // Buffered widget swap: drop the outgoing content but keep the freshly-loaded
+          // iframe we're swapping in.
+          Array.from(container.children).forEach(ch => { if (ch !== keep) { try { ch.remove(); } catch (e) {} } });
+        } else {
+          container.innerHTML = '';
+        }
       }
       // #146 fix: also release currentVideoEl even if it was DETACHED from the container —
       // a detached-but-playing <video> keeps emitting audio and the querySelectorAll above
@@ -2064,7 +2087,85 @@
       currentVideoEl = null;
     }
 
+    // Discard the in-flight buffered swap — superseded by a newer render, OR timed out (the
+    // new iframe never loaded, e.g. server unreachable). Remove the still-hidden frame and
+    // drop its timer so a late 'load' can't fire against stale state; the last-good board
+    // already on screen is left untouched. Shared by the supersede and timeout paths.
+    function discardPendingSwap() {
+      if (!pendingWidgetSwap) return;
+      clearTimeout(pendingWidgetSwap.timer);
+      try { pendingWidgetSwap.iframe.remove(); } catch (e) {}
+      pendingWidgetSwap = null;
+    }
+
+    // Buffered widget render (#directory-board black-cycle): build the new widget iframe
+    // BEHIND the current content (hidden) and reveal it only once it fires 'load' — then tear
+    // down the outgoing content. Kills the black flash on every widget transition, and lets a
+    // solo board refresh for freshness without ever blanking. On a load timeout we keep the
+    // last-good board and discard the dead frame (see below) rather than reveal a blank one.
+    function renderWidgetBuffered(item) {
+      const container = document.getElementById('playerContainer');
+      container.style.display = 'block';
+
+      // A newer render supersedes a still-loading swap (rapid re-render / playlist churn).
+      discardPendingSwap();
+
+      const iframe = document.createElement('iframe');
+      iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render`;
+      // Positioned + sized by the `#playerContainer > iframe` CSS rule. Hidden while it
+      // loads so its black background never shows over the outgoing content.
+      iframe.style.background = '#000';
+      iframe.style.visibility = 'hidden';
+      iframe.allow = 'autoplay; fullscreen';
+      // Sandbox into a unique origin so widget scripts can't read window.parent state.
+      iframe.setAttribute('sandbox', 'allow-scripts');
+
+      const reveal = () => {
+        if (!pendingWidgetSwap || pendingWidgetSwap.iframe !== iframe) return; // superseded / discarded
+        clearTimeout(pendingWidgetSwap.timer);
+        pendingWidgetSwap = null;
+        iframe.style.visibility = 'visible';
+        teardownCurrentMedia(iframe);   // remove the outgoing content, keep this iframe
+        if (PREVIEW_MODE && item.widget_type === 'webpage') addWebpageNote(container); // #104
+      };
+      iframe.addEventListener('load', reveal);
+      container.appendChild(iframe);
+      // Timeout: the new iframe never loaded (network hang). DON'T reveal a maybe-blank frame —
+      // keep the last-good board visible and discard the dead hidden iframe through the shared
+      // cleanup (so it can't leak or fire a late 'load'). The solo refresh / next advance retries,
+      // so a transient server blip self-heals without ever showing black.
+      pendingWidgetSwap = { iframe, timer: setTimeout(discardPendingSwap, WIDGET_SWAP_TIMEOUT_MS) };
+    }
+
     function renderContent(item) {
+      // Cancel any pending advance/refresh timer up front so a prior item's timer (incl. a
+      // self-rescheduling widget refresh) can't fire against the new content.
+      if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+      // Fullscreen (non-wall) widget: buffered swap — never blank on reload. Runs BEFORE the
+      // generic teardown (which would black the screen), and owns its own refresh/advance
+      // timer below. Multi-zone widgets go through renderZones; wall+widget keeps the legacy
+      // path.
+      const isZones = !!(layout && layout.zones && layout.zones.length > 1 && !wallConfig);
+      if (item && item.widget_id && !isZones && !wallConfig) {
+        renderWidgetBuffered(item);
+        // Group members run no local timer (their schedule tick drives the index).
+        if (!groupSync) {
+          // "Held" = this is the only schedule-active item right now, so advancing would
+          // just re-render ourselves. Hold the board and refresh its DATA on a slow, sane
+          // cadence (still buffered -> no flash) instead of re-querying every duration_sec.
+          if (nextActiveIndex(currentIndex) === currentIndex) {
+            advanceTimer = setTimeout(function widgetRefresh() {
+              renderWidgetBuffered(item);
+              advanceTimer = setTimeout(widgetRefresh, WIDGET_SOLO_REFRESH_MS);
+            }, WIDGET_SOLO_REFRESH_MS);
+          } else {
+            // Rotating playlist: advance to the next item after this item's duration.
+            advanceTimer = setTimeout(nextItem, (item.duration_sec || 30) * 1000);
+          }
+        }
+        return;
+      }
+
       teardownCurrentMedia();
 
       const container = document.getElementById('playerContainer');
