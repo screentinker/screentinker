@@ -2150,18 +2150,14 @@
         renderWidgetBuffered(item);
         // Group members run no local timer (their schedule tick drives the index).
         if (!groupSync) {
-          // "Held" = this is the only schedule-active item right now, so advancing would
-          // just re-render ourselves. Hold the board and refresh its DATA on a slow, sane
-          // cadence (still buffered -> no flash) instead of re-querying every duration_sec.
-          if (nextActiveIndex(currentIndex) === currentIndex) {
-            advanceTimer = setTimeout(function widgetRefresh() {
-              renderWidgetBuffered(item);
-              advanceTimer = setTimeout(widgetRefresh, WIDGET_SOLO_REFRESH_MS);
-            }, WIDGET_SOLO_REFRESH_MS);
-          } else {
-            // Rotating playlist: advance to the next item after this item's duration.
-            advanceTimer = setTimeout(nextItem, (item.duration_sec || 30) * 1000);
-          }
+          // Advance via nextItem in BOTH cases so the schedule is re-evaluated every cycle
+          // (a closed daypart / newly-active sibling is honored) — never a bespoke loop that
+          // re-renders blind to the schedule. A solo/held board (nextActiveIndex === current)
+          // just does it on a slow cadence: nextItem re-selects this same item and re-renders
+          // it through the buffered swap (data refresh, no flash). A rotating playlist advances
+          // on the item's duration.
+          const held = nextActiveIndex(currentIndex) === currentIndex;
+          advanceTimer = setTimeout(nextItem, held ? WIDGET_SOLO_REFRESH_MS : (item.duration_sec || 30) * 1000);
         }
         return;
       }
