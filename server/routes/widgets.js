@@ -622,31 +622,35 @@ function renderDirectoryBoard(c) {
   }
 
   var track = document.getElementById('track');
+  var scrollStyle = document.createElement('style');
+  scrollStyle.id = 'scroll-kf';
+  document.head.appendChild(scrollStyle);
+  var cycleH = 0, durationS = 0;
 
-  // ----- scroll engine: a JS-owned offset driven by requestAnimationFrame -----
-  // NOT a CSS @keyframes animation: a keyframe restarts from 0% whenever it's re-injected,
-  // so any live data change (or iframe reload) snapped the scroll to the top. A JS offset
-  // can be rescaled across a rebuild, so the scroll keeps its phase — no jump.
-  var offset = 0, cycleH = 0, speedPxSec = 0, rafId = null, lastTs = 0;
-
-  function computeSpeed(baseH, viewH) {
-    var s = SPEEDS[cfg.scroll_speed] || SPEEDS.medium;
-    return (baseH <= viewH) ? MIN_SCROLL_PX_SEC : s; // content fits -> slow anti-burn-in creep
-  }
-
-  // Build base + gap + enough clones for a seamless loop, re-measure cycleH, and PRESERVE
-  // the current scroll phase. Runs for the first paint, on resize, and on a live data change.
-  function rebuildTrack() {
-    var prevCycle = cycleH;
+  // ----- scroll: an OFF-MAIN-THREAD CSS marquee -----
+  // A CSS @keyframes animation runs on the COMPOSITOR thread, so it stays smooth even under
+  // main-thread jank/GC (a requestAnimationFrame loop dropped ~1 frame per cycle on the panel).
+  // Rebuilt for first paint, resize, and live data changes; a data change PRESERVES the scroll
+  // phase via a negative animation-delay, so an update resumes in place instead of snapping to
+  // the top. Unchanged polls never touch it.
+  function rebuildTrack(preservePhase) {
+    // capture the current scroll phase (0..1) BEFORE we replace the animation
+    var phaseFrac = 0;
+    if (preservePhase && durationS > 0) {
+      try {
+        var a = track.getAnimations && track.getAnimations()[0];
+        if (a) phaseFrac = ((Number(a.currentTime) || 0) % (durationS * 1000)) / (durationS * 1000);
+      } catch (e) {}
+    }
     track.replaceChildren(); // drop all old nodes in one shot (no detached-node buildup)
     var baseBlock = buildBlock();
     track.appendChild(baseBlock);
-    var baseH = baseBlock.getBoundingClientRect().height;
-    cycleH = baseH + GAP_PX; // translate distance per loop; MUST equal base height + .gap (#197)
-    var viewH = scroller.getBoundingClientRect().height || window.innerHeight;
     var gap = document.createElement('div');
     gap.className = 'gap'; gap.style.height = GAP_PX + 'px';
     track.appendChild(gap);
+    var baseH = baseBlock.getBoundingClientRect().height;
+    cycleH = baseH + GAP_PX; // translate distance per loop; base height + .gap (#197 seam invariant)
+    var viewH = scroller.getBoundingClientRect().height || window.innerHeight;
     var cloneCount = Math.max(1, Math.ceil((viewH + cycleH) / cycleH));
     for (var i = 0; i < cloneCount; i++) {
       track.appendChild(buildBlock());
@@ -656,29 +660,17 @@ function renderDirectoryBoard(c) {
         track.appendChild(g);
       }
     }
-    speedPxSec = computeSpeed(baseH, viewH);
-    // keep scroll phase: map the old offset into the new cycle so a content change never jumps
-    if (prevCycle > 0 && cycleH > 0) offset = (offset / prevCycle) * cycleH;
-    if (cycleH > 0) { offset %= cycleH; if (offset < 0) offset += cycleH; }
-    track.style.transform = 'translate3d(0,' + (-offset) + 'px,0)';
-  }
-
-  function tick(ts) {
-    var dt = lastTs ? (ts - lastTs) / 1000 : 0;
-    lastTs = ts;
-    if (dt > 0.25) dt = 0; // resumed from a backgrounded/throttled tab -> skip, never jump
-    if (cycleH > 0 && speedPxSec > 0) {
-      offset += speedPxSec * dt;
-      if (offset >= cycleH) offset -= cycleH;
-      track.style.transform = 'translate3d(0,' + (-offset) + 'px,0)';
-    }
-    rafId = requestAnimationFrame(tick);
+    var speedPxSec = (baseH <= viewH) ? MIN_SCROLL_PX_SEC : (SPEEDS[cfg.scroll_speed] || SPEEDS.medium);
+    durationS = cycleH / speedPxSec;
+    var delay = preservePhase ? (-phaseFrac * durationS).toFixed(3) : 0; // resume at the same phase
+    scrollStyle.textContent =
+      '@keyframes dir-scroll { from { transform: translate3d(0,0,0); } to { transform: translate3d(0,-' + cycleH + 'px,0); } }' +
+      '.track { animation: dir-scroll ' + durationS + 's linear infinite; animation-delay: ' + delay + 's; }';
   }
 
   function firstPaint() {
     layoutScroller();
-    rebuildTrack();
-    if (rafId == null) { lastTs = 0; rafId = requestAnimationFrame(tick); }
+    rebuildTrack(false);
   }
 
   // wait for images (logo + bgs) to load before the FIRST measure, so heights are correct
@@ -698,7 +690,7 @@ function renderDirectoryBoard(c) {
   var rT;
   window.addEventListener('resize', function(){
     clearTimeout(rT);
-    rT = setTimeout(function(){ layoutScroller(); rebuildTrack(); }, 250);
+    rT = setTimeout(function(){ layoutScroller(); rebuildTrack(true); }, 250);
   });
 
   // ----- live data refresh: poll data.json; re-render ONLY when the entries changed -----
@@ -716,7 +708,7 @@ function renderDirectoryBoard(c) {
         if (sig === lastSig) return;      // unchanged -> leave the scroll running untouched
         lastSig = sig;
         cfg.categories = cats;
-        rebuildTrack();                   // re-render rows in place; phase preserved -> no jump
+        rebuildTrack(true);               // re-render in place; phase kept via negative delay
       })
       .catch(function(){ /* transient error -> keep last-good board */ });
   }, REFRESH_MS);
