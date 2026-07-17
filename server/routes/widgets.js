@@ -449,9 +449,7 @@ function renderDirectoryBoard(c) {
     mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
   }
-  .track { position:absolute; top:0; left:0; right:0; will-change: transform; }
-  .block { padding:0 48px 24px; }
-  .block + .block { padding-top:24px; }
+  .track { position:absolute; top:0; left:0; right:0; }
 
   .category { padding:36px 0 16px; }
   .category h2 {
@@ -484,8 +482,6 @@ function renderDirectoryBoard(c) {
   body.light .entry { color:#1a1a2e; }
   body.light .entry.available, body.light .entry.available .id { color:#059669; }
 
-  .gap { height:120px; }
-
   @media (max-width: 1280px) {
     .header h1 { font-size:54px; }
     .header img.logo { max-height:120px; }
@@ -512,8 +508,7 @@ function renderDirectoryBoard(c) {
   var SPEEDS = { slow: 20, medium: 45, fast: 75 };
 
   if (cfg.theme === 'light') document.body.classList.add('light');
-  var GAP_PX = 120; // MUST match the .gap element height (set inline below) — the scroll loop
-                    // translates by baseH+GAP_PX, so any mismatch jumps that many px each cycle.
+  var GAP_PX = 120; // blank space between the end of the directory and where it repeats (loop seam)
   var MIN_SCROLL_PX_SEC = 5; // anti-burn-in minimum when content fits
   var REFRESH_MS = 60000;    // poll data.json this often; re-render ONLY when entries changed
 
@@ -580,97 +575,148 @@ function renderDirectoryBoard(c) {
   var cols = cfg.columns || 'auto';
   if (['auto','1','2','3','4'].indexOf(String(cols)) === -1) cols = 'auto';
 
-  function buildBlock() {
-    var block = document.createElement('div');
-    block.className = 'block';
-    var cats = Array.isArray(cfg.categories) ? cfg.categories : [];
-    cats.forEach(function(cat){
-      var catEl = document.createElement('div');
-      catEl.className = 'category';
-      var h2 = document.createElement('h2');
-      h2.textContent = cat.name || '';
-      catEl.appendChild(h2);
-      var entries = document.createElement('div');
-      entries.className = 'entries';
-      entries.setAttribute('data-cols', String(cols));
-      (cat.entries || []).forEach(function(e){
-        var row = document.createElement('div');
-        row.className = 'entry' + (e.available ? ' available' : '');
-        var id = document.createElement('span');
-        id.className = 'id';
-        id.textContent = (e.identifier || '') + ':';
-        var text = document.createElement('div');
-        text.className = 'text';
-        var nm = document.createElement('span');
-        nm.className = 'nm';
-        nm.textContent = e.name || '';
-        text.appendChild(nm);
-        if (e.subtitle) {
-          var sub = document.createElement('span');
-          sub.className = 'sub';
-          sub.textContent = e.subtitle;
-          text.appendChild(sub);
-        }
-        row.appendChild(id);
-        row.appendChild(text);
-        entries.appendChild(row);
-      });
-      catEl.appendChild(entries);
-      block.appendChild(catEl);
+  function buildCategoryEl(cat) {
+    var catEl = document.createElement('div');
+    catEl.className = 'category';
+    var h2 = document.createElement('h2');
+    h2.textContent = cat.name || '';
+    catEl.appendChild(h2);
+    var entries = document.createElement('div');
+    entries.className = 'entries';
+    entries.setAttribute('data-cols', String(cols));
+    (cat.entries || []).forEach(function(e){
+      var row = document.createElement('div');
+      row.className = 'entry' + (e.available ? ' available' : '');
+      var id = document.createElement('span');
+      id.className = 'id';
+      id.textContent = (e.identifier || '') + ':';
+      var text = document.createElement('div');
+      text.className = 'text';
+      var nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = e.name || '';
+      text.appendChild(nm);
+      if (e.subtitle) {
+        var sub = document.createElement('span');
+        sub.className = 'sub';
+        sub.textContent = e.subtitle;
+        text.appendChild(sub);
+      }
+      row.appendChild(id);
+      row.appendChild(text);
+      entries.appendChild(row);
     });
-    return block;
+    catEl.appendChild(entries);
+    return catEl;
   }
 
   var track = document.getElementById('track');
-  var scrollStyle = document.createElement('style');
-  scrollStyle.id = 'scroll-kf';
-  document.head.appendChild(scrollStyle);
-  var cycleH = 0, durationS = 0;
 
-  // ----- scroll: an OFF-MAIN-THREAD CSS marquee -----
-  // A CSS @keyframes animation runs on the COMPOSITOR thread, so it stays smooth even under
-  // main-thread jank/GC (a requestAnimationFrame loop dropped ~1 frame per cycle on the panel).
-  // Rebuilt for first paint, resize, and live data changes; a data change PRESERVES the scroll
-  // phase via a negative animation-delay, so an update resumes in place instead of snapping to
-  // the top. Unchanged polls never touch it.
-  function rebuildTrack(preservePhase) {
-    // capture the current scroll phase (0..1) BEFORE we replace the animation
-    var phaseFrac = 0;
-    if (preservePhase && durationS > 0) {
-      try {
-        var a = track.getAnimations && track.getAnimations()[0];
-        if (a) phaseFrac = ((Number(a.currentTime) || 0) % (durationS * 1000)) / (durationS * 1000);
-      } catch (e) {}
-    }
-    track.replaceChildren(); // drop all old nodes in one shot (no detached-node buildup)
-    var baseBlock = buildBlock();
-    track.appendChild(baseBlock);
-    var gap = document.createElement('div');
-    gap.className = 'gap'; gap.style.height = GAP_PX + 'px';
-    track.appendChild(gap);
-    var baseH = baseBlock.getBoundingClientRect().height;
-    cycleH = baseH + GAP_PX; // translate distance per loop; base height + .gap (#197 seam invariant)
-    var viewH = scroller.getBoundingClientRect().height || window.innerHeight;
-    var cloneCount = Math.max(1, Math.ceil((viewH + cycleH) / cycleH));
-    for (var i = 0; i < cloneCount; i++) {
-      track.appendChild(buildBlock());
-      if (i < cloneCount - 1) {
-        var g = document.createElement('div');
-        g.className = 'gap'; g.style.height = GAP_PX + 'px'; // every clone-gap == GAP_PX (seamless)
-        track.appendChild(g);
+  // ----- WINDOWED (virtualized) marquee -----
+  // Only the categories intersecting the viewport (+ a small buffer) are ever in the DOM, each on
+  // its own small compositor layer. As the scroll advances we recycle a tiny element pool instead
+  // of translating one enormous cloned track. That keeps every composited layer ~1 screen tall no
+  // matter how long the directory is, so the GPU never re-rasterizes an oversized layer — which was
+  // the tile-boundary stall (~1 dropped frame every 512px-tile / speed ≈ 11s) that hitched the old
+  // CSS marquee once the track grew past a few thousand px.
+  var vstyle = document.createElement('style');
+  vstyle.textContent =
+    '.track{will-change:auto;animation:none;}' +
+    '.vcat{position:absolute;left:48px;right:48px;top:0;will-change:transform;}' +
+    '.vmeasure{position:absolute;left:0;right:0;top:0;visibility:hidden;padding:0 48px;pointer-events:none;}';
+  document.head.appendChild(vstyle);
+
+  var vlayout = [];   // [{top,h}] per category, in virtual (content) coordinates
+  var loopH = 0;      // full scroll period = total content height + one GAP_PX (the end→repeat gap)
+  var viewH = 0;      // cached scroller height, so the frame loop never forces a layout read
+  var speedPxSec = 0;
+  var pos = 0;        // virtual scroll offset; advances downward, wraps at loopH
+  var pool = [];      // recycled elements: { el, cat (rendered category idx), key ('i:k' or null) }
+  var rafId = null, lastTs = 0;
+
+  // Measure every category's natural height once, at the true render width (hidden flow pass),
+  // and record its virtual top. Cheap: runs on first paint, resize, and real data changes only.
+  function measureLayout() {
+    viewH = scroller.getBoundingClientRect().height || window.innerHeight;
+    var arr = Array.isArray(cfg.categories) ? cfg.categories : [];
+    var meas = document.createElement('div');
+    meas.className = 'vmeasure';
+    track.appendChild(meas);
+    vlayout = [];
+    var top = 0;
+    arr.forEach(function(cat){
+      var el = buildCategoryEl(cat);
+      meas.appendChild(el);
+      var h = el.getBoundingClientRect().height;
+      vlayout.push({ top: top, h: h });
+      top += h;
+    });
+    track.removeChild(meas);
+    loopH = top + GAP_PX;
+    speedPxSec = (top <= viewH) ? MIN_SCROLL_PX_SEC : (SPEEDS[cfg.scroll_speed] || SPEEDS.medium);
+  }
+
+  // Reconcile the visible window: figure out which (category, wrap-copy) instances are on screen,
+  // reuse pooled elements for them, and only repaint an element when its category actually changes.
+  function renderWindow() {
+    if (loopH <= 0) return;
+    var buffer = 140, need = {}, i, k, p;
+    for (i = 0; i < vlayout.length; i++) {
+      var baseY = vlayout[i].top - pos;
+      for (k = -1; k <= 1; k++) { // -1/0/+1 covers the seamless wrap at the loop boundary
+        var y = baseY + k * loopH;
+        if (y + vlayout[i].h >= -buffer && y <= viewH + buffer) need[i + ':' + k] = { i: i, y: y };
       }
     }
-    var speedPxSec = (baseH <= viewH) ? MIN_SCROLL_PX_SEC : (SPEEDS[cfg.scroll_speed] || SPEEDS.medium);
-    durationS = cycleH / speedPxSec;
-    var delay = preservePhase ? (-phaseFrac * durationS).toFixed(3) : 0; // resume at the same phase
-    scrollStyle.textContent =
-      '@keyframes dir-scroll { from { transform: translate3d(0,0,0); } to { transform: translate3d(0,-' + cycleH + 'px,0); } }' +
-      '.track { animation: dir-scroll ' + durationS + 's linear infinite; animation-delay: ' + delay + 's; }';
+    for (p = 0; p < pool.length; p++) { // release elements that scrolled out of the window
+      if (pool[p].key && !need[pool[p].key]) { pool[p].key = null; pool[p].el.style.display = 'none'; }
+    }
+    Object.keys(need).forEach(function(key){
+      var want = need[key], slot = null, q;
+      for (q = 0; q < pool.length; q++) { if (pool[q].key === key) { slot = pool[q]; break; } }
+      if (!slot) {
+        for (q = 0; q < pool.length; q++) { if (!pool[q].key) { slot = pool[q]; break; } }
+        if (!slot) { slot = { el: document.createElement('div'), cat: -1, key: null }; track.appendChild(slot.el); pool.push(slot); }
+        if (slot.cat !== want.i) { // repaint only when the pooled element takes on a new category
+          slot.el.className = 'category vcat';
+          slot.el.innerHTML = buildCategoryEl(cfg.categories[want.i]).innerHTML;
+          slot.cat = want.i;
+        }
+        slot.el.style.display = '';
+        slot.key = key;
+      }
+      slot.el.style.transform = 'translate3d(0,' + want.y + 'px,0)';
+    });
+  }
+
+  function frame(ts) {
+    var dt = lastTs ? (ts - lastTs) / 1000 : 0;
+    lastTs = ts;
+    if (dt < 0 || dt > 0.25) dt = 0; // ignore tab-switch / long-frame jumps (no scroll leap)
+    pos += speedPxSec * dt;
+    if (loopH > 0) { pos %= loopH; if (pos < 0) pos += loopH; }
+    renderWindow();
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function resetPool() { // force a full repaint (widths or data changed) on next renderWindow
+    for (var p = 0; p < pool.length; p++) { pool[p].key = null; pool[p].cat = -1; pool[p].el.style.display = 'none'; }
+  }
+
+  function remeasure(preservePhase) { // re-measure, optionally resuming at the same scroll fraction
+    var frac = (preservePhase && loopH > 0) ? (pos / loopH) : 0;
+    measureLayout();
+    pos = frac * loopH;
+    renderWindow();
   }
 
   function firstPaint() {
     layoutScroller();
-    rebuildTrack(false);
+    measureLayout();
+    pos = 0;
+    if (rafId) cancelAnimationFrame(rafId);
+    lastTs = 0;
+    rafId = requestAnimationFrame(frame);
   }
 
   // wait for images (logo + bgs) to load before the FIRST measure, so heights are correct
@@ -686,11 +732,11 @@ function renderDirectoryBoard(c) {
     setTimeout(build, 5000); // hard timeout so we never hang
   }
 
-  // re-layout on resize (debounced) — rebuild preserves scroll phase
+  // re-layout on resize (debounced) — re-measure at the new width, resume at the same fraction
   var rT;
   window.addEventListener('resize', function(){
     clearTimeout(rT);
-    rT = setTimeout(function(){ layoutScroller(); rebuildTrack(true); }, 250);
+    rT = setTimeout(function(){ layoutScroller(); resetPool(); remeasure(true); }, 250);
   });
 
   // ----- live data refresh: poll data.json; re-render ONLY when the entries changed -----
@@ -708,7 +754,8 @@ function renderDirectoryBoard(c) {
         if (sig === lastSig) return;      // unchanged -> leave the scroll running untouched
         lastSig = sig;
         cfg.categories = cats;
-        rebuildTrack(true);               // re-render in place; phase kept via negative delay
+        resetPool();                      // new data -> pooled elements must repaint
+        remeasure(true);                  // re-measure in place; scroll resumes at the same fraction
       })
       .catch(function(){ /* transient error -> keep last-good board */ });
   }, REFRESH_MS);
