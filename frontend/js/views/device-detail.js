@@ -11,6 +11,7 @@ let screenshotHandler = null;
 let playbackHandler = null;
 let logHandler = null;
 let shellHandler = null;
+let diagPollTimer = null; // polls a diag-smoothness widget's reported frame stats while the page is open
 let screenshotInterval = null;
 let remoteActive = false;
 
@@ -172,6 +173,7 @@ async function loadDevice(deviceId, activeTab = null) {
     const device = await api.getDevice(deviceId);
     currentDevice = device;
     const latestTelemetry = device.telemetry?.[0] || {};
+    const diagWidget = (device.assignments || []).find(a => a && a.widget_type === 'diag-smoothness');
 
     contentEl.innerHTML = `
       <div class="device-header">
@@ -290,6 +292,7 @@ async function loadDevice(deviceId, activeTab = null) {
 
       <!-- Info Tab -->
       <div class="tab-content" id="tab-info">
+        ${diagWidget ? renderDiagPanel(diagWidget) : ''}
         <div class="info-grid">
           <div class="info-card">
             <div class="info-card-label">${t('device.info.status')}</div>
@@ -614,6 +617,8 @@ async function loadDevice(deviceId, activeTab = null) {
         <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${t('device.terminal.push_apk_hint')}</div>
       </div>` : ''}
     `;
+    // If this device is assigned the smoothness-diagnostic widget, poll THIS device's reported stats.
+    if (diagWidget) startDiagPoll(diagWidget.widget_id, deviceId);
     // Hydrate authenticated thumbnail images in the playlist tab
     const pc = document.getElementById('playlistContainer');
     if (pc) hydrateAuthImages(pc);
@@ -1870,7 +1875,69 @@ function updateTelemetryDisplay(telemetry) {
   if (telemetry.cpu_usage != null) update('telCpu', telemetry.cpu_usage.toFixed(1) + '%');
 }
 
+// ----- diag-smoothness widget: show the frame stats it reports from the panel -----
+function renderDiagPanel(w) {
+  return `
+    <div class="info-card" id="diagCard" style="grid-column:1/-1;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px">
+        <div class="info-card-label">Frame-rate diagnostic${w.widget_name ? ' · ' + esc(w.widget_name) : ''}</div>
+        <span id="diagVerdict" style="font-weight:700;font-size:15px;color:var(--text-muted)">waiting for panel…</span>
+      </div>
+      <div class="info-grid" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+        <div class="info-card"><div class="info-card-label">FPS</div><div class="info-card-value" id="diagFps">--</div></div>
+        <div class="info-card"><div class="info-card-label">Refresh</div><div class="info-card-value" id="diagHz">--</div></div>
+        <div class="info-card"><div class="info-card-label">Long frames</div><div class="info-card-value" id="diagLong">--</div></div>
+        <div class="info-card"><div class="info-card-label">Worst stall</div><div class="info-card-value" id="diagWorst">--</div></div>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--text-muted)" id="diagMeta">The panel running this widget reports its frame timing here every few seconds.</div>
+      <div style="margin-top:6px;font-size:12px;color:var(--danger);font-family:ui-monospace,Menlo,monospace" id="diagStalls"></div>
+    </div>`;
+}
+
+function startDiagPoll(widgetId, deviceId) {
+  if (diagPollTimer) clearInterval(diagPollTimer);
+  const url = `/api/widgets/${encodeURIComponent(widgetId)}/telemetry?device=${encodeURIComponent(deviceId)}`;
+  const tick = async () => {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      updateDiagPanel(res.ok ? await res.json() : null);
+    } catch (e) { /* transient — keep last shown */ }
+  };
+  tick();
+  diagPollTimer = setInterval(tick, 2500);
+}
+
+function updateDiagPanel(d) {
+  const v = document.getElementById('diagVerdict');
+  if (!v) { if (diagPollTimer) { clearInterval(diagPollTimer); diagPollTimer = null; } return; } // navigated away
+  const set = (id, val, color) => { const el = document.getElementById(id); if (el) { el.textContent = val; if (color) el.style.color = color; } };
+  if (!d) {
+    v.textContent = 'no report yet'; v.style.color = 'var(--text-muted)';
+    set('diagMeta', 'No data received yet — make sure the panel is showing this widget, then give it a few seconds.');
+    return;
+  }
+  const age = d.receivedAt ? Math.max(0, Math.round((Date.now() - d.receivedAt) / 1000)) : null;
+  const stale = age != null && age > 15;
+  const verdict = d.verdict || 'measuring';
+  const vcolor = verdict === 'SMOOTH' ? 'var(--success)' : (verdict === 'STALLING' ? 'var(--danger)' : 'var(--text-muted)');
+  // If we haven't heard from THIS panel recently, say so plainly rather than showing stale numbers as live.
+  if (stale) { v.textContent = 'no live report'; v.style.color = 'var(--text-muted)'; }
+  else { v.textContent = verdict; v.style.color = vcolor; }
+  set('diagFps', d.fps != null ? String(d.fps) : '--');
+  set('diagHz', d.refreshHz != null ? d.refreshHz + ' Hz' : '--');
+  set('diagLong', d.longFrames != null ? String(d.longFrames) : '--', d.longFrames > 0 ? 'var(--danger)' : 'var(--success)');
+  set('diagWorst', d.worstStallMs != null ? d.worstStallMs + ' ms' : '--', d.worstStallMs > 50 ? 'var(--danger)' : 'var(--text)');
+  const meta = [];
+  if (d.vp) meta.push('viewport ' + d.vp);
+  if (d.dpr) meta.push('dpr ' + d.dpr);
+  if (d.elapsedS != null) meta.push('running ' + d.elapsedS + 's');
+  if (age != null) meta.push('last report ' + age + 's ago');
+  set('diagMeta', meta.join(' · '));
+  set('diagStalls', Array.isArray(d.recent) && d.recent.length ? ('recent stalls: ' + d.recent.join('   ')) : '');
+}
+
 export function cleanup() {
+  if (diagPollTimer) { clearInterval(diagPollTimer); diagPollTimer = null; }
   if (statusHandler) off('device-status', statusHandler);
   if (screenshotHandler) off('screenshot-ready', screenshotHandler);
   if (playbackHandler) off('playback-state', playbackHandler);

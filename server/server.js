@@ -560,6 +560,8 @@ const { PUBLIC_ROUTERS, JWT_ONLY_ROUTERS, AGENCY_ROUTERS } = require('./config/a
 // BEFORE their parent router mount so the _skipAuth bypass / the limiter fire first.
 app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/:id/data.json', (req, res, next) => { req._skipAuth = true; next(); });
+app.post('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); }); // diag widget reports frame stats (null-origin iframe)
+app.get('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth = true; next(); });
 app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
 app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview session creation retains rendered HTML in memory for 5min

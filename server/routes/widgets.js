@@ -168,7 +168,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search']);
+const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness']);
 function renderWidgetHtml(type, config) {
   config = config || {};
   switch (type) {
@@ -180,6 +180,7 @@ function renderWidgetHtml(type, config) {
     case 'social': return renderSocial(config);
     case 'directory-board': return renderDirectoryBoard(config);
     case 'directory-search': return renderDirectorySearch(config);
+    case 'diag-smoothness': return renderDiagSmoothness(config);
     default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
   }
 }
@@ -219,6 +220,35 @@ router.get('/:id/data.json', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
   res.json({ categories });
+});
+
+// Latest frame-rate telemetry per widget, reported by the diag-smoothness widget running on a device.
+// In-memory (diagnostic, not persisted) — a device page reads the snapshot for the widget it plays.
+const widgetTelemetry = new Map();
+// Public POST from the widget: it runs in a null-origin sandboxed iframe, so this must be no-auth +
+// CORS-open. The widget sends text/plain (a "simple" request → no CORS preflight); we JSON.parse it.
+router.post('/:id/telemetry', express.text({ type: '*/*', limit: '16kb' }), (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  let t = {};
+  try { t = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {}); } catch (e) { t = {}; }
+  t.receivedAt = Date.now();
+  // Key by the reporting device (player passes ?device=<id>) so multiple panels don't collide;
+  // fall back to a widget-scoped key for players that don't pass a device id yet.
+  const key = (t.device && String(t.device).slice(0, 64)) || ('w:' + req.params.id);
+  widgetTelemetry.set(key, t);
+  res.json({ ok: true });
+});
+// Public GET so the dashboard device page can display the snapshot. ?device=<id> reads that panel's
+// report; without it (or if that panel hasn't reported) falls back to the widget-scoped snapshot.
+router.get('/:id/telemetry', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store');
+  const dev = req.query.device ? String(req.query.device) : null;
+  // Device-scoped request returns ONLY that device's report — NO widget-wide fallback, or one
+  // reporting panel's data would show on every other device's page (incl. offline ones). A request
+  // with no device id gets the widget-scoped snapshot (raw/debug view only).
+  const rec = dev ? (widgetTelemetry.get(dev) || null) : (widgetTelemetry.get('w:' + req.params.id) || null);
+  res.json(rec);
 });
 
 // Preview unsaved widget from config (used by editor Preview button)
@@ -1031,6 +1061,117 @@ function renderDirectorySearch(c) {
 })();
 </script>
 </body></html>`;
+}
+
+// diag-smoothness: a self-contained frame-cadence tester for the ACTUAL panel. Two GPU-composited
+// animations (a vertical scroll like the board + a fast sweep) plus a big on-screen HUD (FPS, refresh
+// estimate, long-frame count, worst stall, SMOOTH/STALLING verdict) — so a stutter can be read off the
+// panel screen with no console. If this stalls on real signage hardware, the hardware is the cause.
+function renderDiagSmoothness(config) {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smoothness Diagnostic</title><style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#0a0d13;color:#cbd4e4;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;height:100vh}
+  .bar{position:absolute;top:0;left:0;right:0;padding:1.4vh 2vw;border-bottom:1px solid #20293a;background:#0f1420;z-index:5}
+  .bar h1{font-size:2.2vh;font-weight:700;letter-spacing:.02em}
+  .bar p{font-size:1.7vh;color:#6d7789;margin-top:.4vh}
+  .bar b{color:#54a6ff}
+  .stage{position:absolute;top:0;left:0;right:0;bottom:0}
+  .col{position:absolute;top:0;left:0;width:52%;height:100%;overflow:hidden;border-right:1px solid #20293a}
+  .roll{position:absolute;left:0;right:0;top:0;will-change:transform;animation:roll 30s linear infinite}
+  @keyframes roll{from{transform:translate3d(0,0,0)}to{transform:translate3d(0,-50%,0)}}
+  .row{display:flex;align-items:center;gap:1.4vw;padding:1.5vh 2vw;border-bottom:1px solid #20293a;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:2.6vh}
+  .row .n{color:#54a6ff;min-width:3.2em;font-variant-numeric:tabular-nums}
+  .row:nth-child(3n) .n{color:#37d391}
+  .sweep{position:absolute;top:0;right:0;width:48%;height:100%;background:repeating-linear-gradient(90deg,#0f1420 0 3vw,#182234 3vw 6vw)}
+  .marker{position:absolute;top:0;bottom:0;width:.5vw;background:#f5b451;box-shadow:0 0 3vw #f5b451;will-change:transform;animation:sweep 2s linear infinite}
+  @keyframes sweep{from{transform:translateX(0)}to{transform:translateX(calc(48vw - .5vw))}}
+  .tag{position:absolute;top:1.5vh;font-family:ui-monospace,monospace;font-size:1.6vh;color:#6d7789;z-index:2}
+  .col .tag{left:1.5vw;background:#0a0d13;padding:.4vh .8vw;border-radius:4px}
+  .sweep .tag{right:1.5vw}
+  .hud{position:absolute;left:50%;bottom:3vh;transform:translateX(-50%);background:rgba(12,16,24,.94);border:1px solid #20293a;border-radius:14px;padding:2.2vh 2.4vw;min-width:64vw;z-index:6;box-shadow:0 1.4vh 4vh rgba(0,0,0,.55)}
+  .verdict{display:flex;align-items:center;gap:1.4vw;margin-bottom:1.8vh}
+  .dot{width:1.8vh;height:1.8vh;border-radius:50%;background:#6d7789}
+  .verdict.smooth .dot{background:#37d391;box-shadow:0 0 0 .6vh rgba(55,211,145,.16)}
+  .verdict.stall .dot{background:#ff5d5d;box-shadow:0 0 0 .6vh rgba(255,93,93,.18)}
+  .verdict .txt{font-size:3.4vh;font-weight:750;letter-spacing:.01em}
+  .verdict.smooth .txt{color:#37d391}.verdict.stall .txt{color:#ff5d5d}
+  .verdict .sub{font-size:1.9vh;color:#6d7789;font-weight:400;margin-left:auto;text-align:right}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2vw;margin-bottom:1.4vh}
+  .stat{background:#121826;border:1px solid #20293a;border-radius:10px;padding:1.2vh 1vw}
+  .stat .k{font-size:1.4vh;text-transform:uppercase;letter-spacing:.08em;color:#6d7789}
+  .stat .v{font-family:ui-monospace,Menlo,monospace;font-size:4vh;font-variant-numeric:tabular-nums;margin-top:.4vh}
+  .stat .v small{font-size:1.8vh;color:#6d7789}
+  .log{font-family:ui-monospace,Menlo,monospace;font-size:1.7vh;color:#6d7789;height:2.4vh;overflow:hidden}
+  .log b{color:#ff5d5d}
+  </style></head><body>
+  <div class="bar"><h1>Panel Smoothness Diagnostic</h1><p>Two GPU-composited animations, zero app logic. If the scroll or the yellow bar <b>skips</b> — or the HUD reads STALLING — this <b>panel/hardware</b> is dropping frames.</p></div>
+  <div class="stage">
+    <div class="col"><div class="tag">TEST 1 &middot; vertical scroll</div><div class="roll" id="roll"></div></div>
+    <div class="sweep"><div class="tag">TEST 2 &middot; fast sweep</div><div class="marker"></div></div>
+    <div class="hud">
+      <div class="verdict" id="verdict"><span class="dot"></span><span class="txt" id="vtxt">measuring&hellip;</span><span class="sub" id="vsub">collecting frames</span></div>
+      <div class="grid">
+        <div class="stat"><div class="k">FPS now</div><div class="v" id="fps">&ndash;</div></div>
+        <div class="stat"><div class="k">Refresh est.</div><div class="v" id="hz">&ndash;<small> Hz</small></div></div>
+        <div class="stat"><div class="k">Long frames</div><div class="v" id="long">0<small> &gt;50ms</small></div></div>
+        <div class="stat"><div class="k">Worst stall</div><div class="v" id="worst">0<small> ms</small></div></div>
+      </div>
+      <div class="log" id="log">no stalls yet &middot; a healthy panel shows 0 long frames</div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    var roll=document.getElementById('roll'),half='',i;
+    for(i=1;i<=26;i++){ half+='<div class="row"><span class="n">'+(100+i)+'</span><span class="t">Directory line '+i+'</span></div>'; }
+    roll.innerHTML=half+half;
+    var last=0,worst=0,longCount=0,recent=[],dts=[],started=0,lastPaint=0;
+    var elFps=document.getElementById('fps'),elHz=document.getElementById('hz'),elLong=document.getElementById('long'),
+        elWorst=document.getElementById('worst'),elLog=document.getElementById('log'),verdict=document.getElementById('verdict'),
+        vtxt=document.getElementById('vtxt'),vsub=document.getElementById('vsub');
+    function median(a){ var b=a.slice().sort(function(x,y){return x-y}); return b[Math.floor(b.length/2)]||0; }
+    function paint(ts){
+      var med=median(dts)||16.7;
+      elFps.innerHTML=(1000/med).toFixed(0);
+      elHz.innerHTML=(1000/med).toFixed(0)+'<small> Hz</small>';
+      elLong.innerHTML=longCount+'<small> &gt;50ms</small>';
+      elWorst.innerHTML=worst.toFixed(0)+'<small> ms</small>';
+      if(recent.length) elLog.innerHTML=recent.join(' \\u00b7 ');
+      var el=ts-started;
+      if(el>4000){
+        if(longCount===0){ verdict.className='verdict smooth'; vtxt.innerHTML='SMOOTH'; vsub.innerHTML='0 long frames &mdash; this panel animates cleanly'; }
+        else { verdict.className='verdict stall'; vtxt.innerHTML='STALLING'; vsub.innerHTML=longCount+' long frame'+(longCount>1?'s':'')+' &mdash; this panel is dropping frames'; }
+      } else { vsub.innerHTML='collecting frames&hellip; '+(el/1000).toFixed(0)+'s'; }
+    }
+    function frame(ts){
+      if(!started) started=ts;
+      if(last){ var dt=ts-last; dts.push(dt); if(dts.length>180) dts.shift();
+        if(dt>50){ longCount++; if(dt>worst) worst=dt;
+          recent.unshift('<b>'+dt.toFixed(0)+'ms</b> @ '+((ts-started)/1000).toFixed(0)+'s'); if(recent.length>3) recent.pop(); }
+      }
+      last=ts;
+      if(ts-lastPaint>250){ lastPaint=ts; paint(ts); }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+    // the player appends ?device=<id> to the render URL so telemetry can be keyed to THIS panel.
+    var DEVID=''; try{ var mm=(location.search||'').match(/[?&](?:device|d)=([^&]+)/); if(mm) DEVID=decodeURIComponent(mm[1]); }catch(e){}
+    // report the snapshot back to the server (relative 'telemetry' -> /api/widgets/<id>/telemetry).
+    // text/plain keeps it a CORS-simple request (no preflight) from the null-origin sandboxed iframe.
+    function report(){
+      try{
+        var med=median(dts)||16.7, now=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+        var payload={device:DEVID,fps:Math.round(1000/med),refreshHz:Math.round(1000/med),longFrames:longCount,worstStallMs:Math.round(worst),
+          elapsedS:started?Math.round((now-started)/1000):0,
+          verdict:(started&&(now-started>4000))?(longCount?'STALLING':'SMOOTH'):'measuring',
+          recent:recent.slice(0,3).map(function(s){return s.replace(/<[^>]+>/g,'');}),
+          vp:window.innerWidth+'x'+window.innerHeight,dpr:window.devicePixelRatio||1,ua:(navigator.userAgent||'').slice(0,180)};
+        fetch('telemetry',{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload),keepalive:true})['catch'](function(){});
+      }catch(e){}
+    }
+    setInterval(report,2500);
+  })();
+  </script></body></html>`;
 }
 
 module.exports = router;
