@@ -2111,7 +2111,7 @@
       discardPendingSwap();
 
       const iframe = document.createElement('iframe');
-      iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render`;
+      iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}`;
       // Positioned + sized by the `#playerContainer > iframe` CSS rule. Hidden while it
       // loads so its black background never shows over the outgoing content.
       iframe.style.background = '#000';
@@ -2313,7 +2313,7 @@
           if (!isFollower) advanceTimer = setTimeout(nextItem, (item.duration_sec || 10) * 1000);
         } else if (item.widget_id) {
           const iframe = document.createElement('iframe');
-          iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render`;
+          iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}`;
           iframe.style.cssText = 'width:100%;height:100%;border:none;background:#000';
           iframe.allow = 'autoplay; fullscreen';
           // Sandbox into a unique origin so widget scripts can't read window.parent
@@ -2427,7 +2427,7 @@
       // Android player, which keys off the assignment's widget_type.
       if (a.widget_id) {
         const iframe = document.createElement('iframe');
-        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render`;
+        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}`;
         // Sandbox into a unique origin so widget scripts can't read window.parent
         // state (localStorage / JWT). allow-scripts keeps inline widget code running.
         iframe.setAttribute('sandbox', 'allow-scripts');

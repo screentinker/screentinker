@@ -45,6 +45,7 @@ class ZoneManager(
     private var zones = listOf<Zone>()
     // Render context kept for rotation re-renders.
     private var renderServerUrl = ""
+    private var renderDeviceId = "" // appended to widget render URLs so widgets can report per-device
     private var renderCache: com.remotedisplay.player.data.ContentCache? = null
 
     var currentLayoutId: String? = null
@@ -77,7 +78,7 @@ class ZoneManager(
         Log.i(TAG, "Setup ${zones.size} zones")
     }
 
-    fun renderAssignments(assignments: JSONArray, serverUrl: String, contentCache: com.remotedisplay.player.data.ContentCache) {
+    fun renderAssignments(assignments: JSONArray, serverUrl: String, contentCache: com.remotedisplay.player.data.ContentCache, deviceId: String = "") {
         // Clear ONLY our own zone views/timers. `container` is the activity root and
         // also holds the static playerView/imageView/youtubeWebView/statusOverlay -
         // removeAllViews() here would detach those and black the screen on switch-back.
@@ -86,13 +87,14 @@ class ZoneManager(
         zoneViews.clear()
         releaseExoPlayers()
         renderServerUrl = serverUrl
+        renderDeviceId = deviceId
         renderCache = contentCache
 
         val containerWidth = container.width
         val containerHeight = container.height
         if (containerWidth == 0 || containerHeight == 0) {
             // Container not laid out yet, retry after layout.
-            container.post { renderAssignments(assignments, serverUrl, contentCache) }
+            container.post { renderAssignments(assignments, serverUrl, contentCache, deviceId) }
             return
         }
 
@@ -205,7 +207,9 @@ class ZoneManager(
             widgetType != null -> {
                 val widgetId = a.optString("widget_id", "")
                 val webView = createWebView()
-                webView.loadUrl("$renderServerUrl/api/widgets/$widgetId/render")
+                val wUrl = "$renderServerUrl/api/widgets/$widgetId/render" +
+                    (if (renderDeviceId.isNotEmpty()) "?device=" + android.net.Uri.encode(renderDeviceId) else "")
+                webView.loadUrl(wUrl)
                 webView.layoutParams = params
                 container.addView(webView); zoneViews[zone.id] = webView
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)

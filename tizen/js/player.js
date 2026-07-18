@@ -18,9 +18,10 @@ var TIZEN_I18N = {
 var TZ_LANG = (function () { try { return (localStorage.getItem('rd_lang') || navigator.language || 'en').split('-')[0]; } catch (e) { return 'en'; } })();
 function tzt(k) { return (TIZEN_I18N[TZ_LANG] && TIZEN_I18N[TZ_LANG][k]) || TIZEN_I18N.en[k] || k; }
 
-function PlaylistPlayer(stageEl, getBase) {
+function PlaylistPlayer(stageEl, getBase, getDeviceId) {
   this.stage = stageEl;
   this.getBase = getBase;
+  this.getDeviceId = getDeviceId || function () { return ''; };
   this.items = [];
   this.index = 0;
   this.timer = null;
@@ -547,7 +548,7 @@ PlaylistPlayer.prototype.renderYouTube = function (item, single) {
 };
 
 PlaylistPlayer.prototype.renderWidget = function (item, single) {
-  var src = this.getBase() + '/api/widgets/' + item.widget_id + '/render';
+  var src = this.getBase() + '/api/widgets/' + item.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '');
   this.renderFrame(src, single ? 0 : this.durationMs(item));
 };
 
@@ -582,9 +583,10 @@ PlaylistPlayer.prototype.youtubeId = function (url) {
  * the FIRST zone only. Single-zone playback stays in PlaylistPlayer; app.js chooses the
  * renderer from payload.layout.
  */
-function ZoneRenderer(stageEl, getBase) {
+function ZoneRenderer(stageEl, getBase, getDeviceId) {
   this.stage = stageEl;
   this.getBase = getBase;
+  this.getDeviceId = getDeviceId || function () { return ''; };
   this.timezone = null;
   this.zones = [];
   this.timers = {}; // zoneId -> timeout id
@@ -744,7 +746,7 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       zone.el.appendChild(zrFrame(ysrc, 'autoplay; encrypted-media', yvert));
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (a.widget_type || (a.widget_id && !a.content_id)) {
-      zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render'));
+      zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '')));
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime.indexOf('video/') === 0) {
       var v = document.createElement('video');

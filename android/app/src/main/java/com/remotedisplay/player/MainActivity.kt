@@ -545,13 +545,13 @@ class MainActivity : AppCompatActivity() {
                         playerView.visibility = View.GONE
                         imageView.visibility = View.GONE
                         zoneManager?.setupZones(layoutZones, layoutId)
-                        zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache)
+                        zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache, config.deviceId)
                         zoneManager?.lastAssignmentSig = assignmentSig
                     }
                 } else if (changed) {
                     Log.i("MainActivity", "Multi-zone assignments changed, re-rendering")
                     handler.post {
-                        zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache)
+                        zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache, config.deviceId)
                         zoneManager?.lastAssignmentSig = assignmentSig
                     }
                 } else {
@@ -832,7 +832,8 @@ class MainActivity : AppCompatActivity() {
         // layouts; multi-zone widgets go through ZoneManager). Previously unhandled,
         // so widgets were blank/broken in default-fullscreen and the fullscreen template.
         if (item.isWidget) {
-            val url = "${config.serverUrl}/api/widgets/${item.widgetId}/render"
+            val url = "${config.serverUrl}/api/widgets/${item.widgetId}/render" +
+                (if (config.deviceId.isNotEmpty()) "?device=" + android.net.Uri.encode(config.deviceId) else "")
             Log.i("MainActivity", "Playing widget fullscreen: $url")
             mediaPlayer.showWidget(url)
             wsService?.sendPlaybackState(item.contentId.ifEmpty { item.widgetId ?: "" }, 0f)

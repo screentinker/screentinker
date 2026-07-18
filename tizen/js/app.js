@@ -586,10 +586,10 @@
   }
 
   // ---- playback ----
-  var player = new PlaylistPlayer(elStage, function () { return serverUrl.replace(/\/+$/, ''); });
+  var player = new PlaylistPlayer(elStage, function () { return serverUrl.replace(/\/+$/, ''); }, function () { return deviceId || ''; });
   // Multi-zone layout renderer (matches the Android player). app.js picks the renderer
   // per playlist-update from payload.layout; the two never run at once.
-  var zoneRenderer = new ZoneRenderer(elStage, function () { return serverUrl.replace(/\/+$/, ''); });
+  var zoneRenderer = new ZoneRenderer(elStage, function () { return serverUrl.replace(/\/+$/, ''); }, function () { return deviceId || ''; });
   // #162: player and zoneRenderer SHARE the single #stage node. Track who currently owns it so we
   // only blank the OTHER renderer when actually switching modes — never on a same-mode unchanged
   // update, which (combined with each renderer's unchanged-sig short-circuit) used to leave the
