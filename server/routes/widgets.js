@@ -497,7 +497,6 @@ function renderDirectoryBoard(c) {
     <div class="bg-layer" id="bgLayer"></div>
     <header class="header" id="header"></header>
     <div class="scroller" id="scroller">
-      <div class="track" id="track"></div>
     </div>
     <footer class="footer" id="footer"></footer>
   </div>
@@ -610,118 +609,97 @@ function renderDirectoryBoard(c) {
     return catEl;
   }
 
-  var track = document.getElementById('track');
+  var stage = scroller; // the clip window between header & footer
+  var N = 4;            // panels in the ring (2 tile the screen, 1 dwells below, 1 above)
+  var baseStyle = document.createElement('style');
+  baseStyle.textContent =
+    '.panel{ position:absolute; left:0; right:0; top:0; overflow:hidden; contain:paint; will-change:transform; backface-visibility:hidden; }' +
+    '.pcontent{ position:absolute; left:0; right:0; top:0; padding:0 48px; }';
+  document.head.appendChild(baseStyle);
+  var scrollStyle = document.createElement('style');
+  scrollStyle.id = 'dir-scroll-kf';
+  document.head.appendChild(scrollStyle);
 
-  // ----- WINDOWED (virtualized) marquee -----
-  // Each category is pre-built ONCE onto its own small compositor layer; the scroll only shows the
-  // ones intersecting the viewport (+ a small buffer) and moves them with a transform. Nothing is
-  // built, parsed, or laid out per frame. That keeps every composited layer ~1 screen tall no
-  // matter how long the directory is, so the GPU never re-rasterizes an oversized layer — which was
-  // the tile-boundary stall (~1 dropped frame every 512px-tile / speed ≈ 11s) that hitched the old
-  // CSS marquee once the track grew past a few thousand px.
-  var vstyle = document.createElement('style');
-  vstyle.textContent =
-    '.track{will-change:auto;animation:none;}' +
-    '.vcat{position:absolute;left:48px;right:48px;top:0;will-change:transform;}' +
-    '.vmeasure{position:absolute;left:0;right:0;top:0;visibility:hidden;padding:0 48px;pointer-events:none;}';
-  document.head.appendChild(vstyle);
-
-  var vlayout = [];   // [{top,h}] per category, in virtual (content) coordinates
-  var insts = [];     // pre-built display instances: [{top,h,k,el,shown}] (one el per category × wrap-copy)
-  var loopH = 0;      // full scroll period = total content height + one GAP_PX (the end→repeat gap)
-  var viewH = 0;      // cached scroller height, so the frame loop never forces a layout read
+  // ----- scroll: a ring of compositor-animated, viewport-tall panels -----
+  // Animating one tall track fails on Firefox (it won't composite a transform bigger than ~1.1x the
+  // viewport / 4096px and falls back to a stuttering main-thread animation) and churns GPU tiles even
+  // on Chromium. Instead we run N panels, each exactly one stage-height tall (overflow:hidden +
+  // contain:paint clamp each compositor layer to that box). Each panel is a static window onto a full
+  // copy of the directory (positioned by a static inner translateY = -slice); the PANEL is slid
+  // rigidly upward by ONE CSS @keyframes animation, and the panels are phase-locked by negative
+  // animation-delay so two always tile the screen while one dwells off-screen below and one above.
+  // There is NO per-frame JS — "scrolling" is the compositor sliding pre-rasterized viewport-sized
+  // textures, so nothing on the main thread (GC, extensions, the host player) can stutter it. On each
+  // off-screen wrap a panel jumps its slice N screens ahead (content already built — nothing to load
+  // when it reappears) and, if a data refresh is pending, rebuilds its content THEN, safely off-screen.
+  var panels = [];       // [{el, content, version, slice}]
+  var Sh = 0;            // panel / stage height
+  var C = 0;             // looped directory height (one full copy)
   var speedPxSec = 0;
-  var pos = 0;        // virtual scroll offset; advances downward, wraps at loopH
-  var rafId = null, lastTs = 0;
+  var contentVersion = 0;
+  var pending = null;    // a queued data refresh, picked up per-panel while off-screen
 
-  function clearInsts() {
-    for (var n = 0; n < insts.length; n++) { var e = insts[n].el; if (e.parentNode) e.parentNode.removeChild(e); }
-    insts = [];
-  }
-
-  // Measure each category once at the true render width, then PRE-BUILD every instance that can ever
-  // be on screen (each category × the -1/0/+1 wrap-copies at the loop seam). Runs ONLY on first paint,
-  // resize, and real data changes — never during scroll — so the frame loop only moves finished
-  // elements; it never parses HTML or forces layout. (That per-recycle rebuild was the irregular hitch.)
-  function measureLayout() {
-    viewH = scroller.getBoundingClientRect().height || window.innerHeight;
+  function fillContent(el) { // full directory + a clone of the top (>= one screen) for the within-panel wrap
     var arr = Array.isArray(cfg.categories) ? cfg.categories : [];
-    var meas = document.createElement('div');
-    meas.className = 'vmeasure';
-    track.appendChild(meas);
-    vlayout = [];
-    var top = 0;
-    arr.forEach(function(cat){
-      var el = buildCategoryEl(cat);
-      meas.appendChild(el);
-      var h = el.getBoundingClientRect().height;
-      vlayout.push({ top: top, h: h });
-      top += h;
-    });
-    track.removeChild(meas);
-    loopH = top + GAP_PX;
-    speedPxSec = (top <= viewH) ? MIN_SCROLL_PX_SEC : (SPEEDS[cfg.scroll_speed] || SPEEDS.medium);
-    clearInsts();
-    for (var i = 0; i < arr.length; i++) {
-      for (var k = -1; k <= 1; k++) {
-        var cel = buildCategoryEl(arr[i]);
-        cel.className = 'category vcat';
-        cel.style.display = 'none';
-        track.appendChild(cel);
-        insts.push({ top: vlayout[i].top, h: vlayout[i].h, k: k, el: cel, shown: false });
-      }
+    arr.forEach(function(c){ el.appendChild(buildCategoryEl(c)); });
+    var full = el.scrollHeight; // == C (one full directory)
+    var i = 0, guard = arr.length * 4 + 1;
+    while ((el.scrollHeight - full) < Sh + 4 && arr.length && i < guard) {
+      el.appendChild(buildCategoryEl(arr[i % arr.length])); i++;
     }
+    return full;
   }
 
-  // Per-frame: reposition the pre-built instances. Pure number math + compositor-only transform
-  // writes, zero allocations — nothing here can trigger GC or a layout, so the scroll stays smooth.
-  function renderWindow() {
-    if (loopH <= 0) return;
-    var buffer = 140;
-    for (var n = 0; n < insts.length; n++) {
-      var it = insts[n];
-      var y = it.top - pos + it.k * loopH;
-      if (y + it.h >= -buffer && y <= viewH + buffer) {
-        it.el.style.transform = 'translate3d(0,' + y + 'px,0)';
-        if (!it.shown) { it.el.style.display = ''; it.shown = true; }
-      } else if (it.shown) {
-        it.el.style.display = 'none'; it.shown = false;
-      }
+  function globalScroll() { return speedPxSec * ((document.timeline.currentTime || 0) / 1000); }
+  function mod(a, n) { return n > 0 ? ((a % n) + n) % n : 0; }
+  function setSlice(p, off) { p.slice = off; p.content.style.transform = 'translate3d(0,' + (-off) + 'px,0)'; }
+
+  function seedSlices() { // four consecutive screens, matching the lanes' physical phase (delays 0..-3T)
+    var base = globalScroll();
+    var laneStart = [2 * Sh, 1 * Sh, 0, -1 * Sh];
+    panels.forEach(function(p, i){ setSlice(p, mod(base + laneStart[i % 4], C)); });
+  }
+
+  function onWrap(p) { // fires as a panel wraps to the bottom (off-screen); rebuild + advance N screens
+    if (pending && p.version !== pending.version) {
+      p.content.replaceChildren();
+      C = fillContent(p.content); // all panels share the same data => same C
+      p.version = pending.version;
     }
+    setSlice(p, mod(p.slice + N * Sh, C));
   }
 
-  function frame(ts) {
-    var dt = lastTs ? (ts - lastTs) / 1000 : 0;
-    lastTs = ts;
-    if (dt < 0 || dt > 0.25) dt = 0; // ignore tab-switch / long-frame jumps (no scroll leap)
-    pos += speedPxSec * dt;
-    if (loopH > 0) { pos %= loopH; if (pos < 0) pos += loopH; }
-    renderWindow();
-    rafId = requestAnimationFrame(frame);
-  }
-
-  function remeasure(preservePhase) { // re-measure + rebuild instances, resuming at the same fraction
-    var frac = (preservePhase && loopH > 0) ? (pos / loopH) : 0;
-    measureLayout();
-    pos = frac * loopH;
-    renderWindow();
-  }
-
-  function firstPaint() {
+  function setup() {
     layoutScroller();
-    measureLayout();
-    pos = 0;
-    if (rafId) cancelAnimationFrame(rafId);
-    lastTs = 0;
-    rafId = requestAnimationFrame(frame);
+    Sh = stage.getBoundingClientRect().height || window.innerHeight;
+    stage.replaceChildren();
+    panels = [];
+    for (var i = 0; i < N; i++) {
+      var el = document.createElement('div'); el.className = 'panel'; el.setAttribute('data-lane', i);
+      el.style.height = Sh + 'px';
+      var content = document.createElement('div'); content.className = 'pcontent';
+      el.appendChild(content);
+      stage.appendChild(el);
+      panels.push({ el: el, content: content, version: contentVersion, slice: 0 });
+    }
+    C = fillContent(panels[0].content);
+    for (var j = 1; j < N; j++) fillContent(panels[j].content);
+    speedPxSec = (C <= Sh) ? MIN_SCROLL_PX_SEC : (SPEEDS[cfg.scroll_speed] || SPEEDS.medium);
+    var T = Sh / speedPxSec, dur = N * T;
+    var kf = '@keyframes dir-pan { from { transform: translate3d(0,' + (2 * Sh) + 'px,0); } to { transform: translate3d(0,' + (-2 * Sh) + 'px,0); } }';
+    kf += '.panel{ animation: dir-pan ' + dur + 's linear infinite; }';
+    for (var k = 0; k < N; k++) kf += '.panel[data-lane="' + k + '"]{ animation-delay: ' + (-k * T).toFixed(4) + 's; }';
+    scrollStyle.textContent = kf;
+    seedSlices();
+    panels.forEach(function(p){ p.el.addEventListener('animationiteration', function(){ onWrap(p); }); });
   }
 
-  // wait for images (logo + bgs) to load before the FIRST measure, so heights are correct
+  // wait for images (logo + bgs) to load before the first layout, so heights are correct
   var pendingImgs = Array.from(document.images).filter(function(i){ return !i.complete; });
   if (pendingImgs.length === 0) {
-    firstPaint();
+    setup();
   } else {
-    var built = false, build = function(){ if (!built) { built = true; firstPaint(); } };
+    var built = false, build = function(){ if (!built) { built = true; setup(); } };
     pendingImgs.forEach(function(i){
       i.addEventListener('load', build, { once:true });
       i.addEventListener('error', build, { once:true });
@@ -729,11 +707,11 @@ function renderDirectoryBoard(c) {
     setTimeout(build, 5000); // hard timeout so we never hang
   }
 
-  // re-layout on resize (debounced) — re-measure at the new width, resume at the same fraction
+  // re-layout on resize (debounced) — rebuild the ring; globalScroll() keeps the same content position
   var rT;
   window.addEventListener('resize', function(){
     clearTimeout(rT);
-    rT = setTimeout(function(){ layoutScroller(); remeasure(true); }, 250);
+    rT = setTimeout(setup, 250);
   });
 
   // ----- live data refresh: poll data.json; re-render ONLY when the entries changed -----
@@ -751,7 +729,8 @@ function renderDirectoryBoard(c) {
         if (sig === lastSig) return;      // unchanged -> leave the scroll running untouched
         lastSig = sig;
         cfg.categories = cats;
-        remeasure(true);                  // rebuild instances in place; scroll resumes at the same fraction
+        contentVersion++;                 // queue it; each panel adopts it on its next off-screen wrap
+        pending = { version: contentVersion };
       })
       .catch(function(){ /* transient error -> keep last-good board */ });
   }, REFRESH_MS);
