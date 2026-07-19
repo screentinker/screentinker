@@ -1,0 +1,438 @@
+[
+  {
+    "id": "CRTCollapse",
+    "name": "CRT Collapse",
+    "blurb": "Frame crushes to a line, then a dot, then the next image blooms back out. Power-cycle drama.",
+    "file": "CRTCollapse.glsl",
+    "params": [
+      {
+        "name": "lineHold",
+        "default": 0.16,
+        "min": 0,
+        "max": 0.45
+      },
+      {
+        "name": "flashGain",
+        "default": 1.6,
+        "min": 0,
+        "max": 4
+      },
+      {
+        "name": "bloom",
+        "default": 14,
+        "min": 4,
+        "max": 40
+      }
+    ]
+  },
+  {
+    "id": "Datamosh",
+    "name": "Datamosh",
+    "blurb": "P-frame corruption — the old frame’s gradients smear the new one until the blocks give up.",
+    "file": "Datamosh.glsl",
+    "params": [
+      {
+        "name": "blockSize",
+        "default": 30,
+        "min": 6,
+        "max": 90
+      },
+      {
+        "name": "bleed",
+        "default": 0.45,
+        "min": 0,
+        "max": 1.5
+      },
+      {
+        "name": "chroma",
+        "default": 0.5,
+        "min": 0,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "id": "Etch",
+    "name": "Etch",
+    "blurb": "Photomask reveal — the frame develops in on a stepper field, with a hot exposure edge.",
+    "file": "Etch.glsl",
+    "params": [
+      {
+        "name": "cellSize",
+        "default": 26,
+        "min": 6,
+        "max": 90
+      },
+      {
+        "name": "edgeGlow",
+        "default": 1,
+        "min": 0,
+        "max": 3
+      },
+      {
+        "name": "randomness",
+        "default": 0.55,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "default": 0.09,
+        "min": 0.005,
+        "max": 0.3
+      }
+    ]
+  },
+  {
+    "id": "FiberSplice",
+    "name": "Fiber Splice",
+    "blurb": "Two ends draw apart, the arc fires, and the new frame fuses in from the seam.",
+    "file": "FiberSplice.glsl",
+    "params": [
+      {
+        "name": "separation",
+        "default": 0.3,
+        "min": 0,
+        "max": 0.5
+      },
+      {
+        "name": "arcGain",
+        "default": 1.8,
+        "min": 0,
+        "max": 4
+      },
+      {
+        "name": "arcTight",
+        "default": 26,
+        "min": 4,
+        "max": 80
+      },
+      {
+        "name": "flicker",
+        "default": 0.5,
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "FilmAdvance",
+    "name": "Film Advance",
+    "blurb": "The strip pulls through the gate — frame bar and sprockets sweep past, shutter flickers, next frame registers with a bounce.",
+    "file": "FilmAdvance.glsl",
+    "params": [
+      {
+        "name": "frameBar",
+        "default": 0.11,
+        "min": 0.02,
+        "max": 0.35
+      },
+      {
+        "name": "bounce",
+        "default": 0.5,
+        "min": 0,
+        "max": 1.5
+      },
+      {
+        "name": "shutter",
+        "default": 0.55,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "sprockets",
+        "default": 1,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "grainAmt",
+        "default": 0.5,
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "PacketLoss",
+    "name": "Packet Loss",
+    "blurb": "Blocks drop out of the stream, rows tear, and the new frame retransmits block by block.",
+    "file": "PacketLoss.glsl",
+    "params": [
+      {
+        "name": "cols",
+        "default": 26,
+        "min": 4,
+        "max": 80
+      },
+      {
+        "name": "rows",
+        "default": 15,
+        "min": 3,
+        "max": 48
+      },
+      {
+        "name": "rowTear",
+        "default": 0.06,
+        "min": 0,
+        "max": 0.3
+      },
+      {
+        "name": "garbage",
+        "default": 0.5,
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "PixelSort",
+    "name": "Pixel Sort",
+    "blurb": "Columns tear and quantize like glitch art, then resolve on a staggered per-column threshold.",
+    "file": "PixelSort.glsl",
+    "params": [
+      {
+        "name": "columns",
+        "default": 200,
+        "min": 20,
+        "max": 600
+      },
+      {
+        "name": "strength",
+        "default": 0.45,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "split",
+        "default": 0.012,
+        "min": 0,
+        "max": 0.06
+      },
+      {
+        "name": "density",
+        "default": 0.35,
+        "min": 0,
+        "max": 0.9
+      }
+    ]
+  },
+  {
+    "id": "QuantumDither",
+    "name": "Quantum Dither",
+    "blurb": "Pixels stay undecided, shimmering between both frames, then collapse on an ordered threshold.",
+    "file": "QuantumDither.glsl",
+    "params": [
+      {
+        "name": "grain",
+        "default": 180,
+        "min": 20,
+        "max": 600
+      },
+      {
+        "name": "coherence",
+        "default": 0.6,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "shimmer",
+        "default": 0.5,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "edgeSoft",
+        "default": 0.1,
+        "min": 0.01,
+        "max": 0.4
+      }
+    ]
+  },
+  {
+    "id": "ReelChange",
+    "name": "Reel Change",
+    "blurb": "Cue mark burns in the corner, the splice jumps the frame, dust settles on the new reel.",
+    "file": "ReelChange.glsl",
+    "params": [
+      {
+        "name": "cueSize",
+        "default": 0.045,
+        "min": 0,
+        "max": 0.12
+      },
+      {
+        "name": "jumpAmt",
+        "default": 0.16,
+        "min": 0,
+        "max": 0.5
+      },
+      {
+        "name": "dust",
+        "default": 0.6,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "scratch",
+        "default": 0.5,
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "SignalLock",
+    "name": "Signal Lock",
+    "blurb": "Static, rolling sync bars, then the picture snaps in like a tuner acquiring.",
+    "file": "SignalLock.glsl",
+    "params": [
+      {
+        "name": "noiseAmount",
+        "default": 0.85,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "rollSpeed",
+        "default": 2.4,
+        "min": 0,
+        "max": 8
+      },
+      {
+        "name": "barCount",
+        "default": 3,
+        "min": 0,
+        "max": 8
+      },
+      {
+        "name": "tearAmount",
+        "default": 0.12,
+        "min": 0,
+        "max": 0.5
+      }
+    ]
+  },
+  {
+    "id": "SpectrumSweep",
+    "name": "Spectrum Sweep",
+    "blurb": "An analyzer band crosses the frame, drawing the incoming image as bars before it resolves.",
+    "file": "SpectrumSweep.glsl",
+    "params": [
+      {
+        "name": "bandWidth",
+        "default": 0.22,
+        "min": 0.05,
+        "max": 0.6
+      },
+      {
+        "name": "barCount",
+        "default": 64,
+        "min": 8,
+        "max": 200
+      },
+      {
+        "name": "glow",
+        "default": 1.2,
+        "min": 0,
+        "max": 3
+      },
+      {
+        "name": "floorLift",
+        "default": 0.12,
+        "min": 0,
+        "max": 0.5
+      }
+    ]
+  },
+  {
+    "id": "ThermalBloom",
+    "name": "Thermal Bloom",
+    "blurb": "The frame falls into false colour, blooms hot, and the next image cools back out of it.",
+    "file": "ThermalBloom.glsl",
+    "params": [
+      {
+        "name": "heat",
+        "default": 1,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "blur",
+        "default": 0.01,
+        "min": 0,
+        "max": 0.05
+      },
+      {
+        "name": "gain",
+        "default": 0.35,
+        "min": 0,
+        "max": 1.2
+      }
+    ]
+  },
+  {
+    "id": "TraceRoute",
+    "name": "Trace Route",
+    "blurb": "Copper traces route across the board and the new frame fills in behind them.",
+    "file": "TraceRoute.glsl",
+    "params": [
+      {
+        "name": "pitch",
+        "default": 30,
+        "min": 6,
+        "max": 90
+      },
+      {
+        "name": "wander",
+        "default": 0.45,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "traceGlow",
+        "default": 1.4,
+        "min": 0,
+        "max": 3
+      },
+      {
+        "name": "traceW",
+        "default": 0.1,
+        "min": 0.02,
+        "max": 0.35
+      }
+    ]
+  },
+  {
+    "id": "VanEck",
+    "name": "Van Eck",
+    "blurb": "The next frame reconstructs from raster noise, scanline by scanline, behind an acquisition beam.",
+    "file": "VanEck.glsl",
+    "params": [
+      {
+        "name": "lineCount",
+        "default": 300,
+        "min": 60,
+        "max": 720
+      },
+      {
+        "name": "smear",
+        "default": 0.07,
+        "min": 0,
+        "max": 0.3
+      },
+      {
+        "name": "jitter",
+        "default": 0.35,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "phosphor",
+        "default": 1,
+        "min": 0,
+        "max": 1
+      }
+    ]
+  }
+]
