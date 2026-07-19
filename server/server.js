@@ -737,6 +737,12 @@ app.use('/uploads/content', (req, res, next) => {
   next();
 }, express.static(config.contentDir));
 
+// Media proxy for remote (URL-referenced) playlist items — public by construction (players are
+// unauthenticated browsers). Takes an itemId, never a caller URL: it fetches the item's stored
+// remote_url through the SSRF guard so a WebGL transition can read the bytes same-origin. Must sit
+// before the SPA catch-all (app.get('*')) or that would swallow /media/proxy/*.
+app.use('/media', require('./routes/media'));
+
 // Setup WebSockets
 const setupWebSockets = require('./ws');
 const { deviceNs, dashboardNs } = setupWebSockets(io);
