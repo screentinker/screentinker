@@ -71,4 +71,6 @@ void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { parseParams, resolveParams, PREAMBLE, EPILOGUE, VERTEX };
+} else if (typeof self !== 'undefined') {
+  self.TransitionParams = { parseParams, resolveParams, PREAMBLE, EPILOGUE, VERTEX }; // browser (player/demo)
 }

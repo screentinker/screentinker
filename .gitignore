@@ -49,3 +49,6 @@ Thumbs.db
 
 # Local-only marketing assets
 video/
+
+# Generated: transition demo (rebuild with `node shared/Transitions/build-demo.js`)
+shared/Transitions/demo.html
