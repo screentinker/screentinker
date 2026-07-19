@@ -361,6 +361,7 @@
     }
     let playlist = [];
     let currentIndex = -1;
+    let imgPreloadCache = {}; // src -> decoded HTMLImageElement, warmed one item ahead (feat/player-image-preload)
     // #157: deferred rotation-out. When a playlist update removes the item currently on screen
     // (e.g. it just expired) in solo playback, we keep it up and rotate to deferredSuccessorId on
     // the next natural advance instead of interrupting/restarting.
@@ -1728,6 +1729,7 @@
       const oldAnchorId = identityOf(oldPlaylist[oldAnchorIdx]);
 
       playlist = newItems;
+      imgPreloadCache = {}; // playlist changed — drop stale one-ahead preloads (feat/player-image-preload)
       savePlaylistCache(playlist);
       // #157: a fresh structural update supersedes any pending deferred rotation; the branches
       // below re-arm it only if the current item was removed while live in solo playback.
@@ -2150,6 +2152,72 @@
       nextItem();
     }
 
+    // feat/player-image-preload: warm the NEXT scheduled image (decoded) during the current dwell,
+    // and swap decode-gated so a slow panel never shows a blank/half-painted frame mid-decode.
+    function imgSrcFor(it) {
+      return it.remote_url || `${config.serverUrl}/uploads/content/${it.filepath}`;
+    }
+    // Load an <img> requesting CORS ('anonymous') so branch 4 can use the decoded bitmap as a WebGL
+    // texture; if the CORS load fails (upstream sends no ACAO), retry WITHOUT crossOrigin so the frame
+    // still DISPLAYS (branch 4 hard-cuts the un-texturable ones — it never blanks). A fresh element per
+    // attempt avoids a cached failed-CORS response defeating the retry. onerror is wired before .src so
+    // a load failure always fires; onReady/onFail each fire at most once.
+    function loadImageCors(src, onReady, onFail) {
+      const attempt = (cors) => {
+        const img = new Image();
+        if (cors) img.crossOrigin = 'anonymous';
+        img.onload = () => onReady(img);
+        img.onerror = () => { if (cors) attempt(false); else onFail(img); };
+        try { img.src = src; } catch (e) { if (cors) attempt(false); else onFail(img); }
+      };
+      attempt(true);
+    }
+    function cacheImg(src, img) {
+      imgPreloadCache[src] = img;
+      const keys = Object.keys(imgPreloadCache);           // bound it: reschedule can leak entries
+      while (keys.length > 4) delete imgPreloadCache[keys.shift()];
+    }
+    function preloadNextImage() {
+      const nextIdx = nextActiveIndex(currentIndex);
+      if (nextIdx < 0 || nextIdx === currentIndex) return;
+      const it = playlist[nextIdx];
+      if (!it || typeof it.mime_type !== 'string' || !it.mime_type.startsWith('image/')) return;
+      const src = imgSrcFor(it);
+      if (imgPreloadCache[src]) return;
+      loadImageCors(src, (img) => {
+        (img.decode ? img.decode() : Promise.resolve()).then(() => cacheImg(src, img)).catch(() => cacheImg(src, img));
+      }, () => {}); // preload best-effort; a failed warm just means renderImageBuffered loads it live
+    }
+    function renderImageBuffered(item) {
+      const src = imgSrcFor(item);
+      const cached = imgPreloadCache[src];
+      let done = false;
+      let watchdog = null;
+      const mount = (img) => {
+        if (done) return; done = true;
+        if (watchdog) clearTimeout(watchdog);
+        img.style.cssText = 'width:100%;height:100%;object-fit:contain';
+        teardownCurrentMedia();
+        const c = document.getElementById('playerContainer');
+        c.style.display = 'block';
+        c.appendChild(img);
+        delete imgPreloadCache[src];
+        advanceTimer = setTimeout(nextItem, (item.duration_sec || 10) * 1000);
+        preloadNextImage();
+      };
+      const fail = () => {
+        if (done) return; done = true;
+        if (watchdog) clearTimeout(watchdog);
+        console.error('Image error'); advanceTimer = setTimeout(nextItem, 3000); // skip broken item; hold prior frame until then
+      };
+      // a hung load/decode must never stall the playlist: at 3s mount whatever we have, else skip
+      watchdog = setTimeout(() => { if (cached) mount(cached); else fail(); }, 3000);
+      if (cached) { mount(cached); return; }               // decoded ahead — instant, CORS-clean swap
+      loadImageCors(src, (img) => {                         // load (CORS, plain retry) then decode-gate
+        (img.decode ? img.decode() : Promise.resolve()).then(() => mount(img)).catch(() => mount(img));
+      }, fail);
+    }
+
     function renderContent(item) {
       // Cancel any pending advance/refresh timer up front so a prior item's timer (incl. a
       // self-rescheduling widget refresh) can't fire against the new content.
@@ -2173,6 +2241,17 @@
           if (held) advanceTimer = setTimeout(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
           else advanceTimer = setTimeout(nextItem, (item.duration_sec || 30) * 1000);
         }
+        return;
+      }
+
+      // feat/player-image-preload: decode-gated buffered swap for the common fullscreen image case.
+      // Runs BEFORE the generic teardown so the outgoing frame survives until the incoming image is
+      // DECODED (no blank/half-painted flash on slow panels). Wall/group/zone images fall through to
+      // the legacy path below (they carry their own sync/preload handling).
+      const isImageBufferable = item && typeof item.mime_type === 'string' && item.mime_type.startsWith('image/')
+        && !item.widget_id && !wallConfig && !isZones && !groupSync;
+      if (isImageBufferable) {
+        renderImageBuffered(item);
         return;
       }
 
