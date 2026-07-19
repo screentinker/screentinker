@@ -10,6 +10,7 @@ const commandQueue = require('../lib/command-queue');
 const reconnectThrottle = require('../lib/reconnect-throttle');
 const contentAckLimiter = require('../lib/content-ack-limiter');
 const statusLogWriter = require('../lib/status-log-writer');
+const { normalizeTransitions } = require('../lib/transition-config');
 const { protectSocket } = require('../lib/safe-socket');
 const flapLimiter = require('../lib/flap-limiter');
 const sessionSettle = require('../lib/session-settle');   // #148 patch2: eviction-storm debounce
@@ -280,6 +281,10 @@ function buildPlaylistPayload(deviceId) {
 // instead of binding to a now-gone left/right zone and never playing.
 function assemblePayload({ assignments, layout, orientation, wall_config, group_sync, timezone }) {
   let a = Array.isArray(assignments) ? assignments : [];
+  // Transition widgets are normalized OUT here (the single device+preview chokepoint): each is dropped
+  // from the visible list and its config attached as an opaque `transition` on the item it plays into.
+  // Old players simply see no transition widget and ignore the field (hard cut) — no regression.
+  a = normalizeTransitions(a);
   const zoneCount = layout?.zones?.length || 0;
   if (zoneCount < 2) a = a.map(x => (x && x.zone_id != null ? { ...x, zone_id: null } : x));
   return {
