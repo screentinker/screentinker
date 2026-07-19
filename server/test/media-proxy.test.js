@@ -16,7 +16,7 @@ process.env.MEDIA_PROXY_MAX_BYTES = '1024';
 const express = require('express');
 const media = require('../routes/media');
 const { db } = require('../db/database');
-const { sniffMedia, consumeToCache, ensureCached, dataFile, metaFile, readMeta } = media.__test;
+const { sniffMedia, consumeToCache, ensureCached, fetchOrRevalidate, isFresh, dataFile, metaFile, readMeta } = media.__test;
 
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), Buffer.alloc(40)]);
 const jpeg = Buffer.concat([Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]), Buffer.alloc(40)]);
@@ -95,7 +95,7 @@ test('route: cache hit serves sniffed type with hardening headers', async () => 
   db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id) VALUES (1,'p1','c1')").run();
   const key = crypto.createHash('sha256').update('http://example.test/x').digest('hex');
   fs.writeFileSync(dataFile(key), png);
-  fs.writeFileSync(metaFile(key), JSON.stringify({ type: 'image/png', size: png.length }));
+  fs.writeFileSync(metaFile(key), JSON.stringify({ type: 'image/png', size: png.length, fetchedAt: Date.now() }));
 
   const { port, close } = await listen();
   try {
@@ -119,6 +119,59 @@ test('route: hostile remote_url pointing at loopback is blocked end-to-end (403)
     const r = await get(port, '/media/proxy/2');
     assert.equal(r.status, 403, 'SSRF guard refuses the live fetch to a private IP');
   } finally { await close(); }
+});
+
+test('consumeToCache: captures ETag/Last-Modified + fetchedAt for revalidation', async () => {
+  const key = 'validators';
+  const s = Readable.from([png]); s.headers = { etag: '"abc123"', 'last-modified': 'Wed, 21 Oct 2025 07:28:00 GMT' };
+  const meta = await consumeToCache(s, key);
+  assert.equal(meta.etag, '"abc123"');
+  assert.equal(meta.lastModified, 'Wed, 21 Oct 2025 07:28:00 GMT');
+  assert.equal(typeof meta.fetchedAt, 'number');
+});
+
+test('ensureCached: fresh hit served without refetch, stale hit triggers revalidation', async () => {
+  const key = 'freshness';
+  fs.writeFileSync(dataFile(key), png);
+  let called = 0;
+  const fetcher = () => { called++; return Promise.resolve({ type: 'image/png', size: png.length, fetchedAt: Date.now() }); };
+
+  fs.writeFileSync(metaFile(key), JSON.stringify({ type: 'image/png', size: png.length, fetchedAt: Date.now() }));
+  assert.equal(isFresh(readMeta(key)), true);
+  await ensureCached('http://x/a', key, fetcher);
+  assert.equal(called, 0, 'fresh hit does not refetch');
+
+  fs.writeFileSync(metaFile(key), JSON.stringify({ type: 'image/png', size: png.length, fetchedAt: 1 })); // ancient
+  assert.equal(isFresh(readMeta(key)), false);
+  await ensureCached('http://x/a', key, fetcher);
+  assert.equal(called, 1, 'stale hit revalidates');
+});
+
+test('fetchOrRevalidate: revalidation failure serves the STALE copy (never blank)', async () => {
+  const key = 'stale-serve';
+  fs.writeFileSync(dataFile(key), png);
+  const existing = { type: 'image/png', size: png.length, fetchedAt: 1, etag: '"x"' };
+  fs.writeFileSync(metaFile(key), JSON.stringify(existing));
+  // loopback remote_url -> SSRF guard rejects the revalidation fetch -> must fall back to stale bytes
+  const meta = await fetchOrRevalidate('http://127.0.0.1:9/x', key, existing);
+  assert.equal(meta.type, 'image/png');
+  assert.ok(meta.fetchedAt > 1, 'freshness stamp bumped so we do not hammer a down upstream');
+});
+
+test('fetchOrRevalidate: hard miss to a blocked host throws (no stale to fall back on)', async () => {
+  await assert.rejects(fetchOrRevalidate('http://127.0.0.1:9/x', 'nomiss', null));
+});
+
+test('consumeToCache: refuses to write when free space is below the floor (disk-fill guard)', async () => {
+  const key = 'diskfull';
+  const prev = process.env.MEDIA_PROXY_FREE_FLOOR_BYTES;
+  process.env.MEDIA_PROXY_FREE_FLOOR_BYTES = String(Number.MAX_SAFE_INTEGER); // floor above any real free space
+  try {
+    await assert.rejects(consumeToCache(Readable.from([png]), key), (e) => /disk-full/.test(e.message));
+    assert.ok(!fs.existsSync(dataFile(key)));
+  } finally {
+    if (prev === undefined) delete process.env.MEDIA_PROXY_FREE_FLOOR_BYTES; else process.env.MEDIA_PROXY_FREE_FLOOR_BYTES = prev;
+  }
 });
 
 // ---- helpers ----

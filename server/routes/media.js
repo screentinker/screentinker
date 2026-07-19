@@ -28,12 +28,16 @@ const { assertSafeUrl, pinnedLookup, SsrfError } = require('../lib/ssrf-guard');
 
 const router = express.Router();
 
-const MAX_BYTES = parseInt(process.env.MEDIA_PROXY_MAX_BYTES, 10) || 128 * 1024 * 1024; // ceiling; abort the stream past this
+const MAX_BYTES = parseInt(process.env.MEDIA_PROXY_MAX_BYTES, 10) || 128 * 1024 * 1024; // per-item ceiling; abort the stream past this
 const MAX_REDIRECTS = 4;
 const IDLE_TIMEOUT_MS = 20000;                // no-progress socket timeout
 const SNIFF_BYTES = 32;                       // enough for every magic below
 const CACHE_DIR = path.join(config.dataDir, 'proxy-cache'); // NOT under contentDir (never statically served)
-const CACHE_CAP_BYTES = 2 * 1024 * 1024 * 1024;
+const CACHE_CAP_BYTES = parseInt(process.env.MEDIA_PROXY_CACHE_CAP_BYTES, 10) || 2 * 1024 * 1024 * 1024; // TOTAL cache cap
+const TTL_MS = parseInt(process.env.MEDIA_PROXY_TTL_MS, 10) || 5 * 60 * 1000; // revalidate upstream past this age
+// A full disk on a signage box is a cross-tenant outage — refuse to write when free space is below this.
+function freeFloorBytes() { return parseInt(process.env.MEDIA_PROXY_FREE_FLOOR_BYTES, 10) || 1024 * 1024 * 1024; }
+function freeSpace() { try { const s = fs.statfsSync(CACHE_DIR); return s.bavail * s.bsize; } catch (e) { return Infinity; } }
 
 try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch (e) { /* fall through; writes will surface errors */ }
 
@@ -69,28 +73,33 @@ function sniffMedia(buf) {
 
 const ALLOWED_PREFIX = /^(image|video)\//;
 
-// ---- outbound fetch: vet URL, pin socket to vetted IP, re-vet each redirect hop, return 200 stream ----
-function resolveWithRedirects(rawUrl, redirectsLeft) {
+// ---- outbound fetch: vet URL, pin socket to vetted IP, re-vet each redirect hop.
+// Resolves { res } for a 200 stream, or { notModified:true } for a 304 (conditional revalidation).
+function resolveWithRedirects(rawUrl, redirectsLeft, validators) {
   return new Promise((resolve, reject) => {
     assertSafeUrl(rawUrl).then(({ url, addresses }) => {
       const mod = url.protocol === 'https:' ? https : http;
+      const headers = { 'user-agent': 'ScreenTinker-media-proxy', accept: 'image/*,video/*' };
+      if (validators && validators.etag) headers['if-none-match'] = validators.etag;
+      if (validators && validators.lastModified) headers['if-modified-since'] = validators.lastModified;
       const req = mod.request(url, {
         method: 'GET',
         lookup: pinnedLookup(addresses),   // connect to the vetted IP only (defeats DNS rebinding)
         servername: url.hostname,          // SNI + cert validation stay against the hostname, not the IP
-        headers: { 'user-agent': 'ScreenTinker-media-proxy', accept: 'image/*,video/*' },
+        headers,
       }, (res) => {
         const sc = res.statusCode;
+        if (sc === 304) { res.resume(); return resolve({ notModified: true }); } // still current upstream
         if (sc >= 300 && sc < 400 && res.headers.location) {
           res.resume(); // drain the redirect body
           if (redirectsLeft <= 0) return reject(new MediaError('too-many-redirects'));
           let next;
           try { next = new URL(res.headers.location, url).toString(); }
           catch (e) { return reject(new MediaError('bad-redirect')); }
-          return resolveWithRedirects(next, redirectsLeft - 1).then(resolve, reject);
+          return resolveWithRedirects(next, redirectsLeft - 1, validators).then(resolve, reject);
         }
         if (sc !== 200) { res.resume(); return reject(new MediaError('upstream-status-' + sc)); }
-        resolve(res);
+        resolve({ res });
       });
       req.setTimeout(IDLE_TIMEOUT_MS, () => req.destroy(new MediaError('timeout')));
       req.on('error', reject);
@@ -103,6 +112,11 @@ function resolveWithRedirects(rawUrl, redirectsLeft) {
 function consumeToCache(res, key) {
   return new Promise((resolve, reject) => {
     {
+      // Free-space floor: try to reclaim from our own cache first, then refuse rather than fill the disk.
+      if (freeSpace() < freeFloorBytes()) {
+        evictIfOverCap();
+        if (freeSpace() < freeFloorBytes()) { res.destroy(); return reject(new MediaError('disk-full')); }
+      }
       const tmp = dataFile(key) + '.tmp-' + crypto.randomBytes(6).toString('hex');
       const out = fs.createWriteStream(tmp);
       let received = 0, head = [], headLen = 0, sniffed = null, aborted = false;
@@ -134,7 +148,9 @@ function consumeToCache(res, key) {
         out.end(() => {
           try {
             fs.renameSync(tmp, dataFile(key));
-            const meta = { type: sniffed, size: received };
+            const h = res.headers || {};
+            const meta = { type: sniffed, size: received, fetchedAt: Date.now(),
+              etag: h.etag || null, lastModified: h['last-modified'] || null };
             fs.writeFileSync(metaFile(key), JSON.stringify(meta));
             evictIfOverCap();
             resolve(meta);
@@ -145,11 +161,6 @@ function consumeToCache(res, key) {
   });
 }
 
-// fetch (vet -> pin -> re-vet redirects) then consume into the cache
-function downloadToCache(remoteUrl, key) {
-  return resolveWithRedirects(remoteUrl, MAX_REDIRECTS).then((res) => consumeToCache(res, key));
-}
-
 function readMeta(key) {
   try {
     const m = JSON.parse(fs.readFileSync(metaFile(key), 'utf8'));
@@ -157,13 +168,35 @@ function readMeta(key) {
   } catch (e) { /* miss */ }
   return null;
 }
+function isFresh(meta) { return meta && typeof meta.fetchedAt === 'number' && (Date.now() - meta.fetchedAt) < TTL_MS; }
+// upstream unchanged (304) or a revalidation error: keep the bytes, just reset freshness + LRU stamp
+function touchMeta(key, meta) {
+  meta.fetchedAt = Date.now();
+  try { fs.writeFileSync(metaFile(key), JSON.stringify(meta)); const t = new Date(); fs.utimesSync(dataFile(key), t, t); } catch (e) {}
+  return meta;
+}
 
-const inflight = new Map(); // cache key -> Promise<meta> (single-flight)
+// Miss -> download. Stale hit -> conditional GET: 304 keeps the bytes, 200 replaces them, and a
+// revalidation FAILURE serves the stale copy (a signage screen must never blank on a flaky upstream).
+function fetchOrRevalidate(remoteUrl, key, existing) {
+  const validators = existing && (existing.etag || existing.lastModified)
+    ? { etag: existing.etag, lastModified: existing.lastModified } : null;
+  return resolveWithRedirects(remoteUrl, MAX_REDIRECTS, validators).then((r) => {
+    if (r.notModified && existing) return touchMeta(key, existing);
+    return consumeToCache(r.res, key);
+  }).catch((err) => {
+    if (existing) return touchMeta(key, existing); // stale-while-error
+    throw err;
+  });
+}
+
+const inflight = new Map(); // cache key -> Promise<meta> (single-flight; covers revalidation too)
 function ensureCached(remoteUrl, key, fetcher) {
   const hit = readMeta(key);
-  if (hit) return Promise.resolve(hit);
+  if (hit && isFresh(hit)) return Promise.resolve(hit);
   if (inflight.has(key)) return inflight.get(key);
-  const p = (fetcher || downloadToCache)(remoteUrl, key).finally(() => inflight.delete(key));
+  const run = fetcher || ((u, k) => fetchOrRevalidate(u, k, hit)); // hit may be a stale copy to revalidate
+  const p = run(remoteUrl, key, hit).finally(() => inflight.delete(key));
   inflight.set(key, p);
   return p;
 }
@@ -195,8 +228,10 @@ function serveFromCache(res, key, meta) {
   res.setHeader('Content-Security-Policy', 'sandbox');   // if ever navigated to directly, no script/plugins
   res.setHeader('Access-Control-Allow-Origin', '*');     // canvas/WebGL needs to read the pixels
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
+  // short client cache so a stale screen self-corrects within ~a minute; server-side TTL handles upstream
+  res.setHeader('Cache-Control', 'public, max-age=60');
   res.setHeader('Content-Length', meta.size);
+  const t = new Date(); fs.utimes(dataFile(key), t, t, () => {}); // LRU: stamp access time for eviction ordering
   const rs = fs.createReadStream(dataFile(key));
   rs.on('error', () => { if (!res.headersSent) res.status(500).end(); else res.destroy(); });
   rs.pipe(res);
@@ -227,4 +262,4 @@ router.get('/proxy/:itemId', (req, res) => {
 
 module.exports = router;
 // exported for tests (security-critical internals, exercised without the DB/express layer)
-module.exports.__test = { sniffMedia, resolveWithRedirects, consumeToCache, downloadToCache, ensureCached, readMeta, inflight, dataFile, metaFile, CACHE_DIR, MAX_BYTES };
+module.exports.__test = { sniffMedia, resolveWithRedirects, consumeToCache, fetchOrRevalidate, ensureCached, readMeta, isFresh, touchMeta, evictIfOverCap, inflight, dataFile, metaFile, CACHE_DIR, MAX_BYTES, TTL_MS };
