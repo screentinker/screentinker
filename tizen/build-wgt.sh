@@ -18,6 +18,11 @@ rm -f "$OUT"
 # .wgt always ships the canonical (byte-identical) copy, never a stale duplicate.
 cp ../server/lib/schedule-eval.js js/schedule-eval.js
 
+# transition-engine: rebuild the WebGL transition runtime (params + renderer + shaders) from
+# shared/Transitions into the .wgt, same single-source discipline. No npm deps needed.
+node -e "require('fs').writeFileSync('js/transitions.js', require('../server/lib/transition-bundle').bundle())" \
+  && echo "Rebuilt js/transitions.js from shared/Transitions."
+
 # #119: stamp the player version from the single source (config.xml) so the .wgt's
 # reported app_version always matches what is installed — same idea as the copy above.
 VER="$(grep -v '<?xml' config.xml | grep -oE 'version="[0-9][^"]*"' | head -1 | sed -E 's/version="([^"]+)"/\1/')"

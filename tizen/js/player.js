@@ -419,6 +419,15 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
   var mount = function () {
     if (settled) return; settled = true;
     if (stale()) { try { img.src = ''; } catch (e) {} return; }
+    // transition-engine: if this item carries a transition and the outgoing frame is a live image,
+    // composite instead of hard-swapping. _runImageTransition owns clear+append+schedule+preload, and
+    // falls back to the plain swap on any failure (never blank). Video is unaffected (AVPlay plane).
+    var t = item.transition;
+    var from = self._texturableStageImage();
+    if (t && t.effects && t.effects.length && from && self._transitionRuntimeReady()) {
+      self._runImageTransition(from, img, t, item, targetIdx, single);
+      return;
+    }
     self.clearStage();                 // SWAP: clear only now, with the decoded image ready to paint
     self.stage.appendChild(img);
     if (!single) {
@@ -440,6 +449,81 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
   } else {
     img.onload = mount;                // onerror set above routes a load error to fail
   }
+};
+
+// ---- transition-engine: GL image->image transition on the Tizen player ----
+// Images only (video lives on the AVPlay hardware plane and can't be textured). Every failure path
+// falls back to the plain clear+append swap, so a transition never leaves the screen blank.
+PlaylistPlayer.prototype._transitionRuntimeReady = function () {
+  return !!(window.TransitionRenderer && window.TransitionParams && window.__TRANSITION_SHADERS);
+};
+PlaylistPlayer.prototype._texturableStageImage = function () {
+  var img = this.stage.querySelector('img');
+  return (img && img.complete && img.naturalWidth > 0) ? img : null;
+};
+PlaylistPlayer.prototype._fitMode = function (item) {
+  var f = (item.fit || item.scale || 'cover').toLowerCase();
+  if (f === 'contain' || f === 'fit') return 'contain';
+  if (f === 'fill' || f === 'stretch') return 'fill';
+  return 'cover';
+};
+// draw a source image onto a stage-sized canvas honoring the item's fit mode, so the transition frames
+// match the static <img>'s object-fit (no pop). Stays texturable iff the source is (else texImage2D throws).
+PlaylistPlayer.prototype._fitToCanvas = function (src, w, h, mode) {
+  var c = document.createElement('canvas'); c.width = w; c.height = h;
+  var cx = c.getContext('2d');
+  var iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
+  var dw, dh;
+  if (mode === 'fill') { dw = w; dh = h; }
+  else { var s = (mode === 'cover') ? Math.max(w / iw, h / ih) : Math.min(w / iw, h / ih); dw = iw * s; dh = ih * s; }
+  cx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  return c;
+};
+PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item, targetIdx, single) {
+  var self = this, stage = this.stage;
+  var effect = t.effects[Math.floor(Math.random() * t.effects.length)];   // vary among the chosen effects
+  var src = effect && window.__TRANSITION_SHADERS[effect.shader];
+  // the ordinary hard-cut swap (schedules the dwell) — used when we bail BEFORE starting the transition
+  var swapPlain = function () {
+    self.clearStage(); stage.appendChild(toImg);
+    if (!single) { self.schedule(self.durationMs(item)); self.preloadImage(self.nextActiveIndex(targetIdx)); }
+  };
+  if (!src) { swapPlain(); return; }
+  var mode = this._fitMode(item);
+  var w = stage.clientWidth || 1280, h = stage.clientHeight || 720;
+  var renderer = null, canvas = null, raf = 0, startTs = 0, done = false;
+  // end the transition once it's already begun (already scheduled) — swap in the plain image, no re-schedule
+  var finish = function () {
+    if (done) return; done = true;
+    if (raf) cancelAnimationFrame(raf);
+    try { renderer && renderer.destroy(); } catch (e) {}
+    self.clearStage(); stage.appendChild(toImg);
+    if (!single) self.preloadImage(self.nextActiveIndex(targetIdx));
+  };
+  try {
+    canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%';
+    renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, { onContextLost: finish });
+    renderer.setFrom(self._fitToCanvas(fromImg, w, h, mode)); // throws (SecurityError) on a tainted source
+    renderer.setTo(self._fitToCanvas(toImg, w, h, mode));
+    renderer.setShader(src);                                  // throws on a bad shader
+    renderer.render(0, effect.params);
+  } catch (e) { swapPlain(); return; }                        // setup failed BEFORE scheduling -> plain swap
+  stage.appendChild(canvas);                                  // over the outgoing <img>, both live
+  // OVERLAP-not-additive: start the dwell clock now so the transition plays INSIDE the item's duration
+  var dwellMs = this.durationMs(item);
+  if (!single) self.schedule(dwellMs);
+  var durMs = Math.min(t.durationMs, Math.max(150, dwellMs - 100));
+  var frame = function (ts) {
+    if (done) return;
+    if (renderer.lost) { finish(); return; }
+    if (!startTs) startTs = ts;
+    var p = Math.min(1, (ts - startTs) / durMs);
+    if (!renderer.render(p, effect.params)) { finish(); return; }
+    if (p >= 1) { finish(); return; }
+    raf = requestAnimationFrame(frame);
+  };
+  raf = requestAnimationFrame(frame);
 };
 
 PlaylistPlayer.prototype.setOrientation = function (o) { this.orientation = o || 'landscape'; };
