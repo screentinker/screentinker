@@ -2241,7 +2241,6 @@
     // the first. Kept out of #playerContainer so teardownCurrentMedia() can't remove it. Recreated only
     // on a genuine context loss.
     let glTx = null, glTxAbort = null;
-    function txlog(m) { try { console.log('[tx] ' + m); } catch (e) {} } // per-advance diagnostic (real-device visibility)
     function getGlTransition() {
       if (glTx && !glTx.renderer.lost) return glTx;
       try {
@@ -2249,27 +2248,26 @@
         canvas.id = 'txCanvas';
         canvas.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;display:none;z-index:35;pointer-events:none';
         const renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, {
-          onContextLost: () => { txlog('context lost'); const a = glTxAbort; glTx = null; glTxAbort = null; if (a) a(); },
+          onContextLost: () => { const a = glTxAbort; glTx = null; glTxAbort = null; if (a) a(); },
         });
         document.body.appendChild(canvas);              // attach ONCE; stays forever
         glTx = { canvas, renderer };
-        txlog('renderer created');
         return glTx;
-      } catch (e) { glTx = null; txlog('createRenderer FAILED: ' + e.message); return null; }
+      } catch (e) { glTx = null; return null; }
     }
     function runImageTransition(fromImg, toImg, t, item) {
       // a transition may carry several effects — pick one at random per advance for variety
       const effect = t.effects[Math.floor(Math.random() * t.effects.length)];
       const src = effect && shaderSource(effect.shader);
-      if (!src) { txlog('cut: no shader ' + (effect && effect.shader)); mountImage(toImg, item); return; }
-      if (document.hidden) { txlog('cut: page hidden'); mountImage(toImg, item); return; } // rAF frozen -> hard cut
+      if (!src) { mountImage(toImg, item); return; }
+      if (document.hidden) { mountImage(toImg, item); return; } // rAF frozen when hidden -> hard cut
       const gl = getGlTransition();
-      if (!gl) { txlog('cut: no gl context'); mountImage(toImg, item); return; }
+      if (!gl) { mountImage(toImg, item); return; }
       const canvas = gl.canvas, renderer = gl.renderer;
       const container = document.getElementById('playerContainer');
       const rect = container.getBoundingClientRect();
       const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
-      let raf = 0, startTs = 0, done = false, deadline = 0, frames = 0;
+      let raf = 0, startTs = 0, done = false, deadline = 0;
       const finish = () => { // end the transition; mount the plain image, KEEP the renderer/context alive
         if (done) return; done = true;
         if (raf) cancelAnimationFrame(raf);
@@ -2280,7 +2278,6 @@
         teardownCurrentMedia(toImg); // drop outgoing img, KEEP toImg + the armed dwell timer
         canvas.style.display = 'none';                  // HIDE after toImg is mounted (no flash); NEVER detach
         preloadNextImage();
-        txlog('done (' + frames + ' frames)');
       };
       try {
         canvas.style.left = rect.left + 'px'; canvas.style.top = rect.top + 'px';
@@ -2290,11 +2287,10 @@
         renderer.setTo(fitToCanvas(toImg, w, h));
         renderer.setShader(src);                        // throws on a bad shader
         renderer.render(0, effect.params);
-      } catch (e) { canvas.style.display = 'none'; txlog('cut: setup threw ' + e.message); mountImage(toImg, item); return; }
+      } catch (e) { canvas.style.display = 'none'; mountImage(toImg, item); return; }
       glTxAbort = finish;                               // context lost / tab hidden mid-wipe -> finish (hard cut)
       canvas.style.display = 'block';                   // SHOW over the current image (fixed overlay)
       container.style.display = 'block';
-      txlog('WIPE ' + effect.shader);
       // OVERLAP-not-additive: start the dwell clock NOW so the transition plays INSIDE the item's duration.
       const dwellMs = (item.duration_sec || 10) * 1000;
       advanceTimer = setTimeout(nextItem, dwellMs);
@@ -2305,11 +2301,10 @@
       deadline = setTimeout(finish, durMs + 80);
       const frame = (ts) => {
         if (done) return;
-        if (renderer.lost) { txlog('cut: context lost mid-wipe'); return finish(); }
+        if (renderer.lost) return finish();
         if (!startTs) startTs = ts;
-        frames++;
         const p = Math.min(1, (ts - startTs) / durMs);
-        if (!renderer.render(p, effect.params)) { txlog('cut: render() returned false'); return finish(); }
+        if (!renderer.render(p, effect.params)) return finish();
         if (p >= 1) return finish();
         raf = requestAnimationFrame(frame);
       };
@@ -2330,9 +2325,6 @@
         if (t && Array.isArray(t.effects) && t.effects.length && from && canTexture && transitionRuntimeReady()) {
           runImageTransition(from, img, t, item); // owns teardown + advance + preload
         } else {
-          txlog('no wipe: t=' + !!(t && t.effects && t.effects.length) + ' from=' + !!from
-            + ' canTex=' + canTexture + ' [imgComplete=' + img.complete + ' nW=' + img.naturalWidth + ' co=' + img.crossOrigin
-            + '] curImg=' + (function(){var e=document.getElementById('playerContainer').querySelector('img'); return e?('complete='+e.complete+',nW='+e.naturalWidth+',co='+e.crossOrigin+',read='+isMediaReadable(e)):'none';})());
           mountImage(img, item);                  // hard cut (never blank)
         }
       };
