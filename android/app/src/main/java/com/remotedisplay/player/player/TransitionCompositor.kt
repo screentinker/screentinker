@@ -99,15 +99,12 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
         visibility = GONE
     }
 
-    /** Main-thread entry: run a wipe. If the runtime can't start it, onDone still fires (hard cut). */
+    /** Main-thread entry: run a wipe. If the runtime can't start it, onDone still fires (hard cut).
+     *  onDone is the RAW content swap — the overlay's visibility/render-mode are owned by the renderer
+     *  (parkIfIdle), NOT by this callback, so a superseded wipe's late onDone can't hide the overlay out
+     *  from under a newer wipe that's already in flight (that was a playlist-wedge bug). */
     fun play(from: Bitmap, to: Bitmap, fragmentSrc: String, params: Map<String, Float>, durationMs: Int, onDone: () -> Unit) {
-        val job = Job(from, to, fragmentSrc, params, durationMs.coerceAtLeast(1)) {
-            // wrap so the view is hidden + parked on the main thread right when the swap happens
-            visibility = GONE
-            renderMode = RENDERMODE_WHEN_DIRTY
-            onDone()
-        }
-        incoming = job
+        incoming = Job(from, to, fragmentSrc, params, durationMs.coerceAtLeast(1), onDone)
         visibility = VISIBLE
         renderMode = RENDERMODE_CONTINUOUSLY
         requestRender()
@@ -129,16 +126,17 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
             GLES20.glClearColor(0f, 0f, 0f, 0f)  // transparent: content behind shows through pre-wipe
             vShader = compile(GLES20.GL_VERTEX_SHADER, TransitionGlsl.VERTEX)
-            // a context (re)create drops any active job's GL objects — abandon it, the caller already
-            // swapped or will on the next advance; never leave the overlay stuck visible.
-            active?.let { finishOnMain(it) }
+            // a context (re)create drops any active job's GL objects — abandon it (hard-cut to its target),
+            // and park if nothing new is queued so the overlay never sticks visible.
+            active?.let { swapOnMain(it) }
             active = null; program = 0; texFrom = 0; texTo = 0
+            parkIfIdle()
         }
 
         override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) { vw = width; vh = height; GLES20.glViewport(0, 0, width, height) }
 
         override fun onDrawFrame(gl: GL10?) {
-            incoming?.let { j -> incoming = null; active?.let { finishOnMain(it) }; setup(j) } // pick up a new request
+            incoming?.let { j -> incoming = null; active?.let { supersede(it) }; setup(j) } // pick up a new request
             val j = active
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             if (j == null) return
@@ -172,6 +170,9 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
                 for (name in j.params.keys) uParam[name] = GLES20.glGetUniformLocation(prog, name)
                 texFrom = uploadTexture(j.from)
                 texTo = uploadTexture(j.to)
+                // pixels now live in the GL textures — free the (full-screen ARGB) fit bitmaps promptly
+                // rather than waiting on GC, which matters on a long-lived signage device.
+                try { j.from.recycle(); j.to.recycle() } catch (_: Throwable) {}
             } catch (e: Throwable) {
                 Log.w("TransitionGL", "wipe setup failed, hard-cutting: ${e.message}")
                 j.failed = true
@@ -193,14 +194,30 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
             GLES20.glDisableVertexAttribArray(0)
         }
 
-        // Release GL objects, then run the job's onDone on the main thread (the content swap happens there).
+        // Wipe completed (or failed): release its GL, run the content swap on the main thread, then park
+        // the overlay IF no newer wipe is queued.
         private fun finish(j: Job) {
             active = null
             releaseGl()
-            finishOnMain(j)
+            swapOnMain(j)
+            parkIfIdle()
         }
 
-        private fun finishOnMain(j: Job) { post { j.onDone() } } // View.post -> main thread; guarded once by active handoff
+        // Superseded by a newer wipe (advance fired mid-wipe): release THIS wipe's GL (else its program +
+        // both textures leak) and run its content swap, but do NOT park — the new wipe keeps the overlay
+        // visible + rendering. setup(new) runs immediately after and rebuilds the GL objects.
+        private fun supersede(old: Job) {
+            releaseGl()
+            swapOnMain(old)
+        }
+
+        private fun swapOnMain(j: Job) { post { j.onDone() } } // View.post -> main thread (the content swap)
+
+        // Hide the overlay + stop the render loop, but ONLY if nothing new is queued. `incoming` is
+        // @Volatile and mutated only on the main thread (play), the same thread this posted block runs on,
+        // so a newer play() either already set incoming (we skip park) or runs after (it re-shows) —
+        // race-free, and never leaves a new wipe hidden.
+        private fun parkIfIdle() { post { if (incoming == null) { visibility = GONE; renderMode = RENDERMODE_WHEN_DIRTY } } }
 
         private fun releaseGl() {
             if (texFrom != 0) { GLES20.glDeleteTextures(1, intArrayOf(texFrom), 0); texFrom = 0 }

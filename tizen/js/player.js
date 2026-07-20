@@ -603,6 +603,12 @@ PlaylistPlayer.prototype.renderVideoBuffered = function (item, single) {
   var self = this, stage = this.stage;
   var from = this._texturableStageFrame();   // capture the outgoing frame NOW (playCurrent skipped clearStage)
   var t = item.transition;
+  // The warm-play (first-frame wait + wipe) is async; if the current item changes mid-window (playlist
+  // push / advance), a stale clip must NOT clear the stage + mount over the newer content. Mirrors the
+  // stale() guard renderImage already uses.
+  var targetIdx = this.index;
+  var stale = function () { return self.index !== targetIdx || self.items[targetIdx] !== item; };
+  var abandon = function () { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} };
   var v = document.createElement('video');
   this.fit(v, item);
   v.muted = true; v.setAttribute('playsinline', '');         // warm-play MUST be muted (autoplay policy)
@@ -610,6 +616,7 @@ PlaylistPlayer.prototype.renderVideoBuffered = function (item, single) {
   v.style.cssText = '';
   var done = false, watchdog = null;
   var mountVideo = function () {                             // full clear + append + resume from the snapshot frame
+    if (stale()) { abandon(); return; }                     // a newer item took over during the wipe — don't clobber it
     self.clearStage();
     self.currentVideoEl = v;                                 // wall/group drift-correct this (only after clearStage)
     stage.appendChild(v);
@@ -624,6 +631,7 @@ PlaylistPlayer.prototype.renderVideoBuffered = function (item, single) {
   var onFirstFrame = function () {
     if (done) return; done = true;
     if (watchdog) clearTimeout(watchdog);
+    if (stale()) { abandon(); return; }                     // superseded before the wipe even started
     try { v.pause(); } catch (e) {}                          // hold at the snapshot frame; mountVideo resumes here
     var w = stage.clientWidth || 1280, h = stage.clientHeight || 720;
     var to = null;
@@ -640,7 +648,7 @@ PlaylistPlayer.prototype.renderVideoBuffered = function (item, single) {
   };
   v.addEventListener('loadeddata', function () { var p = v.play(); if (p && p.then) p.then(armFrame).catch(armFrame); else armFrame(); }, { once: true });
   v.addEventListener('error', function () { if (done) return; done = true; if (watchdog) clearTimeout(watchdog); self.skipSoon(); });
-  watchdog = setTimeout(function () { if (done) return; done = true; mountVideo(); }, 800); // cold/slow clip -> hard cut
+  watchdog = setTimeout(function () { if (done) return; done = true; if (stale()) { abandon(); return; } mountVideo(); }, 800); // cold/slow clip -> hard cut
   v.src = this.contentUrl(item);
   v.load();
 };

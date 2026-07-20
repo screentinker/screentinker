@@ -2381,10 +2381,17 @@
     // frame as the wipe's `to`, run the GL wipe, then mount + resume the real <video> FROM that same
     // frame (zero jump). Every failure path (no from-frame, un-decodable, no runtime, context loss, or
     // the decode watchdog) hard-cuts straight to mount+play — never a blank.
+    // Bumped on every renderContent dispatch. A buffered render captures the value at start and bails if
+    // it changes — the warm-play is async (first-frame wait + the wipe), and a playlist push mid-window
+    // must not let a stale clip tear down the newer content that already took over.
+    let renderSeq = 0;
     function renderVideoBuffered(item) {
       const src = item.remote_url || `${config.serverUrl}/uploads/content/${item.filepath}`;
       const from = currentTexturableFrame();            // capture the outgoing frame NOW, before any teardown
       const t = item.transition;
+      const mySeq = renderSeq;
+      const stale = () => renderSeq !== mySeq;          // a newer renderContent superseded this one
+      const abandon = () => { try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {} };
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';                  // texturable (CORS-clean) + matches the legacy branch
       video.playsInline = true;
@@ -2398,6 +2405,7 @@
       // unconditionally releases the old currentVideoEl). Sets the REAL mute state here (warm-play was
       // muted) and resumes from the snapshot frame, so there's no forward jump on reveal.
       const mountVideo = () => {
+        if (stale()) { abandon(); return; }             // a newer item took over during the wipe — don't clobber it
         const c = document.getElementById('playerContainer');
         teardownCurrentMedia();                         // drop the outgoing frame (new video still detached)
         c.style.display = 'block';
@@ -2414,6 +2422,7 @@
       const onFirstFrame = () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
+        if (stale()) { abandon(); return; }             // superseded before the wipe even started
         try { video.pause(); } catch (e) {}             // hold at the snapshot frame; mountVideo resumes from here
         const canTexture = video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video);
         let to = null;
@@ -2447,12 +2456,14 @@
       });
       // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary hanging
       // (mirrors renderImageBuffered's watchdog).
-      watchdog = setTimeout(() => { if (done) return; done = true; mountVideo(); }, 800);
+      watchdog = setTimeout(() => { if (done) return; done = true; if (stale()) { abandon(); return; } mountVideo(); }, 800);
       video.src = src;
       video.load();
     }
 
     function renderContent(item) {
+      // New dispatch supersedes any in-flight buffered (async warm-play) render — see renderSeq.
+      renderSeq++;
       // Cancel any pending advance/refresh timer up front so a prior item's timer (incl. a
       // self-rescheduling widget refresh) can't fire against the new content.
       if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
