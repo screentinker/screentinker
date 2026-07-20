@@ -362,7 +362,10 @@ PlaylistPlayer.prototype.playCurrent = function () {
     && !(item.widget_id && !item.content_id)
     && mime.indexOf('video/') !== 0
     && mime.indexOf('image/') === 0;
-  if (!isImage) this.clearStage();
+  // Skip the pre-dispatch clearStage for an image (it decode-gates + swaps inside renderImage) AND for a
+  // landscape video that will composite into a wipe (renderVideoBuffered needs the outgoing frame to
+  // capture as `from`, then clears inside its own mount). Everything else clears up front as before.
+  if (!isImage && !this._videoWillComposite(item)) this.clearStage();
 
   try {
     if (mime === 'video/youtube') return this.renderYouTube(item, single);
@@ -426,7 +429,7 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
     // falls back to the plain swap on any failure (never blank). Video is unaffected (AVPlay plane).
     var t = item.transition;
     if (self._glTxAbort) self._glTxAbort(); // settle any in-flight wipe first — one at a time on the shared renderer
-    var from = self._texturableStageImage();
+    var from = self._texturableStageFrame(); // may snapshot an outgoing <video> -> video→image wipes
     if (t && t.effects && t.effects.length && from && self._transitionRuntimeReady()) {
       self._runImageTransition(from, img, t, item, targetIdx, single);
       return;
@@ -464,6 +467,31 @@ PlaylistPlayer.prototype._texturableStageImage = function () {
   var img = this.stage.querySelector('img');
   return (img && img.complete && img.naturalWidth > 0) ? img : null;
 };
+// Is there a paintable frame on the stage right now (img OR video)? Cheap existence check (no snapshot),
+// used to decide whether a video will composite before we skip the pre-dispatch clearStage.
+PlaylistPlayer.prototype._hasStageFrame = function () {
+  var img = this.stage.querySelector('img');
+  if (img && img.complete && img.naturalWidth > 0) return true;
+  var v = this.stage.querySelector('video');
+  return !!(v && v.readyState >= 2 && v.videoWidth > 0);
+};
+// The on-stage frame as a texturable source: the live <img>, or — so a wipe can start FROM a playing
+// clip (video→image / video→video) — a snapshot canvas of the outgoing <video>'s current frame. A
+// cross-origin video with no CORS taints the snapshot; that surfaces later as a texImage2D SecurityError
+// in _runGlWipe and hard-cuts (never blank). Returns null if nothing on stage is paintable yet.
+PlaylistPlayer.prototype._texturableStageFrame = function () {
+  var img = this.stage.querySelector('img');
+  if (img && img.complete && img.naturalWidth > 0) return img;
+  var v = this.stage.querySelector('video');
+  if (v && v.readyState >= 2 && v.videoWidth > 0) {
+    try {
+      var w = this.stage.clientWidth || 1280, h = this.stage.clientHeight || 720;
+      var mode = v.className === 'contain' ? 'contain' : (v.className === 'fill' ? 'fill' : 'cover');
+      return this._fitToCanvas(v, w, h, mode);
+    } catch (e) { return null; }
+  }
+  return null;
+};
 PlaylistPlayer.prototype._fitMode = function (item) {
   var f = (item.fit || item.scale || 'cover').toLowerCase();
   if (f === 'contain' || f === 'fit') return 'contain';
@@ -475,7 +503,9 @@ PlaylistPlayer.prototype._fitMode = function (item) {
 PlaylistPlayer.prototype._fitToCanvas = function (src, w, h, mode) {
   var c = document.createElement('canvas'); c.width = w; c.height = h;
   var cx = c.getContext('2d');
-  var iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
+  // a <video> exposes its intrinsic size as videoWidth/Height, not naturalWidth/width — check both,
+  // else the divisor is 0 and drawImage paints NaN/blank.
+  var iw = src.naturalWidth || src.videoWidth || src.width, ih = src.naturalHeight || src.videoHeight || src.height;
   var dw, dh;
   if (mode === 'fill') { dw = w; dh = h; }
   else { var s = (mode === 'cover') ? Math.max(w / iw, h / ih) : Math.min(w / iw, h / ih); dw = iw * s; dh = ih * s; }
@@ -498,45 +528,43 @@ PlaylistPlayer.prototype._getGlTransition = function () {
     return this._glTx;
   } catch (e) { this._glTx = null; return null; }
 };
-PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item, targetIdx, single) {
+// Shared GL-wipe core for EVERY Tizen transition — image OR (landscape) video target. Renders
+// `fromFrame` (img|video|canvas) -> `toTex` on the persistent canvas; on completion (rAF p>=1, the
+// deadline, or context loss) it detaches the canvas (Tizen keeps the context alive by detaching, not
+// hiding) and calls mount(), which swaps in the real incoming element (img, or video+play) and owns its
+// schedule/preload. onStart() runs once the wipe is committed (the image path schedules its dwell there
+// for overlap timing; video advances on 'ended'). Any setup failure / missing runtime / tainted source
+// calls hardCut() — never a blank stage. dwellMs bounds the wipe so it can't outlast an image's dwell.
+PlaylistPlayer.prototype._runGlWipe = function (fromFrame, toTex, t, item, dwellMs, onStart, mount, hardCut) {
   var self = this, stage = this.stage;
   var effect = t.effects[Math.floor(Math.random() * t.effects.length)];   // vary among the chosen effects
   var src = effect && window.__TRANSITION_SHADERS[effect.shader];
-  // the ordinary hard-cut swap (schedules the dwell) — used when we bail BEFORE starting the transition
-  var swapPlain = function () {
-    self.clearStage(); stage.appendChild(toImg);
-    if (!single) { self.schedule(self.durationMs(item)); self.preloadImage(self.nextActiveIndex(targetIdx)); }
-  };
   var gl = src ? this._getGlTransition() : null;
-  if (!gl) { swapPlain(); return; }                           // no shader / no WebGL -> plain swap
+  if (!gl) { hardCut(); return; }                            // no shader / no WebGL -> hard cut
   var canvas = gl.canvas, renderer = gl.renderer;
   var mode = this._fitMode(item);
   var w = stage.clientWidth || 1280, h = stage.clientHeight || 720;
   var raf = 0, startTs = 0, done = false, deadline = 0;
-  // end the transition once it's already begun (already scheduled) — swap in the plain image, no re-schedule
   var finish = function () {
     if (done) return; done = true;
     if (raf) cancelAnimationFrame(raf);
     if (deadline) clearTimeout(deadline);
     if (self._glTxAbort === finish) self._glTxAbort = null;
     try { if (canvas.parentNode) canvas.parentNode.removeChild(canvas); } catch (e) {} // detach, keep context
-    self.clearStage(); stage.appendChild(toImg);
-    if (!single) self.preloadImage(self.nextActiveIndex(targetIdx));
+    mount();                                                  // swap in the incoming element + own its schedule/preload
   };
   try {
     renderer.resize(w, h);                                    // size the persistent canvas to the stage
-    renderer.setFrom(self._fitToCanvas(fromImg, w, h, mode)); // throws (SecurityError) on a tainted source
-    renderer.setTo(self._fitToCanvas(toImg, w, h, mode));
+    renderer.setFrom(self._fitToCanvas(fromFrame, w, h, mode)); // throws (SecurityError) on a tainted source
+    renderer.setTo(self._fitToCanvas(toTex, w, h, mode));
     renderer.setShader(src);                                  // throws on a bad shader
     renderer.render(0, effect.params);
-  } catch (e) { try { if (canvas.parentNode) canvas.parentNode.removeChild(canvas); } catch (x) {} swapPlain(); return; }
-  self._glTxAbort = finish;                                   // context lost mid-transition -> finish
-  stage.appendChild(canvas);                                  // over the outgoing <img>, both live
-  // OVERLAP-not-additive: start the dwell clock now so the transition plays INSIDE the item's duration
-  var dwellMs = this.durationMs(item);
-  if (!single) self.schedule(dwellMs);
+  } catch (e) { try { if (canvas.parentNode) canvas.parentNode.removeChild(canvas); } catch (x) {} hardCut(); return; }
+  self._glTxAbort = finish;                                   // context lost mid-transition -> finish (hard cut)
+  stage.appendChild(canvas);                                  // over the outgoing frame, both live
+  onStart();                                                  // OVERLAP: image dwell starts now (video: no-op)
   var durMs = Math.min(t.durationMs, Math.max(150, dwellMs - 100));
-  // safety net: mount the target image from a timer too, not only rAF — survives rAF throttling/freeze
+  // safety net: mount the target from a timer too, not only rAF — survives rAF throttling/freeze
   deadline = setTimeout(finish, durMs + 80);
   var frame = function (ts) {
     if (done) return;
@@ -548,6 +576,86 @@ PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
+};
+// Image target: wipe fromImg -> toImg, then swap in the plain <img>. Dwell is scheduled at wipe START
+// (overlap timing); the mount just swaps the frame (no re-schedule). hardCut = the plain swap.
+PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item, targetIdx, single) {
+  var self = this, stage = this.stage;
+  var dwellMs = this.durationMs(item);
+  var swapPlain = function () {                               // plain hard-cut swap (schedules the dwell)
+    self.clearStage(); stage.appendChild(toImg);
+    if (!single) { self.schedule(self.durationMs(item)); self.preloadImage(self.nextActiveIndex(targetIdx)); }
+  };
+  this._runGlWipe(fromImg, toImg, t, item, dwellMs,
+    function () { if (!single) self.schedule(dwellMs); },     // onStart: schedule the dwell for overlap
+    function () {                                             // mount: swap in the image (dwell already scheduled)
+      self.clearStage(); stage.appendChild(toImg);
+      if (!single) self.preloadImage(self.nextActiveIndex(targetIdx));
+    },
+    swapPlain);                                               // hardCut
+};
+// Landscape VIDEO target (image→video / video→video): warm-play the incoming clip MUTED offscreen until
+// its first frame is PRESENTED (a just-'loadeddata' <video> won't reliably drawImage), freeze it,
+// snapshot that frame as the wipe's `to`, run the wipe, then swap in + resume the real <video> from that
+// same frame. Every failure path hard-cuts to a plain video mount. Only reached for landscape (portrait
+// video rides the AVPlay hardware plane, which can't be textured — always a hard cut there).
+PlaylistPlayer.prototype.renderVideoBuffered = function (item, single) {
+  var self = this, stage = this.stage;
+  var from = this._texturableStageFrame();   // capture the outgoing frame NOW (playCurrent skipped clearStage)
+  var t = item.transition;
+  var v = document.createElement('video');
+  this.fit(v, item);
+  v.muted = true; v.setAttribute('playsinline', '');         // warm-play MUST be muted (autoplay policy)
+  v.loop = single;                                           // single item loops; multi advances on end
+  v.style.cssText = '';
+  var done = false, watchdog = null;
+  var mountVideo = function () {                             // full clear + append + resume from the snapshot frame
+    self.clearStage();
+    self.currentVideoEl = v;                                 // wall/group drift-correct this (only after clearStage)
+    stage.appendChild(v);
+    v.onended = function () { if (!single) self.advance(); };
+    v.onerror = function () { self.skipSoon(); };
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+    if (!single) {
+      var secs = Number(item.content_duration || item.duration_sec) || self.DEFAULT_DURATION;
+      self.schedule((secs + 5) * 1000);                      // safety net if 'ended' never fires
+    }
+  };
+  var onFirstFrame = function () {
+    if (done) return; done = true;
+    if (watchdog) clearTimeout(watchdog);
+    try { v.pause(); } catch (e) {}                          // hold at the snapshot frame; mountVideo resumes here
+    var w = stage.clientWidth || 1280, h = stage.clientHeight || 720;
+    var to = null;
+    if (v.readyState >= 2 && v.videoWidth > 0) { try { to = self._fitToCanvas(v, w, h, self._fitMode(item)); } catch (e) { to = null; } }
+    if (from && to && t && t.effects && t.effects.length && self._transitionRuntimeReady()) {
+      self._runGlWipe(from, to, t, item, t.durationMs + 200, function () {}, mountVideo, mountVideo);
+    } else {
+      mountVideo();
+    }
+  };
+  var armFrame = function () {
+    if ('requestVideoFrameCallback' in v) v.requestVideoFrameCallback(function () { onFirstFrame(); });
+    else setTimeout(onFirstFrame, 150);
+  };
+  v.addEventListener('loadeddata', function () { var p = v.play(); if (p && p.then) p.then(armFrame).catch(armFrame); else armFrame(); }, { once: true });
+  v.addEventListener('error', function () { if (done) return; done = true; if (watchdog) clearTimeout(watchdog); self.skipSoon(); });
+  watchdog = setTimeout(function () { if (done) return; done = true; mountVideo(); }, 800); // cold/slow clip -> hard cut
+  v.src = this.contentUrl(item);
+  v.load();
+};
+// A landscape video will composite into the wipe iff it carries a transition, the runtime is ready, and
+// there's a texturable frame on stage. Portrait/flipped video uses the AVPlay hardware plane (untexturable)
+// -> never composites. playCurrent uses this to skip the pre-dispatch clearStage (keep the outgoing frame);
+// renderVideo uses it to route here. Both are synchronous with an unchanged stage, so they always agree.
+PlaylistPlayer.prototype._videoWillComposite = function (item) {
+  var mime = item.mime_type || '';
+  if (mime.indexOf('video/') !== 0) return false;
+  if (this.orientation === 'portrait' || this.orientation === 'portrait-flipped') return false;
+  var t = item.transition;
+  if (!(t && t.effects && t.effects.length)) return false;
+  if (!this._transitionRuntimeReady()) return false;
+  return this._hasStageFrame();
 };
 
 PlaylistPlayer.prototype.setOrientation = function (o) { this.orientation = o || 'landscape'; };
@@ -623,6 +731,10 @@ PlaylistPlayer.prototype.renderVideo = function (item, single) {
   if ((this.orientation === 'portrait' || this.orientation === 'portrait-flipped') && this.avAvailable()) {
     return this.renderVideoAv(item, single);
   }
+  // Landscape: if this video has a transition and there's a texturable outgoing frame, wipe INTO it
+  // (image→video / video→video). playCurrent skipped the pre-dispatch clearStage for exactly this case,
+  // so the outgoing frame is still on stage to capture. Plain videos fall through to the proven path.
+  if (this._videoWillComposite(item)) { return this.renderVideoBuffered(item, single); }
   var self = this;
   // Double buffer: reuse the pre-buffered element for this index if warmed (no black hold); its src
   // is already set + buffering, so playback starts near-instantly.
