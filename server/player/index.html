@@ -2219,18 +2219,31 @@
       return !!(window.TransitionRenderer && window.TransitionParams && window.__TRANSITION_SHADERS);
     }
     function shaderSource(id) { return (window.__TRANSITION_SHADERS && window.__TRANSITION_SHADERS[id]) || null; }
-    // the <img> on screen now, iff it's decoded and texturable (CORS-clean)
-    function currentTexturableImage() {
+    // the frame on screen now, as a texturable (CORS-clean) source: the live <img>, or — so a wipe can
+    // start FROM a playing clip — a snapshot canvas of the outgoing <video>'s current frame. Returns null
+    // if nothing on screen is texturable yet (first item after boot, un-decoded, or tainted) -> hard cut.
+    function currentTexturableFrame() {
       const c = document.getElementById('playerContainer');
-      const img = c && c.querySelector('img');
-      return (img && img.complete && img.naturalWidth > 0 && isMediaReadable(img)) ? img : null;
+      if (!c) return null;
+      const img = c.querySelector('img');
+      if (img && img.complete && img.naturalWidth > 0 && isMediaReadable(img)) return img;
+      const v = c.querySelector('video');
+      if (v && v.readyState >= 2 && v.videoWidth > 0 && isMediaReadable(v)) {
+        try {
+          const r = c.getBoundingClientRect();
+          return fitToCanvas(v, Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
+        } catch (e) { return null; } // snapshot threw (taint slipped through) -> no from-frame -> hard cut
+      }
+      return null;
     }
-    // draw a source onto a container-sized canvas with object-fit:contain framing, so the transition
-    // matches the static letterboxing exactly (stays CORS-clean iff the source is)
+    // draw a source (img | video | canvas) onto a container-sized canvas with object-fit:contain framing,
+    // so the transition matches the static letterboxing exactly (stays CORS-clean iff the source is). A
+    // <video> exposes its intrinsic size as videoWidth/Height, not naturalWidth/width — check both.
     function fitToCanvas(src, w, h) {
       const c = document.createElement('canvas'); c.width = w; c.height = h;
       const cx = c.getContext('2d');
-      const iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
+      const iw = src.naturalWidth || src.videoWidth || src.width;
+      const ih = src.naturalHeight || src.videoHeight || src.height;
       const s = Math.min(w / iw, h / ih);
       cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
       return c;
@@ -2255,49 +2268,51 @@
         return glTx;
       } catch (e) { glTx = null; return null; }
     }
-    function runImageTransition(fromImg, toImg, t, item) {
-      // a transition may carry several effects — pick one at random per advance for variety
-      const effect = t.effects[Math.floor(Math.random() * t.effects.length)];
+    // Shared GL-wipe core for EVERY buffered transition — image OR video target. Renders `fromFrame`
+    // (img|video|canvas) -> `toTex` (the texturable incoming frame) on the persistent canvas. When the
+    // wipe completes (rAF reaches p>=1, the deadline fires, or the context is lost) it calls mount(),
+    // which inserts the REAL incoming element (img, or video+play) and owns its teardown, then hides the
+    // canvas AFTER the mount so there's no flash. onStart() runs once the wipe is committed (the image
+    // path arms its dwell there for overlap timing; video advances on 'ended' instead). Any setup
+    // failure / hidden tab / missing runtime calls hardCut() — never a blank frame. dwellMs bounds the
+    // wipe so it can't outlast an image's on-screen time.
+    function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
+      const effect = t.effects[Math.floor(Math.random() * t.effects.length)]; // several effects -> pick one for variety
       const src = effect && shaderSource(effect.shader);
-      if (!src) { mountImage(toImg, item); return; }
-      if (document.hidden) { mountImage(toImg, item); return; } // rAF frozen when hidden -> hard cut
+      if (!src) { hardCut(); return; }
+      if (document.hidden) { hardCut(); return; }        // rAF frozen when hidden -> hard cut
       const gl = getGlTransition();
-      if (!gl) { mountImage(toImg, item); return; }
+      if (!gl) { hardCut(); return; }
       const canvas = gl.canvas, renderer = gl.renderer;
       const container = document.getElementById('playerContainer');
       const rect = container.getBoundingClientRect();
       const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
       let raf = 0, startTs = 0, done = false, deadline = 0;
-      const finish = () => { // end the transition; mount the plain image, KEEP the renderer/context alive
+      const finish = () => { // end the wipe; mount the incoming element, KEEP the renderer/context alive
         if (done) return; done = true;
         if (raf) cancelAnimationFrame(raf);
         if (deadline) clearTimeout(deadline);
         if (glTxAbort === finish) glTxAbort = null;
-        toImg.style.cssText = 'width:100%;height:100%;object-fit:contain';
-        container.appendChild(toImg);
-        teardownCurrentMedia(toImg); // drop outgoing img, KEEP toImg + the armed dwell timer
-        canvas.style.display = 'none';                  // HIDE after toImg is mounted (no flash); NEVER detach
-        preloadNextImage();
+        mount();                                        // insert incoming + own its teardown/dwell/play
+        canvas.style.display = 'none';                  // HIDE after the incoming frame is mounted (no flash); NEVER detach
       };
       try {
         canvas.style.left = rect.left + 'px'; canvas.style.top = rect.top + 'px';
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
         renderer.resize(w, h);                          // size the persistent canvas to the stage
-        renderer.setFrom(fitToCanvas(fromImg, w, h));
-        renderer.setTo(fitToCanvas(toImg, w, h));
+        renderer.setFrom(fitToCanvas(fromFrame, w, h));
+        renderer.setTo(fitToCanvas(toTex, w, h));
         renderer.setShader(src);                        // throws on a bad shader
         renderer.render(0, effect.params);
-      } catch (e) { canvas.style.display = 'none'; mountImage(toImg, item); return; }
+      } catch (e) { canvas.style.display = 'none'; hardCut(); return; }
       glTxAbort = finish;                               // context lost / tab hidden mid-wipe -> finish (hard cut)
-      canvas.style.display = 'block';                   // SHOW over the current image (fixed overlay)
+      canvas.style.display = 'block';                   // SHOW over the current frame (fixed overlay)
       container.style.display = 'block';
-      // OVERLAP-not-additive: start the dwell clock NOW so the transition plays INSIDE the item's duration.
-      const dwellMs = (item.duration_sec || 10) * 1000;
-      advanceTimer = setTimeout(nextItem, dwellMs);
+      onStart();                                        // OVERLAP-not-additive: image dwell starts NOW (video: no-op)
       const durMs = Math.min(t.durationMs, Math.max(150, dwellMs - 100)); // never exceed the dwell
-      // Safety net: also drive the final image-mount from a TIMER, not only the rAF loop. If rAF is
-      // throttled/frozen (backgrounded/occluded tab), the wipe won't animate but the image still swaps
-      // on time instead of the screen sticking. Whichever of {rAF hits p>=1, this deadline} fires wins.
+      // Safety net: also drive the final mount from a TIMER, not only the rAF loop. If rAF is throttled/
+      // frozen (backgrounded/occluded tab), the wipe won't animate but the content still swaps on time
+      // instead of the screen sticking. Whichever of {rAF hits p>=1, this deadline} fires wins.
       deadline = setTimeout(finish, durMs + 80);
       const frame = (ts) => {
         if (done) return;
@@ -2310,6 +2325,21 @@
       };
       raf = requestAnimationFrame(frame);
     }
+    // Image target: wipe fromImg -> toImg, then mount the plain <img>. Dwell is armed at wipe START
+    // (overlap timing) so the transition plays INSIDE the item's duration; finish just swaps the frame.
+    function runImageTransition(fromImg, toImg, t, item) {
+      const dwellMs = (item.duration_sec || 10) * 1000;
+      const container = document.getElementById('playerContainer');
+      runGlWipe(fromImg, toImg, t, dwellMs,
+        () => { advanceTimer = setTimeout(nextItem, dwellMs); },   // onStart: arm the dwell for overlap
+        () => {                                                    // mount: swap in the image, keep the armed timer
+          toImg.style.cssText = 'width:100%;height:100%;object-fit:contain';
+          container.appendChild(toImg);
+          teardownCurrentMedia(toImg); // drop outgoing, KEEP toImg + the armed dwell timer
+          preloadNextImage();
+        },
+        () => { mountImage(toImg, item); });                       // hardCut: plain mount (arms its own dwell)
+    }
     function renderImageBuffered(item) {
       const src = imgSrcFor(item);
       const cached = imgPreloadCache[src];
@@ -2319,7 +2349,7 @@
         if (watchdog) clearTimeout(watchdog);
         delete imgPreloadCache[src];
         if (glTxAbort) glTxAbort(); // settle any in-flight wipe first — one transition at a time on the shared renderer
-        const from = currentTexturableImage();
+        const from = currentTexturableFrame(); // may be an outgoing <video> snapshot -> video→image wipes
         const t = item.transition;
         const canTexture = img.complete && img.naturalWidth > 0 && isMediaReadable(img);
         if (t && Array.isArray(t.effects) && t.effects.length && from && canTexture && transitionRuntimeReady()) {
@@ -2339,6 +2369,87 @@
       loadImageCors(src, proxySrcFor(item), (img) => {       // CORS -> proxy -> plain, then decode-gate
         (img.decode ? img.decode() : Promise.resolve()).then(() => swap(img)).catch(() => swap(img));
       }, fail);
+    }
+
+    // Buffered SOLO-video render (feat/transition-engine): wipe the outgoing frame INTO a video —
+    // image→video and video→video. Only fullscreen solo videos reach here (the renderContent gate
+    // excludes wall/zone/group/widget/youtube), so none of the wall/follower/sync logic applies.
+    //
+    // A just-'loadeddata' but never-played <video> does NOT reliably paint via drawImage (some engines
+    // present no frame until playback starts) — so we warm-play the incoming clip MUTED offscreen until
+    // its first frame is actually PRESENTED (requestVideoFrameCallback), pause it there, snapshot that
+    // frame as the wipe's `to`, run the GL wipe, then mount + resume the real <video> FROM that same
+    // frame (zero jump). Every failure path (no from-frame, un-decodable, no runtime, context loss, or
+    // the decode watchdog) hard-cuts straight to mount+play — never a blank.
+    function renderVideoBuffered(item) {
+      const src = item.remote_url || `${config.serverUrl}/uploads/content/${item.filepath}`;
+      const from = currentTexturableFrame();            // capture the outgoing frame NOW, before any teardown
+      const t = item.transition;
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';                  // texturable (CORS-clean) + matches the legacy branch
+      video.playsInline = true;
+      video.preload = 'auto';
+      video.muted = true;                               // warm-play MUST be muted (autoplay policy); real mute set at mount
+      video.loop = (playlist.length === 1);             // single-item playlist holds by looping
+      video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';
+      let done = false, watchdog = null;
+      // Full teardown + append + resume. The incoming <video> is detached until now, so teardown's
+      // container-wide video cleanup can't touch it; we claim currentVideoEl only AFTER teardown (which
+      // unconditionally releases the old currentVideoEl). Sets the REAL mute state here (warm-play was
+      // muted) and resumes from the snapshot frame, so there's no forward jump on reveal.
+      const mountVideo = () => {
+        const c = document.getElementById('playerContainer');
+        teardownCurrentMedia();                         // drop the outgoing frame (new video still detached)
+        c.style.display = 'block';
+        c.appendChild(video);
+        currentVideoEl = video;
+        video.muted = (!userHasInteracted || !!item.muted); // autoplay policy + per-item mute (#129)
+        if (!video.muted) video.volume = 1.0;
+        video.onended = () => { if (!video.loop) nextItem(); };
+        video.onerror = (e) => { console.error('Video error:', src, e); advanceTimer = setTimeout(nextItem, 3000); };
+        video.play().catch(() => { video.muted = true; video.play().catch(() => {}); }); // autoplay-policy fallback
+        setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000); // last-resort kick
+      };
+      // First PRESENTED frame reached (or watchdog): freeze it, snapshot, wipe if we have from+to+runtime.
+      const onFirstFrame = () => {
+        if (done) return; done = true;
+        if (watchdog) clearTimeout(watchdog);
+        try { video.pause(); } catch (e) {}             // hold at the snapshot frame; mountVideo resumes from here
+        const canTexture = video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video);
+        let to = null;
+        if (canTexture) {
+          try {
+            const r = document.getElementById('playerContainer').getBoundingClientRect();
+            to = fitToCanvas(video, Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
+          } catch (e) { to = null; }                    // snapshot tainted/threw -> hard cut below
+        }
+        if (from && to && t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady()) {
+          runGlWipe(from, to, t, t.durationMs + 200,     // video has no image-dwell; bound only keeps the full duration
+            () => {},                                    // onStart: video advance is driven by 'ended', not a dwell timer
+            mountVideo, mountVideo);                      // mount AND hardCut both mount+resume the real video
+        } else {
+          mountVideo();                                  // no from-frame / un-texturable / no runtime -> hard cut
+        }
+      };
+      // Warm-play until the first frame is PRESENTED. rVFC is the precise "a frame just painted" signal;
+      // without it, fall back to a short beat after playback starts. If play() is somehow rejected we still
+      // arm the frame wait (the watchdog is the final backstop).
+      const armFrame = () => {
+        if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(() => onFirstFrame());
+        else setTimeout(onFirstFrame, 150);
+      };
+      video.addEventListener('loadeddata', () => { video.play().then(armFrame).catch(armFrame); }, { once: true });
+      // A decode failure or a hung load must never stall the playlist.
+      video.addEventListener('error', () => {
+        if (done) return; done = true;
+        if (watchdog) clearTimeout(watchdog);
+        console.error('Video error:', src); advanceTimer = setTimeout(nextItem, 3000); // skip broken clip; hold prior frame
+      });
+      // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary hanging
+      // (mirrors renderImageBuffered's watchdog).
+      watchdog = setTimeout(() => { if (done) return; done = true; mountVideo(); }, 800);
+      video.src = src;
+      video.load();
     }
 
     function renderContent(item) {
@@ -2378,6 +2489,19 @@
         && !item.widget_id && !wallConfig && !isZones && !groupSync;
       if (isImageBufferable) {
         renderImageBuffered(item);
+        return;
+      }
+      // Same buffered path for a SOLO video that has a transition: wipe the outgoing frame into it
+      // (image→video / video→video). Only when a runtime + transition are actually present — a plain
+      // solo video falls through to the legacy branch, which keeps its preload/mute/loop handling. Wall/
+      // zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube) too.
+      const isVideoBufferable = item && typeof item.mime_type === 'string'
+        && item.mime_type.startsWith('video/') && item.mime_type !== 'video/youtube'
+        && !item.widget_id && !wallConfig && !isZones && !groupSync
+        && item.transition && Array.isArray(item.transition.effects) && item.transition.effects.length
+        && transitionRuntimeReady();
+      if (isVideoBufferable) {
+        renderVideoBuffered(item);
         return;
       }
 
