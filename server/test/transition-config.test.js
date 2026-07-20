@@ -35,12 +35,13 @@ test('resolveTransitionConfig: unknown shader -> null (hard cut, never black)', 
   assert.equal(resolveTransitionConfig('not json'), null);
 });
 
-test('resolveTransitionConfig: duration bounded, scope defaults to next', () => {
+test('resolveTransitionConfig: duration bounded, scope defaults to all (one widget covers the playlist)', () => {
   assert.equal(resolveTransitionConfig({ shader: 'Etch', durationMs: 999999 }).durationMs, 3000);
   assert.equal(resolveTransitionConfig({ shader: 'Etch', durationMs: 1 }).durationMs, 150);
   assert.equal(resolveTransitionConfig({ shader: 'Etch' }).durationMs, 800, 'missing duration -> default');
-  assert.equal(resolveTransitionConfig({ shader: 'Etch' }).scope, 'next');
+  assert.equal(resolveTransitionConfig({ shader: 'Etch' }).scope, 'all', 'one widget covers the whole playlist by default');
   assert.equal(resolveTransitionConfig({ shader: 'Etch', scope: 'all' }).scope, 'all');
+  assert.equal(resolveTransitionConfig({ shader: 'Etch', scope: 'next' }).scope, 'next', 'explicit next still honored');
 });
 
 test('normalizeTransitions: scope:next attaches to the FOLLOWING item, widget dropped', () => {

@@ -498,8 +498,8 @@ export async function render(container) {
             <input type="number" id="wTransDuration" class="input" value="${config.durationMs || 800}" min="150" max="3000" step="50"></div>
           <div class="form-group" style="max-width:300px"><label>${t('widget.trans.scope')}</label>
             <select id="wTransScope" class="input" style="background:var(--bg-input)">
-              <option value="next" ${config.scope !== 'all' ? 'selected' : ''}>${t('widget.trans.scope_next')}</option>
-              <option value="all" ${config.scope === 'all' ? 'selected' : ''}>${t('widget.trans.scope_all')}</option>
+              <option value="all" ${config.scope !== 'next' ? 'selected' : ''}>${t('widget.trans.scope_all')}</option>
+              <option value="next" ${config.scope === 'next' ? 'selected' : ''}>${t('widget.trans.scope_next')}</option>
             </select>
             <div style="font-size:11px;color:var(--text-muted);margin-top:6px">${t('widget.trans.scope_hint')}</div></div>`;
         break;
@@ -929,7 +929,7 @@ export async function render(container) {
           shaders,
           params,
           durationMs: parseInt(val('wTransDuration')) || 800,
-          scope: val('wTransScope') || 'next',
+          scope: val('wTransScope') || 'all',
         });
         break;
       }

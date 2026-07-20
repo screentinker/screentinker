@@ -41,7 +41,7 @@ function resolveTransitionConfig(configJsonOrObj) {
   let durationMs = Number(cfg.durationMs);
   if (!Number.isFinite(durationMs)) durationMs = DEFAULT_MS;
   durationMs = Math.max(MIN_MS, Math.min(MAX_MS, Math.round(durationMs)));
-  const scope = cfg.scope === 'all' ? 'all' : 'next';
+  const scope = cfg.scope === 'next' ? 'next' : 'all'; // default: one widget covers the whole playlist
   return { effects, durationMs, scope };
 }
 
