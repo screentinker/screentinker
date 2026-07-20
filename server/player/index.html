@@ -2233,61 +2233,66 @@
       cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
       return c;
     }
-    // ONE persistent WebGL renderer, reused for EVERY transition. Creating a fresh context per
-    // transition leaks GPU contexts: real GPUs cap live contexts (~8-16) and choke after the first
-    // few — and a 24/7 signage page would exhaust any cap. So we create the context once (lazily) and
-    // only recreate it after a genuine context loss. The canvas is detached between transitions but the
-    // context (held via glTx.canvas) survives — detaching a canvas does not destroy its GL context.
+    // ONE persistent WebGL renderer, reused for EVERY transition. The canvas is attached to <body> ONCE
+    // and only SHOWN/HIDDEN per wipe — NEVER detached. Detaching a canvas can drop its WebGL context in
+    // some browsers (Firefox), which would reintroduce per-wipe context churn and kill every wipe after
+    // the first. Kept out of #playerContainer so teardownCurrentMedia() can't remove it. Recreated only
+    // on a genuine context loss.
     let glTx = null, glTxAbort = null;
+    function txlog(m) { try { console.log('[tx] ' + m); } catch (e) {} } // per-advance diagnostic (real-device visibility)
     function getGlTransition() {
       if (glTx && !glTx.renderer.lost) return glTx;
       try {
         const canvas = document.createElement('canvas');
-        canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
+        canvas.id = 'txCanvas';
+        canvas.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;display:none;z-index:35;pointer-events:none';
         const renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, {
-          onContextLost: () => { const a = glTxAbort; glTx = null; glTxAbort = null; if (a) a(); },
+          onContextLost: () => { txlog('context lost'); const a = glTxAbort; glTx = null; glTxAbort = null; if (a) a(); },
         });
+        document.body.appendChild(canvas);              // attach ONCE; stays forever
         glTx = { canvas, renderer };
+        txlog('renderer created');
         return glTx;
-      } catch (e) { glTx = null; return null; }
+      } catch (e) { glTx = null; txlog('createRenderer FAILED: ' + e.message); return null; }
     }
     function runImageTransition(fromImg, toImg, t, item) {
       // a transition may carry several effects — pick one at random per advance for variety
       const effect = t.effects[Math.floor(Math.random() * t.effects.length)];
       const src = effect && shaderSource(effect.shader);
-      // Don't animate an invisible wipe: a hidden/occluded tab FREEZES requestAnimationFrame, so the
-      // wipe would never progress and the image would never swap. Hard-cut instead (never blank/stuck).
-      const gl = (src && !document.hidden) ? getGlTransition() : null;
-      if (!gl) { mountImage(toImg, item); return; } // no shader / no WebGL / hidden -> hard cut
+      if (!src) { txlog('cut: no shader ' + (effect && effect.shader)); mountImage(toImg, item); return; }
+      if (document.hidden) { txlog('cut: page hidden'); mountImage(toImg, item); return; } // rAF frozen -> hard cut
+      const gl = getGlTransition();
+      if (!gl) { txlog('cut: no gl context'); mountImage(toImg, item); return; }
       const canvas = gl.canvas, renderer = gl.renderer;
       const container = document.getElementById('playerContainer');
       const rect = container.getBoundingClientRect();
       const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
-      const prevPos = container.style.position;
-      let raf = 0, startTs = 0, done = false, deadline = 0;
+      let raf = 0, startTs = 0, done = false, deadline = 0, frames = 0;
       const finish = () => { // end the transition; mount the plain image, KEEP the renderer/context alive
         if (done) return; done = true;
         if (raf) cancelAnimationFrame(raf);
         if (deadline) clearTimeout(deadline);
         if (glTxAbort === finish) glTxAbort = null;
-        try { canvas.remove(); } catch (e) {}          // detach (context survives), don't destroy
-        container.style.position = prevPos;
         toImg.style.cssText = 'width:100%;height:100%;object-fit:contain';
         container.appendChild(toImg);
         teardownCurrentMedia(toImg); // drop outgoing img, KEEP toImg + the armed dwell timer
+        canvas.style.display = 'none';                  // HIDE after toImg is mounted (no flash); NEVER detach
         preloadNextImage();
+        txlog('done (' + frames + ' frames)');
       };
       try {
+        canvas.style.left = rect.left + 'px'; canvas.style.top = rect.top + 'px';
+        canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
         renderer.resize(w, h);                          // size the persistent canvas to the stage
         renderer.setFrom(fitToCanvas(fromImg, w, h));
         renderer.setTo(fitToCanvas(toImg, w, h));
         renderer.setShader(src);                        // throws on a bad shader
         renderer.render(0, effect.params);
-      } catch (e) { try { canvas.remove(); } catch (x) {} mountImage(toImg, item); return; }
+      } catch (e) { canvas.style.display = 'none'; txlog('cut: setup threw ' + e.message); mountImage(toImg, item); return; }
       glTxAbort = finish;                               // context lost / tab hidden mid-wipe -> finish (hard cut)
-      container.style.position = 'relative';
+      canvas.style.display = 'block';                   // SHOW over the current image (fixed overlay)
       container.style.display = 'block';
-      container.appendChild(canvas);                    // over the outgoing <img>, both live
+      txlog('WIPE ' + effect.shader);
       // OVERLAP-not-additive: start the dwell clock NOW so the transition plays INSIDE the item's duration.
       const dwellMs = (item.duration_sec || 10) * 1000;
       advanceTimer = setTimeout(nextItem, dwellMs);
@@ -2298,10 +2303,11 @@
       deadline = setTimeout(finish, durMs + 80);
       const frame = (ts) => {
         if (done) return;
-        if (renderer.lost) return finish();
+        if (renderer.lost) { txlog('cut: context lost mid-wipe'); return finish(); }
         if (!startTs) startTs = ts;
+        frames++;
         const p = Math.min(1, (ts - startTs) / durMs);
-        if (!renderer.render(p, effect.params)) return finish();
+        if (!renderer.render(p, effect.params)) { txlog('cut: render() returned false'); return finish(); }
         if (p >= 1) return finish();
         raf = requestAnimationFrame(frame);
       };
