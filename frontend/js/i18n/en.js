@@ -708,6 +708,7 @@ export default {
   'widget.type.transition.desc': 'Animated crossover between playlist items',
   // transition widget
   'widget.trans.shader': 'Effect',
+  'widget.trans.multi_hint': 'Pick one, or several — with more than one, the player uses a different effect each time (click a name to preview and tune it).',
   'widget.trans.params': 'Parameters',
   'widget.trans.duration': 'Duration (ms)',
   'widget.trans.scope': 'Applies to',

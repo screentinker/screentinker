@@ -480,8 +480,9 @@ export async function render(container) {
       case 'transition':
         html += `
           <div class="form-group"><label>${t('widget.trans.shader')}</label>
-            <select id="wTransShader" class="input" style="background:var(--bg-input)"></select>
-            <div id="wTransBlurb" style="font-size:11px;color:var(--text-muted);margin-top:6px"></div></div>
+            <div id="wTransList" style="max-height:158px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px;background:var(--bg-input)"></div>
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:6px">${t('widget.trans.multi_hint')}</div>
+            <div id="wTransBlurb" style="font-size:11px;color:var(--text-muted);margin-top:4px"></div></div>
           <div class="form-group">
             <div style="position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9">
               <canvas id="wTransCanvas" style="width:100%;height:100%;display:block"></canvas>
@@ -545,10 +546,11 @@ export async function render(container) {
     if (type === 'transition') initTransitionForm(config);
   }
 
-  // Live transition picker: shader dropdown + WebGL preview of the selected shader crossing between two
-  // placeholder images + param sliders (from the shader's own declared ranges) + duration + scope. Uses
-  // the same runtime the player ships (/player/transitions.js), so the preview IS the shipping renderer.
-  let transState = { renderer: null, from: null, to: null, raf: 0, playing: false, t0: 0, params: {}, shaderId: null };
+  // Live transition picker: a CHECKLIST of effects (pick one or several — the player randomizes among
+  // the chosen set per advance), a WebGL preview of the focused effect crossing two placeholder images,
+  // param sliders (from the shader's declared ranges) + duration + scope. Uses the same runtime the
+  // player ships (/player/transitions.js), so the preview IS the shipping renderer.
+  let transState = { renderer: null, from: null, to: null, raf: 0, playing: false, t0: 0, params: {}, focus: null };
   function ensureTransitionRuntime() {
     if (window.TransitionRenderer && window.__TRANSITION_MANIFEST) return Promise.resolve(true);
     return new Promise((resolve) => {
@@ -570,23 +572,23 @@ export async function render(container) {
   }
   async function initTransitionForm(config) {
     const canvas = document.getElementById('wTransCanvas');
-    const sel = document.getElementById('wTransShader');
+    const list = document.getElementById('wTransList');
     const blurb = document.getElementById('wTransBlurb');
     const scrub = document.getElementById('wTransScrub');
     const progLbl = document.getElementById('wTransProgress');
     const playBtn = document.getElementById('wTransPlay');
     const paramsBox = document.getElementById('wTransParams');
-    if (!canvas || !sel) return;
+    if (!canvas || !list) return;
 
     const ready = await ensureTransitionRuntime();
-    if (!ready || !window.__TRANSITION_MANIFEST) {
-      blurb.textContent = t('widget.trans.unavailable');
-      sel.innerHTML = `<option>${t('widget.trans.unavailable')}</option>`;
-      return;
-    }
+    if (!ready || !window.__TRANSITION_MANIFEST) { blurb.textContent = t('widget.trans.unavailable'); return; }
     const MAN = window.__TRANSITION_MANIFEST;
-    sel.innerHTML = MAN.map((m) => `<option value="${escAttr(m.id)}">${escAttr(m.name)}</option>`).join('');
-    if (config.shader && MAN.some((m) => m.id === config.shader)) sel.value = config.shader;
+    const byId = (id) => MAN.find((x) => x.id === id);
+
+    // initial selection: config.shaders, else legacy single config.shader, else the first effect
+    const initialSel = (Array.isArray(config.shaders) && config.shaders.length ? config.shaders
+      : (config.shader ? [config.shader] : [MAN[0].id])).filter(byId);
+    transState.params = {}; // id -> resolved param values (lazily seeded)
 
     canvas.width = 640; canvas.height = 360;
     try {
@@ -597,40 +599,50 @@ export async function render(container) {
       transState.renderer.setTo(transState.to);
     } catch (e) { blurb.textContent = t('widget.trans.unavailable'); return; }
 
-    const render = () => {
-      const p = (+scrub.value) / 1000;
-      progLbl.textContent = p.toFixed(2);
-      try { transState.renderer.render(p, transState.params); } catch (e) {}
-    };
-    const selectShader = (id) => {
-      const m = MAN.find((x) => x.id === id) || MAN[0];
-      transState.shaderId = m.id;
-      blurb.textContent = m.blurb || '';
-      try { transState.renderer.setShader(window.__TRANSITION_SHADERS[m.id]); }
-      catch (e) { blurb.textContent = t('widget.trans.compile_error'); return; }
-      // resolve stored params over the shader's declared defaults/ranges, then build sliders
-      const stored = (config.shader === m.id && config.params) ? config.params : {};
-      transState.params = window.TransitionParams.resolveParams(
+    const paramsFor = (id) => {
+      if (transState.params[id]) return transState.params[id];
+      const m = byId(id);
+      const stored = (config.params && config.params[id]) || (config.shader === id && config.params) || {};
+      transState.params[id] = window.TransitionParams.resolveParams(
         m.params.map((pp) => ({ name: pp.name, default: pp.default, min: pp.min, max: pp.max })), stored);
+      return transState.params[id];
+    };
+    const render = () => {
+      if (!transState.focus) return;
+      const p = (+scrub.value) / 1000; progLbl.textContent = p.toFixed(2);
+      try { transState.renderer.render(p, paramsFor(transState.focus)); } catch (e) {}
+    };
+    const buildSliders = (id) => {
+      const m = byId(id), vals = paramsFor(id);
       paramsBox.innerHTML = '';
       m.params.forEach((pp) => {
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:6px';
-        const lab = document.createElement('label');
-        lab.textContent = pp.name; lab.style.cssText = 'font-size:12px;color:var(--text-muted);min-width:104px';
-        const r = document.createElement('input');
-        r.type = 'range'; r.dataset.param = pp.name;
-        r.min = pp.min; r.max = pp.max; r.step = (pp.max - pp.min) / 200 || 0.001;
-        r.value = transState.params[pp.name]; r.style.cssText = 'flex:1;accent-color:var(--accent)';
-        const v = document.createElement('span');
-        v.textContent = (+transState.params[pp.name]).toFixed(2);
-        v.style.cssText = 'font:600 11px ui-monospace,monospace;color:var(--text-muted);min-width:44px;text-align:right';
-        r.oninput = () => { transState.params[pp.name] = +r.value; v.textContent = (+r.value).toFixed(2); render(); };
+        const row = document.createElement('div'); row.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:6px';
+        const lab = document.createElement('label'); lab.textContent = pp.name; lab.style.cssText = 'font-size:12px;color:var(--text-muted);min-width:104px';
+        const r = document.createElement('input'); r.type = 'range'; r.min = pp.min; r.max = pp.max; r.step = (pp.max - pp.min) / 200 || 0.001; r.value = vals[pp.name]; r.style.cssText = 'flex:1;accent-color:var(--accent)';
+        const v = document.createElement('span'); v.textContent = (+vals[pp.name]).toFixed(2); v.style.cssText = 'font:600 11px ui-monospace,monospace;color:var(--text-muted);min-width:44px;text-align:right';
+        r.oninput = () => { vals[pp.name] = +r.value; v.textContent = (+r.value).toFixed(2); render(); };
         row.appendChild(lab); row.appendChild(r); row.appendChild(v); paramsBox.appendChild(row);
       });
-      render();
     };
-    sel.onchange = () => selectShader(sel.value);
+    const focusShader = (id) => {
+      transState.focus = id;
+      const m = byId(id); blurb.textContent = m ? (m.blurb || '') : '';
+      list.querySelectorAll('[data-focus]').forEach((el) => { el.style.fontWeight = el.dataset.focus === id ? '700' : '400'; });
+      try { transState.renderer.setShader(window.__TRANSITION_SHADERS[id]); }
+      catch (e) { blurb.textContent = t('widget.trans.compile_error'); return; }
+      buildSliders(id); render();
+    };
+
+    list.innerHTML = MAN.map((m) => `
+      <label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;cursor:pointer">
+        <input type="checkbox" data-id="${escAttr(m.id)}" ${initialSel.includes(m.id) ? 'checked' : ''}>
+        <span data-focus="${escAttr(m.id)}" style="flex:1">${escAttr(m.name)}</span>
+      </label>`).join('');
+    list.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+      cb.onchange = () => { if (cb.checked) focusShader(cb.dataset.id); };
+    });
+    // clicking the NAME previews/tunes it; preventDefault so the label doesn't also toggle its checkbox
+    list.querySelectorAll('[data-focus]').forEach((sp) => { sp.onclick = (e) => { e.preventDefault(); focusShader(sp.dataset.focus); }; });
     scrub.oninput = render;
 
     // auto-play loop (eased, with holds); auto-stops when the modal closes (canvas leaves the DOM)
@@ -650,7 +662,7 @@ export async function render(container) {
       if (transState.playing) { transState.t0 = 0; transState.raf = requestAnimationFrame(loop); }
       else cancelAnimationFrame(transState.raf);
     };
-    selectShader(sel.value);
+    focusShader(initialSel[0] || MAN[0].id);
   }
 
   function renderDirCategories(opts = {}) {
@@ -910,10 +922,11 @@ export async function render(container) {
       case 'webpage': Object.assign(config, { url: val('wUrl'), zoom: parseInt(val('wZoom')) || 100, refresh_interval: parseInt(val('wRefresh')) || 0 }); break;
       case 'social': Object.assign(config, { platform: val('wPlatform'), query: val('wQuery') }); break;
       case 'transition': {
-        const params = {};
-        document.querySelectorAll('#wTransParams input[type=range]').forEach(r => { params[r.dataset.param] = parseFloat(r.value); });
+        const shaders = Array.from(document.querySelectorAll('#wTransList input[type=checkbox]:checked')).map(c => c.dataset.id);
+        const params = {}; // per-shader tuned values held in transState.params
+        shaders.forEach(id => { if (transState.params[id]) params[id] = transState.params[id]; });
         Object.assign(config, {
-          shader: val('wTransShader'),
+          shaders,
           params,
           durationMs: parseInt(val('wTransDuration')) || 800,
           scope: val('wTransScope') || 'next',

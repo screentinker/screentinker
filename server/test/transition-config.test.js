@@ -8,11 +8,25 @@ const IMG = (id) => ({ content_id: id, mime_type: 'image/png' });
 
 test('resolveTransitionConfig: valid shader resolves + clamps params/duration', () => {
   const r = resolveTransitionConfig({ shader: 'CRTCollapse', params: { lineHold: 99, flashGain: -5 }, durationMs: 800, scope: 'next' });
-  assert.equal(r.shader, 'CRTCollapse');
+  assert.equal(r.effects.length, 1);
+  assert.equal(r.effects[0].shader, 'CRTCollapse');
   assert.equal(r.durationMs, 800);
   assert.equal(r.scope, 'next');
-  assert.equal(r.params.lineHold, 0.45, 'over-range param clamped to shader max');
-  assert.equal(r.params.flashGain, 0, 'under-range param clamped to shader min');
+  assert.equal(r.effects[0].params.lineHold, 0.45, 'over-range param clamped to shader max');
+  assert.equal(r.effects[0].params.flashGain, 0, 'under-range param clamped to shader min');
+});
+
+test('resolveTransitionConfig: multiple shaders -> one effect each, per-shader params via map', () => {
+  const r = resolveTransitionConfig({ shaders: ['CRTCollapse', 'Etch'], params: { CRTCollapse: { lineHold: 0.2 } }, durationMs: 500 });
+  assert.deepEqual(r.effects.map((e) => e.shader), ['CRTCollapse', 'Etch']);
+  assert.equal(r.effects[0].params.lineHold, 0.2, 'per-shader params applied from the map');
+});
+
+test('resolveTransitionConfig: unknown ids dropped from the set, dups collapsed, all-unknown -> null', () => {
+  const r = resolveTransitionConfig({ shaders: ['CRTCollapse', 'Ghost', 'CRTCollapse', 'Etch'] });
+  assert.deepEqual(r.effects.map((e) => e.shader), ['CRTCollapse', 'Etch']);
+  assert.equal(resolveTransitionConfig({ shaders: [] }), null);
+  assert.equal(resolveTransitionConfig({ shaders: ['Ghost'] }), null);
 });
 
 test('resolveTransitionConfig: unknown shader -> null (hard cut, never black)', () => {
@@ -34,7 +48,7 @@ test('normalizeTransitions: scope:next attaches to the FOLLOWING item, widget dr
   assert.equal(out.length, 3, 'transition widget removed from visible list');
   assert.deepEqual(out.map((i) => i.content_id), ['a', 'b', 'c']);
   assert.equal(out[0].transition, undefined);
-  assert.equal(out[1].transition.shader, 'CRTCollapse', 'plays INTO b');
+  assert.equal(out[1].transition.effects[0].shader, 'CRTCollapse', 'plays INTO b');
   assert.equal(out[2].transition, undefined);
 });
 
@@ -45,15 +59,15 @@ test('normalizeTransitions: scope:all is a playlist default, scope:next override
     T({ shader: 'CRTCollapse', scope: 'next' }), IMG('c'),
   ]);
   assert.equal(out.length, 3);
-  assert.equal(out[0].transition.shader, 'Etch', 'default applies to a');
-  assert.equal(out[1].transition.shader, 'Etch', 'default applies to b');
-  assert.equal(out[2].transition.shader, 'CRTCollapse', 'override wins for c');
+  assert.equal(out[0].transition.effects[0].shader, 'Etch', 'default applies to a');
+  assert.equal(out[1].transition.effects[0].shader, 'Etch', 'default applies to b');
+  assert.equal(out[2].transition.effects[0].shader, 'CRTCollapse', 'override wins for c');
 });
 
 test('normalizeTransitions: a trailing scope:next wraps onto the first item (loop)', () => {
   const out = normalizeTransitions([IMG('a'), IMG('b'), T({ shader: 'ReelChange', scope: 'next' })]);
   assert.equal(out.length, 2);
-  assert.equal(out[0].transition.shader, 'ReelChange', 'last->first advance');
+  assert.equal(out[0].transition.effects[0].shader, 'ReelChange', 'last->first advance');
   assert.equal(out[1].transition, undefined);
 });
 
@@ -69,5 +83,5 @@ test('normalizeTransitions: non-transition widgets pass through untouched', () =
   assert.equal(out.length, 3);
   assert.equal(out[1].widget_type, 'clock', 'clock widget stays visible');
   assert.equal(out[1].transition, undefined);
-  assert.equal(out[2].transition.shader, 'Etch');
+  assert.equal(out[2].transition.effects[0].shader, 'Etch');
 });

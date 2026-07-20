@@ -14,22 +14,35 @@ const { resolveParams } = require(path.join(__dirname, '../../shared/Transitions
 const BY_ID = new Map(MANIFEST.map((m) => [m.id, m]));
 const MIN_MS = 150, MAX_MS = 3000, DEFAULT_MS = 800;
 
-// Parse + validate + clamp one transition config. Returns { shader, params, durationMs, scope } or null.
+// Parse + validate + clamp a transition config. A transition holds one OR MORE effects; the player
+// picks one at random per advance (variety). Returns { effects:[{shader,params}], durationMs, scope }
+// or null (unknown/empty -> no transition -> the player hard-cuts). Params live in a by-shader-id map;
+// a single flat params object is also accepted (single-effect shape).
 function resolveTransitionConfig(configJsonOrObj) {
   let cfg;
   if (typeof configJsonOrObj === 'string') { try { cfg = JSON.parse(configJsonOrObj); } catch (e) { return null; } }
   else cfg = configJsonOrObj || {};
-  const entry = BY_ID.get(String(cfg.shader || ''));
-  if (!entry) return null; // unknown/removed shader -> no transition (hard cut), never a black frame
-  const params = resolveParams(
-    entry.params.map((p) => ({ name: p.name, default: p.default, min: p.min, max: p.max })),
-    cfg.params || {}
-  );
+  const ids = Array.isArray(cfg.shaders) ? cfg.shaders : (cfg.shader ? [cfg.shader] : []);
+  const paramsMap = (cfg.params && typeof cfg.params === 'object') ? cfg.params : {};
+  const effects = [];
+  const seen = new Set();
+  for (const id of ids) {
+    const entry = BY_ID.get(String(id));
+    if (!entry || seen.has(entry.id)) continue; // unknown/removed or dup -> skip
+    seen.add(entry.id);
+    // per-shader params from the map, else (single-effect shape) a flat params object, else defaults
+    const stored = paramsMap[entry.id] || (ids.length === 1 ? paramsMap : {});
+    effects.push({
+      shader: entry.id,
+      params: resolveParams(entry.params.map((p) => ({ name: p.name, default: p.default, min: p.min, max: p.max })), stored),
+    });
+  }
+  if (!effects.length) return null; // no valid effect -> hard cut, never a black frame
   let durationMs = Number(cfg.durationMs);
   if (!Number.isFinite(durationMs)) durationMs = DEFAULT_MS;
   durationMs = Math.max(MIN_MS, Math.min(MAX_MS, Math.round(durationMs)));
   const scope = cfg.scope === 'all' ? 'all' : 'next';
-  return { shader: entry.id, params, durationMs, scope };
+  return { effects, durationMs, scope };
 }
 
 // Walk snapshot items: drop transition-widget items, attach a resolved `transition` to the visible
@@ -53,7 +66,7 @@ function normalizeTransitions(items) {
   for (const it of visible) {
     const t = it.__override || playlistDefault;
     delete it.__override;
-    if (t) it.transition = { shader: t.shader, params: t.params, durationMs: t.durationMs };
+    if (t) it.transition = { effects: t.effects, durationMs: t.durationMs };
   }
   return visible;
 }

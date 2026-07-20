@@ -2234,6 +2234,10 @@
       return c;
     }
     function runImageTransition(fromImg, toImg, t, item) {
+      // a transition may carry several effects — pick one at random per advance for variety
+      const effect = t.effects[Math.floor(Math.random() * t.effects.length)];
+      const src = effect && shaderSource(effect.shader);
+      if (!src) { mountImage(toImg, item); return; } // the picked effect's shader is unavailable -> hard cut
       const container = document.getElementById('playerContainer');
       const rect = container.getBoundingClientRect();
       const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
@@ -2254,8 +2258,8 @@
         renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, { onContextLost: hardCut });
         renderer.setFrom(fitToCanvas(fromImg, w, h));
         renderer.setTo(fitToCanvas(toImg, w, h));
-        renderer.setShader(shaderSource(t.shader)); // throws on a bad shader -> hardCut
-        renderer.render(0, t.params);
+        renderer.setShader(src); // throws on a bad shader -> hardCut
+        renderer.render(0, effect.params);
       } catch (e) { return hardCut(); }
       container.style.position = 'relative';
       container.style.display = 'block';
@@ -2280,7 +2284,7 @@
         if (renderer.lost) return hardCut();
         if (!startTs) startTs = ts;
         const p = Math.min(1, (ts - startTs) / durMs);
-        if (!renderer.render(p, t.params)) return hardCut();
+        if (!renderer.render(p, effect.params)) return hardCut();
         if (p >= 1) return finish();
         raf = requestAnimationFrame(frame);
       };
@@ -2297,7 +2301,7 @@
         const from = currentTexturableImage();
         const t = item.transition;
         const canTexture = img.complete && img.naturalWidth > 0 && isMediaReadable(img);
-        if (t && from && canTexture && transitionRuntimeReady() && shaderSource(t.shader)) {
+        if (t && Array.isArray(t.effects) && t.effects.length && from && canTexture && transitionRuntimeReady()) {
           runImageTransition(from, img, t, item); // owns teardown + advance + preload
         } else {
           mountImage(img, item);                  // hard cut (never blank)
