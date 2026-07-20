@@ -602,6 +602,10 @@ function updateProps() {
       <div class="form-group"><label>${t('designer.prop.shape')}</label><select class="input" style="background:var(--bg-input)" data-prop="shape"><option ${el.shape === 'rect' ? 'selected' : ''}>rect</option><option ${el.shape === 'circle' ? 'selected' : ''}>circle</option></select></div>`;
   } else if (el.type === 'weather') {
     html += `<div class="form-group"><label>${t('designer.prop.location')}</label><input type="text" class="input" value="${el.location}" data-prop="location"></div>
+      <div class="form-group"><label>${t('widget.field.units')}</label><select class="input" data-prop="units">
+        <option value="imperial" ${el.units !== 'metric' ? 'selected' : ''}>${t('widget.field.units_imperial')}</option>
+        <option value="metric" ${el.units === 'metric' ? 'selected' : ''}>${t('widget.field.units_metric')}</option>
+      </select></div>
       <div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="16" max="80" value="${el.fontSize}" data-prop="fontSize" style="width:100%"></div>
       <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${el.color}" data-prop="color" style="width:100%;height:28px;border:none"></div>`;
   } else if (el.type === 'ticker') {
