@@ -1627,10 +1627,12 @@
       const newItems = data.assignments || [];
       // Build fingerprint from id + url + filename to detect any content change.
       // #74/#75: include schedules so a schedule edit (same content) is detected too.
-      // STRUCTURAL fingerprint only (identity + order + schedules). duration_sec is deliberately
-      // EXCLUDED so a duration-only edit is not treated as a full change/restart — it's applied IN
-      // PLACE in the unchanged branch below (the schedule tick + advance timer read duration_sec live).
-      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}`).join(',');
+      // transition-engine: include the per-item transition too, or a transition config change (effects,
+      // duration, scope, or presence) keeps the SAME fingerprint -> "unchanged" -> the player keeps a
+      // stale cached playlist and never applies the new transitions. This bug hid every transition edit.
+      // STRUCTURAL fingerprint only (identity + order + schedules + transition). duration_sec is
+      // deliberately EXCLUDED so a duration-only edit is applied IN PLACE (not a full change/restart).
+      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${JSON.stringify(a.transition || null)}`).join(',');
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
 

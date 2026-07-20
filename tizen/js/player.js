@@ -140,8 +140,10 @@ PlaylistPlayer.prototype.load = function (assignments) {
 
   var sig = JSON.stringify(items.map(function (a) {
     // STRUCTURAL only. #74/#75: include schedules so a schedule edit (same content) re-renders.
+    // transition-engine: include the per-item transition, or a transition change keeps the same
+    // signature -> "unchanged" -> the player never applies the new transitions.
     // duration_sec is EXCLUDED so a duration edit applies in place (below), not as a restart.
-    return [a.content_id, a.widget_id, a.remote_url, a.mime_type, a.schedules || []];
+    return [a.content_id, a.widget_id, a.remote_url, a.mime_type, a.schedules || [], a.transition || null];
   }));
   if (sig === this.sig && this.items.length) {
     // In-place duration refresh: patch duration_sec on the live items so a duration edit takes effect
