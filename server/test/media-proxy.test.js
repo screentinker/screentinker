@@ -81,25 +81,24 @@ test('ensureCached: single-flight collapses concurrent misses to one fetch', asy
   assert.deepEqual(a, b);
 });
 
-test('route: 400 on non-numeric id, 404 on unknown item', async () => {
+test('route: 400 on malformed content id, 404 on unknown content', async () => {
   const { port, close } = await listen();
   try {
-    assert.equal((await get(port, '/media/proxy/abc')).status, 400);
-    assert.equal((await get(port, '/media/proxy/9999999')).status, 404);
+    assert.equal((await get(port, '/media/proxy/bad.id')).status, 400, 'dot is not a valid id char');
+    assert.equal((await get(port, '/media/proxy/ghostcontent')).status, 404, 'well-formed but no such content');
   } finally { await close(); }
 });
 
 test('route: cache hit serves sniffed type with hardening headers', async () => {
   db.pragma('foreign_keys = OFF');
   db.prepare("INSERT INTO content (id, filename, mime_type, remote_url) VALUES ('c1','x.png','image/png','http://example.test/x')").run();
-  db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id) VALUES (1,'p1','c1')").run();
   const key = crypto.createHash('sha256').update('http://example.test/x').digest('hex');
   fs.writeFileSync(dataFile(key), png);
   fs.writeFileSync(metaFile(key), JSON.stringify({ type: 'image/png', size: png.length, fetchedAt: Date.now() }));
 
   const { port, close } = await listen();
   try {
-    const r = await get(port, '/media/proxy/1');
+    const r = await get(port, '/media/proxy/c1');
     assert.equal(r.status, 200);
     assert.equal(r.headers['content-type'], 'image/png');
     assert.equal(r.headers['x-content-type-options'], 'nosniff');
@@ -113,10 +112,9 @@ test('route: cache hit serves sniffed type with hardening headers', async () => 
 test('route: hostile remote_url pointing at loopback is blocked end-to-end (403)', async () => {
   db.pragma('foreign_keys = OFF');
   db.prepare("INSERT INTO content (id, filename, mime_type, remote_url) VALUES ('c2','y.png','image/png','http://127.0.0.1:9/x')").run();
-  db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id) VALUES (2,'p1','c2')").run();
   const { port, close } = await listen();
   try {
-    const r = await get(port, '/media/proxy/2');
+    const r = await get(port, '/media/proxy/c2');
     assert.equal(r.status, 403, 'SSRF guard refuses the live fetch to a private IP');
   } finally { await close(); }
 });

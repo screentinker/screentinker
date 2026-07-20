@@ -237,16 +237,18 @@ function serveFromCache(res, key, meta) {
   rs.pipe(res);
 }
 
-router.get('/proxy/:itemId', (req, res) => {
-  const itemId = parseInt(req.params.itemId, 10);
-  if (!Number.isInteger(itemId) || itemId <= 0 || String(itemId) !== req.params.itemId) {
+// Keyed on content.id (a TEXT id present in the id-free published_snapshot the player consumes; the
+// playlist_items id is not). content OWNS remote_url, so this is the natural lookup and lets multiple
+// playlist items that reference the same image share one cache entry. Still not an open proxy: only a
+// content row a customer created is fetchable, and the SSRF guard gates the actual remote_url fetch.
+router.get('/proxy/:contentId', (req, res) => {
+  const contentId = String(req.params.contentId || '');
+  if (!contentId || contentId.length > 64 || !/^[A-Za-z0-9_-]+$/.test(contentId)) {
     return res.status(400).end();
   }
   let row;
   try {
-    row = db.prepare(
-      'SELECT c.remote_url FROM playlist_items pi LEFT JOIN content c ON pi.content_id = c.id WHERE pi.id = ?'
-    ).get(itemId);
+    row = db.prepare('SELECT remote_url FROM content WHERE id = ?').get(contentId);
   } catch (e) { return res.status(500).end(); }
   if (!row || !row.remote_url) return res.status(404).end();
 
