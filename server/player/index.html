@@ -233,6 +233,9 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
   <script src="/player/player-media-health.js"></script>
+  <!-- feat/transition-engine: WebGL transition runtime (renderer + shaders). Optional; if it fails to
+       load the player just hard-cuts. Not deferred so it's ready before the first content swap. -->
+  <script src="/player/transitions.js"></script>
   <script>
     // ==================== i18n ====================
     // Lightweight inline i18n for the player. The player is a standalone page
@@ -2157,20 +2160,31 @@
     function imgSrcFor(it) {
       return it.remote_url || `${config.serverUrl}/uploads/content/${it.filepath}`;
     }
-    // Load an <img> requesting CORS ('anonymous') so branch 4 can use the decoded bitmap as a WebGL
-    // texture; if the CORS load fails (upstream sends no ACAO), retry WITHOUT crossOrigin so the frame
-    // still DISPLAYS (branch 4 hard-cuts the un-texturable ones — it never blanks). A fresh element per
-    // attempt avoids a cached failed-CORS response defeating the retry. onerror is wired before .src so
-    // a load failure always fires; onReady/onFail each fire at most once.
-    function loadImageCors(src, onReady, onFail) {
-      const attempt = (cors) => {
+    // A remote image gets a proxy fallback (/media/proxy/:contentId) so it can be textured for a
+    // transition when its origin sends no CORS header. Local /uploads content is already CORS-enabled,
+    // and VIDEO never reaches here — images-only through the proxy, per the wiring rule.
+    function proxySrcFor(it) {
+      return (it && it.remote_url && it.content_id) ? `${config.serverUrl}/media/proxy/${it.content_id}` : null;
+    }
+    // Load an <img> for display + texturing. Try direct-with-CORS first (local + CORS-enabled remotes),
+    // then the proxy-with-CORS (non-CORS remotes -> same-origin + texturable), then a plain direct load
+    // so the frame still DISPLAYS as a last resort (a transition touching it just hard-cuts). onerror is
+    // wired before .src so a failure always advances the chain; onReady/onFail fire at most once.
+    function loadImageCors(src, proxySrc, onReady, onFail) {
+      const plan = [{ url: src, cors: true }];
+      if (proxySrc && proxySrc !== src) plan.push({ url: proxySrc, cors: true });
+      plan.push({ url: src, cors: false });
+      let i = 0;
+      const next = () => {
+        if (i >= plan.length) return onFail && onFail();
+        const step = plan[i++];
         const img = new Image();
-        if (cors) img.crossOrigin = 'anonymous';
+        if (step.cors) img.crossOrigin = 'anonymous';
         img.onload = () => onReady(img);
-        img.onerror = () => { if (cors) attempt(false); else onFail(img); };
-        try { img.src = src; } catch (e) { if (cors) attempt(false); else onFail(img); }
+        img.onerror = next;
+        try { img.src = step.url; } catch (e) { next(); }
       };
-      attempt(true);
+      next();
     }
     function cacheImg(src, img) {
       imgPreloadCache[src] = img;
@@ -2184,37 +2198,121 @@
       if (!it || typeof it.mime_type !== 'string' || !it.mime_type.startsWith('image/')) return;
       const src = imgSrcFor(it);
       if (imgPreloadCache[src]) return;
-      loadImageCors(src, (img) => {
+      loadImageCors(src, proxySrcFor(it), (img) => {
         (img.decode ? img.decode() : Promise.resolve()).then(() => cacheImg(src, img)).catch(() => cacheImg(src, img));
       }, () => {}); // preload best-effort; a failed warm just means renderImageBuffered loads it live
+    }
+    // Plain hard-cut mount: tear down the outgoing frame, show the incoming image, arm the dwell.
+    function mountImage(img, item) {
+      img.style.cssText = 'width:100%;height:100%;object-fit:contain';
+      teardownCurrentMedia();
+      const c = document.getElementById('playerContainer');
+      c.style.display = 'block';
+      c.appendChild(img);
+      advanceTimer = setTimeout(nextItem, (item.duration_sec || 10) * 1000);
+      preloadNextImage();
+    }
+    // ---- GL transition (feat/transition-engine). Every failure path hard-cuts — never a blank. ----
+    function transitionRuntimeReady() {
+      return !!(window.TransitionRenderer && window.TransitionParams && window.__TRANSITION_SHADERS);
+    }
+    function shaderSource(id) { return (window.__TRANSITION_SHADERS && window.__TRANSITION_SHADERS[id]) || null; }
+    // the <img> on screen now, iff it's decoded and texturable (CORS-clean)
+    function currentTexturableImage() {
+      const c = document.getElementById('playerContainer');
+      const img = c && c.querySelector('img');
+      return (img && img.complete && img.naturalWidth > 0 && isMediaReadable(img)) ? img : null;
+    }
+    // draw a source onto a container-sized canvas with object-fit:contain framing, so the transition
+    // matches the static letterboxing exactly (stays CORS-clean iff the source is)
+    function fitToCanvas(src, w, h) {
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const cx = c.getContext('2d');
+      const iw = src.naturalWidth || src.width, ih = src.naturalHeight || src.height;
+      const s = Math.min(w / iw, h / ih);
+      cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
+      return c;
+    }
+    function runImageTransition(fromImg, toImg, t, item) {
+      const container = document.getElementById('playerContainer');
+      const rect = container.getBoundingClientRect();
+      const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
+      const prevPos = container.style.position;
+      let renderer = null, canvas = null, raf = 0, startTs = 0, finished = false;
+      const hardCut = () => {
+        if (finished) return; finished = true;
+        if (raf) cancelAnimationFrame(raf);
+        if (canvas) { try { canvas.remove(); } catch (e) {} }
+        container.style.position = prevPos;
+        try { renderer && renderer.destroy(); } catch (e) {}
+        mountImage(toImg, item);
+      };
+      try {
+        canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
+        renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, { onContextLost: hardCut });
+        renderer.setFrom(fitToCanvas(fromImg, w, h));
+        renderer.setTo(fitToCanvas(toImg, w, h));
+        renderer.setShader(shaderSource(t.shader)); // throws on a bad shader -> hardCut
+        renderer.render(0, t.params);
+      } catch (e) { return hardCut(); }
+      container.style.position = 'relative';
+      container.style.display = 'block';
+      container.appendChild(canvas); // over the outgoing <img>, both live
+      // OVERLAP-not-additive: start the dwell clock NOW so the transition plays INSIDE the item's
+      // duration rather than adding to it.
+      const dwellMs = (item.duration_sec || 10) * 1000;
+      advanceTimer = setTimeout(nextItem, dwellMs);
+      const durMs = Math.min(t.durationMs, Math.max(150, dwellMs - 100)); // never exceed the dwell
+      const finish = () => {
+        if (finished) return; finished = true;
+        if (raf) cancelAnimationFrame(raf);
+        toImg.style.cssText = 'width:100%;height:100%;object-fit:contain';
+        container.appendChild(toImg);
+        teardownCurrentMedia(toImg); // drop outgoing img + canvas, KEEP toImg + the armed dwell timer
+        container.style.position = prevPos;
+        try { renderer.destroy(); } catch (e) {}
+        preloadNextImage();
+      };
+      const frame = (ts) => {
+        if (finished) return;
+        if (renderer.lost) return hardCut();
+        if (!startTs) startTs = ts;
+        const p = Math.min(1, (ts - startTs) / durMs);
+        if (!renderer.render(p, t.params)) return hardCut();
+        if (p >= 1) return finish();
+        raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
     }
     function renderImageBuffered(item) {
       const src = imgSrcFor(item);
       const cached = imgPreloadCache[src];
-      let done = false;
-      let watchdog = null;
-      const mount = (img) => {
+      let done = false, watchdog = null;
+      const swap = (img) => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
-        img.style.cssText = 'width:100%;height:100%;object-fit:contain';
-        teardownCurrentMedia();
-        const c = document.getElementById('playerContainer');
-        c.style.display = 'block';
-        c.appendChild(img);
         delete imgPreloadCache[src];
-        advanceTimer = setTimeout(nextItem, (item.duration_sec || 10) * 1000);
-        preloadNextImage();
+        const from = currentTexturableImage();
+        const t = item.transition;
+        const canTexture = img.complete && img.naturalWidth > 0 && isMediaReadable(img);
+        if (t && from && canTexture && transitionRuntimeReady() && shaderSource(t.shader)) {
+          runImageTransition(from, img, t, item); // owns teardown + advance + preload
+        } else {
+          mountImage(img, item);                  // hard cut (never blank)
+        }
       };
       const fail = () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
-        console.error('Image error'); advanceTimer = setTimeout(nextItem, 3000); // skip broken item; hold prior frame until then
+        console.error('Image error'); advanceTimer = setTimeout(nextItem, 3000); // skip broken item; hold prior frame
       };
-      // a hung load/decode must never stall the playlist: at 3s mount whatever we have, else skip
-      watchdog = setTimeout(() => { if (cached) mount(cached); else fail(); }, 3000);
-      if (cached) { mount(cached); return; }               // decoded ahead — instant, CORS-clean swap
-      loadImageCors(src, (img) => {                         // load (CORS, plain retry) then decode-gate
-        (img.decode ? img.decode() : Promise.resolve()).then(() => mount(img)).catch(() => mount(img));
+      // a hung load/decode must never stall the playlist: at 3s use what we have, else skip
+      watchdog = setTimeout(() => { if (cached) swap(cached); else fail(); }, 3000);
+      if (cached) { swap(cached); return; }                 // decoded ahead — instant, CORS-clean
+      loadImageCors(src, proxySrcFor(item), (img) => {       // CORS -> proxy -> plain, then decode-gate
+        (img.decode ? img.decode() : Promise.resolve()).then(() => swap(img)).catch(() => swap(img));
       }, fail);
     }
 
@@ -2222,6 +2320,9 @@
       // Cancel any pending advance/refresh timer up front so a prior item's timer (incl. a
       // self-rescheduling widget refresh) can't fire against the new content.
       if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+      // Defense in depth: a transition widget is normalized out server-side and must never render as
+      // content. If a stale/legacy payload still carries one, skip it instead of mounting a blank iframe.
+      if (item && item.widget_type === 'transition') { advanceTimer = setTimeout(nextItem, 0); return; }
       // Fullscreen (non-wall) widget: buffered swap — never blank on reload. Runs BEFORE the
       // generic teardown (which would black the screen), and owns its own refresh/advance
       // timer below. Multi-zone widgets go through renderZones; wall+widget keeps the legacy
