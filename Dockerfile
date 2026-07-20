@@ -29,6 +29,10 @@ WORKDIR /app/server
 COPY server/ /app/server/
 COPY --from=builder /app/server/node_modules /app/server/node_modules
 COPY frontend/ /app/frontend/
+# shared/Transitions is a RUNTIME dependency: server/lib/transition-config.js + transition-bundle.js
+# require the shader manifest/params/sources from ../../shared at load time (the server won't boot
+# without it). Small, and keeps the .glsl files the single source across server + player + Tizen.
+COPY shared/ /app/shared/
 COPY VERSION /app/VERSION
 # the /openapi.yaml route serves ../docs/openapi.yaml (the spec Redoc on /docs fetches);
 # without this it 404s in the image even though it serves fine from a dev checkout.
