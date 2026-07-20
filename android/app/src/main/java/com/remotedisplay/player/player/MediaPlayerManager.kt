@@ -1,10 +1,16 @@
 package com.remotedisplay.player.player
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
+import android.graphics.drawable.BitmapDrawable
+import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Surface
+import android.view.TextureView
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -25,8 +31,12 @@ class MediaPlayerManager(
     private val imageView: ImageView,
     private val youtubeWebView: WebView? = null,
     private val onVideoComplete: () -> Unit,
-    private val onImageError: (() -> Unit)? = null
+    private val onImageError: (() -> Unit)? = null,
+    // feat/transition-engine: the full-screen GL overlay that plays a from->to wipe. Null = no
+    // transitions (every render hard-cuts, exactly as before).
+    private val transitionView: TransitionGLView? = null
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var exoPlayer: ExoPlayer? = null
     private var currentType: MediaType = MediaType.NONE
     // Wall mode: followers must stay muted even as the leader's sync switches them
@@ -82,6 +92,71 @@ class MediaPlayerManager(
     // #129: remembered so the live device:mute-changed toggle knows YouTube's current
     // state and the IFrame API bridge can flip it without reloading the embed.
     private var youtubeMuted = false
+
+    // ---- feat/transition-engine: GL wipe helpers. Every failure path returns false/null so the caller
+    // hard-cuts (never a blank frame). Solo fullscreen only — suppressed for wall followers and group/
+    // loop sync (they own their own frame timing). ----
+    private fun transitionsActive(): Boolean = transitionView != null && !wallMute && !videoLooping
+
+    // The frame on screen now, as a bitmap, for the wipe's `from`. Image -> the ImageView bitmap; video
+    // -> the ExoPlayer TextureView's current frame. Null (youtube/widget/none/unavailable) -> hard cut.
+    private fun captureCurrentFrame(): Bitmap? = try {
+        when (currentType) {
+            MediaType.IMAGE -> (imageView.drawable as? BitmapDrawable)?.bitmap
+            MediaType.VIDEO -> (playerView.videoSurfaceView as? TextureView)?.let { tv ->
+                if (tv.isAvailable && tv.width > 0 && tv.height > 0) tv.bitmap else null
+            }
+            else -> null
+        }
+    } catch (e: Throwable) { null }
+
+    // Pick one effect at random (variety) and resolve its wrapped fragment source + params. Null if the
+    // shader isn't in assets -> hard cut.
+    private fun pickEffect(spec: TransitionSpec): Pair<String, Map<String, Float>>? {
+        if (spec.effects.isEmpty()) return null
+        val idx = (Math.random() * spec.effects.size).toInt().coerceIn(0, spec.effects.size - 1)
+        val e = spec.effects[idx]
+        val src = TransitionGlsl.loadSource(context.assets, e.shader) ?: return null
+        return TransitionGlsl.fragmentFor(src) to e.params
+    }
+
+    // Run a from->to wipe, then `swap` (the plain mount) on completion. Returns false if it can't start
+    // (the caller must then swap immediately). `swap` is the SAME plain mount the no-transition path uses.
+    private fun runWipe(toBitmap: Bitmap, spec: TransitionSpec?, from: Bitmap?, swap: () -> Unit): Boolean {
+        val view = transitionView
+        if (view == null || spec == null || from == null || !transitionsActive()) return false
+        val picked = pickEffect(spec) ?: return false
+        val w = ImageLoader.screenWidth(context); val h = ImageLoader.screenHeight(context)
+        if (w <= 0 || h <= 0) return false
+        val fromFit: Bitmap; val toFit: Bitmap
+        try { fromFit = fitTransitionBitmap(from, w, h); toFit = fitTransitionBitmap(toBitmap, w, h) }
+        catch (e: Throwable) { Log.w("MediaPlayerManager", "wipe fit failed: ${e.message}"); return false }
+        view.play(fromFit, toFit, picked.first, picked.second, spec.durationMs) { swap() }
+        return true
+    }
+
+    // Extract a local video's first frame as a bitmap (the wipe's `to` for image->video / video->video).
+    // Blocking — call off the main thread. Null on any failure -> hard cut.
+    private fun extractFirstFrame(path: String): Bitmap? {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(path)
+            r.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        } catch (e: Throwable) { Log.w("MediaPlayerManager", "first-frame extract failed: ${e.message}"); null }
+        finally { try { r.release() } catch (_: Throwable) {} }
+    }
+
+    // Plain image mount (visibility flip + set bitmap). Shared by the transition-done swap and the
+    // no-transition hard cut.
+    private fun mountImageBitmap(bitmap: Bitmap) {
+        currentType = MediaType.IMAGE
+        playerView.visibility = android.view.View.GONE
+        imageView.visibility = android.view.View.VISIBLE
+        youtubeWebView?.visibility = android.view.View.GONE
+        exoPlayer?.stop()
+        try { imageView.setImageBitmap(bitmap) }
+        catch (e: Throwable) { Log.e("MediaPlayerManager", "setImageBitmap failed: ${e.message}"); onImageError?.invoke() }
+    }
 
     fun playYoutube(embedUrl: String, durationSec: Int = 0, muted: Boolean = false) {
         Log.i("MediaPlayerManager", "Playing YouTube: $embedUrl (muted=$muted)")
@@ -151,26 +226,18 @@ class MediaPlayerManager(
         }
     }
 
-    fun showImageFromUrl(url: String) {
+    fun showImageFromUrl(url: String, transition: TransitionSpec? = null) {
         Log.i("MediaPlayerManager", "Loading remote image: $url")
-        currentType = MediaType.IMAGE
-
-        playerView.visibility = android.view.View.GONE
-        imageView.visibility = android.view.View.VISIBLE
-        youtubeWebView?.visibility = android.view.View.GONE
-
-        exoPlayer?.stop()
-
+        // Capture the outgoing frame NOW, on the main thread, before the decode thread swaps it out.
+        val from = if (transition != null) captureCurrentFrame() else null
         Thread {
             val bitmap = ImageLoader.decodeUrl(url, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
-            if (bitmap != null) {
-                imageView.post {
-                    try { imageView.setImageBitmap(bitmap) }
-                    catch (e: Throwable) { Log.e("MediaPlayerManager", "setImageBitmap failed: ${e.message}"); onImageError?.invoke() }
+            mainHandler.post {
+                if (bitmap == null) {
+                    Log.w("MediaPlayerManager", "Skipping unloadable remote image: $url")
+                    onImageError?.invoke(); return@post
                 }
-            } else {
-                Log.w("MediaPlayerManager", "Skipping unloadable remote image: $url")
-                imageView.post { onImageError?.invoke() }
+                if (!runWipe(bitmap, transition, from) { mountImageBitmap(bitmap) }) mountImageBitmap(bitmap)
             }
         }.start()
     }
@@ -196,7 +263,28 @@ class MediaPlayerManager(
         Log.i("MediaPlayerManager", "Preloaded next video: ${file.name}")
     }
 
-    fun playVideo(file: File, muted: Boolean = false) {
+    fun playVideo(file: File, muted: Boolean = false, transition: TransitionSpec? = null) {
+        // image->video / video->video wipe: extract the incoming clip's first frame OFF the main thread,
+        // wipe from the outgoing frame into it, then warm-mount the real video (which starts from frame 0,
+        // matching the wipe's `to`). Any failure hard-cuts to the plain mount. Local files only — remote
+        // streams (playVideoFromUrl) keep the plain path.
+        if (transition != null && transitionsActive()) {
+            val from = captureCurrentFrame()
+            if (from != null) {
+                Thread {
+                    val toBmp = extractFirstFrame(file.absolutePath)
+                    mainHandler.post {
+                        if (toBmp != null && runWipe(toBmp, transition, from) { mountVideo(file, muted) }) return@post
+                        mountVideo(file, muted)
+                    }
+                }.start()
+                return
+            }
+        }
+        mountVideo(file, muted)
+    }
+
+    private fun mountVideo(file: File, muted: Boolean = false) {
         currentType = MediaType.VIDEO
 
         // Show player, hide image
@@ -233,28 +321,18 @@ class MediaPlayerManager(
         }
     }
 
-    fun showImage(file: File) {
+    fun showImage(file: File, transition: TransitionSpec? = null) {
         Log.i("MediaPlayerManager", "Showing image: ${file.absolutePath}")
-        currentType = MediaType.IMAGE
-
-        playerView.visibility = android.view.View.GONE
-        imageView.visibility = android.view.View.VISIBLE
-        youtubeWebView?.visibility = android.view.View.GONE
-
-        exoPlayer?.stop()
-
         val bitmap = ImageLoader.decodeFile(file, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
         if (bitmap == null) {
             Log.w("MediaPlayerManager", "Skipping unloadable image: ${file.name}")
             onImageError?.invoke()
             return
         }
-        try {
-            imageView.setImageBitmap(bitmap)
-        } catch (e: Throwable) {
-            Log.e("MediaPlayerManager", "setImageBitmap failed: ${e.message}")
-            onImageError?.invoke()
-        }
+        // Capture the outgoing frame (image or the video's TextureView) BEFORE the swap; decode above
+        // doesn't touch the views, so it still reflects what's on screen. Wipe into the image, else hard cut.
+        val from = if (transition != null) captureCurrentFrame() else null
+        if (!runWipe(bitmap, transition, from) { mountImageBitmap(bitmap) }) mountImageBitmap(bitmap)
     }
 
     fun stop() {

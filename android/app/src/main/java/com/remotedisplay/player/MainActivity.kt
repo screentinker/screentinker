@@ -30,6 +30,7 @@ import androidx.media3.ui.PlayerView
 import com.remotedisplay.player.data.ContentCache
 import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.player.MediaPlayerManager
+import com.remotedisplay.player.player.TransitionGLView
 import com.remotedisplay.player.player.PlaylistController
 import com.remotedisplay.player.player.PlaylistItem
 import com.remotedisplay.player.player.PipOverlay
@@ -227,6 +228,16 @@ class MainActivity : AppCompatActivity() {
             item.isWidget || item.isRemote || contentCache.isContentCached(item.contentId)
         }
 
+        // feat/transition-engine: full-screen GLES2 overlay that plays image/video wipes. Inserted just
+        // BELOW the status overlay (so the connecting/idle screen still covers it) and ABOVE the image/
+        // video layers, so a wipe composites over the outgoing content. Hidden except during a wipe.
+        val transitionView = TransitionGLView(this)
+        (rootView as FrameLayout).let { root ->
+            val idx = root.indexOfChild(statusOverlay).coerceAtLeast(0)
+            root.addView(transitionView, idx,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+
         // Setup media player
         mediaPlayer = MediaPlayerManager(
             context = this,
@@ -237,7 +248,8 @@ class MainActivity : AppCompatActivity() {
             onImageError = {
                 Log.w("MainActivity", "Image failed to load, skipping to next item")
                 handler.postDelayed({ playlistController.next() }, 500)
-            }
+            },
+            transitionView = transitionView
         )
 
         // Video-wall controller. The emit lambdas read wsService lazily (it's bound after
@@ -852,9 +864,9 @@ class MainActivity : AppCompatActivity() {
         if (item.isRemote) {
             Log.i("MainActivity", "Playing remote content: ${item.remoteUrl}")
             if (item.mimeType.startsWith("video/")) {
-                mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted)
+                mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted) // remote video: plain (no wipe)
             } else if (item.mimeType.startsWith("image/")) {
-                mediaPlayer.showImageFromUrl(item.remoteUrl!!)
+                mediaPlayer.showImageFromUrl(item.remoteUrl!!, item.transition)
             }
             wsService?.sendPlaybackState(item.contentId, 0f)
             return
@@ -879,9 +891,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun playFile(item: PlaylistItem, file: java.io.File) {
         if (item.mimeType.startsWith("video/")) {
-            mediaPlayer.playVideo(file, item.muted)
+            mediaPlayer.playVideo(file, item.muted, item.transition)
         } else if (item.mimeType.startsWith("image/")) {
-            mediaPlayer.showImage(file)
+            mediaPlayer.showImage(file, item.transition)
         }
 
         // Report playback state

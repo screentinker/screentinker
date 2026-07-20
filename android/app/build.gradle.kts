@@ -55,6 +55,11 @@ android {
         // APIs return defaults instead of throwing "not mocked".
         unitTests.isReturnDefaultValues = true
     }
+
+    // feat/transition-engine: the GL transition shaders ship as assets, COPIED from shared/Transitions
+    // at build (the single source of truth — same .glsl the web bundle + Tizen build assemble from),
+    // so the native compositor can't drift from the other players. See copyTransitionShaders below.
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/transitionAssets"))
 }
 
 dependencies {
@@ -94,6 +99,16 @@ dependencies {
     // returns defaults with isReturnDefaultValues=true) so TransitionParseTest exercises actual parsing.
     testImplementation("org.json:json:20231013")
 }
+
+// feat/transition-engine: copy the shared GL transition shaders into a generated assets dir so the
+// native compositor loads the SAME .glsl the web/Tizen players do (no checked-in copy to drift). Wired
+// ahead of asset merge for every variant.
+val copyTransitionShaders by tasks.registering(Copy::class) {
+    from(File(rootProject.projectDir.parentFile, "shared/Transitions")) { include("*.glsl") }
+    into(layout.buildDirectory.dir("generated/transitionAssets/transitions"))
+}
+tasks.matching { it.name == "preBuild" || it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(copyTransitionShaders) }
 
 // #74/#75: point the evaluator drift-guard test at the SHARED vector contract
 // (shared/schedule-vectors.json, the single source - no snapshot). rootProject is
