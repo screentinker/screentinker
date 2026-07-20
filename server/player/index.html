@@ -2255,17 +2255,20 @@
       // a transition may carry several effects — pick one at random per advance for variety
       const effect = t.effects[Math.floor(Math.random() * t.effects.length)];
       const src = effect && shaderSource(effect.shader);
-      const gl = src ? getGlTransition() : null;
-      if (!gl) { mountImage(toImg, item); return; } // no shader / no WebGL -> hard cut (never blank)
+      // Don't animate an invisible wipe: a hidden/occluded tab FREEZES requestAnimationFrame, so the
+      // wipe would never progress and the image would never swap. Hard-cut instead (never blank/stuck).
+      const gl = (src && !document.hidden) ? getGlTransition() : null;
+      if (!gl) { mountImage(toImg, item); return; } // no shader / no WebGL / hidden -> hard cut
       const canvas = gl.canvas, renderer = gl.renderer;
       const container = document.getElementById('playerContainer');
       const rect = container.getBoundingClientRect();
       const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
       const prevPos = container.style.position;
-      let raf = 0, startTs = 0, done = false;
+      let raf = 0, startTs = 0, done = false, deadline = 0;
       const finish = () => { // end the transition; mount the plain image, KEEP the renderer/context alive
         if (done) return; done = true;
         if (raf) cancelAnimationFrame(raf);
+        if (deadline) clearTimeout(deadline);
         if (glTxAbort === finish) glTxAbort = null;
         try { canvas.remove(); } catch (e) {}          // detach (context survives), don't destroy
         container.style.position = prevPos;
@@ -2281,7 +2284,7 @@
         renderer.setShader(src);                        // throws on a bad shader
         renderer.render(0, effect.params);
       } catch (e) { try { canvas.remove(); } catch (x) {} mountImage(toImg, item); return; }
-      glTxAbort = finish;                               // context lost mid-transition -> finish (hard cut)
+      glTxAbort = finish;                               // context lost / tab hidden mid-wipe -> finish (hard cut)
       container.style.position = 'relative';
       container.style.display = 'block';
       container.appendChild(canvas);                    // over the outgoing <img>, both live
@@ -2289,6 +2292,10 @@
       const dwellMs = (item.duration_sec || 10) * 1000;
       advanceTimer = setTimeout(nextItem, dwellMs);
       const durMs = Math.min(t.durationMs, Math.max(150, dwellMs - 100)); // never exceed the dwell
+      // Safety net: also drive the final image-mount from a TIMER, not only the rAF loop. If rAF is
+      // throttled/frozen (backgrounded/occluded tab), the wipe won't animate but the image still swaps
+      // on time instead of the screen sticking. Whichever of {rAF hits p>=1, this deadline} fires wins.
+      deadline = setTimeout(finish, durMs + 80);
       const frame = (ts) => {
         if (done) return;
         if (renderer.lost) return finish();
@@ -2308,6 +2315,7 @@
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
         delete imgPreloadCache[src];
+        if (glTxAbort) glTxAbort(); // settle any in-flight wipe first — one transition at a time on the shared renderer
         const from = currentTexturableImage();
         const t = item.transition;
         const canTexture = img.complete && img.naturalWidth > 0 && isMediaReadable(img);
@@ -2916,6 +2924,7 @@
       // liveness check — reset the grace and reconnect ONLY if genuinely dead; never spuriously
       // tear down a live socket on the hidden->visible gap.
       if (document.visibilityState === 'visible') { requestWakeLock(); verifyLivenessSoon(); }
+      else if (glTxAbort) { glTxAbort(); } // tab hidden mid-wipe: hard-cut NOW (before rAF freezes) so nothing sticks
     });
     // pairing-race fix: pageshow fires on EVERY load (persisted=false), not only bfcache restores.
     // Unfiltered it ran verifyLivenessSoon() on the initial cold load, which opened the socket EARLY

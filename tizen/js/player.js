@@ -423,6 +423,7 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
     // composite instead of hard-swapping. _runImageTransition owns clear+append+schedule+preload, and
     // falls back to the plain swap on any failure (never blank). Video is unaffected (AVPlay plane).
     var t = item.transition;
+    if (self._glTxAbort) self._glTxAbort(); // settle any in-flight wipe first — one at a time on the shared renderer
     var from = self._texturableStageImage();
     if (t && t.effects && t.effects.length && from && self._transitionRuntimeReady()) {
       self._runImageTransition(from, img, t, item, targetIdx, single);
@@ -509,11 +510,12 @@ PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item
   var canvas = gl.canvas, renderer = gl.renderer;
   var mode = this._fitMode(item);
   var w = stage.clientWidth || 1280, h = stage.clientHeight || 720;
-  var raf = 0, startTs = 0, done = false;
+  var raf = 0, startTs = 0, done = false, deadline = 0;
   // end the transition once it's already begun (already scheduled) — swap in the plain image, no re-schedule
   var finish = function () {
     if (done) return; done = true;
     if (raf) cancelAnimationFrame(raf);
+    if (deadline) clearTimeout(deadline);
     if (self._glTxAbort === finish) self._glTxAbort = null;
     try { if (canvas.parentNode) canvas.parentNode.removeChild(canvas); } catch (e) {} // detach, keep context
     self.clearStage(); stage.appendChild(toImg);
@@ -532,6 +534,8 @@ PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item
   var dwellMs = this.durationMs(item);
   if (!single) self.schedule(dwellMs);
   var durMs = Math.min(t.durationMs, Math.max(150, dwellMs - 100));
+  // safety net: mount the target image from a timer too, not only rAF — survives rAF throttling/freeze
+  deadline = setTimeout(finish, durMs + 80);
   var frame = function (ts) {
     if (done) return;
     if (renderer.lost) { finish(); return; }
