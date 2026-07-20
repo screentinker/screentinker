@@ -2328,6 +2328,9 @@
         if (t && Array.isArray(t.effects) && t.effects.length && from && canTexture && transitionRuntimeReady()) {
           runImageTransition(from, img, t, item); // owns teardown + advance + preload
         } else {
+          txlog('no wipe: t=' + !!(t && t.effects && t.effects.length) + ' from=' + !!from
+            + ' canTex=' + canTexture + ' [imgComplete=' + img.complete + ' nW=' + img.naturalWidth + ' co=' + img.crossOrigin
+            + '] curImg=' + (function(){var e=document.getElementById('playerContainer').querySelector('img'); return e?('complete='+e.complete+',nW='+e.naturalWidth+',co='+e.crossOrigin+',read='+isMediaReadable(e)):'none';})());
           mountImage(img, item);                  // hard cut (never blank)
         }
       };
