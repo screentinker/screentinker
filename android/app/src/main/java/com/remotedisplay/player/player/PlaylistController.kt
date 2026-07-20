@@ -20,7 +20,9 @@ data class PlaylistItem(
     val muted: Boolean = false,
     val widgetId: String? = null,
     val widgetType: String? = null,
-    val schedules: List<ScheduleEval.Block> = emptyList()
+    val schedules: List<ScheduleEval.Block> = emptyList(),
+    // feat/transition-engine: the resolved GL transition this item plays INTO (null = hard cut).
+    val transition: TransitionSpec? = null
 ) {
     val isRemote: Boolean get() = !remoteUrl.isNullOrEmpty()
     // Widget assignments have a widget_id and no downloadable content file.
@@ -130,7 +132,8 @@ class PlaylistController(
                     muted = obj.optInt("muted", 0) == 1,
                     widgetId = if (obj.isNull("widget_id")) null else obj.optString("widget_id", "").ifEmpty { null },
                     widgetType = if (obj.isNull("widget_type")) null else obj.optString("widget_type", "").ifEmpty { null },
-                    schedules = parseSchedules(obj.optJSONArray("schedules"))
+                    schedules = parseSchedules(obj.optJSONArray("schedules")),
+                    transition = Transitions.parse(obj.optJSONObject("transition"))
                 )
             )
         }
@@ -146,10 +149,12 @@ class PlaylistController(
         // deliberately EXCLUDED so a duration-only edit does NOT force a restart; instead it's applied
         // IN PLACE below (the #group-sync schedule tick + the solo advance timer read durationSec live),
         // so timing edits take effect without interrupting playback or resetting the index.
+        // transition included so a transition-only edit re-renders instead of being de-duped (a
+        // cached-playlist device otherwise silently ignores it — the web/Tizen fingerprint bug).
         fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + (if (it.muted) "m" else "") + "|" +
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
-            }
+            } + "|" + (it.transition?.sig() ?: "")
         val oldContentIds = items.map(::sig)
         val newContentIds = newItems.map(::sig)
         val playlistChanged = oldContentIds != newContentIds

@@ -90,6 +90,9 @@ dependencies {
 
     // #74/#75: unit tests for the Kotlin schedule evaluator (vector drift guard)
     testImplementation("junit:junit:4.13.2")
+    // feat/transition-engine: real org.json on the unit-test classpath (the stubbed android.jar one
+    // returns defaults with isReturnDefaultValues=true) so TransitionParseTest exercises actual parsing.
+    testImplementation("org.json:json:20231013")
 }
 
 // #74/#75: point the evaluator drift-guard test at the SHARED vector contract
