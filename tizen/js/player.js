@@ -479,6 +479,22 @@ PlaylistPlayer.prototype._fitToCanvas = function (src, w, h, mode) {
   cx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
   return c;
 };
+// ONE persistent WebGL renderer, reused for every transition. A context per transition leaks GPU
+// contexts and chokes real hardware after a few; detaching the canvas between transitions keeps the
+// context alive, and only a genuine context loss forces a rebuild.
+PlaylistPlayer.prototype._getGlTransition = function () {
+  if (this._glTx && !this._glTx.renderer.lost) return this._glTx;
+  try {
+    var self = this;
+    var canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%';
+    var renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, {
+      onContextLost: function () { var a = self._glTxAbort; self._glTx = null; self._glTxAbort = null; if (a) a(); },
+    });
+    this._glTx = { canvas: canvas, renderer: renderer };
+    return this._glTx;
+  } catch (e) { this._glTx = null; return null; }
+};
 PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item, targetIdx, single) {
   var self = this, stage = this.stage;
   var effect = t.effects[Math.floor(Math.random() * t.effects.length)];   // vary among the chosen effects
@@ -488,27 +504,29 @@ PlaylistPlayer.prototype._runImageTransition = function (fromImg, toImg, t, item
     self.clearStage(); stage.appendChild(toImg);
     if (!single) { self.schedule(self.durationMs(item)); self.preloadImage(self.nextActiveIndex(targetIdx)); }
   };
-  if (!src) { swapPlain(); return; }
+  var gl = src ? this._getGlTransition() : null;
+  if (!gl) { swapPlain(); return; }                           // no shader / no WebGL -> plain swap
+  var canvas = gl.canvas, renderer = gl.renderer;
   var mode = this._fitMode(item);
   var w = stage.clientWidth || 1280, h = stage.clientHeight || 720;
-  var renderer = null, canvas = null, raf = 0, startTs = 0, done = false;
+  var raf = 0, startTs = 0, done = false;
   // end the transition once it's already begun (already scheduled) — swap in the plain image, no re-schedule
   var finish = function () {
     if (done) return; done = true;
     if (raf) cancelAnimationFrame(raf);
-    try { renderer && renderer.destroy(); } catch (e) {}
+    if (self._glTxAbort === finish) self._glTxAbort = null;
+    try { if (canvas.parentNode) canvas.parentNode.removeChild(canvas); } catch (e) {} // detach, keep context
     self.clearStage(); stage.appendChild(toImg);
     if (!single) self.preloadImage(self.nextActiveIndex(targetIdx));
   };
   try {
-    canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
-    canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%';
-    renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, { onContextLost: finish });
+    renderer.resize(w, h);                                    // size the persistent canvas to the stage
     renderer.setFrom(self._fitToCanvas(fromImg, w, h, mode)); // throws (SecurityError) on a tainted source
     renderer.setTo(self._fitToCanvas(toImg, w, h, mode));
     renderer.setShader(src);                                  // throws on a bad shader
     renderer.render(0, effect.params);
-  } catch (e) { swapPlain(); return; }                        // setup failed BEFORE scheduling -> plain swap
+  } catch (e) { try { if (canvas.parentNode) canvas.parentNode.removeChild(canvas); } catch (x) {} swapPlain(); return; }
+  self._glTxAbort = finish;                                   // context lost mid-transition -> finish
   stage.appendChild(canvas);                                  // over the outgoing <img>, both live
   // OVERLAP-not-additive: start the dwell clock now so the transition plays INSIDE the item's duration
   var dwellMs = this.durationMs(item);

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rd-player-v11';
+const CACHE_NAME = 'rd-player-v12';
 
 // Install: skip waiting to activate immediately
 self.addEventListener('install', (event) => {
