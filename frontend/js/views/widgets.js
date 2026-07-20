@@ -6,7 +6,7 @@ const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type':
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -16,6 +16,7 @@ const WIDGET_ICONS = {
   social: '&#128172;',
   'directory-board': '&#127970;',
   'directory-search': '&#128269;',
+  transition: '&#127916;',
 };
 const widgetTypeName = (id) => t(`widget.type.${id.replace(/-/g, '_')}.name`);
 const widgetTypeDesc = (id) => t(`widget.type.${id.replace(/-/g, '_')}.desc`);
@@ -476,12 +477,40 @@ export async function render(container) {
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wKeyboard" ${config.show_onscreen_keyboard === false ? '' : 'checked'}> ${t('widget.dirsearch.keyboard_label')}</label></div>`;
         break;
       }
+      case 'transition':
+        html += `
+          <div class="form-group"><label>${t('widget.trans.shader')}</label>
+            <select id="wTransShader" class="input" style="background:var(--bg-input)"></select>
+            <div id="wTransBlurb" style="font-size:11px;color:var(--text-muted);margin-top:6px"></div></div>
+          <div class="form-group">
+            <div style="position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9">
+              <canvas id="wTransCanvas" style="width:100%;height:100%;display:block"></canvas>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+              <button type="button" id="wTransPlay" class="btn btn-secondary" style="min-width:84px">${t('widget.trans.play')}</button>
+              <input type="range" id="wTransScrub" min="0" max="1000" value="0" style="flex:1;accent-color:var(--accent)">
+            </div>
+            <div id="wTransProgress" style="font-size:11px;color:var(--text-muted);text-align:right;margin-top:2px">0.00</div>
+          </div>
+          <div class="form-group"><label>${t('widget.trans.params')}</label><div id="wTransParams"></div></div>
+          <div class="form-group" style="max-width:220px"><label>${t('widget.trans.duration')}</label>
+            <input type="number" id="wTransDuration" class="input" value="${config.durationMs || 800}" min="150" max="3000" step="50"></div>
+          <div class="form-group" style="max-width:300px"><label>${t('widget.trans.scope')}</label>
+            <select id="wTransScope" class="input" style="background:var(--bg-input)">
+              <option value="next" ${config.scope !== 'all' ? 'selected' : ''}>${t('widget.trans.scope_next')}</option>
+              <option value="all" ${config.scope === 'all' ? 'selected' : ''}>${t('widget.trans.scope_all')}</option>
+            </select>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:6px">${t('widget.trans.scope_hint')}</div></div>`;
+        break;
     }
 
     document.getElementById('widgetConfigForm').innerHTML = html;
     const modalEl = document.querySelector('#widgetModal .modal');
-    if (modalEl) modalEl.style.width = type === 'directory-board' ? '720px' : '560px';
+    if (modalEl) modalEl.style.width = type === 'directory-board' ? '720px' : (type === 'transition' ? '620px' : '560px');
     document.getElementById('widgetModal').style.display = 'flex';
+    // Transitions carry their own live preview, so the iframe "Preview" button doesn't apply.
+    const pvBtn = document.getElementById('previewWidgetBtn');
+    if (pvBtn) pvBtn.style.display = (type === 'transition') ? 'none' : '';
 
     if (type === 'directory-board') {
       dirState.logo_url = config.logo_url || '';
@@ -512,6 +541,116 @@ export async function render(container) {
       dirState.logo_url = config.logo_url || '';
       renderLogoPicker();
     }
+
+    if (type === 'transition') initTransitionForm(config);
+  }
+
+  // Live transition picker: shader dropdown + WebGL preview of the selected shader crossing between two
+  // placeholder images + param sliders (from the shader's own declared ranges) + duration + scope. Uses
+  // the same runtime the player ships (/player/transitions.js), so the preview IS the shipping renderer.
+  let transState = { renderer: null, from: null, to: null, raf: 0, playing: false, t0: 0, params: {}, shaderId: null };
+  function ensureTransitionRuntime() {
+    if (window.TransitionRenderer && window.__TRANSITION_MANIFEST) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = '/player/transitions.js';
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    });
+  }
+  function transPlaceholder(color, label) {
+    const c = document.createElement('canvas'); c.width = 640; c.height = 360;
+    const cx = c.getContext('2d');
+    const g = cx.createLinearGradient(0, 0, 640, 360);
+    g.addColorStop(0, color[0]); g.addColorStop(1, color[1]); cx.fillStyle = g; cx.fillRect(0, 0, 640, 360);
+    cx.fillStyle = 'rgba(255,255,255,.9)'; cx.textBaseline = 'middle';
+    cx.font = '700 64px system-ui,sans-serif'; cx.fillText(label, 44, 176);
+    return c;
+  }
+  async function initTransitionForm(config) {
+    const canvas = document.getElementById('wTransCanvas');
+    const sel = document.getElementById('wTransShader');
+    const blurb = document.getElementById('wTransBlurb');
+    const scrub = document.getElementById('wTransScrub');
+    const progLbl = document.getElementById('wTransProgress');
+    const playBtn = document.getElementById('wTransPlay');
+    const paramsBox = document.getElementById('wTransParams');
+    if (!canvas || !sel) return;
+
+    const ready = await ensureTransitionRuntime();
+    if (!ready || !window.__TRANSITION_MANIFEST) {
+      blurb.textContent = t('widget.trans.unavailable');
+      sel.innerHTML = `<option>${t('widget.trans.unavailable')}</option>`;
+      return;
+    }
+    const MAN = window.__TRANSITION_MANIFEST;
+    sel.innerHTML = MAN.map((m) => `<option value="${escAttr(m.id)}">${escAttr(m.name)}</option>`).join('');
+    if (config.shader && MAN.some((m) => m.id === config.shader)) sel.value = config.shader;
+
+    canvas.width = 640; canvas.height = 360;
+    try {
+      transState.renderer = window.TransitionRenderer.createRenderer(canvas, window.TransitionParams, { preserveDrawingBuffer: true });
+      transState.from = transPlaceholder(['#f97316', '#b91c1c'], 'A');
+      transState.to = transPlaceholder(['#0ea5e9', '#155e75'], 'B');
+      transState.renderer.setFrom(transState.from);
+      transState.renderer.setTo(transState.to);
+    } catch (e) { blurb.textContent = t('widget.trans.unavailable'); return; }
+
+    const render = () => {
+      const p = (+scrub.value) / 1000;
+      progLbl.textContent = p.toFixed(2);
+      try { transState.renderer.render(p, transState.params); } catch (e) {}
+    };
+    const selectShader = (id) => {
+      const m = MAN.find((x) => x.id === id) || MAN[0];
+      transState.shaderId = m.id;
+      blurb.textContent = m.blurb || '';
+      try { transState.renderer.setShader(window.__TRANSITION_SHADERS[m.id]); }
+      catch (e) { blurb.textContent = t('widget.trans.compile_error'); return; }
+      // resolve stored params over the shader's declared defaults/ranges, then build sliders
+      const stored = (config.shader === m.id && config.params) ? config.params : {};
+      transState.params = window.TransitionParams.resolveParams(
+        m.params.map((pp) => ({ name: pp.name, default: pp.default, min: pp.min, max: pp.max })), stored);
+      paramsBox.innerHTML = '';
+      m.params.forEach((pp) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:6px';
+        const lab = document.createElement('label');
+        lab.textContent = pp.name; lab.style.cssText = 'font-size:12px;color:var(--text-muted);min-width:104px';
+        const r = document.createElement('input');
+        r.type = 'range'; r.dataset.param = pp.name;
+        r.min = pp.min; r.max = pp.max; r.step = (pp.max - pp.min) / 200 || 0.001;
+        r.value = transState.params[pp.name]; r.style.cssText = 'flex:1;accent-color:var(--accent)';
+        const v = document.createElement('span');
+        v.textContent = (+transState.params[pp.name]).toFixed(2);
+        v.style.cssText = 'font:600 11px ui-monospace,monospace;color:var(--text-muted);min-width:44px;text-align:right';
+        r.oninput = () => { transState.params[pp.name] = +r.value; v.textContent = (+r.value).toFixed(2); render(); };
+        row.appendChild(lab); row.appendChild(r); row.appendChild(v); paramsBox.appendChild(row);
+      });
+      render();
+    };
+    sel.onchange = () => selectShader(sel.value);
+    scrub.oninput = render;
+
+    // auto-play loop (eased, with holds); auto-stops when the modal closes (canvas leaves the DOM)
+    const DUR = 1600, HOLD = 500;
+    const loop = (ts) => {
+      if (!document.body.contains(canvas)) { transState.playing = false; return; }
+      if (!transState.t0) transState.t0 = ts;
+      const cycle = DUR + HOLD * 2, e = (ts - transState.t0) % cycle;
+      let p = e < HOLD ? 0 : e > HOLD + DUR ? 1 : (e - HOLD) / DUR;
+      p = p <= 0 ? 0 : p >= 1 ? 1 : (1 - Math.cos(p * Math.PI)) / 2;
+      scrub.value = Math.round(p * 1000); render();
+      if (transState.playing) transState.raf = requestAnimationFrame(loop);
+    };
+    playBtn.onclick = () => {
+      transState.playing = !transState.playing;
+      playBtn.textContent = transState.playing ? t('widget.trans.pause') : t('widget.trans.play');
+      if (transState.playing) { transState.t0 = 0; transState.raf = requestAnimationFrame(loop); }
+      else cancelAnimationFrame(transState.raf);
+    };
+    selectShader(sel.value);
   }
 
   function renderDirCategories(opts = {}) {
@@ -770,6 +909,17 @@ export async function render(container) {
       case 'text': Object.assign(config, { html: val('wHtml'), css: val('wCss'), background: val('wBg') }); break;
       case 'webpage': Object.assign(config, { url: val('wUrl'), zoom: parseInt(val('wZoom')) || 100, refresh_interval: parseInt(val('wRefresh')) || 0 }); break;
       case 'social': Object.assign(config, { platform: val('wPlatform'), query: val('wQuery') }); break;
+      case 'transition': {
+        const params = {};
+        document.querySelectorAll('#wTransParams input[type=range]').forEach(r => { params[r.dataset.param] = parseFloat(r.value); });
+        Object.assign(config, {
+          shader: val('wTransShader'),
+          params,
+          durationMs: parseInt(val('wTransDuration')) || 800,
+          scope: val('wTransScope') || 'next',
+        });
+        break;
+      }
       case 'directory-board': Object.assign(config, {
         title: val('wTitle') || ' ',
         logo_url: dirState.logo_url || '',
