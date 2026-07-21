@@ -327,10 +327,21 @@ async function loadWidgetForEdit(widgetId) {
   try {
     const w = await api.getWidget(widgetId);
     const cfg = typeof w.config === 'string' ? JSON.parse(w.config || '{}') : (w.config || {});
-    if (!cfg.design || !Array.isArray(cfg.design.elements)) return; // nothing to rehydrate
-    elements = cfg.design.elements;
-    bgValue = cfg.design.bgValue || '#000000';
-    bgImageDataUrl = cfg.design.bgImage || null;
+    if (cfg.design && Array.isArray(cfg.design.elements)) {
+      // Preferred: the exact design source saved with the widget.
+      elements = cfg.design.elements;
+      bgValue = cfg.design.bgValue || '#000000';
+      bgImageDataUrl = cfg.design.bgImage || null;
+    } else if (typeof cfg.html === 'string' && cfg.html) {
+      // Legacy widget (published before the design source was stored): best-effort reconstruct the
+      // editable elements from the deterministic HTML the designer produced.
+      const r = reconstructDesign(cfg.html);
+      elements = r.elements;
+      bgValue = cfg.background || '#000000';
+      bgImageDataUrl = r.bgImage || null;
+    } else {
+      return; // nothing to rehydrate
+    }
     editingWidgetId = w.id;
     editingWidgetName = w.name;
     selectedIdx = -1;
@@ -339,6 +350,54 @@ async function loadWidgetForEdit(widgetId) {
     redraw();
     showToast(t('designer.toast.loaded'), 'success');
   } catch (e) { showToast((e && e.message) || t('designer.toast.invalid_file'), 'error'); }
+}
+
+// Best-effort reverse of generateInnerHTML() for LEGACY widgets that stored only the rendered HTML.
+// The designer's output is deterministic (positioned elements + a known <script> per dynamic type), so
+// it round-trips cleanly for designer-made content; unrecognized nodes are skipped. Returns { elements,
+// bgImage }.
+function reconstructDesign(html) {
+  const out = { elements: [], bgImage: null };
+  let root;
+  try { root = new DOMParser().parseFromString(`<div id="__r">${html}</div>`, 'text/html').getElementById('__r'); }
+  catch (e) { return out; }
+  if (!root) return out;
+  const rgbToHex = (c) => {
+    if (!c) return '#FFFFFF';
+    if (c[0] === '#') return c;
+    const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    return m ? '#' + [1, 2, 3].map((i) => (+m[i]).toString(16).padStart(2, '0')).join('') : '#FFFFFF';
+  };
+  const pct = (v) => parseFloat(v) || 0;
+  const fontVw = (el) => { const f = parseFloat(el.style.fontSize); return isFinite(f) ? Math.round(f * 10) : 36; };
+  const scriptFor = (id) => { for (const s of root.querySelectorAll('script')) if ((s.textContent || '').includes(`'${id}'`)) return s.textContent || ''; return ''; };
+  for (const node of Array.from(root.children)) {
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'script' || tag === 'style') continue;
+    const st = node.style;
+    const x = pct(st.left), y = pct(st.top);
+    if (tag === 'img') {
+      if (!st.left && (st.inset || st.objectFit === 'cover')) { out.bgImage = node.getAttribute('src'); continue; } // baked background
+      out.elements.push({ type: 'image', x, y, width: pct(st.width), height: pct(st.height), src: node.getAttribute('src') });
+    } else if (tag === 'video') {
+      out.elements.push({ type: 'video', x, y, width: pct(st.width), height: pct(st.height), src: node.getAttribute('src'), muted: node.hasAttribute('muted'), loop: node.hasAttribute('loop') });
+    } else if (tag === 'iframe') {
+      out.elements.push({ type: 'webpage', x, y, width: pct(st.width), height: pct(st.height), url: node.getAttribute('src') });
+    } else if (tag === 'div') {
+      const id = node.id || '';
+      const base = { x, y, fontSize: fontVw(node), color: rgbToHex(st.color), fontFamily: st.fontFamily || 'Arial' };
+      const cd = node.querySelector('[id^="cd"]');   // countdown: inner cdN div
+      const tk = node.querySelector('[id^="t"]');    // ticker: inner tN div
+      if (/^c\d+$/.test(id)) { const sc = scriptFor(id); out.elements.push({ ...base, bold: true, type: 'clock', showSeconds: /second:'2-digit'/.test(sc), format: /hour12:false/.test(sc) ? '24h' : '12h' }); }
+      else if (/^d\d+$/.test(id)) { out.elements.push({ ...base, type: 'date' }); }
+      else if (/^w\d+$/.test(id)) { const sc = scriptFor(id); const loc = (sc.match(/wttr\.in\/([^?]+)\?/) || [])[1]; out.elements.push({ ...base, type: 'weather', location: loc ? decodeURIComponent(loc) : '', units: /temp_C/.test(sc) ? 'metric' : 'imperial' }); }
+      else if (cd) { const sc = scriptFor(cd.id); const lbl = node.querySelector('div'); out.elements.push({ ...base, type: 'countdown', label: lbl ? lbl.textContent : '', targetDate: (sc.match(/new Date\('([^']+)'\)/) || [])[1] || '' }); }
+      else if (tk && (st.overflow === 'hidden' || st.display === 'flex')) { const sc = scriptFor(tk.id); const feed = (sc.match(/rss_url=([^']+)'/) || [])[1]; out.elements.push({ type: 'ticker', x, y, width: pct(st.width), height: pct(st.height), bgColor: rgbToHex(st.background || st.backgroundColor), color: rgbToHex(tk.style.color), feedUrl: feed ? decodeURIComponent(feed) : '', speed: parseFloat((tk.style.animation || '').match(/([\d.]+)s/)?.[1]) || 30, fontSize: fontVw(tk) }); }
+      else if ((st.background || st.backgroundColor) && st.width && st.height && !node.textContent.trim()) { const circle = st.borderRadius === '50%'; out.elements.push({ type: 'shape', x, y, width: pct(st.width), height: pct(st.height), color: rgbToHex(st.background || st.backgroundColor), opacity: parseFloat(st.opacity) || 1, shape: circle ? 'circle' : 'rect', radius: circle ? 0 : (parseInt(st.borderRadius) || 0) }); }
+      else { out.elements.push({ ...base, type: 'text', text: node.textContent, bold: st.fontWeight === 'bold' || st.fontWeight === '700', shadow: !!st.textShadow }); }
+    }
+  }
+  return out;
 }
 
 function addElement(el) {

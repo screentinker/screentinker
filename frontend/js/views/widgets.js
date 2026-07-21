@@ -1029,9 +1029,13 @@ export async function render(container) {
         const w = widgets.find(x => x.id === editBtn.dataset.editWidget);
         if (w) {
           const config = JSON.parse(w.config || '{}');
-          // A widget built in the content designer carries its `design` source — reopen it IN the
-          // designer for visual editing instead of the raw HTML/CSS form.
-          if (config.design && Array.isArray(config.design.elements)) {
+          // Reopen designer-made widgets IN the designer for visual editing instead of the raw HTML form.
+          // New designs carry a `design` source; legacy ones (HTML only) are detected by the designer's
+          // signature output (every element is absolutely positioned) — the designer reconstructs their
+          // elements from the HTML. Hand-written HTML text widgets lack the pattern and keep the editor.
+          const designerMade = (config.design && Array.isArray(config.design.elements))
+            || (w.widget_type === 'text' && typeof config.html === 'string' && /position:absolute;left:/.test(config.html));
+          if (designerMade) {
             window.location.hash = '#/designer/' + w.id;
             return;
           }
