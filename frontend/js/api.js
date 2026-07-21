@@ -134,6 +134,7 @@ export const api = {
 
   // Widgets
   getWidgets: () => request('/widgets'),
+  getWidget: (id) => request('/widgets/' + id),
 
   // Device Groups
   getGroups: () => request('/groups'),

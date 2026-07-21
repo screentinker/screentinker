@@ -25,12 +25,18 @@ let bgValue = '#000000';
 let bgImageDataUrl = null;
 let dragging = null;
 let dragStart = null;
+// When editing an existing designer-made widget: its id + name, so Publish UPDATES it (PUT) instead of
+// creating a new one. Null = a fresh design (create).
+let editingWidgetId = null;
+let editingWidgetName = null;
 
-export function render(container) {
+export function render(container, widgetId) {
   elements = [];
   selectedIdx = -1;
   bgValue = '#000000';
   bgImageDataUrl = null;
+  editingWidgetId = null;
+  editingWidgetName = null;
 
   container.innerHTML = `
     <div class="page-header">
@@ -197,18 +203,19 @@ export function render(container) {
 
   document.getElementById('deleteEl').onclick = () => { if (selectedIdx >= 0) { elements.splice(selectedIdx, 1); selectedIdx = -1; redraw(); } };
 
-  // Publish as dynamic HTML content
+  // Publish as a widget. The config carries the rendered HTML (what the player shows) AND the `design`
+  // source (elements + background) so the widget can be reopened in THIS designer and edited visually
+  // instead of dropping into the raw HTML editor. Editing an existing designer widget PUTs it in place.
   document.getElementById('publishBtn').onclick = async () => {
     try {
-      const html = generateHTML();
-      const blob = new Blob([html], { type: 'text/html' });
-      const file = new File([blob], `design-${Date.now()}.html`, { type: 'text/html' });
-      // Upload as a widget instead - create a text widget with the HTML
-      const res = await fetch('/api/widgets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ widget_type: 'text', name: t('designer.widget_name', { date: new Date().toLocaleDateString() }), config: { html: generateInnerHTML(), css: '', background: bgValue } })
-      });
+      const config = { html: generateInnerHTML(), css: '', background: bgValue, design: { elements, bgValue, bgImage: bgImageDataUrl } };
+      const auth = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` };
+      let res;
+      if (editingWidgetId) {
+        res = await fetch('/api/widgets/' + editingWidgetId, { method: 'PUT', headers: auth, body: JSON.stringify({ name: editingWidgetName, config }) });
+      } else {
+        res = await fetch('/api/widgets', { method: 'POST', headers: auth, body: JSON.stringify({ widget_type: 'text', name: t('designer.widget_name', { date: new Date().toLocaleDateString() }), config }) });
+      }
       if (res.ok) showToast(t('designer.toast.published'), 'success');
       else showToast(t('designer.toast.publish_failed'), 'error');
     } catch (err) { showToast(err.message, 'error'); }
@@ -310,6 +317,28 @@ export function render(container) {
   preview.onmouseup = () => { dragging = null; dragStart = null; };
 
   redraw();
+  if (widgetId) loadWidgetForEdit(widgetId);
+}
+
+// Reopen a designer-made widget for visual editing: pull its stored `design` source back into the
+// canvas and remember its id/name so Publish updates it in place. Widgets without a design source
+// (e.g. hand-written text widgets) simply don't route here.
+async function loadWidgetForEdit(widgetId) {
+  try {
+    const w = await api.getWidget(widgetId);
+    const cfg = typeof w.config === 'string' ? JSON.parse(w.config || '{}') : (w.config || {});
+    if (!cfg.design || !Array.isArray(cfg.design.elements)) return; // nothing to rehydrate
+    elements = cfg.design.elements;
+    bgValue = cfg.design.bgValue || '#000000';
+    bgImageDataUrl = cfg.design.bgImage || null;
+    editingWidgetId = w.id;
+    editingWidgetName = w.name;
+    selectedIdx = -1;
+    const pub = document.getElementById('publishBtn');
+    if (pub) pub.textContent = t('common.save'); // updating an existing widget, not publishing a new one
+    redraw();
+    showToast(t('designer.toast.loaded'), 'success');
+  } catch (e) { showToast((e && e.message) || t('designer.toast.invalid_file'), 'error'); }
 }
 
 function addElement(el) {

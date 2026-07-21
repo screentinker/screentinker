@@ -1028,9 +1028,15 @@ export async function render(container) {
       if (editBtn) {
         const w = widgets.find(x => x.id === editBtn.dataset.editWidget);
         if (w) {
+          const config = JSON.parse(w.config || '{}');
+          // A widget built in the content designer carries its `design` source — reopen it IN the
+          // designer for visual editing instead of the raw HTML/CSS form.
+          if (config.design && Array.isArray(config.design.elements)) {
+            window.location.hash = '#/designer/' + w.id;
+            return;
+          }
           editingWidget = w;
           creatingType = w.widget_type;
-          const config = JSON.parse(w.config || '{}');
           config._name = w.name;
           showConfigForm(w.widget_type, config);
         }
