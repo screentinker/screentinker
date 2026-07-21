@@ -1397,6 +1397,26 @@
     // stage so this device's tile is the visible portion. Each tile is
     // 100vw × 100vh; the stage is the full grid, translated by this tile's
     // grid position (plus bezel offsets in px between tiles).
+    // #200: keep advanceTimer consistent with the current playback mode. A schedule-driven device (wall
+    // FOLLOWER or group member) runs NO local advance timer — its tick drives the index, and a stale solo
+    // timer would spuriously advance and desync (zombie timer, Bug B). A solo player or wall LEADER
+    // advances locally, so on the way OUT of a schedule-driven mode a surviving image/widget item (which
+    // never armed a timer while driven) would freeze (Bug C) — re-render it (buffered, no flash) to re-arm.
+    // Video/YouTube self-advance via their own end handlers and re-rendering would restart them, so leave
+    // those alone. Called on every mode enter/exit (applyWallMode/applyGroupSync), which is the single
+    // chokepoint every transition path routes through.
+    function reconcileAdvanceTimerForMode() {
+      if (isWallFollower() || groupSync) {
+        if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+        return;
+      }
+      if (!isPlaying) return;
+      const item = playlist[currentIndex];
+      if (!item || advanceTimer) return;   // solo/leader that already has its timer armed -> nothing to do
+      const needsSoloTimer = !!item.widget_id || (typeof item.mime_type === 'string' && item.mime_type.startsWith('image/'));
+      if (needsSoloTimer) playCurrentItem();   // re-render buffered + re-arm the solo advance timer
+    }
+
     function applyWallMode(config) {
       const container = document.getElementById('playerContainer');
       // Tear down previous wall mode (clear sync timer regardless of new state)
@@ -1407,6 +1427,7 @@
         wallConfig = null;
         container.classList.remove('wall-mode');
         console.log('[wall] exited wall mode');
+        reconcileAdvanceTimerForMode();   // #200: back to solo -> re-arm a surviving image/widget's timer
         return;
       }
       wallConfig = config;
@@ -1443,6 +1464,7 @@
           socket.emit('wall:sync-request', { wall_id: config.wall_id });
         }
       }
+      reconcileAdvanceTimerForMode();   // #200: follower -> kill any stale solo timer; leader keeps its own
     }
 
     function emitWallSync() {
@@ -1562,6 +1584,7 @@
       if (!cfg) {
         if (groupSync) groupReport('info', 'group-sync exited'); groupSync = null; console.log('[group-sync] exited');
         if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) {} groupPreloadEl = null; groupPreloadIdx = -1; }
+        reconcileAdvanceTimerForMode();   // #200: back to solo -> re-arm a surviving image/widget's timer
         return;
       }
       const first = !groupSync;
@@ -1571,6 +1594,7 @@
       groupReport('info', 'group-sync ' + (first ? 'entered' : 'refresh') + ' group=' + String(cfg.group_id).slice(0, 8) + ' off=' + clockOffsetMs + 'ms');
       groupScheduleTick();                                    // align immediately
       groupSyncTimer = setInterval(groupScheduleTick, 250);   // 4Hz local correction
+      reconcileAdvanceTimerForMode();   // #200: group member runs no solo timer -> kill any zombie
     }
 
     // Map the player rect into this device's viewport using vw/vh so the
