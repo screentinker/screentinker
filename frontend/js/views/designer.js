@@ -210,9 +210,15 @@ export function render(container, widgetId) {
     try {
       const config = { html: generateInnerHTML(), css: '', background: bgValue, design: { elements, bgValue, bgImage: bgImageDataUrl } };
       const auth = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` };
+      // The URL is the source of truth for WHICH widget is being edited (#/designer/<id>). route() can
+      // re-fire and momentarily reset editingWidgetId, so fall back to the hash — otherwise a save races
+      // to POST a duplicate instead of updating the original.
+      const targetId = editingWidgetId || (location.hash.match(/#\/designer\/([^/?]+)/) || [])[1] || null;
       let res;
-      if (editingWidgetId) {
-        res = await fetch('/api/widgets/' + editingWidgetId, { method: 'PUT', headers: auth, body: JSON.stringify({ name: editingWidgetName, config }) });
+      if (targetId) {
+        const body = { config };
+        if (editingWidgetName) body.name = editingWidgetName; // preserve the name; server keeps it if omitted
+        res = await fetch('/api/widgets/' + targetId, { method: 'PUT', headers: auth, body: JSON.stringify(body) });
       } else {
         res = await fetch('/api/widgets', { method: 'POST', headers: auth, body: JSON.stringify({ widget_type: 'text', name: t('designer.widget_name', { date: new Date().toLocaleDateString() }), config }) });
       }
