@@ -69,6 +69,41 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
     console.warn('Thumbnail/metadata generation failed:', e.message);
   }
 
+  if (config.bunnyStorageEndpoint && config.bunnyApiKey && config.bunnyPullZone) {
+    try {
+      const fs = require('fs');
+      const uploadToBunny = async (localPath, bunnyFilename) => {
+        const fileStream = fs.createReadStream(localPath);
+        const url = `${config.bunnyStorageEndpoint.replace(/\/$/, '')}/${bunnyFilename}`;
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: { 'AccessKey': config.bunnyApiKey },
+          body: fileStream,
+          duplex: 'half'
+        });
+        if (!res.ok) throw new Error(`BunnyCDN upload failed: ${res.statusText}`);
+        return `${config.bunnyPullZone.replace(/\/$/, '')}/${bunnyFilename}`;
+      };
+
+      const bunnyFileUrl = await uploadToBunny(file.path, filepath);
+      let bunnyThumbUrl = null;
+      if (thumbnailPath) {
+        bunnyThumbUrl = await uploadToBunny(path.join(config.contentDir, thumbnailPath), thumbnailPath);
+        fs.unlink(path.join(config.contentDir, thumbnailPath), () => {});
+      }
+      fs.unlink(file.path, () => {});
+
+      db.prepare(`
+        INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id, remote_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, userId, workspaceId, safeFilename(file.originalname), '', file.mimetype, file.size, durationSec, bunnyThumbUrl, width, height, folderId || null, bunnyFileUrl);
+      
+      return db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    } catch (e) {
+      console.warn('BunnyCDN upload failed, falling back to local storage:', e.message);
+    }
+  }
+
   db.prepare(`
     INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

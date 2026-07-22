@@ -338,4 +338,9 @@ module.exports = {
   // #143 throttle the reclaim-deferred log to once per device per window, so a
   // retrying/stuck device can't flood stdout (same discipline as the content-ack shed log).
   reclaimRejectLogWindowMs: parseInt(process.env.RECLAIM_REJECT_LOG_WINDOW_MS) || 60000,
+  
+  // BunnyStorage Integration
+  bunnyStorageEndpoint: process.env.VITE_BUNNY_STORAGE_ENDPOINT || '',
+  bunnyApiKey: process.env.VITE_BUNNY_API_KEY || '',
+  bunnyPullZone: process.env.VITE_BUNNY_PULL_ZONE || '',
 };
