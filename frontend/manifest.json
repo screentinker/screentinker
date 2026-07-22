@@ -1,11 +1,11 @@
 {
-  "name": "ScreenTinker",
-  "short_name": "ScreenTinker",
+  "name": "GoldenSignage",
+  "short_name": "GoldenSignage",
   "description": "Digital Signage Management",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#111827",
-  "theme_color": "#3B82F6",
+  "background_color": "#09090b",
+  "theme_color": "#ff6b00",
   "orientation": "any",
   "icons": [
     {

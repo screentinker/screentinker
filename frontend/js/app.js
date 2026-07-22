@@ -543,7 +543,7 @@ window.addEventListener('hashchange', () => { if (isAuthenticated()) refreshCurr
 
 // Register PWA service worker
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw-admin.js').catch(() => {});
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
 // Mobile sidebar: open/close via hamburger, backdrop, nav tap, Escape
@@ -640,3 +640,45 @@ document.addEventListener('click', (e) => {
   const modal = document.getElementById(id);
   if (modal) modal.style.display = 'none';
 });
+
+// Custom Pull-to-Refresh logic for mobile PWA standalone
+let pwaTouchStartY = 0;
+let pwaIsPulling = false;
+
+document.addEventListener('touchstart', (e) => {
+  // Only start pull-to-refresh if we are at the very top of the page
+  const scrollElement = document.querySelector('.content') || document.documentElement;
+  if (scrollElement.scrollTop === 0) {
+    pwaTouchStartY = e.changedTouches[0].screenY;
+    pwaIsPulling = true;
+  } else {
+    pwaIsPulling = false;
+  }
+}, { passive: true });
+
+document.addEventListener('touchend', (e) => {
+  if (!pwaIsPulling) return;
+  const pwaTouchEndY = e.changedTouches[0].screenY;
+  
+  if (pwaTouchEndY - pwaTouchStartY > 150) { 
+    if ('caches' in window) {
+      caches.keys().then((names) => {
+        Promise.all(names.map(name => caches.delete(name)))
+          .then(() => {
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then((registrations) => {
+                for (let registration of registrations) {
+                  registration.unregister();
+                }
+                window.location.reload(true);
+              });
+            } else {
+              window.location.reload(true);
+            }
+          });
+      });
+    } else {
+      window.location.reload(true);
+    }
+  }
+}, { passive: true });
