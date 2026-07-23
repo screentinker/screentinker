@@ -117,6 +117,7 @@ export function render(container) {
       </label>
     </div>
     <div id="folderBreadcrumb" style="display:flex;gap:6px;align-items:center;margin-bottom:12px;font-size:13px;flex-wrap:wrap"></div>
+    <div id="batchToolbar" style="display:none"></div>
     <div id="folderGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px"></div>
     <div class="content-grid" id="contentGrid">
       <div class="empty-state" style="grid-column:1/-1"><h3>${t('common.loading')}</h3></div>
@@ -230,6 +231,8 @@ const state = {
   search: '',            // #214: server-side text search (spans the whole workspace)
   type: 'all',           // #214: type filter — all | video | image | youtube | web
   sort: 'date_desc',     // #214: sort order — date_desc | date_asc | name | size
+  selected: new Set(),   // #213: ids selected for batch operations (scoped to the current view)
+  lastClickedId: null,   // #213: anchor for shift-click range selection
 };
 
 async function handleFiles(files) {
@@ -419,7 +422,10 @@ async function loadContent() {
     grid.innerHTML = content.map(c => {
       const exp = expiryInfo(c);
       return `
-      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${c.folder || ''}" style="${exp.expired ? 'opacity:.55' : ''}">
+      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${c.folder || ''}" style="position:relative;${state.selected.has(c.id) ? 'outline:2px solid var(--primary,#3B82F6);outline-offset:-2px;' : ''}${exp.expired ? 'opacity:.55' : ''}">
+        <label class="content-select-wrap" style="position:absolute;top:6px;left:6px;z-index:2;background:rgba(0,0,0,.55);border-radius:4px;padding:3px;display:flex;cursor:pointer">
+          <input type="checkbox" class="content-select" data-content-id="${c.id}" ${state.selected.has(c.id) ? 'checked' : ''} style="width:16px;height:16px;margin:0;cursor:pointer">
+        </label>
         <div class="content-item-preview">
           ${c.mime_type === 'video/youtube'
             ? `<div style="position:relative;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center">
@@ -491,8 +497,34 @@ async function loadContent() {
       });
     });
 
+    // #213: selection checkboxes (with shift-click range). `content` is the current page's
+    // ordered list, so a range fills between the anchor and the clicked item.
+    grid.querySelectorAll('.content-select').forEach(cb => {
+      cb.addEventListener('click', (e) => {
+        const id = cb.dataset.contentId;
+        if (e.shiftKey && state.lastClickedId) {
+          const order = content.map(c => c.id);
+          const a = order.indexOf(state.lastClickedId);
+          const b = order.indexOf(id);
+          if (a !== -1 && b !== -1) {
+            const [lo, hi] = a < b ? [a, b] : [b, a];
+            const on = cb.checked; // apply the clicked box's new state across the range
+            for (let i = lo; i <= hi; i++) { if (on) state.selected.add(order[i]); else state.selected.delete(order[i]); }
+          }
+        } else if (cb.checked) {
+          state.selected.add(id);
+        } else {
+          state.selected.delete(id);
+        }
+        state.lastClickedId = id;
+        loadContent(); // re-render to reflect range + selection outlines + toolbar
+      });
+    });
+
     // Delete handler via event delegation
     grid.onclick = async (e) => {
+      // #213: ignore clicks originating on a selection checkbox (handled above).
+      if (e.target.closest('.content-select-wrap')) return;
       // Preview on click (not on delete button)
       const previewTarget = e.target.closest('.content-item-preview');
       if (previewTarget) {
@@ -552,9 +584,85 @@ async function loadContent() {
       }, 3000);
     };
 
+    // #213: batch-operations toolbar reflects the current selection.
+    renderBatchToolbar(content);
+
   } catch (err) {
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>${t('content.failed_to_load')}</h3><p>${esc(err.message)}</p></div>`;
   }
+}
+
+// #213: the batch toolbar — shown only when something is selected. `visible` is the current
+// page's items, used by "select all". Actions validate/act atomically server-side; on success
+// the selection is cleared and the grid reloaded.
+function renderBatchToolbar(visible) {
+  const bar = document.getElementById('batchToolbar');
+  if (!bar) return;
+  const count = state.selected.size;
+  if (count === 0) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+
+  const allVisibleSelected = visible.length > 0 && visible.every(c => state.selected.has(c.id));
+  bar.style.display = 'flex';
+  bar.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg)';
+  bar.innerHTML = `
+    <strong style="font-size:13px">${t('content.batch_selected', { count })}</strong>
+    <button class="btn btn-secondary btn-sm" id="batchSelectAll">${allVisibleSelected ? t('content.batch_select_none') : t('content.batch_select_all')}</button>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+      <select id="batchMoveFolder" class="input btn-sm" style="width:auto;background:var(--bg-input)">
+        <option value="">${t('content.batch_move_placeholder')}</option>
+        <option value="__root__">${t('content.folder_root_option')}</option>
+        ${state.folders.map(f => `<option value="${f.id}">${esc(folderPath(f, state.folders))}</option>`).join('')}
+      </select>
+      <button class="btn btn-danger btn-sm" id="batchDelete">${t('content.batch_delete', { count })}</button>
+    </div>
+  `;
+
+  bar.querySelector('#batchSelectAll').onclick = () => {
+    if (allVisibleSelected) visible.forEach(c => state.selected.delete(c.id));
+    else visible.forEach(c => state.selected.add(c.id));
+    loadContent();
+  };
+
+  bar.querySelector('#batchMoveFolder').onchange = async (e) => {
+    const val = e.target.value;
+    if (!val) return;
+    const folderId = val === '__root__' ? null : val;
+    const ids = [...state.selected];
+    try {
+      await api.batchMoveContent(ids, folderId);
+      showToast(t('content.toast.batch_moved', { count: ids.length }), 'success');
+      state.selected.clear();
+      state.lastClickedId = null;
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+      e.target.value = '';
+    }
+  };
+
+  const delBtn = bar.querySelector('#batchDelete');
+  delBtn.onclick = async () => {
+    const ids = [...state.selected];
+    if (delBtn.dataset.confirming !== 'true') {
+      delBtn.dataset.confirming = 'true';
+      delBtn.textContent = t('content.batch_delete_confirm', { count: ids.length });
+      setTimeout(() => { if (delBtn.dataset.confirming === 'true') { delBtn.dataset.confirming = 'false'; delBtn.textContent = t('content.batch_delete', { count: ids.length }); } }, 3000);
+      return;
+    }
+    try {
+      delBtn.disabled = true;
+      await api.batchDeleteContent(ids);
+      showToast(t('content.toast.batch_deleted', { count: ids.length }), 'success');
+      state.selected.clear();
+      state.lastClickedId = null;
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+      delBtn.disabled = false;
+      delBtn.dataset.confirming = 'false';
+      delBtn.textContent = t('content.batch_delete', { count: ids.length });
+    }
+  };
 }
 
 function showEditModal(contentItem, onSave) {

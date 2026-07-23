@@ -75,6 +75,15 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify({ folder_id: folderId })
   }),
+  // #213: batch operations — the whole batch succeeds or fails atomically server-side.
+  batchDeleteContent: (ids) => request('/content/batch/delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids })
+  }),
+  batchMoveContent: (ids, folderId) => request('/content/batch/move', {
+    method: 'POST',
+    body: JSON.stringify({ ids, folder_id: folderId || null })
+  }),
 
   // Folders
   getFolders: () => request('/folders'),

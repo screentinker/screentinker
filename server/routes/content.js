@@ -271,6 +271,132 @@ function checkContentWrite(req, res) {
   return content;
 }
 
+// #213: boolean form of checkContentWrite for batch paths (no res side effects). True if
+// req.user may modify this content row. Mirrors checkContentWrite's authorization exactly.
+function contentWritable(req, content) {
+  if (!content) return false;
+  if (!content.workspace_id) return PLATFORM_ROLES.includes(req.user.role);
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
+  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  if (!ctx) return false;
+  if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return false;
+  return true;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// #213: shared single-row teardown used by DELETE /:id and POST /batch/delete. Removes the
+// row's files, scrubs it from published snapshots in its workspace, deletes the row (cascades
+// playlist_items). Returns the device ids whose playlists referenced it so the caller can push
+// updates. Pure DB+FS, no HTTP. `content.id` MUST be a validated UUID (LIKE scrub) and the
+// caller MUST have authorized the write. File unlinks are wrapped so they never throw.
+function purgeContentRow(content) {
+  const id = content.id;
+  const unlink = (rel) => {
+    if (!rel) return;
+    const p = path.join(config.contentDir, path.basename(rel));
+    if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (e) { /* best-effort */ } }
+  };
+  unlink(content.filepath);
+  unlink(content.thumbnail_path);
+  unlink(content.subtitle_url); // #216 sidecar (undefined on pre-#216 rows — no-op)
+
+  const affected = db.prepare(`
+    SELECT DISTINCT d.id as device_id FROM devices d
+    JOIN playlists p ON d.playlist_id = p.id
+    JOIN playlist_items pi ON pi.playlist_id = p.id
+    WHERE pi.content_id = ?
+  `).all(id).map(r => r.device_id);
+
+  const snapshotPlaylists = db.prepare(
+    "SELECT id, published_snapshot FROM playlists WHERE workspace_id = ? AND published_snapshot LIKE ?"
+  ).all(content.workspace_id, `%${id}%`);
+  for (const pl of snapshotPlaylists) {
+    try {
+      const items = JSON.parse(pl.published_snapshot);
+      const filtered = items.filter(item => item.content_id !== id);
+      if (filtered.length !== items.length) {
+        db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?').run(JSON.stringify(filtered), pl.id);
+      }
+    } catch (e) { /* corrupt snapshot, skip */ }
+  }
+
+  db.prepare('DELETE FROM content WHERE id = ?').run(id);
+  return affected;
+}
+
+// #213: push a playlist refresh to a set of device ids (deduped). Silent on any failure.
+function pushContentUpdates(req, deviceIds) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const { buildPlaylistPayload } = require('../ws/deviceSocket');
+    const commandQueue = require('../lib/command-queue');
+    const deviceNs = io.of('/device');
+    for (const id of new Set(deviceIds)) {
+      commandQueue.queueOrEmitPlaylistUpdate(deviceNs, id, buildPlaylistPayload);
+    }
+  } catch (e) { /* silent */ }
+}
+
+// #213: batch delete. Validates + authorizes EVERY id first (atomic — the whole batch is
+// rejected if any id is malformed/missing/forbidden), then deletes in one transaction.
+router.post('/batch/delete', (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
+  if (!ids || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array' });
+  if (ids.length > 500) return res.status(400).json({ error: 'Too many items (max 500 per batch)' });
+
+  const rows = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) return res.status(400).json({ error: `Invalid content ID: ${id}` });
+    const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    if (!content) return res.status(404).json({ error: `Content not found: ${id}` });
+    if (!contentWritable(req, content)) return res.status(403).json({ error: `Access denied for content: ${id}` });
+    rows.push(content);
+  }
+
+  const affected = new Set();
+  db.transaction(() => {
+    for (const content of rows) for (const d of purgeContentRow(content)) affected.add(d);
+  })();
+  pushContentUpdates(req, affected);
+  res.json({ success: true, deleted: rows.length, affectedDevices: [...affected] });
+});
+
+// #213: batch move. Reassigns folder_id for many items at once. Folder is organizational only
+// (not in the published snapshot), so no device push is needed. Same atomic validate-all-first.
+router.post('/batch/move', (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
+  const folderId = req.body.folder_id || null;
+  if (!ids || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array' });
+  if (ids.length > 500) return res.status(400).json({ error: 'Too many items (max 500 per batch)' });
+
+  const rows = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) return res.status(400).json({ error: `Invalid content ID: ${id}` });
+    const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    if (!content) return res.status(404).json({ error: `Content not found: ${id}` });
+    if (!contentWritable(req, content)) return res.status(403).json({ error: `Access denied for content: ${id}` });
+    rows.push(content);
+  }
+  // Target folder (if any) must exist and share the workspace of every moved item.
+  if (folderId) {
+    const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(folderId);
+    if (!target) return res.status(400).json({ error: 'Invalid folder_id' });
+    for (const content of rows) {
+      if (target.workspace_id !== content.workspace_id) {
+        return res.status(403).json({ error: 'Cannot move content to a folder in another workspace' });
+      }
+    }
+  }
+
+  db.transaction(() => {
+    const stmt = db.prepare('UPDATE content SET folder_id = ? WHERE id = ?');
+    for (const content of rows) stmt.run(folderId, content.id);
+  })();
+  res.json({ success: true, moved: rows.length, folder_id: folderId });
+});
+
 // Get content metadata
 router.get('/:id', (req, res) => {
   const content = checkContentRead(req, res);
@@ -411,65 +537,14 @@ router.get('/:id/thumbnail', (req, res) => {
 router.delete('/:id', (req, res) => {
   const content = checkContentWrite(req, res);
   if (!content) return;
-
-  // Delete file from disk (skip for remote URL content)
-  if (content.filepath) {
-    const filePath = path.join(config.contentDir, content.filepath);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }
-
-  // Delete thumbnail
-  if (content.thumbnail_path) {
-    const thumbPath = path.join(config.contentDir, content.thumbnail_path);
-    if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
-  }
-
-  // Get devices that have this content in their playlist (via playlist_items)
-  const affectedDevices = db.prepare(`
-    SELECT DISTINCT d.id as device_id FROM devices d
-    JOIN playlists p ON d.playlist_id = p.id
-    JOIN playlist_items pi ON pi.playlist_id = p.id
-    WHERE pi.content_id = ?
-  `).all(req.params.id);
-
-  // Scrub published snapshots that reference this content
-  // Validate UUID format to prevent LIKE wildcard injection
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // Validate UUID format to prevent LIKE wildcard injection in the snapshot scrub.
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid content ID format' });
-  // Phase 2.2k: scope snapshot scrubbing by content.workspace_id (was content.user_id).
-  // Playlists referencing this content live in the same workspace; user_id-keying missed
-  // cross-user playlists in the same workspace once playlists became workspace-scoped.
-  const snapshotPlaylists = db.prepare(
-    "SELECT id, published_snapshot FROM playlists WHERE workspace_id = ? AND published_snapshot LIKE ?"
-  ).all(content.workspace_id, `%${req.params.id}%`);
-  for (const pl of snapshotPlaylists) {
-    try {
-      const items = JSON.parse(pl.published_snapshot);
-      const filtered = items.filter(item => item.content_id !== req.params.id);
-      if (filtered.length !== items.length) {
-        db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
-          .run(JSON.stringify(filtered), pl.id);
-      }
-    } catch (e) { /* corrupt snapshot, skip */ }
-  }
 
-  // Delete from DB (cascades to playlist_items via ON DELETE CASCADE)
-  db.prepare('DELETE FROM content WHERE id = ?').run(req.params.id);
-
-  // Push updated snapshots to affected devices
-  try {
-    const io = req.app.get('io');
-    if (io) {
-      const { buildPlaylistPayload } = require('../ws/deviceSocket');
-      const commandQueue = require('../lib/command-queue');
-      const deviceNs = io.of('/device');
-      for (const d of affectedDevices) {
-        commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.device_id, buildPlaylistPayload);
-      }
-    }
-  } catch (e) { /* silent */ }
-
-  res.json({ success: true, affectedDevices: affectedDevices.map(d => d.device_id) });
+  // #213: shared teardown (file removal + snapshot scrub + row delete). Returns the affected
+  // device ids so we can push a refresh.
+  const affectedDevices = purgeContentRow(content);
+  pushContentUpdates(req, affectedDevices);
+  res.json({ success: true, affectedDevices });
 });
 
 module.exports = router;
