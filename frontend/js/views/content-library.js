@@ -231,7 +231,7 @@ async function handleFiles(files) {
       await api.uploadContent(file, (pct) => {
         progressFill.style.width = pct + '%';
         progressText.textContent = t('content.upload_progress_named_pct', { name: file.name, pct });
-      });
+      }, state.currentFolderId);
       showToast(t('content.toast.uploaded_named', { name: file.name }), 'success');
     } catch (err) {
       showToast(t('content.toast.upload_failed_named', { name: file.name, error: err.message }), 'error');

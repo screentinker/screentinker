@@ -99,7 +99,7 @@ router.post('/', checkStorageLimit, upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     // #73: shared ingest - identical processing + insert for dashboard and agency uploads.
-    const content = await ingestUploadedFile({ file: req.file, userId: req.user.id, workspaceId: req.workspaceId });
+    const content = await ingestUploadedFile({ file: req.file, userId: req.user.id, workspaceId: req.workspaceId, folderId: req.body.folder_id || null });
     res.status(201).json(content);
   } catch (err) {
     console.error('Upload error:', err);

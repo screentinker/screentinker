@@ -83,9 +83,10 @@ export const api = {
     body: JSON.stringify({ parent_id: parentId || null })
   }),
   deleteFolder: (id) => request(`/folders/${id}`, { method: 'DELETE' }),
-  uploadContent: async (file, onProgress) => {
+  uploadContent: async (file, onProgress, folderId) => {
     const formData = new FormData();
     formData.append('file', file);
+    if (folderId) formData.append('folder_id', folderId);
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
