@@ -297,6 +297,12 @@ export function render(container) {
     document.getElementById('pairingCodeInput').value = '';
     document.getElementById('deviceNameInput').value = '';
     document.getElementById('pairingCodeInput').focus();
+
+    const serverUrl = `${window.location.protocol}//${window.location.host}`;
+    const el = document.getElementById('addDeviceServerUrl');
+    if (el) el.textContent = serverUrl;
+    const tvEl = document.getElementById('addDeviceSmartTvUrl');
+    if (tvEl) tvEl.textContent = `${serverUrl}/player`;
   });
 
   // #device-owner: provision a fresh/factory-reset Android panel straight from Add Display.

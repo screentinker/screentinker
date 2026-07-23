@@ -1176,6 +1176,8 @@ export default {
   'add_display.web_player': 'Reproductor web',
   'add_display.raspberry_pi': 'Raspberry Pi',
   'add_display.windows': 'Windows',
-  'add_display.smart_tv_note': 'Smart TVs (LG/Samsung): abre el navegador integrado y ve a <code style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px">/player</code>',
   'add_display.pair_btn': 'Vincular pantalla',
+  'add_display.server_url_label': 'URL del servidor',
+  'add_display.server_url_hint': 'Usa esta URL al configurar la app de Android',
+  'add_display.smart_tv_prefix': 'Smart TVs (LG/Samsung): abre el navegador integrado y ve a',
 };
