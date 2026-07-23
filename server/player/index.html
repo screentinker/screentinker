@@ -2035,6 +2035,10 @@
             playlist: shouldLoop ? videoId : undefined,
             enablejsapi: 1,
             origin: window.location.origin,
+            // #217: cap quality at 720p for items flagged "unstable connection" so weak
+            // WiFi doesn't stall on an auto-selected 1080p+ stream. vq is a hint the player
+            // may still override, so we also call setPlaybackQuality in onReady below.
+            vq: item.unstable_connection ? 'hd720' : undefined,
           },
           events: {
             onReady: (event) => {
@@ -2060,6 +2064,12 @@
                     nextItem();
                   }, (duration + 3) * 1000);
                 }
+              }
+              // #217: best-effort quality cap for weak WiFi. setPlaybackQuality is a
+              // hint (YouTube may still adapt), but combined with the vq playerVar it
+              // biases the initial selection toward 720p instead of 1080p+.
+              if (item.unstable_connection) {
+                try { event.target.setPlaybackQuality('hd720'); } catch {}
               }
             },
             onError: (event) => {

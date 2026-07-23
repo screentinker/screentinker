@@ -528,6 +528,7 @@ function showEditModal(contentItem, onSave) {
   overlay.style.display = 'flex';
 
   const isRemote = !!contentItem.remote_url;
+  const isYoutube = contentItem.mime_type === 'video/youtube';
 
   overlay.innerHTML = `
     <div class="modal" style="max-width:500px;width:95vw">
@@ -571,6 +572,15 @@ function showEditModal(contentItem, onSave) {
           <input type="datetime-local" id="editExpiresAt" class="input" style="background:var(--bg-input)" value="${toLocalDatetimeInput(contentItem.expires_at)}">
           <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_hint')}</p>
         </div>
+        ${isYoutube ? `
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="editUnstableConnection" ${contentItem.unstable_connection ? 'checked' : ''} style="width:auto;margin:0">
+            <span>${t('content.label_unstable_connection')}</span>
+          </label>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.unstable_connection_hint')}</p>
+        </div>
+        ` : ''}
         ${!isRemote ? `
         <div class="form-group">
           <label>${t('content.label_replace_file')}</label>
@@ -613,6 +623,12 @@ function showEditModal(contentItem, onSave) {
       const newExpiry = expiryRaw ? Math.floor(new Date(expiryRaw).getTime() / 1000) : null;
       const curExpiry = contentItem.expires_at != null ? Number(contentItem.expires_at) : null;
       if (newExpiry !== curExpiry) updateData.expires_at = newExpiry;
+      // #217: YouTube-only "unstable connection" quality cap.
+      const unstableEl = overlay.querySelector('#editUnstableConnection');
+      if (unstableEl) {
+        const newUnstable = unstableEl.checked ? 1 : 0;
+        if (newUnstable !== (contentItem.unstable_connection ? 1 : 0)) updateData.unstable_connection = newUnstable;
+      }
 
       if (Object.keys(updateData).length > 0) {
         await fetch('/api/content/' + contentItem.id, {

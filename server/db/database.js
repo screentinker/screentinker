@@ -376,6 +376,10 @@ const migrations = [
   // Every other existing local user stays 0 -> prompted on first login.
   "UPDATE users SET email_verified = 1 WHERE auth_provider != 'local'",
   "UPDATE users SET email_verified = 1 WHERE role = 'platform_admin'",
+  // #217: per-item "unstable connection" flag. When set, the player caps the YouTube
+  // embed at 720p (playerVars.vq='hd720') so weak/unstable WiFi on Android TV doesn't
+  // buffer/stall on an auto-selected 1080p+ stream. DEFAULT 0 = no cap (today's behaviour).
+  "ALTER TABLE content ADD COLUMN unstable_connection INTEGER NOT NULL DEFAULT 0",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

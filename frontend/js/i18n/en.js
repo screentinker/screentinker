@@ -218,6 +218,8 @@ export default {
   'content.label_folder': 'Folder',
   'content.label_expires_at': 'Expiry date',
   'content.expires_hint': 'After this date the item stops serving and is dropped from playlists. Leave blank for no expiry.',
+  'content.label_unstable_connection': 'Unstable connection (cap at 720p)',
+  'content.unstable_connection_hint': 'Forces YouTube to a 720p ceiling so weak or unstable WiFi buffers less. Leave off for full quality.',
   'content.label_replace_file': 'Replace File',
   'content.replace_file_hint': 'Leave empty to keep current file',
   'content.folder_root_option': '— Root —',

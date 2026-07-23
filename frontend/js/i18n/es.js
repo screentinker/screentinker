@@ -175,6 +175,8 @@ export default {
   'content.label_remote_url_field': 'URL remota',
   'content.label_mime_type': 'Tipo MIME',
   'content.label_folder': 'Carpeta',
+  'content.label_unstable_connection': 'Conexión inestable (limitar a 720p)',
+  'content.unstable_connection_hint': 'Fuerza un tope de 720p en YouTube para que el WiFi débil o inestable almacene menos en búfer. Déjalo desactivado para calidad completa.',
   'content.label_replace_file': 'Reemplazar archivo',
   'content.replace_file_hint': 'Déjalo vacío para mantener el archivo actual',
   'content.folder_root_option': '— Raíz —',

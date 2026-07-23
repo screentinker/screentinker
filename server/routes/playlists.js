@@ -68,7 +68,7 @@ function buildSnapshotItems(playlistId) {
   const items = db.prepare(`
     SELECT pi.id AS _iid, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
            COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
-           c.duration_sec as content_duration, c.remote_url,
+           c.duration_sec as content_duration, c.remote_url, c.unstable_connection,
            w.name as widget_name, w.widget_type, w.config as widget_config
     FROM playlist_items pi
     LEFT JOIN content c ON pi.content_id = c.id

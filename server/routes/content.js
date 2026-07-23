@@ -242,7 +242,7 @@ router.put('/:id', (req, res) => {
   const content = checkContentWrite(req, res);
   if (!content) return;
 
-  const { filename, mime_type, remote_url, folder, folder_id, expires_at } = req.body;
+  const { filename, mime_type, remote_url, folder, folder_id, expires_at, unstable_connection } = req.body;
   const updates = [];
   const values = [];
   if (filename !== undefined) { updates.push('filename = ?'); values.push(safeFilename(filename)); }
@@ -288,6 +288,12 @@ router.put('/:id', (req, res) => {
     }
     updates.push('expires_at = ?'); values.push(val);
     updates.push('is_active = 1');
+  }
+  // #217: force a lower YouTube quality ceiling for weak/unstable WiFi. Stored 0/1;
+  // accepts booleans or 0/1 from the client and coerces to an integer.
+  if (unstable_connection !== undefined) {
+    updates.push('unstable_connection = ?');
+    values.push(unstable_connection ? 1 : 0);
   }
 
   if (updates.length > 0) {
