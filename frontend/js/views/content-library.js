@@ -218,24 +218,32 @@ const state = {
 };
 
 async function handleFiles(files) {
+  const list = Array.from(files);
+  if (list.length === 0) return;
   const progress = document.getElementById('uploadProgress');
   const progressFill = document.getElementById('uploadProgressFill');
   const progressText = document.getElementById('uploadProgressText');
 
-  for (const file of files) {
-    progress.style.display = 'block';
-    progressFill.style.width = '0%';
-    progressText.textContent = t('content.upload_progress_named', { name: file.name });
+  // #212: send all selected files in a single request with aggregate progress, instead
+  // of one sequential XHR per file.
+  progress.style.display = 'block';
+  progressFill.style.width = '0%';
+  const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
+  progressText.textContent = label;
 
-    try {
-      await api.uploadContent(file, (pct) => {
-        progressFill.style.width = pct + '%';
-        progressText.textContent = t('content.upload_progress_named_pct', { name: file.name, pct });
-      }, state.currentFolderId);
-      showToast(t('content.toast.uploaded_named', { name: file.name }), 'success');
-    } catch (err) {
-      showToast(t('content.toast.upload_failed_named', { name: file.name, error: err.message }), 'error');
-    }
+  try {
+    await api.uploadContent(list, (pct) => {
+      progressFill.style.width = pct + '%';
+      progressText.textContent = `${label} — ${pct}%`;
+    }, state.currentFolderId);
+    showToast(
+      list.length === 1
+        ? t('content.toast.uploaded_named', { name: list[0].name })
+        : t('content.toast.uploaded_count', { count: list.length }),
+      'success'
+    );
+  } catch (err) {
+    showToast(t('content.toast.upload_failed_named', { name: label, error: err.message }), 'error');
   }
 
   progress.style.display = 'none';

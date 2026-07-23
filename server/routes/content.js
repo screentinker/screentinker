@@ -93,14 +93,27 @@ router.get('/folders', (req, res) => {
 });
 
 // Upload content
-router.post('/', checkStorageLimit, upload.single('file'), async (req, res) => {
+// #212: multi-file upload. Accept the new `files` field (up to 20) and keep the legacy
+// single `file` field so older clients / API callers / the replace flow are unaffected.
+const uploadContentFiles = upload.fields([
+  { name: 'files', maxCount: 20 },
+  { name: 'file', maxCount: 1 },
+]);
+router.post('/', checkStorageLimit, uploadContentFiles, async (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+    if (files.length === 0) return res.status(400).json({ error: 'No file uploaded' });
 
     // #73: shared ingest - identical processing + insert for dashboard and agency uploads.
-    const content = await ingestUploadedFile({ file: req.file, userId: req.user.id, workspaceId: req.workspaceId, folderId: req.body.folder_id || null });
-    res.status(201).json(content);
+    const folderId = req.body.folder_id || null;
+    const results = [];
+    for (const file of files) {
+      results.push(await ingestUploadedFile({ file, userId: req.user.id, workspaceId: req.workspaceId, folderId }));
+    }
+    // Backward-compatible shape: a single upload still returns the content object (what
+    // every existing caller reads); a multi-file upload returns the array of them.
+    res.status(201).json(results.length === 1 ? results[0] : results);
   } catch (err) {
     console.error('Upload error:', err);
     res.status(500).json({ error: 'Upload failed' });

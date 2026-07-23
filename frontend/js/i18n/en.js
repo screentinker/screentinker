@@ -172,6 +172,7 @@ export default {
   'content.upload_progress': 'Uploading...',
   'content.upload_progress_named': 'Uploading {name}...',
   'content.upload_progress_named_pct': 'Uploading {name}... {pct}%',
+  'content.upload_progress_count': 'Uploading {count} files...',
   // Remote URL panel
   'content.remote_url': 'Remote URL',
   'content.remote_desc': 'Stream directly from a URL. Saves local bandwidth.',
@@ -241,6 +242,7 @@ export default {
   'content.toast.deleted': 'Content deleted',
   'content.toast.updated': 'Content updated',
   'content.toast.uploaded_named': '{name} uploaded successfully',
+  'content.toast.uploaded_count': '{count} files uploaded successfully',
   'content.toast.upload_failed_named': 'Failed to upload {name}: {error}',
   'content.toast.folder_created_named': 'Folder "{name}" created',
   'content.toast.folder_renamed': 'Folder renamed',

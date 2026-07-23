@@ -83,9 +83,14 @@ export const api = {
     body: JSON.stringify({ parent_id: parentId || null })
   }),
   deleteFolder: (id) => request(`/folders/${id}`, { method: 'DELETE' }),
+  // #212: accepts a single File or an array/FileList of Files. All go up in one request
+  // under the `files` field (the server also still accepts the legacy `file` field).
+  // onProgress reports aggregate percent across the whole batch. Resolves to the content
+  // object for a single file, or an array of them for a batch.
   uploadContent: async (file, onProgress, folderId) => {
+    const files = (file instanceof FileList || Array.isArray(file)) ? Array.from(file) : [file];
     const formData = new FormData();
-    formData.append('file', file);
+    for (const f of files) formData.append('files', f);
     if (folderId) formData.append('folder_id', folderId);
 
     return new Promise((resolve, reject) => {
