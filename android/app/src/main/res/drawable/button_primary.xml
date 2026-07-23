@@ -1,10 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Keeps the touch press ripple, and adds a high-contrast white stroke on
+  state_focused so D-pad navigation on Android TV is visible from across the
+  room (the bare <ripple> only reacted to state_pressed). See issue #209.
+-->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
     android:color="#2563EB">
     <item>
-        <shape android:shape="rectangle">
-            <solid android:color="#3B82F6" />
-            <corners android:radius="8dp" />
-        </shape>
+        <selector>
+            <item android:state_focused="true">
+                <shape android:shape="rectangle">
+                    <solid android:color="#3B82F6" />
+                    <stroke android:width="3dp" android:color="#FFFFFF" />
+                    <corners android:radius="8dp" />
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#3B82F6" />
+                    <corners android:radius="8dp" />
+                </shape>
+            </item>
+        </selector>
     </item>
 </ripple>
