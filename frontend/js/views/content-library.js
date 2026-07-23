@@ -96,7 +96,21 @@ export function render(container) {
     </div>
 
     <div style="display:flex;gap:12px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-      <input type="text" id="contentSearch" class="input" placeholder="${t('content.search_placeholder')}" style="max-width:250px;width:100%">
+      <input type="text" id="contentSearch" class="input" placeholder="${t('content.search_placeholder')}" style="max-width:250px;width:100%" value="${esc(state.search)}">
+      <select id="contentTypeFilter" class="input btn-sm" style="width:auto;background:var(--bg-input)">
+        <option value="all" ${state.type === 'all' ? 'selected' : ''}>${t('content.filter_type_all')}</option>
+        <option value="video" ${state.type === 'video' ? 'selected' : ''}>${t('content.filter_type_video')}</option>
+        <option value="image" ${state.type === 'image' ? 'selected' : ''}>${t('content.filter_type_image')}</option>
+        <option value="youtube" ${state.type === 'youtube' ? 'selected' : ''}>${t('content.filter_type_youtube')}</option>
+        <option value="web" ${state.type === 'web' ? 'selected' : ''}>${t('content.filter_type_web')}</option>
+      </select>
+      <select id="contentSort" class="input btn-sm" style="width:auto;background:var(--bg-input)">
+        <option value="date_desc" ${state.sort === 'date_desc' ? 'selected' : ''}>${t('content.sort_newest')}</option>
+        <option value="date_asc" ${state.sort === 'date_asc' ? 'selected' : ''}>${t('content.sort_oldest')}</option>
+        <option value="name" ${state.sort === 'name' ? 'selected' : ''}>${t('content.sort_name')}</option>
+        <option value="size" ${state.sort === 'size' ? 'selected' : ''}>${t('content.sort_size')}</option>
+      </select>
+      <span id="contentResultCount" style="font-size:13px;color:var(--text-muted)"></span>
       <button class="btn btn-secondary btn-sm" id="newFolderBtn">${t('content.new_folder_btn')}</button>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;margin-left:auto">
         <input type="checkbox" id="showExpiredToggle" ${state.showExpired ? 'checked' : ''}> ${t('content.show_expired')}
@@ -174,19 +188,17 @@ export function render(container) {
     }
   });
 
-  // Content search filters items currently shown in the grid.
-  function filterContent() {
-    const q = document.getElementById('contentSearch').value.toLowerCase();
-    document.querySelectorAll('.content-item').forEach(item => {
-      const name = item.querySelector('.content-item-name')?.textContent.toLowerCase() || '';
-      item.style.display = (!q || name.includes(q)) ? '' : 'none';
-    });
-    document.querySelectorAll('.folder-card').forEach(card => {
-      const name = card.dataset.name?.toLowerCase() || '';
-      card.style.display = (!q || name.includes(q)) ? '' : 'none';
-    });
-  }
-  document.getElementById('contentSearch').oninput = filterContent;
+  // #214: search/type/sort now query the server so results span the whole workspace,
+  // not just the items already rendered on the current page. Search is debounced to
+  // avoid a request per keystroke.
+  let searchTimer = null;
+  document.getElementById('contentSearch').oninput = (e) => {
+    clearTimeout(searchTimer);
+    const v = e.target.value;
+    searchTimer = setTimeout(() => { state.search = v.trim(); loadContent(); }, 300);
+  };
+  document.getElementById('contentTypeFilter').onchange = (e) => { state.type = e.target.value; loadContent(); };
+  document.getElementById('contentSort').onchange = (e) => { state.sort = e.target.value; loadContent(); };
 
   // #157: "Show expired" — reloads the grid including deactivated / past-expiry items so
   // they can be inspected and restored (clear/extend expiry in the edit modal).
@@ -215,6 +227,9 @@ const state = {
   currentFolderId: null, // null = root
   folders: [],           // all folders for this user (flat tree)
   showExpired: false,    // #157: include is_active=0 / past-expiry items in the library view
+  search: '',            // #214: server-side text search (spans the whole workspace)
+  type: 'all',           // #214: type filter — all | video | image | youtube | web
+  sort: 'date_desc',     // #214: sort order — date_desc | date_asc | name | size
 };
 
 async function handleFiles(files) {
@@ -250,10 +265,22 @@ async function loadContent() {
 
   try {
     const [content, folders] = await Promise.all([
-      api.getContent(state.currentFolderId === null ? null : state.currentFolderId, state.showExpired),
+      api.getContent(state.currentFolderId === null ? null : state.currentFolderId, state.showExpired, {
+        q: state.search, type: state.type, sort: state.sort,
+      }),
       api.getFolders(),
     ]);
     state.folders = folders;
+
+    // #214: while a search or type filter is active, results span the whole workspace,
+    // so surface a count and note the folder scope no longer applies.
+    const countEl = document.getElementById('contentResultCount');
+    if (countEl) {
+      const filtering = state.search || (state.type && state.type !== 'all');
+      countEl.textContent = filtering
+        ? t('content.result_count', { count: content.length })
+        : '';
+    }
 
     // Breadcrumb path: walk parent_id chain from current folder up to root.
     const folderById = new Map(folders.map(f => [f.id, f]));

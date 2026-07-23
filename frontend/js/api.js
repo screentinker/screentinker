@@ -54,11 +54,19 @@ export const api = {
   }),
 
   // Content
-  getContent: (folderId, includeExpired = false) => {
-    const exp = includeExpired ? '&include_expired=1' : '';
-    if (folderId === undefined) return request(`/content${exp ? '?' + exp.slice(1) : ''}`);
-    const q = folderId === null ? 'root' : encodeURIComponent(folderId);
-    return request(`/content?folder_id=${q}${exp}`);
+  getContent: (folderId, includeExpired = false, opts = {}) => {
+    const p = new URLSearchParams();
+    // #214: a text search spans the whole workspace, so folder_id is only sent when
+    // NOT searching (the server also ignores folder_id when q is present, but keeping
+    // the client in sync avoids a misleading URL).
+    const searching = opts.q && opts.q.trim();
+    if (!searching && folderId !== undefined) p.set('folder_id', folderId === null ? 'root' : folderId);
+    if (includeExpired) p.set('include_expired', '1');
+    if (searching) p.set('q', opts.q.trim());
+    if (opts.type && opts.type !== 'all') p.set('type', opts.type);
+    if (opts.sort) p.set('sort', opts.sort);
+    const qs = p.toString();
+    return request(`/content${qs ? '?' + qs : ''}`);
   },
   getContentItem: (id) => request(`/content/${id}`),
   deleteContent: (id) => request(`/content/${id}`, { method: 'DELETE' }),

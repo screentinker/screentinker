@@ -69,7 +69,11 @@ router.get('/', (req, res) => {
     sql += " AND is_active = 1 AND (expires_at IS NULL OR expires_at > strftime('%s','now'))";
   }
   if (folder) { sql += ' AND folder = ?'; params.push(folder); }
-  if (folderId !== undefined) {
+  // #214: a text search (?q=) spans the whole workspace, not just the open folder —
+  // "searching for a logo on page 1 shouldn't miss logos in another folder". When q is
+  // absent we keep the folder-scoped browse behaviour.
+  const q = (req.query.q || '').trim();
+  if (!q && folderId !== undefined) {
     if (folderId === 'root' || folderId === '') {
       sql += ' AND folder_id IS NULL';
     } else {
@@ -77,7 +81,31 @@ router.get('/', (req, res) => {
       params.push(folderId);
     }
   }
-  sql += ' ORDER BY folder, created_at DESC LIMIT ? OFFSET ?';
+  if (q) {
+    // Leading-wildcard LIKE (no index) — fine for the library's scale. Escape the LIKE
+    // metacharacters so a filename with % or _ is matched literally.
+    const esc = q.replace(/[\\%_]/g, (m) => '\\' + m);
+    sql += " AND filename LIKE ? ESCAPE '\\'";
+    params.push('%' + esc + '%');
+  }
+  // #214: type filter. youtube (video/youtube) and web (any other remote_url) are split
+  // out from plain uploaded video/image so the UI's four buckets map cleanly.
+  switch (req.query.type) {
+    case 'image':   sql += " AND mime_type LIKE 'image/%'"; break;
+    case 'video':   sql += " AND mime_type LIKE 'video/%' AND mime_type != 'video/youtube'"; break;
+    case 'youtube': sql += " AND mime_type = 'video/youtube'"; break;
+    case 'web':     sql += " AND remote_url IS NOT NULL AND mime_type != 'video/youtube'"; break;
+    // default / 'all' / unknown: no type constraint
+  }
+  // #214: whitelisted sort (never interpolate user input into ORDER BY). Default keeps the
+  // legacy newest-first ordering.
+  const SORTS = {
+    date_desc: 'created_at DESC',
+    date_asc:  'created_at ASC',
+    name:      'filename COLLATE NOCASE ASC',
+    size:      'file_size DESC',
+  };
+  sql += ' ORDER BY ' + (SORTS[req.query.sort] || SORTS.date_desc) + ' LIMIT ? OFFSET ?';
   params.push(Math.min(parseInt(req.query.limit) || 100, 500), parseInt(req.query.offset) || 0);
   const content = db.prepare(sql).all(...params);
   res.json(content);
