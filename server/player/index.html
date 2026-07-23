@@ -513,6 +513,10 @@
     let ytApiCallbacks = [];
     let activeYtPlayer = null;
     let ytGeneration = 0;
+    // #215: fallback advance timer for YouTube. Shorts (and some Android TV WebViews)
+    // never fire the ENDED state, so onStateChange alone can stall the playlist. Armed
+    // in onReady from the reported duration, cleared on ENDED/onError/teardown.
+    let ytSafetyNet = null;
 
     // AudioContext is created lazily on the first user gesture. Resuming it
     // is what convinces stricter browsers (Firefox) that the site is "user-
@@ -1964,6 +1968,7 @@
       const myGeneration = ++ytGeneration;
 
       // Destroy old player without triggering side effects (callbacks check generation)
+      if (ytSafetyNet) { clearTimeout(ytSafetyNet); ytSafetyNet = null; }
       if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch {} activeYtPlayer = null; }
 
       // Vertical (Shorts) content is tagged st_aspect=vertical at ingest. Render it
@@ -2040,9 +2045,26 @@
                 event.target.unMute();
                 event.target.setVolume(100);
               }
+              // #215 safety net: if ENDED never fires (Shorts, flaky Android TV
+              // WebViews), advance from the reported duration + 3s slack. Cleared
+              // on a real ENDED, on error, or on teardown. Skip when looping (a
+              // single-item playlist intentionally loops forever).
+              if (!shouldLoop) {
+                let duration = 0;
+                try { duration = event.target.getDuration(); } catch {}
+                if (duration > 0) {
+                  clearTimeout(ytSafetyNet);
+                  ytSafetyNet = setTimeout(() => {
+                    if (myGeneration !== ytGeneration) return;
+                    console.log('YouTube safety net fired for:', item.filename);
+                    nextItem();
+                  }, (duration + 3) * 1000);
+                }
+              }
             },
             onError: (event) => {
               if (myGeneration !== ytGeneration) return;
+              clearTimeout(ytSafetyNet); ytSafetyNet = null;
               console.error('YouTube error', event.data, 'for:', item.filename);
               if (playlist.length > 1) {
                 console.log('Skipping unplayable YouTube video');
@@ -2056,6 +2078,7 @@
               // YT.PlayerState.ENDED = 0 — advance to next video
               // Ignore ENDED if video played for less than 3 seconds (spurious during init)
               if (event.data === 0 && !shouldLoop && (Date.now() - playStartTime) > 3000) {
+                clearTimeout(ytSafetyNet); ytSafetyNet = null;
                 console.log('YouTube video ended:', item.filename);
                 nextItem();
               }
@@ -2085,6 +2108,9 @@
       // On a buffered widget reveal (keep set) the widget's advance/refresh timer was just
       // armed by renderContent and must survive; only a real teardown cancels it.
       if (!keep && advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+      // #215: a stale YouTube safety-net timer must never fire into a torn-down/rotated
+      // playlist and force a spurious advance.
+      if (ytSafetyNet) { clearTimeout(ytSafetyNet); ytSafetyNet = null; }
       // Cancel any in-flight buffered widget swap so its deferred reveal can't fire after
       // we've torn down (which would drop the incoming content). reveal() nulls this before
       // calling teardownCurrentMedia(iframe), so preserving `keep` is safe.
