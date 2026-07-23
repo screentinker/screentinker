@@ -380,6 +380,15 @@ const migrations = [
   // embed at 720p (playerVars.vq='hd720') so weak/unstable WiFi on Android TV doesn't
   // buffer/stall on an auto-selected 1080p+ stream. DEFAULT 0 = no cap (today's behaviour).
   "ALTER TABLE content ADD COLUMN unstable_connection INTEGER NOT NULL DEFAULT 0",
+  // #216: subtitle/caption support as a content property (applied automatically by the
+  // player, no in-player controls). YouTube uses captions_enabled + captions_lang (via the
+  // IFrame API); uploaded videos use subtitle_url (a .vtt filename in the content dir,
+  // served at /uploads/content/<file>) + subtitle_lang for the <track> element. All default
+  // off/NULL so existing content is unchanged.
+  "ALTER TABLE content ADD COLUMN captions_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE content ADD COLUMN captions_lang TEXT",
+  "ALTER TABLE content ADD COLUMN subtitle_url TEXT",
+  "ALTER TABLE content ADD COLUMN subtitle_lang TEXT",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

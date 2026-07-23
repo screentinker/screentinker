@@ -409,7 +409,8 @@ router.put('/:id', (req, res) => {
   const content = checkContentWrite(req, res);
   if (!content) return;
 
-  const { filename, mime_type, remote_url, folder, folder_id, expires_at, unstable_connection } = req.body;
+  const { filename, mime_type, remote_url, folder, folder_id, expires_at, unstable_connection,
+          captions_enabled, captions_lang, subtitle_url, subtitle_lang } = req.body;
   const updates = [];
   const values = [];
   if (filename !== undefined) { updates.push('filename = ?'); values.push(safeFilename(filename)); }
@@ -462,6 +463,21 @@ router.put('/:id', (req, res) => {
     updates.push('unstable_connection = ?');
     values.push(unstable_connection ? 1 : 0);
   }
+  // #216: caption/subtitle metadata. The subtitle FILE is uploaded via POST /:id/subtitle;
+  // these fields toggle YouTube captions, set languages, or clear a subtitle (subtitle_url=null).
+  if (captions_enabled !== undefined) {
+    updates.push('captions_enabled = ?'); values.push(captions_enabled ? 1 : 0);
+  }
+  if (captions_lang !== undefined) {
+    updates.push('captions_lang = ?'); values.push(captions_lang ? String(captions_lang).slice(0, 10) : null);
+  }
+  if (subtitle_url !== undefined) {
+    // Only null (clear) is accepted here — a real subtitle_url is set by the upload endpoint.
+    updates.push('subtitle_url = ?'); values.push(subtitle_url ? String(subtitle_url).slice(0, 255) : null);
+  }
+  if (subtitle_lang !== undefined) {
+    updates.push('subtitle_lang = ?'); values.push(subtitle_lang ? String(subtitle_lang).slice(0, 10) : null);
+  }
 
   if (updates.length > 0) {
     values.push(req.params.id);
@@ -509,6 +525,29 @@ router.put('/:id/replace', upload.single('file'), async (req, res) => {
   db.prepare(`UPDATE content SET filepath = ?, mime_type = ?, file_size = ?, thumbnail_path = ?, width = ?, height = ? WHERE id = ?`)
     .run(filepath, req.file.mimetype, req.file.size, thumbnailPath, width, height, req.params.id);
 
+  res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
+});
+
+// #216: upload a WebVTT subtitle track for an uploaded video. Stores the .vtt in the
+// content dir (served at /uploads/content/<file>) and records its filename + language on
+// the content row. Replaces any existing subtitle (old file removed).
+router.post('/:id/subtitle', upload.subtitleUpload.single('subtitle'), async (req, res) => {
+  const content = checkContentWrite(req, res);
+  if (!content) {
+    // checkContentWrite already sent the response; clean up the orphaned upload.
+    if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    return;
+  }
+  if (!req.file) return res.status(400).json({ error: 'No subtitle file provided' });
+
+  // Remove the previous subtitle file if there was one.
+  if (content.subtitle_url) {
+    const old = path.join(config.contentDir, path.basename(content.subtitle_url));
+    if (fs.existsSync(old)) { try { fs.unlinkSync(old); } catch {} }
+  }
+  const lang = req.body.subtitle_lang ? String(req.body.subtitle_lang).slice(0, 10) : (content.subtitle_lang || null);
+  db.prepare('UPDATE content SET subtitle_url = ?, subtitle_lang = ? WHERE id = ?')
+    .run(req.file.filename, lang, req.params.id);
   res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
 });
 

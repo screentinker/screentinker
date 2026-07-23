@@ -3,6 +3,14 @@ import { showToast } from '../components/toast.js';
 import { esc, hydrateAuthImages } from '../utils.js';
 import { t } from '../i18n.js';
 
+// #216: languages offered in the caption/subtitle pickers. Codes are BCP-47 primary tags —
+// enough for signage; extend as needed.
+const SUBTITLE_LANGS = [
+  ['en', 'English'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'],
+  ['pt', 'Português'], ['it', 'Italiano'], ['nl', 'Nederlands'], ['ja', '日本語'],
+  ['ko', '한국어'], ['zh', '中文'],
+];
+
 function formatFileSize(bytes) {
   if (!bytes) return '--';
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
@@ -672,6 +680,11 @@ function showEditModal(contentItem, onSave) {
 
   const isRemote = !!contentItem.remote_url;
   const isYoutube = contentItem.mime_type === 'video/youtube';
+  const isUploadedVideo = !isRemote && contentItem.mime_type?.startsWith('video/');
+  // #216: language <option>s shared by the caption + subtitle pickers.
+  const langOptions = (sel) => SUBTITLE_LANGS
+    .map(([code, label]) => `<option value="${code}" ${sel === code ? 'selected' : ''}>${label}</option>`)
+    .join('');
 
   overlay.innerHTML = `
     <div class="modal" style="max-width:500px;width:95vw">
@@ -724,6 +737,32 @@ function showEditModal(contentItem, onSave) {
           <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.unstable_connection_hint')}</p>
         </div>
         ` : ''}
+        ${isYoutube ? `
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="editCaptionsEnabled" ${contentItem.captions_enabled ? 'checked' : ''} style="width:auto;margin:0">
+            <span>${t('content.label_captions_enabled')}</span>
+          </label>
+          <div style="margin-top:8px">
+            <label style="font-size:12px;color:var(--text-secondary)">${t('content.label_captions_lang')}</label>
+            <select id="editCaptionsLang" class="input" style="background:var(--bg-input)">${langOptions(contentItem.captions_lang || 'en')}</select>
+          </div>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.captions_hint')}</p>
+        </div>
+        ` : ''}
+        ${isUploadedVideo ? `
+        <div class="form-group">
+          <label>${t('content.label_subtitle_file')}</label>
+          ${contentItem.subtitle_url ? `<p style="font-size:11px;color:var(--text-secondary);margin:2px 0 6px">${t('content.subtitle_current')}</p>` : ''}
+          <input type="file" id="editSubtitleFile" accept=".vtt,text/vtt" style="font-size:13px;color:var(--text-secondary)">
+          <div style="margin-top:8px">
+            <label style="font-size:12px;color:var(--text-secondary)">${t('content.label_subtitle_lang')}</label>
+            <select id="editSubtitleLang" class="input" style="background:var(--bg-input)">${langOptions(contentItem.subtitle_lang || 'en')}</select>
+          </div>
+          ${contentItem.subtitle_url ? `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px"><input type="checkbox" id="editSubtitleRemove" style="width:auto;margin:0"><span>${t('content.subtitle_remove')}</span></label>` : ''}
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.subtitle_hint')}</p>
+        </div>
+        ` : ''}
         ${!isRemote ? `
         <div class="form-group">
           <label>${t('content.label_replace_file')}</label>
@@ -772,6 +811,26 @@ function showEditModal(contentItem, onSave) {
         const newUnstable = unstableEl.checked ? 1 : 0;
         if (newUnstable !== (contentItem.unstable_connection ? 1 : 0)) updateData.unstable_connection = newUnstable;
       }
+      // #216: YouTube captions (checkbox + language).
+      const captionsEl = overlay.querySelector('#editCaptionsEnabled');
+      if (captionsEl) {
+        const newCaptions = captionsEl.checked ? 1 : 0;
+        if (newCaptions !== (contentItem.captions_enabled ? 1 : 0)) updateData.captions_enabled = newCaptions;
+        const capLang = overlay.querySelector('#editCaptionsLang')?.value || null;
+        if (capLang !== (contentItem.captions_lang || 'en')) updateData.captions_lang = capLang;
+      }
+      // #216: uploaded-video subtitle language change / removal (the FILE is sent separately below).
+      const subtitleFile = overlay.querySelector('#editSubtitleFile')?.files[0];
+      const subLangEl = overlay.querySelector('#editSubtitleLang');
+      const subRemove = overlay.querySelector('#editSubtitleRemove')?.checked;
+      if (subRemove) {
+        updateData.subtitle_url = null;
+        updateData.subtitle_lang = null;
+      } else if (subLangEl && !subtitleFile) {
+        // Lang-only change (no new file) — the upload endpoint handles lang when a file IS sent.
+        const subLang = subLangEl.value || null;
+        if (contentItem.subtitle_url && subLang !== (contentItem.subtitle_lang || 'en')) updateData.subtitle_lang = subLang;
+      }
 
       if (Object.keys(updateData).length > 0) {
         await fetch('/api/content/' + contentItem.id, {
@@ -789,6 +848,18 @@ function showEditModal(contentItem, onSave) {
           method: 'PUT',
           headers,
           body: formData
+        });
+      }
+
+      // #216: upload a new subtitle .vtt if one was chosen (skipped when "remove" is ticked).
+      if (subtitleFile && !subRemove) {
+        const subForm = new FormData();
+        subForm.append('subtitle', subtitleFile);
+        if (subLangEl?.value) subForm.append('subtitle_lang', subLangEl.value);
+        await fetch('/api/content/' + contentItem.id + '/subtitle', {
+          method: 'POST',
+          headers,
+          body: subForm
         });
       }
 

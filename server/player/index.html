@@ -2071,6 +2071,14 @@
               if (item.unstable_connection) {
                 try { event.target.setPlaybackQuality('hd720'); } catch {}
               }
+              // #216: turn on YouTube captions when the content is flagged. loadModule
+              // makes the CC module available, then setOption selects the language track.
+              // Both are best-effort (undocumented, version-dependent) — wrapped so a
+              // throw can never break playback.
+              if (item.captions_enabled) {
+                try { event.target.loadModule('captions'); } catch {}
+                try { event.target.setOption('captions', 'track', { languageCode: item.captions_lang || 'en' }); } catch {}
+              }
             },
             onError: (event) => {
               if (myGeneration !== ytGeneration) return;
@@ -2462,6 +2470,22 @@
       video.crossOrigin = 'anonymous';                  // texturable (CORS-clean) + matches the legacy branch
       video.playsInline = true;
       video.preload = 'auto';
+      // #216: attach a WebVTT subtitle track when the content carries one (uploaded videos
+      // only; remote/proxied clips are skipped). Served same-origin from /uploads/content,
+      // so it's CORS-clean like the video. `default` + mode='showing' makes it visible with
+      // no player controls. Old players ignore an absent subtitle_url.
+      if (item.subtitle_url && !item.remote_url) {
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.srclang = item.subtitle_lang || 'en';
+        track.label = item.subtitle_lang || 'Subtitles';
+        track.default = true;
+        track.src = `${config.serverUrl}/uploads/content/${item.subtitle_url}`;
+        video.appendChild(track);
+        // The `default` attribute alone doesn't always engage without controls; force it on
+        // once the track has loaded its cues.
+        track.addEventListener('load', () => { try { track.track.mode = 'showing'; } catch (e) {} });
+      }
       video.muted = true;                               // warm-play MUST be muted (autoplay policy); real mute set at mount
       video.loop = (playlist.length === 1);             // single-item playlist holds by looping
       video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';

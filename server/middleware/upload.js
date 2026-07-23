@@ -54,4 +54,25 @@ const upload = multer({
   defParamCharset: 'utf8'
 });
 
+// #216: dedicated uploader for WebVTT subtitle files. The main `fileFilter` only allows
+// video/image, so subtitles need their own instance. Written into the same content dir
+// (served at /uploads/content/<file>) with a .vtt name; capped small — subtitles are tiny.
+const subtitleStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, config.contentDir),
+  filename: (req, file, cb) => cb(null, `${uuidv4()}.vtt`),
+});
+const subtitleUpload = multer({
+  storage: subtitleStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB — generous for a subtitle track
+  fileFilter: (req, file, cb) => {
+    // Browsers send .vtt as text/vtt; some send text/plain or application/octet-stream.
+    // Gate on the extension (authoritative here) plus those benign text mimetypes.
+    const okExt = /\.vtt$/i.test(file.originalname || '');
+    const okMime = ['text/vtt', 'text/plain', 'application/octet-stream'].includes(file.mimetype);
+    if (okExt && okMime) return cb(null, true);
+    cb(new Error('Only .vtt subtitle files are allowed'), false);
+  },
+});
+upload.subtitleUpload = subtitleUpload;
+
 module.exports = upload;
