@@ -50,6 +50,11 @@ router.post('/checkout', requireAuth, async (req, res) => {
       customer: customerId,
       mode: 'subscription',
       payment_method_types: ['card'],
+      // Renders the "Add promotion code" field on Stripe's hosted checkout page. For
+      // API-created sessions this is the ONLY way to enable it — there is no Stripe Dashboard
+      // toggle for it outside Payment Links (which we don't use). Do not remove thinking it's
+      // redundant with a dashboard setting.
+      allow_promotion_codes: true,
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${req.headers.origin || appUrl}/#/settings?payment=success`,
       cancel_url: `${req.headers.origin || appUrl}/#/settings?payment=cancelled`,
