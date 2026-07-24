@@ -63,6 +63,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          # Cache ~/.gradle/caches AND ~/.gradle/wrapper. The wrapper cache holds the
+          # Gradle distribution (gradle-8.5-bin.zip); without it every run re-downloaded
+          # ~130MB from services.gradle.org, and a transient reset there failed the job
+          # before any test ran (org.gradle.wrapper.Install.forceFetch). On a cache hit the
+          # distribution is already present, so the download — and its flake — is skipped.
+          cache: gradle
       - uses: android-actions/setup-android@v3
       # ScheduleEvalTest reads the SHARED shared/schedule-vectors.json (wired via
       # the test task in app/build.gradle.kts), so a ScheduleEval.kt change that
