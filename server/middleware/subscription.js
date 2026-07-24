@@ -28,8 +28,21 @@ function getUserPlan(userId) {
     user.trial_days_left = Math.max(0, Math.ceil((trialEnd - now) / 86400));
     user.trial_end = trialEnd;
 
-    // Auto-downgrade if trial expired and no paid subscription
-    if (!user.trial_active && user.subscription_status !== 'active' && user.plan_name !== 'free') {
+    // Auto-downgrade an EXPIRED trial to free. Keyed on "no real paid subscription"
+    // (stripe_subscription_id IS NULL) plus "still on the plan the trial granted"
+    // (plan_id === trial_plan) — deliberately NOT on subscription_status.
+    //
+    // TRAP — do not reintroduce a subscription_status guard here: that column DEFAULTs to
+    // 'active' and is only ever changed by Stripe webhook events. A `subscription_status !==
+    // 'active'` check is therefore ALWAYS false for trial users who never touch Stripe — the
+    // entire population this is meant to catch — so the downgrade never fired and every signup
+    // kept Pro free forever.
+    //
+    // The `plan_id === user.trial_plan` clause is load-bearing: it protects comped / hand-
+    // granted plans (e.g. an enterprise plan set manually, where plan_id !== trial_plan) from
+    // being silently downgraded. Grandfathered users (trial_started IS NULL) never reach this
+    // block at all.
+    if (!user.trial_active && !user.stripe_subscription_id && user.plan_id === user.trial_plan && user.plan_name !== 'free') {
       db.prepare("UPDATE users SET plan_id = 'free', trial_started = NULL WHERE id = ?").run(userId);
       // Re-fetch with free plan
       return getUserPlan(userId);
