@@ -619,7 +619,19 @@ async function checkVersion() {
       if (toast) {
         const notice = document.createElement('div');
         notice.className = 'toast info';
-        notice.innerHTML = '<span>Dashboard updated. <a href="javascript:location.reload()" style="color:var(--accent);text-decoration:underline;font-weight:600">Reload now</a></span>';
+        const span = document.createElement('span');
+        span.textContent = 'Dashboard updated. ';
+        const link = document.createElement('a');
+        link.textContent = 'Reload now';
+        link.href = '#';
+        link.style.cssText = 'color:var(--accent);text-decoration:underline;font-weight:600';
+        // The dashboard CSP is `script-src 'self'` (no 'unsafe-inline'), which blocks
+        // `javascript:` URIs — so the old `href="javascript:location.reload()"` link was dead
+        // (click did nothing, only a CSP console warning). Use a real click listener, which
+        // runs as first-party script and is CSP-clean.
+        link.addEventListener('click', (e) => { e.preventDefault(); location.reload(); });
+        span.appendChild(link);
+        notice.appendChild(span);
         toast.appendChild(notice);
       }
     }
