@@ -487,7 +487,7 @@ export default {
   'widget.configure': 'Configura Widget',
   'widget.preview': 'Anteprima',
   'widget.preview_title': 'Anteprima',
-  'widget.webpage_blocked_note': 'Se quest’area è vuota, il sito blocca l’incorporamento in un browser; verrà comunque mostrato sullo schermo del dispositivo.',
+  'widget.webpage_blocked_note': 'Se quest’area è vuota, il sito blocca l’incorporamento e non verrà mostrato nemmeno sul dispositivo. Prova una pagina che lo consente.',
   'widget.close': 'Chiudi',
   'widget.edit_x': 'Modifica {type}',
   'widget.new_x': 'Nuovo {type}',

@@ -752,7 +752,7 @@ export default {
   'widget.configure': 'Configure Widget',
   'widget.preview': 'Preview',
   'widget.preview_title': 'Preview',
-  'widget.webpage_blocked_note': 'If this area is blank, the site blocks embedding in a browser — it will still display on the device screen.',
+  'widget.webpage_blocked_note': 'If this area is blank, the site blocks being embedded and won’t display on the device either. Try a page that allows embedding.',
   'widget.close': 'Close',
   'widget.edit_x': 'Edit {type}',
   'widget.new_x': 'New {type}',

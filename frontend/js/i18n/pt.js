@@ -508,7 +508,7 @@ export default {
   'widget.configure': 'Configurar widget',
   'widget.preview': 'Pré-visualizar',
   'widget.preview_title': 'Pré-visualização',
-  'widget.webpage_blocked_note': 'Se esta área estiver em branco, o site bloqueia a incorporação em um navegador; ainda assim será exibido na tela do dispositivo.',
+  'widget.webpage_blocked_note': 'Se esta área estiver em branco, o site bloqueia a incorporação e também não será exibido no dispositivo. Tente uma página que a permita.',
   'widget.close': 'Fechar',
   'widget.edit_x': 'Editar {type}',
   'widget.new_x': 'Novo {type}',
