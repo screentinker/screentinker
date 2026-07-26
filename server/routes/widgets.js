@@ -1179,6 +1179,7 @@ function renderDiagSmoothness(config) {
 module.exports = router;
 
 
+
 function renderCrypto() {
   return `<!doctype html>
 <html lang="en">
@@ -1235,19 +1236,19 @@ function renderCrypto() {
     function render(items) {
       document.getElementById("ticker").innerHTML = items.map((c, i) => {
         const isUp = c.change24h >= 0; const accent = ["#7aa2ff", "#2fe38a", "#ffb86b", "#c77dff"][i % 4];
-        return `<div class="coin">
-          <div class="coin-top"><div class="name"><div class="badge" style="background: linear-gradient(135deg, ${accent}, rgba(255,255,255,0.18));">${c.symbol[0]}</div>
-          <div><p class="symbol">${c.symbol}</p><div class="full">${c.name}</div></div></div></div>
-          <p class="price">${fmt.format(c.price)}</p>
-          <div class="change ${isUp ? 'up' : 'down'}"><span>${isUp ? '▲' : '▼'} ${(c.change24h>=0?'+':'')+c.change24h.toFixed(2)}%</span></div>
-        </div>`;
+        return "\`<div class=\"coin\">" + 
+          "<div class=\"coin-top\"><div class=\"name\"><div class=\"badge\" style=\"background: linear-gradient(135deg, \${accent}, rgba(255,255,255,0.18));\">\${c.symbol[0]}</div>" + 
+          "<div><p class=\"symbol\">\${c.symbol}</p><div class=\"full\">\${c.name}</div></div></div></div>" + 
+          "<p class=\"price\">\${fmt.format(c.price)}</p>" + 
+          "<div class=\"change \${isUp ? 'up' : 'down'}\"><span>\${isUp ? '▲' : '▼'} \${(c.change24h>=0?'+':'')+c.change24h.toFixed(2)}%</span></div>" + 
+        "</div>\`";
       }).join("");
-      document.getElementById("updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
-      document.getElementById("marqueeText").textContent = items.map(c => `${c.symbol} ${fmt.format(c.price)} • ${(c.change24h>=0?'+':'')+c.change24h.toFixed(2)}%`).join("   •   ");
+      document.getElementById("updated").textContent = "\`Updated \${new Date().toLocaleTimeString()}\`";
+      document.getElementById("marqueeText").textContent = items.map(c => "\`\${c.symbol} \${fmt.format(c.price)} • \${(c.change24h>=0?'+':'')+c.change24h.toFixed(2)}%\`").join("   •   ");
     }
     async function loadData() {
       try {
-        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${assets.map(a=>a.id).join(',')}&vs_currencies=usd&include_24hr_change=true`);
+        const res = await fetch("\`https://api.coingecko.com/api/v3/simple/price?ids=\${assets.map(a=>a.id).join(',')}&vs_currencies=usd&include_24hr_change=true\`");
         const data = await res.json();
         const items = assets.map(a => ({ ...a, price: data[a.id]?.usd || 0, change24h: data[a.id]?.usd_24h_change || 0 }));
         if (!items.some(x => x.price)) throw new Error("No price"); render(items);
@@ -1300,7 +1301,7 @@ function renderWorldClock() {
         const tz = c.dataset.tz;
         c.querySelector(".time").textContent = now.toLocaleTimeString("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
         c.querySelector(".date").textContent = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "2-digit" }).format(now);
-        c.querySelector(".accent").style.background = `linear-gradient(90deg, hsl(${220 + i*28} 90% 72%), hsl(${255 + i*28} 85% 60%))`;
+        c.querySelector(".accent").style.background = "\`linear-gradient(90deg, hsl(\${220 + i*28} 90% 72%), hsl(\${255 + i*28} 85% 60%))\`";
       });
     }
     updateClocks(); setInterval(updateClocks, 1000);
