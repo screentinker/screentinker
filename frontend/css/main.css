@@ -343,7 +343,7 @@ h6,
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--bg);
+  background: var(--bg-base);
   color: var(--text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
@@ -589,11 +589,8 @@ html, body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 24px;
-  background: var(--bg);
-  padding: 16px 32px;
-  margin-left: -32px;
-  margin-right: -32px;
-  margin-top: -24px;
+  background: var(--bg-base);
+  padding: 16px 0;
   border-bottom: 1px solid var(--border);
 }
 
