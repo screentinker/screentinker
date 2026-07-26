@@ -117,7 +117,7 @@
        few-ms delay vs the inline trap is fine since errors before this
        loads are already captured in __debugLog by the inline trap above. -->
   <script src="/player/debug-overlay.js" defer></script>
-  <title>ScreenTinker Player</title>
+  <title>SwiftDisplay Player</title>
   <style>
     * {
       margin: 0;
@@ -138,7 +138,7 @@
     #setupScreen {
       position: fixed;
       inset: 0;
-      background: #111827;
+      background: #1c1c1e;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -147,15 +147,8 @@
       color: #f1f5f9;
     }
 
-    #setupScreen h1 {
-      font-size: 36px;
-      color: #e65c00;
-      margin-bottom: 8px;
-    }
-
-    #setupScreen .subtitle {
-      color: #94a3b8;
-      font-size: 16px;
+    #setupScreen .player-logo {
+      width: 220px;
       margin-bottom: 48px;
     }
 
@@ -365,7 +358,7 @@
     #statusOverlay {
       position: fixed;
       inset: 0;
-      background: #000;
+      background: #1c1c1e;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -374,10 +367,9 @@
       z-index: 500;
     }
 
-    #statusOverlay h2 {
-      color: #e65c00;
-      font-size: 28px;
-      margin-bottom: 8px;
+    #statusOverlay .status-logo {
+      width: 180px;
+      margin-bottom: 16px;
     }
 
     #statusOverlay p {
@@ -389,8 +381,7 @@
 <body>
   <!-- Setup Screen -->
   <div id="setupScreen">
-    <h1>ScreenTinker</h1>
-    <div class="subtitle">Web Player</div>
+    <img src="/assets/logowhiteswift.png" alt="SwiftDisplay" class="player-logo">
     <div class="form" id="urlForm">
       <label>Server URL</label>
       <input type="url" id="serverUrl" placeholder="https://sign.yourdomain.com" autofocus>
@@ -413,8 +404,8 @@
 
   <!-- Status Overlay -->
   <div id="statusOverlay" style="display:none">
+    <img src="/assets/logowhiteswift.png" alt="SwiftDisplay" class="status-logo">
     <div class="spinner"></div>
-    <h2>ScreenTinker</h2>
     <p id="statusText" data-i18n="connecting">Connecting...</p>
   </div>
 
@@ -805,7 +796,7 @@
             const ctx = c.getContext('2d');
             ctx.textBaseline = 'top';
             ctx.font = '14px Arial';
-            ctx.fillText('ScreenTinker fingerprint', 2, 2);
+            ctx.fillText('SwiftDisplay fingerprint', 2, 2);
             return c.toDataURL().slice(-50);
           } catch { return ''; }
         })(),
@@ -883,9 +874,9 @@
         // connects muted, so unattended kiosks still recover without a human tap.
         {
           const tapOverlay = document.createElement('div');
-          tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
+          tapOverlay.style.cssText = 'position:fixed;inset:0;background:#1c1c1e;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
           tapOverlay.innerHTML = `
-          <h1 style="color:#e65c00;font-size:36px;font-family:sans-serif;margin-bottom:12px">ScreenTinker</h1>
+          <img src="/assets/logowhiteswift.png" alt="SwiftDisplay" style="width:200px;margin-bottom:32px">
           <p style="color:#94a3b8;font-size:18px;font-family:sans-serif">Tap anywhere to start</p>
           <p style="color:#64748b;font-size:13px;font-family:sans-serif;margin-top:24px">Audio requires user interaction</p>
         `;
