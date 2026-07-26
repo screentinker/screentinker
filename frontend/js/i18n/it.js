@@ -640,7 +640,7 @@ export default {
   'designer.el.ticker': 'Ticker',
   'designer.el.shape': 'Forma',
   'designer.el.qr': 'Codice QR',
-  'designer.el.countdown': 'Countdown',
+  'designer.el.countdown': 'Conto alla rovescia',
   'designer.el.webpage': 'Pagina Web',
   // Backgrounds
   'designer.bg.black': 'Nero',
