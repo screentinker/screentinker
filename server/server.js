@@ -97,13 +97,13 @@ const dashboardCsp = helmet.contentSecurityPolicy({
     // Both are required — with only the script entry the beacon loads but silently can't report.
     scriptSrc: ["'self'", 'https://static.cloudflareinsights.com'],
     scriptSrcAttr: ["'unsafe-inline'"],
-    styleSrc: ["'self'", "'unsafe-inline'"],
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
     styleSrcAttr: ["'unsafe-inline'"],
     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
     mediaSrc: ["'self'", 'blob:', 'https:'],
     // 'wss:'/'ws:' keep the dashboard's socket.io connection working; the CF entry lets the beacon report.
     connectSrc: ["'self'", 'wss:', 'ws:', 'https:', 'https://cloudflareinsights.com'],
-    fontSrc: ["'self'", 'data:'],
+    fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
     frameSrc: ["'self'", 'https://www.youtube.com', 'https://youtube.com'],
     objectSrc: ["'none'"],
     baseUri: ["'self'"],
