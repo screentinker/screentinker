@@ -6,13 +6,15 @@
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Michroma', sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-primary);
   -webkit-font-smoothing: antialiased;
 }
+
+h1, h2, h3, h4, h5, h6 { font-family: 'Goldman', sans-serif; }
 
 a { color: inherit; text-decoration: none; }
 ul { list-style: none; }

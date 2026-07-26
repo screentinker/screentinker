@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<title>SwiftDisplay — Onboarding</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Goldman:wght@400;700&family=Michroma&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --primary:#F5811F;
+    --primary-light:#FFA84D;
+    --primary-dark:#C85A0E;
+    --navy:#1E2233;
+    --navy-2:#262B41;
+    --navy-3:#30364F;
+    --text:#EDEFF5;
+    --text-dim:#9AA0B4;
+    --radius:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:'Michroma', sans-serif;
+    background:radial-gradient(circle at 20% 20%, #262B41 0%, #171A28 55%, #12141F 100%);
+    color:var(--text);
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    overflow-x:hidden;
+  }
+  h1,h2,h3,.title-font{
+    font-family:'Goldman', sans-serif;
+    font-weight:700;
+  }
+  .topbar{
+    width:100%;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:24px 48px;
+  }
+  .brand{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-family:'Goldman', sans-serif;
+    font-size:22px;
+    font-weight:700;
+    letter-spacing:0.5px;
+  }
+  .brand .logo{
+    width:34px;height:34px;
+    border-radius:8px;
+    background:linear-gradient(135deg,var(--primary-light),var(--primary),var(--primary-dark));
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 4px 14px rgba(245,129,31,.45);
+  }
+  .brand .logo svg{width:20px;height:20px;}
+  .brand span.accent{color:var(--primary);}
+  .skip-link{
+    font-size:12px;
+    color:var(--text-dim);
+    letter-spacing:1px;
+    text-transform:uppercase;
+    cursor:pointer;
+    border:1px solid var(--navy-3);
+    padding:8px 18px;
+    border-radius:30px;
+    transition:.2s;
+  }
+  .skip-link:hover{border-color:var(--primary);color:var(--primary);}
+
+  .stepper{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    margin:6px 0 34px;
+  }
+  .step-dot{
+    width:34px;height:34px;
+    border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px;
+    font-family:'Goldman',sans-serif;
+    background:var(--navy-2);
+    color:var(--text-dim);
+    border:2px solid var(--navy-3);
+    transition:.25s;
+  }
+  .step-dot.active{
+    background:linear-gradient(135deg,var(--primary-light),var(--primary));
+    color:#1a1a1a;
+    border-color:var(--primary);
+    box-shadow:0 0 0 4px rgba(245,129,31,.18);
+  }
+  .step-dot.done{
+    background:var(--primary-dark);
+    border-color:var(--primary-dark);
+    color:#fff;
+  }
+  .step-line{
+    width:46px;height:2px;
+    background:var(--navy-3);
+  }
+  .step-line.done{background:var(--primary);}
+
+  .panel{
+    width:min(880px,92vw);
+    background:linear-gradient(160deg,rgba(38,43,65,.85),rgba(23,26,40,.9));
+    border:1px solid var(--navy-3);
+    border-radius:24px;
+    padding:56px 60px;
+    backdrop-filter:blur(10px);
+    box-shadow:0 30px 60px -20px rgba(0,0,0,.55);
+    position:relative;
+    overflow:hidden;
+  }
+  .panel::before{
+    content:"";
+    position:absolute;
+    top:-120px;right:-120px;
+    width:280px;height:280px;
+    background:radial-gradient(circle,rgba(245,129,31,.35),transparent 70%);
+    filter:blur(10px);
+  }
+  .step-view{display:none;}
+  .step-view.active{display:block;animation:fade .35s ease;}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+  .eyebrow{
+    color:var(--primary);
+    font-size:12px;
+    letter-spacing:2px;
+    text-transform:uppercase;
+    margin-bottom:14px;
+    font-family:'Goldman',sans-serif;
+  }
+  h1.step-title{font-size:32px;line-height:1.2;margin-bottom:12px;}
+  p.step-sub{
+    color:var(--text-dim);
+    font-size:14px;
+    line-height:1.7;
+    max-width:520px;
+    margin-bottom:36px;
+  }
+
+  .cta-row{display:flex;gap:14px;margin-top:40px;}
+  .btn{
+    font-family:'Goldman', sans-serif;
+    font-size:13px;
+    letter-spacing:.5px;
+    padding:14px 28px;
+    border-radius:12px;
+    border:none;
+    cursor:pointer;
+    transition:.2s;
+  }
+  .btn-primary{
+    background:linear-gradient(135deg,var(--primary-light),var(--primary));
+    color:#1c1204;
+    box-shadow:0 10px 25px -8px rgba(245,129,31,.55);
+  }
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 14px 30px -8px rgba(245,129,31,.7);}
+  .btn-ghost{
+    background:transparent;
+    border:1px solid var(--navy-3);
+    color:var(--text-dim);
+  }
+  .btn-ghost:hover{border-color:var(--primary);color:var(--primary);}
+
+  /* Welcome grid */
+  .device-grid{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:16px;
+    margin-bottom:8px;
+  }
+  .device-card{
+    background:var(--navy-2);
+    border:1px solid var(--navy-3);
+    border-radius:14px;
+    padding:20px 16px;
+    text-align:center;
+    cursor:pointer;
+    transition:.2s;
+  }
+  .device-card:hover, .device-card.selected{
+    border-color:var(--primary);
+    background:rgba(245,129,31,.08);
+  }
+  .device-card svg{width:30px;height:30px;margin-bottom:10px;stroke:var(--primary);}
+  .device-card .name{font-family:'Goldman',sans-serif;font-size:13px;}
+  .device-card .sub{font-size:10px;color:var(--text-dim);margin-top:4px;}
+
+  /* Pairing */
+  .pair-box{
+    display:flex;
+    gap:40px;
+    align-items:center;
+  }
+  .pair-code{
+    background:var(--navy-2);
+    border:1px dashed var(--primary);
+    border-radius:16px;
+    padding:30px 40px;
+    text-align:center;
+    flex:1;
+  }
+  .pair-code .code{
+    font-family:'Goldman',sans-serif;
+    font-size:44px;
+    letter-spacing:10px;
+    color:var(--primary);
+    margin-bottom:8px;
+  }
+  .pair-code .hint{font-size:11px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;}
+  .pair-screen{
+    width:180px;height:110px;
+    border-radius:12px;
+    border:6px solid var(--navy-3);
+    background:#0e0f18;
+    display:flex;align-items:center;justify-content:center;
+    position:relative;
+  }
+  .pair-screen::after{
+    content:"";
+    position:absolute;bottom:-14px;left:50%;
+    transform:translateX(-50%);
+    width:50px;height:8px;background:var(--navy-3);border-radius:4px;
+  }
+  .pulse-dot{
+    width:10px;height:10px;border-radius:50%;
+    background:var(--primary);
+    box-shadow:0 0 0 0 rgba(245,129,31,.6);
+    animation:pulse 1.6s infinite;
+  }
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(245,129,31,.6);}
+    70%{box-shadow:0 0 0 14px rgba(245,129,31,0);}
+    100%{box-shadow:0 0 0 0 rgba(245,129,31,0);}
+  }
+
+  /* Content step */
+  .upload-zone{
+    border:2px dashed var(--navy-3);
+    border-radius:16px;
+    padding:40px;
+    text-align:center;
+    color:var(--text-dim);
+    font-size:13px;
+    margin-bottom:24px;
+    transition:.2s;
+  }
+  .upload-zone:hover{border-color:var(--primary);color:var(--primary);}
+  .content-thumbs{display:flex;gap:12px;flex-wrap:wrap;}
+  .thumb{
+    width:90px;height:60px;border-radius:8px;
+    background:linear-gradient(135deg,var(--navy-3),var(--navy-2));
+    display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:var(--text-dim);
+    border:1px solid var(--navy-3);
+  }
+  .thumb.add{border:1px dashed var(--primary);color:var(--primary);cursor:pointer;}
+
+  /* Schedule step */
+  .cal-row{display:flex;gap:8px;margin-bottom:24px;}
+  .cal-day{
+    flex:1;
+    background:var(--navy-2);
+    border:1px solid var(--navy-3);
+    border-radius:10px;
+    padding:14px 6px;
+    text-align:center;
+    font-size:11px;
+    color:var(--text-dim);
+  }
+  .cal-day.active{
+    background:rgba(245,129,31,.12);
+    border-color:var(--primary);
+    color:var(--primary);
+  }
+  .cal-day b{display:block;font-family:'Goldman',sans-serif;font-size:14px;color:var(--text);margin-top:4px;}
+
+  /* Done step */
+  .done-icon{
+    width:80px;height:80px;
+    border-radius:50%;
+    background:linear-gradient(135deg,var(--primary-light),var(--primary));
+    display:flex;align-items:center;justify-content:center;
+    margin-bottom:26px;
+    box-shadow:0 0 0 10px rgba(245,129,31,.12);
+  }
+  .done-icon svg{width:36px;height:36px;stroke:#1c1204;}
+
+  .footer-hint{
+    margin-top:26px;
+    font-size:11px;
+    color:var(--text-dim);
+    letter-spacing:.5px;
+  }
+  .footer-hint b{color:var(--primary);}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#1c1204" stroke-width="2"><path d="M4 12l6-8h6l-6 8h6l-8 10 2-10H4z"/></svg>
+    </div>
+    Swift<span class="accent">Display</span>
+  </div>
+  <div class="skip-link">Saltar configuração</div>
+</div>
+
+<div class="stepper" id="stepper"></div>
+
+<div class="panel">
+
+  <!-- STEP 1 -->
+  <div class="step-view active" data-step="1">
+    <div class="eyebrow">Passo 1 de 5</div>
+    <h1 class="step-title">Onde vais mostrar o teu conteúdo?</h1>
+    <p class="step-sub">Escolhe o tipo de ecrã que vais ligar à SwiftDisplay. Podes adicionar mais dispositivos depois, a qualquer momento.</p>
+    <div class="device-grid">
+      <div class="device-card selected">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg>
+        <div class="name">Android TV</div>
+        <div class="sub">App nativa</div>
+      </div>
+      <div class="device-card">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 21h12"/></svg>
+        <div class="name">Raspberry Pi</div>
+        <div class="sub">Player leve</div>
+      </div>
+      <div class="device-card">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
+        <div class="name">Browser</div>
+        <div class="sub">Qualquer TV</div>
+      </div>
+    </div>
+    <div class="cta-row">
+      <button class="btn btn-primary" onclick="goTo(2)">Continuar</button>
+      <button class="btn btn-ghost" onclick="goTo(2)">Decidir mais tarde</button>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step-view" data-step="2">
+    <div class="eyebrow">Passo 2 de 5</div>
+    <h1 class="step-title">Emparelha o teu ecrã</h1>
+    <p class="step-sub">Abre <b>swiftdisplay.app/pair</b> no dispositivo ou instala a app do player e insere o código abaixo.</p>
+    <div class="pair-box">
+      <div class="pair-code">
+        <div class="code">7 K 3 F</div>
+        <div class="hint">Código expira em 09:42</div>
+      </div>
+      <div class="pair-screen">
+        <div class="pulse-dot"></div>
+      </div>
+    </div>
+    <div class="cta-row">
+      <button class="btn btn-primary" onclick="goTo(3)">Ecrã emparelhado</button>
+      <button class="btn btn-ghost" onclick="goTo(1)">Voltar</button>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step-view" data-step="3">
+    <div class="eyebrow">Passo 3 de 5</div>
+    <h1 class="step-title">Adiciona o teu conteúdo</h1>
+    <p class="step-sub">Carrega imagens ou vídeos, ou começa com um dos nossos templates prontos para usar.</p>
+    <div class="upload-zone">Arrasta ficheiros para aqui ou clica para carregar (JPG, PNG, MP4)</div>
+    <div class="content-thumbs">
+      <div class="thumb">promo.mp4</div>
+      <div class="thumb">menu.png</div>
+      <div class="thumb">logo.png</div>
+      <div class="thumb add">+ Adicionar</div>
+    </div>
+    <div class="cta-row">
+      <button class="btn btn-primary" onclick="goTo(4)">Continuar</button>
+      <button class="btn btn-ghost" onclick="goTo(2)">Voltar</button>
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="step-view" data-step="4">
+    <div class="eyebrow">Passo 4 de 5</div>
+    <h1 class="step-title">Agenda e publica</h1>
+    <p class="step-sub">Define quando o conteúdo deve aparecer. Podes sempre alterar isto mais tarde a partir do telemóvel.</p>
+    <div class="cal-row">
+      <div class="cal-day">SEG<b>ON</b></div>
+      <div class="cal-day">TER<b>ON</b></div>
+      <div class="cal-day">QUA<b>ON</b></div>
+      <div class="cal-day active">QUI<b>ON</b></div>
+      <div class="cal-day">SEX<b>ON</b></div>
+      <div class="cal-day">SÁB<b>OFF</b></div>
+      <div class="cal-day">DOM<b>OFF</b></div>
+    </div>
+    <div class="cta-row">
+      <button class="btn btn-primary" onclick="goTo(5)">Publicar agora</button>
+      <button class="btn btn-ghost" onclick="goTo(3)">Voltar</button>
+    </div>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="step-view" data-step="5" style="text-align:center;display:flex;flex-direction:column;align-items:center;">
+    <div class="eyebrow">Tudo pronto</div>
+    <div class="done-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4"><path d="M4 12l5 5L20 6"/></svg>
+    </div>
+    <h1 class="step-title">O teu ecrã está ao vivo</h1>
+    <p class="step-sub" style="margin-left:auto;margin-right:auto;">O conteúdo já está a ser publicado. Acede ao painel para gerir dispositivos, playlists e agendamentos em qualquer altura.</p>
+    <div class="cta-row">
+      <button class="btn btn-primary" onclick="goTo(1)">Ir para o Dashboard</button>
+    </div>
+    <div class="footer-hint">Precisas de ajuda? Fala com o <b>suporte SwiftDisplay</b></div>
+  </div>
+
+</div>
+
+<script>
+  const total = 5;
+  const stepperEl = document.getElementById('stepper');
+
+  function renderStepper(current){
+    stepperEl.innerHTML = '';
+    for(let i=1;i<=total;i++){
+      const dot = document.createElement('div');
+      dot.className = 'step-dot' + (i===current?' active':(i<current?' done':''));
+      dot.textContent = i;
+      stepperEl.appendChild(dot);
+      if(i<total){
+        const line = document.createElement('div');
+        line.className = 'step-line' + (i<current?' done':'');
+        stepperEl.appendChild(line);
+      }
+    }
+  }
+
+  function goTo(step){
+    document.querySelectorAll('.step-view').forEach(v=>{
+      v.classList.toggle('active', parseInt(v.dataset.step)===step);
+    });
+    renderStepper(step);
+  }
+
+  document.querySelectorAll('.device-card').forEach(c=>{
+    c.addEventListener('click',()=>{
+      document.querySelectorAll('.device-card').forEach(x=>x.classList.remove('selected'));
+      c.classList.add('selected');
+    });
+  });
+
+  renderStepper(1);
+</script>
+</body>
+</html>
