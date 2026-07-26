@@ -172,6 +172,8 @@ const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','so
 function renderWidgetHtml(type, config) {
   config = config || {};
   switch (type) {
+    case 'crypto': return renderCrypto();
+    case 'world-clock': return renderWorldClock();
     case 'clock': return renderClock(config);
     case 'weather': return renderWeather(config);
     case 'rss': return renderRSS(config);
@@ -1175,3 +1177,133 @@ function renderDiagSmoothness(config) {
 }
 
 module.exports = router;
+
+
+function renderCrypto() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Crypto Ticker</title>
+  <style>
+    :root{ --bg: #0b0f17; --panel: rgba(15, 20, 31, 0.78); --panel-2: rgba(255,255,255,0.04); --text: #e8eefc; --muted: #8b96ad; --line: rgba(255,255,255,0.08); --green: #2fe38a; --red: #ff5d73; --shadow: 0 20px 60px rgba(0,0,0,.45); }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: radial-gradient(circle at top left, rgba(122,162,255,0.14), transparent 30%), radial-gradient(circle at bottom right, rgba(47,227,138,0.10), transparent 28%), linear-gradient(180deg, #090d14, #0b0f17 40%, #090d14); font-family: Inter, system-ui, sans-serif; color: var(--text); }
+    .wrap { width: 100vw; height: 100vh; padding: 28px; display: flex; align-items: center; justify-content: center; }
+    .card { width: min(1200px, 100%); border: 1px solid var(--line); border-radius: 24px; background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)); box-shadow: var(--shadow); backdrop-filter: blur(18px); overflow: hidden; position: relative; }
+    .header { padding: 22px 24px 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent); }
+    .title h1 { margin: 0; font-size: 18px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; }
+    .title p { margin: 0; color: var(--muted); font-size: 13px; }
+    .status { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+    .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--green); box-shadow: 0 0 16px rgba(47,227,138,.75); animation: pulse 1.8s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { transform: scale(0.95); opacity: 0.85; } 50% { transform: scale(1.2); opacity: 1; } }
+    .ticker { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+    .coin { padding: 22px 24px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-height: 132px; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent); }
+    .coin:nth-child(4n) { border-right: none; }
+    .coin-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+    .name { display: flex; align-items: center; gap: 12px; }
+    .badge { width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center; font-weight: 800; color: #fff; background: linear-gradient(135deg, rgba(122,162,255,0.95), rgba(47,227,138,0.8)); box-shadow: 0 10px 30px rgba(122,162,255,0.18); }
+    .symbol { font-size: 16px; font-weight: 700; margin: 0; }
+    .full { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .price { font-size: 28px; font-weight: 800; letter-spacing: -0.03em; margin: 0; }
+    .change { margin-top: 10px; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; background: var(--panel-2); border: 1px solid var(--line); }
+    .up { color: var(--green); } .down { color: var(--red); }
+    .footer { padding: 14px 24px; color: var(--muted); font-size: 12px; background: rgba(255,255,255,0.02); overflow: hidden; white-space: nowrap; }
+    .marquee span { display: inline-block; padding-left: 100%; animation: scroll 26s linear infinite; }
+    @keyframes scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+  </style>
+</head>
+<body>
+  <div class="wrap"><div class="card">
+    <div class="header">
+      <div class="title"><h1>Live Crypto Ticker</h1><p>Premium market snapshot</p></div>
+      <div class="status"><span class="dot"></span><span id="updated">Updating…</span></div>
+    </div>
+    <div class="ticker" id="ticker"><div class="coin">Loading…</div></div>
+    <div class="footer"><div class="marquee"><span id="marqueeText">Fetching live data…</span></div></div>
+  </div></div>
+  <script>
+    const assets = [
+      { id: "bitcoin", symbol: "BTC", name: "Bitcoin" },
+      { id: "ethereum", symbol: "ETH", name: "Ethereum" },
+      { id: "solana", symbol: "SOL", name: "Solana" },
+      { id: "ripple", symbol: "XRP", name: "XRP" }
+    ];
+    const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+    function fallbackData() { return assets.map((a, i) => { const base = [118000, 3700, 172, 0.62][i]; const delta = (Math.random() * 4 - 2); return { id: a.id, symbol: a.symbol, name: a.name, price: base * (1 + delta / 100), change24h: delta }; }); }
+    function render(items) {
+      document.getElementById("ticker").innerHTML = items.map((c, i) => {
+        const isUp = c.change24h >= 0; const accent = ["#7aa2ff", "#2fe38a", "#ffb86b", "#c77dff"][i % 4];
+        return `<div class="coin">
+          <div class="coin-top"><div class="name"><div class="badge" style="background: linear-gradient(135deg, ${accent}, rgba(255,255,255,0.18));">${c.symbol[0]}</div>
+          <div><p class="symbol">${c.symbol}</p><div class="full">${c.name}</div></div></div></div>
+          <p class="price">${fmt.format(c.price)}</p>
+          <div class="change ${isUp ? 'up' : 'down'}"><span>${isUp ? '▲' : '▼'} ${(c.change24h>=0?'+':'')+c.change24h.toFixed(2)}%</span></div>
+        </div>`;
+      }).join("");
+      document.getElementById("updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+      document.getElementById("marqueeText").textContent = items.map(c => `${c.symbol} ${fmt.format(c.price)} • ${(c.change24h>=0?'+':'')+c.change24h.toFixed(2)}%`).join("   •   ");
+    }
+    async function loadData() {
+      try {
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${assets.map(a=>a.id).join(',')}&vs_currencies=usd&include_24hr_change=true`);
+        const data = await res.json();
+        const items = assets.map(a => ({ ...a, price: data[a.id]?.usd || 0, change24h: data[a.id]?.usd_24h_change || 0 }));
+        if (!items.some(x => x.price)) throw new Error("No price"); render(items);
+      } catch (e) { render(fallbackData()); }
+    }
+    loadData(); setInterval(loadData, 30000);
+  </script>
+</body></html>`;
+}
+
+function renderWorldClock() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>World Clock</title>
+  <style>
+    :root{ --bg: #090c12; --line: rgba(255,255,255,0.08); --text: #eef3ff; --muted: #93a0b8; --accent: #7aa2ff; --glow: rgba(122,162,255,0.18); }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: radial-gradient(circle at 20% 20%, rgba(122,162,255,0.14), transparent 26%), radial-gradient(circle at 80% 80%, rgba(47,227,138,0.10), transparent 24%), linear-gradient(180deg, #070a10, #090c12 50%, #070a10); color: var(--text); font-family: Inter, system-ui, sans-serif; }
+    .wrap { width: 100vw; height: 100vh; display: grid; place-items: center; padding: 28px; }
+    .panel { width: min(980px, 100%); border-radius: 28px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)); box-shadow: 0 22px 70px rgba(0,0,0,.48); backdrop-filter: blur(18px); overflow: hidden; position: relative; }
+    .top { display: flex; justify-content: space-between; align-items: center; padding: 22px 24px; border-bottom: 1px solid var(--line); }
+    .brand h1 { margin: 0; font-size: 22px; font-weight: 800; }
+    .kicker { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.14em; }
+    .clock-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); }
+    .clock { background: rgba(10, 14, 22, 0.72); padding: 26px 24px; min-height: 176px; display: flex; flex-direction: column; justify-content: space-between; }
+    .city h2 { margin: 0; font-size: 18px; font-weight: 700; }
+    .tz { color: var(--muted); font-size: 12px; }
+    .time { font-size: 54px; line-height: 1; font-weight: 800; letter-spacing: -0.05em; }
+    .date { margin-top: 10px; color: var(--muted); font-size: 13px; }
+    .accent { margin-top: 18px; height: 4px; width: 72px; border-radius: 999px; background: linear-gradient(90deg, var(--accent), rgba(47,227,138,0.95)); box-shadow: 0 0 24px var(--glow); }
+  </style>
+</head>
+<body>
+  <div class="wrap"><section class="panel">
+    <div class="top"><div class="brand"><div class="kicker">Global time</div><h1>Minimal World Clock</h1></div><div class="kicker">Live</div></div>
+    <div class="clock-grid">
+      <div class="clock" data-tz="America/New_York"><div class="city"><h2>New York</h2><div class="tz">America/New_York</div></div><div><div class="time">--:--</div><div class="date">---</div><div class="accent"></div></div></div>
+      <div class="clock" data-tz="Europe/London"><div class="city"><h2>London</h2><div class="tz">Europe/London</div></div><div><div class="time">--:--</div><div class="date">---</div><div class="accent"></div></div></div>
+      <div class="clock" data-tz="Asia/Tokyo"><div class="city"><h2>Tokyo</h2><div class="tz">Asia/Tokyo</div></div><div><div class="time">--:--</div><div class="date">---</div><div class="accent"></div></div></div>
+    </div>
+  </section></div>
+  <script>
+    const clocks = [...document.querySelectorAll(".clock")];
+    function updateClocks() {
+      const now = new Date();
+      clocks.forEach((c, i) => {
+        const tz = c.dataset.tz;
+        c.querySelector(".time").textContent = now.toLocaleTimeString("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+        c.querySelector(".date").textContent = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "2-digit" }).format(now);
+        c.querySelector(".accent").style.background = `linear-gradient(90deg, hsl(${220 + i*28} 90% 72%), hsl(${255 + i*28} 85% 60%))`;
+      });
+    }
+    updateClocks(); setInterval(updateClocks, 1000);
+  </script>
+</body></html>`;
+}

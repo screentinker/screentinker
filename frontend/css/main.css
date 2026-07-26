@@ -1905,6 +1905,11 @@ h6,
   cursor: pointer;
 }
 
+
+.mobile-menu-btn[aria-expanded="true"] {
+  display: none !important;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .mobile-menu-btn {

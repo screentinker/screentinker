@@ -2,7 +2,7 @@
   "name": "SwiftDisplay",
   "short_name": "SwiftDisplay",
   "description": "Digital Signage Management",
-  "start_url": "/",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#ff6b00",

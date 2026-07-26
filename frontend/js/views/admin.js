@@ -149,7 +149,7 @@ async function loadOrgs() {
   }
   el.innerHTML = orgs.map(o => {
     const wsRows = (o.workspaces || []).map(w => `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-top:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-top:1px solid var(--border);flex-wrap:wrap;gap:8px">
         <div style="font-size:13px">${esc(w.name)}
           <span style="color:var(--text-muted);font-size:11px">· ${w.device_count} ${t('admin.orgs.devices')} · ${w.member_count} ${t('admin.orgs.members')}</span>
         </div>
@@ -157,7 +157,7 @@ async function loadOrgs() {
       </div>`).join('');
     return `
       <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-secondary)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-secondary);flex-wrap:wrap;gap:12px">
           <div>
             <div style="font-weight:600">${esc(o.name)}</div>
             <div style="color:var(--text-muted);font-size:11px">

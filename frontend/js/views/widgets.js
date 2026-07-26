@@ -6,7 +6,7 @@ const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type':
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition', 'crypto', 'world-clock'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -17,9 +17,11 @@ const WIDGET_ICONS = {
   'directory-board': '&#127970;',
   'directory-search': '&#128269;',
   transition: '&#127916;',
+  crypto: '&#8383;',
+  'world-clock': '&#127758;',
 };
-const widgetTypeName = (id) => t(`widget.type.${id.replace(/-/g, '_')}.name`);
-const widgetTypeDesc = (id) => t(`widget.type.${id.replace(/-/g, '_')}.desc`);
+const widgetTypeName = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.name`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live Crypto' : (id === 'world-clock' ? 'World Clock' : id)); };
+const widgetTypeDesc = (id) => { const n = t(`widget.type.${id.replace(/-/g, '_')}.desc`); return n && !n.includes('widget.type') ? n : (id === 'crypto' ? 'Live cryptocurrency ticker' : (id === 'world-clock' ? 'Minimal multi-timezone clock' : '')); };
 
 function escAttr(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -377,6 +379,13 @@ export async function render(container) {
     let html = `<div class="form-group"><label>${t('widget.field.name')}</label><input type="text" id="wName" class="input" value="${escAttr(config._name || typeName)}"></div>`;
 
     switch (type) {
+      
+      case 'crypto':
+        html += `<p style="color:var(--text-muted);font-size:14px;margin-bottom:16px">This widget is fully automated. It tracks live prices for Bitcoin, Ethereum, Solana, and XRP using a dark premium aesthetic.</p>`;
+        break;
+      case 'world-clock':
+        html += `<p style="color:var(--text-muted);font-size:14px;margin-bottom:16px">A minimal world clock showing New York, London, and Tokyo times synchronously.</p>`;
+        break;
       case 'clock':
         html += `
           <div class="form-group"><label>${t('widget.field.format')}</label><select id="wFormat" class="input" style="background:var(--bg-input)"><option value="12h" ${config.format === '12h' ? 'selected' : ''}>${t('widget.field.format_12h')}</option><option value="24h" ${config.format === '24h' ? 'selected' : ''}>${t('widget.field.format_24h')}</option></select></div>

@@ -72,6 +72,7 @@ export async function render(container) {
 }
 
 function getActionIcon(action) {
+  if (!action) return '&#128196;';
   if (action.includes('DELETE')) return '&#128465;';
   if (action.includes('POST') && action.includes('content')) return '&#128228;';
   if (action.includes('POST') && action.includes('provision')) return '&#128279;';
