@@ -1,5 +1,11 @@
-const Database = require('libsql');
 const fs = require('fs');
+let Database;
+try {
+  Database = require('libsql');
+} catch (err) {
+  fs.writeFileSync('libsql-crash.txt', err.toString() + '\\n' + err.stack);
+  throw err;
+}
 const path = require('path');
 const config = require('../config');
 const { chunkedDelete, yieldTick, currentBand } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
