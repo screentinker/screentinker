@@ -1006,7 +1006,7 @@
           <div class="name">Samsung Tizen</div>
         </div>
         <div class="platform-item">
-          <div class="icon">&#127758;</div>
+          <div class="icon"><i class="fa-solid fa-globe"></i></div>
           <div class="name">Any Browser</div>
         </div>
       </div>
@@ -1036,10 +1036,10 @@
           <tbody>
             <tr>
               <td>Price (15 devices/yr)</td>
-              <td style="color:var(--accent);font-weight:600">€1,188</td>
-              <td>€1,440+</td>
-              <td>€3,600+</td>
-              <td>€1,800+</td>
+              <td style="color:var(--accent);font-weight:600">&euro;1,188</td>
+              <td>&euro;1,440+</td>
+              <td>&euro;3,600+</td>
+              <td>&euro;1,800+</td>
             </tr>
             <tr>
               <td>Free tier</td>
@@ -1520,8 +1520,8 @@
       const planCardsHtml = publicPlans.map((p, i) => `
         <div class="price-card ${i === 2 ? 'featured' : ''}">
           <h3>${p.display_name}</h3>
-          <div class="price">${p.price_monthly > 0 ? '€' + p.price_monthly : 'Free'}<span>${p.price_monthly > 0 ? '/mo' : ''}</span></div>
-          ${p.price_yearly > 0 ? `<div class="yearly">or €${p.price_yearly}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
+          <div class="price">${p.price_monthly > 0 ? "&euro;" + p.price_monthly : 'Free'}<span>${p.price_monthly > 0 ? '/mo' : ''}</span></div>
+          ${p.price_yearly > 0 ? `<div class="yearly">or &euro;${p.price_yearly}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
           <ul>
             <li>${p.max_devices === -1 ? 'Unlimited' : p.max_devices} device${p.max_devices !== 1 ? 's' : ''}</li>
             <li>${p.max_storage_mb === -1 ? 'Unlimited' : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + ' GB' : p.max_storage_mb + ' MB'} storage</li>
