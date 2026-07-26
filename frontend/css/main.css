@@ -340,6 +340,20 @@ h6,
   font-weight: 600;
 }
 
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
 .member-avatar--muted {
   background: var(--text-muted);
 }
@@ -575,12 +589,7 @@ h6,
   align-items: center;
   justify-content: space-between;
   margin-bottom: 24px;
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  background: rgba(17, 17, 19, 0.8);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--bg);
   padding: 16px 32px;
   margin-left: -32px;
   margin-right: -32px;
