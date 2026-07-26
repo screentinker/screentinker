@@ -343,4 +343,6 @@ module.exports = {
   bunnyStorageEndpoint: process.env.VITE_BUNNY_STORAGE_ENDPOINT || '',
   bunnyApiKey: process.env.VITE_BUNNY_API_KEY || '',
   bunnyPullZone: process.env.VITE_BUNNY_PULL_ZONE || '',
+  bunnyDbUrl: process.env.BUNNY_DATABASE_URL || '',
+  bunnyDbAuthToken: process.env.BUNNY_DATABASE_AUTH_TOKEN || '',
 };

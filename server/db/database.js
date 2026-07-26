@@ -1,4 +1,4 @@
-const Database = require('better-sqlite3');
+const Database = require('libsql');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
@@ -7,7 +7,15 @@ const { chunkedDelete, yieldTick, currentBand } = require('../lib/chunked-prune'
 const dbDir = path.dirname(config.dbPath);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
-const db = new Database(config.dbPath);
+const dbOptions = {};
+if (config.bunnyDbUrl && config.bunnyDbAuthToken) {
+  dbOptions.syncUrl = config.bunnyDbUrl;
+  dbOptions.authToken = config.bunnyDbAuthToken;
+}
+const db = new Database(config.dbPath, dbOptions);
+if (dbOptions.syncUrl) {
+  db.sync(); // Initial sync
+}
 
 // Enable WAL mode and foreign keys
 db.pragma('journal_mode = WAL');
