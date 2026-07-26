@@ -18,9 +18,33 @@ if (config.bunnyDbUrl && config.bunnyDbAuthToken) {
   dbOptions.syncUrl = config.bunnyDbUrl;
   dbOptions.authToken = config.bunnyDbAuthToken;
 }
-const db = new Database(config.dbPath, dbOptions);
-if (dbOptions.syncUrl) {
-  db.sync(); // Initial sync
+let db;
+try {
+  db = new Database(config.dbPath, dbOptions);
+  if (dbOptions.syncUrl) {
+    db.sync(); // Initial sync
+  }
+} catch (e) {
+  if (e.message && e.message.includes('malformed')) {
+    console.error('[boot] Database is malformed, attempting auto-recovery...');
+    try {
+      const { execSync } = require('child_process');
+      const recoveredPath = config.dbPath + '.recovered';
+      execSync(`sqlite3 "${config.dbPath}" ".recover" | sqlite3 "${recoveredPath}"`);
+      fs.renameSync(config.dbPath, config.dbPath + '.corrupted.' + Date.now());
+      fs.renameSync(recoveredPath, config.dbPath);
+      console.error('[boot] Auto-recovery successful. Reopening...');
+      db = new Database(config.dbPath, dbOptions);
+      if (dbOptions.syncUrl) {
+        db.sync();
+      }
+    } catch (recoverErr) {
+      console.error('[boot] Auto-recovery failed:', recoverErr);
+      throw e;
+    }
+  } else {
+    throw e;
+  }
 }
 
 // Enable foreign keys (and WAL mode if supported)
