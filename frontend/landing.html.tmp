@@ -180,7 +180,6 @@
     .hero h1 span {
       background: linear-gradient(135deg, #e65c00, #8b5cf6);
       -webkit-background-clip: text;
-      background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
@@ -527,7 +526,7 @@
     }
 
     .price-card li::before {
-      content: ' ';
+      content: '✓ ';
       color: var(--accent);
     }
 
@@ -768,12 +767,55 @@
         <a href="#pricing">Pricing</a>
         <a href="#compare">Compare</a>
         <a href="/integrations/">Integrations</a>
-        
+        <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener"
+          aria-label="SwiftDisplay on GitHub" class="nav-github"
+          style="margin-left:16px;display:inline-flex;align-items:center;color:var(--muted)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path
+              d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3" />
+          </svg>
+        </a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px"><span class="btn-full">Start Free
+            Trial</span><span class="btn-short">Try Free</span></a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-badge">&#9889; Open source &middot; Free plan &middot; 14-day Pro trial, no credit card</div>
+      <h1>Open-Source Digital Signage<br>for <span>Any Screen</span></h1>
+      <p>Free, open-source <strong>digital signage software</strong> to manage TVs, video walls, and kiosks from
+        anywhere. A complete <strong>digital signage CMS</strong> with remote control, scheduling, playlists, and
+        analytics — <strong>self-host it</strong> on your own server or use our managed cloud.</p>
+      <div class="hero-btns">
+        <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free Trial</a>
+        <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener" class="btn btn-outline"
+          style="padding:14px 28px;font-size:16px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+            style="margin-right:2px">
+            <path
+              d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3" />
+          </svg>
+          View on GitHub
+        </a>
         <a href="#compare" class="btn btn-outline" style="padding:14px 28px;font-size:16px">See How We Compare</a>
       </div>
     </section>
 
-    
+    <!-- Intro video -->
+    <div style="max-width:800px;margin:32px auto;border-radius:12px;overflow:hidden;border:1px solid var(--border)">
+      <div style="position:relative;padding-bottom:56.25%;height:0">
+        <iframe src="https://www.youtube-nocookie.com/embed/Sq3RbnuDgKw?rel=0"
+          title="SwiftDisplay - Open Source Digital Signage for Any Screen" loading="lazy" width="800" height="450"
+          frameborder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerpolicy="strict-origin-when-cross-origin" allowfullscreen
+          style="position:absolute;top:0;left:0;width:100%;height:100%"></iframe>
+      </div>
+    </div>
 
     <!-- Dashboard preview -->
     <div class="screenshot">
@@ -782,7 +824,21 @@
         loading="lazy" width="2500" height="1314">
     </div>
 
-    
+    <!-- Open Source callout -->
+    <section class="opensource" id="opensource"
+      style="max-width:900px;margin:0 auto;padding:40px 24px;text-align:center">
+      <h2 style="font-size:28px;margin-bottom:12px">Fully Open Source</h2>
+      <p style="color:var(--muted);font-size:16px;margin-bottom:20px">MIT licensed. Self-host on your own infrastructure
+        or use our managed cloud. Your data, your rules.</p>
+      <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener" class="btn btn-outline"
+        style="display:inline-flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path
+            d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3" />
+        </svg>
+        github.com/swiftdisplay/swiftdisplay
+      </a>
+    </section>
 
     <!-- How it works -->
     <section class="features" id="how-it-works">
@@ -790,19 +846,19 @@
       <p class="subtitle">No proprietary hardware, no complicated setup.</p>
       <div class="feature-grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">
         <div class="feature-card">
-          <div class="feature-icon">1.</div>
+          <div class="feature-icon">1&#65039;&#8419;</div>
           <h3>Connect a screen</h3>
           <p>Install the free player on an Android TV, Fire TV, Raspberry Pi, Windows PC, or open a browser tab — then
             pair it with a code.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">2.</div>
+          <div class="feature-icon">2&#65039;&#8419;</div>
           <h3>Add your content</h3>
           <p>Upload images and video, build playlists and multi-zone layouts, or design screens with built-in widgets.
           </p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">3.</div>
+          <div class="feature-icon">3&#65039;&#8419;</div>
           <h3>Schedule and publish</h3>
           <p>Assign content to displays or groups, set day/time schedules, and push live. Change it any time from your
             phone.</p>
@@ -1414,6 +1470,7 @@
       "highPrice": "99",
       "offerCount": "3",
       "offers": [
+        { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "EUR", "description": "1 device, 500MB storage", "url": "https://swiftdisplay.com/#pricing" },
         { "@type": "Offer", "name": "Starter", "price": "39", "priceCurrency": "EUR", "priceValidUntil": "2027-12-31", "description": "5 devices, 5GB storage, remote URL streaming", "url": "https://swiftdisplay.com/#pricing" },
         { "@type": "Offer", "name": "Pro", "price": "99", "priceCurrency": "EUR", "priceValidUntil": "2027-12-31", "description": "15 devices, 20GB storage, all features", "url": "https://swiftdisplay.com/#pricing" }
       ]
@@ -1498,20 +1555,20 @@
     // settings.js, admin.js) get the full list as before.
     fetch('/api/subscription/plans').then(r => r.json()).then(plans => {
       const grid = document.getElementById('pricingGrid');
-      const publicPlans = plans.filter(p => p.active && p.name !== "enterprise" && p.name !== "free");
+      const publicPlans = plans.filter(p => p.active && p.name !== 'enterprise');
       const planCardsHtml = publicPlans.map((p, i) => `
-        <div class="price-card ${i === 2 ? 'featured' : ''}">
-          <h3>${p.display_name}</h3>
-          <div class="price">${p.price_monthly > 0 ? '€' + p.price_monthly : 'Free'}<span>${p.price_monthly > 0 ? '/mo' : ''}</span></div>
-          ${p.price_yearly > 0 ? `<div class="yearly">or €${p.price_yearly}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
+        <div class="price-card €{i === 2 ? 'featured' : ''}">
+          <h3>€{p.display_name}</h3>
+          <div class="price">€{p.price_monthly > 0 ? '€' + p.price_monthly : 'Free'}<span>€{p.price_monthly > 0 ? '/mo' : ''}</span></div>
+          €{p.price_yearly > 0 ? `<div class="yearly">or €€{p.price_yearly}/year (save €{Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
           <ul>
-            <li>${p.max_devices === -1 ? 'Unlimited' : p.max_devices} device${p.max_devices !== 1 ? 's' : ''}</li>
-            <li>${p.max_storage_mb === -1 ? 'Unlimited' : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + ' GB' : p.max_storage_mb + ' MB'} storage</li>
+            <li>€{p.max_devices === -1 ? 'Unlimited' : p.max_devices} device€{p.max_devices !== 1 ? 's' : ''}</li>
+            <li>€{p.max_storage_mb === -1 ? 'Unlimited' : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + ' GB' : p.max_storage_mb + ' MB'} storage</li>
             <li>Remote control & live view</li>
-            ${p.remote_url ? '<li>Remote URL streaming</li>' : ''}
-            ${p.priority_support ? '<li>Priority support</li>' : ''}
+            €{p.remote_url ? '<li>Remote URL streaming</li>' : ''}
+            €{p.priority_support ? '<li>Priority support</li>' : ''}
           </ul>
-          <a href="/app#/login" class="btn ${i === 0 ? 'btn-outline' : 'btn-primary'}" style="width:100%;justify-content:center">${p.price_monthly > 0 ? 'Start Trial' : 'Get Started'}</a>
+          <a href="/app#/login" class="btn €{i === 0 ? 'btn-outline' : 'btn-primary'}" style="width:100%;justify-content:center">€{p.price_monthly > 0 ? 'Start Trial' : 'Get Started'}</a>
         </div>
       `).join('');
       // Hardcoded Enterprise / Custom card. Uses .price class for vertical
@@ -1572,7 +1629,7 @@
           return;
         }
       }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+€/.test(data.email)) {
         status.className = 'contact-status-error';
         status.textContent = 'Please enter a valid email address.';
         return;
