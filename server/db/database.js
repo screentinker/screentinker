@@ -57,12 +57,13 @@ function ensureMultitenancyMigration() {
     console.warn(`[boot] Pre-migration snapshot: ${snapshotPath}`);
   } catch (e) {
     console.error(`[boot] Snapshot failed: ${e.message}`);
-    process.exit(1);
+    if (!e.message.includes('Sqlite3UnsupportedStatement')) process.exit(1);
   }
 
   try {
     const { runMigration } = require('../../scripts/migrate-multitenancy');
     runMigration({ db });
+    if (dbOptions.syncUrl) db.sync();
     console.warn('[boot] Migration complete, continuing startup');
   } catch (e) {
     console.error(`[boot] Migration FAILED: ${e.message}`);
@@ -781,7 +782,7 @@ function backfillPlaylistItemsZoneId() {
     console.warn(`[zone-id backfill] Pre-migration snapshot: ${snapshotPath}`);
   } catch (e) {
     console.error(`[zone-id backfill] Snapshot failed: ${e.message}`);
-    process.exit(1);
+    if (!e.message.includes('Sqlite3UnsupportedStatement')) process.exit(1);
   }
 
   try {
@@ -877,7 +878,7 @@ const { applyTenantDeleteCascade } = require('../lib/tenant-cascade-migration');
     snapped = true;
   } catch (e) {
     console.error(`[tenant-cascade] Snapshot failed: ${e.message}`);
-    process.exit(1);
+    if (!e.message.includes('Sqlite3UnsupportedStatement')) process.exit(1);
   }
 
   try {
