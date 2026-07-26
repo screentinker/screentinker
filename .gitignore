@@ -42,7 +42,6 @@ android/release-key.jks
 Thumbs.db
 
 # Environment
-.env
 .env.*
 # ...but DO track the documented template (placeholders only, no secrets)
 !.env.example
