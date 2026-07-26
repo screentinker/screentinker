@@ -21,12 +21,12 @@
 const PLATFORM_DEFAULT_ID = 'platform-default';
 
 const HARDCODED_BRANDING = {
-  brand_name: 'GoldenSignage',
-  logo_url: '/assets/logoswift.png',
+  brand_name: 'SwiftDisplay',
+  logo_url: '/assets/logowhiteswift.png',
   favicon_url: '/assets/pwa-icon.png',
   primary_color: '#ff6b00',
   secondary_color: '#1E293B',
-  bg_color: '#111827',
+  bg_color: '#1c1c1e',
   custom_css: null,
   hide_branding: 0,
 };
