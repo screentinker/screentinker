@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Power BI Dashboards on Digital Signage (2026) | ScreenTinker</title>
-  <meta name="description" content="Put a live Power BI dashboard on a digital signage screen. Use Publish to web to get an embeddable URL, paste it into ScreenTinker's Webpage widget, and show a self-refreshing report on the wall. Includes the important public-data security caveat.">
+  <title>Power BI Dashboards on Digital Signage (2026) | SwiftDisplay</title>
+  <meta name="description" content="Put a live Power BI dashboard on a digital signage screen. Use Publish to web to get an embeddable URL, paste it into SwiftDisplay's Webpage widget, and show a self-refreshing report on the wall. Includes the important public-data security caveat.">
   <meta name="keywords" content="power bi digital signage, power bi on tv, power bi dashboard wall, power bi publish to web, power bi embed signage, power bi kiosk display">
   <meta name="robots" content="index, follow">
-  <link rel="canonical" href="https://screentinker.com/integrations/power-bi-digital-signage.html">
+  <link rel="canonical" href="https://swiftdisplay.com/integrations/power-bi-digital-signage.html">
 
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://screentinker.com/integrations/power-bi-digital-signage.html">
+  <meta property="og:url" content="https://swiftdisplay.com/integrations/power-bi-digital-signage.html">
   <meta property="og:title" content="Power BI Dashboards on Digital Signage (2026)">
-  <meta property="og:description" content="Use Publish to web to get an embeddable URL and paste it into ScreenTinker's Webpage widget for a live dashboard on the wall.">
-  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
-  <meta property="og:site_name" content="ScreenTinker">
+  <meta property="og:description" content="Use Publish to web to get an embeddable URL and paste it into SwiftDisplay's Webpage widget for a live dashboard on the wall.">
+  <meta property="og:image" content="https://swiftdisplay.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="SwiftDisplay">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Power BI Dashboards on Digital Signage (2026)">
-  <meta name="twitter:description" content="Use Publish to web to get an embeddable URL and paste it into ScreenTinker's Webpage widget for a live dashboard on the wall.">
-  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta name="twitter:description" content="Use Publish to web to get an embeddable URL and paste it into SwiftDisplay's Webpage widget for a live dashboard on the wall.">
+  <meta name="twitter:image" content="https://swiftdisplay.com/assets/dashboard-preview.png">
 
   <meta name="theme-color" content="#111827">
   <link rel="icon" href="/assets/icon-192.png">
@@ -32,7 +32,7 @@
       <div class="nav-logo">
         <a href="/" style="display:flex;align-items:center;gap:10px">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          <span class="nav-logo-text">ScreenTinker</span>
+          <span class="nav-logo-text">SwiftDisplay</span>
         </a>
       </div>
       <div class="nav-links">
@@ -56,17 +56,17 @@
     </nav>
 
     <h1>How to put a Power BI dashboard on a digital signage screen</h1>
-    <p class="lead">ScreenTinker has no dedicated "Power BI app," and it does not need one. Power BI can produce an embeddable public URL with "Publish to web," and ScreenTinker's universal Webpage widget can display that live, self-refreshing report on a wall - as long as you understand the security trade-off first.</p>
+    <p class="lead">SwiftDisplay has no dedicated "Power BI app," and it does not need one. Power BI can produce an embeddable public URL with "Publish to web," and SwiftDisplay's universal Webpage widget can display that live, self-refreshing report on a wall - as long as you understand the security trade-off first.</p>
 
     <h2>The short version</h2>
-    <p>In Power BI, use <strong>File &rarr; Embed report &rarr; Publish to web (public)</strong> to generate an embeddable URL, then add a <strong>Webpage</strong> widget in ScreenTinker, paste the URL, add it to a playlist, and assign it to a screen. Because "Publish to web" makes the report <em>public</em>, only do this for non-confidential data.</p>
+    <p>In Power BI, use <strong>File &rarr; Embed report &rarr; Publish to web (public)</strong> to generate an embeddable URL, then add a <strong>Webpage</strong> widget in SwiftDisplay, paste the URL, add it to a playlist, and assign it to a screen. Because "Publish to web" makes the report <em>public</em>, only do this for non-confidential data.</p>
 
     <h2>Step by step</h2>
     <ol>
       <li><strong>Open the report</strong> in the Power BI service (app.powerbi.com).</li>
       <li><strong>Confirm the data is safe to make public.</strong> "Publish to web" exposes the report to anyone with the link - see the caveat below before continuing.</li>
       <li><strong>Choose File &rarr; Embed report &rarr; Publish to web (public).</strong> Create the embed code and copy the <em>link</em> (the standalone URL, not just the <code>&lt;iframe&gt;</code> snippet).</li>
-      <li><strong>In ScreenTinker, add a Webpage widget.</strong> Create or edit a playlist item and select the <strong>Webpage</strong> widget type.</li>
+      <li><strong>In SwiftDisplay, add a Webpage widget.</strong> Create or edit a playlist item and select the <strong>Webpage</strong> widget type.</li>
       <li><strong>Paste the Publish-to-web URL</strong> into the widget's URL field and save.</li>
       <li><strong>Add the widget to a playlist</strong> and set a comfortable on-screen duration.</li>
       <li><strong>Assign the playlist to a screen.</strong> The player loads the report and it refreshes on its own schedule.</li>
@@ -80,15 +80,15 @@
       <li><strong>Publish to web (public)</strong> produces a URL (<code>app.powerbi.com/view?r=...</code>) that anyone can open with no login and that is allowed to be framed. This is the one that works on signage.</li>
       <li><strong>Embed (for your organization)</strong> requires each viewer to sign in with a Microsoft Entra / Azure AD account. A signage player has no one to complete that login, so this path generally will <em>not</em> display on an unattended screen - it will show a sign-in wall instead.</li>
     </ul>
-    <p>The underlying reason is the same as every embed: pages that send <code>X-Frame-Options</code> / <code>frame-ancestors</code> to deny framing, or that demand authentication, cannot render in ScreenTinker's Webpage widget (it is an iframe). Publish-to-web is served specifically to be publicly embeddable; the org embed and the normal report URL are not.</p>
+    <p>The underlying reason is the same as every embed: pages that send <code>X-Frame-Options</code> / <code>frame-ancestors</code> to deny framing, or that demand authentication, cannot render in SwiftDisplay's Webpage widget (it is an iframe). Publish-to-web is served specifically to be publicly embeddable; the org embed and the normal report URL are not.</p>
 
     <h2 style="color:#dc2626">Security caveat: Publish to web makes the report public</h2>
     <p>This matters, so it gets its own section. <strong>"Publish to web" exposes your report and its underlying data to anyone who has the link - no authentication, no row-level security, indexable by search engines in some cases.</strong> Do not use it for confidential, personal, financial, or otherwise sensitive data. Many organizations disable Publish to web in the Power BI admin portal for exactly this reason.</p>
-    <p>If the dashboard contains anything private, do not put it on a public URL. The safer pattern for confidential dashboards is to <a href="/guides/self-hosted-digital-signage.html">self-host ScreenTinker on a trusted LAN</a> and point the Webpage widget at an internal, network-restricted dashboard URL that never leaves your network. Reserve Publish to web for genuinely public metrics - marketing stats, public KPIs, community dashboards, and the like.</p>
+    <p>If the dashboard contains anything private, do not put it on a public URL. The safer pattern for confidential dashboards is to <a href="/guides/self-hosted-digital-signage.html">self-host SwiftDisplay on a trusted LAN</a> and point the Webpage widget at an internal, network-restricted dashboard URL that never leaves your network. Reserve Publish to web for genuinely public metrics - marketing stats, public KPIs, community dashboards, and the like.</p>
 
     <h2>Auto-refresh tips</h2>
     <ul>
-      <li><strong>Refresh is driven by Power BI, not ScreenTinker.</strong> A Publish-to-web report updates on Power BI's cached schedule (typically about hourly, and roughly every few minutes for visuals in an open view). Design expectations around that cadence rather than expecting real-time.</li>
+      <li><strong>Refresh is driven by Power BI, not SwiftDisplay.</strong> A Publish-to-web report updates on Power BI's cached schedule (typically about hourly, and roughly every few minutes for visuals in an open view). Design expectations around that cadence rather than expecting real-time.</li>
       <li><strong>Match your dataset refresh schedule.</strong> The screen can only be as fresh as the dataset behind it, so set the dataset's scheduled refresh to the fastest cadence your source and license allow.</li>
       <li><strong>Reload periodically if needed.</strong> For long-running displays, rotating the report through a playlist (so the widget reloads on each cycle) helps ensure the latest cached view is fetched.</li>
       <li><strong>Design for the wall.</strong> Build a report page sized for your display and hide slicers/filters the audience cannot interact with, so the unattended view stays clean.</li>
@@ -100,7 +100,7 @@
     <p>You probably used the normal report URL or the "Embed for your organization" link, both of which require a Microsoft login. Use <strong>Publish to web (public)</strong> and paste that <code>app.powerbi.com/view?r=...</code> URL instead.</p>
 
     <h3>Is it safe to put a Power BI dashboard on signage?</h3>
-    <p>Only if the data is non-confidential. "Publish to web" makes the report public to anyone with the link. For private data, self-host ScreenTinker on a trusted LAN and point the Webpage widget at an internal, network-restricted dashboard URL instead.</p>
+    <p>Only if the data is non-confidential. "Publish to web" makes the report public to anyone with the link. For private data, self-host SwiftDisplay on a trusted LAN and point the Webpage widget at an internal, network-restricted dashboard URL instead.</p>
 
     <h3>Can I use "Embed for your organization" on a screen?</h3>
     <p>Generally no. That path requires each viewer to sign in with an organizational account, and an unattended signage player cannot complete that login - it will show a sign-in wall.</p>
@@ -109,7 +109,7 @@
     <p>On Power BI's cached schedule for Publish-to-web (roughly hourly, with visuals updating every few minutes in an open view), and never fresher than the dataset's own scheduled refresh.</p>
 
     <h3>Is there a native Power BI widget?</h3>
-    <p>No - this uses the universal Webpage widget with a Publish-to-web URL. That is the supported way to show Power BI on ScreenTinker.</p>
+    <p>No - this uses the universal Webpage widget with a Publish-to-web URL. That is the supported way to show Power BI on SwiftDisplay.</p>
 
     <div class="related">
       <h2>Related guides</h2>
@@ -123,17 +123,17 @@
     </div>
 
     <div class="cta">
-      <h2>Try ScreenTinker free</h2>
+      <h2>Try SwiftDisplay free</h2>
       <p>Add a Webpage widget, paste a Publish-to-web URL, and see your dashboard on a screen in minutes. Free plan, no credit card required.</p>
       <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free</a>
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
+      <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
     </div>
   </main>
 
   <footer>
-    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 SwiftDisplay. All rights reserved.</div>
     <div class="links">
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener">GitHub</a>
       <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
       <a href="/legal/terms.html">Terms</a>
       <a href="/legal/privacy.html">Privacy</a>
@@ -147,9 +147,9 @@
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
-      { "@type": "ListItem", "position": 2, "name": "Integrations", "item": "https://screentinker.com/integrations/" },
-      { "@type": "ListItem", "position": 3, "name": "Power BI", "item": "https://screentinker.com/integrations/power-bi-digital-signage.html" }
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://swiftdisplay.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Integrations", "item": "https://swiftdisplay.com/integrations/" },
+      { "@type": "ListItem", "position": 3, "name": "Power BI", "item": "https://swiftdisplay.com/integrations/power-bi-digital-signage.html" }
     ]
   }
   </script>
@@ -159,10 +159,10 @@
     "@type": "FAQPage",
     "mainEntity": [
       { "@type": "Question", "name": "Why won't my Power BI report show up on the screen?", "acceptedAnswer": { "@type": "Answer", "text": "You probably used the normal report URL or the Embed for your organization link, both of which require a Microsoft login. Use Publish to web (public) and paste that app.powerbi.com/view?r=... URL instead." } },
-      { "@type": "Question", "name": "Is it safe to put a Power BI dashboard on signage?", "acceptedAnswer": { "@type": "Answer", "text": "Only if the data is non-confidential. Publish to web makes the report public to anyone with the link. For private data, self-host ScreenTinker on a trusted LAN and point the Webpage widget at an internal, network-restricted dashboard URL instead." } },
+      { "@type": "Question", "name": "Is it safe to put a Power BI dashboard on signage?", "acceptedAnswer": { "@type": "Answer", "text": "Only if the data is non-confidential. Publish to web makes the report public to anyone with the link. For private data, self-host SwiftDisplay on a trusted LAN and point the Webpage widget at an internal, network-restricted dashboard URL instead." } },
       { "@type": "Question", "name": "Can I use Embed for your organization on a screen?", "acceptedAnswer": { "@type": "Answer", "text": "Generally no. That path requires each viewer to sign in with an organizational account, and an unattended signage player cannot complete that login - it will show a sign-in wall." } },
       { "@type": "Question", "name": "How often does the dashboard refresh?", "acceptedAnswer": { "@type": "Answer", "text": "On Power BI's cached schedule for Publish-to-web (roughly hourly, with visuals updating every few minutes in an open view), and never fresher than the dataset's own scheduled refresh." } },
-      { "@type": "Question", "name": "Is there a native Power BI widget?", "acceptedAnswer": { "@type": "Answer", "text": "No - this uses the universal Webpage widget with a Publish-to-web URL. That is the supported way to show Power BI on ScreenTinker." } }
+      { "@type": "Question", "name": "Is there a native Power BI widget?", "acceptedAnswer": { "@type": "Answer", "text": "No - this uses the universal Webpage widget with a Publish-to-web URL. That is the supported way to show Power BI on SwiftDisplay." } }
     ]
   }
   </script>

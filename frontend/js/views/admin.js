@@ -211,7 +211,7 @@ async function loadBranding() {
   const v = (x) => esc(x == null ? '' : x);
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:640px">
-      <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.brand_name')}</label><input type="text" id="brBrandName" class="input" placeholder="ScreenTinker" value="${v(b.brand_name)}"></div>
+      <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.brand_name')}</label><input type="text" id="brBrandName" class="input" placeholder="SwiftDisplay" value="${v(b.brand_name)}"></div>
       <div class="form-group"><label>${t('admin.branding.primary_color')}</label><input type="text" id="brPrimary" class="input" placeholder="#e65c00" value="${v(b.primary_color)}"></div>
       <div class="form-group"><label>${t('admin.branding.bg_color')}</label><input type="text" id="brBg" class="input" placeholder="#111827" value="${v(b.bg_color)}"></div>
       <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.logo_url')}</label><input type="text" id="brLogo" class="input" placeholder="https://…/logo.png" value="${v(b.logo_url)}"></div>
@@ -226,7 +226,7 @@ async function loadBranding() {
   document.getElementById('brSave').onclick = async () => {
     try {
       await api.adminSetBranding({
-        brand_name: document.getElementById('brBrandName').value.trim() || 'ScreenTinker',
+        brand_name: document.getElementById('brBrandName').value.trim() || 'SwiftDisplay',
         primary_color: document.getElementById('brPrimary').value.trim() || null,
         bg_color: document.getElementById('brBg').value.trim() || null,
         logo_url: document.getElementById('brLogo').value.trim() || null,

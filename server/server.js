@@ -443,7 +443,9 @@ app.get('/api/devices/:id/screenshot', (req, res) => {
   if (!screenshot) return res.status(404).json({ error: 'No screenshot available' });
   const safePath = path.resolve(config.screenshotsDir, path.basename(screenshot.filepath));
   if (!safePath.startsWith(path.resolve(config.screenshotsDir))) return res.status(403).json({ error: 'Invalid path' });
-  res.sendFile(safePath);
+  res.sendFile(safePath, (err) => {
+    if (err) res.status(404).json({ error: 'Screenshot file not found on server' });
+  });
 });
 
 // A logged-in user who can access the content's workspace may view its file /

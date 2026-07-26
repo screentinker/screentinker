@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "build": "npm install --prefix server",
+    "postinstall": "node scripts/fix-htaccess.js",
     "build:manifest": "node shared/Transitions/generate-manifest.js",
     "test:shaders": "node shared/Transitions/compile-test.js"
   },

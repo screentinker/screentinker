@@ -1,7 +1,7 @@
 // Render-blocking branding primer (#38). Loaded as a synchronous same-origin
 // <script> right after the sidebar logo, so it runs DURING parse, before first
 // paint — applying the current workspace's CACHED white-label so the page paints
-// branded instead of flashing the "ScreenTinker" default. branding.js then
+// branded instead of flashing the "SwiftDisplay" default. branding.js then
 // refreshes it from the server and re-writes the cache. Plain script (not a
 // module) so it's not deferred; keyed by workspace so a switch shows the right
 // brand (or the neutral default for a workspace we haven't cached yet).
@@ -19,7 +19,7 @@
     if (!wl) {
       // #76: no per-workspace cache yet (e.g. a never-visited org). Fall back to
       // the server-injected instance / custom-domain branding so the page paints
-      // the configured brand instead of flashing the ScreenTinker default;
+      // the configured brand instead of flashing the SwiftDisplay default;
       // branding.js then fetches and caches the workspace-specific brand.
       try {
         var ssr = document.querySelector('meta[name="ssr-brand"]');

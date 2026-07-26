@@ -1,7 +1,7 @@
 // Applies the current user's saved white-label config to the DOM.
 // Runs once after login/route bootstrap. Without this, saved values in the
 // white_labels table are read into the Settings form but never applied to
-// the actual page — so users see "ScreenTinker" and default colors after
+// the actual page — so users see "SwiftDisplay" and default colors after
 // every reload, as if their save reverted.
 
 let applied = false;

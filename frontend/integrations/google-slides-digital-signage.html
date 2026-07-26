@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>How to Put Google Slides on Digital Signage (2026) | ScreenTinker</title>
-  <meta name="description" content="Show a Google Slides deck on digital signage. Publish the slideshow to the web, paste the published URL into ScreenTinker's Webpage widget, and let it auto-advance on any screen. Step-by-step guide.">
+  <title>How to Put Google Slides on Digital Signage (2026) | SwiftDisplay</title>
+  <meta name="description" content="Show a Google Slides deck on digital signage. Publish the slideshow to the web, paste the published URL into SwiftDisplay's Webpage widget, and let it auto-advance on any screen. Step-by-step guide.">
   <meta name="keywords" content="google slides digital signage, google slides on tv, google slides signage, publish google slides to web, google slides embed signage, google slides kiosk">
   <meta name="robots" content="index, follow">
-  <link rel="canonical" href="https://screentinker.com/integrations/google-slides-digital-signage.html">
+  <link rel="canonical" href="https://swiftdisplay.com/integrations/google-slides-digital-signage.html">
 
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://screentinker.com/integrations/google-slides-digital-signage.html">
+  <meta property="og:url" content="https://swiftdisplay.com/integrations/google-slides-digital-signage.html">
   <meta property="og:title" content="How to Put Google Slides on Digital Signage (2026)">
-  <meta property="og:description" content="Publish a Slides deck to the web and paste the URL into ScreenTinker's Webpage widget to auto-advance it on any screen.">
-  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
-  <meta property="og:site_name" content="ScreenTinker">
+  <meta property="og:description" content="Publish a Slides deck to the web and paste the URL into SwiftDisplay's Webpage widget to auto-advance it on any screen.">
+  <meta property="og:image" content="https://swiftdisplay.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="SwiftDisplay">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="How to Put Google Slides on Digital Signage (2026)">
-  <meta name="twitter:description" content="Publish a Slides deck to the web and paste the URL into ScreenTinker's Webpage widget to auto-advance it on any screen.">
-  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta name="twitter:description" content="Publish a Slides deck to the web and paste the URL into SwiftDisplay's Webpage widget to auto-advance it on any screen.">
+  <meta name="twitter:image" content="https://swiftdisplay.com/assets/dashboard-preview.png">
 
   <meta name="theme-color" content="#111827">
   <link rel="icon" href="/assets/icon-192.png">
@@ -32,7 +32,7 @@
       <div class="nav-logo">
         <a href="/" style="display:flex;align-items:center;gap:10px">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          <span class="nav-logo-text">ScreenTinker</span>
+          <span class="nav-logo-text">SwiftDisplay</span>
         </a>
       </div>
       <div class="nav-links">
@@ -56,17 +56,17 @@
     </nav>
 
     <h1>How to put Google Slides on a digital signage screen</h1>
-    <p class="lead">ScreenTinker does not have a dedicated "Google Slides app" - and it does not need one. Google Slides can publish a deck to the web, and ScreenTinker's universal Webpage widget can display that published URL on any screen, auto-advancing through the slides on a loop.</p>
+    <p class="lead">SwiftDisplay does not have a dedicated "Google Slides app" - and it does not need one. Google Slides can publish a deck to the web, and SwiftDisplay's universal Webpage widget can display that published URL on any screen, auto-advancing through the slides on a loop.</p>
 
     <h2>The short version</h2>
-    <p>In Google Slides, go to <strong>File &rarr; Share &rarr; Publish to web &rarr; Embed</strong>, set the auto-advance interval, and copy the published URL. In ScreenTinker, add a <strong>Webpage</strong> widget, paste that URL, drop the widget into a playlist, and assign the playlist to a screen. That is the whole integration.</p>
+    <p>In Google Slides, go to <strong>File &rarr; Share &rarr; Publish to web &rarr; Embed</strong>, set the auto-advance interval, and copy the published URL. In SwiftDisplay, add a <strong>Webpage</strong> widget, paste that URL, drop the widget into a playlist, and assign the playlist to a screen. That is the whole integration.</p>
 
     <h2>Step by step</h2>
     <ol>
       <li><strong>Open your deck</strong> in Google Slides and choose <strong>File &rarr; Share &rarr; Publish to web</strong>.</li>
       <li><strong>Switch to the "Embed" tab.</strong> Pick how fast slides should advance (for example, every 5 seconds) and tick <em>Auto-advance</em> and <em>Restart the slideshow after the last slide</em> so it loops forever.</li>
       <li><strong>Click Publish</strong> and confirm. Copy the published URL from the embed snippet - it is the <code>src</code> value that looks like the one below, <em>not</em> your normal editing link.</li>
-      <li><strong>In ScreenTinker, add a Webpage widget.</strong> Open your dashboard, create or edit a playlist item, and choose the <strong>Webpage</strong> widget type.</li>
+      <li><strong>In SwiftDisplay, add a Webpage widget.</strong> Open your dashboard, create or edit a playlist item, and choose the <strong>Webpage</strong> widget type.</li>
       <li><strong>Paste the published URL</strong> into the widget's URL field and save.</li>
       <li><strong>Add the widget to a playlist</strong> and set its duration to at least one full loop of the deck.</li>
       <li><strong>Assign the playlist to a screen.</strong> The player pulls the published deck and it starts advancing on the wall.</li>
@@ -81,14 +81,14 @@
       <li><strong>The /present URL</strong> (ends in <code>/present</code>) is presenter mode and also blocks framing.</li>
       <li><strong>The published URL</strong> from <em>Publish to web</em> (contains <code>/pub</code> or <code>/pubembed</code>) is the only one that permits embedding. Always use this one.</li>
     </ul>
-    <p>The reason is <code>X-Frame-Options</code> / <code>frame-ancestors</code>: any page that sends those headers to deny framing cannot be shown in an iframe, and ScreenTinker's Webpage widget is an iframe. The published URL is served without that restriction specifically so it can be embedded. If your slides do not appear, the URL is almost always the cause.</p>
+    <p>The reason is <code>X-Frame-Options</code> / <code>frame-ancestors</code>: any page that sends those headers to deny framing cannot be shown in an iframe, and SwiftDisplay's Webpage widget is an iframe. The published URL is served without that restriction specifically so it can be embedded. If your slides do not appear, the URL is almost always the cause.</p>
 
     <h2>Auto-advance and refresh tips</h2>
     <ul>
-      <li><strong>Set the pace in Slides, not ScreenTinker.</strong> The <code>delayms</code> parameter in the published URL controls how long each slide holds. Adjust it by re-publishing with a different interval, or edit the <code>delayms</code> value directly in the URL (milliseconds).</li>
+      <li><strong>Set the pace in Slides, not SwiftDisplay.</strong> The <code>delayms</code> parameter in the published URL controls how long each slide holds. Adjust it by re-publishing with a different interval, or edit the <code>delayms</code> value directly in the URL (milliseconds).</li>
       <li><strong>Keep <code>loop=true</code></strong> so the deck restarts after the last slide and never goes blank.</li>
       <li><strong>Give the playlist item enough time.</strong> Set the Webpage widget's on-screen duration to at least the length of one full loop so viewers see every slide.</li>
-      <li><strong>Content updates are automatic-ish.</strong> When you edit the source deck, Google re-publishes changes to the published URL within a short window (usually a few minutes), so the sign updates without touching ScreenTinker.</li>
+      <li><strong>Content updates are automatic-ish.</strong> When you edit the source deck, Google re-publishes changes to the published URL within a short window (usually a few minutes), so the sign updates without touching SwiftDisplay.</li>
     </ul>
 
     <h2>FAQ</h2>
@@ -103,10 +103,10 @@
     <p>Yes. Enable auto-advance when you publish and set the interval; the <code>delayms</code> and <code>loop</code> parameters in the published URL handle timing and looping.</p>
 
     <h3>Will the sign update when I edit the deck?</h3>
-    <p>Yes, on a short delay. Google re-publishes edits to the published URL automatically, so the screen picks up changes without any change in ScreenTinker.</p>
+    <p>Yes, on a short delay. Google re-publishes edits to the published URL automatically, so the screen picks up changes without any change in SwiftDisplay.</p>
 
     <h3>Is there a native Google Slides widget?</h3>
-    <p>No - this uses the universal Webpage widget with the deck's published URL. That is the supported and reliable way to show Slides on ScreenTinker.</p>
+    <p>No - this uses the universal Webpage widget with the deck's published URL. That is the supported and reliable way to show Slides on SwiftDisplay.</p>
 
     <div class="related">
       <h2>Related guides</h2>
@@ -120,17 +120,17 @@
     </div>
 
     <div class="cta">
-      <h2>Try ScreenTinker free</h2>
+      <h2>Try SwiftDisplay free</h2>
       <p>Add a Webpage widget, paste your published deck, and see it on a screen in minutes. Free plan, no credit card required.</p>
       <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free</a>
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
+      <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
     </div>
   </main>
 
   <footer>
-    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 SwiftDisplay. All rights reserved.</div>
     <div class="links">
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener">GitHub</a>
       <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
       <a href="/legal/terms.html">Terms</a>
       <a href="/legal/privacy.html">Privacy</a>
@@ -144,9 +144,9 @@
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
-      { "@type": "ListItem", "position": 2, "name": "Integrations", "item": "https://screentinker.com/integrations/" },
-      { "@type": "ListItem", "position": 3, "name": "Google Slides", "item": "https://screentinker.com/integrations/google-slides-digital-signage.html" }
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://swiftdisplay.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Integrations", "item": "https://swiftdisplay.com/integrations/" },
+      { "@type": "ListItem", "position": 3, "name": "Google Slides", "item": "https://swiftdisplay.com/integrations/google-slides-digital-signage.html" }
     ]
   }
   </script>
@@ -158,8 +158,8 @@
       { "@type": "Question", "name": "Why won't my Google Slides link show up on the screen?", "acceptedAnswer": { "@type": "Answer", "text": "You almost certainly pasted the /edit or /present URL. Those require a login and block framing. Go back to File > Share > Publish to web and copy the published /pubembed URL instead." } },
       { "@type": "Question", "name": "Do viewers need a Google account to see the deck?", "acceptedAnswer": { "@type": "Answer", "text": "No. A published-to-web deck is public and renders without any login, which is why it works on an unattended signage player." } },
       { "@type": "Question", "name": "Can I make the slides advance automatically?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Enable auto-advance when you publish and set the interval; the delayms and loop parameters in the published URL handle timing and looping." } },
-      { "@type": "Question", "name": "Will the sign update when I edit the deck?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, on a short delay. Google re-publishes edits to the published URL automatically, so the screen picks up changes without any change in ScreenTinker." } },
-      { "@type": "Question", "name": "Is there a native Google Slides widget?", "acceptedAnswer": { "@type": "Answer", "text": "No - this uses the universal Webpage widget with the deck's published URL. That is the supported and reliable way to show Slides on ScreenTinker." } }
+      { "@type": "Question", "name": "Will the sign update when I edit the deck?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, on a short delay. Google re-publishes edits to the published URL automatically, so the screen picks up changes without any change in SwiftDisplay." } },
+      { "@type": "Question", "name": "Is there a native Google Slides widget?", "acceptedAnswer": { "@type": "Answer", "text": "No - this uses the universal Webpage widget with the deck's published URL. That is the supported and reliable way to show Slides on SwiftDisplay." } }
     ]
   }
   </script>

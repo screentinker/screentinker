@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>How to Set Up Digital Signage on Raspberry Pi (2026) | ScreenTinker</title>
-  <meta name="description" content="Step-by-step guide to building a Raspberry Pi digital signage player with ScreenTinker. Covers hardware, Pi OS setup, the install script, pairing, and pushing content. Free and open source.">
+  <title>How to Set Up Digital Signage on Raspberry Pi (2026) | SwiftDisplay</title>
+  <meta name="description" content="Step-by-step guide to building a Raspberry Pi digital signage player with SwiftDisplay. Covers hardware, Pi OS setup, the install script, pairing, and pushing content. Free and open source.">
   <meta name="keywords" content="raspberry pi digital signage, digital signage raspberry pi, pi signage, raspberry pi tv display, free pi signage software, open source pi signage">
   <meta name="robots" content="index, follow">
-  <link rel="canonical" href="https://screentinker.com/guides/raspberry-pi-digital-signage.html">
+  <link rel="canonical" href="https://swiftdisplay.com/guides/raspberry-pi-digital-signage.html">
 
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://screentinker.com/guides/raspberry-pi-digital-signage.html">
+  <meta property="og:url" content="https://swiftdisplay.com/guides/raspberry-pi-digital-signage.html">
   <meta property="og:title" content="How to Set Up Digital Signage on Raspberry Pi (2026)">
   <meta property="og:description" content="Step-by-step Pi signage guide. Hardware, OS, install script, pairing, content. Free and open source.">
-  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
-  <meta property="og:site_name" content="ScreenTinker">
+  <meta property="og:image" content="https://swiftdisplay.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="SwiftDisplay">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="How to Set Up Digital Signage on Raspberry Pi (2026)">
   <meta name="twitter:description" content="Step-by-step Pi signage guide. Hardware, OS, install script, pairing, content. Free and open source.">
-  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta name="twitter:image" content="https://swiftdisplay.com/assets/dashboard-preview.png">
 
   <meta name="theme-color" content="#111827">
   <link rel="icon" href="/assets/icon-192.png">
@@ -32,7 +32,7 @@
       <div class="nav-logo">
         <a href="/" style="display:flex;align-items:center;gap:10px">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          <span class="nav-logo-text">ScreenTinker</span>
+          <span class="nav-logo-text">SwiftDisplay</span>
         </a>
       </div>
       <div class="nav-links">
@@ -56,7 +56,7 @@
     </nav>
 
     <h1>How to Set Up Digital Signage on a Raspberry Pi (2026)</h1>
-    <p class="lead">A step-by-step guide to turning a Raspberry Pi into a free, open-source digital signage player using ScreenTinker. Works on Pi 3, Pi 4, and Pi 5.</p>
+    <p class="lead">A step-by-step guide to turning a Raspberry Pi into a free, open-source digital signage player using SwiftDisplay. Works on Pi 3, Pi 4, and Pi 5.</p>
 
     <h2>What you will need</h2>
     <ul>
@@ -65,7 +65,7 @@
       <li><strong>Power supply</strong> appropriate for your model (Pi 4 uses USB-C 15W; Pi 5 uses USB-C 27W).</li>
       <li><strong>HDMI cable</strong> to your TV or monitor (micro-HDMI on Pi 4/5).</li>
       <li><strong>Network connection</strong> - Ethernet preferred for reliability, Wi-Fi works fine.</li>
-      <li><strong>A ScreenTinker account.</strong> <a href="/app#/login">Sign up free</a> if you do not have one.</li>
+      <li><strong>A SwiftDisplay account.</strong> <a href="/app#/login">Sign up free</a> if you do not have one.</li>
     </ul>
 
     <h2>Step 1: Install Raspberry Pi OS</h2>
@@ -79,9 +79,9 @@
     </ul>
     <p>Insert the SD card, plug in the Pi, and let it boot through first-time setup.</p>
 
-    <h2>Step 2: Run the ScreenTinker installer</h2>
+    <h2>Step 2: Run the SwiftDisplay installer</h2>
     <p>Open a terminal on the Pi and run:</p>
-    <pre><code>curl -sL https://screentinker.com/scripts/raspberry-pi-setup.sh | bash</code></pre>
+    <pre><code>curl -sL https://swiftdisplay.com/scripts/raspberry-pi-setup.sh | bash</code></pre>
     <p>The script will:</p>
     <ul>
       <li>Install Chromium (the kiosk browser used as the player)</li>
@@ -90,10 +90,10 @@
       <li>Configure HDMI to keep the display awake</li>
       <li>Reboot the Pi when finished</li>
     </ul>
-    <p>On reboot the Pi will launch directly into the ScreenTinker player and show a 6-digit pairing code.</p>
+    <p>On reboot the Pi will launch directly into the SwiftDisplay player and show a 6-digit pairing code.</p>
 
     <h2>Step 3: Pair the Pi to your dashboard</h2>
-    <p>Sign in to <a href="/app#/login">your ScreenTinker dashboard</a> and click <strong>+ Add Display</strong>. Enter the 6-digit code shown on the Pi and give the display a name (e.g. "Lobby TV"). The Pi will switch from the pairing screen to "Waiting for content".</p>
+    <p>Sign in to <a href="/app#/login">your SwiftDisplay dashboard</a> and click <strong>+ Add Display</strong>. Enter the 6-digit code shown on the Pi and give the display a name (e.g. "Lobby TV"). The Pi will switch from the pairing screen to "Waiting for content".</p>
 
     <h2>Step 4: Push content</h2>
     <p>From the dashboard:</p>
@@ -115,7 +115,7 @@
 
     <h2>Troubleshooting</h2>
     <h3>The Pi reboots into the desktop, not the player</h3>
-    <p>Check that the autostart file <code>~/.config/autostart/screentinker.desktop</code> exists. The installer creates this; if it's missing, re-run the installer.</p>
+    <p>Check that the autostart file <code>~/.config/autostart/swiftdisplay.desktop</code> exists. The installer creates this; if it's missing, re-run the installer.</p>
 
     <h3>The screen goes dark after a few minutes</h3>
     <p>The installer should disable screen blanking, but some monitors sleep based on their own timer. Disable sleep mode on the monitor itself, or use a dummy HDMI plug if the Pi negotiates a low-power mode.</p>
@@ -128,23 +128,23 @@
       <ul>
         <li><a href="/guides/digital-signage-android-tv.html">Digital signage for Android TV and Fire TV</a></li>
         <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage: complete guide</a></li>
-        <li><a href="/compare/yodeck-alternative.html">Compare: ScreenTinker vs Yodeck</a></li>
-        <li><a href="/compare/screencloud-alternative.html">Compare: ScreenTinker vs ScreenCloud</a></li>
+        <li><a href="/compare/yodeck-alternative.html">Compare: SwiftDisplay vs Yodeck</a></li>
+        <li><a href="/compare/screencloud-alternative.html">Compare: SwiftDisplay vs ScreenCloud</a></li>
       </ul>
     </div>
 
     <div class="cta">
       <h2>Ready to set up your Pi?</h2>
-      <p>Start a free ScreenTinker account in under a minute.</p>
+      <p>Start a free SwiftDisplay account in under a minute.</p>
       <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free</a>
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
+      <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
     </div>
   </main>
 
   <footer>
-    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 SwiftDisplay. All rights reserved.</div>
     <div class="links">
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/swiftdisplay/swiftdisplay" target="_blank" rel="noopener">GitHub</a>
       <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
       <a href="/legal/terms.html">Terms</a>
       <a href="/legal/privacy.html">Privacy</a>
@@ -158,9 +158,9 @@
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
-      { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://screentinker.com/" },
-      { "@type": "ListItem", "position": 3, "name": "Raspberry Pi Digital Signage", "item": "https://screentinker.com/guides/raspberry-pi-digital-signage.html" }
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://swiftdisplay.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://swiftdisplay.com/" },
+      { "@type": "ListItem", "position": 3, "name": "Raspberry Pi Digital Signage", "item": "https://swiftdisplay.com/guides/raspberry-pi-digital-signage.html" }
     ]
   }
   </script>
