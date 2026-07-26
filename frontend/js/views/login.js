@@ -44,7 +44,7 @@ export async function render(container) {
   const [config, branding] = await Promise.all([loadAuthConfig(), loadLoginBranding()]);
   const isSetup = config.needsSetup;
   // registration_enabled may be absent on older servers — treat as enabled for back-compat
-  const canRegister = config.registration_enabled !== false;
+  const canRegister = false;
 
   applyLoginBrandingDoc(branding);
   const brandName = branding.brand_name || 'SwiftDisplay';
