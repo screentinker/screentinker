@@ -77,7 +77,7 @@ export async function render(container) {
               ${p.id === subData.plan.id ? `<div style="position:absolute;top:-10px;right:12px;background:var(--accent);color:white;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:500">${t('billing.current')}</div>` : ''}
               <div style="font-size:18px;font-weight:700;margin-bottom:4px">${p.display_name}</div>
               <div style="font-size:24px;font-weight:700;color:var(--accent);margin-bottom:12px">
-                ${p.price_monthly > 0 ? `$${p.price_monthly}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>` : t('billing.free')}
+                ${p.price_monthly > 0 ? `€${p.price_monthly}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>` : t('billing.free')}
               </div>
               <div style="font-size:13px;color:var(--text-secondary);line-height:2">
                 <div>${p.max_devices === -1 ? t('billing.unlimited') : p.max_devices} ${t('billing.devices_lc')}</div>

@@ -1,6 +1,6 @@
 {
-  "name": "GoldenSignage",
-  "short_name": "GoldenSignage",
+  "name": "SwiftDisplay",
+  "short_name": "SwiftDisplay",
   "description": "Digital Signage Management",
   "start_url": "/",
   "display": "standalone",

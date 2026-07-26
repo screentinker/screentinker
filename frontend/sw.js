@@ -1,4 +1,4 @@
-const CACHE_NAME = 'goldensignage-v1';
+const CACHE_NAME = 'swiftdisplay-v1';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
