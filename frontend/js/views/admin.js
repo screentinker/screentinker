@@ -212,7 +212,7 @@ async function loadBranding() {
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:640px">
       <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.brand_name')}</label><input type="text" id="brBrandName" class="input" placeholder="ScreenTinker" value="${v(b.brand_name)}"></div>
-      <div class="form-group"><label>${t('admin.branding.primary_color')}</label><input type="text" id="brPrimary" class="input" placeholder="#3B82F6" value="${v(b.primary_color)}"></div>
+      <div class="form-group"><label>${t('admin.branding.primary_color')}</label><input type="text" id="brPrimary" class="input" placeholder="#e65c00" value="${v(b.primary_color)}"></div>
       <div class="form-group"><label>${t('admin.branding.bg_color')}</label><input type="text" id="brBg" class="input" placeholder="#111827" value="${v(b.bg_color)}"></div>
       <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.logo_url')}</label><input type="text" id="brLogo" class="input" placeholder="https://…/logo.png" value="${v(b.logo_url)}"></div>
       <div class="form-group" style="grid-column:1/-1"><label>${t('admin.branding.favicon_url')}</label><input type="text" id="brFavicon" class="input" placeholder="https://…/favicon.ico" value="${v(b.favicon_url)}"></div>
@@ -389,9 +389,9 @@ async function loadPlans() {
             <tr style="border-bottom:1px solid var(--border)">
               <td style="padding:8px;font-weight:500">${p.display_name}</td>
               <td style="padding:8px;text-align:right">${p.max_devices === -1 ? t('admin.unlimited') : p.max_devices}</td>
-              <td style="padding:8px;text-align:right">${p.max_storage_mb === -1 ? t('admin.unlimited') : p.max_storage_mb >= 1024 ? (p.max_storage_mb/1024)+'GB' : p.max_storage_mb+'MB'}</td>
-              <td style="padding:8px;text-align:right">${p.price_monthly > 0 ? '$'+p.price_monthly : t('admin.free')}</td>
-              <td style="padding:8px;text-align:right">${p.price_yearly > 0 ? '$'+p.price_yearly : '-'}</td>
+              <td style="padding:8px;text-align:right">${p.max_storage_mb === -1 ? t('admin.unlimited') : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + 'GB' : p.max_storage_mb + 'MB'}</td>
+              <td style="padding:8px;text-align:right">${p.price_monthly > 0 ? '$' + p.price_monthly : t('admin.free')}</td>
+              <td style="padding:8px;text-align:right">${p.price_yearly > 0 ? '$' + p.price_yearly : '-'}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -531,4 +531,4 @@ async function loadSystem() {
   } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
 
-export function cleanup() {}
+export function cleanup() { }

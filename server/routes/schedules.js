@@ -146,7 +146,7 @@ router.get('/week', (req, res) => {
 // playlist were accepted with NO ownership check at all.
 router.post('/', (req, res) => {
   const { device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time,
-          timezone, recurrence, recurrence_end, priority, color } = req.body;
+    timezone, recurrence, recurrence_end, priority, color } = req.body;
 
   if (!start_time || !end_time) {
     return res.status(400).json({ error: 'start_time and end_time required' });
@@ -181,9 +181,9 @@ router.post('/', (req, res) => {
   // Payload refs must live in the same workspace. Platform templates
   // (workspace_id IS NULL) on content / widget / layout / playlist are allowed.
   const refChecks = [
-    ['content',   content_id,  true],
-    ['widgets',   widget_id,   true],
-    ['layouts',   layout_id,   true],
+    ['content', content_id, true],
+    ['widgets', widget_id, true],
+    ['layouts', layout_id, true],
     ['playlists', playlist_id, true],
   ];
   for (const [table, id, allowNull] of refChecks) {
@@ -199,7 +199,7 @@ router.post('/', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, req.user.id, targetWorkspaceId, device_id || null, group_id || null, zone_id || null, content_id || null, widget_id || null,
     layout_id || null, playlist_id || null, title || '', start_time, end_time, timezone || 'UTC',
-    recurrence || null, recurrence_end || null, priority || 0, color || '#3B82F6');
+    recurrence || null, recurrence_end || null, priority || 0, color || '#e65c00');
 
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
   res.status(201).json(schedule);
@@ -225,12 +225,12 @@ router.put('/:id', requireScheduleWrite, (req, res) => {
   // (no NULL workspace path); content / widget / layout / playlist may be
   // platform templates (NULL workspace_id).
   const ownershipChecks = [
-    ['devices',       req.body.device_id,   schedule.device_id,   false],
-    ['device_groups', req.body.group_id,    schedule.group_id,    false],
-    ['content',       req.body.content_id,  schedule.content_id,  true],
-    ['widgets',       req.body.widget_id,   schedule.widget_id,   true],
-    ['layouts',       req.body.layout_id,   schedule.layout_id,   true],
-    ['playlists',     req.body.playlist_id, schedule.playlist_id, true],
+    ['devices', req.body.device_id, schedule.device_id, false],
+    ['device_groups', req.body.group_id, schedule.group_id, false],
+    ['content', req.body.content_id, schedule.content_id, true],
+    ['widgets', req.body.widget_id, schedule.widget_id, true],
+    ['layouts', req.body.layout_id, schedule.layout_id, true],
+    ['playlists', req.body.playlist_id, schedule.playlist_id, true],
   ];
   for (const [table, newVal, oldVal, allowNull] of ownershipChecks) {
     if (newVal === undefined || newVal === oldVal || !newVal) continue;

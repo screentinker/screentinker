@@ -103,7 +103,7 @@ router.get('/:id/render', (req, res) => {
     text-align:center; cursor:pointer; transition:all 0.2s ease; touch-action:manipulation;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
   }
-  .kiosk-btn:hover, .kiosk-btn:active { background:${safeColor(style.buttonHover, '#3b82f6')}; border-color:${safeColor(style.buttonHover, '#3b82f6')}; transform:scale(1.02); }
+  .kiosk-btn:hover, .kiosk-btn:active { background:${safeColor(style.buttonHover, '#e65c00')}; border-color:${safeColor(style.buttonHover, '#e65c00')}; transform:scale(1.02); }
   .kiosk-btn .icon { font-size:${safeNumber(style.iconSize, 48)}px; }
   .kiosk-btn .label { font-size:${safeNumber(style.labelSize, 20)}px; font-weight:600; }
   .kiosk-btn .sublabel { font-size:${safeNumber(style.sublabelSize, 14)}px; opacity:0.6; }
@@ -245,7 +245,7 @@ function getDefaultKioskConfig() {
       columns: 3,
       buttonBg: '#1e293b',
       buttonBorder: '#334155',
-      buttonHover: '#3b82f6',
+      buttonHover: '#e65c00',
       buttonRadius: 16,
       buttonPadding: 32,
       gap: 24,

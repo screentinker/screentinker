@@ -14,16 +14,18 @@ process.env.SELF_HOSTED = 'false';
 
 const db = new Database(':memory:');
 const dbModulePath = require.resolve('../db/database');
-require.cache[dbModulePath] = { id: dbModulePath, filename: dbModulePath, loaded: true, exports: { db, pruneTelemetry() {}, pruneScreenshots() {} } };
+require.cache[dbModulePath] = { id: dbModulePath, filename: dbModulePath, loaded: true, exports: { db, pruneTelemetry() { }, pruneScreenshots() { } } };
 
 const ai = require('../routes/ai');
 const { normalizeDesign, endpointAllowed } = ai;
 
 test('normalizeDesign: keeps valid text+shape, sets background', () => {
-  const d = normalizeDesign({ background: '#102030', elements: [
-    { type: 'text', x: 5, y: 5, text: 'HELLO', fontSize: 90, color: '#ffffff', bold: true },
-    { type: 'shape', x: 0, y: 90, width: 100, height: 8, color: '#ff0000', opacity: 0.5 },
-  ]});
+  const d = normalizeDesign({
+    background: '#102030', elements: [
+      { type: 'text', x: 5, y: 5, text: 'HELLO', fontSize: 90, color: '#ffffff', bold: true },
+      { type: 'shape', x: 0, y: 90, width: 100, height: 8, color: '#ff0000', opacity: 0.5 },
+    ]
+  });
   assert.equal(d.background, '#102030');
   assert.equal(d.elements.length, 2);
   const txt = d.elements.find((e) => e.type === 'text');
@@ -32,25 +34,29 @@ test('normalizeDesign: keeps valid text+shape, sets background', () => {
 });
 
 test('normalizeDesign: converts pixel shape dims to %, clamps ranges', () => {
-  const d = normalizeDesign({ elements: [
-    { type: 'shape', x: -10, y: 200, width: 1920, height: 1080, color: 'red', opacity: 5 },
-  ]});
+  const d = normalizeDesign({
+    elements: [
+      { type: 'shape', x: -10, y: 200, width: 1920, height: 1080, color: 'red', opacity: 5 },
+    ]
+  });
   const s = d.elements[0];
   assert.equal(s.x, 0, 'x clamped so full-width shape fits');
   assert.equal(s.y, 0, 'y clamped so full-height shape fits (y+height<=100)');
   assert.ok(Math.abs(s.width - 100) < 0.01, '1920px -> 100%');
   assert.ok(Math.abs(s.height - 100) < 0.01, '1080px -> 100%');
-  assert.equal(s.color, '#3b82f6', 'non-hex color -> default');
+  assert.equal(s.color, '#e65c00', 'non-hex color -> default');
   assert.equal(s.opacity, 1, 'opacity clamped to 1');
 });
 
 test('normalizeDesign: strips HTML from text, drops empty/invalid', () => {
-  const d = normalizeDesign({ elements: [
-    { type: 'text', text: '<img src=x onerror=alert(1)>Sale</b>', fontSize: 9999 },
-    { type: 'text', text: '   ' },
-    { type: 'bogus', text: 'x' },
-    null,
-  ]});
+  const d = normalizeDesign({
+    elements: [
+      { type: 'text', text: '<img src=x onerror=alert(1)>Sale</b>', fontSize: 9999 },
+      { type: 'text', text: '   ' },
+      { type: 'bogus', text: 'x' },
+      null,
+    ]
+  });
   assert.equal(d.elements.length, 1, 'only the one real text survives');
   assert.equal(d.elements[0].text, 'Sale');
   assert.ok(!/[<>]/.test(d.elements[0].text), 'no angle brackets');
@@ -77,9 +83,11 @@ test('endpointAllowed: blocks private/internal when hosted, allows public https'
 });
 
 test('normalizeDesign: long/large text is shrunk + repositioned to fit canvas', () => {
-  const d = normalizeDesign({ elements: [
-    { type: 'text', x: 30, y: 95, text: 'GRAND OPENING THIS FRIDAY EVERYONE WELCOME', fontSize: 160, color: '#fff' },
-  ]});
+  const d = normalizeDesign({
+    elements: [
+      { type: 'text', x: 30, y: 95, text: 'GRAND OPENING THIS FRIDAY EVERYONE WELCOME', fontSize: 160, color: '#fff' },
+    ]
+  });
   const e = d.elements[0];
   const w = e.text.length * e.fontSize * 0.075;
   assert.ok(e.x + w <= 96.5, `fits horizontally (x=${e.x} w=${w.toFixed(1)})`);
@@ -89,11 +97,13 @@ test('normalizeDesign: long/large text is shrunk + repositioned to fit canvas', 
 });
 
 test('normalizeDesign: separates overlapping text + orders shapes behind text', () => {
-  const d = normalizeDesign({ elements: [
-    { type: 'text', x: 5, y: 40, text: 'HEADLINE TEXT HERE', fontSize: 60, color: '#fff' },
-    { type: 'text', x: 5, y: 41, text: 'SUBTEXT OVERLAPPING IT', fontSize: 40, color: '#fff' },
-    { type: 'shape', x: 0, y: 0, width: 100, height: 100, color: '#000', opacity: 0.5 },
-  ]});
+  const d = normalizeDesign({
+    elements: [
+      { type: 'text', x: 5, y: 40, text: 'HEADLINE TEXT HERE', fontSize: 60, color: '#fff' },
+      { type: 'text', x: 5, y: 41, text: 'SUBTEXT OVERLAPPING IT', fontSize: 40, color: '#fff' },
+      { type: 'shape', x: 0, y: 0, width: 100, height: 100, color: '#000', opacity: 0.5 },
+    ]
+  });
   assert.equal(d.elements[0].type, 'shape', 'shape rendered behind (first in array)');
   const texts = d.elements.filter((e) => e.type === 'text');
   const hi = texts[0].y <= texts[1].y ? texts[0] : texts[1];

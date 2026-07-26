@@ -183,7 +183,7 @@ async function loadSummary() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     const families = [
-      ['Tizen', data.byFamily.tizen, '#3b82f6'],
+      ['Tizen', data.byFamily.tizen, '#e65c00'],
       ['WebOS', data.byFamily.webos, '#a3e635'],
       ['Fire TV', data.byFamily.fire_tv, '#f97316'],
       ['Bravia', data.byFamily.bravia, '#a855f7'],

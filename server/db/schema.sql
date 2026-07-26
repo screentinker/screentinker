@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     recurrence_end  TEXT,
     priority        INTEGER NOT NULL DEFAULT 0,
     enabled         INTEGER NOT NULL DEFAULT 1,
-    color           TEXT DEFAULT '#3B82F6',
+    color           TEXT DEFAULT '#e65c00',
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
@@ -336,7 +336,7 @@ CREATE TABLE IF NOT EXISTS device_groups (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL REFERENCES users(id),
     name            TEXT NOT NULL,
-    color           TEXT DEFAULT '#3B82F6',
+    color           TEXT DEFAULT '#e65c00',
     playlist_id     TEXT REFERENCES playlists(id) ON DELETE SET NULL,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -419,7 +419,7 @@ CREATE TABLE IF NOT EXISTS white_labels (
     brand_name      TEXT NOT NULL DEFAULT 'ScreenTinker',
     logo_url        TEXT,
     favicon_url     TEXT,
-    primary_color   TEXT DEFAULT '#3B82F6',
+    primary_color   TEXT DEFAULT '#e65c00',
     secondary_color TEXT DEFAULT '#1E293B',
     bg_color        TEXT DEFAULT '#111827',
     custom_domain   TEXT,

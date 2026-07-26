@@ -91,8 +91,8 @@ function renderDeviceCard(device) {
       </label>
       <div class="device-card-preview" id="preview-${device.id}">
         ${screenshotUrl
-          ? `<img src="${screenshotUrl}" alt="Screenshot" loading="lazy">`
-          : `<div class="no-preview">
+      ? `<img src="${screenshotUrl}" alt="Screenshot" loading="lazy">`
+      : `<div class="no-preview">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
                 <line x1="8" y1="21" x2="16" y2="21"/>
@@ -100,7 +100,7 @@ function renderDeviceCard(device) {
               </svg>
               <span>${t('dashboard.no_preview')}</span>
             </div>`
-        }
+    }
         <div class="device-card-status is-liveness">
           ${(() => { const b = livenessBadge(device, { short: true }); return `<span class="device-status-badge ${b.state}" data-liveness="${b.state}" data-offline-reason="${esc(b.reason)}"${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.label)}</span>`; })()}
         </div>
@@ -211,7 +211,7 @@ function renderGroupSection(group, devices, playlists) {
   const playlistLabel = getGroupPlaylistLabel(devices, playlists);
   return `
     <div class="group-section" data-group-id="${group.id}" style="margin-bottom:24px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#3B82F6')}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#e65c00')}">
         <div style="display:flex;align-items:center;gap:10px">
           <strong style="font-size:15px">${esc(group.name)}</strong>
           <span style="color:var(--text-muted);font-size:12px">${tn('dashboard.devices_count', devices.length)} &middot; ${t('dashboard.online_count', { n: onlineCount })}</span>
@@ -898,8 +898,8 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
           <p style="margin:0 0 16px;font-size:12px;color:var(--text-muted)">${t('dashboard.manage_group_subtitle')}</p>
           <div style="display:flex;flex-direction:column;gap:6px">
             ${allDevices.filter(d => d.status !== 'provisioning').map(d => {
-              const inOther = otherGroups.filter(g => g.memberIds.has(d.id)).map(g => g.name);
-              return `
+        const inOther = otherGroups.filter(g => g.memberIds.has(d.id)).map(g => g.name);
+        return `
                 <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:var(--bg-secondary)">
                   <input type="checkbox" data-device-id="${d.id}" data-in-groups="${inOther.join(',')}" ${memberIds.has(d.id) ? 'checked' : ''}>
                   <span class="status-dot ${d.status}" style="width:8px;height:8px"></span>
@@ -907,7 +907,7 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
                   ${inOther.length > 0 ? `<span style="font-size:10px;color:var(--text-muted);background:var(--bg-primary);padding:1px 6px;border-radius:8px">${esc(inOther.join(', '))}</span>` : ''}
                 </label>
               `;
-            }).join('')}
+      }).join('')}
           </div>
           <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
             <button class="btn" id="manageGroupClose">${t('common.done')}</button>
@@ -951,8 +951,8 @@ export function cleanup() {
   if (screenshotHandler) off('screenshot-ready', screenshotHandler);
   if (playbackHandler) off('playback-progress', playbackHandler);
   if (wallChangedHandler) off('wall-changed', wallChangedHandler);
-  off('device-added', () => {});
-  off('device-removed', () => {});
+  off('device-added', () => { });
+  off('device-removed', () => { });
   if (refreshInterval) clearInterval(refreshInterval);
   if (progressTickInterval) clearInterval(progressTickInterval);
   statusHandler = null;

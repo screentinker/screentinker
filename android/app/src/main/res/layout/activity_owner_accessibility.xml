@@ -190,7 +190,7 @@
                     android:clickable="false"
                     android:focusable="false"
                     android:thumbTint="#FFFFFF"
-                    android:trackTint="#3B82F6" />
+                    android:trackTint="#e65c00" />
 
                 <Button
                     android:id="@+id/openA11yBtn"

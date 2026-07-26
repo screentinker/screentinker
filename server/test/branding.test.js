@@ -21,7 +21,7 @@ db.exec(`
   );
   CREATE TABLE white_labels (
     id TEXT PRIMARY KEY, user_id TEXT, brand_name TEXT NOT NULL DEFAULT 'ScreenTinker',
-    logo_url TEXT, favicon_url TEXT, primary_color TEXT DEFAULT '#3B82F6',
+    logo_url TEXT, favicon_url TEXT, primary_color TEXT DEFAULT '#e65c00',
     secondary_color TEXT DEFAULT '#1E293B', bg_color TEXT DEFAULT '#111827',
     custom_domain TEXT, custom_css TEXT, hide_branding INTEGER DEFAULT 0,
     workspace_id TEXT, created_at INTEGER DEFAULT (strftime('%s','now')), updated_at INTEGER DEFAULT (strftime('%s','now'))
@@ -33,7 +33,7 @@ db.exec(`
 `);
 
 const dbModulePath = require.resolve('../db/database');
-require.cache[dbModulePath] = { id: dbModulePath, filename: dbModulePath, loaded: true, exports: { db, pruneTelemetry() {}, pruneScreenshots() {} } };
+require.cache[dbModulePath] = { id: dbModulePath, filename: dbModulePath, loaded: true, exports: { db, pruneTelemetry() { }, pruneScreenshots() { } } };
 
 const express = require('express');
 const { generateToken, requireAuth } = require('../middleware/auth');

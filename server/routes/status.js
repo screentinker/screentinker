@@ -292,7 +292,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       // Cleanup uploaded zip
       fs.unlinkSync(req.file.path);
     } catch (err) {
-      if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
+      if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch { }
       return res.status(400).json({ error: 'Failed to extract ZIP: ' + err.message });
     }
   } else {
@@ -415,7 +415,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       if (!devId && !grpId) continue;
       const newId = uuid.v4();
       const playlistId = s.playlist_id ? (idMap.playlists[s.playlist_id] || null) : null;
-      db.prepare(`INSERT INTO schedules (id, user_id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, grpId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#3B82F6', s.created_at || Math.floor(Date.now() / 1000));
+      db.prepare(`INSERT INTO schedules (id, user_id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time, timezone, recurrence, recurrence_end, priority, enabled, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, devId, grpId, s.zone_id ? (idMap.zones[s.zone_id] || null) : null, s.content_id ? (idMap.content[s.content_id] || null) : null, s.widget_id ? (idMap.widgets[s.widget_id] || null) : null, s.layout_id ? (idMap.layouts[s.layout_id] || null) : null, playlistId, s.title || '', s.start_time, s.end_time, s.timezone || 'UTC', s.recurrence || null, s.recurrence_end || null, s.priority || 0, s.enabled !== undefined ? s.enabled : 1, s.color || '#e65c00', s.created_at || Math.floor(Date.now() / 1000));
       stats.schedules++;
     }
 
@@ -446,7 +446,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
     for (const g of (data.device_groups || [])) {
       const newId = uuid.v4();
       idMap.groups[g.id] = newId;
-      db.prepare(`INSERT INTO device_groups (id, user_id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, g.name, g.color || '#3B82F6', g.created_at || Math.floor(Date.now() / 1000));
+      db.prepare(`INSERT INTO device_groups (id, user_id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, g.name, g.color || '#e65c00', g.created_at || Math.floor(Date.now() / 1000));
       stats.device_groups++;
     }
     for (const gm of (data.device_group_members || [])) {
@@ -468,9 +468,9 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
       const wl = data.white_label;
       const existing = db.prepare('SELECT id FROM white_labels WHERE workspace_id = ?').get(workspaceId);
       if (existing) {
-        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0, workspaceId);
+        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#e65c00', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0, workspaceId);
       } else {
-        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0);
+        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#e65c00', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0);
       }
     }
   });

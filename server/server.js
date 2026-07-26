@@ -249,13 +249,15 @@ app.get(['/integrations', '/integrations/'], (req, res) => {
 // Serve frontend static files
 // JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
 // Images/fonts/icons: long cache for Cloudflare + browser
-app.use(express.static(config.frontendDir, { index: false, etag: true, lastModified: true, setHeaders: (res, filePath) => {
-  if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
-    res.setHeader('Cache-Control', 'no-cache');
-  } else if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|webp|mp4|webm)$/i.test(filePath)) {
-    res.setHeader('Cache-Control', 'public, max-age=2592000'); // 30 days
+app.use(express.static(config.frontendDir, {
+  index: false, etag: true, lastModified: true, setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|webp|mp4|webm)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=2592000'); // 30 days
+    }
   }
-}}));
+}));
 
 // Player HTML: dynamic route. Injects a small inline window.__playerConfig
 // script before the debug-overlay.js tag so the client knows whether to send
@@ -312,11 +314,13 @@ app.get('/player/transitions.js', (req, res) => {
 // Serve web player at /player (same no-cache for JS/HTML). The index.html
 // route above intercepts the HTML requests; everything else still falls
 // through to this static handler (debug-overlay.js, sw.js, manifest, etc).
-app.use('/player', express.static(path.join(__dirname, 'player'), { etag: true, lastModified: true, setHeaders: (res, filePath) => {
-  if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
-    res.setHeader('Cache-Control', 'no-cache');
+app.use('/player', express.static(path.join(__dirname, 'player'), {
+  etag: true, lastModified: true, setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
   }
-}}));
+}));
 
 // Serve setup scripts
 app.use('/scripts', express.static(path.join(__dirname, '..', 'scripts')));
@@ -424,7 +428,7 @@ app.get('/api/devices/:id/screenshot', (req, res) => {
   const { db: sdb } = require('./db/database');
   const device = sdb.prepare('SELECT user_id FROM devices WHERE id = ?').get(req.params.id);
   if (!device) return res.status(404).json({ error: 'Device not found' });
-  if (!['admin','superadmin'].includes(user.role) && device.user_id && device.user_id !== user.id) return res.status(403).json({ error: 'Access denied' });
+  if (!['admin', 'superadmin'].includes(user.role) && device.user_id && device.user_id !== user.id) return res.status(403).json({ error: 'Access denied' });
   // Serve from memory if available (device online), otherwise from disk (offline snapshot)
   const deviceSocket = require('./ws/deviceSocket');
   const memScreenshot = deviceSocket.lastScreenshots?.[req.params.id];
@@ -606,12 +610,12 @@ function updateFrontendHash() {
       'js/views/layout-editor.js', 'js/views/schedule.js', 'js/views/widgets.js',
       'js/views/video-wall.js', 'js/views/reports.js', 'js/views/designer.js',
       'js/views/activity.js', 'js/views/kiosk.js'].map(f => {
-      try { return fs.readFileSync(path.join(config.frontendDir, f)); } catch { return ''; }
-    });
+        try { return fs.readFileSync(path.join(config.frontendDir, f)); } catch { return ''; }
+      });
     // Include player files in hash so web players detect code updates
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'index.html'))); } catch {}
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'sw.js'))); } catch {}
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'debug-overlay.js'))); } catch {}
+    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'index.html'))); } catch { }
+    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'sw.js'))); } catch { }
+    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'debug-overlay.js'))); } catch { }
     frontendHash = crypto.createHash('md5').update(Buffer.concat(files.map(f => Buffer.from(f)))).digest('hex').slice(0, 8);
   } catch { frontendHash = Date.now().toString(36); }
 }
@@ -803,9 +807,9 @@ let _shuttingDown = false;
 function gracefulShutdown(sig) {
   if (_shuttingDown) return; _shuttingDown = true;
   console.log(`[shutdown] ${sig} — stopping WAL checkpointer + closing DB`);
-  Promise.resolve(stopWalCheckpointer()).catch(() => {}).finally(() => {
-    try { require('./lib/status-log-writer').flush(); } catch (_) {}
-    try { require('./db/database').db.close(); } catch (_) {}
+  Promise.resolve(stopWalCheckpointer()).catch(() => { }).finally(() => {
+    try { require('./lib/status-log-writer').flush(); } catch (_) { }
+    try { require('./db/database').db.close(); } catch (_) { }
     process.exit(0);
   });
 }
@@ -939,7 +943,7 @@ const otaDownloadState = otaDownloadGuard.prodState();   // #146 P3.8: shared si
 app.get('/download/apk', (req, res) => {
   const apk = apkCache.get();
   if (!apk.exists) {
-    return res.status(404).send(`<!DOCTYPE html><html><head><title>APK Not Found</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:500px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet. In Docker, mount a built APK at <code>/data/ScreenTinker.apk</code>, or use the <a href="/player" style="color:#3b82f6">web player</a>.</p></div></body></html>`);
+    return res.status(404).send(`<!DOCTYPE html><html><head><title>APK Not Found</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:500px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet. In Docker, mount a built APK at <code>/data/ScreenTinker.apk</code>, or use the <a href="/player" style="color:#e65c00">web player</a>.</p></div></body></html>`);
   }
 
   const verdict = otaDownloadGuard.admit(otaDownloadState, getBand());

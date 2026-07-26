@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.RemoteDisplay" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#3B82F6</item>
+        <item name="colorPrimary">#e65c00</item>
         <item name="colorPrimaryVariant">#2563EB</item>
         <item name="colorSecondary">#1E293B</item>
         <item name="android:windowBackground">#111827</item>

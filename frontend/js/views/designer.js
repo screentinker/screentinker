@@ -187,7 +187,7 @@ export function render(container, widgetId) {
     const url = prompt(t('designer.prompt.rss_url'), 'https://feeds.bbci.co.uk/news/rss.xml');
     if (url) addElement({ type: 'ticker', x: 0, y: 90, width: 100, height: 10, feedUrl: url, speed: 30, fontSize: 20, color: '#FFFFFF', bgColor: 'rgba(0,0,0,0.7)' });
   };
-  document.getElementById('addShape').onclick = () => addElement({ type: 'shape', x: 20, y: 20, width: 30, height: 20, color: '#3b82f6', opacity: 0.7, radius: 8, shape: 'rect' });
+  document.getElementById('addShape').onclick = () => addElement({ type: 'shape', x: 20, y: 20, width: 30, height: 20, color: '#e65c00', opacity: 0.7, radius: 8, shape: 'rect' });
   document.getElementById('addQR').onclick = () => {
     const data = prompt(t('designer.prompt.qr_url'), 'https://example.com');
     if (data) addElement({ type: 'qr', x: 80, y: 70, size: 15, data, fgColor: '#FFFFFF', bgColor: '#000000' });
@@ -538,7 +538,7 @@ function redraw() {
   // Elements
   elements.forEach((el, i) => {
     const selected = i === selectedIdx;
-    const border = selected ? 'outline:2px solid #3b82f6;outline-offset:2px;' : '';
+    const border = selected ? 'outline:2px solid #e65c00;outline-offset:2px;' : '';
     const cursor = 'cursor:move;';
 
     switch (el.type) {
@@ -813,4 +813,4 @@ function generateHTML() {
   return `<!DOCTYPE html><html><head><style>*{margin:0;padding:0;box-sizing:border-box}body{width:100vw;height:100vh;overflow:hidden;background:${bgImageDataUrl ? `url(${bgImageDataUrl}) center/cover` : bgValue}}</style></head><body>${generateInnerHTML()}</body></html>`;
 }
 
-export function cleanup() {}
+export function cleanup() { }

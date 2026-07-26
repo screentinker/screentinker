@@ -72,7 +72,7 @@ router.post('/', (req, res) => {
   if (color && !VALID_COLOR.test(color)) return res.status(400).json({ error: 'invalid color format, use #RRGGBB' });
   const id = uuidv4();
   db.prepare('INSERT INTO device_groups (id, user_id, workspace_id, name, color) VALUES (?, ?, ?, ?, ?)')
-    .run(id, req.user.id, req.workspaceId, name, color || '#3B82F6');
+    .run(id, req.user.id, req.workspaceId, name, color || '#e65c00');
   res.status(201).json(db.prepare('SELECT * FROM device_groups WHERE id = ?').get(id));
 });
 

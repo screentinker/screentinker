@@ -23,7 +23,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="RemoteDisplay"
-            android:textColor="#3B82F6"
+            android:textColor="#e65c00"
             android:textSize="22sp"
             android:textStyle="bold"
             android:layout_marginBottom="4dp" />
@@ -111,7 +111,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="96dp"
                 android:text="------"
-                android:textColor="#3B82F6"
+                android:textColor="#e65c00"
                 android:textStyle="bold"
                 android:fontFamily="monospace"
                 android:letterSpacing="0.3"

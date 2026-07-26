@@ -38,7 +38,7 @@ test('clock widget: malicious background/color/font_size cannot break out of <st
 });
 
 test('rss widget: scroll_speed/max_items coerced to numbers (no injection)', async () => {
-  seed('rss1', 'rss', { scroll_speed: '30s}</style><script>y</script>', max_items: '10);evil(' , background: CSS_BREAKOUT });
+  seed('rss1', 'rss', { scroll_speed: '30s}</style><script>y</script>', max_items: '10);evil(', background: CSS_BREAKOUT });
   const html = await render('rss1');
   assert.ok(!html.includes('</style><script>y'), 'scroll_speed cannot inject');
   assert.ok(!html.includes('evil('), 'max_items cannot inject into the script');
@@ -54,8 +54,8 @@ test('text widget: raw HTML is isolated in a null-origin sandboxed iframe', asyn
 });
 
 test('valid color/gradient backgrounds are preserved', async () => {
-  seed('clock2', 'clock', { background: 'linear-gradient(45deg, #ff0000, #00ff00)', color: '#3B82F6' });
+  seed('clock2', 'clock', { background: 'linear-gradient(45deg, #ff0000, #00ff00)', color: '#e65c00' });
   const html = await render('clock2');
   assert.ok(html.includes('linear-gradient(45deg, #ff0000, #00ff00)'), 'legit gradient preserved');
-  assert.ok(html.includes('color:#3B82F6'), 'legit hex color preserved');
+  assert.ok(html.includes('color:#e65c00'), 'legit hex color preserved');
 });

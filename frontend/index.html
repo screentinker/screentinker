@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html data-theme="dark" lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -10,28 +11,35 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/assets/icon-192.png">
   <link rel="apple-touch-icon" href="/assets/icon-192.png">
-  <title>GoldenSignage</title>
-  
+  <title>SwiftDisplay</title>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Goldman:wght@400;700&family=Michroma&display=swap" rel="stylesheet">
-  
+  <link href="https://fonts.googleapis.com/css2?family=Goldman:wght@400;700&family=Michroma&display=swap"
+    rel="stylesheet">
+
   <link rel="stylesheet" href="/css/variables.css">
   <link rel="stylesheet" href="/css/reset.css">
   <link rel="stylesheet" href="/css/main.css">
   <script src="/socket.io/socket.io.js"></script>
   <!-- OAuth providers loaded on-demand by login.js when needed -->
 </head>
+
 <body>
-  <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidebar">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle navigation menu" aria-expanded="false"
+    aria-controls="sidebar">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
   </button>
   <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="logo">
         <img src="/assets/logowhiteswift.png" alt="Logo" style="height: 28px;">
-        <span id="brandName" style="margin-left: 8px;">GoldenSignage</span>
+        <span id="brandName" style="margin-left: 8px;">SwiftDisplay</span>
       </div>
       <!-- #38: apply cached white-label before first paint (no ScreenTinker flash) -->
       <script src="/js/brand-prime.js"></script>
@@ -39,114 +47,140 @@
     </div>
     <ul class="nav-links">
       <li><a href="#/" class="nav-link active" data-view="dashboard">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-          <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
-        </svg>
-        <span>Displays</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+          </svg>
+          <span>Displays</span>
+        </a></li>
       <li><a href="#/content" class="nav-link" data-view="content">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-          <polyline points="13 2 13 9 20 9"/>
-        </svg>
-        <span>Content</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+            <polyline points="13 2 13 9 20 9" />
+          </svg>
+          <span>Content</span>
+        </a></li>
       <li><a href="#/playlists" class="nav-link" data-view="playlists">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
-          <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-        </svg>
-        <span>Playlists</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+          <span>Playlists</span>
+        </a></li>
       <li><a href="#/layouts" class="nav-link" data-view="layouts">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
-        </svg>
-        <span>Layouts</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+            <line x1="9" y1="21" x2="9" y2="9" />
+          </svg>
+          <span>Layouts</span>
+        </a></li>
       <li><a href="#/widgets" class="nav-link" data-view="widgets">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/>
-          <rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/>
-        </svg>
-        <span>Widgets</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="8" height="8" rx="1" />
+            <rect x="14" y="2" width="8" height="8" rx="1" />
+            <rect x="2" y="14" width="8" height="8" rx="1" />
+            <rect x="14" y="14" width="8" height="8" rx="1" />
+          </svg>
+          <span>Widgets</span>
+        </a></li>
       <li><a href="#/schedule" class="nav-link" data-view="schedule">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-        </svg>
-        <span>Schedule</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+          <span>Schedule</span>
+        </a></li>
       <li><a href="#/walls" class="nav-link" data-view="walls">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="9" height="8" rx="1"/><rect x="13" y="3" width="9" height="8" rx="1"/>
-          <rect x="2" y="13" width="9" height="8" rx="1"/><rect x="13" y="13" width="9" height="8" rx="1"/>
-        </svg>
-        <span>Video Walls</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="9" height="8" rx="1" />
+            <rect x="13" y="3" width="9" height="8" rx="1" />
+            <rect x="2" y="13" width="9" height="8" rx="1" />
+            <rect x="13" y="13" width="9" height="8" rx="1" />
+          </svg>
+          <span>Video Walls</span>
+        </a></li>
       <li><a href="#/reports" class="nav-link" data-view="reports">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
-        </svg>
-        <span>Reports</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="20" x2="18" y2="10" />
+            <line x1="12" y1="20" x2="12" y2="4" />
+            <line x1="6" y1="20" x2="6" y2="14" />
+          </svg>
+          <span>Reports</span>
+        </a></li>
       <li><a href="#/kiosk" class="nav-link" data-view="kiosk">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
-          <circle cx="12" cy="10" r="1"/>
-        </svg>
-        <span>Kiosk</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+            <path d="M8 21h8" />
+            <path d="M12 17v4" />
+            <circle cx="12" cy="10" r="1" />
+          </svg>
+          <span>Kiosk</span>
+        </a></li>
       <li><a href="#/designer" class="nav-link" data-view="designer">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/>
-          <circle cx="11" cy="11" r="2"/>
-        </svg>
-        <span>Designer</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 19l7-7 3 3-7 7-3-3z" />
+            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+            <path d="M2 2l7.586 7.586" />
+            <circle cx="11" cy="11" r="2" />
+          </svg>
+          <span>Designer</span>
+        </a></li>
       <li><a href="#/activity" class="nav-link" data-view="activity">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-        </svg>
-        <span>Activity</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+          <span>Activity</span>
+        </a></li>
       <!-- Teams nav hidden while the feature is being redesigned as a user-grouping
            primitive within Workspaces. Route + view kept in place so any existing
            bookmark still loads (and shows the 503 from the API). -->
       <li style="display:none"><a href="#/teams" class="nav-link" data-view="teams">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-        </svg>
-        <span>Teams</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          <span>Teams</span>
+        </a></li>
       <li><a href="#/help" class="nav-link" data-view="help">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-        </svg>
-        <span>Help</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          <span>Help</span>
+        </a></li>
       <li><a href="#/settings" class="nav-link" data-view="settings">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-        <span>Settings</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          <span>Settings</span>
+        </a></li>
       <li id="billingNavItem"><a href="#/billing" class="nav-link" data-view="billing">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
-          <line x1="1" y1="10" x2="23" y2="10"/>
-        </svg>
-        <span>Subscription</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+            <line x1="1" y1="10" x2="23" y2="10" />
+          </svg>
+          <span>Subscription</span>
+        </a></li>
       <li id="adminNavItem" style="display:none"><a href="#/admin" class="nav-link" data-view="admin">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-        </svg>
-        <span>Admin</span>
-      </a></li>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+          <span>Admin</span>
+        </a></li>
     </ul>
     <div class="sidebar-footer">
       <div class="connection-status" id="connectionStatus">
@@ -171,41 +205,55 @@
         <h3 data-i18n="add_display.title">Add Display</h3>
         <button class="btn-icon" data-close-modal="addDeviceModal">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
       </div>
       <div class="modal-body">
-        <p class="modal-description" style="margin-bottom:16px" data-i18n="add_display.intro">Enter the 6-digit pairing code shown on the display.</p>
+        <p class="modal-description" style="margin-bottom:16px" data-i18n="add_display.intro">Enter the 6-digit pairing
+          code shown on the display.</p>
         <div class="form-group">
           <label data-i18n="add_display.pairing_code">Pairing Code</label>
-          <input type="text" id="pairingCodeInput" maxlength="6" pattern="[0-9]{6}" placeholder="000000" class="pairing-input">
+          <input type="text" id="pairingCodeInput" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+            class="pairing-input">
         </div>
         <div class="form-group">
           <label data-i18n="add_display.display_name">Display Name (optional)</label>
-          <input type="text" id="deviceNameInput" data-i18n-placeholder="add_display.name_placeholder" placeholder="e.g., Lobby TV" class="input">
+          <input type="text" id="deviceNameInput" data-i18n-placeholder="add_display.name_placeholder"
+            placeholder="e.g., Lobby TV" class="input">
         </div>
         <div style="border-top:1px solid var(--border,#1e293b);margin-top:20px;padding-top:16px">
-          <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500" data-i18n="add_display.need_player">Need a player app? Install one to get a pairing code:</p>
+          <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500"
+            data-i18n="add_display.need_player">Need a player app? Install one to get a pairing code:</p>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <a href="/download/apk" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+            <a href="/download/apk" class="btn btn-secondary btn-sm"
+              style="text-decoration:none;justify-content:center;font-size:12px">
               &#129302; <span data-i18n="add_display.android_apk">Android APK</span>
             </a>
-            <a href="/player" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+            <a href="/player" target="_blank" class="btn btn-secondary btn-sm"
+              style="text-decoration:none;justify-content:center;font-size:12px">
               &#127760; <span data-i18n="add_display.web_player">Web Player</span>
             </a>
-            <a href="/scripts/raspberry-pi-setup.sh" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+            <a href="/scripts/raspberry-pi-setup.sh" class="btn btn-secondary btn-sm"
+              style="text-decoration:none;justify-content:center;font-size:12px">
               &#129359; <span data-i18n="add_display.raspberry_pi">Raspberry Pi</span>
             </a>
-            <a href="/scripts/windows-setup.bat" class="btn btn-secondary btn-sm" style="text-decoration:none;justify-content:center;font-size:12px">
+            <a href="/scripts/windows-setup.bat" class="btn btn-secondary btn-sm"
+              style="text-decoration:none;justify-content:center;font-size:12px">
               &#128187; <span data-i18n="add_display.windows">Windows</span>
             </a>
           </div>
-          <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:8px" data-i18n-html="add_display.smart_tv_note">Smart TVs (LG/Samsung): open the built-in browser and navigate to <code style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px">/player</code></p>
+          <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:8px"
+            data-i18n-html="add_display.smart_tv_note">Smart TVs (LG/Samsung): open the built-in browser and navigate to
+            <code style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px">/player</code></p>
         </div>
         <div style="border-top:1px solid var(--border,#1e293b);margin-top:16px;padding-top:16px">
-          <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500" data-i18n="add_display.owner_prompt">Provisioning a fresh / factory-reset Android panel? Enroll it as device owner for silent updates, reboot &amp; kiosk:</p>
-          <button type="button" class="btn btn-secondary btn-sm" id="deviceOwnerQrBtn" style="width:100%;justify-content:center;font-size:12px">
+          <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500"
+            data-i18n="add_display.owner_prompt">Provisioning a fresh / factory-reset Android panel? Enroll it as device
+            owner for silent updates, reboot &amp; kiosk:</p>
+          <button type="button" class="btn btn-secondary btn-sm" id="deviceOwnerQrBtn"
+            style="width:100%;justify-content:center;font-size:12px">
             &#128242; <span data-i18n="add_display.owner_qr_btn">Show device-owner QR</span>
           </button>
         </div>
@@ -222,4 +270,5 @@
 
   <script type="module" src="/js/app.js"></script>
 </body>
+
 </html>

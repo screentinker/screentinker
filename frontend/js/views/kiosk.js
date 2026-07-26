@@ -117,7 +117,7 @@ async function renderEditor(container, pageId) {
             <option ${(config.style?.columns || 3) === 4 ? 'selected' : ''} value="4">4</option>
           </select></div>
           <div class="form-group"><label>${t('kiosk.button_color')}</label><input type="color" id="kBtnBg" value="${config.style?.buttonBg || '#1e293b'}" style="width:100%;height:28px;border:none;cursor:pointer"></div>
-          <div class="form-group"><label>${t('kiosk.button_hover')}</label><input type="color" id="kBtnHover" value="${config.style?.buttonHover || '#3b82f6'}" style="width:100%;height:28px;border:none;cursor:pointer"></div>
+          <div class="form-group"><label>${t('kiosk.button_hover')}</label><input type="color" id="kBtnHover" value="${config.style?.buttonHover || '#e65c00'}" style="width:100%;height:28px;border:none;cursor:pointer"></div>
         </div>
 
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
@@ -196,4 +196,4 @@ async function renderEditor(container, pageId) {
   renderButtons();
 }
 
-export function cleanup() {}
+export function cleanup() { }

@@ -71,7 +71,7 @@ async function checkOfflineDevices(io) {
         db.prepare(
           'INSERT INTO activity_log (user_id, device_id, action, details, workspace_id) VALUES (?, ?, ?, ?, ?)'
         ).run(device.user_id, device.id, 'alert:device_offline', `${device.name} offline for ${offlineMinutes}m`, device.workspace_id || null);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -86,7 +86,7 @@ async function checkOfflineDevices(io) {
 // previously inlined in the webhook payload at sendEmailAlert.
 function buildAlertHtml(recipientName, subject, body) {
   return `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-    <h2 style="color:#3b82f6">ScreenTinker Alert</h2>
+    <h2 style="color:#e65c00">ScreenTinker Alert</h2>
     <p>Hi ${escapeHtml(recipientName || 'there')},</p>
     <div style="background:#f1f5f9;padding:16px;border-radius:8px;margin:16px 0">
       <strong>${escapeHtml(subject)}</strong><br><br>
@@ -98,7 +98,7 @@ function buildAlertHtml(recipientName, subject, body) {
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c =>
-    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // Legacy export name preserved - some other modules may still call this.

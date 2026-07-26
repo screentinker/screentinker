@@ -110,7 +110,7 @@ function normalizeDesign(raw) {
         x: Math.min(clampN(e.x, 0, 100, 0), 100 - w),
         y: Math.min(clampN(e.y, 0, 100, 0), 100 - h),
         width: w, height: h,
-        color: hex(e.color, '#3b82f6'), opacity: clampN(e.opacity, 0, 1, 0.85), radius: 0,
+        color: hex(e.color, '#e65c00'), opacity: clampN(e.opacity, 0, 1, 0.85), radius: 0,
       });
     }
   }

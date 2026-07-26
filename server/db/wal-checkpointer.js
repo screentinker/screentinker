@@ -93,7 +93,10 @@ function startWalCheckpointer(db, dbPath) {
   respawnAt.length = 0;
 
   // From now on the main thread NEVER inline-checkpoints (removes the loop-blocking fsync).
-  db.pragma('wal_autocheckpoint = 0');
+  try { db.pragma('wal_autocheckpoint = 0'); } catch (e) {
+    if (!e.message.includes('Sqlite3UnsupportedStatement')) throw e;
+  }
+
   // Hand the worker a clean WAL (one-time, at boot; explicit checkpoints are independent of
   // wal_autocheckpoint, so this still works at 0). Also reclaims any WAL a prior crash left.
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) { /* best-effort */ }

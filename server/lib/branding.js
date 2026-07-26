@@ -21,10 +21,10 @@
 const PLATFORM_DEFAULT_ID = 'platform-default';
 
 const HARDCODED_BRANDING = {
-  brand_name: 'ScreenTinker',
-  logo_url: null,
-  favicon_url: null,
-  primary_color: '#3B82F6',
+  brand_name: 'GoldenSignage',
+  logo_url: '/assets/logoswift.png',
+  favicon_url: '/assets/pwa-icon.png',
+  primary_color: '#ff6b00',
   secondary_color: '#1E293B',
   bg_color: '#111827',
   custom_css: null,

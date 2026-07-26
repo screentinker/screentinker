@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- Primary SEO -->
   <title>Open-Source Digital Signage CMS — Self-Hosted &amp; Free | ScreenTinker</title>
-  <meta name="description" content="Open-source, self-hostable digital signage CMS. Manage TVs, video walls, kiosks &amp; schedules on Android, Raspberry Pi, Windows &amp; any browser. Free plan — start today.">
-  <meta name="keywords" content="digital signage, open source digital signage, self hosted signage, digital signage cms, free digital signage software, digital signage raspberry pi, digital signage android tv, video wall software, kiosk software, screen management">
+  <meta name="description"
+    content="Open-source, self-hostable digital signage CMS. Manage TVs, video walls, kiosks &amp; schedules on Android, Raspberry Pi, Windows &amp; any browser. Free plan — start today.">
+  <meta name="keywords"
+    content="digital signage, open source digital signage, self hosted signage, digital signage cms, free digital signage software, digital signage raspberry pi, digital signage android tv, video wall software, kiosk software, screen management">
   <meta name="author" content="ScreenTinker">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://screentinker.com/">
@@ -16,19 +19,23 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://screentinker.com/">
   <meta property="og:title" content="ScreenTinker - Open-Source Digital Signage CMS">
-  <meta property="og:description" content="Open-source digital signage CMS. Free plan, self-host or cloud. Manage TVs, video walls, kiosks, and schedules across 9 platforms.">
+  <meta property="og:description"
+    content="Open-source digital signage CMS. Free plan, self-host or cloud. Manage TVs, video walls, kiosks, and schedules across 9 platforms.">
   <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
   <meta property="og:image:width" content="2500">
   <meta property="og:image:height" content="1314">
-  <meta property="og:image:alt" content="ScreenTinker open-source digital signage dashboard showing four online displays with playlist assignments">
+  <meta property="og:image:alt"
+    content="ScreenTinker open-source digital signage dashboard showing four online displays with playlist assignments">
   <meta property="og:site_name" content="ScreenTinker">
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="ScreenTinker - Open-Source Digital Signage CMS">
-  <meta name="twitter:description" content="Open-source digital signage CMS. Free plan, self-host or cloud. Video walls, kiosks, scheduling, and live remote control across 9 platforms.">
+  <meta name="twitter:description"
+    content="Open-source digital signage CMS. Free plan, self-host or cloud. Video walls, kiosks, scheduling, and live remote control across 9 platforms.">
   <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
-  <meta name="twitter:image:alt" content="ScreenTinker open-source digital signage dashboard showing four online displays with playlist assignments">
+  <meta name="twitter:image:alt"
+    content="ScreenTinker open-source digital signage dashboard showing four online displays with playlist assignments">
 
   <!-- Theme -->
   <meta name="theme-color" content="#111827">
@@ -36,151 +43,717 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/assets/icon-512.png">
   <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    :root { --accent:#3b82f6; --bg:#111827; --card:#1e293b; --border:#334155; --text:#f1f5f9; --muted:#94a3b8; --dim:#64748b; }
-    body { font-family: 'Michroma', sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
-    h1, h2, h3, h4, h5, h6, .nav-logo { font-family: 'Goldman', sans-serif; font-weight: bold; }
-    a { color:var(--accent); text-decoration:none; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --accent: #e65c00;
+      --bg: #111827;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --dim: #64748b;
+    }
+
+    body {
+      font-family: 'Michroma', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    .nav-logo {
+      font-family: 'Goldman', sans-serif;
+      font-weight: bold;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
 
     /* Nav */
-    nav { position:fixed; top:0; left:0; right:0; z-index:100; background:rgba(17,24,39,0.9); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); }
-    .nav-inner { max-width:1200px; margin:0 auto; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; }
-    .nav-logo { display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; color:var(--accent); flex-shrink:0; }
-    .nav-links a { color:var(--muted); margin-left:24px; font-size:14px; transition:color 0.2s; }
-    .nav-links a:hover { color:var(--text); }
-    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 20px; border-radius:8px; font-weight:600; font-size:14px; transition:all 0.2s; border:none; cursor:pointer; }
-    .btn-primary { background:var(--accent); color:white; }
-    .btn-primary:hover { background:#2563eb; }
-    .btn-outline { background:transparent; color:var(--accent); border:1px solid var(--accent); }
-    .btn-outline:hover { background:rgba(59,130,246,0.1); }
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: rgba(17, 24, 39, 0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      margin-left: 24px;
+      font-size: 14px;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      transition: all 0.2s;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #2563eb;
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+
+    .btn-outline:hover {
+      background: rgba(59, 130, 246, 0.1);
+    }
 
     /* Hero */
-    .hero { padding:140px 24px 80px; text-align:center; max-width:900px; margin:0 auto; }
-    .hero h1 { font-size:clamp(36px,5vw,64px); font-weight:800; line-height:1.1; margin-bottom:20px; }
-    .hero h1 span { background:linear-gradient(135deg,#3b82f6,#8b5cf6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
-    .hero p { font-size:clamp(16px,2vw,20px); color:var(--muted); max-width:600px; margin:0 auto 32px; }
-    .hero-btns { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
-    .hero-badge { display:inline-block; background:var(--card); border:1px solid var(--border); border-radius:20px; padding:6px 16px; font-size:13px; color:var(--muted); margin-bottom:24px; }
+    .hero {
+      padding: 140px 24px 80px;
+      text-align: center;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 5vw, 64px);
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 20px;
+    }
+
+    .hero h1 span {
+      background: linear-gradient(135deg, #e65c00, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      font-size: clamp(16px, 2vw, 20px);
+      color: var(--muted);
+      max-width: 600px;
+      margin: 0 auto 32px;
+    }
+
+    .hero-btns {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 16px;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
 
     /* Screenshot */
-    .screenshot { max-width:1100px; margin:0 auto 80px; padding:0 24px; }
-    .screenshot img, .screenshot .mock { width:100%; max-width:100%; height:auto; display:block; border-radius:12px; border:1px solid var(--border); box-shadow:0 20px 60px rgba(0,0,0,0.5); }
-    .mock { background:var(--card); aspect-ratio:16/9; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:18px; }
+    .screenshot {
+      max-width: 1100px;
+      margin: 0 auto 80px;
+      padding: 0 24px;
+    }
+
+    .screenshot img,
+    .screenshot .mock {
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .mock {
+      background: var(--card);
+      aspect-ratio: 16/9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--dim);
+      font-size: 18px;
+    }
 
     /* Features */
-    .features { max-width:1200px; margin:0 auto; padding:80px 24px; }
-    .features h2 { text-align:center; font-size:36px; margin-bottom:12px; }
-    .features .subtitle { text-align:center; color:var(--muted); margin-bottom:48px; font-size:18px; }
-    .feature-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:24px; }
-    .feature-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:28px; transition:border-color 0.2s; }
-    .feature-card:hover { border-color:var(--accent); }
-    .feature-icon { font-size:32px; margin-bottom:12px; }
-    .feature-card h3 { font-size:18px; margin-bottom:8px; }
-    .feature-card p { color:var(--muted); font-size:14px; }
+    .features {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 80px 24px;
+    }
+
+    .features h2 {
+      text-align: center;
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+
+    .features .subtitle {
+      text-align: center;
+      color: var(--muted);
+      margin-bottom: 48px;
+      font-size: 18px;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 24px;
+    }
+
+    .feature-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      transition: border-color 0.2s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--accent);
+    }
+
+    .feature-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+    }
+
+    .feature-card h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      color: var(--muted);
+      font-size: 14px;
+    }
 
     /* Platforms */
-    .platforms { max-width:1200px; margin:0 auto; padding:80px 24px; text-align:center; }
-    .platforms h2 { font-size:36px; margin-bottom:12px; }
-    .platforms .subtitle { color:var(--muted); margin-bottom:40px; font-size:18px; }
-    .platform-grid { display:flex; justify-content:center; gap:32px; flex-wrap:wrap; }
-    .platform-item { text-align:center; width:100px; }
-    .platform-item .icon { font-size:40px; margin-bottom:8px; }
-    .platform-item .name { font-size:13px; color:var(--muted); }
+    .platforms {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 80px 24px;
+      text-align: center;
+    }
+
+    .platforms h2 {
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+
+    .platforms .subtitle {
+      color: var(--muted);
+      margin-bottom: 40px;
+      font-size: 18px;
+    }
+
+    .platform-grid {
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+
+    .platform-item {
+      text-align: center;
+      width: 100px;
+    }
+
+    .platform-item .icon {
+      font-size: 40px;
+      margin-bottom: 8px;
+    }
+
+    .platform-item .name {
+      font-size: 13px;
+      color: var(--muted);
+    }
 
     /* Modal (mirrors frontend/css/main.css conventions so screenshots look
        consistent across landing and dashboard; copied inline since
        landing.html doesn't import main.css). */
-    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; padding:16px; }
-    .modal { background:var(--card); border:1px solid var(--border); border-radius:12px; width:100%; max-width:560px; max-height:90vh; overflow-y:auto; }
-    .modal-header { padding:20px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
-    .modal-header h3 { font-size:18px; margin:0; }
-    .modal-close { background:none; border:none; color:var(--muted); font-size:24px; cursor:pointer; padding:0; line-height:1; }
-    .modal-body { padding:20px 24px; }
-    .modal-description { color:var(--muted); font-size:14px; margin-bottom:16px; }
-    .modal-footer { padding:16px 24px; border-top:1px solid var(--border); display:flex; gap:12px; justify-content:flex-end; }
-    .modal-body label { display:block; margin-bottom:12px; font-size:13px; color:var(--text); }
-    .modal-body input, .modal-body select, .modal-body textarea { width:100%; margin-top:4px; padding:8px 10px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:14px; font-family:inherit; box-sizing:border-box; }
-    .modal-body input:focus, .modal-body select:focus, .modal-body textarea:focus { outline:none; border-color:var(--accent); }
-    .modal-body textarea { resize:vertical; }
-    .contact-status-success { color:#10b981; font-size:13px; }
-    .contact-status-error { color:#f87171; font-size:13px; }
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 16px;
+    }
+
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 560px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h3 {
+      font-size: 18px;
+      margin: 0;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .modal-body {
+      padding: 20px 24px;
+    }
+
+    .modal-description {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .modal-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+
+    .modal-body label {
+      display: block;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .modal-body input,
+    .modal-body select,
+    .modal-body textarea {
+      width: 100%;
+      margin-top: 4px;
+      padding: 8px 10px;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+      box-sizing: border-box;
+    }
+
+    .modal-body input:focus,
+    .modal-body select:focus,
+    .modal-body textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .modal-body textarea {
+      resize: vertical;
+    }
+
+    .contact-status-success {
+      color: #10b981;
+      font-size: 13px;
+    }
+
+    .contact-status-error {
+      color: #f87171;
+      font-size: 13px;
+    }
 
     /* Pricing */
-    .pricing { max-width:1200px; margin:0 auto; padding:80px 24px; }
-    .pricing h2 { text-align:center; font-size:36px; margin-bottom:12px; }
-    .pricing .subtitle { text-align:center; color:var(--muted); margin-bottom:48px; font-size:18px; }
-    .pricing-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:20px; }
-    .price-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:28px; position:relative; }
-    .price-card.featured { border-color:var(--accent); }
-    .price-card.featured::before { content:'Most Popular'; position:absolute; top:-12px; left:50%; transform:translateX(-50%); background:var(--accent); color:white; padding:4px 16px; border-radius:12px; font-size:12px; font-weight:600; }
-    .price-card h3 { font-size:20px; margin-bottom:4px; }
-    .price-card .price { font-size:36px; font-weight:700; color:var(--accent); margin:12px 0; }
-    .price-card .price span { font-size:16px; color:var(--muted); font-weight:400; }
-    .price-card .yearly { font-size:12px; color:var(--dim); margin-bottom:16px; }
-    .price-card ul { list-style:none; margin-bottom:20px; }
-    .price-card li { font-size:14px; color:var(--muted); padding:4px 0; }
-    .price-card li::before { content:'✓ '; color:var(--accent); }
+    .pricing {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 80px 24px;
+    }
+
+    .pricing h2 {
+      text-align: center;
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+
+    .pricing .subtitle {
+      text-align: center;
+      color: var(--muted);
+      margin-bottom: 48px;
+      font-size: 18px;
+    }
+
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 20px;
+    }
+
+    .price-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      position: relative;
+    }
+
+    .price-card.featured {
+      border-color: var(--accent);
+    }
+
+    .price-card.featured::before {
+      content: 'Most Popular';
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent);
+      color: white;
+      padding: 4px 16px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .price-card h3 {
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+
+    .price-card .price {
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--accent);
+      margin: 12px 0;
+    }
+
+    .price-card .price span {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .price-card .yearly {
+      font-size: 12px;
+      color: var(--dim);
+      margin-bottom: 16px;
+    }
+
+    .price-card ul {
+      list-style: none;
+      margin-bottom: 20px;
+    }
+
+    .price-card li {
+      font-size: 14px;
+      color: var(--muted);
+      padding: 4px 0;
+    }
+
+    .price-card li::before {
+      content: '✓ ';
+      color: var(--accent);
+    }
 
     /* Compare */
-    .compare { max-width:1000px; margin:0 auto; padding:80px 24px; }
-    .compare h2 { text-align:center; font-size:36px; margin-bottom:40px; }
-    .compare-table { width:100%; border-collapse:collapse; font-size:14px; }
-    .compare-table th, .compare-table td { padding:12px 16px; text-align:left; border-bottom:1px solid var(--border); }
-    .compare-table th { color:var(--dim); font-weight:500; }
-    .compare-table td:first-child { color:var(--muted); }
-    .compare-table .yes { color:#22c55e; }
-    .compare-table .no { color:#ef4444; }
-    .compare-table .paid { color:#f59e0b; }
-    .compare-table .partial { color:#f59e0b; }
+    .compare {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 80px 24px;
+    }
+
+    .compare h2 {
+      text-align: center;
+      font-size: 36px;
+      margin-bottom: 40px;
+    }
+
+    .compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .compare-table th,
+    .compare-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .compare-table th {
+      color: var(--dim);
+      font-weight: 500;
+    }
+
+    .compare-table td:first-child {
+      color: var(--muted);
+    }
+
+    .compare-table .yes {
+      color: #22c55e;
+    }
+
+    .compare-table .no {
+      color: #ef4444;
+    }
+
+    .compare-table .paid {
+      color: #f59e0b;
+    }
+
+    .compare-table .partial {
+      color: #f59e0b;
+    }
 
     /* CTA */
-    .cta { text-align:center; padding:80px 24px; background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.1)); border-top:1px solid var(--border); border-bottom:1px solid var(--border); margin:80px 0; }
-    .cta h2 { font-size:36px; margin-bottom:12px; }
-    .cta p { color:var(--muted); margin-bottom:24px; font-size:18px; }
+    .cta {
+      text-align: center;
+      padding: 80px 24px;
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      margin: 80px 0;
+    }
+
+    .cta h2 {
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+
+    .cta p {
+      color: var(--muted);
+      margin-bottom: 24px;
+      font-size: 18px;
+    }
 
     /* Footer */
-    footer { max-width:1200px; margin:0 auto; padding:40px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; border-top:1px solid var(--border); }
-    footer .links a { color:var(--dim); margin-left:16px; font-size:13px; }
+    footer {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    footer .links a {
+      color: var(--dim);
+      margin-left: 16px;
+      font-size: 13px;
+    }
 
     /* Horizontal-scroll wrapper for wide tables on mobile */
-    .table-scroll { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .table-scroll {
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
 
-    .nav-links { display:flex; align-items:center; flex-wrap:nowrap; }
-    .btn-short { display:none; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      flex-wrap: nowrap;
+    }
+
+    .btn-short {
+      display: none;
+    }
+
     @media (max-width:768px) {
+
       /* Hide section anchor links on mobile; keep Try Free + Sign In */
-      .nav-links a:not(.btn) { display:none; }
-      .nav-inner { padding:12px 14px; gap:8px; }
-      .nav-links .btn { padding:8px 12px; font-size:13px; margin-left:8px !important; flex-shrink:0; min-height:0; }
-      .btn-full { display:none; }
-      .btn-short { display:inline; }
+      .nav-links a:not(.btn) {
+        display: none;
+      }
+
+      .nav-inner {
+        padding: 12px 14px;
+        gap: 8px;
+      }
+
+      .nav-links .btn {
+        padding: 8px 12px;
+        font-size: 13px;
+        margin-left: 8px !important;
+        flex-shrink: 0;
+        min-height: 0;
+      }
+
+      .btn-full {
+        display: none;
+      }
+
+      .btn-short {
+        display: inline;
+      }
     }
+
     @media (max-width:420px) {
-      .nav-logo-text { display:none; }
+      .nav-logo-text {
+        display: none;
+      }
     }
 
     @media (max-width:768px) {
-      .feature-grid { grid-template-columns:1fr; }
-      .pricing-grid { grid-template-columns:1fr; }
-      .compare-table { font-size:12px; min-width:560px; }
-      .compare-table th, .compare-table td { padding:8px; }
-      footer { flex-direction:column; text-align:center; }
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .pricing-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .compare-table {
+        font-size: 12px;
+        min-width: 560px;
+      }
+
+      .compare-table th,
+      .compare-table td {
+        padding: 8px;
+      }
+
+      footer {
+        flex-direction: column;
+        text-align: center;
+      }
 
       /* 44px tap targets for all buttons on mobile */
-      .btn { min-height:44px; }
-      .hero { padding:110px 16px 60px; }
-      .features, .platforms, .pricing, .compare { padding:60px 16px; }
-      .cta { padding:60px 16px; }
-      .screenshot { padding:0 16px; margin-bottom:60px; }
+      .btn {
+        min-height: 44px;
+      }
+
+      .hero {
+        padding: 110px 16px 60px;
+      }
+
+      .features,
+      .platforms,
+      .pricing,
+      .compare {
+        padding: 60px 16px;
+      }
+
+      .cta {
+        padding: 60px 16px;
+      }
+
+      .screenshot {
+        padding: 0 16px;
+        margin-bottom: 60px;
+      }
+    }
+
+    body {
+      font-family: 'Michroma', sans-serif;
+      font-weight: 400;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    .brand {
+      font-family: 'Goldman', sans-serif;
+      font-weight: 700;
+    }
+
+    .feature-icon {
+      font-size: 32px;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .platform-item .icon {
+      font-size: 32px;
+      color: var(--accent);
+      margin-bottom: 8px;
     }
   </style>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
+
 <body>
   <nav>
     <div class="nav-inner">
       <div class="nav-logo">
         <img src="/assets/logoswift.png" alt="Logo" style="height: 24px;">
-        <span class="nav-logo-text" style="margin-left: 8px;">ScreenTinker</span>
+
       </div>
       <div class="nav-links">
         <a href="#features">Features</a>
@@ -188,250 +761,582 @@
         <a href="#pricing">Pricing</a>
         <a href="#compare">Compare</a>
         <a href="/integrations/">Integrations</a>
-        <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" aria-label="ScreenTinker on GitHub" class="nav-github" style="margin-left:16px;display:inline-flex;align-items:center;color:var(--muted)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+        <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener"
+          aria-label="ScreenTinker on GitHub" class="nav-github"
+          style="margin-left:16px;display:inline-flex;align-items:center;color:var(--muted)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path
+              d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3" />
+          </svg>
         </a>
         <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
-        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px"><span class="btn-full">Start Free Trial</span><span class="btn-short">Try Free</span></a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px"><span class="btn-full">Start Free
+            Trial</span><span class="btn-short">Try Free</span></a>
       </div>
     </div>
   </nav>
 
   <main>
-  <!-- Hero -->
-  <section class="hero">
-    <div class="hero-badge">&#9889; Open source &middot; Free plan &middot; 14-day Pro trial, no credit card</div>
-    <h1>Open-Source Digital Signage<br>for <span>Any Screen</span></h1>
-    <p>Free, open-source <strong>digital signage software</strong> to manage TVs, video walls, and kiosks from anywhere. A complete <strong>digital signage CMS</strong> with remote control, scheduling, playlists, and analytics — <strong>self-host it</strong> on your own server or use our managed cloud.</p>
-    <div class="hero-btns">
-      <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free Trial</a>
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="margin-right:2px"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
-        View on GitHub
-      </a>
-      <a href="#compare" class="btn btn-outline" style="padding:14px 28px;font-size:16px">See How We Compare</a>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-badge">&#9889; Open source &middot; Free plan &middot; 14-day Pro trial, no credit card</div>
+      <h1>Open-Source Digital Signage<br>for <span>Any Screen</span></h1>
+      <p>Free, open-source <strong>digital signage software</strong> to manage TVs, video walls, and kiosks from
+        anywhere. A complete <strong>digital signage CMS</strong> with remote control, scheduling, playlists, and
+        analytics — <strong>self-host it</strong> on your own server or use our managed cloud.</p>
+      <div class="hero-btns">
+        <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free Trial</a>
+        <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline"
+          style="padding:14px 28px;font-size:16px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+            style="margin-right:2px">
+            <path
+              d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3" />
+          </svg>
+          View on GitHub
+        </a>
+        <a href="#compare" class="btn btn-outline" style="padding:14px 28px;font-size:16px">See How We Compare</a>
+      </div>
+    </section>
+
+    <!-- Intro video -->
+    <div style="max-width:800px;margin:32px auto;border-radius:12px;overflow:hidden;border:1px solid var(--border)">
+      <div style="position:relative;padding-bottom:56.25%;height:0">
+        <iframe src="https://www.youtube-nocookie.com/embed/Sq3RbnuDgKw?rel=0"
+          title="ScreenTinker - Open Source Digital Signage for Any Screen" loading="lazy" width="800" height="450"
+          frameborder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerpolicy="strict-origin-when-cross-origin" allowfullscreen
+          style="position:absolute;top:0;left:0;width:100%;height:100%"></iframe>
+      </div>
     </div>
-  </section>
 
-  <!-- Intro video -->
-  <div style="max-width:800px;margin:32px auto;border-radius:12px;overflow:hidden;border:1px solid var(--border)">
-    <div style="position:relative;padding-bottom:56.25%;height:0">
-      <iframe src="https://www.youtube-nocookie.com/embed/Sq3RbnuDgKw?rel=0" title="ScreenTinker - Open Source Digital Signage for Any Screen" loading="lazy" width="800" height="450" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%"></iframe>
+    <!-- Dashboard preview -->
+    <div class="screenshot">
+      <img src="/assets/dashboard-preview.png"
+        alt="ScreenTinker open-source digital signage dashboard showing 4 online displays with playlist assignments"
+        loading="lazy" width="2500" height="1314">
     </div>
-  </div>
 
-  <!-- Dashboard preview -->
-  <div class="screenshot">
-    <img src="/assets/dashboard-preview.png" alt="ScreenTinker open-source digital signage dashboard showing 4 online displays with playlist assignments" loading="lazy" width="2500" height="1314">
-  </div>
+    <!-- Open Source callout -->
+    <section class="opensource" id="opensource"
+      style="max-width:900px;margin:0 auto;padding:40px 24px;text-align:center">
+      <h2 style="font-size:28px;margin-bottom:12px">Fully Open Source</h2>
+      <p style="color:var(--muted);font-size:16px;margin-bottom:20px">MIT licensed. Self-host on your own infrastructure
+        or use our managed cloud. Your data, your rules.</p>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline"
+        style="display:inline-flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path
+            d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3" />
+        </svg>
+        github.com/screentinker/screentinker
+      </a>
+    </section>
 
-  <!-- Open Source callout -->
-  <section class="opensource" id="opensource" style="max-width:900px;margin:0 auto;padding:40px 24px;text-align:center">
-    <h2 style="font-size:28px;margin-bottom:12px">Fully Open Source</h2>
-    <p style="color:var(--muted);font-size:16px;margin-bottom:20px">MIT licensed. Self-host on your own infrastructure or use our managed cloud. Your data, your rules.</p>
-    <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="display:inline-flex;align-items:center;gap:8px">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
-      github.com/screentinker/screentinker
-    </a>
-  </section>
+    <!-- How it works -->
+    <section class="features" id="how-it-works">
+      <h2>Up and Running in Minutes</h2>
+      <p class="subtitle">No proprietary hardware, no complicated setup.</p>
+      <div class="feature-grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">
+        <div class="feature-card">
+          <div class="feature-icon">1&#65039;&#8419;</div>
+          <h3>Connect a screen</h3>
+          <p>Install the free player on an Android TV, Fire TV, Raspberry Pi, Windows PC, or open a browser tab — then
+            pair it with a code.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">2&#65039;&#8419;</div>
+          <h3>Add your content</h3>
+          <p>Upload images and video, build playlists and multi-zone layouts, or design screens with built-in widgets.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">3&#65039;&#8419;</div>
+          <h3>Schedule and publish</h3>
+          <p>Assign content to displays or groups, set day/time schedules, and push live. Change it any time from your
+            phone.</p>
+        </div>
+      </div>
+    </section>
 
-  <!-- How it works -->
-  <section class="features" id="how-it-works">
-    <h2>Up and Running in Minutes</h2>
-    <p class="subtitle">No proprietary hardware, no complicated setup.</p>
-    <div class="feature-grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">
-      <div class="feature-card"><div class="feature-icon">1&#65039;&#8419;</div><h3>Connect a screen</h3><p>Install the free player on an Android TV, Fire TV, Raspberry Pi, Windows PC, or open a browser tab — then pair it with a code.</p></div>
-      <div class="feature-card"><div class="feature-icon">2&#65039;&#8419;</div><h3>Add your content</h3><p>Upload images and video, build playlists and multi-zone layouts, or design screens with built-in widgets.</p></div>
-      <div class="feature-card"><div class="feature-icon">3&#65039;&#8419;</div><h3>Schedule and publish</h3><p>Assign content to displays or groups, set day/time schedules, and push live. Change it any time from your phone.</p></div>
-    </div>
-  </section>
+    <!-- Features -->
+    <section class="features" id="features">
+      <h2>Everything You Need</h2>
+      <p class="subtitle">Every feature you'd expect from an enterprise <strong>digital signage CMS</strong> — video
+        walls, scheduling, proof-of-play, and remote monitoring — free and open source.</p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-tv"></i></div>
+          <h3>Multi-Zone Layouts</h3>
+          <p>Split screens into zones with a drag-and-drop editor. 7 built-in templates or create your own.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-border-all"></i></div>
+          <h3>Video Wall</h3>
+          <p>Combine multiple displays into one giant screen. Automatic bezel compensation. Any grid size.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-desktop"></i></div>
+          <h3>Remote Control</h3>
+          <p>See what's on screen in real-time. Send key presses, navigate menus, power on/off remotely.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-regular fa-calendar"></i></div>
+          <h3>Scheduling</h3>
+          <p>Visual weekly calendar with recurrence rules. Schedule per device or for whole groups — device rules
+            override the group.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-list"></i></div>
+          <h3>Playlists</h3>
+          <p>Share one playlist across many displays. Draft changes, preview, then publish — or revert to the last
+            published version.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-building"></i></div>
+          <h3>Directory Board</h3>
+          <p>Scrolling lobby, building, and staff directories. Categories, dark &amp; light themes, anti-burn-in. Not
+            found in any other open-source CMS.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-wrench"></i></div>
+          <h3>Content Designer</h3>
+          <p>Built-in editor with live clocks, weather, RSS tickers, countdowns, QR codes, and more.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-hand-pointer"></i></div>
+          <h3>Kiosk Mode</h3>
+          <p>Create interactive touchscreen interfaces. Wayfinding, directories, check-in screens.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-chart-line"></i></div>
+          <h3>Proof-of-Play</h3>
+          <p>Track what played, when, and on which device. Export CSV reports for ad verification.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-bell"></i></div>
+          <h3>Alerts & Monitoring</h3>
+          <p>Email alerts when devices go offline. Full telemetry: battery, storage, WiFi, uptime.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-plug-circle-xmark"></i></div>
+          <h3>Offline Resilience</h3>
+          <p>Displays keep playing cached content when the internet or your server drops. They catch up automatically
+            when you're back.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-mobile-screen"></i></div>
+          <h3>Mobile Dashboard</h3>
+          <p>Manage everything from your phone. The full dashboard works on any mobile browser — no separate app needed.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-server"></i></div>
+          <h3>Self-Hosted Option</h3>
+          <p>Deploy on your own infrastructure. Your data never leaves your network. Lock down signups with a single env
+            var.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-palette"></i></div>
+          <h3>White Label</h3>
+          <p>Custom branding, colors, logo, and domain. Resell under your own brand.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-users"></i></div>
+          <h3>Teams</h3>
+          <p>Multi-user accounts with owner, editor, and viewer roles. Invite by email.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-arrows-rotate"></i></div>
+          <h3>Auto-Update</h3>
+          <p>Devices automatically update when you push a new version. Zero manual intervention.</p>
+        </div>
+      </div>
+    </section>
 
-  <!-- Features -->
-  <section class="features" id="features">
-    <h2>Everything You Need</h2>
-    <p class="subtitle">Every feature you'd expect from an enterprise <strong>digital signage CMS</strong> — video walls, scheduling, proof-of-play, and remote monitoring — free and open source.</p>
-    <div class="feature-grid">
-      <div class="feature-card"><div class="feature-icon">&#128250;</div><h3>Multi-Zone Layouts</h3><p>Split screens into zones with a drag-and-drop editor. 7 built-in templates or create your own.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127916;</div><h3>Video Wall</h3><p>Combine multiple displays into one giant screen. Automatic bezel compensation. Any grid size.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128421;</div><h3>Remote Control</h3><p>See what's on screen in real-time. Send key presses, navigate menus, power on/off remotely.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128197;</div><h3>Scheduling</h3><p>Visual weekly calendar with recurrence rules. Schedule per device or for whole groups — device rules override the group.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127926;</div><h3>Playlists</h3><p>Share one playlist across many displays. Draft changes, preview, then publish — or revert to the last published version.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127970;</div><h3>Directory Board</h3><p>Scrolling lobby, building, and staff directories. Categories, dark &amp; light themes, anti-burn-in. Not found in any other open-source CMS.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128295;</div><h3>Content Designer</h3><p>Built-in editor with live clocks, weather, RSS tickers, countdowns, QR codes, and more.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128433;</div><h3>Kiosk Mode</h3><p>Create interactive touchscreen interfaces. Wayfinding, directories, check-in screens.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128202;</div><h3>Proof-of-Play</h3><p>Track what played, when, and on which device. Export CSV reports for ad verification.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128276;</div><h3>Alerts & Monitoring</h3><p>Email alerts when devices go offline. Full telemetry: battery, storage, WiFi, uptime.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128268;</div><h3>Offline Resilience</h3><p>Displays keep playing cached content when the internet or your server drops. They catch up automatically when you're back.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128241;</div><h3>Mobile Dashboard</h3><p>Manage everything from your phone. The full dashboard works on any mobile browser — no separate app needed.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128274;</div><h3>Self-Hosted Option</h3><p>Deploy on your own infrastructure. Your data never leaves your network. Lock down signups with a single env var.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127912;</div><h3>White Label</h3><p>Custom branding, colors, logo, and domain. Resell under your own brand.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128101;</div><h3>Teams</h3><p>Multi-user accounts with owner, editor, and viewer roles. Invite by email.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128260;</div><h3>Auto-Update</h3><p>Devices automatically update when you push a new version. Zero manual intervention.</p></div>
-    </div>
-  </section>
+    <!-- Use cases / industries -->
+    <section class="features" id="use-cases">
+      <h2>Digital Signage for Any Space</h2>
+      <p class="subtitle">One platform, every use case.</p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-cart-shopping"></i></div>
+          <h3>Retail &amp; QSR</h3>
+          <p>Menu boards, promotions, and price updates pushed to every location instantly.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-utensils"></i></div>
+          <h3>Restaurants &amp; Cafés</h3>
+          <p>Digital menu boards with dayparting — breakfast, lunch, and dinner menus that switch themselves on
+            schedule.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-building"></i></div>
+          <h3>Offices &amp; Corporate</h3>
+          <p>Lobby welcome screens, meeting-room signs, KPI dashboards, and internal comms.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-graduation-cap"></i></div>
+          <h3>Schools &amp; Universities</h3>
+          <p>Campus announcements, event calendars, and emergency alerts across every building.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-notes-medical"></i></div>
+          <h3>Healthcare &amp; Clinics</h3>
+          <p>Waiting-room info, wayfinding, and check-in kiosks that keep playing even offline.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-church"></i></div>
+          <h3>Churches &amp; Nonprofits</h3>
+          <p>Free, self-hostable signage for lobbies and sanctuaries with no recurring cost.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-dumbbell"></i></div>
+          <h3>Gyms &amp; Fitness</h3>
+          <p>Class schedules, promos, and live directories on any screen you already own.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fa-solid fa-building"></i></div>
+          <h3>Building &amp; Staff Directories</h3>
+          <p>Scrolling lobby, tenant, and staff directories with categories and anti-burn-in.</p>
+        </div>
+      </div>
+    </section>
 
-  <!-- Use cases / industries -->
-  <section class="features" id="use-cases">
-    <h2>Digital Signage for Any Space</h2>
-    <p class="subtitle">One platform, every use case.</p>
-    <div class="feature-grid">
-      <div class="feature-card"><div class="feature-icon">&#128722;</div><h3>Retail &amp; QSR</h3><p>Menu boards, promotions, and price updates pushed to every location instantly.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127869;</div><h3>Restaurants &amp; Cafés</h3><p>Digital menu boards with dayparting — breakfast, lunch, and dinner menus that switch themselves on schedule.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127970;</div><h3>Offices &amp; Corporate</h3><p>Lobby welcome screens, meeting-room signs, KPI dashboards, and internal comms.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127979;</div><h3>Schools &amp; Universities</h3><p>Campus announcements, event calendars, and emergency alerts across every building.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127973;</div><h3>Healthcare &amp; Clinics</h3><p>Waiting-room info, wayfinding, and check-in kiosks that keep playing even offline.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#9962;</div><h3>Churches &amp; Nonprofits</h3><p>Free, self-hostable signage for lobbies and sanctuaries with no recurring cost.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127947;</div><h3>Gyms &amp; Fitness</h3><p>Class schedules, promos, and live directories on any screen you already own.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127970;</div><h3>Building &amp; Staff Directories</h3><p>Scrolling lobby, tenant, and staff directories with categories and anti-burn-in.</p></div>
-    </div>
-  </section>
+    <!-- Platforms -->
+    <section class="platforms" id="platforms">
+      <h2>Runs on Everything</h2>
+      <p class="subtitle">No hardware lock-in. Use any screen you already have.</p>
+      <div class="platform-grid">
+        <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit">
+          <div class="icon"><i class="fa-brands fa-android"></i></div>
+          <div class="name">Android TV</div>
+        </a>
+        <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit">
+          <div class="icon"><i class="fa-brands fa-amazon"></i></div>
+          <div class="name">Fire TV</div>
+        </a>
+        <a class="platform-item" href="/guides/raspberry-pi-digital-signage.html" style="color:inherit">
+          <div class="icon"><i class="fa-brands fa-raspberry-pi"></i></div>
+          <div class="name">Raspberry Pi</div>
+        </a>
+        <div class="platform-item">
+          <div class="icon"><i class="fa-brands fa-windows"></i></div>
+          <div class="name">Windows</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon"><i class="fa-brands fa-chrome"></i></div>
+          <div class="name">ChromeOS</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon"><i class="fa-solid fa-tv"></i></div>
+          <div class="name">LG webOS</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon"><i class="fa-solid fa-tv"></i></div>
+          <div class="name">Samsung Tizen</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon">&#127758;</div>
+          <div class="name">Any Browser</div>
+        </div>
+      </div>
+    </section>
 
-  <!-- Platforms -->
-  <section class="platforms" id="platforms">
-    <h2>Runs on Everything</h2>
-    <p class="subtitle">No hardware lock-in. Use any screen you already have.</p>
-    <div class="platform-grid">
-      <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#129302;</div><div class="name">Android TV</div></a>
-      <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#128293;</div><div class="name">Fire TV</div></a>
-      <a class="platform-item" href="/guides/raspberry-pi-digital-signage.html" style="color:inherit"><div class="icon">&#129359;</div><div class="name">Raspberry Pi</div></a>
-      <div class="platform-item"><div class="icon">&#128187;</div><div class="name">Windows</div></div>
-      <div class="platform-item"><div class="icon">&#127760;</div><div class="name">ChromeOS</div></div>
-      <div class="platform-item"><div class="icon">&#128250;</div><div class="name">LG webOS</div></div>
-      <div class="platform-item"><div class="icon">&#128250;</div><div class="name">Samsung Tizen</div></div>
-      <div class="platform-item"><div class="icon">&#127758;</div><div class="name">Any Browser</div></div>
-    </div>
-  </section>
+    <!-- Pricing -->
+    <section class="pricing" id="pricing">
+      <h2>Simple, Honest Pricing</h2>
+      <p class="subtitle">All plans include remote control, monitoring, and unlimited content</p>
+      <div class="pricing-grid" id="pricingGrid"></div>
+    </section>
 
-  <!-- Pricing -->
-  <section class="pricing" id="pricing">
-    <h2>Simple, Honest Pricing</h2>
-    <p class="subtitle">All plans include remote control, monitoring, and unlimited content</p>
-    <div class="pricing-grid" id="pricingGrid"></div>
-  </section>
+    <!-- Compare -->
+    <section class="compare" id="compare">
+      <h2>How We Compare</h2>
+      <div class="table-scroll">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th style="color:var(--accent);font-weight:700">ScreenTinker</th>
+              <th>Yodeck</th>
+              <th>ScreenCloud</th>
+              <th>OptiSigns</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Price (15 devices/yr)</td>
+              <td style="color:var(--accent);font-weight:600">€1,188</td>
+              <td>€1,440+</td>
+              <td>€3,600+</td>
+              <td>€1,800+</td>
+            </tr>
+            <tr>
+              <td>Free tier</td>
+              <td class="yes">&#10003; 1 device</td>
+              <td class="yes">&#10003;</td>
+              <td class="no">&#10007;</td>
+              <td class="yes">&#10003;</td>
+            </tr>
+            <tr>
+              <td>Video Wall</td>
+              <td class="yes">&#10003; Included</td>
+              <td class="partial">Basic</td>
+              <td class="partial">
+                Basic<!-- VERIFY: multi-screen confirmed; bezel-compensated video wall not confirmed --></td>
+              <td class="partial">Paid add-on</td>
+            </tr>
+            <tr>
+              <td>Live screen view + remote key presses*</td>
+              <td class="yes">&#10003; All plans</td>
+              <td class="partial">Limited</td>
+              <td class="partial">Limited</td>
+              <td class="partial">Limited</td>
+            </tr>
+            <tr>
+              <td>Kiosk/Touchscreen</td>
+              <td class="yes">&#10003; Included</td>
+              <td class="yes">&#10003;</td>
+              <td class="partial">Limited</td>
+              <td class="yes">&#10003;</td>
+            </tr>
+            <tr>
+              <td>Proof-of-Play</td>
+              <td class="yes">&#10003; All plans</td>
+              <td class="paid">Paid tier</td>
+              <td class="paid">Paid</td>
+              <td class="paid">Paid</td>
+            </tr>
+            <tr>
+              <td>Self-Hosted</td>
+              <td class="yes">&#10003; Only us</td>
+              <td class="no">&#10007;</td>
+              <td class="no">&#10007;</td>
+              <td class="no">&#10007;</td>
+            </tr>
+            <tr>
+              <td>White Label</td>
+              <td class="yes">&#10003; Included</td>
+              <td class="paid">Paid</td>
+              <td class="paid">Enterprise</td>
+              <td class="paid">Paid tier</td>
+            </tr>
+            <tr>
+              <td>Email Alerts</td>
+              <td class="yes">&#10003; All plans</td>
+              <td class="paid">Paid</td>
+              <td class="paid">Paid</td>
+              <td class="paid">Paid</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="max-width:1000px;margin:16px auto 0;font-size:12px;color:var(--dim);line-height:1.6">
+        * Live screen view + remote key presses is Android only and requires granting the on-device accessibility
+        permission.<br>
+        Comparison as of June 2026, based on each vendor's publicly listed pricing and documentation. Spot an error? <a
+          href="https://github.com/screentinker/screentinker/issues" target="_blank" rel="noopener"
+          style="color:var(--accent)">Open an issue on GitHub</a> and we'll fix it.
+      </p>
+    </section>
 
-  <!-- Compare -->
-  <section class="compare" id="compare">
-    <h2>How We Compare</h2>
-    <div class="table-scroll">
-    <table class="compare-table">
-      <thead><tr><th></th><th style="color:var(--accent);font-weight:700">ScreenTinker</th><th>Yodeck</th><th>ScreenCloud</th><th>OptiSigns</th></tr></thead>
-      <tbody>
-        <tr><td>Price (15 devices/yr)</td><td style="color:var(--accent);font-weight:600">$1,188</td><td>$1,440+</td><td>$3,600+</td><td>$1,800+</td></tr>
-        <tr><td>Free tier</td><td class="yes">&#10003; 1 device</td><td class="yes">&#10003;</td><td class="no">&#10007;</td><td class="yes">&#10003;</td></tr>
-        <tr><td>Video Wall</td><td class="yes">&#10003; Included</td><td class="partial">Basic</td><td class="partial">Basic<!-- VERIFY: multi-screen confirmed; bezel-compensated video wall not confirmed --></td><td class="partial">Paid add-on</td></tr>
-        <tr><td>Live screen view + remote key presses*</td><td class="yes">&#10003; All plans</td><td class="partial">Limited</td><td class="partial">Limited</td><td class="partial">Limited</td></tr>
-        <tr><td>Kiosk/Touchscreen</td><td class="yes">&#10003; Included</td><td class="yes">&#10003;</td><td class="partial">Limited</td><td class="yes">&#10003;</td></tr>
-        <tr><td>Proof-of-Play</td><td class="yes">&#10003; All plans</td><td class="paid">Paid tier</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
-        <tr><td>Self-Hosted</td><td class="yes">&#10003; Only us</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
-        <tr><td>White Label</td><td class="yes">&#10003; Included</td><td class="paid">Paid</td><td class="paid">Enterprise</td><td class="paid">Paid tier</td></tr>
-        <tr><td>Email Alerts</td><td class="yes">&#10003; All plans</td><td class="paid">Paid</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
-      </tbody>
-    </table>
-    </div>
-    <p style="max-width:1000px;margin:16px auto 0;font-size:12px;color:var(--dim);line-height:1.6">
-      * Live screen view + remote key presses is Android only and requires granting the on-device accessibility permission.<br>
-      Comparison as of June 2026, based on each vendor's publicly listed pricing and documentation. Spot an error? <a href="https://github.com/screentinker/screentinker/issues" target="_blank" rel="noopener" style="color:var(--accent)">Open an issue on GitHub</a> and we'll fix it.
-    </p>
-  </section>
+    <!-- Resources / internal linking for SEO -->
+    <section class="resources" id="resources" style="max-width:1000px;margin:0 auto;padding:60px 24px;">
+      <h2 style="text-align:center;font-size:32px;margin-bottom:8px">Resources</h2>
+      <p style="text-align:center;color:var(--muted);margin-bottom:32px">Setup guides and honest comparisons.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
+        <a href="/guides/raspberry-pi-digital-signage.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Guide</div>
+          <div style="font-weight:600;margin-bottom:4px">How to set up digital signage on Raspberry Pi</div>
+          <div style="font-size:13px;color:var(--muted)">Hardware, OS, install script, pairing.</div>
+        </a>
+        <a href="/guides/digital-signage-android-tv.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Guide</div>
+          <div style="font-weight:600;margin-bottom:4px">Free digital signage for Android TV &amp; Fire TV</div>
+          <div style="font-size:13px;color:var(--muted)">APK sideload, kiosk mode, hardware tips.</div>
+        </a>
+        <a href="/guides/self-hosted-digital-signage.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Guide</div>
+          <div style="font-weight:600;margin-bottom:4px">Self-hosted digital signage guide</div>
+          <div style="font-size:13px;color:var(--muted)">Sizing, deploy, TLS, backups.</div>
+        </a>
+        <a href="/compare/yodeck-alternative.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Compare</div>
+          <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs Yodeck</div>
+          <div style="font-size:13px;color:var(--muted)">Features, pricing, platform support.</div>
+        </a>
+        <a href="/compare/screencloud-alternative.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Compare</div>
+          <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs ScreenCloud</div>
+          <div style="font-size:13px;color:var(--muted)">Pricing breakdown at scale.</div>
+        </a>
+        <a href="/compare/optisigns-alternative.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Compare</div>
+          <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs OptiSigns</div>
+          <div style="font-size:13px;color:var(--muted)">Side by side feature and price comparison.</div>
+        </a>
+        <a href="/guides/open-source-digital-signage.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Guide</div>
+          <div style="font-weight:600;margin-bottom:4px">Open-source digital signage explained</div>
+          <div style="font-size:13px;color:var(--muted)">Why open source, and how ScreenTinker fits.</div>
+        </a>
+        <a href="/guides/what-is-digital-signage.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Guide</div>
+          <div style="font-weight:600;margin-bottom:4px">What is digital signage?</div>
+          <div style="font-size:13px;color:var(--muted)">Beginner's guide: how it works and what it costs.</div>
+        </a>
+        <a href="/compare/xibo-alternative.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Compare</div>
+          <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs Xibo</div>
+          <div style="font-size:13px;color:var(--muted)">Open source vs open source — and the paid players.</div>
+        </a>
+        <a href="/compare/anthias-alternative.html"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Compare</div>
+          <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs Anthias</div>
+          <div style="font-size:13px;color:var(--muted)">Beyond one Pi, one screen.</div>
+        </a>
+        <a href="/integrations/"
+          style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+          <div
+            style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            Integrations</div>
+          <div style="font-weight:600;margin-bottom:4px">Connect Google Slides, Canva, Power BI &amp; more</div>
+          <div style="font-size:13px;color:var(--muted)">Native widgets + embed any web app.</div>
+        </a>
+      </div>
+    </section>
 
-  <!-- Resources / internal linking for SEO -->
-  <section class="resources" id="resources" style="max-width:1000px;margin:0 auto;padding:60px 24px;">
-    <h2 style="text-align:center;font-size:32px;margin-bottom:8px">Resources</h2>
-    <p style="text-align:center;color:var(--muted);margin-bottom:32px">Setup guides and honest comparisons.</p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
-      <a href="/guides/raspberry-pi-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Guide</div>
-        <div style="font-weight:600;margin-bottom:4px">How to set up digital signage on Raspberry Pi</div>
-        <div style="font-size:13px;color:var(--muted)">Hardware, OS, install script, pairing.</div>
-      </a>
-      <a href="/guides/digital-signage-android-tv.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Guide</div>
-        <div style="font-weight:600;margin-bottom:4px">Free digital signage for Android TV &amp; Fire TV</div>
-        <div style="font-size:13px;color:var(--muted)">APK sideload, kiosk mode, hardware tips.</div>
-      </a>
-      <a href="/guides/self-hosted-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Guide</div>
-        <div style="font-weight:600;margin-bottom:4px">Self-hosted digital signage guide</div>
-        <div style="font-size:13px;color:var(--muted)">Sizing, deploy, TLS, backups.</div>
-      </a>
-      <a href="/compare/yodeck-alternative.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Compare</div>
-        <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs Yodeck</div>
-        <div style="font-size:13px;color:var(--muted)">Features, pricing, platform support.</div>
-      </a>
-      <a href="/compare/screencloud-alternative.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Compare</div>
-        <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs ScreenCloud</div>
-        <div style="font-size:13px;color:var(--muted)">Pricing breakdown at scale.</div>
-      </a>
-      <a href="/compare/optisigns-alternative.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Compare</div>
-        <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs OptiSigns</div>
-        <div style="font-size:13px;color:var(--muted)">Side by side feature and price comparison.</div>
-      </a>
-      <a href="/guides/open-source-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Guide</div>
-        <div style="font-weight:600;margin-bottom:4px">Open-source digital signage explained</div>
-        <div style="font-size:13px;color:var(--muted)">Why open source, and how ScreenTinker fits.</div>
-      </a>
-      <a href="/guides/what-is-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Guide</div>
-        <div style="font-weight:600;margin-bottom:4px">What is digital signage?</div>
-        <div style="font-size:13px;color:var(--muted)">Beginner's guide: how it works and what it costs.</div>
-      </a>
-      <a href="/compare/xibo-alternative.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Compare</div>
-        <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs Xibo</div>
-        <div style="font-size:13px;color:var(--muted)">Open source vs open source — and the paid players.</div>
-      </a>
-      <a href="/compare/anthias-alternative.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Compare</div>
-        <div style="font-weight:600;margin-bottom:4px">ScreenTinker vs Anthias</div>
-        <div style="font-size:13px;color:var(--muted)">Beyond one Pi, one screen.</div>
-      </a>
-      <a href="/integrations/" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
-        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Integrations</div>
-        <div style="font-weight:600;margin-bottom:4px">Connect Google Slides, Canva, Power BI &amp; more</div>
-        <div style="font-size:13px;color:var(--muted)">Native widgets + embed any web app.</div>
-      </a>
-    </div>
-  </section>
+    <!-- FAQ (visible copy mirrors the FAQPage JSON-LD below) -->
+    <section class="features" id="faq" style="max-width:820px">
+      <h2>Frequently Asked Questions</h2>
+      <p class="subtitle">Everything you need to know about running open-source digital signage.</p>
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">Is there free digital signage software?</h3>
+          <p style="color:var(--muted);font-size:15px">Yes. ScreenTinker is free and open source (MIT licensed). The
+            free cloud plan runs 1 display with 500 MB of storage, and if you self-host there's no per-screen fee at all
+            — run as many displays as your own server can handle. New accounts also get a 14-day Pro trial (15 displays)
+            with no credit card required.</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">Can I run digital signage on a Raspberry Pi?</h3>
+          <p style="color:var(--muted);font-size:15px">Yes. A Raspberry Pi 4 or newer makes an excellent low-cost
+            signage player. Our one-line installer sets up kiosk mode, auto-start, and pairing for you. See the full
+            walkthrough in our <a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi digital signage
+              guide</a>.</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">Does ScreenTinker work on Android TV and Fire TV?</h3>
+          <p style="color:var(--muted);font-size:15px">Yes. Install the free APK on any Android TV box or Amazon Fire TV
+            Stick to turn it into a managed signage display, complete with kiosk mode and live remote control.
+            Step-by-step instructions are in our <a href="/guides/digital-signage-android-tv.html">Android TV &amp; Fire
+              TV guide</a>. ScreenTinker also runs on Windows, ChromeOS, LG webOS, Samsung Tizen, and any web browser.
+          </p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">What's the difference between self-hosted and cloud digital
+            signage?</h3>
+          <p style="color:var(--muted);font-size:15px">With cloud, we host everything and you just sign in — the fastest
+            way to start. With self-hosting, you deploy ScreenTinker on your own server or VPS so your content and
+            device data never leave your network, with no recurring SaaS fees. You can switch later. Our <a
+              href="/guides/self-hosted-digital-signage.html">self-hosted digital signage guide</a> covers sizing,
+            deployment, TLS, and backups.</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">Is ScreenTinker really open source?</h3>
+          <p style="color:var(--muted);font-size:15px">Yes. The full platform is released under the permissive MIT
+            license on <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>.
+            You can read the code, self-host it, modify it, and even white-label it — no vendor lock-in and no
+            proprietary black box.</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">What can I put on my screens?</h3>
+          <p style="color:var(--muted);font-size:15px">Images, video, playlists, multi-zone layouts, and live widgets —
+            clocks, weather, RSS tickers, countdowns, QR codes, web pages, and scrolling lobby/staff directories. You
+            can schedule different content by day and time, per display or per group.</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">Do my displays keep playing if the internet goes down?</h3>
+          <p style="color:var(--muted);font-size:15px">Yes. ScreenTinker players cache their content locally and keep
+            playing during an internet or server outage, then sync automatically once the connection returns. No blank
+            screens.</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">Can I control my screens remotely?</h3>
+          <p style="color:var(--muted);font-size:15px">Yes, on every plan. See a live view of what's on each screen,
+            push content instantly, and send remote key presses or power commands. (Live view and key presses on Android
+            require the on-device accessibility permission.)</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">Is there a limit on how many screens I can manage?</h3>
+          <p style="color:var(--muted);font-size:15px">On cloud plans, your display count is set by your tier (1 free,
+            up to 15 on Pro, more on Enterprise). If you self-host, there is no built-in device cap — you're limited
+            only by your own hardware.</p>
+        </div>
+        <div>
+          <h3 style="font-size:18px;margin-bottom:6px">How does ScreenTinker compare to Yodeck, ScreenCloud, and
+            OptiSigns?</h3>
+          <p style="color:var(--muted);font-size:15px">ScreenTinker is typically a fraction of the price at scale and is
+            the only one of the four you can self-host. See the detailed breakdowns: <a
+              href="/compare/yodeck-alternative.html">vs Yodeck</a>, <a href="/compare/screencloud-alternative.html">vs
+              ScreenCloud</a>, and <a href="/compare/optisigns-alternative.html">vs OptiSigns</a>.</p>
+        </div>
+      </div>
+    </section>
 
-  <!-- FAQ (visible copy mirrors the FAQPage JSON-LD below) -->
-  <section class="features" id="faq" style="max-width:820px">
-    <h2>Frequently Asked Questions</h2>
-    <p class="subtitle">Everything you need to know about running open-source digital signage.</p>
-    <div style="display:flex;flex-direction:column;gap:20px">
-      <div><h3 style="font-size:18px;margin-bottom:6px">Is there free digital signage software?</h3><p style="color:var(--muted);font-size:15px">Yes. ScreenTinker is free and open source (MIT licensed). The free cloud plan runs 1 display with 500 MB of storage, and if you self-host there's no per-screen fee at all — run as many displays as your own server can handle. New accounts also get a 14-day Pro trial (15 displays) with no credit card required.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">Can I run digital signage on a Raspberry Pi?</h3><p style="color:var(--muted);font-size:15px">Yes. A Raspberry Pi 4 or newer makes an excellent low-cost signage player. Our one-line installer sets up kiosk mode, auto-start, and pairing for you. See the full walkthrough in our <a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi digital signage guide</a>.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">Does ScreenTinker work on Android TV and Fire TV?</h3><p style="color:var(--muted);font-size:15px">Yes. Install the free APK on any Android TV box or Amazon Fire TV Stick to turn it into a managed signage display, complete with kiosk mode and live remote control. Step-by-step instructions are in our <a href="/guides/digital-signage-android-tv.html">Android TV &amp; Fire TV guide</a>. ScreenTinker also runs on Windows, ChromeOS, LG webOS, Samsung Tizen, and any web browser.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">What's the difference between self-hosted and cloud digital signage?</h3><p style="color:var(--muted);font-size:15px">With cloud, we host everything and you just sign in — the fastest way to start. With self-hosting, you deploy ScreenTinker on your own server or VPS so your content and device data never leave your network, with no recurring SaaS fees. You can switch later. Our <a href="/guides/self-hosted-digital-signage.html">self-hosted digital signage guide</a> covers sizing, deployment, TLS, and backups.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">Is ScreenTinker really open source?</h3><p style="color:var(--muted);font-size:15px">Yes. The full platform is released under the permissive MIT license on <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>. You can read the code, self-host it, modify it, and even white-label it — no vendor lock-in and no proprietary black box.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">What can I put on my screens?</h3><p style="color:var(--muted);font-size:15px">Images, video, playlists, multi-zone layouts, and live widgets — clocks, weather, RSS tickers, countdowns, QR codes, web pages, and scrolling lobby/staff directories. You can schedule different content by day and time, per display or per group.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">Do my displays keep playing if the internet goes down?</h3><p style="color:var(--muted);font-size:15px">Yes. ScreenTinker players cache their content locally and keep playing during an internet or server outage, then sync automatically once the connection returns. No blank screens.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">Can I control my screens remotely?</h3><p style="color:var(--muted);font-size:15px">Yes, on every plan. See a live view of what's on each screen, push content instantly, and send remote key presses or power commands. (Live view and key presses on Android require the on-device accessibility permission.)</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">Is there a limit on how many screens I can manage?</h3><p style="color:var(--muted);font-size:15px">On cloud plans, your display count is set by your tier (1 free, up to 15 on Pro, more on Enterprise). If you self-host, there is no built-in device cap — you're limited only by your own hardware.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">How does ScreenTinker compare to Yodeck, ScreenCloud, and OptiSigns?</h3><p style="color:var(--muted);font-size:15px">ScreenTinker is typically a fraction of the price at scale and is the only one of the four you can self-host. See the detailed breakdowns: <a href="/compare/yodeck-alternative.html">vs Yodeck</a>, <a href="/compare/screencloud-alternative.html">vs ScreenCloud</a>, and <a href="/compare/optisigns-alternative.html">vs OptiSigns</a>.</p></div>
-    </div>
-  </section>
-
-  <!-- CTA -->
-  <section class="cta">
-    <h2>Ready to Get Started?</h2>
-    <p>14-day free Pro trial. No credit card required. Set up in under 5 minutes.</p>
-    <a href="/app#/login" class="btn btn-primary" style="padding:14px 32px;font-size:16px">Start Free Trial</a>
-  </section>
+    <!-- CTA -->
+    <section class="cta">
+      <h2>Ready to Get Started?</h2>
+      <p>14-day free Pro trial. No credit card required. Set up in under 5 minutes.</p>
+      <a href="/app#/login" class="btn btn-primary" style="padding:14px 32px;font-size:16px">Start Free Trial</a>
+    </section>
   </main>
 
   <!-- Footer -->
   <footer style="border-top:1px solid var(--border);background:rgba(15,23,42,0.4)">
-    <div style="max-width:1200px;margin:0 auto;padding:48px 24px 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:32px">
+    <div
+      style="max-width:1200px;margin:0 auto;padding:48px 24px 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:32px">
       <div>
         <div style="font-weight:700;color:var(--accent);margin-bottom:12px">ScreenTinker</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.6">Open-source digital signage. Free plan, self-host or cloud. MIT licensed.</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.6">Open-source digital signage. Free plan, self-host
+          or cloud. MIT licensed.</div>
       </div>
       <div>
-        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Guides</div>
+        <div
+          style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">
+          Guides</div>
         <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
           <a href="/guides/raspberry-pi-digital-signage.html" style="color:var(--muted)">Raspberry Pi setup</a>
           <a href="/guides/digital-signage-android-tv.html" style="color:var(--muted)">Android TV &amp; Fire TV</a>
@@ -439,7 +1344,9 @@
         </div>
       </div>
       <div>
-        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Compare</div>
+        <div
+          style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">
+          Compare</div>
         <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
           <a href="/compare/yodeck-alternative.html" style="color:var(--muted)">vs Yodeck</a>
           <a href="/compare/screencloud-alternative.html" style="color:var(--muted)">vs ScreenCloud</a>
@@ -447,16 +1354,22 @@
         </div>
       </div>
       <div>
-        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Project</div>
+        <div
+          style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">
+          Project</div>
         <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
-          <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" style="color:var(--muted)">GitHub</a>
+          <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener"
+            style="color:var(--muted)">GitHub</a>
           <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener" style="color:var(--muted)">Discord</a>
-          <a href="https://www.youtube.com/@ScreenTinker" target="_blank" rel="noopener" style="color:var(--muted)">YouTube</a>
+          <a href="https://www.youtube.com/@ScreenTinker" target="_blank" rel="noopener"
+            style="color:var(--muted)">YouTube</a>
           <a href="/app#/login" style="color:var(--muted)">Sign in</a>
         </div>
       </div>
       <div>
-        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Legal</div>
+        <div
+          style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">
+          Legal</div>
         <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
           <a href="/legal/terms.html" style="color:var(--muted)">Terms</a>
           <a href="/legal/privacy.html" style="color:var(--muted)">Privacy</a>
@@ -464,7 +1377,8 @@
         </div>
       </div>
     </div>
-    <div style="max-width:1200px;margin:0 auto;padding:16px 24px 32px;border-top:1px solid var(--border);color:var(--dim);font-size:13px;text-align:center">
+    <div
+      style="max-width:1200px;margin:0 auto;padding:16px 24px 32px;border-top:1px solid var(--border);color:var(--dim);font-size:13px;text-align:center">
       &copy; 2026 ScreenTinker. All rights reserved.
     </div>
   </footer>
@@ -479,11 +1393,13 @@
         <button type="button" class="modal-close" onclick="closeContactModal()" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-description">Tell us about your deployment and we'll get back to you within one business day.</p>
+        <p class="modal-description">Tell us about your deployment and we'll get back to you within one business day.
+        </p>
         <form id="contactForm" novalidate>
           <label>Name *<input name="name" type="text" required autocomplete="name" maxlength="200"></label>
           <label>Email *<input name="email" type="email" required autocomplete="email" maxlength="200"></label>
-          <label>Company / organization *<input name="company" type="text" required autocomplete="organization" maxlength="200"></label>
+          <label>Company / organization *<input name="company" type="text" required autocomplete="organization"
+              maxlength="200"></label>
           <label>Estimated number of screens *<input name="screens" type="number" min="1" max="100000" required></label>
           <label>Multi-tenant? *
             <select name="multi_tenant" required>
@@ -637,8 +1553,8 @@
       const planCardsHtml = publicPlans.map((p, i) => `
         <div class="price-card ${i === 2 ? 'featured' : ''}">
           <h3>${p.display_name}</h3>
-          <div class="price">${p.price_monthly > 0 ? '$' + p.price_monthly : 'Free'}<span>${p.price_monthly > 0 ? '/mo' : ''}</span></div>
-          ${p.price_yearly > 0 ? `<div class="yearly">or $${p.price_yearly}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
+          <div class="price">${p.price_monthly > 0 ? '€' + p.price_monthly : 'Free'}<span>${p.price_monthly > 0 ? '/mo' : ''}</span></div>
+          ${p.price_yearly > 0 ? `<div class="yearly">or €${p.price_yearly}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
           <ul>
             <li>${p.max_devices === -1 ? 'Unlimited' : p.max_devices} device${p.max_devices !== 1 ? 's' : ''}</li>
             <li>${p.max_storage_mb === -1 ? 'Unlimited' : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + ' GB' : p.max_storage_mb + ' MB'} storage</li>
@@ -682,17 +1598,17 @@
     // Contact modal: open/close, submit, validation. Functions are attached
     // to window so the inline onclick handlers on the Contact Us button (in
     // the dynamically-rendered pricing card) can find them.
-    window.openContactModal = function() {
+    window.openContactModal = function () {
       document.getElementById('contactModal').style.display = 'flex';
       setTimeout(() => document.querySelector('#contactForm input[name="name"]')?.focus(), 50);
     };
-    window.closeContactModal = function() {
+    window.closeContactModal = function () {
       document.getElementById('contactModal').style.display = 'none';
       const status = document.getElementById('contactFormStatus');
       status.className = '';
       status.textContent = '';
     };
-    window.submitContactForm = async function() {
+    window.submitContactForm = async function () {
       const form = document.getElementById('contactForm');
       const status = document.getElementById('contactFormStatus');
       const btn = document.getElementById('contactSubmitBtn');
@@ -747,4 +1663,5 @@
     });
   </script>
 </body>
+
 </html>

@@ -117,7 +117,7 @@ export async function render(container) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div class="form-group"><label>${t('settings.brand_name')}</label><input type="text" id="wlBrandName" class="input" placeholder="ScreenTinker"></div>
           <div class="form-group"><label>${t('settings.logo_url')}</label><input type="text" id="wlLogoUrl" class="input" placeholder="https://..."></div>
-          <div class="form-group"><label>${t('settings.primary_color')}</label><input type="color" id="wlPrimaryColor" value="#3B82F6" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
+          <div class="form-group"><label>${t('settings.primary_color')}</label><input type="color" id="wlPrimaryColor" value="#e65c00" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
           <div class="form-group"><label>${t('settings.bg_color')}</label><input type="color" id="wlBgColor" value="#111827" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
           <div class="form-group"><label>${t('settings.custom_domain')}</label><input type="text" id="wlDomain" class="input" placeholder="signage.yourcompany.com"></div>
           <div class="form-group"><label>${t('settings.favicon_url')}</label><input type="text" id="wlFavicon" class="input" placeholder="https://..."></div>
@@ -301,7 +301,7 @@ export async function render(container) {
           }
           const result = await res.json();
           if (res.ok) {
-            const imported = Object.entries(result.stats).filter(([k,v]) => v > 0 && k !== 'files_restored').map(([k,v]) => `${v} ${k}`).join(', ');
+            const imported = Object.entries(result.stats).filter(([k, v]) => v > 0 && k !== 'files_restored').map(([k, v]) => `${v} ${k}`).join(', ');
             statusEl.style.color = 'var(--success)';
             let html = t('settings.import.complete', { imported });
             if (result.device_pairings?.length) {
@@ -373,16 +373,15 @@ export async function render(container) {
             <tr style="border-bottom:1px solid var(--border)${tok.revoked_at ? ';opacity:0.55' : ''}">
               <td style="padding:10px 12px;font-family:monospace">${esc(tok.prefix)}&hellip;</td>
               <td style="padding:10px 12px">${esc(tok.name || '')}</td>
-              <td style="padding:10px 12px">${esc(scopeLabel(tok.scope))}${
-                tok.scope === 'agency' && Array.isArray(tok.targets)
-                  ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('apitoken.targets_label')} ${tok.targets.length ? tok.targets.map(p => esc(p.name)).join(', ') : '—'}${tok.auto_publish ? ' · ' + esc(t('apitoken.auto_publish_on')) : ''}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('apitoken.folder_label')} ${tok.upload_folder ? esc(tok.upload_folder) : esc(t('apitoken.folder_root'))}</div>`
-                  : ''}</td>
+              <td style="padding:10px 12px">${esc(scopeLabel(tok.scope))}${tok.scope === 'agency' && Array.isArray(tok.targets)
+        ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('apitoken.targets_label')} ${tok.targets.length ? tok.targets.map(p => esc(p.name)).join(', ') : '—'}${tok.auto_publish ? ' · ' + esc(t('apitoken.auto_publish_on')) : ''}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('apitoken.folder_label')} ${tok.upload_folder ? esc(tok.upload_folder) : esc(t('apitoken.folder_root'))}</div>`
+        : ''}</td>
               <td style="padding:10px 12px">${esc(fmtTokenDate(tok.created_at))}</td>
               <td style="padding:10px 12px">${tok.last_used_at ? esc(fmtTokenDate(tok.last_used_at)) : t('apitoken.never')}</td>
               <td style="padding:10px 12px;white-space:nowrap;text-align:right">
                 ${tok.revoked_at
-                  ? `<span style="color:var(--text-muted);font-size:12px">${t('apitoken.revoked')}</span>`
-                  : `${tok.scope === 'agency' ? `<button class="btn btn-secondary btn-sm edit-targets-btn" data-id="${esc(String(tok.id))}" data-targets="${esc((tok.targets || []).map(p => p.id).join(','))}">${t('apitoken.edit_targets')}</button> <button class="btn btn-secondary btn-sm edit-folder-btn" data-id="${esc(String(tok.id))}" data-folder="${esc(String(tok.upload_folder_id || ''))}">${t('apitoken.edit_folder')}</button> ` : ''}<button class="btn btn-secondary btn-sm revoke-token-btn" data-id="${esc(String(tok.id))}">${t('apitoken.revoke')}</button>`}
+        ? `<span style="color:var(--text-muted);font-size:12px">${t('apitoken.revoked')}</span>`
+        : `${tok.scope === 'agency' ? `<button class="btn btn-secondary btn-sm edit-targets-btn" data-id="${esc(String(tok.id))}" data-targets="${esc((tok.targets || []).map(p => p.id).join(','))}">${t('apitoken.edit_targets')}</button> <button class="btn btn-secondary btn-sm edit-folder-btn" data-id="${esc(String(tok.id))}" data-folder="${esc(String(tok.upload_folder_id || ''))}">${t('apitoken.edit_folder')}</button> ` : ''}<button class="btn btn-secondary btn-sm revoke-token-btn" data-id="${esc(String(tok.id))}">${t('apitoken.revoke')}</button>`}
               </td>
             </tr>
           `).join('')}
@@ -416,10 +415,10 @@ export async function render(container) {
           <h4 style="font-size:14px;margin-bottom:8px">${t('apitoken.edit_targets')}</h4>
           <div style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow:auto;margin-bottom:12px">
             ${pls.length
-              ? pls.map(p => p.zoned
-                  ? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;opacity:.5"><input type="checkbox" disabled> ${esc(p.name)} <span style="font-size:11px;color:var(--text-muted)">— ${esc(t('apitoken.zoned_playlist_reason'))}</span></label>`
-                  : `<label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" class="edit-pl" value="${esc(String(p.id))}"${current.has(String(p.id)) ? ' checked' : ''}> ${esc(p.name)}</label>`).join('')
-              : `<p style="color:var(--text-muted);font-size:12px">${t('apitoken.agency_no_playlists')}</p>`}
+          ? pls.map(p => p.zoned
+            ? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;opacity:.5"><input type="checkbox" disabled> ${esc(p.name)} <span style="font-size:11px;color:var(--text-muted)">— ${esc(t('apitoken.zoned_playlist_reason'))}</span></label>`
+            : `<label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" class="edit-pl" value="${esc(String(p.id))}"${current.has(String(p.id)) ? ' checked' : ''}> ${esc(p.name)}</label>`).join('')
+          : `<p style="color:var(--text-muted);font-size:12px">${t('apitoken.agency_no_playlists')}</p>`}
           </div>
           <button class="btn btn-primary btn-sm" id="saveTargetsBtn">${t('common.save')}</button>
           <button class="btn btn-secondary btn-sm" id="cancelTargetsBtn">${t('common.cancel')}</button>
@@ -482,8 +481,8 @@ export async function render(container) {
       const pls = await api.getPlaylists().catch(() => []);
       list.innerHTML = pls.length
         ? pls.map(p => p.zoned
-            ? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;opacity:.5"><input type="checkbox" disabled> ${esc(p.name)} <span style="font-size:11px;color:var(--text-muted)">— ${esc(t('apitoken.zoned_playlist_reason'))}</span></label>`
-            : `<label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" class="agency-pl" value="${esc(String(p.id))}"> ${esc(p.name)}</label>`).join('')
+          ? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;opacity:.5"><input type="checkbox" disabled> ${esc(p.name)} <span style="font-size:11px;color:var(--text-muted)">— ${esc(t('apitoken.zoned_playlist_reason'))}</span></label>`
+          : `<label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" class="agency-pl" value="${esc(String(p.id))}"> ${esc(p.name)}</label>`).join('')
         : `<p style="color:var(--text-muted);font-size:12px">${t('apitoken.agency_no_playlists')}</p>`;
       // #158: offer existing folders to bind, or leave on the auto-create default.
       const folders = await api.getFolders().catch(() => []);
@@ -628,7 +627,7 @@ async function loadWhiteLabel() {
     if (wl.favicon_url) document.getElementById('wlFavicon').value = wl.favicon_url;
     if (wl.custom_css) document.getElementById('wlCustomCss').value = wl.custom_css;
     if (wl.hide_branding) document.getElementById('wlHideBranding').checked = true;
-  } catch {}
+  } catch { }
 
   document.getElementById('saveWhiteLabelBtn')?.addEventListener('click', async () => {
     try {
@@ -779,4 +778,4 @@ async function loadUsers() {
   }
 }
 
-export function cleanup() {}
+export function cleanup() { }

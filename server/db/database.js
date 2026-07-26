@@ -617,7 +617,7 @@ function migrateGroupSchedules() {
         recurrence_end  TEXT,
         priority        INTEGER NOT NULL DEFAULT 0,
         enabled         INTEGER NOT NULL DEFAULT 1,
-        color           TEXT DEFAULT '#3B82F6',
+        color           TEXT DEFAULT '#e65c00',
         created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
@@ -927,7 +927,7 @@ async function pruneStatusLog(opts = {}) {
     const delCap = cap > 0 ? db.prepare('DELETE FROM device_status_log WHERE rowid IN (SELECT rowid FROM device_status_log WHERE device_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?)') : null;
 
     let total = 0, lastDev = '';
-    for (;;) {
+    for (; ;) {
       const row = nextDevice.get(lastDev);            // O(log n) index seek to next distinct device_id
       if (!row) break;
       lastDev = row.device_id;

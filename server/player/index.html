@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -14,102 +15,102 @@
     player won't boot.
   -->
   <script>
-  (function () {
-    try {
-      if (!window.__debugLog) window.__debugLog = [];
-      var MAX_LOG = 200;
-      var INIT_T = (function () { try { return Date.now(); } catch (e) { return new Date().getTime(); } })();
-
-      function nowMs() {
-        try { return Date.now(); } catch (e) { return new Date().getTime(); }
-      }
-
-      function pushLog(entry) {
-        try {
-          entry.t = nowMs();
-          window.__debugLog.push(entry);
-          if (window.__debugLog.length > MAX_LOG) {
-            window.__debugLog.splice(0, window.__debugLog.length - MAX_LOG);
-          }
-        } catch (e) { /* we are the safety net; do not crash */ }
-      }
-      window.__debugLog_push = pushLog; // shared pusher for debug-overlay.js
-
-      pushLog({
-        type: 'init',
-        ua: (navigator && navigator.userAgent) || '',
-        url: location.href,
-        sw: typeof screen !== 'undefined' ? screen.width : null,
-        sh: typeof screen !== 'undefined' ? screen.height : null
-      });
-
-      // Uncaught script errors. Capture phase so we also see errors from
-      // <img>/<script>/<link> resource failures (ev.target.src on those).
-      window.addEventListener('error', function (ev) {
-        try {
-          var src = ev.filename || (ev.target && ev.target.src) || '';
-          pushLog({
-            type: 'error',
-            message: ev.message || (ev.error && String(ev.error)) || 'error',
-            source: src,
-            line: ev.lineno || 0,
-            col: ev.colno || 0,
-            stack: (ev.error && ev.error.stack) || ''
-          });
-        } catch (e) {}
-      }, true);
-
-      window.addEventListener('unhandledrejection', function (ev) {
-        try {
-          var reason = ev.reason;
-          pushLog({
-            type: 'rejection',
-            message: (reason && reason.message) || String(reason || 'rejection'),
-            stack: (reason && reason.stack) || ''
-          });
-        } catch (e) {}
-      });
-
-      // Wrap console methods. Original behavior preserved so devtools still
-      // sees the real call; we additionally append a sanitized text record.
-      var methods = ['log', 'warn', 'error'];
-      for (var i = 0; i < methods.length; i++) {
-        (function (m) {
-          var orig = console[m];
-          console[m] = function () {
-            try {
-              var args = Array.prototype.slice.call(arguments);
-              var msg = '';
-              for (var j = 0; j < args.length; j++) {
-                var part;
-                try {
-                  part = typeof args[j] === 'string' ? args[j] : JSON.stringify(args[j]);
-                } catch (e) {
-                  part = String(args[j]);
-                }
-                msg += (j > 0 ? ' ' : '') + part;
-              }
-              if (msg.length > 1000) msg = msg.slice(0, 1000) + '...[trunc]';
-              pushLog({ type: 'console.' + m, message: msg });
-            } catch (e) {}
-            try { return orig.apply(console, arguments); } catch (e) {}
-          };
-        })(methods[i]);
-      }
-
-      // Page-load timing relative to this script's execution.
+    (function () {
       try {
-        document.addEventListener('DOMContentLoaded', function () {
-          pushLog({ type: 'timing', event: 'DOMContentLoaded', sinceInit: nowMs() - INIT_T });
+        if (!window.__debugLog) window.__debugLog = [];
+        var MAX_LOG = 200;
+        var INIT_T = (function () { try { return Date.now(); } catch (e) { return new Date().getTime(); } })();
+
+        function nowMs() {
+          try { return Date.now(); } catch (e) { return new Date().getTime(); }
+        }
+
+        function pushLog(entry) {
+          try {
+            entry.t = nowMs();
+            window.__debugLog.push(entry);
+            if (window.__debugLog.length > MAX_LOG) {
+              window.__debugLog.splice(0, window.__debugLog.length - MAX_LOG);
+            }
+          } catch (e) { /* we are the safety net; do not crash */ }
+        }
+        window.__debugLog_push = pushLog; // shared pusher for debug-overlay.js
+
+        pushLog({
+          type: 'init',
+          ua: (navigator && navigator.userAgent) || '',
+          url: location.href,
+          sw: typeof screen !== 'undefined' ? screen.width : null,
+          sh: typeof screen !== 'undefined' ? screen.height : null
         });
-        window.addEventListener('load', function () {
-          pushLog({ type: 'timing', event: 'load', sinceInit: nowMs() - INIT_T });
+
+        // Uncaught script errors. Capture phase so we also see errors from
+        // <img>/<script>/<link> resource failures (ev.target.src on those).
+        window.addEventListener('error', function (ev) {
+          try {
+            var src = ev.filename || (ev.target && ev.target.src) || '';
+            pushLog({
+              type: 'error',
+              message: ev.message || (ev.error && String(ev.error)) || 'error',
+              source: src,
+              line: ev.lineno || 0,
+              col: ev.colno || 0,
+              stack: (ev.error && ev.error.stack) || ''
+            });
+          } catch (e) { }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (ev) {
+          try {
+            var reason = ev.reason;
+            pushLog({
+              type: 'rejection',
+              message: (reason && reason.message) || String(reason || 'rejection'),
+              stack: (reason && reason.stack) || ''
+            });
+          } catch (e) { }
         });
-      } catch (e) {}
-    } catch (outerErr) {
-      // If even init failed, the player must still boot. Do nothing.
-    }
-  })();
+
+        // Wrap console methods. Original behavior preserved so devtools still
+        // sees the real call; we additionally append a sanitized text record.
+        var methods = ['log', 'warn', 'error'];
+        for (var i = 0; i < methods.length; i++) {
+          (function (m) {
+            var orig = console[m];
+            console[m] = function () {
+              try {
+                var args = Array.prototype.slice.call(arguments);
+                var msg = '';
+                for (var j = 0; j < args.length; j++) {
+                  var part;
+                  try {
+                    part = typeof args[j] === 'string' ? args[j] : JSON.stringify(args[j]);
+                  } catch (e) {
+                    part = String(args[j]);
+                  }
+                  msg += (j > 0 ? ' ' : '') + part;
+                }
+                if (msg.length > 1000) msg = msg.slice(0, 1000) + '...[trunc]';
+                pushLog({ type: 'console.' + m, message: msg });
+              } catch (e) { }
+              try { return orig.apply(console, arguments); } catch (e) { }
+            };
+          })(methods[i]);
+        }
+
+        // Page-load timing relative to this script's execution.
+        try {
+          document.addEventListener('DOMContentLoaded', function () {
+            pushLog({ type: 'timing', event: 'DOMContentLoaded', sinceInit: nowMs() - INIT_T });
+          });
+          window.addEventListener('load', function () {
+            pushLog({ type: 'timing', event: 'load', sinceInit: nowMs() - INIT_T });
+          });
+        } catch (e) { }
+      } catch (outerErr) {
+        // If even init failed, the player must still boot. Do nothing.
+      }
+    })();
   </script>
   <!-- Debug overlay module (section 2). Defers so HTML parse doesn't block
        on the fetch. Auto-activation check fires after DOMContentLoaded;
@@ -118,50 +119,175 @@
   <script src="/player/debug-overlay.js" defer></script>
   <title>ScreenTinker Player</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, sans-serif;
+    }
 
     /* Setup Screen */
     #setupScreen {
-      position: fixed; inset: 0; background: #111827; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; z-index: 1000; color: #f1f5f9;
+      position: fixed;
+      inset: 0;
+      background: #111827;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      color: #f1f5f9;
     }
-    #setupScreen h1 { font-size: 36px; color: #3b82f6; margin-bottom: 8px; }
-    #setupScreen .subtitle { color: #94a3b8; font-size: 16px; margin-bottom: 48px; }
-    #setupScreen .form { width: 400px; max-width: 90vw; }
-    #setupScreen label { display: block; font-size: 14px; color: #94a3b8; margin-bottom: 8px; }
-    #setupScreen input { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155;
-      border-radius: 8px; color: #f1f5f9; font-size: 16px; margin-bottom: 24px; outline: none; }
-    #setupScreen input:focus { border-color: #3b82f6; }
-    #setupScreen button { width: 100%; padding: 12px; background: #3b82f6; color: white;
-      border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
-    #setupScreen button:hover { background: #2563eb; }
-    #setupScreen button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .pairing-code { font-size: 72px; font-weight: 700; color: #3b82f6; font-family: monospace;
-      letter-spacing: 12px; margin: 24px 0; }
-    .pairing-hint { color: #64748b; font-size: 14px; }
-    .status-msg { color: #94a3b8; font-size: 14px; margin-top: 16px; }
-    .spinner { width: 40px; height: 40px; border: 3px solid #334155; border-top-color: #3b82f6;
-      border-radius: 50%; animation: spin 1s linear infinite; margin: 24px auto; }
-    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #setupScreen h1 {
+      font-size: 36px;
+      color: #e65c00;
+      margin-bottom: 8px;
+    }
+
+    #setupScreen .subtitle {
+      color: #94a3b8;
+      font-size: 16px;
+      margin-bottom: 48px;
+    }
+
+    #setupScreen .form {
+      width: 400px;
+      max-width: 90vw;
+    }
+
+    #setupScreen label {
+      display: block;
+      font-size: 14px;
+      color: #94a3b8;
+      margin-bottom: 8px;
+    }
+
+    #setupScreen input {
+      width: 100%;
+      padding: 12px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #f1f5f9;
+      font-size: 16px;
+      margin-bottom: 24px;
+      outline: none;
+    }
+
+    #setupScreen input:focus {
+      border-color: #e65c00;
+    }
+
+    #setupScreen button {
+      width: 100%;
+      padding: 12px;
+      background: #e65c00;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    #setupScreen button:hover {
+      background: #2563eb;
+    }
+
+    #setupScreen button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .pairing-code {
+      font-size: 72px;
+      font-weight: 700;
+      color: #e65c00;
+      font-family: monospace;
+      letter-spacing: 12px;
+      margin: 24px 0;
+    }
+
+    .pairing-hint {
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .status-msg {
+      color: #94a3b8;
+      font-size: 14px;
+      margin-top: 16px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #334155;
+      border-top-color: #e65c00;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 24px auto;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
 
     /* Player */
-    #playerContainer { position: fixed; inset: 0; background: #000; }
+    #playerContainer {
+      position: fixed;
+      inset: 0;
+      background: #000;
+    }
+
     /* Fullscreen single-zone playback: YouTube's IFrame API measures the placeholder
        at construction time. If that happens before layout settles, YT bakes in a
        300x150 fallback as inline pixel dimensions on the iframe, which our %-based
        rules can't override. Force fullscreen via absolute positioning + !important. */
-    #playerContainer > iframe,
-    #playerContainer > div > iframe {
+    #playerContainer>iframe,
+    #playerContainer>div>iframe {
       position: absolute !important;
-      top: 0 !important; left: 0 !important;
-      width: 100% !important; height: 100% !important;
-      border: none !important; display: block !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      border: none !important;
+      display: block !important;
     }
-    .zone { position: absolute; overflow: hidden; }
-    .zone video { width: 100%; height: 100%; object-fit: cover; }
-    .zone img { width: 100%; height: 100%; object-fit: cover; }
-    .zone iframe { width: 100%; height: 100%; border: none; }
+
+    .zone {
+      position: absolute;
+      overflow: hidden;
+    }
+
+    .zone video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .zone img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .zone iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
 
     /* Video wall mode.
        wall-stage maps the wall's player_rect into this device's viewport
@@ -171,33 +297,95 @@
        which keeps vertical position identical between devices that share
        a viewport height — without that, cover-cropping on different stage
        aspects (different innerWidths) shifts content vertically. */
-    #playerContainer.wall-mode { overflow: hidden; background: #000; }
-    .wall-stage { position: absolute; }
-    .wall-stage > video,
-    .wall-stage > img { width: 100%; height: 100%; object-fit: fill; display: block; }
-    .wall-stage > iframe { width: 100%; height: 100%; border: none; display: block; }
-    .wall-mode #playerContainer > iframe,
-    .wall-mode #playerContainer > div > iframe { position: static !important; width: 100% !important; height: 100% !important; }
+    #playerContainer.wall-mode {
+      overflow: hidden;
+      background: #000;
+    }
+
+    .wall-stage {
+      position: absolute;
+    }
+
+    .wall-stage>video,
+    .wall-stage>img {
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      display: block;
+    }
+
+    .wall-stage>iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+
+    .wall-mode #playerContainer>iframe,
+    .wall-mode #playerContainer>div>iframe {
+      position: static !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
 
     /* #109: PiP overlay layer — a fixed full-viewport layer ABOVE #playerContainer that
        the playlist never touches. The same orientation transform is applied to it as to
        #playerContainer, so corner positions track the visible content in every orientation.
        Pointer-transparent and empty (invisible) until an overlay is shown. */
-    #pipContainer { position: fixed; inset: 0; pointer-events: none; z-index: 9000; }
-    #pipContainer > .pip-box { position: absolute; overflow: hidden; box-sizing: border-box; box-shadow: 0 6px 28px rgba(0,0,0,0.55); }
-    #pipContainer > .pip-box > .pip-title { font: 600 16px sans-serif; padding: 6px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #pipContainer > .pip-box > img,
-    #pipContainer > .pip-box > iframe { display: block; width: 100%; border: 0; }
+    #pipContainer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9000;
+    }
+
+    #pipContainer>.pip-box {
+      position: absolute;
+      overflow: hidden;
+      box-sizing: border-box;
+      box-shadow: 0 6px 28px rgba(0, 0, 0, 0.55);
+    }
+
+    #pipContainer>.pip-box>.pip-title {
+      font: 600 16px sans-serif;
+      padding: 6px 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #pipContainer>.pip-box>img,
+    #pipContainer>.pip-box>iframe {
+      display: block;
+      width: 100%;
+      border: 0;
+    }
 
     /* Status overlay */
     #statusOverlay {
-      position: fixed; inset: 0; background: #000; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; color: #94a3b8; z-index: 500;
+      position: fixed;
+      inset: 0;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #94a3b8;
+      z-index: 500;
     }
-    #statusOverlay h2 { color: #3b82f6; font-size: 28px; margin-bottom: 8px; }
-    #statusOverlay p { font-size: 16px; }
+
+    #statusOverlay h2 {
+      color: #e65c00;
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+
+    #statusOverlay p {
+      font-size: 16px;
+    }
   </style>
 </head>
+
 <body>
   <!-- Setup Screen -->
   <div id="setupScreen">
@@ -327,7 +515,7 @@
     function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
     const PLAYLIST_CACHE_KEY = 'rd_playlist_cache';
     function savePlaylistCache(items) {
-      try { localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify(items)); } catch {}
+      try { localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify(items)); } catch { }
     }
     function loadPlaylistCache() {
       try { return JSON.parse(localStorage.getItem(PLAYLIST_CACHE_KEY) || '[]'); } catch { return []; }
@@ -337,7 +525,7 @@
     // switching to zones once the server payload arrives.
     const LAYOUT_CACHE_KEY = 'rd_layout_cache';
     function saveLayoutCache(l) {
-      try { localStorage.setItem(LAYOUT_CACHE_KEY, JSON.stringify(l || null)); } catch {}
+      try { localStorage.setItem(LAYOUT_CACHE_KEY, JSON.stringify(l || null)); } catch { }
     }
     function loadLayoutCache() {
       try { return JSON.parse(localStorage.getItem(LAYOUT_CACHE_KEY) || 'null'); } catch { return null; }
@@ -360,7 +548,7 @@
         if (reason) m.reason = reason;
         if (detail) m.detail = detail;
         socket.emit('device:event', m);
-      } catch (e) {}
+      } catch (e) { }
     }
     let playlist = [];
     let currentIndex = -1;
@@ -388,11 +576,13 @@
         if (!config || !config.deviceId || !config.deviceToken) return;   // unpaired -> nothing to attribute
         __exitSent = true;
         const url = (config.serverUrl || window.location.origin) + '/api/device/exit';
-        const body = JSON.stringify({ device_id: config.deviceId, device_token: config.deviceToken,
-          reason, detail: (typeof detail === 'string' && detail) ? detail.slice(0, 200) : undefined });
+        const body = JSON.stringify({
+          device_id: config.deviceId, device_token: config.deviceToken,
+          reason, detail: (typeof detail === 'string' && detail) ? detail.slice(0, 200) : undefined
+        });
         const blob = new Blob([body], { type: 'application/json' });      // Content-Type so express.json parses it
         if (navigator.sendBeacon && navigator.sendBeacon(url, blob)) return;
-        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, keepalive: true }).catch(() => {});
+        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, keepalive: true }).catch(() => { });
       } catch (e) { /* a dying page must never throw */ }
     }
     window.addEventListener('error', (ev) => {
@@ -471,7 +661,7 @@
     // player that has synced even once stays aligned through an internet outage (RTC drift is tiny).
     let clockOffsetMs = 0;
     let clockRttMs = null;
-    try { const c = localStorage.getItem('st_clock_offset'); if (c != null && isFinite(Number(c))) clockOffsetMs = Number(c); } catch (e) {}
+    try { const c = localStorage.getItem('st_clock_offset'); if (c != null && isFinite(Number(c))) clockOffsetMs = Number(c); } catch (e) { }
     function syncedNow() { return Date.now() + clockOffsetMs; }
     function ingestClockSample(serverMs, clientMs) {
       if (!serverMs || !clientMs) return;
@@ -483,13 +673,13 @@
       if (clockRttMs === null || Math.abs(sample - clockOffsetMs) > 1000) clockOffsetMs = Math.round(sample);
       else clockOffsetMs = Math.round(clockOffsetMs * 0.8 + sample * 0.2);
       clockRttMs = Math.round(rtt);
-      try { localStorage.setItem('st_clock_offset', String(clockOffsetMs)); } catch (e) {}
+      try { localStorage.setItem('st_clock_offset', String(clockOffsetMs)); } catch (e) { }
     }
 
     // Stream a group-sync diagnostic to the dashboard live-log (tag 'sync') + the in-page overlay.
     function groupReport(level, msg) {
-      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'sync', level, message: msg }); } catch (e) {}
-      try { window.__debugLog_push && window.__debugLog_push({ type: 'sync', level: level, msg: msg }); } catch (e) {}
+      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'sync', level, message: msg }); } catch (e) { }
+      try { window.__debugLog_push && window.__debugLog_push({ type: 'sync', level: level, msg: msg }); } catch (e) { }
     }
     let lastWallSync = null;
     let currentVideoEl = null;
@@ -515,7 +705,7 @@
     function unlockAudioContext() {
       try {
         if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (_audioCtx.state === 'suspended') _audioCtx.resume().catch(() => {});
+        if (_audioCtx.state === 'suspended') _audioCtx.resume().catch(() => { });
         // Play a 1-sample silent buffer to fully promote the context to running.
         const buf = _audioCtx.createBuffer(1, 1, 22050);
         const src = _audioCtx.createBufferSource();
@@ -543,7 +733,7 @@
       const p = video.play();
       if (p && typeof p.then === 'function') {
         p.then(() => {
-          if (isFinite(t)) { try { video.currentTime = t; } catch {} }
+          if (isFinite(t)) { try { video.currentTime = t; } catch { } }
           console.log('[wall/audio] unmuted play() ok muted=' + video.muted + ' volume=' + video.volume);
           hideEnableAudioPrompt();
         }).catch((err) => {
@@ -593,7 +783,7 @@
         tryUnmuteLeader();
         // Unmute YouTube player if active
         if (activeYtPlayer && typeof activeYtPlayer.unMute === 'function') {
-          try { activeYtPlayer.unMute(); activeYtPlayer.setVolume(100); console.log('Unmuted YouTube player'); } catch {}
+          try { activeYtPlayer.unMute(); activeYtPlayer.setVolume(100); console.log('Unmuted YouTube player'); } catch { }
         }
       }, { once: false });
     });
@@ -636,21 +826,21 @@
     // Function used by connect button and auto-connect
     let autoContinueTimer;
     function connectBtnFunc() {
-        if (autoContinueTimer) {
-          clearInterval(autoContinueTimer);
-          autoContinueTimer = null;
-          document.getElementById('connectBtn').textContent = _t('connect');
-        }
-        unlockAudio();
-        const url = document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
-        if (!url) return;
-        config.serverUrl = url;
-        saveConfig(config);
-        document.getElementById('connectBtn').disabled = true;
-        document.getElementById('setupSpinner').style.display = 'block';
-        document.getElementById('setupStatus').textContent = 'Connecting...';
-        connect(url);
-      };
+      if (autoContinueTimer) {
+        clearInterval(autoContinueTimer);
+        autoContinueTimer = null;
+        document.getElementById('connectBtn').textContent = _t('connect');
+      }
+      unlockAudio();
+      const url = document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
+      if (!url) return;
+      config.serverUrl = url;
+      saveConfig(config);
+      document.getElementById('connectBtn').disabled = true;
+      document.getElementById('setupSpinner').style.display = 'block';
+      document.getElementById('setupStatus').textContent = 'Connecting...';
+      connect(url);
+    };
 
     // #104: device-free dashboard preview. Render a draft playlist by id with NO
     // pairing and NO socket. Gated here, before the normal boot, so the unpaired
@@ -660,88 +850,88 @@
       bootPreview(_previewQS);
     } else {
 
-    // Auto-detect server URL from origin since player is served from the same server
-    if (!config.serverUrl) {
-      config.serverUrl = window.location.origin;
-      saveConfig(config);
-    }
-
-    if (config.serverUrl && config.deviceId && config.paired) {
-      // Restore cached playlist immediately so content plays even if offline —
-      // but ONLY if we also know the layout, else we'd guess fullscreen and flash
-      // before the payload arrives. Key presence (not value) is the test: an absent
-      // key means "layout unknown" (e.g. first run after this shipped, or cleared
-      // cache), while a stored `null` is a real fullscreen device. Both caches are
-      // written on every payload, so after the first connection this always renders
-      // immediately; only a genuinely-unknown layout waits (~1s) for the payload.
-      const cachedPlaylist = loadPlaylistCache();
-      const layoutKnown = localStorage.getItem(LAYOUT_CACHE_KEY) !== null;
-      if (cachedPlaylist.length > 0 && layoutKnown) {
-        console.log('Restored cached playlist:', cachedPlaylist.length, 'items');
-        playlist = cachedPlaylist;
-        layout = loadLayoutCache();
-        document.getElementById('setupScreen').style.display = 'none';
-        startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
-        // #group-sync: if this device was in a sync group, resume the schedule immediately from the
-        // cached clock offset — so a reboot mid-outage comes back aligned WITHOUT waiting for a server.
-        try { const cg = localStorage.getItem('st_group_sync'); if (cg) applyGroupSync(JSON.parse(cg)); } catch (e) {}
+      // Auto-detect server URL from origin since player is served from the same server
+      if (!config.serverUrl) {
+        config.serverUrl = window.location.origin;
+        saveConfig(config);
       }
 
-      // Always show the tap overlay on cold load. Browser autoplay policy is
-      // per-document — a localStorage flag from a prior session does not grant
-      // audio autoplay to a fresh page. The overlay auto-dismisses after 5s and
-      // connects muted, so unattended kiosks still recover without a human tap.
-      {
-        const tapOverlay = document.createElement('div');
-        tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
-        tapOverlay.innerHTML = `
-          <h1 style="color:#3b82f6;font-size:36px;font-family:sans-serif;margin-bottom:12px">ScreenTinker</h1>
+      if (config.serverUrl && config.deviceId && config.paired) {
+        // Restore cached playlist immediately so content plays even if offline —
+        // but ONLY if we also know the layout, else we'd guess fullscreen and flash
+        // before the payload arrives. Key presence (not value) is the test: an absent
+        // key means "layout unknown" (e.g. first run after this shipped, or cleared
+        // cache), while a stored `null` is a real fullscreen device. Both caches are
+        // written on every payload, so after the first connection this always renders
+        // immediately; only a genuinely-unknown layout waits (~1s) for the payload.
+        const cachedPlaylist = loadPlaylistCache();
+        const layoutKnown = localStorage.getItem(LAYOUT_CACHE_KEY) !== null;
+        if (cachedPlaylist.length > 0 && layoutKnown) {
+          console.log('Restored cached playlist:', cachedPlaylist.length, 'items');
+          playlist = cachedPlaylist;
+          layout = loadLayoutCache();
+          document.getElementById('setupScreen').style.display = 'none';
+          startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
+          // #group-sync: if this device was in a sync group, resume the schedule immediately from the
+          // cached clock offset — so a reboot mid-outage comes back aligned WITHOUT waiting for a server.
+          try { const cg = localStorage.getItem('st_group_sync'); if (cg) applyGroupSync(JSON.parse(cg)); } catch (e) { }
+        }
+
+        // Always show the tap overlay on cold load. Browser autoplay policy is
+        // per-document — a localStorage flag from a prior session does not grant
+        // audio autoplay to a fresh page. The overlay auto-dismisses after 5s and
+        // connects muted, so unattended kiosks still recover without a human tap.
+        {
+          const tapOverlay = document.createElement('div');
+          tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
+          tapOverlay.innerHTML = `
+          <h1 style="color:#e65c00;font-size:36px;font-family:sans-serif;margin-bottom:12px">ScreenTinker</h1>
           <p style="color:#94a3b8;font-size:18px;font-family:sans-serif">Tap anywhere to start</p>
           <p style="color:#64748b;font-size:13px;font-family:sans-serif;margin-top:24px">Audio requires user interaction</p>
         `;
-        tapOverlay.onclick = () => {
-          unlockAudio();
-          tapOverlay.remove();
-          if (!isPlaying) showStatus(_t('connecting'));
-          connect(config.serverUrl);
-        };
-        document.body.appendChild(tapOverlay);
-
-        // Auto-dismiss after 5 seconds if no interaction (plays muted)
-        setTimeout(() => {
-          if (tapOverlay.parentNode) {
+          tapOverlay.onclick = () => {
+            unlockAudio();
             tapOverlay.remove();
-            if (!isPlaying) showStatus(_t('connecting_muted'));
+            if (!isPlaying) showStatus(_t('connecting'));
             connect(config.serverUrl);
+          };
+          document.body.appendChild(tapOverlay);
+
+          // Auto-dismiss after 5 seconds if no interaction (plays muted)
+          setTimeout(() => {
+            if (tapOverlay.parentNode) {
+              tapOverlay.remove();
+              if (!isPlaying) showStatus(_t('connecting_muted'));
+              connect(config.serverUrl);
+            }
+          }, 5000);
+        }
+      } else {
+        // Auto-Continue after 5s if not configured. If user interacts with form (typing in the box), stop the timer.
+
+        let countdown = 5;
+        const connectBtn = document.getElementById('connectBtn');
+
+        connectBtn.textContent = `${_t('connect')} (${countdown})`;
+
+        autoContinueTimer = setInterval(() => {
+          countdown--;
+          if (countdown > 0) {
+            connectBtn.textContent = `${_t('connect')} (${countdown})`;
+          } else {
+            clearInterval(autoContinueTimer);
+            connectBtn.textContent = _t('connect');
+            connectBtnFunc()
           }
-        }, 5000);
+        }, 1000);
+
+        document.getElementById('serverUrl').addEventListener('input', () => {
+          if (countdown > 0) {
+            clearInterval(autoContinueTimer);
+            connectBtn.textContent = _t('connect');
+          }
+        });
       }
-    } else {
-      // Auto-Continue after 5s if not configured. If user interacts with form (typing in the box), stop the timer.
-      
-      let countdown = 5;
-      const connectBtn = document.getElementById('connectBtn');
-
-      connectBtn.textContent = `${_t('connect')} (${countdown})`;
-
-      autoContinueTimer = setInterval(() => {
-        countdown--;
-        if (countdown > 0) {
-          connectBtn.textContent = `${_t('connect')} (${countdown})`;
-        } else {
-          clearInterval(autoContinueTimer);
-          connectBtn.textContent = _t('connect');
-          connectBtnFunc()
-        }
-      }, 1000);
-
-      document.getElementById('serverUrl').addEventListener('input', () => {
-        if (countdown > 0) {
-          clearInterval(autoContinueTimer);
-          connectBtn.textContent = _t('connect');
-        }
-      });
-    }
     } // #104: end preview-mode gate (else branch wrapping the normal boot)
 
     // ==================== Setup UI ====================
@@ -762,7 +952,7 @@
         src.buffer = buf;
         src.connect(ctx.destination);
         src.start(0);
-      } catch(e) { console.warn('Audio unlock failed:', e); }
+      } catch (e) { console.warn('Audio unlock failed:', e); }
       // Wall followers must stay muted — leader is the only audio source.
       if (isWallFollower()) return;
       // Unmute any playing HTML5 video
@@ -855,7 +1045,7 @@
     // one, so we never guess; we just tell the truth. Preview-only (never on device).
     function addWebpageNote(container) {
       if (!PREVIEW_MODE || !container) return;
-      try { if (getComputedStyle(container).position === 'static') container.style.position = 'relative'; } catch (e) {}
+      try { if (getComputedStyle(container).position === 'static') container.style.position = 'relative'; } catch (e) { }
       const note = document.createElement('div');
       note.className = 'preview-webpage-note';
       note.textContent = _t('preview_webpage_blocked');
@@ -993,7 +1183,7 @@
               link_lost: linkLostDuringGap,
               cold_start: false,
             });
-          } catch (e) {}
+          } catch (e) { }
           disconnectedAt = 0; linkLostDuringGap = false;
         }
 
@@ -1085,15 +1275,15 @@
           const absDrift = Math.abs(drift);
           if (absDrift > 0.3 && isFinite(currentVideoEl.duration) && target < currentVideoEl.duration) {
             // Big drift: hard seek and reset rate.
-            try { currentVideoEl.currentTime = target; } catch (_) {}
-            try { currentVideoEl.playbackRate = 1.0; } catch (_) {}
+            try { currentVideoEl.currentTime = target; } catch (_) { }
+            try { currentVideoEl.playbackRate = 1.0; } catch (_) { }
           } else if (absDrift > 0.05) {
             // Small drift: nudge playbackRate to converge gently. ±3% is
             // imperceptible on most content but pulls in 50ms drift in <2s.
-            try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (_) {}
+            try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (_) { }
           } else if (currentVideoEl.playbackRate !== 1.0) {
             // In-window: ride at normal rate.
-            try { currentVideoEl.playbackRate = 1.0; } catch (_) {}
+            try { currentVideoEl.playbackRate = 1.0; } catch (_) { }
           }
         }
       });
@@ -1194,7 +1384,7 @@
       socket.on('device:mute-changed', (data) => {
         const item = playlist[currentIndex];
         if (data && item && data.content_id && item.content_id === data.content_id && currentVideoEl) {
-          try { currentVideoEl.muted = !!data.muted; } catch (_) {}
+          try { currentVideoEl.muted = !!data.muted; } catch (_) { }
         }
       });
 
@@ -1218,17 +1408,17 @@
     const pipColor = (c) => (typeof c === 'string' && /^#[0-9A-Fa-f]{6}$/.test(c)) ? c : null;
     const pipPx = (v, d) => { const n = Number(v); return (isFinite(n) && n > 0 ? n : d) + 'px'; };
     function pipReport(level, msg) {
-      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'pip', level, message: msg }); } catch (e) {}
+      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'pip', level, message: msg }); } catch (e) { }
     }
     // Zone diagnostics (orphaned zone_id fallback). Mirrors pipReport: stream to the
     // dashboard device-log (tag 'zone') AND the in-page debug overlay buffer.
     function zoneReport(level, msg) {
-      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'zone', level, message: msg }); } catch (e) {}
-      try { window.__debugLog_push && window.__debugLog_push({ type: 'zone', level: level, msg: msg }); } catch (e) {}
-      try { console.warn('[zone] ' + msg); } catch (e) {}
+      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'zone', level, message: msg }); } catch (e) { }
+      try { window.__debugLog_push && window.__debugLog_push({ type: 'zone', level: level, msg: msg }); } catch (e) { }
+      try { console.warn('[zone] ' + msg); } catch (e) { }
     }
     function pipTeardown() {
-      try { if (pipTimer) clearTimeout(pipTimer); } catch (e) {}
+      try { if (pipTimer) clearTimeout(pipTimer); } catch (e) { }
       pipTimer = null; pipCurrent = null;
       const c = document.getElementById('pipContainer'); if (c) c.innerHTML = '';
     }
@@ -1380,7 +1570,7 @@
       fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
         knownServerHash = data.hash;
         console.log('Server version:', data.version, 'hash:', data.hash);
-      }).catch(() => {});
+      }).catch(() => { });
       // Poll every 30s
       versionCheckTimer = setInterval(() => {
         fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
@@ -1388,7 +1578,7 @@
             console.log('Server code updated, reloading...', knownServerHash, '->', data.hash);
             location.reload();
           }
-        }).catch(() => {});
+        }).catch(() => { });
       }, 30000);
     }
 
@@ -1530,14 +1720,14 @@
         const ad = Math.abs(drift);
         if (currentIndex !== groupLastAlignedIndex) groupAlignPending = true;
         if (groupAlignPending) {
-          if (ad > 0.05) { try { currentVideoEl.currentTime = target; } catch (e) {} groupLastSeekAt = Date.now(); }
-          try { currentVideoEl.playbackRate = 1.0; } catch (e) {}
+          if (ad > 0.05) { try { currentVideoEl.currentTime = target; } catch (e) { } groupLastSeekAt = Date.now(); }
+          try { currentVideoEl.playbackRate = 1.0; } catch (e) { }
           groupAlignPending = false; groupLastAlignedIndex = currentIndex;
           action = 'align ' + drift.toFixed(2);
         }
-        else if (ad > 0.3 && Date.now() - groupLastSeekAt > 1200) { try { currentVideoEl.currentTime = target; } catch (e) {} try { currentVideoEl.playbackRate = 1.0; } catch (e) {} groupLastSeekAt = Date.now(); action = 'seek ' + drift.toFixed(2); }
-        else if (ad > 0.05) { try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (e) {} action = 'nudge ' + drift.toFixed(2); }
-        else if (currentVideoEl.playbackRate !== 1.0) { try { currentVideoEl.playbackRate = 1.0; } catch (e) {} }
+        else if (ad > 0.3 && Date.now() - groupLastSeekAt > 1200) { try { currentVideoEl.currentTime = target; } catch (e) { } try { currentVideoEl.playbackRate = 1.0; } catch (e) { } groupLastSeekAt = Date.now(); action = 'seek ' + drift.toFixed(2); }
+        else if (ad > 0.05) { try { currentVideoEl.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (e) { } action = 'nudge ' + drift.toFixed(2); }
+        else if (currentVideoEl.playbackRate !== 1.0) { try { currentVideoEl.playbackRate = 1.0; } catch (e) { } }
       }
       // Log discrete corrections (jump/align/seek) immediately so the transition is visible; only the
       // routine steady-state line (hold/nudge) is throttled — else the one-tick "align" on load is
@@ -1559,7 +1749,7 @@
       if (!isVid) { groupPreloadIdx = idx; groupPreloadEl = null; return; }   // mark handled, nothing to warm
       const url = item.remote_url || (config.serverUrl + '/uploads/content/' + item.filepath);
       try {
-        if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) {} }
+        if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) { } }
         const v = document.createElement('video');
         v.src = url; v.muted = true; v.playsInline = true; v.preload = 'auto';
         v.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px';
@@ -1580,10 +1770,10 @@
     // just start the schedule tick. Idempotent across refreshes/role churn (there is no role now).
     function applyGroupSync(cfg) {
       if (groupSyncTimer) { clearInterval(groupSyncTimer); groupSyncTimer = null; }
-      try { if (cfg) localStorage.setItem('st_group_sync', JSON.stringify(cfg)); else localStorage.removeItem('st_group_sync'); } catch (e) {}
+      try { if (cfg) localStorage.setItem('st_group_sync', JSON.stringify(cfg)); else localStorage.removeItem('st_group_sync'); } catch (e) { }
       if (!cfg) {
         if (groupSync) groupReport('info', 'group-sync exited'); groupSync = null; console.log('[group-sync] exited');
-        if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) {} groupPreloadEl = null; groupPreloadIdx = -1; }
+        if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) { } groupPreloadEl = null; groupPreloadIdx = -1; }
         reconcileAdvanceTimerForMode();   // #200: back to solo -> re-arm a surviving image/widget's timer
         return;
       }
@@ -1608,9 +1798,9 @@
       const s = wallConfig.screen_rect;
       const p = wallConfig.player_rect;
       if (!s.w || !s.h) return;
-      const left   = ((p.x - s.x) / s.w) * 100;
-      const top    = ((p.y - s.y) / s.h) * 100;
-      const width  = (p.w / s.w) * 100;
+      const left = ((p.x - s.x) / s.w) * 100;
+      const top = ((p.y - s.y) / s.h) * 100;
+      const width = (p.w / s.w) * 100;
       const height = (p.h / s.h) * 100;
       const dev = (config.deviceId || '?').slice(0, 8);
       console.log('[wall/render ' + dev + '] screen_rect: ' + JSON.stringify(s) + ' player_rect: ' + JSON.stringify(p));
@@ -1626,7 +1816,7 @@
     // No-op kept for callers that bind a resize listener (kept around in case
     // future zoom/orientation tweaks need it). vw/vh stage updates with the
     // viewport automatically, so explicit re-style isn't needed today.
-    function bindWallResizeOnce() {}
+    function bindWallResizeOnce() { }
 
     // ==================== Playlist ====================
     function handlePlaylistUpdate(data) {
@@ -1724,9 +1914,9 @@
           const item = playlist[currentIndex];
           const kind = !item ? 'other'
             : item.widget_id ? 'widget'
-            : item.mime_type === 'video/youtube' ? 'youtube'
-            : (typeof item.mime_type === 'string' && item.mime_type.startsWith('video/')) ? 'video'
-            : (typeof item.mime_type === 'string' && item.mime_type.startsWith('image/')) ? 'image' : 'other';
+              : item.mime_type === 'video/youtube' ? 'youtube'
+                : (typeof item.mime_type === 'string' && item.mime_type.startsWith('video/')) ? 'video'
+                  : (typeof item.mime_type === 'string' && item.mime_type.startsWith('image/')) ? 'image' : 'other';
           const container = document.getElementById('playerContainer');
           const state = {
             isPlaying: isPlaying,
@@ -1958,7 +2148,7 @@
       const myGeneration = ++ytGeneration;
 
       // Destroy old player without triggering side effects (callbacks check generation)
-      if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch {} activeYtPlayer = null; }
+      if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch { } activeYtPlayer = null; }
 
       // Vertical (Shorts) content is tagged st_aspect=vertical at ingest. Render it
       // in a centered 9:16 box so it fills a portrait screen and pillarboxes cleanly
@@ -2099,7 +2289,7 @@
         if (keep) {
           // Buffered widget swap: drop the outgoing content but keep the freshly-loaded
           // iframe we're swapping in.
-          Array.from(container.children).forEach(ch => { if (ch !== keep) { try { ch.remove(); } catch (e) {} } });
+          Array.from(container.children).forEach(ch => { if (ch !== keep) { try { ch.remove(); } catch (e) { } } });
         } else {
           container.innerHTML = '';
         }
@@ -2125,7 +2315,7 @@
     function discardPendingSwap() {
       if (!pendingWidgetSwap) return;
       clearTimeout(pendingWidgetSwap.timer);
-      try { pendingWidgetSwap.iframe.remove(); } catch (e) {}
+      try { pendingWidgetSwap.iframe.remove(); } catch (e) { }
       pendingWidgetSwap = null;
     }
 
@@ -2142,7 +2332,7 @@
       discardPendingSwap();
 
       const iframe = document.createElement('iframe');
-      iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}`;
+      iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId || '')}`;
       // Positioned + sized by the `#playerContainer > iframe` CSS rule. Hidden while it
       // loads so its black background never shows over the outgoing content.
       iframe.style.background = '#000';
@@ -2226,7 +2416,7 @@
       if (imgPreloadCache[src]) return;
       loadImageCors(src, proxySrcFor(it), (img) => {
         (img.decode ? img.decode() : Promise.resolve()).then(() => cacheImg(src, img)).catch(() => cacheImg(src, img));
-      }, () => {}); // preload best-effort; a failed warm just means renderImageBuffered loads it live
+      }, () => { }); // preload best-effort; a failed warm just means renderImageBuffered loads it live
     }
     // Plain hard-cut mount: tear down the outgoing frame, show the incoming image, arm the dwell.
     function mountImage(img, item) {
@@ -2415,7 +2605,7 @@
       const t = item.transition;
       const mySeq = renderSeq;
       const stale = () => renderSeq !== mySeq;          // a newer renderContent superseded this one
-      const abandon = () => { try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {} };
+      const abandon = () => { try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) { } };
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';                  // texturable (CORS-clean) + matches the legacy branch
       video.playsInline = true;
@@ -2439,15 +2629,15 @@
         if (!video.muted) video.volume = 1.0;
         video.onended = () => { if (!video.loop) nextItem(); };
         video.onerror = (e) => { console.error('Video error:', src, e); advanceTimer = setTimeout(nextItem, 3000); };
-        video.play().catch(() => { video.muted = true; video.play().catch(() => {}); }); // autoplay-policy fallback
-        setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000); // last-resort kick
+        video.play().catch(() => { video.muted = true; video.play().catch(() => { }); }); // autoplay-policy fallback
+        setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => { }); } }, 2000); // last-resort kick
       };
       // First PRESENTED frame reached (or watchdog): freeze it, snapshot, wipe if we have from+to+runtime.
       const onFirstFrame = () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
         if (stale()) { abandon(); return; }             // superseded before the wipe even started
-        try { video.pause(); } catch (e) {}             // hold at the snapshot frame; mountVideo resumes from here
+        try { video.pause(); } catch (e) { }             // hold at the snapshot frame; mountVideo resumes from here
         const canTexture = video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video);
         let to = null;
         if (canTexture) {
@@ -2458,7 +2648,7 @@
         }
         if (from && to && t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady()) {
           runGlWipe(from, to, t, t.durationMs + 200,     // video has no image-dwell; bound only keeps the full duration
-            () => {},                                    // onStart: video advance is driven by 'ended', not a dwell timer
+            () => { },                                    // onStart: video advance is driven by 'ended', not a dwell timer
             mountVideo, mountVideo);                      // mount AND hardCut both mount+resume the real video
         } else {
           mountVideo();                                  // no from-frame / un-texturable / no runtime -> hard cut
@@ -2585,9 +2775,9 @@
       //  - scheduleDriven:  who does NOT run a local advance timer. Wall followers (leader drives the
       //                     index) AND all group members (the clock/schedule tick drives the index).
       const isWallFollower_ = (!!wallConfig && !wallConfig.is_leader);
-      const scheduleDriven  = isWallFollower_ || !!groupSync;
-      const forceMuted      = isWallFollower_;
-      const isFollower      = scheduleDriven;   // keep the old name for the branches below (advance gating)
+      const scheduleDriven = isWallFollower_ || !!groupSync;
+      const forceMuted = isWallFollower_;
+      const isFollower = scheduleDriven;   // keep the old name for the branches below (advance gating)
 
       const isYoutube = item.mime_type === 'video/youtube';
       const isVideo = !isYoutube && item.mime_type?.startsWith('video/');
@@ -2661,7 +2851,7 @@
               .catch((e2) => console.error('[wall/audio] muted-fallback play() also failed: ' + (e2?.name || e2?.message || e2)));
           });
           // Fallback: force play if not started after 2s
-          setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000);
+          setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => { }); } }, 2000);
         } else if (isImage) {
           const img = document.createElement('img');
           img.src = src;
@@ -2677,7 +2867,7 @@
           if (!isFollower) advanceTimer = setTimeout(nextItem, (item.duration_sec || 10) * 1000);
         } else if (item.widget_id) {
           const iframe = document.createElement('iframe');
-          iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}`;
+          iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId || '')}`;
           iframe.style.cssText = 'width:100%;height:100%;border:none;background:#000';
           iframe.allow = 'autoplay; fullscreen';
           // Sandbox into a unique origin so widget scripts can't read window.parent
@@ -2699,7 +2889,7 @@
       return -1;
     }
     function showZoneEmpty(zone, div, items) {
-      div.querySelectorAll('video').forEach(v => { try { v.pause(); } catch (e) {} });
+      div.querySelectorAll('video').forEach(v => { try { v.pause(); } catch (e) { } });
       div.innerHTML = '';
       zoneTimers[zone.id] = setTimeout(() => showZoneItem(zone, div, items, 0), 30000);
     }
@@ -2739,8 +2929,8 @@
       if (PREVIEW_MODE) {
         previewBannerParts.orphans = orphanNames.length
           ? orphanNames.length + ' item(s) assigned to a different layout: ' +
-            orphanNames.slice(0, 6).join(', ') + (orphanNames.length > 6 ? '…' : '') +
-            ' — showing in "' + ((fallbackZone && (fallbackZone.name || fallbackZone.id)) || '—') + '"'
+          orphanNames.slice(0, 6).join(', ') + (orphanNames.length > 6 ? '…' : '') +
+          ' — showing in "' + ((fallbackZone && (fallbackZone.name || fallbackZone.id)) || '—') + '"'
           : null;
         renderPreviewBanner();
       }
@@ -2777,7 +2967,7 @@
       const multi = items.length > 1 || items.some(it => it.schedules && it.schedules.length);
       const advance = () => showZoneItem(zone, div, items, index + 1);
       // Tear down any prior media in this zone before swapping.
-      div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
+      div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) { } });
       div.innerHTML = '';
 
       const isYoutube = a.mime_type === 'video/youtube';
@@ -2791,7 +2981,7 @@
       // Android player, which keys off the assignment's widget_type.
       if (a.widget_id) {
         const iframe = document.createElement('iframe');
-        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}`;
+        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId || '')}`;
         // Sandbox into a unique origin so widget scripts can't read window.parent
         // state (localStorage / JWT). allow-scripts keeps inline widget code running.
         iframe.setAttribute('sandbox', 'allow-scripts');
@@ -2902,9 +3092,9 @@
         const el = zd.querySelector('video, img, iframe');
         let drawn = false;
         if (el && el.tagName === 'IMG' && el.complete && el.naturalWidth > 0 && isMediaReadable(el)) {
-          try { drawMediaFit(ctx, el, el.naturalWidth, el.naturalHeight, dx, dy, dw, dh, getComputedStyle(el).objectFit); drawn = true; } catch (e) {}
+          try { drawMediaFit(ctx, el, el.naturalWidth, el.naturalHeight, dx, dy, dw, dh, getComputedStyle(el).objectFit); drawn = true; } catch (e) { }
         } else if (el && el.tagName === 'VIDEO' && el.readyState >= 2 && el.videoWidth > 0 && isMediaReadable(el)) {
-          try { drawMediaFit(ctx, el, el.videoWidth, el.videoHeight, dx, dy, dw, dh, getComputedStyle(el).objectFit); drawn = true; } catch (e) {}
+          try { drawMediaFit(ctx, el, el.videoWidth, el.videoHeight, dx, dy, dw, dh, getComputedStyle(el).objectFit); drawn = true; } catch (e) { }
         }
         if (!drawn) drawZonePlaceholder(ctx, dx, dy, dw, dh, zonePlaceholderLabel(el));
       });
@@ -2947,7 +3137,7 @@
         if (!captured) {
           ctx.fillStyle = '#111827';
           ctx.fillRect(0, 0, W, H);
-          ctx.fillStyle = '#3b82f6';
+          ctx.fillStyle = '#e65c00';
           ctx.font = 'bold 28px sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText('ScreenTinker Web Player', W / 2, H / 2 - 40);
@@ -3023,7 +3213,7 @@
     infoDiv.id = 'infoOverlay';
     infoDiv.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:800;display:none;flex-direction:column;align-items:center;justify-content:center;color:#f1f5f9;font-family:-apple-system,sans-serif';
     infoDiv.innerHTML = `
-      <h2 style="color:#3b82f6;margin-bottom:16px">${_t('info_title')}</h2>
+      <h2 style="color:#e65c00;margin-bottom:16px">${_t('info_title')}</h2>
       <div style="font-size:14px;line-height:2;text-align:center;color:#94a3b8" id="infoContent"></div>
       <p style="margin-top:24px;font-size:12px;color:#64748b">${_t('info_close_hint')}</p>
     `;
@@ -3032,7 +3222,7 @@
 
     // Escape user-controllable values before injecting into innerHTML — filenames,
     // device names, and server URLs are stored on the server and could contain HTML.
-    const escHtml = (s) => s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    const escHtml = (s) => s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
     // Update info overlay content periodically
     setInterval(() => {
@@ -3062,7 +3252,7 @@
       if (!e.isTrusted) return;
       if (!document.fullscreenElement && config.paired) {
         document.documentElement.requestFullscreen?.() ||
-        document.documentElement.webkitRequestFullscreen?.();
+          document.documentElement.webkitRequestFullscreen?.();
       }
     });
 
@@ -3074,7 +3264,7 @@
           wakeLock = await navigator.wakeLock.request('screen');
           wakeLock.addEventListener('release', () => { setTimeout(requestWakeLock, 1000); });
         }
-      } catch {}
+      } catch { }
     }
     requestWakeLock();
     // v4 browser half-open triggers: tab foreground / bfcache resume / network change all drive the
@@ -3144,4 +3334,5 @@
     });
   </script>
 </body>
+
 </html>

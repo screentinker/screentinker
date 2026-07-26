@@ -28,7 +28,7 @@ router.post('/', requireWorkspaceAdmin, (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before configuring branding.' });
 
   const { brand_name, logo_url, favicon_url, primary_color, secondary_color, bg_color,
-          custom_domain, custom_css, hide_branding } = req.body;
+    custom_domain, custom_css, hide_branding } = req.body;
 
   // Security (#3): custom_domain drives the PUBLIC, pre-auth branding resolver
   // (GET /api/branding) and custom_css is injected into the login page's <style>.
@@ -60,7 +60,7 @@ router.post('/', requireWorkspaceAdmin, (req, res) => {
     db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, secondary_color, bg_color, custom_domain, custom_css, hide_branding)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       id, req.user.id, req.workspaceId, brand_name || 'ScreenTinker', logo_url || null, favicon_url || null,
-      primary_color || '#3B82F6', secondary_color || '#1E293B', bg_color || '#111827',
+      primary_color || '#e65c00', secondary_color || '#1E293B', bg_color || '#111827',
       custom_domain || null, custom_css || null, hide_branding ? 1 : 0);
   }
 

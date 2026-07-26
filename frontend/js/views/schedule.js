@@ -105,7 +105,7 @@ export async function render(container) {
             </select>
           </div>
           <div class="form-group"><label>${t('schedule.priority')}</label><input type="number" id="schedPriority" class="input" value="0" min="0" max="100"></div>
-          <div class="form-group"><label>${t('schedule.color')}</label><input type="color" id="schedColor" value="#3B82F6" style="width:60px;height:32px;border:none;cursor:pointer"></div>
+          <div class="form-group"><label>${t('schedule.color')}</label><input type="color" id="schedColor" value="#e65c00" style="width:60px;height:32px;border:none;cursor:pointer"></div>
         </div>
         <div class="modal-footer" style="display:flex;justify-content:space-between;gap:8px">
           <button class="btn btn-danger" id="deleteScheduleBtn" style="display:none">${t('common.delete')}</button>
@@ -190,7 +190,7 @@ export async function render(container) {
       const block = document.createElement('div');
       const topOffset = (startHour - Math.floor(startHour)) * 28;
       block.style.cssText = `position:absolute;top:${topOffset}px;left:2px;right:2px;height:${Math.max(20, duration * 28)}px;
-        background:${ev.color || '#3B82F6'};border-radius:3px;padding:2px 4px;font-size:10px;color:white;overflow:hidden;cursor:pointer;z-index:1;opacity:0.85;
+        background:${ev.color || '#e65c00'};border-radius:3px;padding:2px 4px;font-size:10px;color:white;overflow:hidden;cursor:pointer;z-index:1;opacity:0.85;
         ${isGroupSchedule ? 'border:1.5px dashed rgba(255,255,255,0.6);' : ''}`;
 
       const label = ev.title || ev.playlist_name || ev.content_name || ev.widget_name || t('schedule.scheduled_label');
@@ -211,11 +211,11 @@ export async function render(container) {
     document.getElementById('schedTitle').value = ev.title || '';
     const start = new Date(ev.start_time);
     const end = new Date(ev.end_time);
-    document.getElementById('schedStart').value = `${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}`;
-    document.getElementById('schedEnd').value = `${String(end.getHours()).padStart(2,'0')}:${String(end.getMinutes()).padStart(2,'0')}`;
+    document.getElementById('schedStart').value = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+    document.getElementById('schedEnd').value = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
     document.getElementById('schedRepeat').value = ev.recurrence || '';
     document.getElementById('schedPriority').value = ev.priority || 0;
-    document.getElementById('schedColor').value = ev.color || '#3B82F6';
+    document.getElementById('schedColor').value = ev.color || '#e65c00';
 
     if (ev.group_id) {
       groupRadio.checked = true;
@@ -311,4 +311,4 @@ export async function render(container) {
   loadCalendar();
 }
 
-export function cleanup() {}
+export function cleanup() { }

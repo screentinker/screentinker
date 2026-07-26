@@ -20,7 +20,7 @@
     try {
       var v = tizen.application.getCurrentApplication().appInfo.version;
       if (v) return v;
-    } catch (e) {}
+    } catch (e) { }
     return APP_VERSION_FALLBACK;
   })();
   var HEARTBEAT_MS = 15000;
@@ -39,8 +39,8 @@
 
   // ---- persistent state ----
   function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
-  function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  function set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
+  function del(k) { try { localStorage.removeItem(k); } catch (e) { } }
 
   function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -83,8 +83,8 @@
 
   // Keep the screen awake (best effort across Tizen APIs)
   function keepAwake() {
-    try { if (window.tizen && tizen.power) tizen.power.request('SCREEN', 'SCREEN_NORMAL'); } catch (e) {}
-    try { if (window.webapis && webapis.appcommon) webapis.appcommon.setScreenSaver(webapis.appcommon.AppCommonScreenSaverState.SCREEN_SAVER_OFF); } catch (e) {}
+    try { if (window.tizen && tizen.power) tizen.power.request('SCREEN', 'SCREEN_NORMAL'); } catch (e) { }
+    try { if (window.webapis && webapis.appcommon) webapis.appcommon.setScreenSaver(webapis.appcommon.AppCommonScreenSaverState.SCREEN_SAVER_OFF); } catch (e) { }
   }
 
   // A5 — MONOTONIC clock for lifecycle time deltas (watchdog silence, resume hidden-duration), so an
@@ -222,7 +222,7 @@
   }
   // Stream a group-sync diagnostic to the dashboard live-log (tag 'sync').
   function reportSync(level, msg) {
-    try { if (socket && socket.connected && deviceId) socket.emit('device:log', { device_id: deviceId, tag: 'sync', level: level, message: msg }); } catch (e) {}
+    try { if (socket && socket.connected && deviceId) socket.emit('device:log', { device_id: deviceId, tag: 'sync', level: level, message: msg }); } catch (e) { }
   }
 
   function deviceInfo() {
@@ -247,14 +247,14 @@
         t.battery_level = Math.round((b.level || 0) * 100);
         t.battery_charging = !!b.isCharging;
       });
-    } catch (e) {}
+    } catch (e) { }
     return t;
   }
 
   function connect() {
     if (!serverUrl) { show(elSetup); return; }
     keepAwake();
-    if (socket) { try { socket.disconnect(); } catch (e) {} socket = null; }
+    if (socket) { try { socket.disconnect(); } catch (e) { } socket = null; }
     if (registerTimer) { clearTimeout(registerTimer); registerTimer = null; } // H4: a fresh connect supersedes any pending re-register
 
     var base = serverUrl.replace(/\/+$/, '');
@@ -326,7 +326,7 @@
             link_lost: linkLostDuringGap,
             cold_start: false
           });
-        } catch (e) {}
+        } catch (e) { }
         disconnectedAtMono = 0; linkLostDuringGap = false;
       }
       startHeartbeat();
@@ -482,7 +482,7 @@
   function reportPip(level, msg) {
     try {
       if (socket && deviceId) socket.emit('device:log', { device_id: deviceId, tag: 'pip', level: level, message: msg });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // feat/offline-cause-log: typed incident feed (device:event) — server inserts a device_events row.
@@ -494,7 +494,7 @@
       if (reason) m.reason = reason;
       if (detail) m.detail = detail;
       socket.emit('device:event', m);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // #125: report a command outcome to the dashboard. device:log surfaces live as
@@ -507,7 +507,7 @@
         socket.emit('device:log', { device_id: deviceId, tag: 'command', level: level, message: message });
         socket.emit('device:command-result', { device_id: deviceId, type: type, level: level, message: msg });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // #125: log the panel's control surface at startup so the dashboard shows whether
@@ -522,9 +522,9 @@
       // TV's firmware/signing path. Surface their presence to the dashboard log so Bold can VERIFY on real
       // hardware whether keep-awake is real (vs a silent no-op) — the load-bearing check for the flap fix.
       var ka = 'keep-awake: setScreenSaver=' + !!(window.webapis && webapis.appcommon)
-             + ' tizen.power=' + !!(window.tizen && tizen.power);
+        + ' tizen.power=' + !!(window.tizen && tizen.power);
       reportCmd('info', 'keepawake', ka);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // #120: best-effort dashboard preview. The Tizen TV runtime decodes <video> onto a
@@ -542,11 +542,11 @@
     try {
       var img = elStage.querySelector('img');
       if (img && img.complete && img.naturalWidth > 0) {
-        try { ctx.drawImage(img, 0, 0, 960, 540); captured = true; } catch (e) {}
+        try { ctx.drawImage(img, 0, 0, 960, 540); captured = true; } catch (e) { }
       }
       if (!captured) {
         ctx.fillStyle = '#111827'; ctx.fillRect(0, 0, 960, 540);
-        ctx.fillStyle = '#3b82f6'; ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#e65c00'; ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText('ScreenTinker (Tizen)', 480, 235);
         ctx.fillStyle = '#94a3b8'; ctx.font = '16px sans-serif';
         ctx.fillText('Live preview unavailable for video / YouTube on Tizen', 480, 280);
@@ -560,7 +560,7 @@
       if (base64 && base64.length > 100) {
         socket.emit('device:screenshot', { device_id: deviceId, image_b64: base64 });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
   function startStreaming() { stopStreaming(); streamTimer = setInterval(captureAndSend, 1000); }
   function stopStreaming() { if (streamTimer) { clearInterval(streamTimer); streamTimer = null; } }
@@ -579,7 +579,7 @@
   function teardownSession() {
     stopHeartbeat();
     stopStreaming();
-    try { player.stop(); } catch (e) {}
+    try { player.stop(); } catch (e) { }
     stageOwner = ''; // #162: stage cleared — next playlist must repaint
     if (registerTimer) { clearTimeout(registerTimer); registerTimer = null; }
     authenticated = false;
@@ -620,7 +620,7 @@
     if (elPip) orientEl(elPip.style, o);
     // #170: the player needs the orientation so portrait/flipped VIDEO routes through AVPlay
     // (hardware-plane rotation) instead of the CSS-rotated <video> that Tizen blacks out.
-    try { if (player && player.setOrientation) player.setOrientation(o); } catch (e) {}
+    try { if (player && player.setOrientation) player.setOrientation(o); } catch (e) { }
   }
   function orientEl(s, o) {
     if (!o || o === 'landscape') {
@@ -655,7 +655,7 @@
     }
     // A2: cache the last RENDERABLE payload so a reboot / WS-outage with no connectivity replays it
     // instead of showing the idle card. Only non-suspended payloads are cached.
-    try { set(LS.payload, JSON.stringify(payload)); } catch (e) {}
+    try { set(LS.payload, JSON.stringify(payload)); } catch (e) { }
     // If we have content + we're paired, make sure we're on the stage.
     if (elPairing.classList.contains('hidden') === false) show(elStage);
     else if (elStage.classList.contains('hidden')) show(elStage);
@@ -725,7 +725,7 @@
   elReset.addEventListener('click', function () {
     del(LS.url); del(LS.id); del(LS.token); del(LS.code); del(LS.payload);
     deviceId = null; deviceToken = null; serverUrl = null;
-    if (socket) { try { socket.disconnect(); } catch (e) {} }
+    if (socket) { try { socket.disconnect(); } catch (e) { } }
     teardownSession(); // H4: stop heartbeat/stream/player-loop + pending register (no dangling timers on setup)
     show(elSetup);
   });
@@ -737,9 +737,9 @@
       if (!elSetup.classList.contains('hidden')) {
         stopKeepAwake(); stopWatchdog(); // FIX A/B: clear timers cleanly before the app exits
         sendExitSignal('clean_exit', 'back_key'); // exit-signal: operator BACK-key exit = confident clean_exit
-        try { tizen.application.getCurrentApplication().exit(); } catch (x) {}
+        try { tizen.application.getCurrentApplication().exit(); } catch (x) { }
       } else {
-        if (socket) { try { socket.disconnect(); } catch (x) {} }
+        if (socket) { try { socket.disconnect(); } catch (x) { } }
         teardownSession(); // H4: same clean teardown when BACK returns to setup
         elUrl.value = serverUrl || '';
         elSetupStatus.textContent = ''; elSetupStatus.className = 'status';
@@ -781,7 +781,7 @@
       if (!deviceId || !deviceToken || !serverUrl) return;              // unpaired -> nothing to attribute
       __exitSent = true;
       var d = (typeof detail === 'string' && detail) ? detail.slice(0, 200) : undefined;
-      if (socket && socket.connected) { try { socket.emit('device:exit', { device_id: deviceId, reason: reason, detail: d }); } catch (e) {} }
+      if (socket && socket.connected) { try { socket.emit('device:exit', { device_id: deviceId, reason: reason, detail: d }); } catch (e) { } }
       if (navigator.sendBeacon) {
         var body = JSON.stringify({ device_id: deviceId, device_token: deviceToken, reason: reason, detail: d });
         navigator.sendBeacon(serverUrl.replace(/\/+$/, '') + '/api/device/exit', new Blob([body], { type: 'application/json' }));
@@ -808,7 +808,7 @@
     // connects (or if it can't). The socket's fresh device:playlist-update replaces it on connect.
     show(elStage);
     var _cp = get(LS.payload);
-    if (_cp) { try { onPlaylist(JSON.parse(_cp)); } catch (e) {} }
+    if (_cp) { try { onPlaylist(JSON.parse(_cp)); } catch (e) { } }
     connect();                                      // paired — reconnect to playback
   } else if (serverUrl) {
     show(elSetup); elUrl.value = serverUrl;          // server known, not paired — confirm + connect
