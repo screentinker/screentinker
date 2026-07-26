@@ -965,6 +965,15 @@ app.get('/download/apk', (req, res) => {
   res.sendFile(apk.path, (err) => { if (err) release(); });
 });
 
+// Global API error handler — prevents Express from sending HTML errors on API routes
+app.use((err, req, res, next) => {
+  console.error('[Unhandled Express Error]', err);
+  if (req.path.startsWith('/api/')) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+  next(err);
+});
+
 // SPA fallback for app routes. Unmatched /api/ paths return 404 so misrouted
 // clients fail fast instead of hanging until Cloudflare's 15s upstream timeout.
 app.get('*', (req, res) => {

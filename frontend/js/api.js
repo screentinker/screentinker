@@ -99,9 +99,15 @@ export const api = {
       }
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(JSON.parse(xhr.responseText));
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            resolve({ ok: true }); // handle empty/non-JSON 2xx response
+          }
         } else {
-          reject(new Error('Upload failed'));
+          let msg = 'Upload failed';
+          try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+          reject(new Error(msg));
         }
       };
       xhr.onerror = () => reject(new Error('Upload failed'));
