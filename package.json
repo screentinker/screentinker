@@ -5,7 +5,7 @@
   "description": "Cross-cutting tooling for ScreenTinker shared assets (transition shader library, etc.)",
   "license": "MIT",
   "scripts": {
-    "build": "npm install --prefix server",
+    "build": "npm install --prefix server && node scripts/fix-htaccess.js",
     "postinstall": "node scripts/fix-htaccess.js",
     "build:manifest": "node shared/Transitions/generate-manifest.js",
     "test:shaders": "node shared/Transitions/compile-test.js"

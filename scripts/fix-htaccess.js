@@ -22,7 +22,12 @@ for (const htaccessPath of possiblePaths) {
         // Remove the offending line completely
         content = content.replace(/^.*SetEnv NODE_OPTIONS.*$/gm, '');
         
-        fs.writeFileSync(htaccessPath, content.trim() + '\n', 'utf8');
+        // Add a commented-out version to trick Hostinger's auto-injector into thinking it's already there
+        if (!content.includes('# SetEnv NODE_OPTIONS --use-openssl-ca')) {
+          content = content.trim() + '\n# SetEnv NODE_OPTIONS --use-openssl-ca\n';
+        }
+        
+        fs.writeFileSync(htaccessPath, content, 'utf8');
         console.log(`[fix-htaccess] Successfully removed SetEnv NODE_OPTIONS!`);
         fixed = true;
       }
