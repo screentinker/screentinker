@@ -59,7 +59,7 @@ module.exports = {
   // #148 Item 4: TCP SO_KEEPALIVE idle delay — OS-level dead-peer probing independent of the
   // app ping, so a half-open TCP can't persist indefinitely.
   tcpKeepAliveMs: parseInt(process.env.TCP_KEEPALIVE_MS) || 20000,
-  maxFileSize: 500 * 1024 * 1024, // 500MB
+  maxFileSize:  process.env.MAX_FILE_SIZE || 500 * 1024 * 1024, // 500MB
   thumbnailWidth: 320,
   screenshotQuality: 70,
   // SSL: drop your Cloudflare Origin cert + key in certs/ folder
