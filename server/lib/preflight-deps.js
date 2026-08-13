@@ -14,6 +14,18 @@
  *   NODE UPGRADE  better-sqlite3 is a native module compiled against one ABI. Upgrading Node makes
  *                 every boot fail with NODE_MODULE_VERSION mismatch, which reads like database
  *                 corruption and is not.
+ *
+ *                 ⚠️ better-sqlite3 is pinned to EXACTLY 12.9.0, not a caret range, and the reason
+ *                 is invisible from package.json: 12.10.0 DROPPED the prebuilt binary for Node 20
+ *                 (ABI 115) while still advertising `"node": "20.x || ..."` in engines. So a caret
+ *                 resolves to 12.11.x, finds no prebuild on Node 20, and silently falls through to
+ *                 `node-gyp rebuild` — a from-source compile during install, and during the repair
+ *                 below. That matters here: this file rebuilds synchronously BEFORE the server
+ *                 listens, and prod's systemd unit has TimeoutStartSec=90 with Restart=always, so a
+ *                 slow or failing compile is a boot loop rather than a self-heal. 12.9.0 is the last
+ *                 version shipping prebuilds for BOTH Node 20 (115) and Node 22 (127), which is what
+ *                 lets the runtime move without the module having to compile at all.
+ *                 Re-check the release assets before widening the pin.
  *   HAND EDITS    a `git checkout`, a partly-copied tree, an interrupted install.
  *
  * All three present as a server that will not start, with an error that names a file rather than
