@@ -24,7 +24,15 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
   clear: () => store.clear(),
 };
-globalThis.navigator = globalThis.navigator || { language: 'en' };
+// Node 22 added a built-in `navigator` global, defined as a getter with NO setter — so the plain
+// assignment this used to do throws ("only a getter") under 'use strict' there, while being fine on
+// Node 20 where the global does not exist at all. It is configurable, so define it rather than
+// assign. Doing that unconditionally is also the more honest fixture: Node 22's own navigator
+// reports the HOST locale (en-US here, something else on another machine or in CI), and a test that
+// reads its language should not depend on where it runs.
+Object.defineProperty(globalThis, 'navigator', {
+  value: { language: 'en' }, configurable: true, writable: true,
+});
 
 const MOD = pathToFileURL(path.join(__dirname, '..', '..', 'frontend', 'js', 'components', 'getting-started.js')).href;
 let GS;
