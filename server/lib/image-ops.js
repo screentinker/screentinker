@@ -127,6 +127,15 @@ function writeThumbnail(src, dest, width, quality = 70) {
   return submit({ op: 'writeThumbnail', src, dest, width, quality });
 }
 
+/*
+ * Both of the above from ONE decode -> { width, height, orientation, thumbnailWritten,
+ * thumbnailError }. Prefer this wherever both are wanted: a decode here is the full ~1s of a 12MP
+ * photo, not sharp's cheap header parse, so the pair costs double. See image-ops-core.
+ */
+function measureAndThumbnail(src, dest, width, quality = 70) {
+  return submit({ op: 'measureAndThumbnail', src, dest, width, quality });
+}
+
 /* Drop the worker now rather than waiting out the idle timer. For shutdown paths and tests. */
 async function shutdown() {
   clearIdleTimer();
@@ -135,4 +144,4 @@ async function shutdown() {
   if (w) await w.terminate();
 }
 
-module.exports = { metadata, writeThumbnail, shutdown };
+module.exports = { metadata, writeThumbnail, measureAndThumbnail, shutdown };

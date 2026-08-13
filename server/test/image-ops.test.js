@@ -6,7 +6,7 @@
 // our own thumbnail backfill. lib/image-ops therefore hosts the work on a worker thread, and
 // these bites pin the properties that makes it safe, none of which a functional test would catch.
 
-const { test, after } = require('node:test');
+const { test, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -74,6 +74,48 @@ test('concurrent callers are serialized, and each still gets its own answer', as
   }));
   const got = await Promise.all(files.map(f => imageOps.metadata(f)));
   assert.deepEqual(got.map(m => [m.width, m.height]), sizes, 'replies must not be crossed between queued jobs');
+});
+
+test('measureAndThumbnail decodes the file exactly once', async () => {
+  // Counted, not timed: a wall-clock comparison against metadata()+writeThumbnail() would be
+  // flaky under load, and this is an exact property. Asserted against image-ops-core directly
+  // because the decode happens on the worker thread, out of reach of a spy set up here.
+  // readImage() is the only reader in core, so readFile calls == decodes.
+  const core = require('../lib/image-ops-core');
+  const fsp = require('node:fs/promises');
+  const src = path.join(tmp, 'once.png');
+  fs.writeFileSync(src, await sharp({ create: { width: 200, height: 80, channels: 3, background: '#246' } }).png().toBuffer());
+
+  const spy = mock.method(fsp, 'readFile');
+  // Count reads OF THIS FILE only. Node's ESM loader also reads through fs.promises.readFile, so
+  // a raw call count picks up jimp's and the WASM codecs' lazy module loading on first use.
+  const decodes = () => spy.mock.calls.filter(c => String(c.arguments[0]) === src).length;
+  try {
+    const r = await core.measureAndThumbnail(src, path.join(tmp, 'once-thumb.jpg'), 100, 70);
+    assert.equal(decodes(), 1, 'combined op must decode once, not once per answer');
+    assert.deepEqual([r.width, r.height], [200, 80]);
+    assert.equal(r.thumbnailWritten, true);
+
+    // The pairing it replaces, for contrast — this is the cost being removed.
+    spy.mock.resetCalls();
+    await core.metadata(src);
+    await core.writeThumbnail(src, path.join(tmp, 'twice-thumb.jpg'), 100, 70);
+    assert.equal(decodes(), 2, 'the separate calls are what cost two decodes');
+  } finally { spy.mock.restore(); }
+});
+
+test('a thumbnail that cannot be written still yields dimensions', async () => {
+  // Dimensions are independently useful — the player needs them to letterbox — and the two-call
+  // version kept them, because width/height were assigned before the thumbnail was attempted.
+  // Merging the calls must not quietly turn a thumbnail failure into a total metadata failure.
+  const src = path.join(tmp, 'ok.png');
+  fs.writeFileSync(src, await sharp({ create: { width: 150, height: 60, channels: 3, background: '#654' } }).png().toBuffer());
+
+  const undirectable = path.join(tmp, 'no-such-dir', 'thumb.jpg');   // parent does not exist
+  const r = await imageOps.measureAndThumbnail(src, undirectable, 100, 70);
+  assert.deepEqual([r.width, r.height], [150, 60], 'dimensions survive a thumbnail write failure');
+  assert.equal(r.thumbnailWritten, false);
+  assert.match(r.thumbnailError || '', /ENOENT|no such file/i);
 });
 
 test('#170 EXIF orientation is applied by the decoder, so dimensions are as DISPLAYED', async () => {

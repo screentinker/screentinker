@@ -97,15 +97,46 @@ async function metadata(src) {
 }
 
 /*
- * Write a JPEG thumbnail `width` px wide, aspect preserved — sharp's
- * .rotate().resize(width).jpeg({quality}).toFile(). Rotation is implicit in the decode.
- * Never upscales: sharp's resize() would enlarge a small source, but a thumbnail bigger than its
- * original is pure waste, and the callers only ever shrink.
+ * Resize-and-encode an ALREADY DECODED image. Never upscales: sharp's resize() would enlarge a
+ * small source, but a thumbnail bigger than its original is pure waste and callers only shrink.
+ * Mutates img, so measure before calling.
  */
-async function writeThumbnail(src, destPath, width, quality = 70) {
-  const img = await readImage(src);
+async function encodeThumbnail(img, destPath, width, quality) {
   if (img.bitmap.width > width) img.resize({ w: width });
   await fs.promises.writeFile(destPath, await img.getBuffer('image/jpeg', { quality }));
 }
 
-module.exports = { metadata, writeThumbnail, readImage };
+/*
+ * Write a JPEG thumbnail `width` px wide, aspect preserved — sharp's
+ * .rotate().resize(width).jpeg({quality}).toFile(). Rotation is implicit in the decode.
+ */
+async function writeThumbnail(src, destPath, width, quality = 70) {
+  await encodeThumbnail(await readImage(src), destPath, width, quality);
+}
+
+/*
+ * Measure AND thumbnail from a SINGLE decode — what ingest actually wants.
+ *
+ * Calling metadata() then writeThumbnail() decodes the file twice. That was free under sharp,
+ * whose .metadata() only parses the header, but here every decode is the full ~1s of a 12MP
+ * photo, so the naive pairing doubled the most expensive thing the ingest path does.
+ *
+ * A thumbnail failure must NOT discard the dimensions: they are independently useful (the player
+ * needs them to letterbox correctly) and that is how the two-call version behaved, since width and
+ * height were already assigned before the thumbnail was written. So the write is reported, not
+ * thrown — and the caller assigns a thumbnail_path only when thumbnailWritten is true, keeping the
+ * phantom-path discipline that stops the UI requesting a file that was never created.
+ * A DECODE failure still throws: there is nothing to report about an unreadable image.
+ */
+async function measureAndThumbnail(src, destPath, width, quality = 70) {
+  const img = await readImage(src);
+  const measured = { width: img.bitmap.width, height: img.bitmap.height, orientation: 1 };
+  try {
+    await encodeThumbnail(img, destPath, width, quality);
+    return { ...measured, thumbnailWritten: true, thumbnailError: null };
+  } catch (err) {
+    return { ...measured, thumbnailWritten: false, thumbnailError: err && err.message ? err.message : String(err) };
+  }
+}
+
+module.exports = { metadata, writeThumbnail, measureAndThumbnail, readImage };
