@@ -2,4 +2,11 @@
 <paths>
     <external-files-path name="downloads" path="Download/" />
     <external-files-path name="apk" path="." />
+    <!-- UpdateChecker.apkDir() stages APKs in internal storage when external storage is not
+         available (getExternalFilesDir returns null). The silent PackageInstaller path streams the
+         file itself and needs nothing here, but the intent-based install FALLBACK resolves it
+         through FileProvider — without this entry that fallback throws
+         IllegalArgumentException ("Failed to find configured root"), turning an already-degraded
+         panel into one that cannot install at all. -->
+    <files-path name="internal_downloads" path="Download/" />
 </paths>

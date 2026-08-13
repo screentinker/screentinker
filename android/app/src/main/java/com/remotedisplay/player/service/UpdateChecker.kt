@@ -311,10 +311,35 @@ class UpdateChecker(private val context: Context) {
     // Returns TRUE only when a verified APK is in hand and an install has been launched (the
     // caller may then count an attempt); FALSE on any download/verify failure — the caller must
     // NOT count those, so a transient network problem can't burn a healthy device's budget. #139
+    /*
+     * Where a downloaded APK is staged.
+     *
+     * getExternalFilesDir() returns NULL whenever external storage is not mounted/available — and
+     * on a signage panel that is not exotic: no emulated volume, a vendor ROM that never mounts one,
+     * an SD card ejected, storage still unmounted early in boot.
+     *
+     * The bug this replaces: `File(context.getExternalFilesDir(...), name)`. Java's File(File,String)
+     * treats a NULL parent as "no parent" and silently produces a RELATIVE path, so the download
+     * targeted `ScreenTinker-x.y.z.apk` in the process working directory — `/` — which is not
+     * writable. The write threw, the generic catch swallowed it, and the caller reported only
+     * "failed to download or failed signature verification". Nothing was ever written, so there was
+     * no partial file to find and nothing in the message pointed at storage. It fails on EVERY
+     * attempt, forever, on an affected panel — and identically for the pushed-APK path, which had
+     * the same line.
+     *
+     * Internal storage always exists, so fall back to it. It costs nothing when external is present.
+     * NOTE: the intent-based install fallback resolves this file through FileProvider, so
+     * res/xml/file_paths.xml must expose this directory too — see the <files-path> entry there.
+     */
+    private fun apkDir(): File {
+        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { return it }
+        Log.w(TAG, "External storage unavailable — staging APKs in internal storage instead")
+        return File(context.filesDir, "Download").apply { mkdirs() }
+    }
+
     private fun downloadAndInstall(url: String, version: String): Boolean {
         try {
-            val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-                "ScreenTinker-$version.apk")
+            val apkFile = File(apkDir(), "ScreenTinker-$version.apk")
 
             // #139: reuse a previously-downloaded, verified APK for this version instead of
             // re-pulling ~8.7 MB every cycle. The file also stays on disk as the artifact for a
@@ -378,7 +403,7 @@ class UpdateChecker(private val context: Context) {
             try {
                 val base = url.substringAfterLast('/').substringBefore('?').ifBlank { "app.apk" }
                 val fileName = "pushed-" + (if (base.endsWith(".apk")) base else "$base.apk")
-                val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
+                val apkFile = File(apkDir(), fileName)
                 if (apkFile.exists()) apkFile.delete()
                 val response = client.newCall(Request.Builder().url(url).build()).execute()
                 if (!response.isSuccessful) { Log.e(TAG, "installFromUrl: download failed ${response.code}"); return@Thread }
