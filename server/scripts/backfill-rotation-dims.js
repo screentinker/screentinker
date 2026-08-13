@@ -31,13 +31,14 @@ function probeVideoDims(filePath) {
 }
 
 async function probeImageDims(filePath) {
-  const sharp = require('sharp');
-  return imageDisplayDims(await sharp(filePath).metadata());
+  const imageOps = require('../lib/image-ops');
+  return imageDisplayDims(await imageOps.metadata(filePath));
 }
 
 async function regenImageThumb(filePath, thumbName) {
-  const sharp = require('sharp');
-  await sharp(filePath).rotate().resize(config.thumbnailWidth).jpeg({ quality: 70 }).toFile(path.join(config.contentDir, thumbName));
+  const imageOps = require('../lib/image-ops');
+  // Rotation is implicit: the decoder auto-orients per EXIF, which is what .rotate() bought here.
+  await imageOps.writeThumbnail(filePath, path.join(config.contentDir, thumbName), config.thumbnailWidth, 70);
 }
 
 (async () => {

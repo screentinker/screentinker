@@ -31,7 +31,7 @@ function safeFilename(name) {
  * orientation bug (#170) that the ingest path fixes with imageDisplayDims + .rotate(). A second
  * copy of this logic is a second place for it to rot; there is now one.
  *
- * Best-effort by contract: a missing ffprobe or a sharp failure yields nulls and a warning, never
+ * Best-effort by contract: a missing ffprobe or a decode failure yields nulls and a warning, never
  * a throw — the file itself is already stored and is worth more than its metadata.
  *
  * @returns {{width:number|null, height:number|null, durationSec:number|null, thumbnailPath:string|null}}
@@ -39,24 +39,24 @@ function safeFilename(name) {
 async function deriveMediaMetadata(sourcePath, filepath, mime) {
   let width = null, height = null, durationSec = null, thumbnailPath = null;
   try {
-    // SVG is deliberately NOT handed to sharp: rasterising it goes through librsvg, which
-    // is where the outstanding libvips CVEs live, and an SVG is already its own thumbnail.
+    // SVG is deliberately NOT rasterised: it is already its own thumbnail. (It also used to be
+    // the one format kept away from sharp, because rasterising went through librsvg — where the
+    // outstanding libvips CVEs live. Nothing rasterises it now either.)
     if (mime === 'image/svg+xml') {
       thumbnailPath = filepath;
     } else if (mime.startsWith('image/')) {
-      const sharp = require('sharp');
-      const metadata = await sharp(sourcePath).metadata();
-      // #170: honor EXIF orientation so a portrait photo isn't stored as landscape.
+      const imageOps = require('./image-ops');
+      const metadata = await imageOps.metadata(sourcePath);
+      // #170: honor EXIF orientation so a portrait photo isn't stored as landscape. The decoder
+      // applies it and reports orientation 1, so this is a no-op pass-through today — kept so the
+      // rule lives in one place regardless of which decoder is underneath.
       ({ width, height } = imageDisplayDims(metadata));
-      // Assign thumbnailPath only AFTER the write succeeds: a sharp failure used to
+      // Assign thumbnailPath only AFTER the write succeeds: a decode failure used to
       // return the already-assigned name for a file that was never written, storing a
       // phantom thumbnail_path that the UI then requests forever as a broken image.
       const thumbName = `thumb_${filepath}`;
-      await sharp(sourcePath)
-        .rotate() // #170: auto-orient per EXIF (and strip the tag) so the thumbnail matches
-        .resize(config.thumbnailWidth)
-        .jpeg({ quality: 70 })
-        .toFile(path.join(config.contentDir, thumbName));
+      // #170: rotation is implicit — the decode already auto-oriented, so the thumbnail matches.
+      await imageOps.writeThumbnail(sourcePath, path.join(config.contentDir, thumbName), config.thumbnailWidth, 70);
       thumbnailPath = thumbName;
     } else if (mime.startsWith('video/')) {
       try {
