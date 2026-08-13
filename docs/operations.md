@@ -20,6 +20,7 @@ did not behave.
 - [Verifying a deploy](#verifying-a-deploy)
 - [Rolling back](#rolling-back)
 - [Releases and version numbers](#releases-and-version-numbers)
+- [Upgrading Node.js](#upgrading-nodejs)
 - [Traps worth knowing before they bite](#traps-worth-knowing-before-they-bite)
 
 ---
@@ -253,12 +254,68 @@ or an image, delete-and-repush is not a fix; cut the next version instead.
 
 ---
 
+## Upgrading Node.js
+
+Upgrading the runtime is not like deploying a release: nothing in the app's own upgrade path is
+involved, so the usual `scripts/upgrade.sh` never runs and nothing reinstalls dependencies. Read
+this before changing the Node major.
+
+**Do it as two separate deploys, never one.** Move the app to a release whose dependencies support
+both the old and new Node major first, confirm it on the runtime you already have, and only then
+change Node. Each half is then independently reversible. Doing both at once means a failure gives
+you nothing to bisect and no single step to undo.
+
+**Check the version floor.** `npm start` uses `node --env-file-if-exists=.env`. That flag reached
+the Node 22 line only in **22.9.0** — it works on Node 20 because it was separately backported
+there. On Node 22.0–22.8 the server refuses to start with `node: bad option`. Target 22.9.0 or
+newer.
+
+**One native module has to survive the move.** `better-sqlite3` is compiled against a single Node
+ABI, so changing Node invalidates it. Two things make this survivable:
+
+- `lib/preflight-deps.js` runs before anything else at boot, detects the mismatch by *opening a
+  database* (a bare `require` succeeds even on a wrong ABI, so it is not a valid check), and repairs
+  it with `npm rebuild better-sqlite3`.
+- The pinned version ships **prebuilt binaries for both the current and the next Node major**, so
+  that repair downloads a binary instead of compiling one.
+
+⚠️ **That second point is why the version is pinned exactly rather than with a caret**, and why
+widening it is risky in a way `package.json` does not show. A version with no prebuild for your Node
+falls back to a from-source `node-gyp` build — and because preflight rebuilds *synchronously before
+the server listens*, a compile that outlives `TimeoutStartSec` turns `Restart=always` into a boot
+loop that never finishes. Before changing that pin, check the project's release assets and confirm a
+prebuild exists for every Node ABI you intend to run. A build toolchain (`python3`, `make`, `g++`)
+should still be present as a fallback.
+
+**Native (git + systemd)**
+
+1. Back up first — a Node upgrade cannot corrupt the database, but you want the rollback anyway.
+2. Change the Node major. If Node came from a distribution repository pinned to a major, the repo
+   definition itself must be repointed — upgrading the package alone can never cross majors, and
+   this pin lives in system configuration rather than in this repository.
+3. `node --version` to confirm.
+4. Rebuild the native module explicitly (`npm rebuild better-sqlite3` as the service user, in
+   `server/`), or let preflight do it on the next restart. Doing it by hand keeps the logs readable.
+5. Restart, then verify as in [Verifying a deploy](#verifying-a-deploy). In the logs, confirm
+   preflight reports a successful rebuild rather than exiting.
+
+**Docker** — nothing to rebuild. Change the base image, build, and deploy the new tag: dependencies
+are installed inside the image against its own Node, so the ABI can never be stale. Rollback is
+repinning the previous tag.
+
+**Afterwards, move CI too.** CI pins its own Node version, and it will happily keep validating a
+version nobody runs — which is worse than no signal, because it looks like coverage. The Docker base
+image is a separate pin from the CI one; both need changing or what CI tests and what ships diverge.
+
+---
+
 ## Traps worth knowing before they bite
 
 **Native modules are built for one Node ABI.** `better-sqlite3` is compiled against the Node that
 installed it. Run the app — or its tests — under a different major version and it fails with
 `NODE_MODULE_VERSION` mismatch, which presents as hundreds of unrelated test failures rather than
-one clear error. Use the same Node the service runs.
+one clear error. Use the same Node the service runs. See [Upgrading Node.js](#upgrading-nodejs)
+before changing it deliberately.
 
 **SQLite foreign keys are off unless enabled per connection.** A declared `ON DELETE CASCADE` does
 not fire on its own, so deleting a parent row can leave orphaned children. Check with

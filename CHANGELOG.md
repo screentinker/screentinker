@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+<!-- Rename this heading to the version when cutting the release — scripts/bump-version.sh
+     warns if CHANGELOG.md has no entry matching the new version. -->
+
+### ⚠️ Upgrading to this build requires reinstalling dependencies
+
+Both changes below alter `server/package.json`, so **`npm ci --omit=dev` is required, not
+optional** — in both directions. The runbook's rollback step marks that command "only if
+dependencies changed"; for this release they did.
+
+- **Upgrading**: `scripts/upgrade.sh` already runs it. A hand-rolled deploy that skips it leaves a
+  `better-sqlite3` that no longer matches `package.json`.
+- **Rolling back past this build**: the reinstall is **mandatory**. Earlier builds import `sharp` at
+  runtime to thumbnail images, and this build removes it from the production dependencies — so
+  rolling back the code without reinstalling leaves a server whose image ingest cannot load its
+  decoder. `lib/preflight-deps.js` catches this at boot and repairs it, but do not rely on that as
+  the plan.
+
+Docker deployments need no action either way: dependencies are installed inside the image.
+
+No migrations, no configuration changes, no player-side changes.
+
+### Changed — image processing no longer uses a native module
+`sharp` is gone. Thumbnailing and image measurement are pure JavaScript (Jimp) with WebAssembly
+codecs for webp and avif, running on a worker thread. `sharp` remains as a development dependency
+for test fixtures, so `--omit=dev` excludes it from a deployed install entirely.
+
+The motivation is that a native module needs a prebuilt binary matching both the platform and the
+Node ABI; when there isn't one, the failure arrives at load time and reads like database corruption
+rather than a missing image library. `better-sqlite3` is now the only native module left.
+
+Format support is unchanged in practice. jpeg, png, gif, tiff and bmp decode natively; webp and avif
+via WebAssembly. `.heic` still produces no thumbnail — it never did, because the `sharp` builds in
+use decode AV1 but refuse HEVC.
+
+Images are decoded on a worker thread rather than in-process. Pure-JavaScript decoding costs about a
+second for a 12-megapixel photo, which in-process would block the event loop — and the thumbnail
+backfill walks an entire library at boot, which is exactly how a maintenance task turns into missed
+heartbeats and players marked offline. Thumbnailing is slower in wall-clock terms than the native
+library was, and no longer competes with serving requests.
+
+### Changed — `better-sqlite3` pinned to 12.9.0
+Preparation for a future Node 22 upgrade, landed separately so the runtime move and the database
+driver move stay independently reversible.
+
+The pin is **exact on purpose**. 12.9.0 is the last release publishing prebuilt binaries for both
+the current and the next Node major; later 12.x releases dropped the older one while still
+advertising support for it in `engines`. A caret range would resolve to one of those and silently
+turn installation into a from-source compile. `lib/preflight-deps.js` explains this at the point
+anyone debugging the resulting failure would be reading.
+
+Nothing in the query API changed — every major since 9.x was bumped only to drop end-of-life Node
+and Electron versions.
+
 ## 1.9.34-alpha6
 
 ### Added — a setup guide for single sign-on
