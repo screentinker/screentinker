@@ -426,6 +426,29 @@ router.put('/status-debug', requirePlatformAdmin, (req, res) => {
   res.json({ enabled });
 });
 
+// ===================== Opt-in install statistics =====================
+// Returns the decision state, the EXACT payload that would be sent, and what was last actually
+// sent. Handing over the real payload rather than a description is the point: an operator can
+// check instead of trusting a sentence, and the code is public so a mismatch would be visible.
+const telemetry = require('../lib/telemetry');
+
+router.get('/telemetry', requirePlatformAdmin, (req, res) => {
+  res.json({
+    state: telemetry.state(),                 // 'unasked' | 'on' | 'off'
+    payload: telemetry.payload(db),           // what WOULD be sent, right now
+    last_report: telemetry.getLastReport(),   // what was actually sent, and when
+  });
+});
+
+router.put('/telemetry', requirePlatformAdmin, (req, res) => {
+  // Both answers are recorded. Declining must persist as 'off' rather than staying 'unasked',
+  // or the prompt returns after every update — which is how telemetry earns its bad name.
+  const enabled = !!req.body.enabled;
+  const state = telemetry.setEnabled(enabled);
+  logActivity(req.user.id, 'admin_set_telemetry', `enabled: ${enabled}`, null, getClientIp(req), null);
+  res.json({ state, payload: telemetry.payload(db) });
+});
+
 // ===================== Version update indicator =====================
 // check-update = requireAdmin — a read-only GHCR poll, operational.
 // trigger-update = requirePlatformAdmin — it runs `docker compose up -d` on the

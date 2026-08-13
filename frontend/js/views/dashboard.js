@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
-import { esc, livenessBadge } from '../utils.js';
+import { esc, livenessBadge, isPlatformAdmin } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import * as gettingStarted from '../components/getting-started.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
@@ -290,6 +290,47 @@ function renderGroupSection(group, devices, playlists) {
   `;
 }
 
+/*
+ * Asks, once, whether this install will share its screen count. Only a platform admin sees it,
+ * and only while the decision is genuinely unmade — BOTH answers persist, so it never returns
+ * after an update. Re-prompting is how telemetry earns its reputation and gets patched out.
+ */
+async function renderStatsPrompt(container) {
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  if (!isPlatformAdmin(user)) return;
+
+  let info;
+  try { info = await api.adminGetTelemetry(); } catch { return; }
+  if (info.state !== 'unasked') return;
+
+  const el = document.createElement('div');
+  el.className = 'settings-section';
+  el.style.cssText = 'margin-bottom:16px;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap';
+  el.innerHTML = `
+    <div style="flex:1;min-width:260px">
+      <strong>Help show how widely ScreenTinker is deployed?</strong>
+      <p style="color:var(--text-muted);font-size:13px;margin:6px 0 0">
+        Because most installs are private, we can't tell how many screens are out there. Sharing
+        sends a random ID, the version, and how many screens you run — nothing else, ever.
+        You can change this any time in Settings.
+      </p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" id="statsYes">Share</button>
+      <button class="btn btn-secondary btn-sm" id="statsNo">No thanks</button>
+    </div>
+  `;
+  container.prepend(el);
+
+  const answer = async (enabled) => {
+    try { await api.adminSetTelemetry(enabled); } catch { /* leave it unasked; it can ask again later */ return; }
+    el.remove();
+    if (enabled) showToast('Thank you — sharing install statistics', 'success');
+  };
+  el.querySelector('#statsYes').addEventListener('click', () => answer(true));
+  el.querySelector('#statsNo').addEventListener('click', () => answer(false));
+}
+
 export function render(container) {
   container.innerHTML = `
     <div class="page-header">
@@ -431,6 +472,10 @@ export function render(container) {
 
   // Load everything
   loadDashboard();
+
+  // Ask once about sharing install statistics. Fire-and-forget: it prepends itself if and only
+  // if the decision is still unmade, and a failure here must never affect the dashboard.
+  renderStatsPrompt(container).catch(() => {});
 
   // Real-time updates
   statusHandler = (data) => {

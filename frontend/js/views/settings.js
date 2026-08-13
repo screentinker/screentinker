@@ -169,6 +169,13 @@ export async function render(container) {
       <div id="licenseSection"><p style="color:var(--text-muted);font-size:13px">${t('settings.license_mit')}</p></div>
     </div>
 
+    ${isSuperAdmin ? `
+    <div class="settings-section" id="telemetrySection">
+      <h3>Install statistics</h3>
+      <div id="telemetryBody"><p style="color:var(--text-muted);font-size:13px">Loading…</p></div>
+    </div>
+    ` : ''}
+
     ${isSuperAdmin ? `<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${t('settings.platform_admin_link')} <a href="#/admin" style="color:var(--accent)">${t('nav.admin')}</a> ${t('settings.platform_admin_page_suffix')}</p>` : ''}
 
     <div class="settings-section">
@@ -275,6 +282,7 @@ export async function render(container) {
   if (isAdmin) {
     loadUsers();
     loadWhiteLabel();
+    loadTelemetry();
 
     // Support token generator
     document.getElementById('generateSupportBtn')?.addEventListener('click', async () => {
@@ -547,6 +555,55 @@ export async function render(container) {
    * Only instance-wide providers appear. An organization's provider is chosen by a customer and
    * must not be attachable to a platform account; the server refuses it too.
    */
+  /*
+   * Install statistics. Shows the ACTUAL payload rather than a description of it — the whole
+   * proposition is "you can check instead of trusting us", and the code is public, so a sentence
+   * that didn't match the bytes would be found. Also shows what was last really sent.
+   */
+  async function loadTelemetry() {
+    const box = document.getElementById('telemetryBody');
+    if (!box) return;
+    let info;
+    try { info = await api.adminGetTelemetry(); }
+    catch { box.innerHTML = `<p style="color:var(--text-muted);font-size:13px">Unavailable.</p>`; return; }
+
+    const on = info.state === 'on';
+    const sent = info.last_report
+      ? `Last sent ${new Date(info.last_report.at * 1000).toLocaleString()}.`
+      : 'Nothing has been sent.';
+
+    box.innerHTML = `
+      <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+        ScreenTinker can't see how widely it's deployed, because most installs are private by
+        design. Sharing lets us say how many screens are running — nothing more.
+      </p>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <input type="checkbox" id="telemetryToggle" ${on ? 'checked' : ''}>
+        Share install statistics
+      </label>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:6px">
+        Everything that would be sent, in full:
+      </p>
+      <pre style="background:var(--bg-input,rgba(0,0,0,.2));padding:10px;border-radius:var(--radius);font-size:12px;overflow-x:auto;margin-bottom:8px">${esc(JSON.stringify(info.payload, null, 2))}</pre>
+      <p style="color:var(--text-muted);font-size:12px">
+        No names, addresses, content, or user details. The ID is random and identifies the install
+        only so repeat reports aren't counted twice. ${esc(sent)}
+      </p>
+    `;
+
+    document.getElementById('telemetryToggle')?.addEventListener('change', async (e) => {
+      const enabled = e.target.checked;
+      try {
+        await api.adminSetTelemetry(enabled);
+        showToast(enabled ? 'Sharing install statistics — thank you' : 'Install statistics off', 'success');
+        loadTelemetry();
+      } catch {
+        e.target.checked = !enabled;
+        showToast('Could not save that setting', 'error');
+      }
+    });
+  }
+
   async function loadSsoLink() {
     const block = document.getElementById('ssoLinkBlock');
     if (!block) return;

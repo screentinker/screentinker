@@ -641,6 +641,19 @@ const migrations = [
   // it can do nothing and must be respected.
   'ALTER TABLE devices ADD COLUMN capabilities TEXT',
 
+  // Opt-in install statistics, COLLECTOR side only — inert unless TELEMETRY_COLLECTOR=1, which
+  // is the hosted deployment. Keyed by instance_id and upserted rather than appended, so it is a
+  // table of current state ("this install last reported N screens") rather than an event log that
+  // grows without bound on a box nobody prunes. Answering "how many screens are deployed" needs
+  // the latest row per install, never the history.
+  `CREATE TABLE IF NOT EXISTS telemetry_reports (
+     instance_id TEXT PRIMARY KEY,
+     version TEXT,
+     screen_count INTEGER NOT NULL DEFAULT 0,
+     first_seen INTEGER NOT NULL,
+     last_seen INTEGER NOT NULL
+   )`,
+
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
