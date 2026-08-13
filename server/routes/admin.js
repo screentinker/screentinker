@@ -436,17 +436,38 @@ router.get('/telemetry', requirePlatformAdmin, (req, res) => {
   res.json({
     state: telemetry.state(),                 // 'unasked' | 'on' | 'off'
     payload: telemetry.payload(db),           // what WOULD be sent, right now
+    endpoint: telemetry.endpoint(),           // ours — the host an operator may need to allowlist
+    extra_endpoint: telemetry.extraEndpoint(),// their own collector, if configured
+    destinations: telemetry.destinations(),   // everywhere it actually goes, right now
     last_report: telemetry.getLastReport(),   // what was actually sent, and when
+    last_error: telemetry.getLastError(),     // why the last attempt failed, if it did
   });
 });
 
-router.put('/telemetry', requirePlatformAdmin, (req, res) => {
+router.put('/telemetry', requirePlatformAdmin, async (req, res) => {
   // Both answers are recorded. Declining must persist as 'off' rather than staying 'unasked',
   // or the prompt returns after every update — which is how telemetry earns its bad name.
   const enabled = !!req.body.enabled;
   const state = telemetry.setEnabled(enabled);
   logActivity(req.user.id, 'admin_set_telemetry', `enabled: ${enabled}`, null, getClientIp(req), null);
-  res.json({ state, payload: telemetry.payload(db) });
+
+  // Send once, now, rather than waiting for the next daily tick. Two reasons: the operator is
+  // standing right here and "nothing has been sent" for the next 24h reads as broken, and an
+  // egress-filtered network fails HERE where we can name the host to unblock — instead of
+  // failing silently tonight where nobody is watching.
+  let first = null;
+  if (enabled) first = await telemetry.report(db);
+
+  res.json({
+    state,
+    payload: telemetry.payload(db),
+    endpoint: telemetry.endpoint(),
+    extra_endpoint: telemetry.extraEndpoint(),
+    destinations: telemetry.destinations(),
+    first_report: first && { sent: first.sent, reason: first.reason || null },
+    last_report: telemetry.getLastReport(),
+    last_error: telemetry.getLastError(),
+  });
 });
 
 // ===================== Version update indicator =====================

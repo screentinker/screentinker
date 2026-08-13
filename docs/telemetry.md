@@ -50,8 +50,43 @@ remembered, so declining is permanent and you will not be asked again after an u
 
 To change your mind at any time: **Settings → Install statistics**.
 
-Reports are sent at most once a day. Nothing is queued or retried — if your server is offline or
-the request fails, that day is simply skipped.
+Reports are sent 5 minutes after the server starts, then once a day while it keeps running.
+Nothing is queued or retried — if your server is offline or the request fails, that attempt is
+simply skipped.
+
+## If your outbound traffic is filtered
+
+Reports are an ordinary HTTPS `POST` from your server to:
+
+```
+https://stats.screentinker.com/api/telemetry/report
+```
+
+Many self-hosted servers sit on networks that block outbound connections by default. **If yours
+does, that address has to be allowed or the reports never arrive** — sharing will appear to be on
+while nothing reaches us.
+
+You do not have to guess whether that is happening. Turning sharing on sends a report immediately,
+so a blocked connection is reported there and then, and **Settings → Install statistics** names the
+failure and the address to allow.
+
+Nothing needs to be opened *inbound*. This is an outbound connection from your server only.
+
+## Keeping your own copy
+
+If you want these numbers for your own fleet, set `TELEMETRY_EXTRA_ENDPOINT` to your own collector.
+Your server then posts the same three fields there as well.
+
+Two things to be clear about, because the naming is deliberate:
+
+- **It is additional, not a redirect.** Setting it does not stop the shared report going to
+  ScreenTinker — that is why it is called `EXTRA` rather than `ENDPOINT`. Settings lists every
+  destination a report goes to, so what is configured is always visible.
+- **It is independent of the sharing switch.** Your collector receives reports whether sharing is
+  on or off, because that is your server posting to your host. **If you want your own statistics
+  and nothing sent to us, set it and leave sharing off** — that combination is supported on purpose.
+
+Each destination is attempted separately, so one being unreachable never stops the other.
 
 ## Why we ask
 

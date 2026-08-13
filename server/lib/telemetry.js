@@ -35,9 +35,24 @@ const appSettings = require('./app-settings');
 
 const KEY_ID = 'telemetry_instance_id';
 const KEY_ENABLED = 'telemetry_enabled';      // unset = never asked
-const KEY_LAST = 'telemetry_last_report';
+const KEY_LAST = 'telemetry_last_report';     // last SUCCESSFUL send
+const KEY_LAST_ERROR = 'telemetry_last_error';// last FAILED attempt — see getLastError
 
-const DEFAULT_ENDPOINT = 'https://stats.screentinker.com/api/telemetry/report';
+/*
+ * Where reports go. TWO independent destinations, deliberately:
+ *
+ *   SCREENTINKER_ENDPOINT  hard-wired, and reached only when the operator has switched sharing on.
+ *                          Not overridable — an "override" that silently redirected the shared
+ *                          report would make the opt-in mean something different from what it says.
+ *
+ *   TELEMETRY_EXTRA_ENDPOINT  an operator's OWN collector, for their own fleet numbers. Additional,
+ *                          never a replacement, and named so it cannot be mistaken for one. It is
+ *                          sent independently of the sharing toggle: it is their server posting to
+ *                          their host, so our opt-in has no business gating it. An operator who
+ *                          wants internal statistics and nothing leaving for us sets this and
+ *                          leaves sharing off — that combination is supported on purpose.
+ */
+const SCREENTINKER_ENDPOINT = 'https://stats.screentinker.com/api/telemetry/report';
 const REPORT_INTERVAL_MS = 24 * 60 * 60 * 1000;   // daily; this is a count, not a metric
 const FIRST_REPORT_DELAY_MS = 5 * 60 * 1000;      // let boot settle before any outbound call
 
@@ -88,6 +103,24 @@ function countScreens(db) {
   }
 }
 
+/* The address an operator may need to allowlist for the shared report. Hard-wired. */
+function endpoint() { return SCREENTINKER_ENDPOINT; }
+
+/* The operator's own collector, if they configured one. Null when they have not. */
+function extraEndpoint() { return process.env.TELEMETRY_EXTRA_ENDPOINT || null; }
+
+/*
+ * Everywhere this report is going, right now, and why — so the UI can list every destination
+ * rather than implying there is only one. Sharing gates OUR endpoint alone.
+ */
+function destinations() {
+  const out = [];
+  if (state() === 'on') out.push({ url: endpoint(), kind: 'screentinker' });
+  const extra = extraEndpoint();
+  if (extra) out.push({ url: extra, kind: 'extra' });
+  return out;
+}
+
 /* What was last sent, and when. Surfaced in Settings so an operator can check rather than trust. */
 function getLastReport() {
   const raw = appSettings.get(KEY_LAST, null);
@@ -96,27 +129,62 @@ function getLastReport() {
 }
 
 /*
+ * The last FAILED attempt, kept separately from the last success.
+ *
+ * A self-hosted server frequently sits behind egress filtering, so "enabled but nothing arrives"
+ * is the normal failure and it is otherwise completely silent — the operator sees "nothing has
+ * been sent" and has no way to tell a blocked firewall from a broken feature. Recording the
+ * failure lets the UI name the host that needs unblocking instead.
+ */
+function getLastError() {
+  const raw = appSettings.get(KEY_LAST_ERROR, null);
+  if (!raw) return null;   // '' is how a success clears it
+  try { return JSON.parse(raw); } catch (_) { return null; }
+}
+
+/*
  * Send one report. Returns {sent:false, reason} rather than throwing — a stats call must never be
  * able to affect the running server, so every failure path here is quiet and local.
  */
-async function report(db, { endpoint = process.env.TELEMETRY_ENDPOINT || DEFAULT_ENDPOINT } = {}) {
-  if (state() !== 'on') return { sent: false, reason: 'not_enabled' };
-
-  const body = payload(db);
+async function postTo(url, body) {
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return { sent: false, reason: `http_${res.status}`, body };
-    appSettings.set(KEY_LAST, JSON.stringify({ at: Math.floor(Date.now() / 1000), body }));
-    return { sent: true, body };
+    return res.ok ? { sent: true } : { sent: false, reason: `http_${res.status}` };
   } catch (err) {
-    // Offline, DNS failure, blocked egress — all normal for a self-hosted box, none of them news.
-    return { sent: false, reason: err && err.name === 'TimeoutError' ? 'timeout' : 'network', body };
+    // Offline, DNS failure, blocked egress — all normal for a self-hosted box, none of them news
+    // in the log, but all worth surfacing in the UI so the operator can act on it.
+    return { sent: false, reason: err && err.name === 'TimeoutError' ? 'timeout' : 'network' };
   }
+}
+
+async function report(db, { urls = null } = {}) {
+  // `urls` is a test seam. Normal callers get destinations() — sharing gates ours, an operator's
+  // own collector is independent of it.
+  const targets = urls || destinations();
+  if (!targets.length) return { sent: false, reason: 'not_enabled', results: [] };
+
+  const now = () => Math.floor(Date.now() / 1000);
+  const body = payload(db);
+
+  // Every destination is attempted, independently. One unreachable collector must not stop the
+  // other from receiving — a blocked corporate firewall on their host should not cost us the
+  // shared count, and our endpoint being down should not cost them their own fleet numbers.
+  const results = [];
+  for (const t of targets) results.push({ ...t, ...(await postTo(t.url, body)) });
+
+  const failed = results.filter(r => !r.sent);
+  if (results.some(r => r.sent)) appSettings.set(KEY_LAST, JSON.stringify({ at: now(), body, results }));
+  // Keep only a LIVE complaint: record what is still failing, and clear it once nothing is.
+  appSettings.set(KEY_LAST_ERROR, failed.length
+    ? JSON.stringify({ at: now(), reason: failed[0].reason, url: failed[0].url, failed })
+    : '');
+
+  return { sent: failed.length === 0, results, body, reason: failed[0]?.reason };
 }
 
 function start(db) {
@@ -129,4 +197,4 @@ function start(db) {
 
 function stop() { if (timer) { clearInterval(timer); timer = null; } }
 
-module.exports = { instanceId, state, setEnabled, payload, report, getLastReport, start, stop };
+module.exports = { instanceId, state, setEnabled, payload, report, endpoint, extraEndpoint, destinations, getLastReport, getLastError, start, stop };

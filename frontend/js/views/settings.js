@@ -570,7 +570,17 @@ export async function render(container) {
     const on = info.state === 'on';
     const sent = info.last_report
       ? `Last sent ${new Date(info.last_report.at * 1000).toLocaleString()}.`
-      : 'Nothing has been sent.';
+      : 'Nothing has been sent yet.';
+
+    // A blocked outbound connection is the normal failure on a self-hosted box, and it is
+    // otherwise invisible — the operator just sees nothing arriving. Name the failure and the
+    // host, so the fix is "allow this in the firewall" rather than "guess".
+    const failed = on && info.last_error;
+    const why = failed
+      ? ({ network: 'the connection was refused or the address did not resolve',
+           timeout: 'the connection timed out' }[info.last_error.reason]
+         || `the server replied ${esc(info.last_error.reason)}`)
+      : '';
 
     box.innerHTML = `
       <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
@@ -585,6 +595,24 @@ export async function render(container) {
         Everything that would be sent, in full:
       </p>
       <pre style="background:var(--bg-input,rgba(0,0,0,.2));padding:10px;border-radius:var(--radius);font-size:12px;overflow-x:auto;margin-bottom:8px">${esc(JSON.stringify(info.payload, null, 2))}</pre>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:${info.extra_endpoint ? '4' : '8'}px">
+        ${on ? 'Sent once a day to' : 'When enabled, sent once a day to'}
+        <code style="font-size:11px">${esc(info.endpoint || '')}</code>. If this server's outbound
+        traffic is filtered, that address has to be allowed or the reports never arrive.
+      </p>
+      ${info.extra_endpoint ? `
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:8px">
+        A second copy also goes to your own collector at
+        <code style="font-size:11px">${esc(info.extra_endpoint)}</code>, configured on this server
+        with <code style="font-size:11px">TELEMETRY_EXTRA_ENDPOINT</code>. That is in addition to
+        the above, not instead of it — turn the switch off if you want your own statistics without
+        sharing.
+      </p>` : ''}
+      ${failed ? `
+      <p style="font-size:12px;color:var(--danger);margin-bottom:8px">
+        The last attempt (${esc(new Date(info.last_error.at * 1000).toLocaleString())}) did not get
+        through — ${why}. Check that outbound HTTPS to that address is permitted.
+      </p>` : ''}
       <p style="color:var(--text-muted);font-size:12px">
         No names, addresses, content, or user details. The ID is random and identifies the install
         only so repeat reports aren't counted twice. ${esc(sent)}
@@ -594,8 +622,12 @@ export async function render(container) {
     document.getElementById('telemetryToggle')?.addEventListener('change', async (e) => {
       const enabled = e.target.checked;
       try {
-        await api.adminSetTelemetry(enabled);
-        showToast(enabled ? 'Sharing install statistics — thank you' : 'Install statistics off', 'success');
+        // Turning it on sends immediately, so a blocked firewall is reported here and now rather
+        // than failing quietly tonight — say so plainly instead of a cheerful success toast.
+        const r = await api.adminSetTelemetry(enabled);
+        if (!enabled) showToast('Install statistics off', 'success');
+        else if (r.first_report && r.first_report.sent) showToast('Shared — thank you', 'success');
+        else showToast('Saved, but the first report did not get through — see below', 'error');
         loadTelemetry();
       } catch {
         e.target.checked = !enabled;
