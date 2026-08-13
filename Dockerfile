@@ -6,7 +6,9 @@
 # No TLS in the image: it listens on plain HTTP :3001. Front it with a
 # TLS-terminating reverse proxy / Cloudflare in production.
 
-# --- builder: install production deps (native: better-sqlite3, sharp) ---
+# --- builder: install production deps (better-sqlite3 is the only native one left; image
+# decoding is pure JS + WASM since sharp was dropped, and sharp is now a devDependency that
+# --omit=dev leaves out entirely) ---
 FROM node:20-slim AS builder
 WORKDIR /app/server
 # build toolchain in case a native prebuild is missing for the target arch
