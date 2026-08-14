@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.9.36
+
+A single fix. **1.9.36 replaces 1.9.35** — see below for whether that affects you.
+
+### Fixed — 1.9.35 would not start on a server collecting install statistics
+
+A server with install-statistics collection switched on could not start 1.9.35. It threw
+`ReferenceError: Cannot access 'db' before initialization` while loading, before it began listening,
+and a service manager configured to restart it would do so in a loop.
+
+**Almost nobody is affected.** The fault is inside a block that only runs when a server is configured
+to *collect* statistics from other installs — not when it merely reports its own. That is a single
+deployment, not a normal install. If you have never set `TELEMETRY_COLLECTOR`, 1.9.35 runs correctly
+and this release changes nothing for you.
+
+The cause was a reference to the database resolved when the file loaded rather than when the request
+arrived, in code that had been moved earlier in the same release.
+
+### Changed — the startup check now covers configuration only one deployment uses
+
+The fault above shipped through a full test suite and every CI job green, because the affected block
+is switched on by configuration that no test set. It had never executed anywhere except the one
+server that turns it on.
+
+The startup smoke check now boots with that configuration enabled and confirms the routes it adds
+actually answer. Code that only one deployment runs is exactly the code an automated check has to
+exercise, and it now does.
+
+### Upgrading
+
+No migrations, no configuration changes, and no dependency changes from 1.9.35 — this release only
+alters when one value is read. Upgrading from 1.9.34 or earlier, the 1.9.35 note still applies:
+`npm ci --omit=dev` is required in both directions, which `scripts/upgrade.sh` already runs.
+
 ## 1.9.35
 
 A maintenance release. Two faults where the product was working correctly and still looked broken to
