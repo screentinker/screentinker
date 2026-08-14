@@ -47,6 +47,18 @@ class UpdateChecker(private val context: Context) {
     // class is the imperative shell that persists state and does the download/install.
     var otaLogReporter: ((level: String, message: String) -> Unit)? = null
 
+    /*
+     * Why the last download/verify attempt failed, in specific terms.
+     *
+     * The caller could only ever say "failed to download or failed signature verification", which
+     * covers SEVEN distinct branches — three of them download failures where verification never
+     * runs at all. Every specific reason went to logcat, which an unprivileged app UID cannot read
+     * on Android 9, so in the field the message was unactionable: it named a symptom shared by
+     * unrelated causes and pointed at the wrong half of the code as often as the right one.
+     * Diagnosing one occurrence took an evening. This makes the next one a sentence.
+     */
+    private var lastFailure: String? = null
+
     private fun report(level: String, message: String) {
         when (level) { "error" -> Log.e(TAG, message); "warn" -> Log.w(TAG, message); else -> Log.i(TAG, message) }
         try { otaLogReporter?.invoke(level, message) } catch (_: Throwable) {}
@@ -272,7 +284,7 @@ class UpdateChecker(private val context: Context) {
             // Unforced this is deliberately quiet (transient network blips are not news). Forced,
             // somebody is waiting on an answer, and "the APK would not download or did not match
             // our signing key" is the single most useful thing we can tell them.
-            if (forced) report("error", "Force update: $latestVersion failed to download or failed signature verification — not installed")
+            if (forced) report("error", "Force update: $latestVersion not installed — ${lastFailure ?: "reason unavailable"}")
             return
         }
 
@@ -357,6 +369,7 @@ class UpdateChecker(private val context: Context) {
             val response = client.newCall(request).execute()
 
             if (!response.isSuccessful) {
+                lastFailure = "server returned HTTP ${response.code} for the APK"
                 Log.e(TAG, "Download failed: ${response.code}")
                 return false
             }
@@ -377,6 +390,9 @@ class UpdateChecker(private val context: Context) {
             // the currently-installed app before installing. An attacker can't forge
             // our signature, so this holds even over an untrusted transport.
             if (!verifyApkSignature(apkFile)) {
+                // lastFailure was set precisely inside verifyApkSignature; keep it, and add the
+                // size so a truncated download is distinguishable from a genuine cert mismatch.
+                lastFailure = "${lastFailure ?: "signature verification failed"} (downloaded ${apkFile.length()} bytes)"
                 Log.e(TAG, "Refusing update: APK signature/package verification failed (tampered or MITM'd APK)")
                 apkFile.delete()
                 return false
@@ -389,6 +405,7 @@ class UpdateChecker(private val context: Context) {
             }
             return true
         } catch (e: Exception) {
+            lastFailure = "download/install threw ${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "Download/install error: ${e.message}")
             return false
         }
@@ -523,10 +540,12 @@ class UpdateChecker(private val context: Context) {
                 PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
             val downloaded = pm.getPackageArchiveInfo(apkFile.absolutePath, archiveFlags)
             if (downloaded == null) {
+                lastFailure = "the downloaded file could not be parsed as an APK (truncated or not an APK)"
                 Log.e(TAG, "Could not parse downloaded APK")
                 return false
             }
             if (downloaded.packageName != context.packageName) {
+                lastFailure = "APK is package ${downloaded.packageName}, expected ${context.packageName}"
                 Log.e(TAG, "APK package mismatch: ${downloaded.packageName} != ${context.packageName}")
                 return false
             }
@@ -536,18 +555,37 @@ class UpdateChecker(private val context: Context) {
             val installedFlags = if (installedUsesSigningInfo)
                 PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
             val installed = pm.getPackageInfo(context.packageName, installedFlags)
-            val downloadedSigs = signingCertHashes(downloaded, archiveUsesSigningInfo)
+            var downloadedSigs = signingCertHashes(downloaded, archiveUsesSigningInfo)
+            // #139 follow-up: on API 28/29 the archive read goes through the legacy GET_SIGNATURES
+            // path, and if PackageManager hands back nothing we previously refused a perfectly good
+            // APK with no way to tell that apart from a real mismatch. Read the v1 signature
+            // ourselves before giving up — JarFile is random-access, which is how the JAR signature
+            // is meant to be read, and it verifies the same bytes PackageManager would have.
+            // This does NOT weaken the check: the cert extracted here is still compared against the
+            // installed app's below, and an unsigned or differently-signed APK still fails.
+            if (downloadedSigs.isEmpty()) {
+                val viaJar = archiveCertsViaJar(apkFile)
+                if (viaJar.isNotEmpty()) {
+                    Log.w(TAG, "Archive certs unreadable via PackageManager on API ${Build.VERSION.SDK_INT}; used JarFile (${viaJar.size})")
+                    downloadedSigs = viaJar
+                }
+            }
             val installedSigs = signingCertHashes(installed, installedUsesSigningInfo)
             if (downloadedSigs.isEmpty() || installedSigs.isEmpty()) {
+                lastFailure = "could not read signing certificates (archive=${downloadedSigs.size}, installed=${installedSigs.size}) on API ${Build.VERSION.SDK_INT}"
                 Log.e(TAG, "Missing signing certificates (downloaded=${downloadedSigs.size}, installed=${installedSigs.size})")
                 return false
             }
             // Require a non-empty overlap of signer certs (handles multi-signer / cert-rotation
             // the same way the API>=30 path does: compare the full current signer sets).
             val match = downloadedSigs.any { it in installedSigs }
-            if (!match) Log.e(TAG, "APK signing certificate does not match installed app")
+            if (!match) {
+                lastFailure = "APK is signed by a different key than the installed app"
+                Log.e(TAG, "APK signing certificate does not match installed app")
+            }
             match
         } catch (e: Exception) {
+            lastFailure = "signature check threw ${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "Signature verification error: ${e.message}", e)
             false
         }
@@ -558,6 +596,31 @@ class UpdateChecker(private val context: Context) {
     // multi-signer + rotation aware), GET_SIGNATURES -> legacy .signatures (the only field
     // populated for ARCHIVE reads on API 28/29). Both yield the same cert for a normally-signed
     // APK; the caller compares as sets so an overlapping signer still verifies.
+    /*
+     * Read the APK's v1 (JAR) signer certificates directly, as a fallback for the API 28/29 archive
+     * read. Opening JarFile with verify=true and reading an entry to completion is what populates
+     * JarEntry.certificates — the certificate is only known once the bytes it covers have been
+     * checked, so the read is the verification, not a step before it.
+     *
+     * Returns an empty set on any problem, which leaves the caller refusing the install: this is a
+     * fallback for "PackageManager told us nothing", never a way to skip the comparison.
+     */
+    private fun archiveCertsViaJar(apkFile: File): Set<String> {
+        return try {
+            java.util.jar.JarFile(apkFile, true).use { jar ->
+                val entry = jar.getJarEntry("AndroidManifest.xml") ?: return emptySet()
+                jar.getInputStream(entry).use { input ->
+                    val buf = ByteArray(8192)
+                    while (input.read(buf) != -1) { /* must read fully before certificates populate */ }
+                }
+                entry.certificates?.mapNotNull { sha256(it.encoded) }?.toSet() ?: emptySet()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "JarFile cert read failed: ${e.message}")
+            emptySet()
+        }
+    }
+
     private fun signingCertHashes(info: PackageInfo, useSigningInfo: Boolean): Set<String> {
         val sigs: Array<Signature>? = if (useSigningInfo) {
             info.signingInfo?.apkContentsSigners
