@@ -100,15 +100,42 @@ jobs:
       - name: Generate release notes
         run: |
           PREV="${{ steps.ver.outputs.prev }}"
+          VERSION="${{ steps.ver.outputs.version }}"
+
+          # Prefer the hand-written CHANGELOG section for this version.
+          #
+          # The generated list is commit SUBJECTS, which describe the work, not the release: cutting
+          # 1.9.34 produced a page reading "chore(release): v1.9.34" and one changelog commit, while
+          # the entry describing single sign-on, the native-dependency removal, the update fixes and
+          # every outside contributor sat in CHANGELOG.md and was never published. The notes on the
+          # release page are what most people actually read, so they should be the written ones.
+          #
+          # awk rather than sed: the body contains regex metacharacters and markdown that a sed range
+          # would mangle. This takes everything between `## <version>` and the next `## ` heading.
+          CHANGELOG_BODY="$(awk -v v="## $VERSION" '
+            $0 == v {found=1; next}
+            found && /^## / {exit}
+            found {print}
+          ' CHANGELOG.md)"
+
           {
             echo "## ScreenTinker ${{ steps.ver.outputs.tag }}"
             echo
-            echo "### Changes"
-            if [ -n "$PREV" ]; then
-              git log --no-merges --pretty='- %s' "${PREV}..${{ steps.ver.outputs.tag }}"
+            if [ -n "$(printf '%s' "$CHANGELOG_BODY" | tr -d '[:space:]')" ]; then
+              echo "$CHANGELOG_BODY"
             else
-              echo "_First tagged release. Most recent changes:_"
-              git log --no-merges --pretty='- %s' -n 30 "${{ steps.ver.outputs.tag }}"
+              # No entry for this version — fall back to commit subjects rather than publish a
+              # release with no notes at all. scripts/bump-version.sh already warns when the
+              # CHANGELOG has no matching heading; this is the same gap showing up downstream.
+              echo "_No CHANGELOG entry for $VERSION; listing commits instead._"
+              echo
+              echo "### Changes"
+              if [ -n "$PREV" ]; then
+                git log --no-merges --pretty='- %s' "${PREV}..${{ steps.ver.outputs.tag }}"
+              else
+                echo "_First tagged release. Most recent changes:_"
+                git log --no-merges --pretty='- %s' -n 30 "${{ steps.ver.outputs.tag }}"
+              fi
             fi
             echo
             echo "### Artifacts"
