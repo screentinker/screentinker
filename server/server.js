@@ -983,7 +983,13 @@ app.use('/api/status', require('./routes/status'));
  * TELEMETRY_COLLECTOR=1, so a normal self-hosted install exposes neither.
  */
 if (process.env.TELEMETRY_COLLECTOR === '1') {
-  app.use('/api', require('./routes/telemetry-collector')(db));
+  /* `require('./db/database').db`, not the module-scope `db` — that binding is declared far
+     below this line, so naming it here throws "Cannot access 'db' before initialization" at
+     load and the process never starts. The inline handler this replaced only touched `db`
+     inside a request callback, which runs long after the binding exists; passing it to a
+     factory made the reference eager. Every neighbouring call site in this region resolves
+     the same lazy way. */
+  app.use('/api', require('./routes/telemetry-collector')(require('./db/database').db));
   console.log('[telemetry] collector enabled at POST /api/telemetry/report (+ GET /api/public/stats)');
 }
 

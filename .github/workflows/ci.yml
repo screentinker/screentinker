@@ -109,6 +109,12 @@ jobs:
         working-directory: server
         env:
           SELF_HOSTED: 'true'
+          # Boot WITH the collector on. This block is config-gated and only the
+          # statistics-collecting deployment sets the flag, so it had never executed in CI,
+          # on alpha, or in any test - and a load-time crash inside it took production down
+          # while every check was green. Code only one deployment runs is exactly the code
+          # CI has to execute.
+          TELEMETRY_COLLECTOR: '1'
         run: |
           node server.js > "$RUNNER_TEMP/server.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/server.pid"
@@ -130,6 +136,21 @@ jobs:
           test "$(echo "$STATUS" | jq -r .status)" = "ok"
           test "$REPORTED" = "$EXPECTED"
           echo "OK: status ok, version $REPORTED matches VERSION"
+
+      # Booting is not enough on its own - the collector could be mounted and broken. Prove
+      # the routes it adds actually answer, so a fault inside that block fails here rather
+      # than on the single deployment that turns it on.
+      - name: Assert the collector routes answer when enabled
+        run: |
+          STATS="$(curl -sf http://localhost:3001/api/public/stats)"
+          echo "stats: $STATS"
+          test "$(echo "$STATS" | jq -r 'has("screens") and has("installs")')" = "true"
+          REPORT="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' -d '{"bad":1}' \
+            http://localhost:3001/api/telemetry/report)"
+          echo "malformed report -> HTTP $REPORT"
+          test "$REPORT" = "400"
+          echo "OK: collector mounted and answering"
 
       - name: Stop server
         if: always()
