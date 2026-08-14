@@ -1206,6 +1206,14 @@ function renderDirectorySearch(c) {
 
   // ----- on-screen keyboard (drives the same filter path as typing) -----
   if (cfg.show_onscreen_keyboard) {
+    /* Tell the platform not to raise ITS keyboard for this field. We autofocus a real
+       <input>, which on Android is the signal to throw the system IME over the bottom of
+       the screen - directly on top of the keyboard we draw below, so a directory panel
+       showed Google's keyboard (mic, GIF and emoji keys included) and never showed its
+       own. The buttons write input.value directly, so suppressing the platform keyboard
+       costs nothing here. Ignored by browsers that don't know inputmode, which is the
+       right fallback: a desktop preview keeps behaving exactly as before. */
+    input.setAttribute('inputmode', 'none');
     var kb = document.getElementById('keyboard');
     function press(ch) { input.value += ch; try { input.focus(); } catch(e){} onInput(); }
     ['1234567890','qwertyuiop','asdfghjkl','zxcvbnm'].forEach(function(r){

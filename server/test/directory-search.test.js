@@ -59,6 +59,24 @@ test('show_onscreen_keyboard flag is carried into the page config', async () => 
   assert.ok(html.includes('"show_onscreen_keyboard":false'), 'keyboard flag inlined (page hides the keyboard when false)');
 });
 
+test('the built-in keyboard suppresses the platform one', async () => {
+  // The page autofocuses a real <input>, which on Android raises the system IME over the
+  // bottom of the screen - covering the keyboard this widget draws itself. A panel showed
+  // Gboard, complete with a mic key, and never showed its own keyboard.
+  seed('search_kb_on', 'directory-search', { source_widget_id: 'board1', show_onscreen_keyboard: true });
+  const { html } = await fetchRender('search_kb_on');
+  assert.ok(/setAttribute\(\s*'inputmode'\s*,\s*'none'\s*\)/.test(html),
+    'page tells the platform not to raise its own keyboard');
+
+  // Only when we are drawing one. With the built-in keyboard off there is nothing to cover,
+  // and the platform keyboard is the only way left to type.
+  seed('search_kb_off2', 'directory-search', { source_widget_id: 'board1', show_onscreen_keyboard: false });
+  const off = await fetchRender('search_kb_off2');
+  assert.ok(off.html.includes('"show_onscreen_keyboard":false'), 'flag inlined as false');
+  assert.ok(!/inputmode="none"/.test(off.html),
+    'the input is not statically marked inputmode=none - suppression is gated on the flag at runtime');
+});
+
 test('missing source -> friendly fallback page, not a 500', async () => {
   seed('search_missing', 'directory-search', { source_widget_id: 'does-not-exist' });
   const { status, html } = await fetchRender('search_missing');
