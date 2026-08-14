@@ -332,3 +332,25 @@ an identity provider and that provider later fails, the login page cannot help y
 **Backups are only real once restored.** A snapshot that has never been restored is a hypothesis.
 Periodically restore the newest one into a throwaway instance and confirm it boots and serves
 `/api/status`.
+
+**`curl … | sudo bash` answers the installer's questions for you.** The pipe *is* stdin, and bash
+has consumed it before any prompt runs — so every question gets an instant end-of-input and the
+script takes the default. On the Pi installer that meant the mode menu appeared to skip itself and
+Player-Only was unreachable through the documented command. Fixed there (prompts read the terminal
+now), but the trap is general: any piped installer that asks you something is not really asking.
+Download the script and run it, or pass the answers as flags.
+
+**A Raspberry Pi 5 on Bookworm runs Wayland, and X11 tools fail silently there.** `xset`,
+`unclutter` and `xrandr` return an error and do nothing — so screen blanking is never suppressed and
+the cursor is never hidden, while every command in your setup notes appears to have worked. If you
+have hand-rolled kiosk tweaks on a Pi, check which session is actually running (`echo
+$XDG_SESSION_TYPE`) before trusting them. The bundled launcher detects this and uses `wlopm` plus
+`--ozone-platform=wayland` on Wayland.
+
+**Overlay FS protects the SD card and discards everything written to it.** Reasonable on a
+**player-only** Pi, where the loss is a content cache that simply re-downloads after each boot. Not
+usable for an **all-in-one** install as-is: the server writes continuously — the SQLite database,
+WAL, uploads and thumbnails — and a read-only root throws all of it away at reboot, so the instance
+silently reverts to its state at the moment you enabled overlay. If you want both, put `DATA_DIR` on
+a writable partition that overlay does not cover, and confirm a screen you add survives a power cut
+before relying on it.
