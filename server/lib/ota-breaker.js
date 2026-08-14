@@ -41,6 +41,8 @@ const { rollingCounter, bump, read } = require('./rolling-counter');
 const rateBackoffCtr = rollingCounter();
 
 // --- minimal semver-ish parse/compare (no dependency) ---
+const { preCmp } = require('./version-precedence');
+
 function parseVer(v) {
   if (typeof v !== 'string') return null;
   const m = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(v.trim());
@@ -54,8 +56,10 @@ function cmpParsed(a, b) {
   if (a.pre === b.pre) return 0;
   if (a.pre === null) return 1;     // release outranks a prerelease of the same core
   if (b.pre === null) return -1;
-  // lexical prerelease compare — fine for beta1..beta9 (cores decide everything else).
-  return a.pre < b.pre ? -1 : (a.pre > b.pre ? 1 : 0);
+  // Natural prerelease compare: digit runs numerically, so alpha8 < alpha9 < alpha10 < alpha11.
+  // A plain lexical compare (what this used to do) put every build from alpha10 onward BELOW
+  // alpha8, so the check answered client-newer and the fleet could not be moved forward at all.
+  return preCmp(a.pre, b.pre);
 }
 function cmp(a, b) { const pa = parseVer(a), pb = parseVer(b); return (!pa || !pb) ? null : cmpParsed(pa, pb); }
 

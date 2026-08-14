@@ -1,5 +1,7 @@
 'use strict';
 
+const { preCmp } = require('./version-precedence');
+
 /*
  * Should a BrightSign player replace its own host package (autorun.zip)?
  *
@@ -54,7 +56,9 @@ function compareVersions(a, b) {
   if (A.pre === B.pre) return 0;
   if (A.pre === null) return 1;   // 1.9.29 beats 1.9.29-rc1
   if (B.pre === null) return -1;
-  return A.pre < B.pre ? -1 : 1;  // rc1 < rc2, lexicographic is right for our naming
+  // Natural compare, NOT lexicographic: rc10 must outrank rc9. This file carried the same
+  // "lexicographic is right for our naming" assumption that broke the Android OTA path.
+  return preCmp(A.pre, B.pre);
 }
 
 /*
