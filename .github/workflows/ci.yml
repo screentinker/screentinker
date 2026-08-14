@@ -86,6 +86,39 @@ jobs:
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
+      # Every artifact that can enter the APK must have a licence on file. This runs here
+      # rather than in its own job because the Gradle cache and Android SDK are already warm.
+      - name: Licence gate (APK runtime classpath)
+        run: node scripts/android-license-check.js
+
+  licenses:
+    name: Licence gate + SBOM (production deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      # --omit=dev on purpose, and it is the whole point of the job. A developer checkout
+      # carries sharp, whose @img/sharp-wasm32 declares LGPL-3.0-or-later; it is a test
+      # fixture generator that never reaches a server. Auditing anything other than a
+      # production install would report a licence we do not actually ship.
+      - name: Install production dependencies only
+        working-directory: server
+        run: npm ci --omit=dev
+
+      - name: Licence gate
+        run: node scripts/license-check.js --sbom sbom/screentinker-server.cdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+
   smoke:
     name: Boot smoke + version check
     runs-on: ubuntu-latest

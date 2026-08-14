@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "Licence policy for everything on the Android release runtime classpath — i.e. everything that",
+    "can end up inside the APK customers install.",
+    "",
+    "scripts/android-license-check.js resolves the real classpath and checks it against this file.",
+    "An artifact that appears in neither 'artifacts' nor 'groups' FAILS: a new transitive dependency",
+    "must be looked at by a person before it ships, which is exactly how org.json:json:20090211 got",
+    "into the APK unnoticed in the first place.",
+    "",
+    "Record what you verified in 'evidence' — the point is to be able to answer 'how do you know?'"
+  ],
+
+  "groups": {
+    "androidx":                   { "license": "Apache-2.0", "evidence": "AndroidX / Jetpack, Apache-2.0 across the board" },
+    "com.google.android.material": { "license": "Apache-2.0", "evidence": "Material Components for Android" },
+    "com.google.code.gson":       { "license": "Apache-2.0", "evidence": "google/gson LICENSE" },
+    "com.google.crypto.tink":     { "license": "Apache-2.0", "evidence": "google/tink LICENSE" },
+    "com.google.errorprone":      { "license": "Apache-2.0", "evidence": "google/error-prone LICENSE" },
+    "com.google.guava":           { "license": "Apache-2.0", "evidence": "google/guava LICENSE" },
+    "com.google.j2objc":          { "license": "Apache-2.0", "evidence": "google/j2objc LICENSE" },
+    "com.squareup.okhttp3":       { "license": "Apache-2.0", "evidence": "square/okhttp LICENSE" },
+    "com.squareup.okio":          { "license": "Apache-2.0", "evidence": "square/okio LICENSE" },
+    "org.checkerframework":       { "license": "MIT",        "evidence": "checker-framework, MIT for the qualifiers" },
+    "org.jetbrains":              { "license": "Apache-2.0", "evidence": "JetBrains annotations" },
+    "org.jetbrains.kotlin":       { "license": "Apache-2.0", "evidence": "Kotlin stdlib" },
+    "org.jetbrains.kotlinx":      { "license": "Apache-2.0", "evidence": "kotlinx coroutines" },
+    "io.socket":                  { "license": "MIT",        "evidence": "socket.io-client-java LICENSE (MIT)" }
+  },
+
+  "artifacts": {},
+
+  "denied": {
+    "org.json:json": {
+      "why": "JSON Licence — the 'shall be used for Good, not Evil' clause. Not OSI-approved, non-free per Debian and Fedora, Apache Category X. Arrives transitively via socket.io-client and was previously packaged into the APK in full (19 classes). Excluded in app/build.gradle.kts; Android provides org.json in the platform from API 1 and minSdk is 24, so nothing is lost."
+    }
+  },
+
+  "denied_licenses": [
+    { "match": "AGPL", "why": "network copyleft" },
+    { "match": "GPL",  "why": "strong copyleft in a commercially distributed binary" },
+    { "match": "SSPL", "why": "not OSI-approved, service-scope obligations" },
+    { "match": "JSON", "why": "field-of-use restriction" }
+  ]
+}

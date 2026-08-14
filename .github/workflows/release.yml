@@ -85,6 +85,15 @@ jobs:
           ./scripts/build-autorun-zip.sh -o autorun.zip
           ls -la autorun.zip
 
+      # A published SBOM is what turns "we track licences" into something a customer or an
+      # underwriter can check for themselves. Built from a PRODUCTION install — a dev tree
+      # would list packages (sharp and its LGPL-bearing wasm variant) that never ship.
+      - name: Generate SBOM (production dependencies)
+        run: |
+          ( cd server && npm ci --omit=dev )
+          node scripts/license-check.js --sbom "screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json"
+          ls -la screentinker-sbom-*.cdx.json
+
       - name: Build source tarball (bundles the .wgt; the signed apk is added by scripts/finalize-release.sh)
         run: |
           OUT="screentinker-${{ steps.ver.outputs.version }}.tar.gz"
@@ -154,6 +163,7 @@ jobs:
               echo "- Docker image: \`ghcr.io/screentinker/screentinker:${{ steps.ver.outputs.version }}\` (also \`:latest\`)."
             fi
             echo "- \`ScreenTinker.apk\` - signed Android player (attached during release finalization)."
+            echo "- \`screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json\` - CycloneDX 1.5 software bill of materials for the server's production dependencies, with the licence of every component."
           } > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
 
@@ -171,6 +181,7 @@ jobs:
             --notes-file RELEASE_NOTES.md \
             "${TARBALL}" \
             autorun.zip \
+            "screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json" \
             tizen/ScreenTinker.wgt
 
   docker:
