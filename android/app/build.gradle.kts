@@ -87,8 +87,24 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
 
-    // Socket.IO client
-    implementation("io.socket:socket.io-client:2.1.0")
+    // Socket.IO client.
+    //
+    // org.json is excluded deliberately. socket.io-client pulls org.json:json:20090211
+    // transitively, and that artifact was being packaged into the APK in full — 19 classes,
+    // including CDL, XML, JSONML and its own Test class. It carries the JSON License, whose
+    // "shall be used for Good, not Evil" clause is not OSI-approved, is treated as non-free by
+    // Debian and Fedora, and is Category X at Apache. Shipping it in a commercially distributed
+    // binary is an avoidable licensing problem: it is not copyleft, but it is not a licence we
+    // want to have to explain.
+    //
+    // Nothing is lost. Android provides org.json in the platform (since API 1, and minSdk is 24),
+    // and the only classes either side actually touches are JSONObject, JSONArray and JSONTokener.
+    // The full method surface used — by socket.io/engine.io and by our own Kotlin — is
+    // get/getString/getLong/getJSONArray/getJSONObject/has/keys/length/isNull/put/NULL,
+    // the opt* family, and JSONTokener.nextValue. Every one is platform API.
+    implementation("io.socket:socket.io-client:2.1.0") {
+        exclude(group = "org.json", module = "json")
+    }
 
     // WorkManager for background downloads
     implementation("androidx.work:work-runtime-ktx:2.9.0")
