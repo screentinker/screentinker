@@ -344,14 +344,58 @@ class UpdateChecker(private val context: Context) {
      * res/xml/file_paths.xml must expose this directory too — see the <files-path> entry there.
      */
     private fun apkDir(): File {
-        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { return it }
-        Log.w(TAG, "External storage unavailable — staging APKs in internal storage instead")
+        // Non-null is not the same as usable. A returned path can still be missing, unwritable, or
+        // on a volume that has since gone away — and every one of those produced the same opaque
+        // "failed to download" as a genuine network fault, which is what made this expensive to
+        // diagnose. Prove the directory before choosing it, and fall back if it does not hold up.
+        val ext = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (ext != null && (ext.exists() || ext.mkdirs()) && ext.canWrite()) return ext
+        if (ext != null) Log.w(TAG, "External APK dir unusable (exists=${ext.exists()} writable=${ext.canWrite()}) — using internal")
+        else Log.w(TAG, "External storage unavailable — staging APKs in internal storage instead")
         return File(context.filesDir, "Download").apply { mkdirs() }
+    }
+
+    /*
+     * Can we actually put a ~9MB file here, right now?
+     *
+     * Checked BEFORE the download rather than discovered as an exception during the write, so the
+     * failure names the real condition — a read-only volume, a missing directory, a full disk —
+     * instead of surfacing as a generic IOException three layers up. Returns null when fine, or the
+     * reason it is not.
+     */
+    private fun apkDirProblem(dir: File, needBytes: Long): String? {
+        if (!dir.exists() && !dir.mkdirs()) return "cannot create ${dir.absolutePath}"
+        if (!dir.isDirectory) return "${dir.absolutePath} is not a directory"
+        if (!dir.canWrite()) return "no write permission on ${dir.absolutePath}"
+        val free = try { dir.usableSpace } catch (_: Throwable) { -1L }
+        // Headroom, not an exact fit: the installer stages its own copy of the APK as well, so a
+        // volume with barely the download's worth free still fails at install time.
+        if (needBytes > 0 && free in 0 until (needBytes * 2)) {
+            return "only ${free / 1024 / 1024}MB free on ${dir.absolutePath}, need ~${needBytes * 2 / 1024 / 1024}MB"
+        }
+        // Prove it rather than infer it: canWrite() can be true on a volume that refuses the write.
+        return try {
+            val probe = File(dir, ".st-write-probe")
+            probe.writeBytes(byteArrayOf(1))
+            probe.delete()
+            null
+        } catch (e: Throwable) {
+            "write test failed in ${dir.absolutePath}: ${e.javaClass.simpleName} ${e.message}"
+        }
     }
 
     private fun downloadAndInstall(url: String, version: String): Boolean {
         try {
-            val apkFile = File(apkDir(), "ScreenTinker-$version.apk")
+            val dir = apkDir()
+            // Preflight the destination. If the box cannot hold the file, say THAT — rather than
+            // letting it surface later as a truncated write or a generic IOException, which is
+            // indistinguishable from a network problem in the message the operator sees.
+            apkDirProblem(dir, 9L * 1024 * 1024)?.let {
+                lastFailure = "cannot stage the update — $it"
+                Log.e(TAG, "APK staging unavailable: $it")
+                return false
+            }
+            val apkFile = File(dir, "ScreenTinker-$version.apk")
 
             // #139: reuse a previously-downloaded, verified APK for this version instead of
             // re-pulling ~8.7 MB every cycle. The file also stays on disk as the artifact for a
@@ -420,7 +464,12 @@ class UpdateChecker(private val context: Context) {
             try {
                 val base = url.substringAfterLast('/').substringBefore('?').ifBlank { "app.apk" }
                 val fileName = "pushed-" + (if (base.endsWith(".apk")) base else "$base.apk")
-                val apkFile = File(apkDir(), fileName)
+                val dir = apkDir()
+                apkDirProblem(dir, 9L * 1024 * 1024)?.let {
+                    Log.e(TAG, "installFromUrl: cannot stage — $it")
+                    return@Thread
+                }
+                val apkFile = File(dir, fileName)
                 if (apkFile.exists()) apkFile.delete()
                 val response = client.newCall(Request.Builder().url(url).build()).execute()
                 if (!response.isSuccessful) { Log.e(TAG, "installFromUrl: download failed ${response.code}"); return@Thread }
