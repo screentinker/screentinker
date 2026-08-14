@@ -683,6 +683,8 @@ export default {
   'device.ctl.screen_on': 'Screen On',
   'device.ctl.launch_player': 'Launch Player',
   'device.ctl.force_update': 'Force Update',
+  'device.ctl.clear_update_cache': 'Clear Update Cache',
+  'device.ctl.clear_update_cache_tip': 'Delete any update file this display has already downloaded, so the next check fetches a fresh copy. Use if updates keep failing.',
   'device.ctl.shutdown': 'Shutdown',
   // Remote tab
   'device.remote.start_prompt': 'Click "Start Remote" to begin',
@@ -773,6 +775,7 @@ export default {
   'device.toast.screen_on_sent': 'Screen on command sent',
   'device.toast.launch_sent': 'Launch command sent',
   'device.toast.update_triggered': 'Update check triggered',
+  'device.toast.update_cache_cleared': 'Update cache cleared — the next check will download afresh',
   'device.toast.remote_started': 'Remote session started',
   'device.toast.command_queued': '{cmd} — device offline, will deliver on reconnect',
   'device.toast.command_undeliverable': '{cmd} — device offline and queue unavailable',

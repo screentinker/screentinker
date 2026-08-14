@@ -415,7 +415,7 @@ class UpdateChecker(private val context: Context) {
             // #139: reuse a previously-downloaded, verified APK for this version instead of
             // re-pulling ~8.7 MB every cycle. The file also stays on disk as the artifact for a
             // manual install when silent install isn't possible.
-            if (apkFile.exists() && verifyApkSignature(apkFile)) {
+            if (apkFile.exists() && cachedApkIs(apkFile, version) && verifyApkSignature(apkFile)) {
                 Log.i(TAG, "Reusing cached verified APK: ${apkFile.absolutePath} (${apkFile.length()} bytes)")
                 handler.post { installApk(apkFile) }
                 return true
@@ -448,6 +448,17 @@ class UpdateChecker(private val context: Context) {
             // Verify the downloaded APK is our package AND signed by the same key as
             // the currently-installed app before installing. An attacker can't forge
             // our signature, so this holds even over an untrusted transport.
+            // The server advertises a version and separately serves a file; the two can drift. A
+            // stale APK behind a current version number installs as a NO-OP, so the version never
+            // changes, the update is attempted again, and the panel loops until its attempts are
+            // spent — reporting a download failure, which it is not. Say what actually happened.
+            if (!cachedApkIs(apkFile, version)) {
+                val got = apkVersionName(apkFile) ?: "unreadable"
+                lastFailure = "server served $got but advertised $version — the update on the server is stale"
+                Log.e(TAG, "Version mismatch: advertised $version, downloaded $got")
+                apkFile.delete()
+                return false
+            }
             if (!verifyApkSignature(apkFile)) {
                 // lastFailure was set precisely inside verifyApkSignature; keep it, and add the
                 // size so a truncated download is distinguishable from a genuine cert mismatch.
@@ -585,6 +596,52 @@ class UpdateChecker(private val context: Context) {
 
     // True only if the downloaded APK is this same package and shares a signing
     // certificate with the installed app. Fail-closed on any error.
+    /* The versionName inside an APK file, or null if it cannot be read. */
+    private fun apkVersionName(apkFile: File): String? = try {
+        context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)?.versionName
+    } catch (e: Throwable) {
+        Log.w(TAG, "Could not read version from ${apkFile.name}: ${e.message}")
+        null
+    }
+
+    /*
+     * Is this file actually the version we mean to install?
+     *
+     * The cache is keyed by FILENAME, and the filename is built from the version the server
+     * advertised — so a file called ScreenTinker-1.9.34.apk containing 1.9.33 passes a signature
+     * check (same key), gets reused on every attempt, and installs as a no-op forever. Fixing the
+     * server does not clear it; only deleting the file does. Checking the version inside makes that
+     * self-healing instead of needing a hand on the device.
+     */
+    private fun cachedApkIs(apkFile: File, version: String): Boolean {
+        val got = apkVersionName(apkFile) ?: return false
+        if (got == version) return true
+        Log.w(TAG, "Cached ${apkFile.name} contains $got, expected $version — discarding")
+        return false
+    }
+
+    /*
+     * Delete every staged APK. The escape hatch for a panel holding a bad download: it forces the
+     * next check to fetch again rather than reuse. Safe at any time — these are only ever caches,
+     * re-fetched on demand.
+     */
+    fun clearUpdateCache(): Int {
+        var n = 0
+        for (dir in listOfNotNull(
+            File(context.filesDir, "Download"),
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            File(context.cacheDir, "Download"),
+        )) {
+            val files = try { dir.listFiles() } catch (_: Throwable) { null } ?: continue
+            for (f in files) {
+                if (!f.name.endsWith(".apk")) continue
+                if (f.delete()) n++
+            }
+        }
+        report("info", "Update cache cleared ($n file(s)) — the next check will download afresh")
+        return n
+    }
+
     private fun verifyApkSignature(apkFile: File): Boolean {
         return try {
             val pm = context.packageManager

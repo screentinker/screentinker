@@ -941,6 +941,14 @@ class MainActivity : AppCompatActivity() {
                     if (::updateChecker.isInitialized) updateChecker.checkForUpdate(forced = true)
                 }
                 // #161 device-owner tooling: push + silently install an arbitrary APK from a URL.
+                // Escape hatch for a panel holding a stale/bad staged APK: drop every cached file
+                // so the next check downloads afresh. Only ever deletes caches.
+                "clear_update_cache" -> {
+                    if (::updateChecker.isInitialized) {
+                        val n = updateChecker.clearUpdateCache()
+                        Log.i("MainActivity", "clear_update_cache removed $n file(s)")
+                    }
+                }
                 "install_apk" -> {
                     val url = payload?.optString("url", "") ?: ""
                     if (url.isNotBlank() && ::updateChecker.isInitialized) {

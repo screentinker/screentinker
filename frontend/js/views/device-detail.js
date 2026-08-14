@@ -501,6 +501,12 @@ async function loadDevice(deviceId, activeTab = null) {
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
             ${t('device.ctl.force_update')}
+          </button>
+          <button class="btn btn-secondary btn-sm" id="clearUpdateCacheBtn" title="${t('device.ctl.clear_update_cache_tip')}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            ${t('device.ctl.clear_update_cache')}
           </button>` : ''}
           ${can('system.reboot') ? `
           <button class="btn btn-danger btn-sm" id="shutdownBtn">
@@ -1591,6 +1597,12 @@ function setupActions(device) {
   // Force Update
   document.getElementById('forceUpdateBtn')?.addEventListener('click', () => {
     sendWithFeedback('update', 'Update', 'device.toast.update_triggered');
+  });
+
+  // Drops every staged APK on the panel so the next check downloads afresh. The escape hatch for a
+  // player holding a bad download — a cached file that cannot install but is reused every attempt.
+  document.getElementById('clearUpdateCacheBtn')?.addEventListener('click', () => {
+    sendWithFeedback('clear_update_cache', 'Clear update cache', 'device.toast.update_cache_cleared');
   });
 
   // #109: PiP overlay tester — pushes/clears an overlay via the public API (POST /api/pip).

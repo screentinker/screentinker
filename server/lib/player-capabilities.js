@@ -312,6 +312,9 @@ const COMMAND_CAPABILITY = {
   launch: 'system.restart_player',
   refresh: 'system.restart_player',
   update: 'system.self_update',
+  // Clearing the staged-APK cache is part of the same self-update surface: a player that can
+  // update itself is a player that can hold a bad download and needs a way to drop it.
+  clear_update_cache: 'system.self_update',
 
   // display
   screen_on: 'display.power',
