@@ -1,5 +1,88 @@
 # Changelog
 
+## 1.9.35
+
+A maintenance release. Two faults where the product was working correctly and still looked broken to
+whoever was standing in front of the screen, plus the dependency advisories that could reach a running
+server.
+
+No migrations and no configuration changes. See the upgrade note at the end of this entry.
+
+### Fixed — a player could get stuck on an update it was never able to install
+
+A staged update is saved under a filename built from the version the server advertised. If a server
+advertised one version while still serving the file for an older one, the player saved the old file
+under the new name — and from then on found it, verified its signature, accepted it, and installed
+something that changed nothing. The version never moved, so the same update was offered again, and the
+player retried the same no-op until it hit its attempt limit.
+
+The signature check passed the whole time, correctly: the file was genuine, it was simply the wrong
+one. Worse, fixing the server did not help, because the bad file was reused before anything was
+downloaded. Recovery meant deleting the file on the device by hand.
+
+A staged update is now reused only when the version inside the file matches the version being
+installed, and a fresh download is checked the same way before it is applied. A server serving the
+wrong file now says so — *"server served 1.9.33 but advertised 1.9.34 — the update on the server is
+stale"* — and the file is deleted instead of kept. That makes this self-healing: once the server is
+corrected, the player recovers on its own.
+
+**Clear update cache** on the device page discards every staged update on a player. The version check
+should make it rarely necessary; it exists because a player already holding a bad file predates this
+release and cannot benefit from the check, and because the alternative is a cable and a laptop.
+
+### Fixed — directory search showed the system keyboard on top of its own
+
+The directory-search widget draws its own on-screen keyboard, sized and themed to the panel and on by
+default. On Android it was never visible. The page puts the cursor in a real text field, which is the
+signal for the device to raise its system keyboard — over the bottom of the screen, exactly where the
+widget's keyboard is.
+
+So a wall-mounted directory showed the phone keyboard: split across the screen, with microphone, GIF,
+emoji and a settings key that opens the keyboard vendor's own interface on a kiosk. On one panel the
+only keyboard installed was voice input, so touching the search box opened a microphone. The widget's
+own keyboard had been underneath the whole time.
+
+When the widget draws a keyboard, it now tells the device not to raise one. Turn the built-in keyboard
+off and the system keyboard behaves as before — with nothing to cover, it is the only way left to type.
+
+### Changed — the dependency advisories that could reach a running server are cleared
+
+Every high-severity advisory affecting a production install is resolved, including eight in the mail
+library covering SMTP command injection and header injection. The remaining advisories are in
+development-only tooling that is not installed on a server and cannot be reached from one.
+
+The real-time connection to players is deliberately untouched: the fix there was a patch to the message
+parser with no change to the format players speak, so nothing about an existing player's connection
+changes.
+
+Sending mail was previously covered only by tests that substituted the mail library for a stand-in,
+which would have stayed green through any change in the library itself. It is now also tested against
+the real one.
+
+### Added — an install that collects statistics can show the total on its landing page
+
+Where install statistics are being collected, the landing page can show how many screens have been
+deployed in total. It is an aggregate across every install that chooses to report, so it says nothing
+about any single one.
+
+This does nothing on a normal install: the figure is served only where collection is switched on, so a
+private server never publishes its own screen count, and the line is hidden entirely rather than
+showing a zero.
+
+### Changed — release notes are the written ones
+
+Published release notes now come from this file rather than from a list of commit subjects. The
+previous release announced itself as one commit titled "chore(release)" while the entry describing it
+sat here unread.
+
+### ⚠️ Upgrading from 1.9.34 reinstalls dependencies
+
+This release changes `server/package.json`, so **`npm ci --omit=dev` is required, not optional** — in
+both directions. `scripts/upgrade.sh` already runs it, and the server repairs a missed install at
+startup where it can reach the npm registry.
+
+Docker deployments need no action; dependencies are installed inside the image.
+
 ## 1.9.34
 
 Single sign-on is the headline, rebuilt rather than extended — because of a vulnerability in what
