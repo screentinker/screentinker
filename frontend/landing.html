@@ -210,6 +210,14 @@
       </a>
       <a href="#compare" class="btn btn-outline" style="padding:14px 28px;font-size:16px">See How We Compare</a>
     </div>
+
+    <!-- Live deployment count. Hidden until the number arrives, so a self-hosted instance (where
+         the endpoint does not exist) and a brand-new one (where the count is 0) show nothing at
+         all rather than an empty frame or a zero. -->
+    <p id="deployed-stat" hidden style="margin-top:28px;color:var(--muted);font-size:15px">
+      <strong id="deployed-count" style="color:var(--text,inherit);font-variant-numeric:tabular-nums"></strong>
+      screens deployed with ScreenTinker
+    </p>
   </section>
 
   <!-- Intro video -->
@@ -630,6 +638,19 @@
     // replace it on the public marketing page with a hardcoded Contact Us
     // card. Other consumers of /api/subscription/plans (billing.js,
     // settings.js, admin.js) get the full list as before.
+    /* Screens deployed. Only the deployment that collects install statistics answers this;
+       everywhere else it 404s and the line stays hidden. Failures are silent by design —
+       a marketing page must not show a broken stat, and there is nothing a visitor could
+       do about it. */
+    fetch('/api/public/stats')
+      .then(r => (r.ok ? r.json() : null))
+      .then(s => {
+        if (!s || !(s.screens > 0)) return;
+        document.getElementById('deployed-count').textContent = s.screens.toLocaleString();
+        document.getElementById('deployed-stat').hidden = false;
+      })
+      .catch(() => {});
+
     fetch('/api/subscription/plans').then(r => r.json()).then(plans => {
       const grid = document.getElementById('pricingGrid');
       const publicPlans = plans.filter(p => p.active && p.name !== 'enterprise');

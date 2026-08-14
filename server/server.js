@@ -978,31 +978,13 @@ app.get('/api/version', (req, res) => {
 app.use('/api/status', require('./routes/status'));
 
 /*
- * Opt-in install statistics — COLLECTOR side. Inert unless TELEMETRY_COLLECTOR=1, so a normal
- * self-hosted install never exposes this at all; only the deployment that gathers the numbers
- * turns it on. Deliberately unauthenticated: a self-hosted instance has no credential with us,
- * and issuing one would mean an enrolment handshake for what is a three-integer postcard.
- *
- * Upsert keyed on instance_id, so a install that reports daily occupies one row forever rather
- * than 365 a year. Nothing here reads or stores the request IP — receiving one is unavoidable,
- * logging it would quietly make a pseudonymous report an identifiable one.
+ * Opt-in install statistics — the COLLECTOR side, plus the public aggregate the marketing
+ * page reads. Both live in routes/telemetry-collector.js; both are mounted only when
+ * TELEMETRY_COLLECTOR=1, so a normal self-hosted install exposes neither.
  */
 if (process.env.TELEMETRY_COLLECTOR === '1') {
-  app.post('/api/telemetry/report', express.json({ limit: '2kb' }), (req, res) => {
-    const { instance_id: id, version, screen_count: screens } = req.body || {};
-    // Validate rather than trust: this endpoint is open, so a malformed or hostile body must
-    // land as a 400, never as a row that poisons the count it exists to produce.
-    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) return res.status(400).json({ error: 'bad instance_id' });
-    if (version != null && (typeof version !== 'string' || version.length > 40)) return res.status(400).json({ error: 'bad version' });
-    if (!Number.isInteger(screens) || screens < 0 || screens > 100000) return res.status(400).json({ error: 'bad screen_count' });
-    db.prepare(`INSERT INTO telemetry_reports (instance_id, version, screen_count, first_seen, last_seen)
-                VALUES (?, ?, ?, strftime('%s','now'), strftime('%s','now'))
-                ON CONFLICT(instance_id) DO UPDATE SET
-                  version = excluded.version, screen_count = excluded.screen_count, last_seen = excluded.last_seen`)
-      .run(id, version || null, screens);
-    res.json({ ok: true });
-  });
-  console.log('[telemetry] collector enabled at POST /api/telemetry/report');
+  app.use('/api', require('./routes/telemetry-collector')(db));
+  console.log('[telemetry] collector enabled at POST /api/telemetry/report (+ GET /api/public/stats)');
 }
 
 // #146 BILLING: Usage Report on its OWN route (NOT part of /api/status — billing is revenue
