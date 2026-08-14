@@ -343,26 +343,43 @@ class UpdateChecker(private val context: Context) {
      * NOTE: the intent-based install fallback resolves this file through FileProvider, so
      * res/xml/file_paths.xml must expose this directory too — see the <files-path> entry there.
      */
-    private fun apkDir(): File {
-        // Non-null is not the same as usable. A returned path can still be missing, unwritable, or
-        // on a volume that has since gone away — and every one of those produced the same opaque
-        // "failed to download" as a genuine network fault, which is what made this expensive to
-        // diagnose. Prove the directory before choosing it, and fall back if it does not hold up.
-        val ext = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-        if (ext != null && (ext.exists() || ext.mkdirs()) && ext.canWrite()) return ext
-        if (ext != null) Log.w(TAG, "External APK dir unusable (exists=${ext.exists()} writable=${ext.canWrite()}) — using internal")
-        else Log.w(TAG, "External storage unavailable — staging APKs in internal storage instead")
-        return File(context.filesDir, "Download").apply { mkdirs() }
+    /*
+     * Where to stage a downloaded APK — the FIRST location that actually accepts bytes.
+     *
+     * Internal app storage is tried first and is effectively guaranteed: /data/data/<pkg>/files is
+     * this app's own private directory, always mounted, always writable. If it is not, the app is
+     * not running. External storage is only a convenience (it survives uninstall and is visible for
+     * a manual install), and it is the one that fails — it can be absent, unmounted, present but
+     * unwritable, or report canWrite() = true and then refuse the write anyway.
+     *
+     * ⚠️ Each candidate is PROVEN with a real write, not asked. The previous version asked
+     * canWrite(), believed the answer, and then died at outputStream() — before a single byte — so
+     * the update failed instantly and reported it as a download problem. Every fallback in the world
+     * is useless if the first choice is trusted rather than tested.
+     *
+     * Returns the directory, or null with every reason it could not find one, so the operator gets
+     * the full picture instead of the first excuse.
+     */
+    private fun apkStagingDir(needBytes: Long): Pair<File?, String> {
+        val candidates = LinkedHashMap<String, File>()
+        candidates["internal"] = File(context.filesDir, "Download")
+        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { candidates["external"] = it }
+        candidates["cache"] = File(context.cacheDir, "Download")
+        candidates["files"] = context.filesDir          // last resort: no subdirectory to create
+
+        val reasons = StringBuilder()
+        for ((name, dir) in candidates) {
+            val problem = apkDirProblem(dir, needBytes)
+            if (problem == null) {
+                if (name != "internal") Log.w(TAG, "Staging APK in $name (${dir.absolutePath})")
+                return dir to name
+            }
+            if (reasons.isNotEmpty()) reasons.append("; ")
+            reasons.append("$name ${problem}")
+        }
+        return null to reasons.toString()
     }
 
-    /*
-     * Can we actually put a ~9MB file here, right now?
-     *
-     * Checked BEFORE the download rather than discovered as an exception during the write, so the
-     * failure names the real condition — a read-only volume, a missing directory, a full disk —
-     * instead of surfacing as a generic IOException three layers up. Returns null when fine, or the
-     * reason it is not.
-     */
     private fun apkDirProblem(dir: File, needBytes: Long): String? {
         if (!dir.exists() && !dir.mkdirs()) return "cannot create ${dir.absolutePath}"
         if (!dir.isDirectory) return "${dir.absolutePath} is not a directory"
@@ -386,13 +403,11 @@ class UpdateChecker(private val context: Context) {
 
     private fun downloadAndInstall(url: String, version: String): Boolean {
         try {
-            val dir = apkDir()
-            // Preflight the destination. If the box cannot hold the file, say THAT — rather than
-            // letting it surface later as a truncated write or a generic IOException, which is
-            // indistinguishable from a network problem in the message the operator sees.
-            apkDirProblem(dir, 9L * 1024 * 1024)?.let {
-                lastFailure = "cannot stage the update — $it"
-                Log.e(TAG, "APK staging unavailable: $it")
+            // Find somewhere that will actually take the file, before asking the network for it.
+            val (dir, whereOrWhy) = apkStagingDir(9L * 1024 * 1024)
+            if (dir == null) {
+                lastFailure = "nowhere to stage the update — $whereOrWhy"
+                Log.e(TAG, "APK staging unavailable: $whereOrWhy")
                 return false
             }
             val apkFile = File(dir, "ScreenTinker-$version.apk")
@@ -464,11 +479,8 @@ class UpdateChecker(private val context: Context) {
             try {
                 val base = url.substringAfterLast('/').substringBefore('?').ifBlank { "app.apk" }
                 val fileName = "pushed-" + (if (base.endsWith(".apk")) base else "$base.apk")
-                val dir = apkDir()
-                apkDirProblem(dir, 9L * 1024 * 1024)?.let {
-                    Log.e(TAG, "installFromUrl: cannot stage — $it")
-                    return@Thread
-                }
+                val (dir, whyNot) = apkStagingDir(9L * 1024 * 1024)
+                if (dir == null) { Log.e(TAG, "installFromUrl: nowhere to stage — $whyNot"); return@Thread }
                 val apkFile = File(dir, fileName)
                 if (apkFile.exists()) apkFile.delete()
                 val response = client.newCall(Request.Builder().url(url).build()).execute()
