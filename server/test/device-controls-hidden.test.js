@@ -368,3 +368,135 @@ test('a player that cannot read its output grows no empty rows', () => {
   assert.equal(has(html, 'telDisplay'), false);
   assert.equal(has(html, 'telVideoMode'), false);
 });
+
+// ---------------------------------------------------------------------------------------------
+// The System View pad and `tier`
+//
+// `tier` is an ANDROID device-owner concept — NOT NULL DEFAULT 0 in db/database.js, written only
+// from the APK's DeviceInfo. A BrightSign, Tizen or web player never sends it, so it sits at the
+// column default forever and can never reach 2. The pad was gated on `tier === 2` alone, which
+// meant HOME / BACK / POWER / the D-pad / OK rendered click-blocked on every non-Android display
+// — for keys those players genuinely handle (server/player/index.html:1895-1938,
+// tizen/js/app.js:435-444). That is the "button that cannot work" this whole file argues against,
+// inverted: a button that DOES work, presented as if it does not.
+// ---------------------------------------------------------------------------------------------
+
+// The pad is one div; read the inline style off it rather than asserting on the whole document.
+// Reads FORWARD from the id — the style attribute follows it on the same tag. An earlier version
+// searched backwards and picked up the preceding <hr>'s style, which made three of these tests
+// pass without ever looking at the pad.
+const padStyle = (html) => {
+  const i = html.indexOf('id="systemViewControls"');
+  if (i === -1) return null;
+  const s = html.indexOf('style="', i);
+  const end = html.indexOf('>', i);
+  if (s === -1 || s > end) return '';   // the tag carries no style at all
+  return html.slice(s + 7, html.indexOf('"', s + 7));
+};
+
+test('the system view pad is live on a BrightSign, which has no tier to earn', () => {
+  const style = padStyle(render(BRIGHTSIGN));
+  assert.ok(style, 'the pad must still render — these keys work on a BrightSign');
+  assert.ok(!style.includes('pointer-events:none'), `pad was click-blocked: ${style}`);
+  assert.ok(!style.includes('opacity:0.4'), `pad was greyed: ${style}`);
+});
+
+test('and on Tizen, for the same reason', () => {
+  const style = padStyle(render(TIZEN));
+  assert.ok(style && !style.includes('pointer-events:none'), `pad was click-blocked: ${style}`);
+});
+
+test('but an Android device that has NOT earned device-owner is still locked', () => {
+  // The #161 gate is real on Android: without device-owner these keycodes need the accessibility
+  // path, and offering them unlocked would be the original sin in the other direction.
+  const style = padStyle(render({ ...ANDROID_FULL, tier: 0 }));
+  assert.ok(style.includes('pointer-events:none'), `tier-0 Android must stay locked: ${style}`);
+  assert.ok(style.includes('opacity:0.4'), `tier-0 Android must stay greyed: ${style}`);
+});
+
+test('and an Android device owner is unlocked', () => {
+  const style = padStyle(render({ ...ANDROID_FULL, tier: 2 }));
+  assert.ok(!style.includes('pointer-events:none'), `tier-2 Android must be live: ${style}`);
+});
+
+test('the two genuinely Android-only keys are not offered elsewhere', () => {
+  // KEYCODE_APP_SWITCH has a case only in the APK (WebSocketService.kt:1068). 'settings' has no
+  // handler outside Android at all and is not even in COMMAND_CAPABILITY, so the server forwards
+  // it and a non-Android player silently drops it — a button that reports success and does
+  // nothing, which is worse than an absent one.
+  for (const [name, dev] of [['brightsign', BRIGHTSIGN], ['tizen', TIZEN], ['web', WEB]]) {
+    const html = render(dev);
+    assert.ok(!html.includes('KEYCODE_APP_SWITCH'), `${name} must not offer Recents`);
+    assert.ok(!html.includes("_sendCmd('settings')"), `${name} must not offer Settings`);
+  }
+  const android = render({ ...ANDROID_FULL, tier: 2 });
+  assert.ok(android.includes('KEYCODE_APP_SWITCH'), 'Android keeps Recents');
+  assert.ok(android.includes("_sendCmd('settings')"), 'Android keeps Settings');
+});
+
+test('the keys that DO work off Android are still rendered everywhere', () => {
+  // The failure this guards against is an over-eager cleanup that deletes the whole pad off
+  // Android, taking five working controls with it.
+  for (const [name, dev] of [['brightsign', BRIGHTSIGN], ['tizen', TIZEN], ['web', WEB]]) {
+    const html = render(dev);
+    for (const key of ['KEYCODE_HOME', 'KEYCODE_BACK', 'KEYCODE_POWER', 'KEYCODE_DPAD_CENTER']) {
+      assert.ok(html.includes(key), `${name} must keep ${key} — the player handles it`);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Player version on the Info tab
+//
+// The version card lived inside the block gated on
+//   device.android_version && !device.android_version.startsWith('Web/')
+// so it rendered for the APK only. A BrightSign, Tizen or web player registers android_version as
+// "Web/<ua>", which fails that test — so those panels showed no version anywhere in the UI, and an
+// operator had no way to tell a freshly-provisioned host from a year-old one.
+// ---------------------------------------------------------------------------------------------
+
+const infoCard = (html, label) => {
+  const i = html.indexOf(label);
+  if (i === -1) return null;
+  const v = html.indexOf('info-card-value', i);
+  return v === -1 ? null : html.slice(v, html.indexOf('</div>', v));
+};
+
+test('a BrightSign shows its player version on the Info tab', () => {
+  const html = render({ ...BRIGHTSIGN, app_version: '1.9.36', client_version: '1.1.0-web' });
+  const card = infoCard(html, 'device.info.app_version');
+  assert.ok(card, 'the version card must render off Android');
+  assert.ok(card.includes('1.9.36'), `expected the host package version, got: ${card}`);
+});
+
+test('and the page version alongside it, because the two can disagree', () => {
+  // On a BrightSign app_version is the on-device host package and client_version is the page we
+  // serve. A stale host against a fresh page is exactly the skew worth seeing at a glance.
+  const html = render({ ...BRIGHTSIGN, app_version: '1.9.36', client_version: '1.1.0-web' });
+  const i = html.indexOf('device.info.app_version');
+  assert.ok(html.slice(i, i + 400).includes('1.1.0-web'), 'the page version should appear too');
+
+  // When they match there is nothing to disambiguate, so it must not be repeated.
+  const same = render({ ...BRIGHTSIGN, app_version: '1.9.36', client_version: '1.9.36' });
+  const j = same.indexOf('device.info.app_version');
+  const seg = same.slice(j, j + 400);
+  assert.equal((seg.match(/1\.9\.36/g) || []).length, 1, 'identical versions must not be shown twice');
+});
+
+test('Tizen and web players get it too, and Android is unchanged', () => {
+  for (const [name, dev] of [['tizen', TIZEN], ['web', WEB], ['android', ANDROID_FULL]]) {
+    const html = render({ ...dev, app_version: '9.9.9' });
+    const card = infoCard(html, 'device.info.app_version');
+    assert.ok(card && card.includes('9.9.9'), `${name} must show a player version`);
+  }
+});
+
+test('the Android-only cards stay Android-only', () => {
+  // Moving the version card out must not drag the APK-specific ones with it: a settings PIN and an
+  // Android OS version mean nothing on a BrightSign.
+  const bs = render({ ...BRIGHTSIGN, app_version: '1.9.36' });
+  assert.ok(!bs.includes('device.info.settings_pin'), 'settings PIN is an APK concept');
+  assert.ok(!bs.includes('device.info.android_version'), 'android_version is an APK concept');
+  const android = render({ ...ANDROID_FULL, app_version: '1.9.36' });
+  assert.ok(android.includes('device.info.settings_pin'), 'Android keeps its PIN card');
+});

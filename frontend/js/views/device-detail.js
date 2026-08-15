@@ -618,6 +618,23 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">${t('device.info.video_mode')}</div>
             <div class="info-card-value small" id="telVideoMode">${esc(latestTelemetry.video_mode)}</div>
           </div>` : ''}
+          <!-- The panel's own EDID, parsed server-side from the raw block the player reported.
+               Answers the questions the player's DWS answers and the dashboard previously could
+               not: which panel is this, how old is it, what does it actually want to be driven at.
+               Absent entirely on a device that never reported one, rather than an empty card. -->
+          ${device.edid ? `
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.edid')}</div>
+            <div class="info-card-value small">${esc(device.edid.manufacturer || '')} ${esc(device.edid.monitorName || device.edid.productHex || '')}</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.5">
+              ${device.edid.preferredMode ? `${t('device.info.edid_preferred')}: <strong>${esc(device.edid.preferredMode)}</strong><br>` : ''}
+              ${device.edid.widthCm ? `${esc(device.edid.widthCm)}&times;${esc(device.edid.heightCm)} cm &middot; ` : ''}${device.edid.digital ? 'digital' : 'analog'} &middot; EDID ${esc(device.edid.edidVersion)}<br>
+              ${device.edid.yearOfManufacture ? `${t('device.info.edid_made')}: ${esc(device.edid.yearOfManufacture)}w${String(device.edid.weekOfManufacture).padStart(2, '0')}<br>` : ''}
+              ${device.edid.serialNumber ? `${t('device.info.edid_serial')}: ${esc(device.edid.serialNumber)} &middot; ` : ''}${t('device.info.edid_product')}: ${esc(device.edid.productHex)}
+              ${device.edid.cea && (device.edid.cea.bt2020Rgb || device.edid.cea.bt2020Ycc) ? `<br>BT.2020${device.edid.cea.hdrSt2084 ? ' &middot; HDR10' : ''}` : ''}
+              ${device.edid.checksumValid === false ? `<br><span style="color:var(--warning,#f59e0b)">${t('device.info.edid_checksum_bad')}</span>` : ''}
+            </div>
+          </div>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.wifi')}</div>
@@ -629,14 +646,23 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">${t('device.info.uptime')}</div>
             <div class="info-card-value small" id="telUptime">${formatUptime(latestTelemetry.uptime_seconds)}</div>
           </div>
+          <!-- Player version, on EVERY platform. This card used to sit inside the Android-only
+               block below, so a BrightSign or Tizen panel never showed a version at all: they
+               register android_version as "Web/<ua>", which fails that test. On a BrightSign
+               app_version is the ON-DEVICE host package (autorun.brs, what OTA replaces) and
+               client_version is the page we serve, which is always current — so where the two
+               differ, both are worth showing: the pair is what tells you whether a panel is
+               running a stale host against a fresh page. -->
+          <div class="info-card">
+            <div class="info-card-label">${t('device.info.app_version')}</div>
+            <div class="info-card-value small">${esc(device.app_version || '--')}</div>
+            ${device.client_version && device.client_version !== device.app_version ? `
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(device.client_version)}</div>` : ''}
+          </div>
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.android_version')}</div>
             <div class="info-card-value small">${device.android_version}</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-label">${t('device.info.app_version')}</div>
-            <div class="info-card-value small">${device.app_version || '--'}</div>
           </div>
           <div class="info-card">
             <div class="info-card-label">${t('device.info.settings_pin')}</div>
@@ -838,11 +864,30 @@ async function loadDevice(deviceId, activeTab = null) {
             <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_VOLUME_DOWN')">${t('device.remote.vol_down')}</button>
             <hr style="border-color:var(--border);margin:8px 0">
             <!-- System View controls — auto-unlocked on a device owner (#161: full-screen via the
-                 accessibility path, no MediaProjection consent); locked until enabled otherwise. -->
-            <div id="systemViewControls" style="opacity:${device.tier === 2 ? '1' : '0.4'};pointer-events:${device.tier === 2 ? 'auto' : 'none'}">
+                 accessibility path, no MediaProjection consent); locked until enabled otherwise.
+
+                 LOCKED ONLY ON ANDROID. tier is an Android device-owner concept: NOT NULL
+                 DEFAULT 0 (db/database.js), written only from the APK's DeviceInfo. A BrightSign,
+                 Tizen or web player never sends it, so it is structurally 0 for them and can never
+                 reach 2 — which left this pad permanently click-blocked (pointer-events:none) on
+                 those platforms for keys the player genuinely HANDLES: HOME, BACK, POWER, D-pad and
+                 OK all have cases in server/player/index.html and tizen/js/app.js. Greying an
+                 Android-only gate over a working control is the "button that cannot work" this
+                 capability system exists to prevent, just inverted. Off Android there is no tier to
+                 earn and nothing to unlock.
+
+                 Expression kept INLINE rather than hoisted to a const, because
+                 server/test/device-controls-hidden.test.js renders this template in a bare VM
+                 sandbox that supplies device and isAndroidDevice but no locals from render().
+                 NOTE: no backticks anywhere in this comment - it lives inside a template literal
+                 and one would terminate the string. -->
+            <div id="systemViewControls" style="opacity:${isAndroidDevice(device) && device.tier !== 2 ? '0.4' : '1'};pointer-events:${isAndroidDevice(device) && device.tier !== 2 ? 'none' : 'auto'}">
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_HOME')">${t('device.remote.home')}</button>
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_BACK')">${t('device.remote.back')}</button>
-              <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_APP_SWITCH')">${t('device.remote.recents')}</button>
+              ${isAndroidDevice(device) ? `
+              <!-- KEYCODE_APP_SWITCH is handled only by the APK (WebSocketService.kt). The web
+                   player and Tizen have no case for it, so off Android it is a dead button. -->
+              <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_APP_SWITCH')">${t('device.remote.recents')}</button>` : ''}
               <button class="btn btn-danger btn-sm" onclick="window._sendKey('KEYCODE_POWER')">${t('device.remote.power')}</button>
               <hr style="border-color:var(--border);margin:8px 0">
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_DPAD_UP')">&#9650;</button>
@@ -852,8 +897,12 @@ async function loadDevice(deviceId, activeTab = null) {
               </div>
               <button class="btn btn-secondary btn-sm" onclick="window._sendKey('KEYCODE_DPAD_DOWN')">&#9660;</button>
               <button class="btn btn-primary btn-sm" onclick="window._sendKey('KEYCODE_DPAD_CENTER')">${t('device.remote.ok')}</button>
+              ${isAndroidDevice(device) ? `
               <hr style="border-color:var(--border);margin:8px 0">
-              <button class="btn btn-secondary btn-sm" onclick="window._sendCmd('settings')">${t('device.remote.settings')}</button>
+              <!-- 'settings' opens the Android settings activity. It is not in COMMAND_CAPABILITY,
+                   so the server forwards it to any player and a non-Android one silently drops it
+                   (tizen/js/app.js falls through to "unknown command"). -->
+              <button class="btn btn-secondary btn-sm" onclick="window._sendCmd('settings')">${t('device.remote.settings')}</button>` : ''}
               ${can('display.power') ? `
               <hr style="border-color:var(--border);margin:8px 0">
               <div style="display:flex;gap:4px">

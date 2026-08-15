@@ -315,6 +315,20 @@ app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
     } else {
       modified = html.replace('</head>', inject + '</head>');
     }
+
+    // Stamp the page's own version, so client_version tracks the release that served it instead of
+    // a literal nobody bumps. Anchored on the ST_PLAYER_VERSION marker rather than the old value,
+    // so a hand-edited default cannot cause a silent miss — and if the marker is ever removed we
+    // say so loudly, because the failure is otherwise invisible: every panel just keeps reporting
+    // a stale version and looks fine.
+    const stamped = modified.replace(
+      /(const PLAYER_VERSION = )'[^']*'/,
+      `$1'${String(VERSION).replace(/'/g, '')}'`
+    );
+    if (stamped === modified) {
+      console.warn('[player] ST_PLAYER_VERSION marker not found — page will report a stale client_version');
+    }
+    modified = stamped;
     res.type('html').setHeader('Cache-Control', 'no-cache');
     res.send(modified);
   });
@@ -372,7 +386,10 @@ const bsUpdate = require('./lib/brightsign-update');
 // tested place instead of being re-implemented in BrightScript where it cannot be tested at all.
 // The host does only what it is told.
 app.get('/api/brightsign/package', async (req, res) => {
-  const pkg = await bsPackage.getPackage();
+  // Same derivation as the download route below — they MUST agree, or the manifest advertises a
+  // checksum for bytes the player never receives, which is the OTA loop this module exists to
+  // prevent. One helper, called from both.
+  const pkg = await bsPackage.getPackage(bsPackage.packageServerUrl(req));
   res.setHeader('Cache-Control', 'no-cache');
 
   // No package (a deployment without brightsign/, or an unreadable VERSION) is reported as a
@@ -401,7 +418,7 @@ app.get('/api/brightsign/package', async (req, res) => {
 });
 
 app.get('/api/brightsign/package/download', async (req, res) => {
-  const pkg = await bsPackage.getPackage();
+  const pkg = await bsPackage.getPackage(bsPackage.packageServerUrl(req));
   if (!pkg) return res.status(404).type('text/plain').send('package unavailable');
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Length', String(pkg.size));
@@ -1524,6 +1541,20 @@ server.listen(listenPort, '0.0.0.0', () => {
 ║  Listening on all interfaces (0.0.0.0)           ║
 ╚══════════════════════════════════════════════════╝
   `);
+
+  // Build the BrightSign package now rather than on the first player that asks. It is cached
+  // per stamped server URL, so this was never per-request work — but the FIRST request otherwise
+  // pays for a zip build, and that request is a player mid-boot deciding whether to update.
+  //
+  // Only possible when APP_URL is set: without it the URL comes from the request's Host, which
+  // does not exist yet at boot. Those deployments build once, lazily, on first contact.
+  if (process.env.APP_URL) {
+    bsPackage.getPackage(bsPackage.packageServerUrl(null))
+      .then((p) => console.log(p
+        ? `[brightsign] package ${p.version} ready (${p.size} bytes, sha256 ${p.sha256.slice(0, 12)}…) -> ${process.env.APP_URL}`
+        : '[brightsign] no package available (missing brightsign/ or VERSION) — players keep what they have'))
+      .catch(() => { /* never let a packaging problem stop the server booting */ });
+  }
 
   // Email transport diagnostics — a partially-configured transport is a real
   // misconfiguration (some fields set, others missing) and gets a loud line;

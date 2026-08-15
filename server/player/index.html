@@ -1534,6 +1534,14 @@
     // socket.io Manager (io opts below). NO status/health poll — load is read from ack-silence.
     // Browser-specific half-open triggers (visibility/resume/online) drive the SAME check + the
     // #148 teardown-first reconnect — additional triggers, not a separate mechanism.
+    // ST_PLAYER_VERSION — stamped at SERVE time by the /player route from the repo VERSION, the
+    // same trick autorun.brs uses for its package version. It was a hardcoded '1.1.0-web' that
+    // nobody bumped for the whole 1.x line, so every web, Tizen and BrightSign panel in the fleet
+    // reported a version three years stale as its client_version. Do not edit by hand.
+    //
+    // No '-web' suffix: client_version is only ever compared for EQUALITY (server/lib/liveness.js),
+    // but a X.Y.Z-web string is a semver PRERELEASE and sorts BELOW X.Y.Z, so the moment anything
+    // orders it the value would read as older than the release it came from.
     const PLAYER_VERSION = '1.1.0-web';
     const V4_THRESHOLD_BASE_MS = 45000, V4_THRESHOLD_JITTER_MS = 10000;
     function v4ThresholdMs(rand) { return V4_THRESHOLD_BASE_MS + Math.round((rand - 0.5) * 2 * V4_THRESHOLD_JITTER_MS); }
@@ -2162,6 +2170,72 @@
       return caps;
     }
 
+    // The version of the HOST package (autorun.brs) this player is running, or null off-platform
+    // and before the host has said. It is stamped into autorun.brs at build time and arrives here
+    // via a host-telemetry message, so it is NOT available synchronously at first register — see
+    // maybeReportAppVersion().
+    //
+    // typeof, not truthiness, for the same reason the heartbeat does it: page and bridge are
+    // fetched separately, so a new page can run against a CACHED older bridge that lacks this
+    // method, and calling it would throw out of registration entirely.
+    function hostPackageVersion() {
+      try {
+        if (!BS || typeof BS.telemetrySnapshot !== 'function') return null;
+        const v = BS.telemetrySnapshot().package_version;
+        return typeof v === 'string' && v.trim() ? v.trim() : null;
+      } catch (e) { return null; }
+    }
+
+    // ⚠️ Always build the WHOLE blob. The server's applyDeviceInfo() UPDATEs every column it
+    // covers unconditionally, so a partial device_info does not "patch" a row — it nulls
+    // android_version and the screen dimensions and resets ota_status/tier/the flag columns.
+    // device:register and device:info both land there, so both must send the full thing.
+    function buildDeviceInfo() {
+      return {
+        android_version: 'Web/' + navigator.userAgent.split(' ').pop(),
+        // On a BrightSign, app_version is the ON-DEVICE host package — the artifact OTA replaces
+        // and the only one here that can be stale. PLAYER_VERSION describes this page, which the
+        // server serves fresh every load, and it already travels as client_version. Reporting the
+        // page version in both columns is what made an XT245 read as 1.1.0-web forever, with no
+        // way to tell a freshly-provisioned host from a year-old one.
+        app_version: hostPackageVersion() || PLAYER_VERSION,
+        screen_width: screen.width,
+        screen_height: screen.height,
+      };
+    }
+
+    // What we last told the server, so a change is detectable. register() re-seeds this with
+    // whatever it actually sent — null when the host had not spoken yet, which is precisely the
+    // case maybeReportAppVersion() exists to repair.
+    let reportedAppVersion = null;
+
+    // The host package version is not known at first register: SendHostTelemetry runs on the
+    // autorun's own schedule and can land after this page has already registered. Rather than
+    // delay registration on it — which would trade a cosmetic gap for a real one — register with
+    // what we have and correct the record when the host speaks up. Also covers the version
+    // CHANGING under a live page, which is exactly what a self-update does, and which the
+    // server turns into an 'upgrade' incident.
+    // The EDID probe is asynchronous and can answer after this page has already registered, so the
+    // first register often carries nothing. It travels on the REGISTER path (applyHardwareIdentity)
+    // rather than device:info, so correcting it means registering again — once, when the value
+    // first appears. Guarded by a flag because re-registering on every heartbeat would be absurd.
+    let reportedEdid = false;
+    function maybeReportEdid() {
+      if (reportedEdid || !BS || typeof BS.edid !== 'function') return;
+      let v = null;
+      try { v = BS.edid(); } catch (e) { return; }
+      if (!v) return;              // still probing, or no panel on this output
+      reportedEdid = true;
+      register();
+    }
+
+    function maybeReportAppVersion() {
+      const v = hostPackageVersion();
+      if (!v || v === reportedAppVersion) return;
+      reportedAppVersion = v;
+      socket.emit('device:info', { device_id: config.deviceId, device_info: buildDeviceInfo() });
+    }
+
     function register() {
       const data = {};
       // #163: always send device identity when we have it, regardless of paired
@@ -2184,12 +2258,10 @@
         }
         data.pairing_code = config.pairingCode;
       }
-      data.device_info = {
-        android_version: 'Web/' + navigator.userAgent.split(' ').pop(),
-        app_version: '1.1.0-web',
-        screen_width: screen.width,
-        screen_height: screen.height,
-      };
+      data.device_info = buildDeviceInfo();
+      // Record what this register just carried, so maybeReportAppVersion() only speaks when the
+      // host actually tells us something we have not already sent.
+      reportedAppVersion = hostPackageVersion();
       // v4 client identity block — additive, canonical snake_case (same shape as APK/.wgt so the
       // server consumes one thing). Backward-compatible: an old server ignores unknown fields.
       data.client_type = 'player';
@@ -2207,6 +2279,11 @@
           // own widget with &screen=2, so two rows from one player stay distinguishable.
           data.bs_screen = BS.screen();
           data.sync_backend = BS.syncBackend();
+          // The attached panel's raw EDID (base64), parsed server-side. Identity, not telemetry:
+          // it changes when someone swaps the screen, so it rides the register next to bs_model
+          // and bs_serial rather than the 15s heartbeat. typeof-guarded because the bridge is
+          // fetched separately from this page and may predate the method.
+          if (typeof BS.edid === 'function') data.bs_edid = BS.edid() || null;
         } catch (e) { /* identity extras are additive — never block registration */ }
       }
       // What this instance can actually do. The server persists it and the dashboard hides the
@@ -2227,6 +2304,11 @@
       stopHeartbeat();
       heartbeatTimer = setInterval(() => {
         if (!socket?.connected || !config.deviceId) return;
+        // Piggy-backed on the heartbeat rather than given its own timer: this is the one loop
+        // already guaranteed to be running whenever the socket is up, and the host version is a
+        // fact that changes at most once per update.
+        maybeReportAppVersion();
+        maybeReportEdid();
         socket.emit('device:heartbeat', {
           device_id: config.deviceId,
           client_ms: Date.now(),   // #group-sync: t1 for NTP-style clock discipline (echoed in the ack)

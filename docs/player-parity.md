@@ -13,9 +13,20 @@ given) · 💀 **dead**: the capability is declared or baselined but the control
 
 BrightSign runs the *same* `server/player/index.html` as the browser, so it differs only where the
 `autorun.brs` host bridge adds something the browser cannot reach. The bridge has two halves: the
-JS (`brightsign/st-bridge.js`, served by us at `/player/st-bridge.js`, always current) and the
+JS (`brightsign/st-bridge.js`, served by us at `/player/st-bridge.js` — always current, but see the
+CDN note below) and the
 on-device BrightScript that must create the widget with `nodejs_enabled:true`. `BS.hasHost()` is
 false unless BOTH are present, and everything host-backed hangs off it.
+
+> **CDN note.** "Always current" was false in the hosted deployment for months. The origin sets
+> `Cache-Control: no-cache` on `/player/*` deliberately (`server/server.js`), but Cloudflare's
+> zone-wide **Browser Cache TTL** (14400s) rewrote it to `max-age=14400` for static extensions, so
+> every player held a 4-hour-stale bridge *on device* — and purging the edge did not help, because
+> the TTL was a browser directive. A new-page-against-old-bridge skew is exactly what makes
+> `BS.<method>()` throw and a display self-report as crashed. Fixed 2026-08-14 by a cache rule on
+> `(http.request.uri.path eq "/player") or starts_with(http.request.uri.path, "/player/")` setting
+> `browser_ttl: respect_origin` — edge caching is retained (it revalidates), only the browser
+> directive is corrected. If this behaviour ever returns, check that rule before debugging code.
 
 Verified at `2237eda`. Where a row cites "the fielded build" it means `v1.9.28` — the last release
 before any player declared anything, and therefore the build every baseline is describing.
@@ -311,13 +322,26 @@ declares `system.reboot` for itself and is unaffected.
 | `display.rotation` | ✅ | ✅ | ⚠️ graphics only | ✅ |
 | `display.power` | ❌ `screen_on` is a no-op | ✅ | ❌ needs host | ❌ |
 | `display.brightness` | ✅ Tier 0, since v1.9.10 | ❌ | ❌ | ❌ |
-| `remote.screenshot` / `remote.stream` | ✅ view capture | ✅ images only | ❌ no video plane | ✅ |
+| `remote.screenshot` / `remote.stream` | ✅ view capture | ✅ images only | ✅ native capture, see note | ✅ |
 | `remote.input` | ✅ | ✅ | ✅ | ✅ |
 | `system.restart_player` | ✅ | ✅ | ❌ widget may not return | ✅ |
 | `system.self_update` | ✅ | ❌ | ❌ needs host | ❌ |
 | `system.reboot` | ❌ owner-only | ❌ | ❌ needs host | ❌ |
 | `sync.clock` | ✅ | ✅ | ✅ | ✅ |
 | `offline.cache` | ✅ | ❌ playlist JSON only | ❌ ❓ unverified | ✅ |
+
+**Note on BrightSign capture.** The table used to read "❌ no video plane", on the reasoning that a
+DOM canvas cannot read the hardware plane a hwz player puts video on. That is still true of the
+canvas, but it is no longer the path taken: `st-bridge.js` `captureScreen()` uses the native
+`@brightsign/screenshot` module, which composites both planes. Confirmed on hardware (XT245,
+BrightSignOS 10.0.16); the module's API is unchanged between OS 9 and 10 — `syncCapture` /
+`asyncCapture` with `destinationFileName`, and `fileName` still honoured as an alias. It needs
+`require()` (i.e. `nodejs_enabled:true`) but **not** `BS.hasHost()`, so it works on widgets with no
+messageport. On a widget with no node integration at all — one built by the BSN Supervisor — the
+path really does fall back to canvas, and there the player now paints "Video is playing on the
+hardware plane and cannot be captured" instead of a silent black frame. The **baseline** still
+withholds both because it cannot tell those two widget kinds apart; every player that runs our page
+declares them for itself regardless.
 
 Everything conditional at runtime on every platform that has it at all — `system.kiosk`,
 `system.brightness`, `system.screen_timeout`, `system.install_apk`, `system.shell`, `system.time`,

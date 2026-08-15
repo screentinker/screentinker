@@ -518,6 +518,12 @@ const migrations = [
   // Which physical output this row paints. A dual-output player runs one player per connector and
   // registers as two devices; without this they are indistinguishable in the dashboard.
   "ALTER TABLE devices ADD COLUMN output_index INTEGER",
+  // The attached panel's RAW EDID, base64. Stored raw and parsed on read (lib/edid.js) rather than
+  // exploded into columns: the blob is ~128-256 bytes, and every future field — gamma, the DTD mode
+  // list, the CEA blocks — then costs a server deploy instead of a migration AND a fleet update.
+  // That matters here more than usual: the bridge that collects it sits behind a CDN, and the host
+  // script only changes via an OTA package.
+  "ALTER TABLE devices ADD COLUMN hardware_edid TEXT",
   // What the player says it can do, as a JSON array (see lib/player-capabilities.js). NULL means
   // the panel has never declared — the overwhelming majority of the fleet on the day this ships —
   // and resolves to a per-platform baseline. That NULL is load bearing: an empty array is a player

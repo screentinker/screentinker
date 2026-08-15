@@ -131,16 +131,23 @@ function applyHardwareIdentity(deviceId, data) {
   const osVersion = str(di.hardware_os_version ?? data.bs_os_version);
   const rawOutput = di.output_index ?? data.bs_screen;
   const output = Number.isInteger(rawOutput) && rawOutput > 0 ? rawOutput : null;
+  // Base64 of a 128 or 256 byte block, so ~172/344 chars. Capped generously to allow for a panel
+  // with several extension blocks while refusing anything that is clearly not an EDID — this is
+  // device-supplied and lands in a column the dashboard renders.
+  const edidRaw = typeof (di.hardware_edid ?? data.bs_edid) === 'string'
+    ? (di.hardware_edid ?? data.bs_edid).trim().slice(0, 4096) || null
+    : null;
 
-  if (model == null && serial == null && osVersion == null && output == null) return;
+  if (model == null && serial == null && osVersion == null && output == null && edidRaw == null) return;
 
   db.prepare(`UPDATE devices SET
       hardware_model      = COALESCE(?, hardware_model),
       hardware_serial     = COALESCE(?, hardware_serial),
       hardware_os_version = COALESCE(?, hardware_os_version),
-      output_index        = COALESCE(?, output_index)
+      output_index        = COALESCE(?, output_index),
+      hardware_edid       = COALESCE(?, hardware_edid)
     WHERE id = ?`)
-    .run(model, serial, osVersion, output, deviceId);
+    .run(model, serial, osVersion, output, edidRaw, deviceId);
 }
 
 /*

@@ -188,7 +188,12 @@ router.get('/:id', (req, res) => {
   // or ~440 existing displays lose their controls the moment this ships.
   const capabilities = playerCapabilities.capabilitiesFor(device);
 
-  res.json({ ...stripDeviceSecrets(device), capabilities, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
+  // Parsed on READ, not on receipt. The raw block stays the stored truth, so adding a field later
+  // is a server deploy rather than re-collecting from every panel in the field. Null for a device
+  // that never reported one, or whose block is unreadable — the card simply does not render.
+  const edid = require('../lib/edid').parseEdid(device.hardware_edid);
+
+  res.json({ ...stripDeviceSecrets(device), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
 });
 
 // Helper: check device write access via the workspace the device belongs to.

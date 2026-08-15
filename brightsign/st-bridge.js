@@ -251,6 +251,44 @@
   // legitimately supplied. Absent means "nothing to say", which is not the same as "zero".
   var telemetry = {};
 
+  // The attached panel's raw EDID, base64. Held apart from `telemetry` deliberately: it is
+  // IDENTITY, not a reading. It changes only when someone physically swaps the screen, so it rides
+  // the register (where hardware_model and hardware_serial already go) rather than the 15-second
+  // heartbeat, where ~350 characters of unchanging data would be pure noise forever.
+  var edidRaw = null;
+
+  /*
+   * Normalise whatever getEdid() hands back into base64.
+   *
+   * Its return type is undocumented and could not be determined from the firmware, so every
+   * plausible shape is handled rather than betting on one and shipping a silent null to the fleet.
+   * Returns null for anything unrecognisable — the server treats a missing EDID as "unknown",
+   * which is honest, whereas a mangled one would be a lie that parses.
+   */
+  function toBase64(v) {
+    try {
+      if (!v) return null;
+      if (typeof v === 'string') {
+        var s = v.trim();
+        if (!s) return null;
+        // Hex comes back roughly twice the length of the 128/256 bytes it encodes.
+        if (/^[0-9a-fA-F]+$/.test(s) && s.length >= 256) {
+          var by = [];
+          for (var i = 0; i < s.length; i += 2) by.push(parseInt(s.substr(i, 2), 16));
+          return toBase64(by);
+        }
+        return s;   // already base64
+      }
+      var arr = (typeof v.length === 'number') ? v : (v.buffer ? new Uint8Array(v.buffer) : null);
+      if (!arr || !arr.length) return null;
+      var bin = '';
+      for (var j = 0; j < arr.length; j++) bin += String.fromCharCode(arr[j] & 0xff);
+      if (typeof global.btoa === 'function') return global.btoa(bin);
+      var B = tryRequire('buffer');
+      return B && B.Buffer ? B.Buffer.from(bin, 'binary').toString('base64') : null;
+    } catch (e) { return null; }
+  }
+
   /*
    * Facts pushed by the host, merged into the same cache the heartbeat reads.
    *
@@ -535,6 +573,12 @@
       }
       return null;
     },
+
+    // The attached panel's raw EDID as base64, or null until the async probe answers (and forever
+    // on a player whose firmware has no getEdid, or an output with nothing plugged in). The page
+    // sends it on register; the server stores it COALESCE-style, so a null never erases a value
+    // that arrived on an earlier connection.
+    edid: function () { return edidRaw; },
 
     /* Which physical output this widget is painting. 1 unless autorun.brs made a second one. */
     screen: screenNumber,
@@ -981,6 +1025,34 @@
                 var mn = e && (e.monitorName || e.monitor_name);
                 if (typeof mn === 'string' && mn.trim()) telemetry.attached_display = mn.trim();
               }, function () { /* no display on this output */ });
+            }
+
+            /*
+             * The RAW EDID, alongside the identity object above.
+             *
+             * getEdidIdentity() answers seven questions (monitorName, product, serialNumber, the
+             * manufacture date and the BT2020/HDR flags) and cannot answer any others. Everything
+             * else the player's own DWS prints — manufacturer, EDID version, physical size, gamma,
+             * the VESA/standard/DTD mode lists, the CEA blocks — is in these bytes.
+             *
+             * Sent as-is and parsed on the SERVER (server/lib/edid.js). Parsing here would mean a
+             * bridge update for every new field, and this file is the one behind a CDN that held it
+             * for four hours at a stretch. Bytes now, questions later.
+             *
+             * The return shape is not documented and was not observable from the firmware strings,
+             * so nothing is assumed: Uint8Array, Array, Buffer-like, hex or base64 all get
+             * normalised to base64 here, and the parser accepts every one of those anyway.
+             */
+            if (typeof vo.getEdid === 'function') {
+              try {
+                var raw = vo.getEdid();
+                if (raw && typeof raw.then === 'function') {
+                  raw.then(function (bytes) { edidRaw = toBase64(bytes) || edidRaw; },
+                           function () { /* no EDID on this output */ });
+                } else if (raw) {
+                  edidRaw = toBase64(raw) || edidRaw;
+                }
+              } catch (e) { /* older firmware without getEdid */ }
             }
           } catch (e) { /* no such output on this model */ }
         }

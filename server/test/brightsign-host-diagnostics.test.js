@@ -234,3 +234,125 @@ test('diagnostics can never take the player down', () => {
   assert.equal((fn.match(/try \{/g) || []).length >= 2, true, 'both the wiring and each callback must be guarded');
   assert.match(fn, /catch \(e\) \{ \/\* diagnostics must never break playback/);
 });
+
+// ---------------------------------------------------------------------------------------------
+// The fourth hop: host version -> devices.app_version
+//
+// package_version reaching telemetrySnapshot() (pinned above) was never the problem. It rode the
+// heartbeat for releases and the server dropped it: device_telemetry has no column for it, and
+// device_info.app_version was the literal '1.1.0-web' for every web player, BrightSign included.
+// An XT245 running a year-old host and one provisioned this morning reported the same string.
+//
+// Executed rather than pattern-matched wherever it can be. A regex proving the literal is gone
+// says nothing about what replaced it, and the failure being repaired here is precisely a value
+// that looks plausible and means nothing.
+// ---------------------------------------------------------------------------------------------
+
+// Lift a top-level `function name(...)` out of the page by matching braces. Cheap, and it beats
+// asserting on source text for functions whose whole contract is what they RETURN.
+function playerFn(name) {
+  const start = player.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name}() must exist in the player`);
+  let depth = 0;
+  for (let i = player.indexOf('{', start); i < player.length; i++) {
+    if (player[i] === '{') depth++;
+    else if (player[i] === '}' && --depth === 0) return player.slice(start, i + 1);
+  }
+  throw new Error(`unbalanced braces reading ${name}()`);
+}
+
+// Evaluate hostPackageVersion + buildDeviceInfo against a stub bridge. Everything else the page
+// touches is stubbed to a fixed value so a change in THOSE cannot turn this test red.
+function deviceInfoWith(BS) {
+  const sandbox = {
+    BS,
+    PLAYER_VERSION: '1.1.0-web',
+    navigator: { userAgent: 'Mozilla/5.0 Chrome/120' },
+    screen: { width: 1920, height: 1200 },
+  };
+  const vm = require('node:vm');
+  vm.runInNewContext(
+    `${playerFn('hostPackageVersion')}\n${playerFn('buildDeviceInfo')}\nresult = buildDeviceInfo();`,
+    sandbox,
+  );
+  return sandbox.result;
+}
+
+test('on a BrightSign, app_version is the HOST package version, not the page version', () => {
+  const di = deviceInfoWith({ telemetrySnapshot: () => ({ package_version: '1.9.36' }) });
+  assert.equal(di.app_version, '1.9.36');
+  assert.notEqual(di.app_version, '1.1.0-web', 'reporting the page version here is the bug itself');
+});
+
+test('off-platform the reported app_version is unchanged, so no existing device shifts', () => {
+  // The page ships to Android/Tizen/desktop too. This fix must be invisible to them.
+  assert.equal(deviceInfoWith(null).app_version, '1.1.0-web');
+  assert.equal(deviceInfoWith({}).app_version, '1.1.0-web', 'a bridge without the method');
+});
+
+test('a CACHED older bridge must not throw registration away', () => {
+  // The page and st-bridge.js are fetched separately and Cloudflare holds the bridge for hours, so
+  // a new page routinely runs against an old one. This exact shape once threw every 15s and took
+  // the whole heartbeat with it while the display kept playing.
+  const angry = { telemetrySnapshot: () => { throw new Error('older bridge'); } };
+  assert.equal(deviceInfoWith(angry).app_version, '1.1.0-web', 'must degrade, not throw');
+});
+
+test('a host that reports a blank version is treated as no version, not as a blank one', () => {
+  for (const bad of [undefined, null, '', '   ', 42]) {
+    const di = deviceInfoWith({ telemetrySnapshot: () => ({ package_version: bad }) });
+    assert.equal(di.app_version, '1.1.0-web', `${JSON.stringify(bad)} must not land in the column`);
+  }
+});
+
+test('device_info is always the WHOLE blob — a partial one silently wipes the row', () => {
+  // ⚠️ The server's applyDeviceInfo() UPDATEs every column it covers unconditionally, so a
+  // partial device_info does not patch: it nulls android_version and the screen dimensions and
+  // resets ota_status/tier/the flag columns. device:register is guarded against an empty blob
+  // (Object.keys().length > 0); device:info is NOT, and that is the path this feature added.
+  const di = deviceInfoWith({ telemetrySnapshot: () => ({ package_version: '1.9.36' }) });
+  assert.deepEqual(Object.keys(di).sort(),
+    ['android_version', 'app_version', 'screen_height', 'screen_width']);
+  assert.match(player, /socket\.emit\('device:info', \{ device_id: config\.deviceId, device_info: buildDeviceInfo\(\) \}\)/,
+    'device:info must send buildDeviceInfo(), never a hand-built subset');
+});
+
+test('a version arriving after registration still reaches the server', () => {
+  // SendHostTelemetry runs on the autorun's own schedule and can land after the page has already
+  // registered, so register alone would pin '1.1.0-web' until the next reload. The correction is
+  // driven from the heartbeat, the one loop guaranteed to run whenever the socket is up.
+  const hb = player.slice(player.indexOf('function startHeartbeat'), player.indexOf('function stopHeartbeat'));
+  assert.match(hb, /maybeReportAppVersion\(\)/, 'the heartbeat must re-check the host version');
+  const fn = playerFn('maybeReportAppVersion');
+  assert.match(fn, /v === reportedAppVersion\) return/, 'and must stay quiet when nothing changed');
+});
+
+// ---------------------------------------------------------------------------------------------
+// The page's OWN version
+//
+// PLAYER_VERSION was the literal '1.1.0-web' and nobody bumped it for the entire 1.x line, so every
+// web, Tizen and BrightSign panel reported that as client_version — and, until the app_version fix
+// above, as app_version too. Both columns carried the same meaningless string.
+// ---------------------------------------------------------------------------------------------
+
+test('the page carries the ST_PLAYER_VERSION marker the server stamps on', () => {
+  assert.match(player, /const PLAYER_VERSION = '[^']*';/,
+    'the declaration must stay in a shape the serve-time stamp can match');
+  assert.match(player, /ST_PLAYER_VERSION/,
+    'the marker is what the stamp is anchored on — losing it silently freezes every reported version');
+});
+
+test('the serve-time stamp is anchored on the declaration, not on the old literal', () => {
+  const server = fs.readFileSync(path.join(ROOT, 'server', 'server.js'), 'utf8');
+  assert.match(server, /const PLAYER_VERSION = \)'\[\^'\]\*'/,
+    'the /player route must rewrite the declaration by pattern');
+  assert.match(server, /ST_PLAYER_VERSION marker not found/,
+    'a missing marker must be reported, not silently ignored');
+});
+
+test('client_version and app_version are no longer the same constant', () => {
+  // They describe different things on a BrightSign: the page we serve (always current) versus the
+  // on-device host package (what OTA replaces). Reporting one value for both hid every skew.
+  assert.match(player, /app_version: hostPackageVersion\(\) \|\| PLAYER_VERSION/);
+  assert.match(player, /data\.client_version = PLAYER_VERSION/);
+});

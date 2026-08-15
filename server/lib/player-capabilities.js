@@ -190,9 +190,25 @@ const BASELINE = {
     // NOT system.reboot / display.power / display.resolution / system.self_update: all four are
     // BrightScript calls through a bridge this unit is not known to have.
     //
-    // NOT remote.screenshot / remote.stream: a canvas capture on a hwz player cannot read the video
-    // plane, so it returns a frame with a hole where the content is. (audio.volume moved INTO the
-    // list above in 1.9.31 — the payload it was waiting on now lands.)
+    // NOT remote.screenshot / remote.stream — but the ORIGINAL reason is now wrong, so read this
+    // before restoring them. The old note said a canvas capture on a hwz player cannot read the
+    // video plane and returns a frame with a hole. Two things changed:
+    //
+    //   1. st-bridge.js gained captureScreen(), which uses the native @brightsign/screenshot module
+    //      and DOES composite the hardware plane. Confirmed on hardware (XT245 / BOS 10.0.16). It
+    //      needs only require(), not a host bridge — so it works on the exact units the note feared.
+    //   2. The canvas fallback is no longer silent: renderCaptureCanvas() paints "Video is playing
+    //      on the hardware plane and cannot be captured" rather than a black rectangle.
+    //
+    // They stay out for a DIFFERENT and narrower reason: captureScreen() needs a node-enabled
+    // widget. A widget built by the BSN Supervisor has no require(), so there the path really does
+    // end at a canvas that cannot see the video. This baseline cannot tell the two apart.
+    //
+    // Restoring them would also be close to a no-op: server/player/index.html declares remote.stream
+    // unconditionally and remote.screenshot behind an always-true canvas check, and platform=
+    // 'brightsign' is only ever set by the same register that carries the declaration — so a
+    // BrightSign row essentially always HAS one and never reaches this baseline. (audio.volume moved
+    // INTO the list above in 1.9.31 — the payload it was waiting on now lands.)
   ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
