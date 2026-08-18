@@ -1162,6 +1162,5 @@ export default {
   'add_display.web_player': 'Web Player',
   'add_display.raspberry_pi': 'Raspberry Pi',
   'add_display.windows': 'Windows',
-  'add_display.smart_tv_note': 'Smart TV (LG/Samsung): apri il browser integrato e vai su <code style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px">/player</code>',
   'add_display.pair_btn': 'Associa Schermo',
 };

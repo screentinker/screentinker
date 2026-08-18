@@ -38,6 +38,10 @@ const mk = (recurrence, startISO, recurrenceEnd = null) => ({
 const weekdaysOf = (events) => events.map(e => new Date(e.instance_start).getDay()).sort();
 
 test('a date-only week anchor retains its calendar day west of UTC', () => {
+  // ⚠️ Record WHETHER it was set, not just its value. `process.env.TZ = undefined` writes the
+  // STRING "undefined", which Node cannot parse and silently resolves to UTC - changing the zone
+  // for every test that runs after this one in this file, all of which are date arithmetic.
+  const hadTz = Object.prototype.hasOwnProperty.call(process.env, 'TZ');
   const originalTz = process.env.TZ;
   process.env.TZ = 'America/Los_Angeles';
   try {
@@ -50,7 +54,8 @@ test('a date-only week anchor retains its calendar day west of UTC', () => {
     assert.equal(selected.getDate(), 9);
     assert.equal(selected.getDay(), 0, 'Sunday remains Sunday');
   } finally {
-    process.env.TZ = originalTz;
+    if (hadTz) process.env.TZ = originalTz;
+    else delete process.env.TZ;
   }
 });
 
