@@ -73,3 +73,43 @@ test('a missing source throws rather than leaving an empty destination behind', 
   assert.strictEqual(fs.existsSync(dest), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('the copy carries the source permissions across', () => {
+  // ⚠️ REGRESSION GUARD. The first version of copyFileBytes dropped the chmod entirely, because
+  // chmod is exactly what made fs.copyFileSync fail on exFAT. The copy then landed at the default
+  // 0666 & ~umask: a 0600 database snapshot came out 0664, making the whole database group- and
+  // world-readable on every install. Removing a permission check to fix a permission error is not
+  // a fix.
+  const dir = tmp();
+  const src = path.join(dir, 'db.sqlite');
+  const dest = path.join(dir, 'snapshot.db');
+  fs.writeFileSync(src, 'SQLite format 3\0payload');
+  fs.chmodSync(src, 0o600);
+
+  copyFileBytes(src, dest);
+
+  const mode = (p) => fs.statSync(p).mode & 0o777;
+  assert.strictEqual(mode(dest), 0o600,
+    `snapshot should be 0600 like its source, was 0${mode(dest).toString(8)}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a filesystem that refuses chmod still gets its bytes', () => {
+  // The exFAT case, which is the whole reason this function exists rather than fs.copyFileSync.
+  // The bytes are written before the mode is attempted, so a refusal must not fail the copy.
+  const dir = tmp();
+  const src = path.join(dir, 'a.bin');
+  const dest = path.join(dir, 'b.bin');
+  const data = Buffer.from('bytes that must survive a chmod refusal');
+  fs.writeFileSync(src, data);
+
+  const realFchmod = fs.fchmodSync;
+  fs.fchmodSync = () => { const e = new Error('EPERM: operation not permitted, fchmod'); e.code = 'EPERM'; throw e; };
+  try {
+    assert.doesNotThrow(() => copyFileBytes(src, dest), 'a refused chmod must not fail the copy');
+    assert.deepStrictEqual(fs.readFileSync(dest), data);
+  } finally {
+    fs.fchmodSync = realFchmod;
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});

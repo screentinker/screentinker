@@ -40,6 +40,27 @@ function copyFileBytes(src, dest) {
       while (written < read) written += fs.writeSync(outFd, buf, written, read - written);
       pos += read;
     }
+    /*
+     * Carry the source's permissions across where the filesystem has any.
+     *
+     * ⚠️ NOT optional, and the reason this function exists does not excuse skipping it. Dropping
+     * the chmod entirely - which is what the first version did - creates the copy at the default
+     * 0666 & ~umask. A database snapshot that was 0600 came out 0664, so the whole database became
+     * group- and world-readable on every install. That is a worse bug than the one this function
+     * was written to fix.
+     *
+     * Doing it as a SEPARATE, failure-tolerant step is the difference from fs.copyFileSync: there
+     * the chmod is inseparable from the copy, so a filesystem that refuses modes - exFAT, which is
+     * what a BrightSign player's storage is - fails the whole operation with EPERM. Here the bytes
+     * are already written and safe; the mode is applied if it can be, and its refusal is not an
+     * error because on such a filesystem there were never permissions to preserve.
+     */
+    try {
+      fs.fchmodSync(outFd, fs.fstatSync(inFd).mode & 0o777);
+    } catch (e) {
+      /* no permission bits on this filesystem - nothing to carry across */
+    }
+
     // The caller is usually taking a backup it is about to rely on, so make sure the bytes are
     // actually on the device before it proceeds to modify the original.
     fs.fsyncSync(outFd);
