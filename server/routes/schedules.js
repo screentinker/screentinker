@@ -60,6 +60,36 @@ function getWorkspaceSchedulesQuery() {
   `;
 }
 
+/*
+ * A recurring instance must go out in the SAME shape a one-off does: a naive wall-clock string.
+ *
+ * ⚠️ THIS IS THE "MY SCHEDULE IS ON THE WRONG DAY" BUG.
+ *
+ * expandSchedule had two emit paths that disagreed. A one-off returns schedule.start_time
+ * untouched - a naive local string like 2026-08-19T20:00:00 - which the browser parses in ITS OWN
+ * zone, giving back the day the operator picked. A recurring instance returned cursor.toISOString(),
+ * an absolute instant derived by reading that same naive string in the SERVER's zone. The browser
+ * then converted it back into its own zone, and the two conversions do not cancel:
+ *
+ *   operator in Tokyo saves Wed 20:00   ->  stored "2026-08-19T20:00:00"
+ *   server in US Central reads 20:00 CDT ->  emits "2026-08-20T01:00:00.000Z"
+ *   browser renders that in JST          ->  THURSDAY 10:00
+ *
+ * Day and time both wrong, and only for recurring schedules - which is why it looked intermittent.
+ * The calendar was also the odd one out: the playback engine compares start_time as a STRING
+ * (services/scheduler.js), never as an instant, so expandSchedule was the only place in the
+ * codebase reinterpreting a wall-clock time as a point in time.
+ *
+ * schedules.timezone is already stored per row; rendering true instants from it would be the fuller
+ * answer. Matching the format the rest of the system already speaks fixes the bug in front of us
+ * and cannot change what the engine actually plays.
+ */
+function localDateTime(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+         `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 // Load a schedule + access context, sending 403/404 on failure.
 function loadScheduleAccess(req, res, requireWrite) {
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
@@ -430,8 +460,8 @@ function expandSchedule(schedule, rangeStart, rangeEnd) {
     if (fires && (cursor >= rangeStart || instanceEnd >= rangeStart)) {
       events.push({
         ...schedule,
-        instance_start: cursor.toISOString(),
-        instance_end: instanceEnd.toISOString(),
+        instance_start: localDateTime(cursor),
+        instance_end: localDateTime(instanceEnd),
       });
     }
     cursor = new Date(cursor.getTime() + dayMs);
@@ -464,3 +494,4 @@ module.exports = router;
 // Exported for testing, the same way playlists.js exports publishPlaylist. The calendar's
 // correctness is arithmetic and deserves to be checked without standing up a server.
 module.exports.expandSchedule = expandSchedule;
+module.exports.localDateTime = localDateTime;

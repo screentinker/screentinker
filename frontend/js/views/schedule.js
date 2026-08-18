@@ -210,6 +210,10 @@ export async function render(container) {
       `${currentWeekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
   }
 
+  // The date the modal is currently working on: a dragged day, the date of the schedule
+  // being edited, or null meaning "today". Set by every path that OPENS the modal.
+  let pendingCreateDate = null;
+
   // Stable colour per target, so the same screen is the same colour every week and
   // across reloads. Hashing the id beats cycling a palette by index, which reshuffles
   // whenever a device is added or removed.
@@ -672,10 +676,20 @@ export async function render(container) {
     if (endEl) endEl.value = hhmm(endMin);
     pendingCreateDate = dayDate;
   }
-  let pendingCreateDate = null;
 
   function editSchedule(ev) {
     editingId = ev.id;
+    // ⚠️ THE DATE OF THE SCHEDULE BEING EDITED.
+    //
+    // Save rebuilds start_time from this date plus the HH:MM in the form. Without it, dref fell
+    // through to `new Date()` and EVERY edit silently moved the schedule to today - change a
+    // colour on a block dated 5 Aug and it jumped to this week. Nothing about that is timezone
+    // dependent; it hit every operator.
+    //
+    // ev.start_time is the SCHEDULE's own anchor (raw from the row), not the occurrence that was
+    // clicked, so editing a recurring rule keeps its start date rather than re-anchoring it to
+    // whichever instance the operator happened to click.
+    pendingCreateDate = new Date(ev.start_time);
     document.getElementById('schedModalTitle').textContent = t('schedule.edit_schedule');
     document.getElementById('schedPlaylist').value = ev.playlist_id || '';
     document.getElementById('schedLayout').value = ev.layout_id || '';
@@ -704,6 +718,12 @@ export async function render(container) {
 
   document.getElementById('addScheduleBtn').onclick = () => {
     editingId = null;
+    // Reset the date on OPEN, not on close. The modal has two inline onclick="...display='none'"
+    // dismissers (the X and Cancel) that cannot touch this scope, so a date left over from a
+    // drag-create survived a cancel and stamped itself on the NEXT schedule created. Setting it
+    // on every open makes the stale value unreachable no matter how the modal was dismissed.
+    // The drag-create path calls this handler first and then assigns its own day, so it still wins.
+    pendingCreateDate = null;
     document.getElementById('schedModalTitle').textContent = t('schedule.add_schedule');
     document.getElementById('schedTitle').value = '';
     document.getElementById('schedPlaylist').value = '';
