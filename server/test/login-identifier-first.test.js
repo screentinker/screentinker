@@ -17,16 +17,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const LOGIN = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'login.js'), 'utf8');
+// The visibility decision itself now lives in a pure module - see login-form-state.test.js for its
+// truth table. It moved because computing it inline from two mutable flags let a keystroke undo
+// first-run setup. These assertions follow it there rather than pinning it to its old address.
+const STATE = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'lib', 'login-form-state.js'), 'utf8');
 
 test('password visibility depends on BOTH identification and SSO-only', () => {
-  assert.match(LOGIN, /const showPassword = identified && !ssoOnlyDomain;/,
+  assert.match(STATE, /identified && !ssoOnlyDomain/,
     'the two drivers must be combined in one place so they cannot disagree');
+  assert.match(LOGIN, /loginFormState\(\{ isSetup, identified, ssoOnlyDomain \}\)/,
+    'the view must take its state from that one place rather than recomputing it');
 });
 
 test('the primary button advances before it signs in', () => {
   assert.match(LOGIN, /if \(identified && !ssoOnlyDomain\) return doLogin\(\);\s*\n\s*identify\(\);/,
     'the button must identify first and only sign in once an address is known');
-  assert.match(LOGIN, /btn\.textContent = identified && !ssoOnlyDomain \? t\('auth\.sign_in'\) : t\('auth\.next'\)/);
+  assert.match(STATE, /'auth\.sign_in'[\s\S]{0,80}'auth\.next'/,
+    'the label must still advance through Next before offering Sign in');
 });
 
 test('editing the address returns to the identifier step', () => {

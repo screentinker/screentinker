@@ -1,4 +1,5 @@
 import { showToast } from '../components/toast.js';
+import { loginFormState } from '../lib/login-form-state.js';
 import { t } from '../i18n.js';
 import { esc } from '../utils.js';
 
@@ -328,6 +329,9 @@ function setupHandlers(config, isSetup) {
    * their domain must get a fresh answer rather than keep the previous domain's one.
    */
   document.getElementById('loginEmail')?.addEventListener('input', () => {
+    // Nothing to step back to during first-run setup - there is no identifier step. This used to
+    // fire on the first keystroke and hide the password field the operator was about to fill in.
+    if (isSetup) return;
     if (!identified) return;
     identified = false;
     applyFormState();
@@ -578,8 +582,10 @@ function setupHandlers(config, isSetup) {
   let ssoOnlyDomain = false;
 
   function applyFormState() {
-    const showPassword = identified && !ssoOnlyDomain;
-    const show = showPassword ? '' : 'none';
+    // One decision, in one place, from ../lib/login-form-state.js. It used to be computed inline
+    // from two mutable flags, which is how first-run setup ended up being undone by a keystroke.
+    const state = loginFormState({ isSetup, identified, ssoOnlyDomain });
+    const show = state.showPassword ? '' : 'none';
     /*
      * ⚠️ Hide the password FIELD, never its .form-group — the organization SSO slot lives inside
      * that same group, so hiding the container took the single sign-on button down with it.
@@ -594,8 +600,8 @@ function setupHandlers(config, isSetup) {
      * rather than two, so there is never a choice about which to press.
      */
     const btn = document.getElementById('loginBtn');
-    if (btn) btn.textContent = identified && !ssoOnlyDomain ? t('auth.sign_in') : t('auth.next');
-    if (btn) btn.style.display = ssoOnlyDomain ? 'none' : '';
+    if (btn) btn.textContent = t(state.buttonKey);
+    if (btn) btn.style.display = state.showButton ? '' : 'none';
 
     /*
      * The instance's own providers stay visible at ALL times, by explicit decision: they are the
