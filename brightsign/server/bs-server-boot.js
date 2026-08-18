@@ -466,7 +466,17 @@ try {
     // Losing the screen must never cost us the server.
     remember('error', ['status listener failed', String(e && e.message ? e.message : e)]);
   });
-  statusServer.listen(STATUS_PORT, () => remember('log', ['status listener on :' + STATUS_PORT]));
+  /*
+   * ⚠️ LOOPBACK ONLY. Its only consumer is node-server.html running on this same device.
+   *
+   * Bound to every interface - which is what listen(port) does - it answered from anywhere on the
+   * customer's LAN with the install progress, disk usage, the device's own address and a tail of
+   * the server's console. That last one is the problem: a log tail carries whatever the server
+   * last printed, which is not a thing to hand to an unauthenticated caller on a network we do
+   * not control.
+   */
+  statusServer.listen(STATUS_PORT, '127.0.0.1',
+    () => remember('log', ['status listener on 127.0.0.1:' + STATUS_PORT]));
   if (statusServer.unref) statusServer.unref();
 } catch (e) {
   remember('error', ['could not start the status listener', String(e && e.message ? e.message : e)]);

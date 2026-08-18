@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy to st-config.json on the player's storage root. Absent or 0 means this device does NOT run a server - which is the default, because exactly one box per site should host one.",
+  "server": 0
+}

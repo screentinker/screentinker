@@ -44,6 +44,9 @@ cp brightsign/server/bs-server-boot.js   "$STAGE/bs-server-boot.js"
 cp brightsign/server/bs-payload-install.js "$STAGE/bs-payload-install.js"
 cp brightsign/server/node-server.html    "$STAGE/node-server.html"
 cp brightsign/server/server.env.example  "$STAGE/server.env.example"
+# Shipped as .example ONLY. A file named st-config.json would be extracted over the operator's own
+# on every re-provision, silently switching a site's server on or off.
+cp brightsign/server/st-config.example.json "$STAGE/st-config.example.json"
 
 mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"

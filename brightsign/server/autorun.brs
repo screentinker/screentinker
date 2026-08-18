@@ -47,17 +47,26 @@ Sub Main()
     CreateDirectory(root$ + "/data")
 
     ' ------------------------------------------------------------------------------------------
-    ' 1. The server.
+    ' 1. The server - only if this player has been told to be one.
     ' ------------------------------------------------------------------------------------------
+    ' ⚠️ OFF UNLESS ASKED. A fleet gets one package; exactly one box per site should host the
+    ' server. Defaulting to on would mean every player that ever received this package started
+    ' listening on 8181, and the mistake would be invisible until two of them fought over the same
+    ' displays. A device with no config file, an unreadable one, or one that says 0 stays a player.
+    serverEnabled = ServerEnabled(root$)
+    print "[st-server] local server enabled: "; serverEnabled
     ' Only three keys exist here: message_port, node_arguments, arguments. An invented `env:` key is
     ' what killed the first attempt at this file, with nothing but "Load or runtime error in
     ' autorun. Forcing recovery." to go on - and it sent me to the widget for the wrong reason.
     ' Anything the server needs to be told goes in DATA_DIR/server.env, which it reads itself.
-    node = CreateObject("roNodeJs", "bs-server-boot.js", { message_port: msgPort })
-    if node = invalid then
-        print "[st-server] FAILED: could not launch the node process"
-    else
-        print "[st-server] node process launched"
+    node = invalid
+    if serverEnabled then
+        node = CreateObject("roNodeJs", "bs-server-boot.js", { message_port: msgPort })
+        if node = invalid then
+            print "[st-server] FAILED: could not launch the node process"
+        else
+            print "[st-server] node process launched"
+        end if
     end if
 
     ' ------------------------------------------------------------------------------------------
@@ -72,10 +81,18 @@ Sub Main()
     end if
     rect = CreateObject("roRectangle", 0, 0, w%, h%)
 
+    ' Spelled out rather than casting the boolean: this file cannot be run anywhere but on the
+    ' player, so it is not the place for a clever conversion nobody can check.
+    serverParam$ = "0"
+    if serverEnabled then serverParam$ = "1"
+
     ' NOTE what is NOT here: nodejs_enabled. The page no longer requires anything - it polls the
     ' server process over HTTP - so it can be an ordinary browser page. One less hybrid context.
     config = {
-        url: "file:///" + LCase(StripColon(root$)) + ":/node-server.html"
+        ' The page cannot discover this for itself: when the server is off there is no status
+        ' listener to ask, and "nothing is answering" would render as a fault rather than as a
+        ' deliberate setting.
+        url: "file:///" + LCase(StripColon(root$)) + ":/node-server.html?server=" + serverParam$
         javascript_enabled: true
         brightsign_js_objects_enabled: true
         storage_path: root$ + "/widget-cache"
@@ -113,6 +130,42 @@ Sub Main()
         end if
     end while
 End Sub
+
+
+'*******************************************************************************************
+Function ServerEnabled(root$ As String) As Boolean
+'*******************************************************************************************
+    ' st-config.json on the storage root, e.g. {"server": 1}
+    '
+    ' Deliberately at the root rather than inside data/: it is what an operator drops in over the
+    ' DWS, and autozip never writes it, so a re-provision cannot silently switch a site's server
+    ' off - or on.
+    '
+    ' Absent, unparseable, or anything other than an affirmative value means DISABLED. There is no
+    ' reading of a broken config file that should end with a device deciding to host a server.
+    txt$ = ReadAsciiFile(root$ + "/st-config.json")
+    if txt$ = "" then return false
+
+    cfg = ParseJSON(txt$)
+    if cfg = invalid then
+        print "[st-server] st-config.json is not valid JSON - server stays disabled"
+        return false
+    end if
+    if type(cfg) <> "roAssociativeArray" then return false
+
+    v = cfg.server
+    if v = invalid then return false
+
+    ' Accept the shapes a human actually writes: 1, true, "1", "true", "yes", "on".
+    if type(v) = "Boolean" then return v
+    if type(v) = "Integer" then return v <> 0
+    if type(v) = "roInt" then return v <> 0
+    if type(v) = "String" or type(v) = "roString" then
+        low$ = LCase(v)
+        return low$ = "1" or low$ = "true" or low$ = "yes" or low$ = "on"
+    end if
+    return false
+End Function
 
 '*******************************************************************************************
 Function StripColon(v As String) As String

@@ -137,7 +137,11 @@
    * flipping to the player on an unanswered probe shows a blank player to someone who is still
    * waiting to be told where to sign up.
    */
-  function screenState(s) {
+  function screenState(s, serverEnabled) {
+    // Off on purpose is not the same as broken. Without this the page would poll a listener that
+    // was never started and report "no answer from the server process" - which reads as a fault
+    // and would send someone looking for one.
+    if (serverEnabled === false) return 'disabled';
     if (!s || !s.serving || s.fatal) return 'diagnostics';
     if (s.needsSetup === true) return 'setup';
     if (s.needsSetup === false) return 'player';
@@ -152,8 +156,14 @@
    */
   var playerShown = false;
 
+  /*
+   * st-config.json decides whether this box runs a server; autorun.brs passes the answer through
+   * because with the server off there is no status listener to ask.
+   */
+  var serverEnabled = !/[?&]server=0(&|$)/.test(String(location.search));
+
   function applyLayer(s) {
-    var state = screenState(s);
+    var state = screenState(s, serverEnabled);
     var frame = el('player');
 
     if (state === 'player') {
@@ -175,6 +185,18 @@
       playerShown = false;
     }
     el('setupNote').style.display = state === 'setup' ? 'block' : 'none';
+
+    if (state === 'disabled') {
+      el('sub').textContent = 'local server disabled';
+      el('sub').className = 'sub';
+      el('url').textContent = 'set {"server": 1} in st-config.json to enable';
+      el('url').className = 'url pending';
+      el('log').textContent =
+        'This player is not running a ScreenTinker server.\n\n' +
+        'Exactly one device per site should host one. To make it this device, put\n' +
+        '  {"server": 1}\n' +
+        'in st-config.json on the storage root and reboot.';
+    }
     return false;
   }
 
@@ -223,7 +245,12 @@
   }
 
   paint();
-  poll();
-  setInterval(poll, 2000);
+  if (serverEnabled) {
+    poll();
+    setInterval(poll, 2000);
+  } else {
+    // No listener was ever started, so polling would only manufacture errors.
+    applyLayer(null);
+  }
 })();
 </script>

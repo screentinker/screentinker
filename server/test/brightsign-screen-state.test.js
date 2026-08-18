@@ -47,43 +47,51 @@ const frame = (over) => Object.assign(
   { serving: true, fatal: null, needsSetup: false, port: '8181' }, over);
 
 test('a healthy server with an account shows the player', () => {
-  assert.equal(screenState(frame()), 'player');
+  assert.equal(screenState(frame(), true), 'player');
+});
+
+test('a player that was never asked to be a server says so, rather than reporting a fault', () => {
+  // st-config.json is absent or {"server": 0} - the default. There is no status listener to poll,
+  // so without this the page would show "no answer from the server process" and send someone
+  // looking for a broken server that was never meant to exist.
+  assert.equal(screenState(null, false), 'disabled');
+  assert.equal(screenState(frame(), false), 'disabled', 'the setting wins over any stale status');
 });
 
 test('a healthy server with NO account shows setup, not a blank player', () => {
   // The whole point of requirement 1: stay on the config screen until someone has signed up.
-  assert.equal(screenState(frame({ needsSetup: true })), 'setup');
+  assert.equal(screenState(frame({ needsSetup: true }), true), 'setup');
 });
 
 test('an unanswered setup probe is not treated as "no setup needed"', () => {
   // null means we have not been told yet. Guessing "false" here would flip a fresh box to a player
   // that has nothing to show, and take the sign-up address off the screen while doing it.
-  assert.equal(screenState(frame({ needsSetup: null })), 'diagnostics');
-  assert.equal(screenState(frame({ needsSetup: undefined })), 'diagnostics');
+  assert.equal(screenState(frame({ needsSetup: null }), true), 'diagnostics');
+  assert.equal(screenState(frame({ needsSetup: undefined }), true), 'diagnostics');
 });
 
 test('nothing listening means diagnostics, whatever else is true', () => {
-  assert.equal(screenState(frame({ serving: false })), 'diagnostics');
-  assert.equal(screenState(frame({ serving: false, needsSetup: false })), 'diagnostics');
+  assert.equal(screenState(frame({ serving: false }), true), 'diagnostics');
+  assert.equal(screenState(frame({ serving: false, needsSetup: false }), true), 'diagnostics');
 });
 
 test('THE RECOVERY CASE: a server that fails takes the player off the screen', () => {
   // Requirement 2. A box that has been playing for weeks and then throws must show the operator
   // something other than black.
   const playing = frame();
-  assert.equal(screenState(playing), 'player');
+  assert.equal(screenState(playing, true), 'player');
 
   const broken = frame({ fatal: 'server failed to start TypeError: ...' });
-  assert.equal(screenState(broken), 'diagnostics', 'a fatal must reveal the diagnostics again');
+  assert.equal(screenState(broken, true), 'diagnostics', 'a fatal must reveal the diagnostics again');
 
   const gone = frame({ serving: false });
-  assert.equal(screenState(gone), 'diagnostics', 'so must the port going away');
+  assert.equal(screenState(gone, true), 'diagnostics', 'so must the port going away');
 });
 
 test('no status at all is diagnostics rather than a crash', () => {
   // The first paint happens before the first poll answers.
-  assert.equal(screenState(null), 'diagnostics');
-  assert.equal(screenState(undefined), 'diagnostics');
+  assert.equal(screenState(null, true), 'diagnostics');
+  assert.equal(screenState(undefined, true), 'diagnostics');
 });
 
 test('the page reloads the player when it comes back, rather than leaving an error page', () => {
