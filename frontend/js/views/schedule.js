@@ -210,6 +210,13 @@ export async function render(container) {
       `${currentWeekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
   }
 
+  // The selected calendar week is a local calendar concept, not an instant. Sending midnight
+  // through toISOString() turns Sunday in a timezone east of UTC into Saturday for a US server,
+  // which makes that server return the prior week. Keep the local Y-M-D intact instead.
+  function calendarDateParam(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
   // Stable colour per target, so the same screen is the same colour every week and
   // across reloads. Hashing the id beats cycling a palette by index, which reshuffles
   // whenever a device is added or removed.
@@ -234,7 +241,7 @@ export async function render(container) {
 
     // all=1 rather than a workspace id — the server scopes to the caller's own workspace.
     const scope = allScreens ? 'all=1' : `device_id=${encodeURIComponent(deviceId)}`;
-    const events = await API(`/schedules/week?date=${currentWeekStart.toISOString()}&${scope}`);
+    const events = await API(`/schedules/week?date=${calendarDateParam(currentWeekStart)}&${scope}`);
 
     const cal = document.getElementById('calendar');
     // Narrow screens render ONE day. Seven columns in a phone-width window leaves ~50px each —

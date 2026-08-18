@@ -60,6 +60,22 @@ function getWorkspaceSchedulesQuery() {
   `;
 }
 
+// The week calendar sends a local YYYY-MM-DD, which represents the date shown in the browser —
+// not a UTC instant. Construct from numeric local parts instead of new Date('YYYY-MM-DD') because
+// that ISO form is specified as UTC and becomes the preceding day on servers west of Greenwich.
+// Full timestamps remain accepted for older browser clients.
+function parseCalendarDate(value) {
+  if (!value) return new Date();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return new Date(value);
+
+  const [, year, month, day] = match.map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day
+    ? parsed
+    : new Date(NaN);
+}
+
 // Load a schedule + access context, sending 403/404 on failure.
 function loadScheduleAccess(req, res, requireWrite) {
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
@@ -173,7 +189,8 @@ router.get('/week', (req, res) => {
   const ctx = workspaceAccess(req, scopeWorkspaceId);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
 
-  const weekStart = date ? new Date(date) : new Date();
+  const weekStart = parseCalendarDate(date);
+  if (Number.isNaN(weekStart.getTime())) return res.status(400).json({ error: 'Invalid calendar date' });
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
   const weekEnd = new Date(weekStart);
@@ -464,3 +481,4 @@ module.exports = router;
 // Exported for testing, the same way playlists.js exports publishPlaylist. The calendar's
 // correctness is arithmetic and deserves to be checked without standing up a server.
 module.exports.expandSchedule = expandSchedule;
+module.exports.parseCalendarDate = parseCalendarDate;

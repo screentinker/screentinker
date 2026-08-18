@@ -24,7 +24,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-cal-'));
 process.env.DATA_DIR = tmp;
 process.env.JWT_SECRET = 'test-secret-calendar';
 
-const { expandSchedule } = require('../routes/schedules');
+const { expandSchedule, parseCalendarDate } = require('../routes/schedules');
 
 // A Monday-to-Sunday window well clear of the schedules' start dates.
 const WEEK_START = new Date('2026-08-03T00:00:00');   // Monday
@@ -36,6 +36,23 @@ const mk = (recurrence, startISO, recurrenceEnd = null) => ({
   end_time: new Date(new Date(startISO).getTime() + 60 * 60 * 1000).toISOString(),
 });
 const weekdaysOf = (events) => events.map(e => new Date(e.instance_start).getDay()).sort();
+
+test('a date-only week anchor retains its calendar day west of UTC', () => {
+  const originalTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+  try {
+    // new Date('2026-08-09') is UTC midnight, so it is still Saturday on a US server.
+    // The calendar date parser must retain the Sunday the browser selected.
+    assert.equal(new Date('2026-08-09').getDay(), 6, 'the legacy parser sees Saturday');
+    const selected = parseCalendarDate('2026-08-09');
+    assert.equal(selected.getFullYear(), 2026);
+    assert.equal(selected.getMonth(), 7);
+    assert.equal(selected.getDate(), 9);
+    assert.equal(selected.getDay(), 0, 'Sunday remains Sunday');
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
 
 test('THE BUG: a Mon-Fri rule draws five events, not one', () => {
   const ev = expandSchedule(mk('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', '2026-07-27T09:00:00'), WEEK_START, WEEK_END);
