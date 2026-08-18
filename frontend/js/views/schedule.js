@@ -740,6 +740,12 @@ export async function render(container) {
       return;
     }
 
+    const targetId = isGroup ? groupSelect.value : deviceSelect.value;
+    if (!targetId) {
+      showToast(t('schedule.toast.target_required'), 'error');
+      return;
+    }
+
     const playlistId = document.getElementById('schedPlaylist').value;
     const layoutId = document.getElementById('schedLayout').value;
 
@@ -762,9 +768,9 @@ export async function render(container) {
     };
 
     if (isGroup) {
-      data.group_id = groupSelect.value;
+      data.group_id = targetId;
     } else {
-      data.device_id = deviceSelect.value;
+      data.device_id = targetId;
     }
 
     try {
