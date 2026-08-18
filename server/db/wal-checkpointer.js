@@ -76,7 +76,7 @@ function scheduleRespawn() {
 
 // Degraded-but-safe: re-arm a conservative inline autocheckpoint on the MAIN connection so
 // the WAL can never grow unbounded, and reclaim the backlog the dead worker left behind.
-function engageFallback() {
+function engageFallback(reason) {
   if (fallbackEngaged) return;
   fallbackEngaged = true;
   try { mainDb.pragma(`wal_autocheckpoint = ${config.walCheckpointFallbackPages}`); } catch (_) {}
@@ -88,7 +88,7 @@ function engageFallback() {
   // high-water mark, where leaving it is the worse of the two risks.
   const over = walBytes() > config.walCheckpointHighWaterMB * 1024 * 1024;
   try { mainDb.pragma(`wal_checkpoint(${over ? 'TRUNCATE' : 'PASSIVE'})`); } catch (_) {}
-  console.error(`[wal-checkpoint] worker unrecoverable — re-enabled inline autocheckpoint as fallback (backlog reclaim: ${over ? 'TRUNCATE' : 'PASSIVE'})`);
+  console.error(`[wal-checkpoint] ${reason || 'worker unrecoverable'} — re-enabled inline autocheckpoint as fallback (backlog reclaim: ${over ? 'TRUNCATE' : 'PASSIVE'})`);
 }
 
 // #240: the fallback is STICKY for the life of the process — once engaged, checkpoints are
@@ -120,7 +120,28 @@ function startWalCheckpointer(db, dbPath) {
   // wal_autocheckpoint, so this still works at 0). Also reclaims any WAL a prior crash left.
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) { /* best-effort */ }
 
-  worker = spawnWorker();
+  /*
+   * The worker may not be constructible AT ALL on some hosts.
+   *
+   * The respawn path below already catches a failed spawn, but this first one did not - and a
+   * throw here escapes startWalCheckpointer and takes the whole server down at boot:
+   *
+   *     Failed to construct 'Worker': The V8 platform used by this instance of Node does not
+   *     support creating Workers
+   *
+   * That is what an roHtmlWidget does: it is a Node context inside a renderer, and the renderer's
+   * V8 platform has no worker threads. The module already knows how to run without one -
+   * engageFallback() re-arms a conservative inline autocheckpoint - so the correct behaviour is
+   * to degrade into it rather than refuse to start. A checkpointer that cannot get a thread is a
+   * slower server; a checkpointer that throws is no server.
+   */
+  try {
+    worker = spawnWorker();
+  } catch (e) {
+    engageFallback(`worker threads unavailable on this platform (${e && e.message})`);
+    return null;
+  }
+
   // #240: this line is where an operator learns the escalation policy, so it must state ALL of
   // it. It advertised only "3 growing runs" after the size floor and the cooldown were added,
   // which is the half that no longer holds on its own — and reading it during an incident would

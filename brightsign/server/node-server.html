@@ -1,0 +1,143 @@
+<!doctype html>
+<!--
+  ScreenTinker server diagnostics, displayed on the player.
+
+  THE SERVER IS NOT IN THIS PAGE. It runs as a separate roNodeJs process; this is only the screen.
+
+  It used to host the server, and that was a mistake worth recording. A Node context inside an
+  Electron renderer is not Node: shebangs are not stripped, require(ESM) is unsupported,
+  setInterval is the DOM's and returns a number rather than a Timeout, and worker_threads cannot
+  create a thread at all. Four separate boot failures, each invisible to a local test because a
+  local test runs on real Node. BrightSign's own guidance is explicit - roNodeJs for "a long
+  running process like ... running a web server", roHtmlWidget for "browser-based apps".
+
+  The other half of that mistake was lifecycle: a server inside the page dies with the page, and
+  takes an open SQLite WAL with it. roNodeJs runs in the background uninterrupted.
+
+  So this page does one job - show what the server process reports, including while it is still
+  downloading itself - and it does that over HTTP because the two are no longer in one process.
+-->
+<meta charset="utf-8">
+<title>ScreenTinker server</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0f1a; color: #e6edf7;
+               font: 22px/1.5 ui-monospace, "DejaVu Sans Mono", monospace; }
+  .wrap { padding: 40px 56px; }
+  h1 { font-size: 34px; margin: 0 0 4px; letter-spacing: .5px; }
+  .sub { color: #7d8da5; margin-bottom: 28px; }
+  .url { font-size: 44px; color: #4ade80; margin: 18px 0 26px; word-break: break-all; }
+  table { border-collapse: collapse; margin-bottom: 26px; }
+  td { padding: 3px 26px 3px 0; }
+  td.k { color: #7d8da5; }
+  .bad { color: #f87171; }
+  /* Not green: green reads as "ready", and it is not ready. */
+  .url.pending { color: #7d8da5; }
+  #log { background: #060911; border: 1px solid #1e2a3d; border-radius: 6px; padding: 14px 18px;
+         font-size: 17px; line-height: 1.45; height: 34vh; overflow: hidden; color: #9fb3cd;
+         white-space: pre-wrap; }
+</style>
+
+<div class="wrap">
+  <h1>ScreenTinker server</h1>
+  <div class="sub" id="sub">starting&hellip;</div>
+  <div class="url" id="url">&mdash;</div>
+  <table>
+    <tr><td class="k">uptime</td><td id="uptime">&mdash;</td>
+        <td class="k">memory</td><td id="mem">&mdash;</td></tr>
+    <tr><td class="k">disk</td><td id="disk">&mdash;</td>
+        <td class="k">database</td><td id="db">&mdash;</td></tr>
+    <tr><td class="k">node</td><td id="node">&mdash;</td>
+        <td class="k">load</td><td id="load">&mdash;</td></tr>
+  </table>
+  <div id="log">waiting for the server&hellip;</div>
+</div>
+
+<script>
+// Plain browser JavaScript. This page no longer needs nodejs_enabled: it does not require()
+// anything, it just polls the server process. One less hybrid context to reason about.
+(function () {
+  var el = function (id) { return document.getElementById(id); };
+
+  function fail(what, e) {
+    el('sub').innerHTML = '<span class="bad">' + what + '</span>';
+    el('log').textContent = String(e && e.stack ? e.stack : e);
+  }
+
+  /*
+   * The server runs in a DIFFERENT PROCESS now (roNodeJs), so this page cannot require() it.
+   *
+   * It used to: both halves lived inside one roHtmlWidget, and the page pulled status straight out
+   * of the module. Moving the server to roNodeJs is what makes it survive this page reloading, and
+   * gives it a real Node runtime instead of a renderer - at the cost that the two now have to talk.
+   * They talk over HTTP on a small port that the wrapper binds immediately, before the payload is
+   * even downloaded, because "downloading" and "failed to start" are exactly the states this screen
+   * exists to show.
+   */
+  var STATUS_URL = 'http://127.0.0.1:8182/';
+  var last = null;
+  var lastError = null;
+
+  function poll() {
+    // XHR rather than fetch: this page is loaded from file://, and XHR's failure modes here are
+    // easier to report than a rejected promise with an opaque TypeError.
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', STATUS_URL + '?t=' + Date.now(), true);
+    xhr.timeout = 4000;
+    xhr.onload = function () {
+      try { last = JSON.parse(xhr.responseText); lastError = null; }
+      catch (e) { lastError = 'bad status payload'; }
+      paint();
+    };
+    xhr.onerror = function () { lastError = 'no answer from the server process'; paint(); };
+    xhr.ontimeout = function () { lastError = 'status request timed out'; paint(); };
+    try { xhr.send(); } catch (e) { lastError = String(e && e.message ? e.message : e); paint(); }
+  }
+
+  function paint() {
+    var s = last;
+    if (!s) {
+      // Before the first successful poll there is genuinely nothing to report. Say that, rather
+      // than paint zeros that look like a running server with no traffic.
+      el('sub').textContent = lastError ? ('waiting for the server process \u2014 ' + lastError)
+                                        : 'starting\u2026';
+      el('sub').className = 'sub';
+      el('url').textContent = 'starting\u2026';
+      el('url').className = 'url pending';
+      return;
+    }
+    // While the payload is coming down there is no server yet and nothing to be alarmed about, so
+    // say what is happening rather than showing a bare 'starting...' for the length of a 71MB fetch.
+    var inst = s.install || {};
+    var busy = inst.phase && inst.phase !== 'installed' && inst.phase !== 'idle' && inst.phase !== 'failed';
+    el('sub').className = 'sub' + (s.fatal ? ' bad' : '');
+    el('sub').textContent = s.fatal ? 'FAILED'
+      : busy ? (inst.phase + (inst.pct !== null && inst.pct !== undefined ? ' ' + inst.pct + '%' : '')
+                + (inst.detail ? ' \u2014 ' + inst.detail : ''))
+      : 'running';
+    // Only show the address once something answers on it - see `serving` in bs-server-boot.js.
+    // Until then say what is actually happening, so nobody types in a URL that cannot work.
+    if (s.serving && s.ip) {
+      el('url').textContent = 'http://' + s.ip + ':' + s.port;
+      el('url').className = 'url';
+    } else {
+      el('url').textContent = !s.ip ? 'no network'
+        : busy ? 'installing\u2026'
+        : s.fatal ? 'not running' : 'starting\u2026';
+      el('url').className = 'url pending';
+    }
+    el('uptime').textContent = s.uptimeSec + 's';
+    el('mem').textContent = 'rss ' + s.rssMb + 'MB / free ' + s.freeMemMb + 'MB';
+    el('disk').textContent = s.disk
+      ? (s.disk.freeMb + 'MB free of ' + s.disk.totalMb + 'MB (' + s.disk.usedPct + '% used)')
+      : 'n/a';
+    el('db').textContent = (s.dbMb === null || s.dbMb === undefined) ? 'n/a' : (s.dbMb + 'MB');
+    el('node').textContent = s.node;
+    el('load').textContent = s.loadAvg && s.loadAvg.length ? s.loadAvg[0] : 'n/a';
+    el('log').textContent = (s.log || []).map(function (l) { return l.m; }).join('\n');
+  }
+
+  paint();
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>

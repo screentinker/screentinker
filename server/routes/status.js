@@ -3,6 +3,7 @@ const router = express.Router();
 const { db } = require('../db/database');
 const os = require('os');
 const path = require('path');
+const { copyFileBytes } = require('../lib/fsutil'); // exFAT-safe; see lib/fsutil.js
 const fs = require('fs');
 const config = require('../config');
 const { sixDigitCode } = require('../lib/numeric-code');
@@ -362,7 +363,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
           const destName = `${newId}${ext}`;
           const destPath = path.join(config.contentDir, destName);
           try {
-            fs.copyFileSync(f.path, destPath);
+            copyFileBytes(f.path, destPath);
             // Match original filepath vs thumbnail
             if (c.original_filepath && f.name === c.original_filepath) {
               newFilepath = destName;

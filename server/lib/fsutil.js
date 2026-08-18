@@ -1,0 +1,53 @@
+'use strict';
+
+const fs = require('fs');
+
+/*
+ * Copy a file without touching its mode.
+ *
+ * ⚠️ USE THIS INSTEAD OF fs.copyFileSync FOR ANYTHING UNDER THE DATA DIRECTORY.
+ *
+ * copyFileSync does not merely copy bytes: it opens the destination and then fchmods it to match
+ * the source. On exFAT there are no permission bits, so that chmod is refused and the whole copy
+ * fails with
+ *
+ *     EPERM: operation not permitted, copyfile '.../remote_display.db' -> '.../...pre-migration.db'
+ *
+ * That is not hypothetical. A BrightSign player's storage is exFAT, and this took down the server
+ * running on one: the pre-migration snapshot in db/database.js failed, the failure path called
+ * process.exit(1), and because that server runs inside an roHtmlWidget the exit killed the page
+ * too — a black screen, no listener, and no diagnostic anywhere. The check was right; the copy was
+ * the problem.
+ *
+ * Chunked rather than readFileSync/writeFileSync because the thing most often copied here is the
+ * database, which is unbounded in principle and 33MB in practice on a developer's machine.
+ */
+const CHUNK = 1024 * 1024;
+
+function copyFileBytes(src, dest) {
+  const inFd = fs.openSync(src, 'r');
+  let outFd;
+  try {
+    // 'w' truncates or creates. No mode is requested, so nothing asks exFAT for permission bits.
+    outFd = fs.openSync(dest, 'w');
+    const buf = Buffer.allocUnsafe(CHUNK);
+    let pos = 0;
+    for (;;) {
+      const read = fs.readSync(inFd, buf, 0, CHUNK, pos);
+      if (read <= 0) break;
+      let written = 0;
+      // A single writeSync is not guaranteed to consume the whole buffer.
+      while (written < read) written += fs.writeSync(outFd, buf, written, read - written);
+      pos += read;
+    }
+    // The caller is usually taking a backup it is about to rely on, so make sure the bytes are
+    // actually on the device before it proceeds to modify the original.
+    fs.fsyncSync(outFd);
+    return pos;
+  } finally {
+    fs.closeSync(inFd);
+    if (outFd !== undefined) fs.closeSync(outFd);
+  }
+}
+
+module.exports = { copyFileBytes };
