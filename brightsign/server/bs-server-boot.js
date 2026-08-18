@@ -30,6 +30,7 @@
 
 const os = require('os');
 const net = require('net');
+const http = require('http');
 
 /*
  * ⚠️ GIVE THE PAGE NODE'S TIMERS.
@@ -268,6 +269,37 @@ let lastLoggedInstall = null;
  * So prove it rather than infer it - a real TCP connect to the port, on the same interval as the
  * status frame. Cheap, and it cannot be fooled by the server having got halfway up.
  */
+/*
+ * Has anyone created the first account yet?
+ *
+ * The screen has three states, and this is the one the server has to be asked about: a server that
+ * is up but has no users is not ready to show a player, it is waiting for someone to open the
+ * dashboard and create an admin. /api/auth/config answers it and is public by design.
+ *
+ * Asked HERE rather than from the page because the page is loaded from file:// - origin "null" -
+ * and the server sets no CORS headers on its own API. This process is already talking to it.
+ *
+ * null means "not known yet", which is deliberately distinct from false: the page must not flip to
+ * the player on a probe that has not answered.
+ */
+let needsSetup = null;
+function probeSetup() {
+  if (!serving) { needsSetup = null; return; }
+  const req = http.request(
+    { host: '127.0.0.1', port: Number(currentPort()), path: '/api/auth/config', timeout: 3000 },
+    (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try { needsSetup = !!JSON.parse(body).needsSetup; }
+        catch (e) { /* a malformed answer is not an answer */ }
+      });
+    });
+  req.on('error', () => { /* server not answering yet; leave the previous value */ });
+  req.on('timeout', () => req.destroy());
+  req.end();
+}
+
 let serving = false;
 function probeListening() {
   const port = Number(currentPort());
@@ -296,6 +328,7 @@ function statusFrame() {
     disk: diskFor(DATA_DIR),
     install: installState,
     serving,
+    needsSetup,
     dbMb: dbBytes(path.join(DATA_DIR, 'db')),
     log: logRing.slice(-14),
   };
@@ -309,7 +342,7 @@ post({ type: 'st-server-boot', node: process.versions.node, arch: process.arch, 
 // A frame straight away so the screen is never blank while the server warms up, then on a timer.
 // 2s is a compromise: fast enough to watch a boot, slow enough that a 3-core player is not being
 // asked to serialise state constantly while it is also serving.
-const timer = setInterval(() => { probeListening(); post(statusFrame()); }, 2000);
+const timer = setInterval(() => { probeListening(); probeSetup(); post(statusFrame()); }, 2000);
 if (typeof timer.unref === 'function') timer.unref();
 post(statusFrame());
 
@@ -417,7 +450,6 @@ function status() {
 
 const STATUS_PORT = Number(process.env.ST_STATUS_PORT || 8182);
 try {
-  const http = require('http');
   const statusServer = http.createServer((req, res) => {
     // The page is loaded from file://, whose origin is "null" - it needs CORS to read this at all.
     res.writeHead(200, {

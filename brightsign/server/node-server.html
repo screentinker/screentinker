@@ -32,10 +32,16 @@
   .bad { color: #f87171; }
   /* Not green: green reads as "ready", and it is not ready. */
   .url.pending { color: #7d8da5; }
+  /* The player is a full-screen layer ABOVE the diagnostics, shown only once the server is
+     genuinely ready. Diagnostics stay mounted underneath so they can be revealed instantly. */
+  #player { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: none;
+            background: #000; z-index: 10; }
   #log { background: #060911; border: 1px solid #1e2a3d; border-radius: 6px; padding: 14px 18px;
          font-size: 17px; line-height: 1.45; height: 34vh; overflow: hidden; color: #9fb3cd;
          white-space: pre-wrap; }
 </style>
+
+<iframe id="player" title="ScreenTinker player" allow="autoplay; fullscreen"></iframe>
 
 <div class="wrap">
   <h1>ScreenTinker server</h1>
@@ -49,6 +55,9 @@
     <tr><td class="k">node</td><td id="node">&mdash;</td>
         <td class="k">load</td><td id="load">&mdash;</td></tr>
   </table>
+  <div id="setupNote" style="display:none;font-size:26px;color:#fbbf24;margin:-10px 0 22px">
+    Open the address above and create the first account to finish setup.
+  </div>
   <div id="log">waiting for the server&hellip;</div>
 </div>
 
@@ -93,8 +102,85 @@
     try { xhr.send(); } catch (e) { lastError = String(e && e.message ? e.message : e); paint(); }
   }
 
+  /*
+   * WHICH LAYER IS ON SCREEN.
+   *
+   * Three states, and the transitions between them are the whole point:
+   *
+   *   installing / down / failed   diagnostics. The operator can see why.
+   *   up, but no account yet       diagnostics, plus the address to go and create one. A player
+   *                                with no account to belong to has nothing to show, and hiding
+   *                                the address would leave the box unsetuppable - it has no
+   *                                keyboard.
+   *   up, account exists           the player, full screen.
+   *
+   * ⚠️ THE PLAYER IS AN IFRAME, NOT A NAVIGATION. Setting location.href would replace this
+   * document, and with it the poller that is the only thing able to notice the server failing
+   * later. As a layer, the diagnostics are always one style change away from being back on screen -
+   * which is exactly what should happen if the server dies at 3am.
+   *
+   * needsSetup === null means the probe has not answered yet, and is deliberately NOT treated as
+   * false: flipping to the player on an unanswered probe would show a blank player to an operator
+   * who is still waiting to be told where to sign up.
+   */
+  /*
+   * WHICH LAYER BELONGS ON SCREEN. Pure, so the transition table can be tested - see
+   * server/test/brightsign-screen-state.test.js.
+   *
+   *   'diagnostics'  installing, down, or failed. The operator can see why.
+   *   'setup'        up, but nobody has created an account. Diagnostics PLUS the address to go
+   *                  and create one: a player with no account has nothing to show, and hiding the
+   *                  address would leave the box unsetuppable - it has no keyboard.
+   *   'player'       up, and an account exists.
+   *
+   * needsSetup === null means the probe has not answered yet, and is deliberately NOT false:
+   * flipping to the player on an unanswered probe shows a blank player to someone who is still
+   * waiting to be told where to sign up.
+   */
+  function screenState(s) {
+    if (!s || !s.serving || s.fatal) return 'diagnostics';
+    if (s.needsSetup === true) return 'setup';
+    if (s.needsSetup === false) return 'player';
+    return 'diagnostics';
+  }
+
+  /*
+   * ⚠️ THE PLAYER IS AN IFRAME, NOT A NAVIGATION. Setting location.href would replace this
+   * document and with it the poller - the only thing able to notice the server failing later. As a
+   * layer, the diagnostics are always one style change away from being back on screen, which is
+   * exactly what should happen if the server dies at 3am.
+   */
+  var playerShown = false;
+
+  function applyLayer(s) {
+    var state = screenState(s);
+    var frame = el('player');
+
+    if (state === 'player') {
+      if (!playerShown) {
+        // (Re)load on every transition INTO player. If the server had been down, whatever the
+        // player last rendered is an error page and it will not recover on its own.
+        frame.src = 'http://127.0.0.1:' + s.port + '/player/';
+        frame.style.display = 'block';
+        playerShown = true;
+      }
+      return true;
+    }
+
+    if (playerShown) {
+      // Blank the frame so a dead server is not being hammered by a player retrying behind an
+      // invisible layer.
+      frame.style.display = 'none';
+      frame.removeAttribute('src');
+      playerShown = false;
+    }
+    el('setupNote').style.display = state === 'setup' ? 'block' : 'none';
+    return false;
+  }
+
   function paint() {
     var s = last;
+    if (applyLayer(s)) return;
     if (!s) {
       // Before the first successful poll there is genuinely nothing to report. Say that, rather
       // than paint zeros that look like a running server with no traffic.
