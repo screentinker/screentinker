@@ -1585,6 +1585,7 @@ export default {
   'schedule.hour_12pm': '12pm',
   'schedule.hour_pm': 'pm',
   'schedule.toast.no_groups': 'No groups available. Create a group first.',
+  'schedule.toast.target_required': 'Select a screen or group before saving.',
   'schedule.toast.saved': 'Schedule saved',
 
   // Reports
