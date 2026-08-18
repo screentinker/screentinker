@@ -102,6 +102,15 @@ test('every help tip is translated in every active locale', () => {
     `these tips fall back to English:\n  ${missing.join('\n  ')}`);
 });
 
+test('Japanese mirrors every key in the English source', () => {
+  const ja = fs.readFileSync(path.join(FRONTEND, 'i18n', 'ja.js'), 'utf8');
+  const japaneseKeys = new Set([...ja.matchAll(/^\s*'([^']+)'\s*:/gm)].map(m => m[1]));
+  assert.deepEqual([...defined].filter(k => !japaneseKeys.has(k)), [],
+    'ja.js is missing keys from en.js');
+  assert.deepEqual([...japaneseKeys].filter(k => !defined.has(k)), [],
+    'ja.js contains keys that do not exist in en.js');
+});
+
 test('a tip marker in a view always names a real string', () => {
   // <span class="help-tip" data-tip="${t('x')}"> renders the KEY when x is undefined, putting
   // a bare identifier in the tooltip of the thing meant to explain the page.
