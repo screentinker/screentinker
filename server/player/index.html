@@ -2747,8 +2747,14 @@
       // transition-engine: include the per-item transition too, or a transition config change (effects,
       // duration, scope, or presence) keeps the SAME fingerprint -> "unchanged" -> the player keeps a
       // stale cached playlist and never applies the new transitions. This bug hid every transition edit.
-      // STRUCTURAL fingerprint only (identity + order + schedules + transition). duration_sec is
-      // deliberately EXCLUDED so a duration-only edit is applied IN PLACE (not a full change/restart).
+      // STRUCTURAL fingerprint only (identity + order + schedules + transition). duration_sec, muted,
+      // captions, subtitles and title are deliberately EXCLUDED: this fingerprint decides RESTART vs
+      // NO RESTART, and none of those need a restart. They are synced in place in the unchanged
+      // branch below, which is where any new per-item field is picked up for free.
+      // ⚠️ Do not "fix" a field being ignored by adding it here — that trades a stale value for a
+      // playlist restart on every edit of it, which is #234 (a rebuild restarting at item 1). Adding
+      // duration_sec here is the fix suggested in #295; it is right for 1.9.0, which had no in-place
+      // path, and wrong for this branch, which does.
       // widget_rev is in here for the same reason as schedules and transition: a widget's IDENTITY
       // does not change when it is EDITED, so a content edit produced an identical fingerprint, the
       // update was treated as "unchanged", and the screen kept the old render until a reload.
@@ -2858,11 +2864,46 @@
 
       if (newFp === oldFp && playlist.length > 0 && !wallChanged && !layoutChanged) {
         console.log('Playlist unchanged');
-        // In-place duration refresh: a duration-only edit keeps the structural fingerprint identical,
-        // so patch duration_sec onto the live items here. The group schedule tick re-anchors on the
-        // new period next tick; solo advance uses it on the next item. No restart, no reload.
+        /*
+         * In-place refresh of everything NON-STRUCTURAL, so an edit that does not change what is
+         * playing is applied without a restart. The group schedule tick re-anchors on the new
+         * period next tick; solo advance uses it on the next item. No restart, no reload.
+         *
+         * ⚠️ SYNCED WHOLESALE, NOT FIELD BY FIELD. Reaching here means the structural fingerprint
+         * matched, so identity, order, schedules and transition are already provably equal —
+         * every other field is a value the player can simply adopt. Copying all of them is the
+         * point: the enumerated version is a bug that keeps coming back. duration_sec, schedules,
+         * transition, widget_rev and zone_id were each added to this handler only AFTER a field
+         * nobody remembered silently stopped taking effect, and #295 is the field report for the
+         * duration one. muted, the caption and subtitle fields, and title were still missing when
+         * that issue was filed.
+         */
+        let patched = false;
+        let liveMuteChanged = false;
         for (let i = 0; i < playlist.length && i < newItems.length; i++) {
-          if (playlist[i].duration_sec !== newItems[i].duration_sec) playlist[i].duration_sec = newItems[i].duration_sec;
+          const live = playlist[i];
+          const next = newItems[i];
+          for (const k of Object.keys(next)) {
+            if (live[k] === next[k]) continue;
+            // Objects and arrays compare by reference, so a rebuilt-but-identical schedules array
+            // would otherwise "change" on every refresh and rewrite the cache forever.
+            if (live[k] && typeof live[k] === 'object' && JSON.stringify(live[k]) === JSON.stringify(next[k])) continue;
+            live[k] = next[k];
+            patched = true;
+            if (k === 'muted' && i === currentIndex) liveMuteChanged = true;
+          }
+        }
+        if (patched) {
+          /*
+           * ⚠️ PERSIST IT. The previous version patched only the live array, so a new duration
+           * held until the next reload and then reverted from localStorage — the second half of
+           * #295, "reloading the page didn't help either". savePlaylistCache is called in the
+           * content-changed branch below, which this early return never reaches.
+           */
+          savePlaylistCache(playlist);
+          // A mute edit on the item already on screen should take effect now, not at the next
+          // loop. applyMute resolves through MediaMute, so a wall follower still stays silent.
+          if (liveMuteChanged) applyMute(playlist[currentIndex]);
         }
         // #146 fix: a no-change refresh used to blindly return — so if the <video> surface
         // had been lost (detached from the DOM while its element kept decoding audio: video
