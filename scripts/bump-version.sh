@@ -17,23 +17,35 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-# Pre-push fast-forward guard. This script creates an annotated tag locally; if
-# origin/main has advanced past the commit we're bumping from, `git push origin main`
-# is rejected as a non-fast-forward - and if the tag gets pushed anyway it fires the
-# release workflow from a commit that isn't even on main (the beta9 divergence
-# incident). Catch the divergence HERE, before the tag exists, so nothing can fire.
-# Best-effort: when the fetch can't run (offline), warn and proceed rather than block
-# a local bump - the push itself is still the backstop.
-if git fetch --quiet origin main 2>/dev/null; then
+# Pre-push fast-forward guard. This script creates an annotated tag locally; if the branch's
+# remote counterpart has advanced past the commit we're bumping from, the push is rejected as a
+# non-fast-forward - and if the tag gets pushed anyway it fires the release workflow from a commit
+# that isn't even on the branch (the beta9 divergence incident). Catch the divergence HERE, before
+# the tag exists, so nothing can fire.
+#
+# ⚠️ CHECKED AGAINST THE BRANCH YOU ARE ON, not against main. This used to hardcode origin/main,
+# which was right while main was the only release line and became wrong the moment 1.9.x existed
+# as a maintenance branch: releasing 1.9.40 from 1.9.x compared it against a main that had moved
+# to 2.0.0, found it "behind", and refused a release that was perfectly fast-forward. The question
+# is always "will pushing THIS branch fast-forward", so ask it about this branch.
+#
+# Best-effort: when the fetch can't run (offline), warn and proceed rather than block a local bump
+# - the push itself is still the backstop.
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [ "$BRANCH" = "HEAD" ]; then
+  echo "ERROR: detached HEAD - check out the release branch before bumping." >&2
+  exit 1
+fi
+if git fetch --quiet origin "$BRANCH" 2>/dev/null; then
   if ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
-    echo "ERROR: origin/main ($(git rev-parse --short FETCH_HEAD)) has commits not in your" >&2
-    echo "       HEAD ($(git rev-parse --short HEAD)) - 'git push origin main' would be rejected." >&2
-    echo "       Merge origin/main into your branch first, then re-run the bump." >&2
+    echo "ERROR: origin/$BRANCH ($(git rev-parse --short FETCH_HEAD)) has commits not in your" >&2
+    echo "       HEAD ($(git rev-parse --short HEAD)) - 'git push origin $BRANCH' would be rejected." >&2
+    echo "       Merge origin/$BRANCH into your branch first, then re-run the bump." >&2
     exit 1
   fi
 else
-  echo "WARNING: could not fetch origin/main - skipping the fast-forward check (offline?)." >&2
-  echo "         Confirm 'git push origin main' will fast-forward before pushing the tag." >&2
+  echo "WARNING: could not fetch origin/$BRANCH - skipping the fast-forward check (new branch, or offline?)." >&2
+  echo "         Confirm 'git push origin $BRANCH' will fast-forward before pushing the tag." >&2
 fi
 
 CURRENT="$(cat VERSION)"
@@ -65,7 +77,25 @@ sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*)\"[0-9]+\.[0-9]+\.[0-9]+[^\"]
 #    `versionName = "X"` / `versionCode = N` forms, which no longer exist. [0-9][^"]* matches a
 #    pre-release current value too (e.g. 1.9.1-beta1) so beta1->beta2 replaces it.
 sed -i -E "s/(versionName.*\?:[[:space:]]*)\"[0-9][^\"]*\"/\1\"$NEW\"/" android/app/build.gradle.kts
+#    ⚠️ THE NEXT CODE IS ONE ABOVE THE HIGHEST EVER RELEASED, NOT ONE ABOVE THIS BRANCH'S.
+#    versionCode is how Android identifies a build, globally — two APKs sharing one are the same
+#    build as far as every device is concerned, so an OTA offering the other sees "already on it"
+#    and silently does nothing. Counting from the current file is only correct while there is one
+#    release line. The moment 1.9.x and 2.0.0 existed in parallel it broke: 1.9.39 was code 126, so
+#    a 1.9.40 bump produced 127 — already published as the 2.0.0-alpha0 APK.
+#    Scanning the tags makes the sequence global, which is the property that actually matters.
 CODE="$(grep -E 'versionCode' android/app/build.gradle.kts | grep -oE '\?:[[:space:]]*\"[0-9]+\"' | grep -oE '[0-9]+' | tail -1)"
+for _t in $(git tag --list 'v*'); do
+  # `|| true` because tags older than #168 have no `?: "literal"` form at all: grep matches nothing,
+  # pipefail fails the pipeline, and the assignment then kills the bump half-applied under `set -e`
+  # — exactly the dirty half-state the gotcha in the release notes warns about.
+  _c="$(git show "$_t:android/app/build.gradle.kts" 2>/dev/null \
+        | grep -oE 'versionCode.*\?:[[:space:]]*"[0-9]+"' | grep -oE '[0-9]+' | tail -1 || true)"
+  # An `a && b && c` chain here would be the last command of the loop body, so the first tag whose
+  # code is NOT higher returns non-zero and `set -e` kills the bump half-applied. Use an if.
+  if [ -n "$_c" ] && [ "$_c" -gt "$CODE" ]; then CODE="$_c"; fi
+done
+echo "  android versionCode: $CODE -> $((CODE + 1)) (highest across all tags was $CODE)"
 sed -i -E "s/(versionCode.*\?:[[:space:]]*)\"[0-9]+\"/\1\"$((CODE + 1))\"/" android/app/build.gradle.kts
 
 # 4) tizen widget version. Skip the <?xml ...?> declaration line - its
@@ -107,4 +137,4 @@ git tag -a "v$NEW" -m "ScreenTinker v$NEW"
 
 echo
 echo "Committed + tagged v$NEW (nothing pushed). To release:"
-echo "    git push origin main && git push origin v$NEW"
+echo "    git push origin $BRANCH && git push origin v$NEW"

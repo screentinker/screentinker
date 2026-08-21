@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.9.40
+
+A single player fix, backported from the 2.0.0 line. Reported by a self-hosted operator running the
+web player in a Chrome kiosk.
+
+### Fixed — a duration-only playlist edit reverted on the next reload (#295)
+
+Change nothing but an item's duration and publish, and a running player picked up the new value —
+then reverted to the old one as soon as the page reloaded, because the stale duration was still in
+the player's local cache. The in-place update wrote to the live playlist and never wrote it back.
+
+The same fix covers **every per-item field that does not need a restart**, not just duration: mute,
+captions, subtitles and title were all being ignored on an otherwise-unchanged playlist. Editing any
+of them now takes effect, and a mute change on the item currently on screen applies immediately
+rather than at the next loop.
+
+⚠️ **If you are on 1.9.0**, the duration edit did not reach the player at all — that half was fixed
+earlier in the 1.9.x line. This release completes it.
+
+Reported, diagnosed and patched by **@stuart-hampl**, who also worked out that duration was not the
+only field affected. Thank you.
+
 ## 1.9.39
 
 A single wording change, following feedback on the white-label work in 1.9.38.
