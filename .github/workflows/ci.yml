@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # ⚠️ 1.9.x IS LISTED ON PURPOSE. GitHub runs the workflow file from the branch being pushed, so
+    # a maintenance branch whose own ci.yml names only `main` has NO CI AT ALL — every commit on the
+    # stable line landing untested while main looks healthy. This branch is where 1.9.x patches are
+    # cut from now that main has moved to 2.0.0, which makes it the branch customers actually run.
+    branches: [main, 1.9.x]
   pull_request:
-    branches: [main]
+    branches: [main, 1.9.x]
   workflow_dispatch:
 
 permissions:
