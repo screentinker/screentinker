@@ -5,6 +5,8 @@ import en from './en.js';
 export default {
   ...en,
   'nav.members': '成员', 'nav.displays': '显示屏', 'nav.content': '内容', 'nav.playlists': '播放列表',
+  'dashboard.select_all': '全选', 'dashboard.invert_selection': '反选', 'dashboard.add_to_group': '加入分组', 'dashboard.create_group_and_add': '创建并加入分组', 'dashboard.remove_from_group': '移出分组', 'dashboard.cancel_selection': '取消', 'dashboard.create_wall': '创建视频墙',
+  'dashboard.selection_count_other': '已选中 {n} 台显示屏',
   'nav.layouts': '布局', 'nav.widgets': '小组件', 'nav.schedule': '排程', 'nav.walls': '视频墙',
   'nav.reports': '报告', 'nav.servers': '服务器', 'nav.kiosk': '信息亭', 'nav.designer': '设计器', 'nav.activity': '活动记录',
   'nav.teams': '团队', 'nav.help': '帮助', 'nav.settings': '设置', 'nav.subscription': '订阅', 'nav.admin': '管理',
@@ -106,6 +108,8 @@ export default {
   'dashboard.toast.command_sent': '“{cmd}”已发送至 {sent}/{total} 台设备',
   'dashboard.toast.command_sent_with_offline': '“{cmd}”已发送至 {sent}/{total} 台设备（{offline} 台离线）',
   'dashboard.toast.command_unsupported_n': '已跳过 {n} 台设备：其播放器不支持该操作。',
+  'dashboard.toast.added_to_group_one': '已将 1 台显示屏加入分组', 'dashboard.toast.added_to_group_other': '已将 {n} 台显示屏加入分组',
+  'dashboard.toast.removed_from_group_one': '已将 1 台显示屏移出分组', 'dashboard.toast.removed_from_group_other': '已将 {n} 台显示屏移出分组',
   'content.title': '内容库', 'content.subtitle': '上传并管理媒体文件',
   'content.drop': '将文件拖到这里，或点击选择一个或多个文件', 'content.upload_hint': '支持 MP4、WebM、AVI、MKV、JPEG、PNG、GIF、WebP',
   'content.upload_progress': '上传中……', 'content.upload_progress_named': '正在上传 {name}……',

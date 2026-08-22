@@ -8,6 +8,7 @@ export default {
   'wall.rename': "ビデオウォールの名前を変更",
   'wall.remove_from_wall': "ビデオウォールから削除",
   'dashboard.select_for_wall': "ビデオウォール用に選択",
+  'dashboard.select_all': 'すべて', 'dashboard.invert_selection': '反転', 'dashboard.cancel_selection': 'キャンセル', 'dashboard.add_to_group': 'グループに追加', 'dashboard.create_group_and_add': 'グループを作成して追加',
   'team.unavailable_desc': "この機能は、ワークスペースで動作するように再設計されている間は使用できません。既存のチームデータは保持されます。",
   'team.unavailable_title': "チームは再構築中です",
   'settings.help_tip': "プロフィール、パスワード、2 要素サインインに加えて、データをエクスポートまたはインポートするための統合およびツール用の API トークン。",

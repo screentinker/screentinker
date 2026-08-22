@@ -378,6 +378,71 @@ body {
   font-size: 12px;
 }
 
+.selection-group-menu {
+  position: relative;
+}
+
+.selection-bar-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  background: var(--border);
+}
+
+.selection-group-menu summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.selection-group-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.selection-group-menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+.selection-group-menu[open] .selection-group-menu-panel {
+  display: grid;
+}
+
+.selection-group-menu-panel button {
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.selection-group-menu-panel button:hover {
+  background: var(--bg-card-hover);
+}
+
+.selection-group-menu-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.selection-group-menu-panel .selection-group-menu-create {
+  color: var(--accent);
+}
+
 .btn-icon {
   padding: 6px;
   border-radius: var(--radius);

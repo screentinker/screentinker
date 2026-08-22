@@ -9,6 +9,7 @@ export default {
   'wall.rename': 'Mudar o nome do mural',
   'wall.remove_from_wall': 'Remover do mural',
   'dashboard.select_for_wall': 'Selecionar para o mural de vídeo',
+  'dashboard.select_all': 'Todos', 'dashboard.invert_selection': 'Inverter', 'dashboard.cancel_selection': 'Cancelar', 'dashboard.add_to_group': 'Adicionar ao grupo', 'dashboard.create_group_and_add': 'Criar e adicionar ao grupo',
   'team.unavailable_desc': 'Esta funcionalidade está indisponível enquanto é reformulada para funcionar com as Áreas de trabalho. Os dados das equipas existentes são preservados.',
   'team.unavailable_title': 'As equipas estão a ser reformuladas',
   'settings.help_tip': 'O seu perfil, palavra-passe e autenticação de dois fatores, além de tokens de API para integrações e ferramentas para exportar ou importar os seus dados.',

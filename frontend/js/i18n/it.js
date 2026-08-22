@@ -8,6 +8,7 @@ export default {
   'wall.rename': 'Rinomina parete',
   'wall.remove_from_wall': 'Rimuovi dalla parete',
   'dashboard.select_for_wall': 'Seleziona per la videowall',
+  'dashboard.select_all': 'Tutti', 'dashboard.invert_selection': 'Inverti', 'dashboard.cancel_selection': 'Annulla', 'dashboard.add_to_group': 'Aggiungi al gruppo', 'dashboard.create_group_and_add': 'Crea e aggiungi al gruppo',
   'team.unavailable_desc': 'Questa funzione non è disponibile mentre viene riprogettata per funzionare con gli Spazi di lavoro. I dati dei team esistenti vengono conservati.',
   'team.unavailable_title': 'I team sono in fase di riprogettazione',
   'settings.help_tip': 'Il tuo profilo, la password e l\'accesso a due fattori, oltre ai token API per le integrazioni e agli strumenti per esportare o importare i tuoi dati.',

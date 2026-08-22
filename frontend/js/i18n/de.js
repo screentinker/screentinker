@@ -9,6 +9,7 @@ export default {
   'wall.rename': 'Wand umbenennen',
   'wall.remove_from_wall': 'Von der Wand entfernen',
   'dashboard.select_for_wall': 'Für Videowand auswählen',
+  'dashboard.select_all': 'Alle', 'dashboard.invert_selection': 'Umkehren', 'dashboard.cancel_selection': 'Abbrechen', 'dashboard.add_to_group': 'Zur Gruppe hinzufügen', 'dashboard.create_group_and_add': 'Gruppe erstellen und hinzufügen',
   'team.unavailable_desc': 'Diese Funktion ist nicht verfügbar, während sie für die Zusammenarbeit mit Workspaces neu gestaltet wird. Vorhandene Teamdaten bleiben erhalten.',
   'team.unavailable_title': 'Teams wird überarbeitet',
   'settings.help_tip': 'Ihr Profil, Passwort und die Zwei-Faktor-Anmeldung sowie API-Tokens für Integrationen und Werkzeuge zum Export und Import Ihrer Daten.',

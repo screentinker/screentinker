@@ -8,6 +8,7 @@ export default {
   'wall.rename': "Renommer le mur",
   'wall.remove_from_wall': "Retirer du mur",
   'dashboard.select_for_wall': "Sélectionner pour le mur d'images",
+  'dashboard.select_all': 'Tout', 'dashboard.invert_selection': 'Inverser', 'dashboard.cancel_selection': 'Annuler', 'dashboard.add_to_group': 'Ajouter au groupe', 'dashboard.create_group_and_add': 'Créer et ajouter au groupe',
   'team.unavailable_desc': "Cette fonctionnalité est indisponible pendant sa refonte pour fonctionner avec les espaces de travail. Les données des équipes existantes sont conservées.",
   'team.unavailable_title': "Les équipes sont en cours de refonte",
   'settings.help_tip': "Votre profil, votre mot de passe et la double authentification, ainsi que les jetons d'API pour les intégrations et les outils d'export ou d'import de vos données.",

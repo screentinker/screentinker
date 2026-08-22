@@ -8,6 +8,7 @@ export default {
   'wall.rename': 'Renombrar muro',
   'wall.remove_from_wall': 'Quitar del muro',
   'dashboard.select_for_wall': 'Seleccionar para el videomuro',
+  'dashboard.select_all': 'Todo', 'dashboard.invert_selection': 'Invertir', 'dashboard.cancel_selection': 'Cancelar', 'dashboard.add_to_group': 'Añadir al grupo', 'dashboard.create_group_and_add': 'Crear y añadir al grupo',
   'team.unavailable_desc': 'Esta función no está disponible mientras se rediseña para funcionar con los Espacios de trabajo. Los datos de los equipos existentes se conservan.',
   'team.unavailable_title': 'Equipos está en rediseño',
   'settings.help_tip': 'Tu perfil, contraseña y verificación en dos pasos, además de tokens de API para integraciones y herramientas para exportar o importar tus datos.',
