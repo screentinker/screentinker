@@ -283,7 +283,6 @@ function renderGroupSection(group, devices, playlists) {
                 title="${esc(group.sync_reason || '')}">${group.sync_downgraded ? '&#9888; ' : ''}${esc(group.sync_effective)}${group.sync_reason ? ' — ' + esc(group.sync_reason) : ''}</span>` : ''}
           <button class="btn group-resync-btn" data-group-id="${group.id}" style="padding:4px 10px;font-size:12px" title="${esc(t('dashboard.group_sync.resync_hint'))}">${t('dashboard.group_sync.resync')}</button>` : ''}
           ` : ''}
-          <button class="btn" data-group-manage="${group.id}" style="padding:4px 10px;font-size:12px" title="${t('dashboard.manage_tooltip')}">${t('dashboard.manage')}</button>
           <button class="btn" data-group-delete="${group.id}" style="padding:4px 8px;font-size:12px;color:var(--danger)" title="${t('dashboard.delete_group_tooltip')}">&#x2715;</button>
         </div>
       </div>
@@ -913,7 +912,7 @@ async function loadDashboard() {
 
     main.innerHTML = html;
     frameCardScreenshots();
-    attachGroupHandlers(groupsWithDevices, dashboardDevices);
+    attachGroupHandlers(groupsWithDevices);
 
     // Drop any selections for devices that have since been absorbed into a
     // wall, and update the toolbar.
@@ -927,7 +926,7 @@ async function loadDashboard() {
   }
 }
 
-function attachGroupHandlers(groupsWithDevices, allDevices) {
+function attachGroupHandlers(groupsWithDevices) {
   // Drag-and-drop: device cards are draggable; group sections + the Ungrouped
   // wrapper are drop targets. Drop on a group adds membership (mirrors the
   // Manage modal). Drop on Ungrouped removes the device from every group it's
@@ -1213,71 +1212,6 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
     });
   });
 
-  // Manage group (add/remove devices)
-  document.querySelectorAll('[data-group-manage]').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const groupId = btn.dataset.groupManage;
-      const group = groupsWithDevices.find(g => g.id === groupId);
-      const memberIds = new Set(group.devices.map(d => d.id));
-
-      // Get all groups for multi-group warning
-      const otherGroups = groupsWithDevices.filter(g => g.id !== groupId);
-
-      const modal = document.createElement('div');
-      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
-      modal.innerHTML = `
-        <div style="background:var(--bg-card);border-radius:12px;padding:24px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto">
-          <h3 style="margin:0 0 4px">${esc(group.name)}</h3>
-          <p style="margin:0 0 16px;font-size:12px;color:var(--text-muted)">${t('dashboard.manage_group_subtitle')}</p>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            ${allDevices.filter(d => d.status !== 'provisioning').map(d => {
-              const inOther = otherGroups.filter(g => g.memberIds.has(d.id)).map(g => g.name);
-              return `
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:var(--bg-secondary)">
-                  <input type="checkbox" data-device-id="${d.id}" data-in-groups="${inOther.join(',')}" ${memberIds.has(d.id) ? 'checked' : ''}>
-                  <span class="status-dot ${d.status}" style="width:8px;height:8px"></span>
-                  <span style="font-size:13px;flex:1">${esc(d.name)}</span>
-                  ${inOther.length > 0 ? `<span style="font-size:10px;color:var(--text-muted);background:var(--bg-primary);padding:1px 6px;border-radius:8px">${esc(inOther.join(', '))}</span>` : ''}
-                </label>
-              `;
-            }).join('')}
-          </div>
-          <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-            <button class="btn" id="manageGroupClose">${t('common.done')}</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-
-      modal.querySelector('#manageGroupClose').onclick = () => { modal.remove(); loadDashboard(); };
-      modal.addEventListener('click', (ev) => { if (ev.target === modal) { modal.remove(); loadDashboard(); } });
-
-      modal.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        cb.addEventListener('change', async () => {
-          const deviceId = cb.dataset.deviceId;
-          const existingGroups = cb.dataset.inGroups;
-          const cbName = cb.closest('label')?.querySelector('span:not(.status-dot)')?.textContent || '';
-          try {
-            if (cb.checked && existingGroups) {
-              if (!confirm(t('dashboard.confirm_add_to_group', { name: cbName, groups: existingGroups, target: group.name }))) {
-                cb.checked = false;
-                return;
-              }
-            }
-            if (cb.checked) {
-              await api.addDeviceToGroup(groupId, deviceId);
-            } else {
-              await api.removeDeviceFromGroup(groupId, deviceId);
-            }
-          } catch (err) {
-            showToast(err.message, 'error');
-            cb.checked = !cb.checked;
-          }
-        });
-      });
-    });
-  });
 }
 
 export function cleanup() {
