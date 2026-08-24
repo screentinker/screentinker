@@ -298,7 +298,6 @@ export default {
   'dashboard.online_count': '{n} online',
   'dashboard.set_playlist_placeholder': 'Set Playlist...',
   'dashboard.send_command_placeholder': 'Send Command...',
-  'dashboard.manage': 'Manage',
   'dashboard.group_sync.label': 'Sync',
   'dashboard.group_sync.hint': "Play this group's shared playlist in lockstep across its displays — items start and end together, and it keeps them aligned even with no internet (each display follows a shared clock + schedule). Requires a playlist assigned to the group; a display on a different playlist is ignored.",
   'dashboard.group_sync.resync': 'Resync now',
@@ -312,10 +311,8 @@ export default {
   'dashboard.group_sync.backend_hint': "Which synchronisation protocol this group uses. Standard works across every player type and keeps displays aligned to the second, with no leader and no internet needed. BrightSign is frame-accurate but only works when every display in the group is a BrightSign on the same network, and it synchronises video only. Auto picks BrightSign when the group can actually run it, and Standard otherwise.",
   'dashboard.group_sync.toast_backend': 'Sync protocol updated',
   'dashboard.group_sync.toast_downgraded': 'Saved, but this group cannot run that protocol:',
-  'dashboard.manage_tooltip': 'Add/remove devices',
   'dashboard.delete_group_tooltip': 'Delete group',
-  'dashboard.no_devices_in_group': 'No devices in this group. Click Manage to add some.',
-  'dashboard.manage_group_subtitle': 'Check devices to add them to this group',
+  'dashboard.no_devices_in_group': 'No devices in this group.',
   'dashboard.draft_suffix': '(draft)',
   // Group commands
   'dashboard.cmd.screen_on': 'Screen On',
@@ -327,7 +324,6 @@ export default {
   // Dashboard prompts/confirms
   'dashboard.prompt_group_name': 'Group name:',
   'dashboard.error_pairing_code': 'Enter a valid 6-digit pairing code',
-  'dashboard.confirm_add_to_group': '{name} is already in: {groups}\n\nAdd it to "{target}" too?',
   'dashboard.confirm_move_to_group': '{name} is currently in: {groups}\n\nMove it to "{target}"?',
   'dashboard.toast.move_partial': 'Could not remove it from {group} — it is still in both',
   'dashboard.confirm_assign_playlist': 'Assign playlist "{playlist}" to all devices in "{group}"?',

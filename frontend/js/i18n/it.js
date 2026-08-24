@@ -112,11 +112,8 @@ export default {
   'dashboard.online_count': '{n} online',
   'dashboard.set_playlist_placeholder': 'Imposta Playlist...',
   'dashboard.send_command_placeholder': 'Invia Comando...',
-  'dashboard.manage': 'Gestisci',
-  'dashboard.manage_tooltip': 'Aggiungi/rimuovi dispositivi',
   'dashboard.delete_group_tooltip': 'Elimina gruppo',
-  'dashboard.no_devices_in_group': 'Nessun dispositivo in questo gruppo. Clicca Gestisci per aggiungerne.',
-  'dashboard.manage_group_subtitle': 'Seleziona i dispositivi per aggiungerli a questo gruppo',
+  'dashboard.no_devices_in_group': 'Nessun dispositivo in questo gruppo.',
   'dashboard.draft_suffix': '(bozza)',
   // Group commands
   'dashboard.cmd.screen_on': 'Accendi Schermo',
@@ -128,7 +125,6 @@ export default {
   // Dashboard prompts/confirms
   'dashboard.prompt_group_name': 'Nome gruppo:',
   'dashboard.error_pairing_code': 'Inserisci un codice di associazione valido di 6 cifre',
-  'dashboard.confirm_add_to_group': '{name} è già presente in: {groups}\n\nAggiungerlo anche a "{target}"?',
   'dashboard.confirm_move_to_group': '{name} è attualmente in: {groups}\n\nSpostarlo in "{target}"?',
   'dashboard.toast.move_partial': 'Impossibile rimuoverlo da {group}: è ancora in entrambi',
   'dashboard.confirm_assign_playlist': 'Assegnare la playlist "{playlist}" a tutti i dispositivi in "{group}"?',

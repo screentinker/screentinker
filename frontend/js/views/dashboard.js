@@ -111,7 +111,7 @@ function renderDeviceCard(device) {
   // nothing still reads as its platform baseline and keeps being polled exactly as today.
   const canShot = !Array.isArray(device.capabilities) || device.capabilities.includes('remote.screenshot');
   return `
-    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" onclick="window.location.hash='/device/${device.id}'">
+    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}">
       <label class="device-card-select" title="${t('dashboard.select_for_wall')}" onclick="event.stopPropagation()">
         <input type="checkbox" class="device-select-cb" data-device-id="${device.id}"${checked ? ' checked' : ''}>
       </label>
@@ -477,6 +477,26 @@ export function render(container) {
     });
     refreshSelectionBar();
   };
+  // Once selection mode is active, the whole device card is a forgiving hit target
+  // for toggling selection. With no active selection, preserve the card's normal
+  // navigation behaviour and open the device detail view.
+  container.addEventListener('click', (e) => {
+    const card = e.target.closest?.('.device-card[data-device-id]');
+    if (!card || e.target.closest('.device-card-select')) return;
+    if (selectedDeviceIds.size === 0) {
+      window.location.hash = `/device/${card.dataset.deviceId}`;
+      return;
+    }
+    e.preventDefault();
+    const id = card.dataset.deviceId;
+    if (selectedDeviceIds.has(id)) selectedDeviceIds.delete(id);
+    else selectedDeviceIds.add(id);
+    const selected = selectedDeviceIds.has(id);
+    card.classList.toggle('selected', selected);
+    const checkbox = card.querySelector('.device-select-cb');
+    if (checkbox) checkbox.checked = selected;
+    refreshSelectionBar();
+  });
   container.addEventListener('click', async (e) => {
     const action = e.target.closest('[data-selection-action]');
     if (!action) return;
