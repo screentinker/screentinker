@@ -33,6 +33,7 @@ let refreshInterval = null;
 let playbackHandler = null;
 let progressTickInterval = null;
 let wallChangedHandler = null;
+let selectionEventController = null;
 // device_id -> { content_name, duration_sec, started_at }
 const playbackByDevice = new Map();
 // Multi-select state for actions on the dashboard cards.
@@ -359,6 +360,12 @@ async function renderStatsPrompt(container) {
 }
 
 export function render(container) {
+  // The app shell persists across route renders, so delegated selection listeners
+  // attached to it must be replaced rather than accumulated.
+  selectionEventController?.abort();
+  selectionEventController = new AbortController();
+  const selectionEventOptions = { signal: selectionEventController.signal };
+
   container.innerHTML = `
     <div class="page-header">
       <div>
@@ -465,7 +472,7 @@ export function render(container) {
     if (cb.checked) selectedDeviceIds.add(id); else selectedDeviceIds.delete(id);
     cb.closest('.device-card')?.classList.toggle('selected', cb.checked);
     refreshSelectionBar();
-  });
+  }, selectionEventOptions);
 
   const visibleDeviceCards = (bar) => [...bar.parentElement.querySelectorAll('.device-card[data-device-id]')]
     .filter(card => card.style.display !== 'none');
@@ -496,7 +503,7 @@ export function render(container) {
     const checkbox = card.querySelector('.device-select-cb');
     if (checkbox) checkbox.checked = selected;
     refreshSelectionBar();
-  });
+  }, selectionEventOptions);
   container.addEventListener('click', async (e) => {
     const action = e.target.closest('[data-selection-action]');
     if (!action) return;
@@ -522,9 +529,10 @@ export function render(container) {
         loadDashboard();
       } catch (err) { showToast(err.message, 'error'); }
     } else if (action.dataset.selectionAction === 'wall') {
-      createWallFromSelection();
+      const ids = visible.map(card => card.dataset.deviceId).filter(id => selectedDeviceIds.has(id));
+      createWallFromSelection(ids);
     }
-  });
+  }, selectionEventOptions);
   container.addEventListener('click', async (e) => {
     const groupItem = e.target.closest('[data-selection-group-id], [data-selection-create-group]');
     if (!groupItem) return;
@@ -545,7 +553,7 @@ export function render(container) {
       loadDashboard();
     } catch (err) { showToast(err.message, 'error'); }
     menu.removeAttribute('open');
-  });
+  }, selectionEventOptions);
 
   // Load everything
   loadDashboard();
@@ -653,8 +661,7 @@ function defaultGridForCount(n) {
   return { cols, rows };
 }
 
-async function createWallFromSelection() {
-  const ids = [...selectedDeviceIds];
+async function createWallFromSelection(ids) {
   if (ids.length < 2) { showToast('Select at least 2 displays', 'error'); return; }
   const name = prompt('Name this video wall:', `Wall ${new Date().toLocaleString()}`);
   if (!name) return;
@@ -669,7 +676,7 @@ async function createWallFromSelection() {
       grid_row: Math.floor(i / cols),
     }));
     await api.setWallDevices(wall.id, placement);
-    selectedDeviceIds.clear();
+    ids.forEach(id => selectedDeviceIds.delete(id));
     showToast('Video wall created', 'success');
     window.location.hash = `#/wall/${wall.id}`;
   } catch (e) {
@@ -1235,6 +1242,8 @@ function attachGroupHandlers(groupsWithDevices) {
 }
 
 export function cleanup() {
+  selectionEventController?.abort();
+  selectionEventController = null;
   if (statusHandler) off('device-status', statusHandler);
   if (screenshotHandler) off('screenshot-ready', screenshotHandler);
   if (playbackHandler) off('playback-progress', playbackHandler);
