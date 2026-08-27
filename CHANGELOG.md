@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — the image picker never opened, and Weather and Social could not be edited
+
+Backported from the 2.0.0 line, where it was found. The escaping sweep of 2026-08-11
+(`ec45092`) added `esc()` to three sinks in `frontend/js/views/widgets.js` and imported it
+in none of them — `esc` lives in `utils.js`, and that file imported only
+`hydrateAuthImages`. Each of those lines threw `ReferenceError: esc is not defined` the
+moment it ran:
+
+* `openContentPicker()` threw while building `overlay.innerHTML`, **before**
+  `appendChild` — so "+ Add Background Image" and "Choose Logo" on a directory board did
+  nothing at all, silently, and the promise behind them never settled
+* the **Weather** config form (`esc(config.location)`) rendered empty — the widget could
+  not be created or edited
+* the **Social** config form (`esc(config.query)`) likewise
+
+Nothing caught it: the reference resolves only when the line runs, so a syntax check
+passes, and all three calls sit inside click handlers, so every view still rendered.
+Verified in a real browser against this branch — before, Weather and Social render an
+empty form and the picker never opens, with three `esc is not defined`; after, all three
+work with no page errors.
+
+`test/frontend-shared-helpers.test.js` comes with it: a shared helper a frontend file calls
+must be one it imports.
+
 ## 1.9.40
 
 A single player fix, backported from the 2.0.0 line. Reported by a self-hosted operator running the

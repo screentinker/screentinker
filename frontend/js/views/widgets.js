@@ -1,6 +1,6 @@
 import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
-import { hydrateAuthImages } from '../utils.js';
+import { esc, hydrateAuthImages } from '../utils.js';
 
 // A refused request must reject, not resolve.
 //
