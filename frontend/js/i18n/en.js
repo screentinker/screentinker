@@ -115,7 +115,13 @@ export default {
   'nav.reports': 'Reports',
   'nav.servers': 'Servers',
   'nav.kiosk': 'Kiosk',
-  'nav.designer': 'Designer',
+  /*
+   * Marked deprecating in the nav rather than removed. Existing designer-made widgets still PLAY
+   * and are still re-editable here — their config carries the design source precisely so they can
+   * be reopened — so pulling the entry would strand them in the raw HTML editor. The label is the
+   * cheapest honest signal that new work belongs in Slides.
+   */
+  'nav.designer': 'Designer (deprecating)',
   'nav.activity': 'Activity',
   'nav.teams': 'Teams',
   'nav.help': 'Help',

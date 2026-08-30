@@ -104,6 +104,27 @@ function normalizeDeck(raw) {
  * values are validated by the one authority that matters and then rewritten in the shape the
  * document has always used.
  */
+/**
+ * normalizeSlide's `cfg`, written back in the snake_case keys the document uses.
+ *
+ * ⚠️ THE FAILURE THIS EXISTS TO PREVENT IS SILENT. The map below rebuilds each element key by key,
+ * so anything not named here is DROPPED on every save — a clock would lose its time zone and a
+ * countdown its target the moment the deck was touched for an unrelated reason, with no error
+ * anywhere and the editor showing the operator's own choice until they reloaded. Every field the
+ * renderer accepts is a duty here too; the round-trip test in test/slide-deck-config-roundtrip.js
+ * is what holds the two lists together.
+ */
+function storedCfg(e) {
+  if (!e.cfg) return {};
+  switch (e.kind) {
+    case 'clock': return { clock_format: e.cfg.format, tz: e.cfg.tz, locale: e.cfg.locale };
+    case 'date': return { date_format: e.cfg.format, tz: e.cfg.tz, locale: e.cfg.locale };
+    case 'countdown': return { target: e.cfg.target };
+    case 'qr': return { qr_ec: e.cfg.ec, qr_fg: e.cfg.fg, qr_bg: e.cfg.bg };
+    default: return {};
+  }
+}
+
 function sanitizeStored(templateIn, fieldsIn) {
   const rawTemplate = (templateIn && typeof templateIn === 'object' && !Array.isArray(templateIn)) ? templateIn : { elements: [] };
   const rawFields = (fieldsIn && typeof fieldsIn === 'object' && !Array.isArray(fieldsIn)) ? fieldsIn : {};
@@ -128,6 +149,7 @@ function sanitizeStored(templateIn, fieldsIn) {
         opacity: e.style.opacity,
       },
       motion: e.motion,
+      ...storedCfg(e),
     })),
   };
 
@@ -150,9 +172,49 @@ function sanitizeStored(templateIn, fieldsIn) {
  * Returned rather than enforced. Refusing the save would be worse: an operator mid-edit has every
  * right to a slide that does not add up yet, and the editor can show this while they work.
  */
+/*
+ * Relative luminance and contrast ratio, the WCAG definitions.
+ *
+ * ⚠️ HERE BECAUSE A QR IS THE ONE ELEMENT THAT CAN BE DRAWN PERFECTLY AND STILL NOT WORK. A camera
+ * decodes it by thresholding light against dark, so a low-contrast pair produces a picture that is
+ * unmistakably a QR code and that no phone will read — and the person who made it has no way to
+ * tell by looking. Every other warning in this file is about something the author could eventually
+ * notice on a screen; this one they could not.
+ */
+function luminance(hex) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const ch = [0, 2, 4].map((i) => {
+    const v = parseInt(full.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+
+function contrastRatio(a, b) {
+  const la = luminance(a); const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** Below this a code is unreliable in the field even when it renders perfectly. */
+const QR_MIN_CONTRAST = 3;
+
 function deckWarnings(deck) {
   const out = [];
   for (const s of deck.slides) {
+    for (const e of normalizeSlide({ template: s.template, fields: s.fields }).elements) {
+      if (e.kind !== 'qr' || !e.cfg) continue;
+      const ratio = contrastRatio(e.cfg.fg, e.cfg.bg);
+      if (ratio >= QR_MIN_CONTRAST) continue;
+      out.push({
+        slide_id: s.id,
+        kind: 'qr-contrast',
+        message: `A QR code on "${s.name}" is ${e.cfg.fg} on ${e.cfg.bg} — a contrast of `
+          + `${ratio.toFixed(1)}:1. It will render, but a camera is unlikely to read it. `
+          + `Dark modules on a light panel scan best.`,
+        contrast: Number(ratio.toFixed(2)),
+      });
+    }
     const settle = settleTime(normalizeSlide({ template: s.template, fields: s.fields }));
     if (settle > s.dwell_sec) {
       out.push({

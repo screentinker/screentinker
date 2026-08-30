@@ -258,7 +258,16 @@ router.post('/models', async (req, res) => {
  */
 const SLIDE_RENDER = require('../lib/slide-render');
 const SLIDE_ANIMATIONS = Object.keys(SLIDE_RENDER.ANIMATIONS || {}).filter((a) => a !== 'none');
-const SLIDE_KINDS = Object.keys(SLIDE_RENDER.KINDS || {}).filter((k) => k !== 'image');
+/*
+ * ⚠️ `config` KINDS ARE EXCLUDED ALONGSIDE `image`, and for the same reason it is.
+ *
+ * The generator writes a layout and the words in it. It cannot invent a URL worth encoding in a QR
+ * or a date worth counting down to, and offering it a kind it cannot fill produces an element
+ * configured entirely from defaults — a QR of nothing, a countdown to null — which looks like a
+ * broken slide rather than an empty one. See KINDS in lib/slide-render.js.
+ */
+const SLIDE_KINDS = Object.keys(SLIDE_RENDER.KINDS || {})
+  .filter((k) => k !== 'image' && !SLIDE_RENDER.KINDS[k].config);
 
 /*
  * The slide schema, described to a model.

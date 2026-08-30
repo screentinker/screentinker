@@ -35,8 +35,33 @@ const KINDS = {
   image: { icon: '▣', label: 'Photo', size: 0, weight: 400 },
   rule: { icon: '▬', label: 'Rule', size: 0, weight: 400 },
   box: { icon: '◻', label: 'Panel', size: 0, weight: 400 },
+  clock: { icon: '◷', label: 'Clock', size: 9, weight: 700 },
+  date: { icon: '▤', label: 'Date', size: 4, weight: 400 },
+  countdown: { icon: '◔', label: 'Countdown', size: 9, weight: 700 },
+  qr: { icon: '▦', label: 'QR code', size: 0, weight: 400 },
 };
-const TEXT_KINDS = ['head', 'body', 'stat'];
+
+/*
+ * ⚠️ THE SAME TWO-FLAG SPLIT THE RENDERER MAKES, and it has to stay in step with it.
+ *
+ * TEXT_KINDS = reads `fields[slot]`, so the Content tab offers an input for it. A QR's payload and
+ * a countdown's expiry message are fields for the same reason a headline is: changing the URL
+ * behind a poster should not mean rebuilding the layout.
+ *
+ * GLYPH_KINDS = puts characters on screen, so it gets the font and size controls. A clock shows
+ * characters and reads no field; a QR reads a field and shows none. Driving both from one list is
+ * the bug the renderer's KINDS comment describes, and it looks correct in this editor either way —
+ * the machine authoring the slide has the fonts installed.
+ */
+const TEXT_KINDS = ['head', 'body', 'stat', 'countdown', 'qr'];
+const GLYPH_KINDS = ['head', 'body', 'stat', 'clock', 'date', 'countdown'];
+const LIVE_KINDS = ['clock', 'date', 'countdown'];
+
+/* The allowlists the server validates against; an option not in these is silently dropped there. */
+const CLOCK_FORMATS = [['24', '13:45'], ['24s', '13:45:09'], ['12', '1:45 PM'], ['12s', '1:45:09 PM']];
+const DATE_FORMATS = [['long', 'Monday, 5 January 2026'], ['weekday', 'Monday, 5 January'],
+  ['short', '5 Jan 2026'], ['numeric', '05/01/2026']];
+const QR_LEVELS = [['L', 'L — smallest'], ['M', 'M — normal'], ['Q', 'Q — tolerant'], ['H', 'H — most tolerant']];
 
 const state = {
   decks: [], deck: null, si: 0, ei: 0, tab: 'content',
@@ -129,10 +154,25 @@ function newElement(kind) {
   const k = KINDS[kind];
   return {
     slot: uid('f'), kind,
-    box: { x: 10, y: 40, w: 50, ...(kind === 'rule' ? { h: 0.7 } : {}), ...(kind === 'image' || kind === 'box' ? { h: 30 } : {}) },
+    box: {
+      x: 10, y: 40, w: kind === 'qr' ? 18 : 50,
+      ...(kind === 'rule' ? { h: 0.7 } : {}),
+      // A QR must stay square or it does not scan; the renderer letterboxes the SVG inside the box,
+      // so an equal-ish w/h is what makes the code as large as the space allows.
+      ...(kind === 'qr' ? { h: 32 } : {}),
+      ...(kind === 'image' || kind === 'box' ? { h: 30 } : {}),
+    },
     style: { color: '#FFFFFF', font: 'sans', size_cqw: k.size || 3, weight: k.weight, align: 'left', opacity: 1, radius_cqw: 0 },
     motion: { animation: 'slideU', delay: 0.2, duration: 0.55, easing: 'ease-out' },
     content_id: null,
+    ...(kind === 'clock' ? { clock_format: '24', tz: '', locale: '' } : {}),
+    ...(kind === 'date' ? { date_format: 'long', tz: '', locale: '' } : {}),
+    // Default target a week out: a countdown to "now" reads as expired the moment it is added, and
+    // the operator cannot tell whether it works.
+    ...(kind === 'countdown' ? { target: Date.now() + 7 * 86400000 } : {}),
+    // ⚠️ Black modules, NOT style.color — a QR that inherits the usual white text colour is a
+    // white square on a white panel. See kindConfig in lib/slide-render.js.
+    ...(kind === 'qr' ? { qr_ec: 'M', qr_fg: '#000000', qr_bg: '#FFFFFF' } : {}),
   };
 }
 
@@ -337,7 +377,11 @@ function renderEditor(container) {
     const s = slide(); if (!s) return;
     const e = newElement(b.dataset.add);
     s.template.elements.push(e);
-    if (TEXT_KINDS.includes(e.kind)) s.fields[e.slot] = KINDS[e.kind].label;
+    if (TEXT_KINDS.includes(e.kind)) {
+      s.fields[e.slot] = e.kind === 'qr' ? 'https://screentinker.com'
+        : e.kind === 'countdown' ? 'Now open'
+        : KINDS[e.kind].label;
+    }
     state.ei = s.template.elements.length - 1; state.tab = 'content';
     touch(container); play();
   });
@@ -407,11 +451,134 @@ function styleFor(e) {
   if (s.radius_cqw) out.push(`border-radius:${s.radius_cqw}cqw`);
   if (e.kind === 'rule' || e.kind === 'box') out.push(`background:${s.color}`);
   else out.push(`color:${s.color}`);
-  if (TEXT_KINDS.includes(e.kind)) {
+  if (GLYPH_KINDS.includes(e.kind)) {
     out.push(`font-family:${fontStack(s.font)}`, `font-size:${s.size_cqw}cqw`, `font-weight:${s.weight}`,
       `text-align:${s.align}`, 'line-height:1.08', 'white-space:pre-wrap');
   }
   return out.join(';');
+}
+
+/* ============ previewing the kinds that are not just text ============ */
+
+/*
+ * ⚠️ THE CANVAS HAS TO SHOW THE REAL CODE, so it asks the server to draw it with the SAME function
+ * the renderer uses (lib/slide-render.qrSvg, via GET /api/slide-decks/qr-preview). A second QR
+ * encoder in the browser would be a second thing to keep in step, and its failure mode — a preview
+ * that scans and a slide that does not, or the reverse — is invisible on the machine that authored
+ * the slide.
+ *
+ * ⚠️ AND IT ARRIVES AS AN <img>, NEVER AS innerHTML. The bytes are ours and carry no operator text,
+ * but fetched markup injected into the dashboard's own origin is a habit worth not having: an
+ * <img> cannot execute anything whatever the response turns out to be. The route hands back JSON
+ * for the same reason — nothing serves an SVG document from this origin.
+ */
+const qrCache = new Map();
+const qrKey = (text, ec, fg, bg) => `${ec}|${fg}|${bg}|${text}`;
+
+async function qrDataUrl(text, ec, fg, bg) {
+  if (!text) return null;
+  const key = qrKey(text, ec, fg, bg);
+  if (qrCache.has(key)) return qrCache.get(key);
+  const q = new URLSearchParams({ text, ec, fg, bg });
+  let url = null;
+  try {
+    const { svg } = await api.get(`/slide-decks/qr-preview?${q}`);
+    // A data: URL rather than a blob: one — nothing has to remember to revoke it, and the stage
+    // repaints on every drag.
+    if (svg) url = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+  } catch (err) { url = null; }
+  // Cached either way: a payload too long to encode should not be re-asked on every repaint.
+  qrCache.set(key, url);
+  if (qrCache.size > 60) qrCache.delete(qrCache.keys().next().value);
+  return url;
+}
+
+function paintQr(host, e, text) {
+  const gap = () => {
+    host.innerHTML = `<div style="width:100%;height:100%;display:grid;place-items:center;
+      background:rgba(255,255,255,.07);border:1px dashed rgba(255,255,255,.22);
+      color:rgba(255,255,255,.45);font-size:2.2cqw">QR</div>`;
+  };
+  gap();
+  qrDataUrl(text, e.qr_ec || 'M', e.qr_fg || '#000000', e.qr_bg || '#FFFFFF')
+    .then((url) => {
+      // The stage may have been rebuilt while the request was in flight; painting into a detached
+      // node is harmless but pointless, and painting a STALE code would be worse.
+      if (!url || !host.isConnected) return;
+      host.innerHTML = '';
+      const img = document.createElement('img');
+      img.alt = '';
+      img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block';
+      img.src = url;
+      host.appendChild(img);
+    })
+    .catch(() => {});
+}
+
+/*
+ * ⚠️ THE FORMAT VOCABULARY IS DUPLICATED FROM lib/slide-render.js, AND A TEST HOLDS THE TWO
+ * TOGETHER (test/slide-live-kinds.test.js). There is no module shared between a server lib and a
+ * browser view here, so the choice was a duplicate with a guard or an editor that offers options
+ * the server silently drops — which is the worse failure, because the operator sees their choice
+ * accepted and the wall ignores it.
+ */
+function liveText(e, now) {
+  if (e.kind === 'countdown') {
+    const t = Number(e.target);
+    if (!Number.isFinite(t)) return '';
+    const ms = t - now;
+    if (ms <= 0) return '';
+    const sec = Math.floor(ms / 1000);
+    const d = Math.floor(sec / 86400); const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60); const ss = sec % 60;
+    return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m ${ss}s` : `${m}m ${ss}s`;
+  }
+  let o;
+  if (e.kind === 'clock') {
+    const f = e.clock_format || '24';
+    o = { hour: '2-digit', minute: '2-digit', hour12: f.charAt(0) === '1' };
+    if (f.includes('s')) o.second = '2-digit';
+  } else {
+    const g = e.date_format || 'long';
+    o = g === 'weekday' ? { weekday: 'long', month: 'long', day: 'numeric' }
+      : g === 'numeric' ? { year: 'numeric', month: '2-digit', day: '2-digit' }
+      : g === 'short' ? { year: 'numeric', month: 'short', day: 'numeric' }
+      : { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+  }
+  const loc = e.locale || undefined;
+  if (e.tz) {
+    try { return new Intl.DateTimeFormat(loc, { ...o, timeZone: e.tz }).format(new Date(now)); } catch (err) { /* fall through */ }
+  }
+  try { return new Intl.DateTimeFormat(loc, o).format(new Date(now)); } catch (err) { return ''; }
+}
+
+function paintLive(host, e) {
+  // A countdown whose target has passed shows its expiry message, exactly as the renderer does.
+  const v = liveText(e, Date.now());
+  host.textContent = (e.kind === 'countdown' && !v)
+    ? ((slide() && slide().fields[e.slot]) || '')
+    : v;
+}
+
+/*
+ * ⚠️ ONE TIMER FOR THE WHOLE CANVAS, started once. A timer per element would be started on every
+ * repaint — and the stage repaints on every drag — so they would accumulate silently until the
+ * editor was spending its frame budget formatting dates.
+ */
+let liveTimer = null;
+function ensureLiveTick() {
+  if (liveTimer) return;
+  liveTimer = setInterval(() => {
+    const s = slide(); if (!s) return;
+    const stage = document.getElementById('stage');
+    if (!stage || !stage.isConnected) return;
+    const els = elementsOf(s);
+    stage.querySelectorAll('[data-live]').forEach((node, idx) => {
+      // Index within the live subset, matched back to the element it was drawn from.
+      const live = els.filter((x) => LIVE_KINDS.includes(x.kind));
+      if (live[idx]) paintLive(node, live[idx]);
+    });
+  }, 1000);
 }
 
 function renderStage(container) {
@@ -455,6 +622,14 @@ function renderStage(container) {
         ? `<img src="${esc(url)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
         : `<div style="width:100%;height:100%;display:grid;place-items:center;background:rgba(255,255,255,.07);
              border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.45);font-size:2.2cqw">photo</div>`;
+    } else if (e.kind === 'qr') {
+      d.style.overflow = 'hidden';
+      paintQr(d, e, s.fields[e.slot] || '');
+    } else if (LIVE_KINDS.includes(e.kind)) {
+      // Painted now and again on the shared tick below, so the canvas shows the same thing the
+      // wall will — a clock frozen at whatever second the panel was last repainted reads as broken.
+      d.dataset.live = e.kind;
+      paintLive(d, e);
     } else if (TEXT_KINDS.includes(e.kind)) {
       d.textContent = s.fields[e.slot] || '';
     }
@@ -463,6 +638,7 @@ function renderStage(container) {
   });
   ensureKeyframes();
   ensureEditorStyles();
+  ensureLiveTick();
   const settle = settleOf(s);
   container.querySelector('#settleLabel').textContent =
     settle > s.dwell_sec
@@ -550,7 +726,11 @@ function renderStrip(container) {
         ${contentUrl(s.template.background_content_id) ? `<div style="position:absolute;inset:0;background-size:cover;background-position:center;background-image:url(${esc(contentUrl(s.template.background_content_id))})"></div>` : ''}
         ${(s.template.background_dim || 0) > 0 && contentUrl(s.template.background_content_id) ? `<div style="position:absolute;inset:0;background:rgba(0,0,0,${s.template.background_dim})"></div>` : ''}
         ${elementsOf(s).map((e) => `<div style="position:absolute;overflow:hidden;${esc(styleFor(e))}">${
-          TEXT_KINDS.includes(e.kind) ? esc(s.fields[e.slot] || '') : ''}</div>`).join('')}
+          // A thumbnail shows what the slide shows: a clock reads as a clock, and a QR is a shape
+          // rather than the raw URL behind it, which at 124px is unreadable noise either way.
+          LIVE_KINDS.includes(e.kind) ? esc(liveText(e, Date.now()) || (s.fields[e.slot] || ''))
+            : e.kind === 'qr' ? ''
+            : TEXT_KINDS.includes(e.kind) ? esc(s.fields[e.slot] || '') : ''}</div>`).join('')}
       </div>
       <div style="display:flex;gap:6px;padding:4px 6px;border-top:1px solid var(--border)">
         <span style="flex:1;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name)}</span>
@@ -598,6 +778,20 @@ function renderLayers(container) {
  * mid-drag — the bug that made Style and Motion unusable. Leaving it around would be leaving the
  * shape of that bug lying next to the code that replaced it.
  */
+/*
+ * Epoch milliseconds -> the value a <input type="datetime-local"> wants, in the AUTHOR's zone.
+ *
+ * ⚠️ NOT toISOString().slice(0,16). That is UTC, so an author in Chicago opening their own
+ * countdown would see it five or six hours off and "correct" it — moving the target every time the
+ * element was inspected. The offset has to be subtracted first.
+ */
+function localInput(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n)) return '';
+  const d = new Date(n - new Date(n).getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 16);
+}
+
 const row = (label, inner) =>
   `<div class="sl-row"><label>${label}</label>${inner}</div>`;
 
@@ -670,7 +864,38 @@ function renderProps(container) {
 
   if (state.tab === 'content') {
     host.innerHTML =
-      (isText
+      (e.kind === 'qr'
+        ? row('Encodes', `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+               A URL, phone number or plain text. The code is drawn on the server, so it works with
+               no network at the panel.</p>`
+          + row('Error correction', `<select class="input" id="pQrEc">${QR_LEVELS.map(([v, lbl]) =>
+              `<option value="${v}" ${(e.qr_ec || 'M') === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('')}</select>`)
+          + row('Modules', `<input type="color" class="input" id="pQrFg" value="${esc(e.qr_fg || '#000000')}">`)
+          + row('Code background', `<input type="color" class="input" id="pQrBg" value="${esc(e.qr_bg || '#FFFFFF')}">`)
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+               Keep a light panel behind the code — a camera reads it by contrast, and over a photo
+               it often will not scan at all.</p>`
+        : e.kind === 'clock'
+        ? row('Format', `<select class="input" id="pFmt">${CLOCK_FORMATS.map(([v, lbl]) =>
+              `<option value="${v}" ${(e.clock_format || '24') === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('')}</select>`)
+          + row('Time zone', `<input class="input" id="pTz" placeholder="the panel's own" value="${esc(e.tz || '')}">`)
+          + row('Language', `<input class="input" id="pLoc" placeholder="the panel's own" value="${esc(e.locale || '')}">`)
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+               Leave both blank to follow the screen. A zone is an IANA name — Europe/London,
+               America/Chicago — which is how you run a lobby clock for another office.</p>`
+        : e.kind === 'date'
+        ? row('Format', `<select class="input" id="pFmt">${DATE_FORMATS.map(([v, lbl]) =>
+              `<option value="${v}" ${(e.date_format || 'long') === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('')}</select>`)
+          + row('Time zone', `<input class="input" id="pTz" placeholder="the panel's own" value="${esc(e.tz || '')}">`)
+          + row('Language', `<input class="input" id="pLoc" placeholder="the panel's own" value="${esc(e.locale || '')}">`)
+        : e.kind === 'countdown'
+        ? row('Counts down to', `<input type="datetime-local" class="input" id="pTarget" value="${esc(localInput(e.target))}">`)
+          + row('Then shows', `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+               The message replaces the counter once the moment passes, so the slide keeps working
+               without anybody editing it that morning.</p>`
+        : isText
         ? row('Text', `<textarea class="input" id="pText" rows="3" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
         : e.kind === 'image'
           ? row('Photo', `<select class="input" id="pImg"><option value="">— none —</option>${
@@ -696,6 +921,32 @@ function renderProps(container) {
         s.fields[e.slot] = ev.target.value; touchValue(container);
       };
     }
+    /*
+     * ⚠️ touchValue, NOT touch, for every one of these — the same rule the Text box above states.
+     * touch() rewrites the panel's innerHTML, which destroys the control being used; on a <select>
+     * that closes the dropdown mid-choice, and on the zone box it eats the caret after one letter.
+     */
+    const bindCfg = (id, apply) => {
+      const el = host.querySelector(id);
+      if (el) el.onchange = (ev) => { apply(ev.target.value); touchValue(container); };
+      return el;
+    };
+    bindCfg('#pQrEc', (v) => { e.qr_ec = v; });
+    bindCfg('#pQrFg', (v) => { e.qr_fg = v; });
+    bindCfg('#pQrBg', (v) => { e.qr_bg = v; });
+    bindCfg('#pFmt', (v) => { if (e.kind === 'clock') e.clock_format = v; else e.date_format = v; });
+    bindCfg('#pTz', (v) => { e.tz = v.trim(); });
+    bindCfg('#pLoc', (v) => { e.locale = v.trim(); });
+    bindCfg('#pTarget', (v) => {
+      /*
+       * ⚠️ STORED AS EPOCH MILLISECONDS. A datetime-local input yields a string with no zone, so
+       * keeping it verbatim would mean the countdown resolved against whatever zone the PANEL is
+       * in — the same poster ending at different moments in two buildings. Date.parse of a
+       * zoneless string uses the AUTHOR's zone here, which is the one they meant.
+       */
+      const ms = Date.parse(v);
+      e.target = Number.isFinite(ms) ? ms : null;
+    });
     if (host.querySelector('#pImg')) {
       // A select is not a control you are mid-drag on, and swapping the photo changes nothing else
       // in this panel — but there is no reason to rebuild it either.
@@ -741,7 +992,7 @@ function renderProps(container) {
         + pair('Width', 'pW', 1, 120, 1, e.box.w, '%')
         + (e.box.h != null ? pair('Height', 'pH', 0.2, 110, 0.2, e.box.h, '%') : ''))
 
-      + (isText ? grp('Type',
+      + (GLYPH_KINDS.includes(e.kind) ? grp('Type',
           `<div class="sl-row"><label for="pFont">Font</label>
              <select class="input" id="pFont">${FONT_CATALOGUE.map((f) =>
                `<option value="${esc(f.id)}" ${f.id === resolveFont(st.font) ? 'selected' : ''}>${

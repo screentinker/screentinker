@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { accessContext } = require('../lib/tenancy');
 const deckLib = require('../lib/slide-deck');
+const slideRender = require('../lib/slide-render');
 
 /*
  * Slide decks — the authoring surface for PowerPoint-style slides.
@@ -47,6 +48,38 @@ function present(deck) {
     warnings: deckLib.deckWarnings(doc),
   };
 }
+
+/*
+ * The editor's QR preview.
+ *
+ * ⚠️ IT EXISTS SO THE CANVAS IS NOT A LIAR. The deck editor draws its own WYSIWYG stage rather than
+ * framing a server render, so without this a QR would preview as a grey rectangle and only become a
+ * real code once it reached a screen — the operator could not tell a working code from a broken one
+ * until the poster was on a wall. The designer this feature replaces did exactly that: its QR was a
+ * box with the word "QR" in it, and generateInnerHTML has no `qr` case at all, so the element
+ * vanished entirely from the published widget.
+ *
+ * ⚠️ AND IT CALLS THE RENDERER'S OWN DRAWING CODE. A second QR implementation in the browser would
+ * be a second thing to keep in step, and the failure — a preview that scans and a slide that does
+ * not, or the reverse — is invisible on the machine that authored it.
+ *
+ * ⚠️ RETURNED AS JSON, NOT AS image/svg+xml. Serving an SVG document from the dashboard's own
+ * origin is a category of thing worth not starting: an SVG loaded as a document can carry script,
+ * and the fact that THIS one is generated and carries no operator text is a property of today's
+ * code rather than of the content type. The editor base64s it into a data: URL for an <img>, which
+ * cannot execute anything whatever the bytes turn out to be.
+ */
+router.get('/qr-preview', (req, res) => {
+  const text = String(req.query.text || '').slice(0, slideRender.MAX_FIELD_CHARS);
+  const svg = slideRender.qrSvg(
+    text,
+    Object.prototype.hasOwnProperty.call(slideRender.QR_EC, req.query.ec) ? req.query.ec : 'M',
+    String(req.query.fg || ''),
+    String(req.query.bg || ''),
+  );
+  if (!svg) return res.status(422).json({ error: 'Payload is empty or too long to encode' });
+  res.json({ svg });
+});
 
 router.get('/', (req, res) => {
   if (!req.workspaceId) return res.json([]);

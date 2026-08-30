@@ -73,14 +73,38 @@ const EASINGS = Object.freeze({
  */
 const slideFonts = require('./slide-fonts');
 
-/** Text kinds carry a field value; the rest are decoration and never read `fields`. */
+/*
+ * ⚠️ FOUR FLAGS, AND `text` AND `glyphs` ARE NOT THE SAME QUESTION.
+ *
+ *   text   — reads `fields[slot]`, so the kind takes part in the template/record split.
+ *   glyphs — puts characters on screen, so an @font-face must be emitted for its family.
+ *   live   — the ticking behaviour LIVE_SCRIPT implements for it, or null if it is static.
+ *   config — needs setup beyond geometry (a QR payload, a countdown target).
+ *
+ * `text` and `glyphs` used to be ONE flag, and that was correct only while every kind that showed
+ * words also got them from a field. A clock shows words and reads no field; a QR reads a field and
+ * shows no words. Collapsing them again drops the font for a clock — which renders it in whatever
+ * face the panel happens to have, the exact "different on every screen" failure the bundled font
+ * set exists to end — or emits a face for a QR that has nothing to set in it.
+ *
+ * `config` is what keeps these kinds out of the vocabulary offered to the AI slide generator
+ * (routes/ai.js): it can invent a headline, but it cannot invent a URL to encode or a date to count
+ * down to, and a kind it cannot fill would come back configured with defaults nobody asked for.
+ */
 const KINDS = Object.freeze({
-  head:  { text: true },
-  body:  { text: true },
-  stat:  { text: true },
-  image: { text: false },
-  rule:  { text: false },
-  box:   { text: false },
+  head:      { text: true,  glyphs: true,  live: null,        config: false },
+  body:      { text: true,  glyphs: true,  live: null,        config: false },
+  stat:      { text: true,  glyphs: true,  live: null,        config: false },
+  image:     { text: false, glyphs: false, live: null,        config: false },
+  rule:      { text: false, glyphs: false, live: null,        config: false },
+  box:       { text: false, glyphs: false, live: null,        config: false },
+  // The payload is a FIELD, so the URL behind a QR can be changed later without rebuilding the
+  // layout — the same reason a headline is a field. It draws no glyphs of its own.
+  qr:        { text: true,  glyphs: false, live: null,        config: true  },
+  clock:     { text: false, glyphs: true,  live: 'clock',     config: true  },
+  date:      { text: false, glyphs: true,  live: 'date',      config: true  },
+  // The field is the message shown once the target passes ("Doors open", "We are closed").
+  countdown: { text: true,  glyphs: true,  live: 'countdown', config: true  },
 });
 
 const clamp = (v, lo, hi, dflt) => {
@@ -130,6 +154,99 @@ function escapeHtml(s) {
 
 /** A slot name — the join key between template and record. */
 const SLOT_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
+
+/* ============ per-kind configuration: clock, date, countdown, qr ============ */
+
+/*
+ * ⚠️ ALLOWLISTS, NOT FORMAT STRINGS.
+ *
+ * The obvious design is to let an operator type a strftime-ish pattern and hand it to the player.
+ * That makes the pattern operator-controlled data flowing into a formatter, which is a much larger
+ * surface than this feature needs — and it is unnecessary, because the set of ways a signage screen
+ * should show a time is small and known. A fixed vocabulary means the renderer interpolates a value
+ * it chose itself, and the script in the page switches on it rather than interpreting it.
+ */
+const CLOCK_FORMATS = Object.freeze({ '24': 1, '24s': 1, '12': 1, '12s': 1 });
+const DATE_FORMATS = Object.freeze({ long: 1, short: 1, numeric: 1, weekday: 1 });
+const QR_EC = Object.freeze({ L: 1, M: 1, Q: 1, H: 1 });
+
+/*
+ * An IANA zone name, structurally. Deliberately NOT a list of the ~600 real ones: that list moves
+ * (zones are added and renamed by the tzdb), and a stale copy here would refuse a zone the panel
+ * actually supports. Structure is checked so nothing strange reaches an attribute; whether the zone
+ * EXISTS is answered by the platform, where Intl throws and the script falls back to local time.
+ */
+const TZ_RE = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/;
+/** A BCP-47 tag, structurally, for the same reason. */
+const LOCALE_RE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/;
+
+const pick = (table, v, dflt) =>
+  (typeof v === 'string' && Object.prototype.hasOwnProperty.call(table, v)) ? v : dflt;
+const matchOr = (re, v, max, dflt) =>
+  (typeof v === 'string' && v.length <= max && re.test(v)) ? v : dflt;
+
+/**
+ * A countdown target, as epoch milliseconds.
+ *
+ * ⚠️ MILLISECONDS, AND NEVER SECONDS. Accepting both means guessing which one a bare number is, and
+ * the guess is wrong for every target before 1970-01-01 in one direction and every target after
+ * 1970-01-21 in the other. An ISO string is accepted because that is what a date input emits, and
+ * it carries its own offset so there is nothing to infer.
+ */
+const MAX_INSTANT = Date.UTC(2200, 0, 1);
+function instant(v) {
+  const n = typeof v === 'number' ? v : (typeof v === 'string' ? Date.parse(v) : NaN);
+  if (!Number.isFinite(n) || n < 0 || n > MAX_INSTANT) return null;
+  return Math.round(n);
+}
+
+/**
+ * Everything a kind needs beyond geometry, or null for the kinds that need nothing.
+ *
+ * Total like the rest of normalize: an unrecognised format becomes the default, a malformed zone
+ * becomes absent, an unparseable target becomes null. Nothing here can fail to produce a value the
+ * renderer may interpolate.
+ */
+function kindConfig(kind, src) {
+  switch (kind) {
+    case 'clock':
+      return {
+        format: pick(CLOCK_FORMATS, src.clock_format, '24'),
+        tz: matchOr(TZ_RE, src.tz, 64, ''),
+        locale: matchOr(LOCALE_RE, src.locale, 32, ''),
+      };
+    case 'date':
+      return {
+        format: pick(DATE_FORMATS, src.date_format, 'long'),
+        tz: matchOr(TZ_RE, src.tz, 64, ''),
+        locale: matchOr(LOCALE_RE, src.locale, 32, ''),
+      };
+    case 'countdown':
+      return { target: instant(src.target) };
+    case 'qr':
+      /*
+       * ⚠️ THE MODULES ARE BLACK ON WHITE BY DEFAULT, AND THEY DO NOT INHERIT style.color.
+       *
+       * The obvious wiring is to draw the modules in the element's colour, the way every text kind
+       * does. It produces a QR THAT CANNOT BE READ: style.color defaults to #FFFFFF because slides
+       * are usually light text on a dark background, so a QR added with no styling is white modules
+       * on the white panel below — a solid white square. It renders without error, the path data is
+       * all there, and it looks like a blank box on the wall. Found by putting one on a screen; no
+       * amount of reading the code showed it.
+       *
+       * ⚠️ AND THE LIGHT PANEL IS NOT DECORATION EITHER. A camera reads a code by thresholding
+       * contrast, so dark modules straight over a photo are frequently unscannable — and the author
+       * cannot tell, because it still LOOKS like a QR. The quiet zone in qrSvg is the same point.
+       */
+      return {
+        ec: pick(QR_EC, src.qr_ec, 'M'),
+        fg: color(src.qr_fg, '#000000'),
+        bg: color(src.qr_bg, '#FFFFFF'),
+      };
+    default:
+      return null;
+  }
+}
 
 /**
  * Validate and clamp a stored slide config into exactly the shape the renderer expects.
@@ -200,6 +317,11 @@ function normalizeSlide(raw) {
         radius: clamp(style.radius_cqw, 0, 20, 0),
         opacity: clamp(style.opacity, 0, 1, 1),
       },
+      /*
+       * Per-kind setup, normalized here so the renderer never re-checks it — the same pairing the
+       * header describes. Null for every kind that needs none, so its absence is not ambiguous.
+       */
+      cfg: kindConfig(kind, src),
       motion: (m && Object.prototype.hasOwnProperty.call(ANIMATIONS, m.animation)) ? {
         animation: m.animation,
         // Bounded well below anything sane: a 40-second delay on a 10-second slide is not a slow
@@ -246,6 +368,183 @@ function settleTime(slide) {
   return (slide.elements || []).reduce(
     (max, e) => (e.motion ? Math.max(max, e.motion.delay + e.motion.duration) : max), 0);
 }
+
+/* ============ QR: drawn server-side, as an SVG, with no script at all ============ */
+
+/*
+ * ⚠️ LAZY AND CACHED. `qrcode` is already a dependency (routes/auth.js draws the MFA enrolment code
+ * with it), but it is a large module and the overwhelming majority of slides have no QR on them.
+ * Requiring it at module load makes every slide render pay for it.
+ */
+let _qrcode;
+function qrLib() {
+  if (_qrcode === undefined) {
+    try { _qrcode = require('qrcode'); } catch (e) { _qrcode = null; }
+  }
+  return _qrcode;
+}
+
+/**
+ * A QR code as an inline SVG, or null if the payload cannot be encoded.
+ *
+ * ⚠️ SERVER-SIDE AND SYNCHRONOUS, VIA `create()`. The library's `toString`/`toDataURL` are async and
+ * renderSlideHtml is not — making the renderer async to draw a QR would ripple into every caller
+ * (routes/widgets.js, routes/ai.js, the deck publisher) for no gain. `create()` returns the module
+ * matrix synchronously and the SVG below is arithmetic on it.
+ *
+ * ⚠️ AND NOT VIA A THIRD-PARTY IMAGE URL. The obvious shortcut is an <img> pointed at one of the
+ * public QR-rendering services. That puts a signage screen's content on someone else's uptime, and
+ * leaks whatever the code encodes to them on every render — for a thing this module can compute.
+ */
+function qrSvg(text, ec, darkIn, lightIn) {
+  const lib = qrLib();
+  const payload = String(text == null ? '' : text);
+  if (!lib || !payload) return null;
+  /*
+   * ⚠️ THE COLOURS AND THE LEVEL ARE RE-VALIDATED HERE, not trusted from the caller.
+   *
+   * On the render path they arrive from a normalized element and are already hex. This function is
+   * ALSO reachable from the deck editor's QR preview route, where they arrive from a QUERY STRING —
+   * and an unvalidated value lands inside `fill="…"`, which is an attribute breakout. Validating in
+   * the caller would mean every future caller has to remember; validating here means the function
+   * cannot emit anything but a colour whoever calls it and however they got there.
+   */
+  const dark = color(darkIn, '#000000');
+  const light = color(lightIn, '#FFFFFF');
+  const level = Object.prototype.hasOwnProperty.call(QR_EC, ec) ? ec : 'M';
+  let qr;
+  try {
+    qr = lib.create(payload, { errorCorrectionLevel: level });
+  } catch (e) {
+    /*
+     * Reachable without anybody doing anything wrong: MAX_FIELD_CHARS is 2000 and the largest QR
+     * holds less than that at error-correction levels above L, so a long payload throws here. The
+     * caller draws the same placeholder a missing photo gets — a slide with a hole in it is better
+     * than a slide that failed to render.
+     */
+    return null;
+  }
+  const size = qr.modules.size;
+  const data = qr.modules.data;
+
+  /*
+   * ⚠️ THE QUIET ZONE IS PART OF THE CODE, NOT PADDING. The spec requires four clear modules on
+   * every side, and a reader that cannot find them frequently will not decode at all. Dropping it
+   * makes the code look tidier in the editor and fail against real phones.
+   */
+  const QUIET = 4;
+  const dim = size + QUIET * 2;
+
+  // Horizontal runs rather than a rect per module: the same picture in roughly half the bytes, and
+  // a slide document is fetched fresh by every player on every play.
+  let d = '';
+  for (let y = 0; y < size; y++) {
+    let x = 0;
+    while (x < size) {
+      if (!data[y * size + x]) { x++; continue; }
+      let run = 1;
+      while (x + run < size && data[y * size + x + run]) run++;
+      d += `M${x + QUIET} ${y + QUIET}h${run}v1h-${run}z`;
+      x += run;
+    }
+  }
+
+  /*
+   * Every value interpolated below is generated here or already hex-validated by `color()`:
+   * `dim` and `d` are arithmetic on the matrix, `dark`/`light` are #RGB or #RRGGBB or the default.
+   * There is no path for operator text to reach the markup — the payload only ever becomes module
+   * coordinates.
+   */
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" `
+    + `preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges" `
+    + `style="width:100%;height:100%;display:block">`
+    + `<rect width="${dim}" height="${dim}" fill="${light}"/>`
+    + `<path d="${d}" fill="${dark}"/></svg>`;
+}
+
+/* ============ the live elements: clock, date, countdown ============ */
+
+/*
+ * ⚠️ ONE CONSTANT SCRIPT, AND EVERY PARAMETER ARRIVES THROUGH THE DOM.
+ *
+ * This is the whole security design of the feature, and it is worth stating plainly because the
+ * obvious implementation is the dangerous one. `frontend/js/views/designer.js` builds a script per
+ * element by interpolating the element's configuration into JavaScript source — `setInterval` with
+ * a date pasted in, `fetch` with a URL pasted in. That makes operator input part of a program, and
+ * the only thing standing between a slide and arbitrary script in the frame is whether every one of
+ * those interpolations was escaped for a JS string context. Some of them are not.
+ *
+ * Here the script below is a CONSTANT: byte-for-byte identical in every document this module emits,
+ * containing no interpolation of any kind. Configuration reaches it as `data-` attributes, which
+ * pass through escapeHtml on the way in, and it reads them with getAttribute — a string API that
+ * cannot execute anything. It writes with `textContent` and never `innerHTML`, so even a value that
+ * somehow arrived carrying markup lands on the screen as the characters the operator typed rather
+ * than as elements. There is no path from a slide's configuration to executed code.
+ *
+ * ⚠️ A LIVE ELEMENT WITH NO WORKING SCRIPT RENDERS EMPTY, DELIBERATELY. The tempting fallback is to
+ * bake the time at render into the element so something shows if the script never runs. But a slide
+ * document is fetched once and can sit on a panel for the length of a playlist loop, so that
+ * fallback is a clock displaying a time that is quietly, plausibly wrong — which on a wall is worse
+ * than an empty box, because nobody can tell by looking.
+ */
+const LIVE_SCRIPT = `<script>
+(function () {
+  var els = document.querySelectorAll('.live');
+  if (!els.length) return;
+  function at(el, n, d) { var v = el.getAttribute(n); return v === null || v === '' ? d : v; }
+  function opts(el, kind) {
+    var o;
+    if (kind === 'clock') {
+      var f = at(el, 'data-fmt', '24');
+      o = { hour: '2-digit', minute: '2-digit', hour12: f.charAt(0) === '1' };
+      if (f.indexOf('s') >= 0) o.second = '2-digit';
+    } else {
+      var g = at(el, 'data-fmt', 'long');
+      o = g === 'weekday' ? { weekday: 'long', month: 'long', day: 'numeric' }
+        : g === 'numeric' ? { year: 'numeric', month: '2-digit', day: '2-digit' }
+        : g === 'short' ? { year: 'numeric', month: 'short', day: 'numeric' }
+        : { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    }
+    return o;
+  }
+  function span(el, now) {
+    var t = parseInt(at(el, 'data-to', ''), 10);
+    if (!isFinite(t)) return '';
+    var ms = t - now;
+    if (ms <= 0) return at(el, 'data-done', '');
+    var s = Math.floor(ms / 1000);
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+    var m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return d > 0 ? d + 'd ' + h + 'h ' + m + 'm'
+      : h > 0 ? h + 'h ' + m + 'm ' + ss + 's'
+      : m + 'm ' + ss + 's';
+  }
+  function text(el, kind, now) {
+    if (kind === 'countdown') return span(el, now);
+    var loc = at(el, 'data-loc', '') || undefined;
+    var tz = at(el, 'data-tz', '');
+    var o = opts(el, kind);
+    var when = new Date(now);
+    if (tz) {
+      o.timeZone = tz;
+      try { return new Intl.DateTimeFormat(loc, o).format(when); } catch (e) { delete o.timeZone; }
+    }
+    try { return new Intl.DateTimeFormat(loc, o).format(when); } catch (e) {}
+    try { return kind === 'clock' ? when.toLocaleTimeString() : when.toLocaleDateString(); } catch (e) {}
+    return '';
+  }
+  function tick() {
+    var now = Date.now();
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var v = text(el, el.getAttribute('data-live'), now);
+      if (el.textContent !== v) el.textContent = v;
+    }
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>`;
 
 /**
  * Join the template to the record and emit a standalone document.
@@ -325,6 +624,15 @@ function renderSlideHtml(rawConfig, opts = {}) {
       return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
     }
 
+    if (e.kind === 'qr') {
+      // cfg.fg, NOT s.color — see kindConfig for the white-on-white failure that caused.
+      const svg = qrSvg(slide.fields[e.slot] || '', e.cfg.ec, e.cfg.fg, e.cfg.bg);
+      css.push('overflow:hidden');
+      // The same quiet placeholder a missing photo gets, for the same reason: an empty payload or
+      // one too long to encode should leave a gap somebody notices, not break the slide.
+      return `<div class="e" style="${css.filter(Boolean).join(';')}">${svg || '<div class="ph"></div>'}</div>`;
+    }
+
     css.push(
       `color:${s.color}`,
       `font-family:${fontFamilyFor(s.font)}`,
@@ -332,6 +640,27 @@ function renderSlideHtml(rawConfig, opts = {}) {
       `font-weight:${s.weight}`,
       `text-align:${s.align}`,
     );
+    const live = KINDS[e.kind].live;
+    if (live) {
+      /*
+       * ⚠️ EVERY ONE OF THESE VALUES IS ESCAPED ON THE WAY INTO THE ATTRIBUTE, even though
+       * normalizeSlide already restricted each to an allowlist, a structural regex or a number.
+       * That is the pairing the header describes and it is not redundancy for its own sake: the day
+       * somebody adds a format or widens a regex, this line is what decides whether that becomes a
+       * markup bug. `data-done` in particular carries operator text straight from a field.
+       */
+      const attrs = [`data-live="${escapeHtml(live)}"`];
+      if (live === 'countdown') {
+        if (e.cfg.target != null) attrs.push(`data-to="${e.cfg.target}"`);
+        attrs.push(`data-done="${escapeHtml(slide.fields[e.slot] || '')}"`);
+      } else {
+        attrs.push(`data-fmt="${escapeHtml(e.cfg.format)}"`);
+        if (e.cfg.tz) attrs.push(`data-tz="${escapeHtml(e.cfg.tz)}"`);
+        if (e.cfg.locale) attrs.push(`data-loc="${escapeHtml(e.cfg.locale)}"`);
+      }
+      return `<div class="e t live" ${attrs.join(' ')} style="${css.filter(Boolean).join(';')}"></div>`;
+    }
+
     return `<div class="e t" style="${css.filter(Boolean).join(';')}">${escapeHtml(slide.fields[e.slot] || '')}</div>`;
   }).join('\n    ');
 
@@ -366,7 +695,7 @@ function renderSlideHtml(rawConfig, opts = {}) {
      * Caught by looking at the emitted HTML, not by reading this function.
      */
     slide.elements
-      .filter((e) => KINDS[e.kind] && KINDS[e.kind].text)
+      .filter((e) => KINDS[e.kind] && KINDS[e.kind].glyphs)
       .map((e) => (slideFonts.isCustom(e.style.font)
         ? (customs.get(e.style.font) ? null : slideFonts.DEFAULT_FAMILY)
         : e.style.font))
@@ -412,11 +741,15 @@ function renderSlideHtml(rawConfig, opts = {}) {
 <body><div class="stage">
     ${bgLayers}
     ${body}
-</div></body></html>`;
+</div>${slide.elements.some((e) => KINDS[e.kind].live) ? LIVE_SCRIPT : ''}</body></html>`;
 }
 
 module.exports = {
   ANIMATIONS, EASINGS, KINDS,
+  CLOCK_FORMATS, DATE_FORMATS, QR_EC,
   MAX_ELEMENTS, MAX_FIELD_CHARS, MAX_FIELDS,
   normalizeSlide, settleTime, renderSlideHtml,
+  // Exported for tests: the QR matrix and the constant script are the two pieces whose properties
+  // have to be asserted directly rather than inferred from a rendered document.
+  qrSvg, LIVE_SCRIPT,
 };
