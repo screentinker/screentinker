@@ -151,6 +151,18 @@ function ensureFontFaces() {
   document.head.appendChild(st);
 }
 
+/*
+ * ⚠️ THE VIDEO PICKER OFFERS ONLY VIDEO. The renderer cannot tell a clip from a photo — it resolves
+ * a content id to a URL and emits it — so a JPEG chosen here becomes a <video> that will never
+ * decode. It would not even look broken: the poster still shows, so the operator gets a still and
+ * no explanation for why it does not move.
+ */
+const VIDEO_EXT = /\.(mp4|webm|ogv|mov|mkv|m4v)$/i;
+function videoContent() {
+  return (state.contentIndex || []).filter((c) => (c.type && String(c.type).startsWith('video'))
+    || VIDEO_EXT.test(c.filename || ''));
+}
+
 function newElement(kind) {
   const k = KINDS[kind];
   return {
@@ -599,9 +611,25 @@ function renderStage(container) {
    * look right here and composite differently on a screen.
    */
   const bgUrl = contentUrl(s.template.background_content_id);
-  if (bgUrl) {
-    const bg = document.createElement('div');
-    bg.style.cssText = `position:absolute;inset:0;background-size:cover;background-position:center;background-image:url(${esc(bgUrl)})`;
+  const bgVidUrl = contentUrl(s.template.background_video_content_id);
+  if (bgUrl || bgVidUrl) {
+    let bg;
+    if (bgVidUrl) {
+      /*
+       * ⚠️ Built the same way the renderer builds it, muted and looping, so what the editor shows
+       * is what a panel shows. A preview that played sound here and not there — or that showed a
+       * still where the wall shows motion — would make the canvas a liar about the one thing this
+       * setting changes.
+       */
+      bg = document.createElement('video');
+      bg.autoplay = true; bg.muted = true; bg.loop = true; bg.playsInline = true;
+      if (bgUrl) bg.poster = bgUrl;
+      bg.src = bgVidUrl;
+      bg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block';
+    } else {
+      bg = document.createElement('div');
+      bg.style.cssText = `position:absolute;inset:0;background-size:cover;background-position:center;background-image:url(${esc(bgUrl)})`;
+    }
     stage.appendChild(bg);
     const d = s.template.background_dim == null ? 0 : s.template.background_dim;
     if (d > 0) {
@@ -741,7 +769,7 @@ function renderStrip(container) {
       border:1px solid ${i === state.si ? 'var(--primary)' : 'var(--border)'};border-radius:4px;overflow:hidden;background:var(--surface)">
       <div style="position:relative;aspect-ratio:${esc(aspectCss())};container-type:size;background:${esc(s.template.background || '#000')}">
         ${contentUrl(s.template.background_content_id) ? `<div style="position:absolute;inset:0;background-size:cover;background-position:center;background-image:url(${esc(contentUrl(s.template.background_content_id))})"></div>` : ''}
-        ${(s.template.background_dim || 0) > 0 && contentUrl(s.template.background_content_id) ? `<div style="position:absolute;inset:0;background:rgba(0,0,0,${s.template.background_dim})"></div>` : ''}
+        ${(s.template.background_dim || 0) > 0 && (contentUrl(s.template.background_content_id) || s.template.background_video_content_id) ? `<div style="position:absolute;inset:0;background:rgba(0,0,0,${s.template.background_dim})"></div>` : ''}
         ${elementsOf(s).map((e) => `<div style="position:absolute;overflow:hidden;${esc(styleFor(e))}">${
           // A thumbnail shows what the slide shows: a clock reads as a clock, and a QR is a shape
           // rather than the raw URL behind it, which at 124px is unreadable noise either way.
@@ -818,6 +846,7 @@ function renderProps(container) {
 
   if (state.tab === 'slide') {
     const bgId = s.template.background_content_id || '';
+    const bgVid = s.template.background_video_content_id || '';
     const dim = s.template.background_dim == null ? 0 : s.template.background_dim;
     host.innerHTML =
       `<div class="sl-group"><p class="sl-legend">Slide</p>
@@ -834,10 +863,17 @@ function renderProps(container) {
              <select class="input" id="sBgImg"><option value="">— none —</option>${
                (state.contentIndex || []).map((c) => `<option value="${esc(c.id)}" ${
                  c.id === bgId ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select></div>
-           ${bgId ? `<div class="sl-row"><label for="sDim">Dim</label>
+           <div class="sl-row"><label for="sBgVid">Video</label>
+             <select class="input" id="sBgVid"><option value="">— none —</option>${
+               videoContent().map((c) => `<option value="${esc(c.id)}" ${
+                 c.id === bgVid ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select></div>
+           ${bgVid ? `<p class="sl-note">The photo above becomes the poster — it shows while the
+              video loads, and stays on any panel that cannot decode it. Background video is always
+              silent; the playlist decides which zone has audio.</p>` : ''}
+           ${(bgId || bgVid) ? `<div class="sl-row"><label for="sDim">Dim</label>
              <div class="sl-slide"><input type="range" id="sDim" min="0" max="0.9" step="0.05" value="${dim}">
                <input type="number" class="sl-num" id="sDimn" min="0" max="0.9" step="0.05" value="${dim.toFixed(2)}"></div></div>
-             <p class="sl-note">Darkens the photo behind the text. A bright photo and white words is
+             <p class="sl-note">Darkens what is behind the text. A bright picture and white words is
                 unreadable from across a room — this fixes that without editing the image.</p>` : ''}
            <p class="sl-note">The colour shows while the photo loads, and stays if it never arrives.</p>
          </div>`
@@ -848,7 +884,13 @@ function renderProps(container) {
     // Changing the photo shows or hides the Dim row, so this one genuinely rebuilds the panel.
     host.querySelector('#sBgImg').onchange = (e) => {
       s.template.background_content_id = e.target.value || null;
-      if (!e.target.value) delete s.template.background_dim;
+      if (!e.target.value && !s.template.background_video_content_id) delete s.template.background_dim;
+      else if (s.template.background_dim == null) s.template.background_dim = 0.35;
+      state.dirty = true; paintAll(container);
+    };
+    host.querySelector('#sBgVid').onchange = (e) => {
+      s.template.background_video_content_id = e.target.value || null;
+      if (!e.target.value && !s.template.background_content_id) delete s.template.background_dim;
       else if (s.template.background_dim == null) s.template.background_dim = 0.35;
       state.dirty = true; paintAll(container);
     };

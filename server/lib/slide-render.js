@@ -385,6 +385,17 @@ function normalizeSlide(raw) {
      */
     backgroundContentId: typeof tplIn.background_content_id === 'string'
       && tplIn.background_content_id.length <= 64 ? tplIn.background_content_id : null,
+    /*
+     * ⚠️ MOTION BEHIND THE WORDS, AND THE STILL IS STILL THE FALLBACK.
+     *
+     * A video background does not replace background_content_id — it sits in front of it as the
+     * `poster`. A slide document is fetched fresh by every player on every play, and a video is
+     * megabytes: for the seconds before the first frame decodes, and for good on a panel that
+     * cannot decode it at all, what shows is the still. Making the video the only background would
+     * turn every one of those cases into a black rectangle behind white text.
+     */
+    backgroundVideoContentId: typeof tplIn.background_video_content_id === 'string'
+      && tplIn.background_video_content_id.length <= 64 ? tplIn.background_video_content_id : null,
     backgroundDim: clamp(tplIn.background_dim, 0, 1, 0),
     elements,
     fields,
@@ -764,8 +775,37 @@ function renderSlideHtml(rawConfig, opts = {}) {
    * on a zoned layout.
    */
   const bgUrl = slide.backgroundContentId ? resolveImage(slide.backgroundContentId) : null;
-  const bgLayers = (bgUrl ? `<div class="bg" style="background-image:url(${escapeHtml(cssUrl(bgUrl))})"></div>` : '')
-    + (bgUrl && slide.backgroundDim > 0
+  const bgVideoUrl = slide.backgroundVideoContentId ? resolveImage(slide.backgroundVideoContentId) : null;
+
+  /*
+   * ⚠️ ALWAYS MUTED, AND THAT IS NOT A DEFAULT — IT IS THE ONLY OPTION.
+   *
+   * Three separate reasons, any one of which is sufficient. Autoplay without a gesture is only
+   * permitted for muted media, so an unmuted background would simply never start. A slide is one
+   * item among many on a wall, and the player already decides which ZONE owns the audio
+   * (showZoneItem mutes every zone but the first) — a widget that made its own noise would fight
+   * that decision from inside an iframe it cannot see out of. And a background is scenery; scenery
+   * that talks over the video in the next zone is a support call.
+   *
+   * ⚠️ hwz="off" IS FOR BRIGHTSIGN AND IS THE WHOLE REASON THIS RENDERS AT ALL THERE.
+   *
+   * With hardware z-order the video decodes onto a plane the DOM sits BEHIND, so a background
+   * video would play OVER the headline and the cut-outs — the exact inverse of a background. The
+   * codebase already documents this for transitions and PiP (brightsign/st-bridge.js, and
+   * suppressMedia in the player, which pauses video rather than covering it because covering it
+   * does not work). `hwz="off"` asks that element to decode into the graphics plane instead, where
+   * it composites normally.
+   *
+   * It is per-element and reversible, deliberately unlike roVideoMode.SetGraphicsZOrder("front") —
+   * which st-bridge.js:482 says was left alone because changing z-order globally risks hiding video
+   * entirely on players that currently work. Every other platform ignores an unknown attribute.
+   */
+  const bgLayers = (bgVideoUrl
+    ? `<video class="bg" autoplay muted loop playsinline hwz="off"`
+      + `${bgUrl ? ` poster="${escapeHtml(bgUrl)}"` : ''}`
+      + ` src="${escapeHtml(bgVideoUrl)}"></video>`
+    : bgUrl ? `<div class="bg" style="background-image:url(${escapeHtml(cssUrl(bgUrl))})"></div>` : '')
+    + ((bgUrl || bgVideoUrl) && slide.backgroundDim > 0
       ? `<div class="scrim" style="background:rgba(0,0,0,${slide.backgroundDim})"></div>` : '');
 
   return `<!DOCTYPE html>
@@ -779,6 +819,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
   .e { position:absolute; }
   /* Both fill the stage and sit beneath every element, in source order: photo, then scrim. */
   .bg { position:absolute; inset:0; background-size:cover; background-position:center; }
+  /* A video background fills the frame the way the still does, and is never letterboxed. */
+  video.bg { width:100%; height:100%; object-fit:cover; display:block; }
   .scrim { position:absolute; inset:0; }
   .t { line-height:1.08; white-space:pre-wrap; word-break:break-word; }
   .e img { width:100%; height:100%; object-fit:cover; display:block; }

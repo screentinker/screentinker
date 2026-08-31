@@ -624,3 +624,117 @@ test('⚠️ the subhead is sized for its length, because the model ignores the 
   assert.equal(subheadSize('x'.repeat(48)), 3.6);
   assert.ok(subheadSize('x'.repeat(200)) >= 3, 'and never collapse to nothing');
 });
+
+/* ============ video backgrounds ============ */
+
+const renderBg = (template, fields = {}, urls = {}) =>
+  R.renderSlideHtml({ template, fields }, { resolveImage: (id) => urls[id] || null });
+
+test('a video background renders as a muted, looping, autoplaying layer', () => {
+  const html = renderBg({ background_video_content_id: 'v', elements: [] }, {},
+    { v: '/uploads/content/clip.mp4' });
+  const tag = html.match(/<video[^>]*>/)[0];
+  for (const attr of ['autoplay', 'muted', 'loop', 'playsinline']) {
+    assert.ok(tag.includes(attr), `a background video must be ${attr}`);
+  }
+  assert.ok(tag.includes('src="/uploads/content/clip.mp4"'));
+});
+
+test('⚠️ muted is not a default — there is no way to turn it off', () => {
+  /*
+   * Three reasons, any one sufficient: autoplay without a gesture is only permitted for muted
+   * media, so an unmuted background would never start; the player already decides which ZONE owns
+   * the audio and a widget cannot see out of its iframe to respect that; and scenery that talks
+   * over the next zone is a support call.
+   */
+  const html = renderBg({ background_video_content_id: 'v', elements: [] }, {}, { v: '/c.mp4' });
+  assert.match(html, /<video[^>]*\bmuted\b/);
+  const src = require('fs').readFileSync(require.resolve('../lib/slide-render.js'), 'utf8');
+  assert.ok(!/background_video_muted|video_audio|bg_audio/.test(src), 'muting must not be configurable');
+});
+
+test('⚠️ hwz="off" is emitted, or the video plays OVER the slide on a BrightSign', () => {
+  /*
+   * With hardware z-order the video decodes onto a plane the DOM sits BEHIND, so a background
+   * would cover the headline and the cut-outs — the exact inverse of a background. The codebase
+   * already documents this for transitions and PiP, and suppressMedia() pauses video rather than
+   * covering it precisely because covering it does not work.
+   */
+  const html = renderBg({ background_video_content_id: 'v', elements: [] }, {}, { v: '/c.mp4' });
+  assert.match(html, /<video[^>]*hwz="off"/);
+});
+
+test('⚠️ the still becomes the poster rather than being replaced', () => {
+  /*
+   * A slide document is fetched fresh on every play and a video is megabytes. For the seconds
+   * before the first frame decodes — and for good on a panel that cannot decode it — what shows is
+   * the still. Dropping it would turn every one of those cases into a black rectangle behind white
+   * text.
+   */
+  const html = renderBg({ background_content_id: 'i', background_video_content_id: 'v', elements: [] },
+    {}, { i: '/still.jpg', v: '/clip.mp4' });
+  assert.match(html, /<video[^>]*poster="\/still\.jpg"/);
+  assert.equal((html.match(/<div class="bg"/g) || []).length, 0,
+    'the still rides as the poster, not as a second layer to paint');
+});
+
+test('a video with no still is fine, and emits no empty poster', () => {
+  const html = renderBg({ background_video_content_id: 'v', elements: [] }, {}, { v: '/clip.mp4' });
+  assert.ok(!html.includes('poster='), 'an absent still must not become poster=""');
+});
+
+test('the scrim still applies over a video', () => {
+  // Text over moving footage is harder to read than over a still, not easier.
+  const html = renderBg({ background_video_content_id: 'v', background_dim: 0.4, elements: [] },
+    {}, { v: '/clip.mp4' });
+  assert.match(html, /<div class="scrim" style="background:rgba\(0,0,0,0\.4\)">/);
+  // Compared inside the BODY: `.scrim` also appears in the stylesheet above, so searching the whole
+  // document finds the CSS rule and says the scrim comes first no matter what the layers do.
+  const body = html.slice(html.indexOf('<body'));
+  assert.ok(body.indexOf('<video') < body.indexOf('<div class="scrim"'),
+    'the scrim must sit above the video');
+});
+
+test('a slide with neither still nor video gets no scrim, whatever the dim says', () => {
+  const html = renderBg({ background_dim: 0.5, elements: [] });
+  const body = html.slice(html.indexOf('<body'));
+  assert.ok(!body.includes('class="scrim"'), 'a scrim over a flat colour is just a darker flat colour');
+});
+
+test('⚠️ a hostile video url cannot break out of the attribute', () => {
+  const html = renderBg({ background_video_content_id: 'v', elements: [] }, {},
+    { v: '" onerror=alert(1) x="' });
+  /*
+   * The escaped characters DO still read as "onerror=alert(1)" inside the attribute value — that is
+   * the payload surviving as data, which is correct. What must not happen is the quote closing the
+   * attribute, so the test is on the structure of the tag, not on the presence of the string.
+   */
+  const tag = html.match(/<video[^>]*>/)[0];
+  assert.ok(tag.includes('&quot;'), 'the quote must be entity-encoded');
+  assert.equal((tag.match(/"/g) || []).length % 2, 0, 'attribute quoting must stay balanced');
+  assert.ok(!/\ssrc="[^"]*"\s+onerror/.test(tag), 'nothing may escape the src attribute');
+});
+
+test('the video background survives a save', () => {
+  // The same silent-loss trap: sanitizeStored rebuilds the template key by key.
+  const saved = deckLib.normalizeDeck({
+    slides: [{ id: 's1', name: 'n', dwell_sec: 10,
+      template: { background_video_content_id: 'vid-1', elements: [] }, fields: {} }],
+  }).slides[0];
+  assert.equal(saved.template.background_video_content_id, 'vid-1');
+});
+
+test('an over-long content id is refused rather than interpolated', () => {
+  const n = R.normalizeSlide({ template: { background_video_content_id: 'x'.repeat(200) } });
+  assert.equal(n.backgroundVideoContentId, null);
+});
+
+test('⚠️ the editor offers only video in the video picker', () => {
+  /*
+   * The renderer cannot tell a clip from a photo — it resolves an id to a URL and emits it — so a
+   * JPEG chosen here becomes a <video> that never decodes. It would not even look broken: the
+   * poster shows, so the operator gets a still and no explanation for why it does not move.
+   */
+  assert.match(VIEW, /function videoContent\(\)/, 'the picker must filter by type');
+  assert.match(VIEW, /id="sBgVid"[\s\S]{0,200}videoContent\(\)/, 'and the select must use it');
+});

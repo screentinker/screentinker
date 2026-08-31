@@ -135,6 +135,7 @@ function sanitizeStored(templateIn, fieldsIn) {
   const template = {
     background: settled.background,
     background_content_id: settled.backgroundContentId,
+    background_video_content_id: settled.backgroundVideoContentId,
     background_dim: settled.backgroundDim,
     elements: settled.elements.map((e) => ({
       slot: e.slot,
