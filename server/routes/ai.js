@@ -674,6 +674,31 @@ const MAX_OBJECTS = 4;
  *           instruction entirely and the "cut-out" is a rectangular photo with its scene intact.
  *           Laid onto a slide that reads as a broken image rather than a missing one.
  */
+/*
+ * ⚠️ WHERE THE WORDS GO, AND IT IS ENFORCED RATHER THAN REQUESTED.
+ *
+ * The plan prompt asks the model to keep objects clear of the headline. Measured against real
+ * output it does not: a run that produced a perfectly good background, leaf and cup also dropped a
+ * pair of mittens directly under "20% OFF". Asking is the right thing to do — a model that
+ * cooperates gives a better composition than one that is corrected — but it cannot be the only
+ * thing, because the failure lands on somebody's wall and reads as a broken slide.
+ */
+const TEXT_ZONE = Object.freeze({ x: 4, y: 20, w: 62, h: 56 });
+
+/** Push an object clear of the text band, if it would sit inside it. */
+function placeClear(box) {
+  const overlaps = box.x < TEXT_ZONE.x + TEXT_ZONE.w && box.x + box.w > TEXT_ZONE.x
+    && box.y < TEXT_ZONE.y + TEXT_ZONE.h && box.y + box.h > TEXT_ZONE.y;
+  if (!overlaps) return box;
+  /*
+   * Moved sideways rather than shrunk or dropped: the model chose a vertical position that suits
+   * the composition, and an object scaled down to fit a gap looks like a mistake in a way that the
+   * same object further right does not. Clamped so a wide object still lands on the slide.
+   */
+  const x = Math.min(100 - box.w, TEXT_ZONE.x + TEXT_ZONE.w + 2);
+  return { ...box, x: Math.max(0, x) };
+}
+
 const MAX_BACKDROP_SPREAD = 70;
 const MAX_OPAQUE = 0.985;
 
@@ -687,6 +712,8 @@ function layeredSystemPrompt(maxObjects) {
     + `Rules. At most ${maxObjects} objects. x, y, w and h are PERCENTAGES of the slide, 0-100; `
     + 'objects must not cover the middle-left area where the headline sits. '
     + 'delay is seconds, 0-2, and each object should differ so they arrive in sequence. '
+    + 'headline is at most 14 characters and subhead at most 40, because both are set large '
+    + 'over a photograph and a long one wraps into the other. '
     + '\n'
     + 'subject names ONE physical thing with no setting and no background — "a ripe orange pumpkin '
     + 'with a curled stem", never "a pumpkin on a table". The background is described separately '
@@ -797,10 +824,10 @@ router.post('/generate-layered', async (req, res) => {
       slot: `obj_${i}`,
       kind: 'image',
       content_id: content.id,
-      box: {
+      box: placeClear({
         x: clampN(o.x, -20, 110, 60), y: clampN(o.y, -20, 110, 40),
         w: clampN(o.w, 5, 100, 30), h: clampN(o.h, 5, 100, 40),
-      },
+      }),
       // ⚠️ contain, always. A cut-out cropped to fill its box is sliced through the object itself.
       fit: 'contain',
       motion: {
@@ -818,15 +845,22 @@ router.post('/generate-layered', async (req, res) => {
   const subhead = String(p.subhead || '').slice(0, SLIDE_RENDER.MAX_FIELD_CHARS);
   if (headline) {
     elements.push({
-      slot: 'headline', kind: 'head', box: { x: 6, y: 30, w: 52 },
-      style: { color: '#FFFFFF', size_cqw: 12, weight: 900, align: 'left' },
+      /*
+       * ⚠️ WIDER AND SMALLER THAN IT LOOKS LIKE IT NEEDS TO BE. At 12cqw in a 52%-wide box, a
+       * headline as short as "20% OFF" wraps to two lines and the second line lands on top of the
+       * subhead below — measured, on a real run. Nothing server-side can measure text, so the box
+       * has to be sized for the wrap that will happen rather than the one line that was intended.
+       */
+      slot: 'headline', kind: 'head', box: { x: 5, y: 24, w: 60 },
+      style: { color: '#FFFFFF', size_cqw: 10, weight: 900, align: 'left' },
       motion: { animation: 'slideD', delay: 0.15, duration: 0.6, easing: 'soft' },
     });
     fields.headline = headline;
   }
   if (subhead) {
     elements.push({
-      slot: 'subhead', kind: 'body', box: { x: 6, y: 52, w: 46 },
+      // Far enough below a two-line headline to clear it. See the headline's box.
+      slot: 'subhead', kind: 'body', box: { x: 5, y: 58, w: 52 },
       style: { color: '#FFFFFF', size_cqw: 4.5, weight: 600, align: 'left' },
       motion: { animation: 'wipe', delay: 0.5, duration: 0.7, easing: 'soft' },
     });

@@ -464,3 +464,46 @@ test('fit survives a save like every other per-element setting', () => {
   assert.equal(savedEl(deckWith([{ kind: 'image', slot: 'a', fit: 'contain' }])).fit, 'contain');
   assert.equal(savedEl(deckWith([{ kind: 'image', slot: 'a' }])).fit, 'cover');
 });
+
+/* ============ layered placement: keeping objects out of the words ============ */
+
+/*
+ * ⚠️ TESTED HERE BECAUSE THE FAILURE WAS SEEN ON A REAL RUN, not imagined. The plan prompt asks the
+ * model to keep objects clear of the headline; a run that produced a good background, leaf and cup
+ * also dropped a pair of mittens directly under "20% OFF". Asking is right — a cooperating model
+ * composes better than a corrected one — but it cannot be the only defence.
+ */
+const AI_SRC = require('fs').readFileSync(require.resolve('../routes/ai.js'), 'utf8');
+
+test('⚠️ object placement is ENFORCED, not merely requested in the prompt', () => {
+  assert.match(AI_SRC, /function placeClear/, 'there must be a server-side placement rule');
+  assert.match(AI_SRC, /box: placeClear\(/, 'and every object must go through it');
+});
+
+test('the text band is reserved and objects are pushed clear of it', () => {
+  // Exercised through the module's own constants so the test cannot drift from the rule.
+  const zone = AI_SRC.match(/const TEXT_ZONE = Object\.freeze\(\{ x: (\d+), y: (\d+), w: (\d+), h: (\d+) \}\)/);
+  assert.ok(zone, 'TEXT_ZONE must be declared');
+  const [, zx, zy, zw, zh] = zone.map(Number);
+  assert.ok(zw > 40 && zh > 40, 'the reserved band must actually cover where the words sit');
+  assert.ok(zx < 10 && zy < 30, 'and start where the headline starts');
+});
+
+test('⚠️ the headline box is sized for the wrap that will happen', () => {
+  /*
+   * A headline as short as "20% OFF" wrapped to two lines at 12cqw in a 52%-wide box and the second
+   * line landed on the subhead. Nothing server-side can measure text, so the geometry has to assume
+   * the wrap rather than the intent — and the subhead has to clear a two-line headline.
+   */
+  const head = AI_SRC.match(/slot: 'headline'[\s\S]*?box: \{ x: \d+, y: (\d+), w: (\d+) \}[\s\S]*?size_cqw: ([\d.]+)/);
+  const sub = AI_SRC.match(/slot: 'subhead'[\s\S]*?box: \{ x: \d+, y: (\d+), w: (\d+) \}/);
+  assert.ok(head && sub, 'both text elements must be findable');
+  const headY = Number(head[1]); const headSize = Number(head[3]); const subY = Number(sub[1]);
+  assert.ok(headSize <= 10, `headline at ${headSize}cqw is large enough to wrap unexpectedly`);
+  assert.ok(subY - headY >= 2.5 * headSize,
+    `subhead at ${subY} does not clear a two-line headline starting at ${headY} at ${headSize}cqw`);
+});
+
+test('the plan asks for text short enough for the size it is set at', () => {
+  assert.match(AI_SRC, /at most 14 characters/, 'the headline length must be constrained upstream too');
+});
