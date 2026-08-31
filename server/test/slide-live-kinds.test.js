@@ -606,3 +606,21 @@ test('the AI slide generator is not offered lettering either', () => {
   // a permanent empty placeholder.
   assert.ok(R.KINDS.lettering.config, 'lettering must be a config kind');
 });
+
+test('⚠️ the subhead is sized for its length, because the model ignores the cap it is given', () => {
+  /*
+   * The plan prompt asks for at most 40 characters; a real run answered with 48 — "Autumn Sale -
+   * Warm up your home with rustic charm" — which at a fixed 4.5cqw wrapped to three lines and ran
+   * out of the bottom of the text band and over the objects. Asking is still worth doing, but the
+   * geometry cannot depend on the answer.
+   */
+  assert.match(AI_SRC, /function subheadSize/, 'the subhead size must be derived, not fixed');
+  assert.match(AI_SRC, /size_cqw: subheadSize\(subhead\)/, 'and actually used');
+  const fn = AI_SRC.match(/function subheadSize\(text\) \{[\s\S]*?\n\}/)[0];
+  // eslint-disable-next-line no-new-func
+  const subheadSize = new Function(`${fn}; return subheadSize;`)();
+  assert.ok(subheadSize('Autumn Sale') > subheadSize('Autumn Sale - Warm up your home with rustic charm'),
+    'a longer subhead must be set smaller');
+  assert.equal(subheadSize('x'.repeat(48)), 3.6);
+  assert.ok(subheadSize('x'.repeat(200)) >= 3, 'and never collapse to nothing');
+});

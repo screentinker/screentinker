@@ -704,6 +704,24 @@ const MAX_OBJECTS = 4;
  */
 const TEXT_ZONE = Object.freeze({ x: 4, y: 20, w: 62, h: 56 });
 
+/**
+ * How large the subhead can be set, given how much of it there is.
+ *
+ * ⚠️ BECAUSE THE MODEL IGNORES THE LENGTH IT IS ASKED FOR. The plan prompt says at most 40
+ * characters; a real run answered with 48 ("Autumn Sale - Warm up your home with rustic charm"),
+ * which at a fixed 4.5cqw wrapped to three lines and ran out of the bottom of the text band and
+ * over the objects. Asking is still worth doing, but the geometry cannot depend on the answer.
+ *
+ * Scaling the type to the copy is what a person would do, needs no measurement, and degrades
+ * gracefully: a long subhead gets smaller rather than getting clipped or colliding.
+ */
+function subheadSize(text) {
+  const n = text.length;
+  if (n <= 32) return 4.5;
+  if (n <= 56) return 3.6;
+  return 3;
+}
+
 /** Push an object clear of the text band, if it would sit inside it. */
 function placeClear(box) {
   const overlaps = box.x < TEXT_ZONE.x + TEXT_ZONE.w && box.x + box.w > TEXT_ZONE.x
@@ -941,8 +959,8 @@ router.post('/generate-layered', async (req, res) => {
   if (subhead) {
     elements.push({
       // Far enough below a two-line headline to clear it. See the headline's box.
-      slot: 'subhead', kind: 'body', box: { x: 5, y: 58, w: 52 },
-      style: { color: '#FFFFFF', size_cqw: 4.5, weight: 600, align: 'left' },
+      slot: 'subhead', kind: 'body', box: { x: 5, y: 58, w: 56 },
+      style: { color: '#FFFFFF', size_cqw: subheadSize(subhead), weight: 600, align: 'left' },
       motion: { animation: 'wipe', delay: 0.5, duration: 0.7, easing: 'soft' },
     });
     fields.subhead = subhead;
