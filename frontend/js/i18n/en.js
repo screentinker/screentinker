@@ -2082,6 +2082,18 @@ export default {
   'trigger.enabled': 'Enabled',
   'trigger.disabled': 'Disabled',
   'trigger.assign': 'Screens',
+  /* Section headings for the trigger dialog. It is a long form — identity, what fires it, what it
+     shows, how it behaves, and who gets it — and without headings it reads as one undifferentiated
+     stack of twelve fields. */
+  'trigger.sec_identity': 'Trigger',
+  'trigger.sec_match': 'What fires it',
+  'trigger.sec_shows': 'What it shows',
+  'trigger.sec_behaviour': 'How it behaves',
+  'trigger.no_published': 'No published playlist to show. A trigger plays a playlist that screens have already downloaded, so publish one first — an unpublished playlist would render nothing.',
+  /* Plural via tn(): the codebase has a helper for count-varying strings precisely so nobody
+     ships "playlist(s)". tn auto-injects {n}. */
+  'trigger.unpublished_hidden_one': '{n} unpublished playlist is not listed: a trigger can only show one that screens have already downloaded.',
+  'trigger.unpublished_hidden_other': '{n} unpublished playlists are not listed: a trigger can only show one that screens have already downloaded.',
   'trigger.assign_hint': 'Assigning a trigger is what makes a screen download and keep its playlist. An unassigned trigger never fires.',
   'trigger.assigned': 'Screens',
   'trigger.unassigned': 'Not assigned',

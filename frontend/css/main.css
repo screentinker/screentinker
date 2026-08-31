@@ -1678,3 +1678,70 @@ body {
   .content-grid { grid-template-columns: 1fr; }
   .assign-content-grid { grid-template-columns: 1fr 1fr; }
 }
+
+
+/* ===================== TRIGGERS DIALOG =====================
+ *
+ * ⚠️ This form used `.modal-backdrop`, which is defined nowhere — so it rendered unstyled and
+ * un-positioned at the end of the page. It now uses the same .modal-overlay/.modal/.modal-header/
+ * .modal-body/.modal-footer skeleton as every other dialog; what follows is only the extra it
+ * genuinely needs, which is a wider shell and the two-column assignment grid.
+ */
+
+/* Wider than the 440px default: this form has paired numeric fields and a two-column assignment
+   grid, and at 440px both wrap into a single column of forty rows. */
+.modal.tg-modal { width: 640px; }
+
+.tg-section { padding-bottom: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.tg-section:last-child { border-bottom: 0; margin-bottom: 0; }
+
+.tg-legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+.tg-blurb { font-size: 12px; color: var(--text-secondary); margin: -4px 0 12px; }
+.tg-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 5px; line-height: 1.45; }
+
+/* Paired fields (max duration + lease) sit side by side; they are read together. */
+.tg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+.tg-sources { display: flex; gap: 18px; margin-top: 2px; }
+
+.tg-check { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
+.tg-check input { margin: 0; }
+
+/* Enabled belongs beside Save, not lost in the middle of the form: it is the one control that
+   decides whether any of the rest happens. margin-right:auto pushes the buttons right. */
+.tg-enabled { margin-right: auto; color: var(--text-secondary); }
+
+.tg-empty {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.tg-col { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 0 0 8px; }
+
+.assign-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+/* The assignment lists can be long — a hundred screens is normal — so each column scrolls rather
+   than pushing Save out of reach. */
+.assign-grid > div { max-height: 210px; overflow-y: auto; padding-right: 4px; }
+.assign-grid label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; padding: 4px 0; cursor: pointer;
+}
+.assign-grid label input { margin: 0; flex-shrink: 0; }
+
+@media (max-width: 700px) {
+  .tg-row, .assign-grid { grid-template-columns: 1fr; }
+}
