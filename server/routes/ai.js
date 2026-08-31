@@ -649,6 +649,25 @@ const CHROMA = Object.freeze({
   blue:    { rgb: '#0047FF', words: 'a perfectly flat uniform chroma-key blue (#0047FF)' },
 });
 
+/*
+ * ⚠️ THE WORDS ARE QUOTED, ALONE ON THEIR OWN LINE, AND REPEATED.
+ *
+ * Image models misspell. That is the whole risk of this feature — a headline is the largest thing
+ * on the slide and a wrong one is worse than a plain font would ever have been. Nothing here can
+ * guarantee the spelling, so the prompt does the only things that measurably help: it states the
+ * string once, exactly, in quotes, and says that nothing else may appear. Everything about HOW it
+ * looks is kept in a separate clause so the two cannot blur together and turn a style word into
+ * something the model tries to write.
+ */
+function letteringPrompt(words, style, backdrop) {
+  const c = CHROMA[backdrop] || CHROMA.green;
+  return `The words "${words}" written as display lettering, and NOTHING else. `
+    + `Spell it exactly: "${words}". No other words, no extra letters, no signature, no watermark. `
+    + `Style: ${style}. `
+    + `The lettering fills the frame, isolated on ${c.words} background. `
+    + 'No shadow on the background, no gradient, no vignette, no border, no frame.';
+}
+
 function objectPrompt(subject, backdrop) {
   const c = CHROMA[backdrop] || CHROMA.green;
   return `${subject}. A single subject, centred, complete and not cropped, photographed straight on, `
@@ -706,6 +725,7 @@ function layeredSystemPrompt(maxObjects) {
   return 'You plan a digital-signage slide as SEPARATE LAYERS so each part can animate on its own.\n'
     + 'Answer with ONE JSON object and nothing else:\n'
     + '{"background_prompt":"...","headline":"...","subhead":"...",'
+    + '"lettering":{"style":"...","backdrop":"green|magenta|blue"},'
     + '"objects":[{"subject":"...","backdrop":"green|magenta|blue","x":N,"y":N,"w":N,"h":N,'
     + '"animation":"fade|slideL|slideR|slideU|slideD|zoom|wipe","delay":N}]}\n'
     + '\n'
@@ -718,6 +738,10 @@ function layeredSystemPrompt(maxObjects) {
     + 'subject names ONE physical thing with no setting and no background — "a ripe orange pumpkin '
     + 'with a curled stem", never "a pumpkin on a table". The background is described separately '
     + 'and must contain NO text and none of the objects.\n'
+    + '\n'
+    + 'lettering.style describes HOW the headline should be painted - "thick red brush script with '
+    + 'rough dry-brush edges", "condensed gold serif with a subtle shadow" - and never says what it '
+    + 'says; the words come from headline. Choose a style that suits the scene.\n'
     + '\n'
     + 'backdrop is the screen colour the object will be photographed against and then removed from, '
     + 'so it MUST NOT be a colour that appears in the object itself: choose magenta for green or '
@@ -843,7 +867,64 @@ router.post('/generate-layered', async (req, res) => {
   // Text last, so it paints over the objects rather than under them.
   const headline = String(p.headline || '').slice(0, SLIDE_RENDER.MAX_FIELD_CHARS);
   const subhead = String(p.subhead || '').slice(0, SLIDE_RENDER.MAX_FIELD_CHARS);
-  if (headline) {
+
+  /*
+   * ⚠️ THE HEADLINE AS PAINTED ARTWORK, WITH THE WORDS STILL KEPT AS A FIELD.
+   *
+   * This is the part a bundled font cannot do — brush script, dry-brush edges, the lettering that
+   * makes a seasonal poster look designed rather than typeset. It goes through the same generate,
+   * key and refuse path as an object, because it IS one: a picture on a flat backdrop.
+   *
+   * ⚠️ AND IT FALLS BACK TO REAL TYPE RATHER THAN FAILING. If the lettering cannot be generated, or
+   * comes back on a backdrop that will not key, the slide gets an ordinary `head` element with the
+   * same words — set in a bundled font, correctly spelled, on every panel. A missing headline is
+   * not an acceptable outcome for a slide whose whole purpose is to say one thing.
+   */
+  let letteringDone = false;
+  const wantLettering = headline && req.body && req.body.lettering !== false;
+  if (wantLettering) {
+    const lp = (p.lettering && typeof p.lettering === 'object') ? p.lettering : {};
+    const style = String(lp.style || 'bold condensed poster lettering with clean edges').slice(0, 200);
+    const backdrop = Object.prototype.hasOwnProperty.call(CHROMA, lp.backdrop) ? lp.backdrop : 'green';
+    try {
+      const { content } = await generateAndIngest({
+        row,
+        prompt: letteringPrompt(headline, style, backdrop),
+        // Wide and short: lettering is a banner, and a square frame wastes most of the pixels on
+        // backdrop that is about to be thrown away.
+        width: 1024, height: 512,
+        name: `ai-lettering-${headline.slice(0, 32).replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'headline'}.png`,
+        userId: req.user.id, workspaceId: req.workspaceId,
+        transform: async (tmpPath) => {
+          const r = await ops.cutout(tmpPath, tmpPath, {});
+          if (!r.written) return { reject: r.reason };
+          if (r.spread > MAX_BACKDROP_SPREAD) {
+            return { reject: `the generated backdrop was not flat (spread ${r.spread.toFixed(0)})` };
+          }
+          if (r.opaque > MAX_OPAQUE) return { reject: 'the generated image had no backdrop to remove' };
+          return r;
+        },
+      });
+      elements.push({
+        slot: 'headline', kind: 'lettering', content_id: content.id,
+        box: { x: 5, y: 22, w: 58, h: 22 },
+        motion: { animation: 'slideD', delay: 0.15, duration: 0.7, easing: 'soft' },
+        style: { opacity: 1 },
+      });
+      fields.headline = headline;
+      letteringDone = true;
+      /*
+       * ⚠️ SAID OUT LOUD, EVERY TIME. Nothing here can verify that the picture spells the headline
+       * correctly, and a misspelled word set two feet tall is the worst thing this feature can
+       * produce. The operator is the check, so they have to be told there is something to check.
+       */
+      notes.push(`The headline is generated lettering — check it reads "${headline}" before publishing.`);
+    } catch (e) {
+      notes.push(`Lettering fell back to type: ${String(e && e.message || e).slice(0, 120)}`);
+    }
+  }
+
+  if (headline && !letteringDone) {
     elements.push({
       /*
        * ⚠️ WIDER AND SMALLER THAN IT LOOKS LIKE IT NEEDS TO BE. At 12cqw in a 52%-wide box, a
@@ -904,7 +985,7 @@ router.post('/generate-layered', async (req, res) => {
           radius_cqw: e.style.radius, opacity: e.style.opacity,
         },
         motion: e.motion,
-        ...(e.kind === 'image' ? { fit: e.cfg.fit } : {}),
+        ...(e.cfg && e.cfg.fit ? { fit: e.cfg.fit } : {}),
       })),
     },
     fields: settled.fields,

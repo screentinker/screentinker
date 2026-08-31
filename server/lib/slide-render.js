@@ -105,6 +105,23 @@ const KINDS = Object.freeze({
   date:      { text: false, glyphs: true,  live: 'date',      config: true  },
   // The field is the message shown once the target passes ("Doors open", "We are closed").
   countdown: { text: true,  glyphs: true,  live: 'countdown', config: true  },
+  /*
+   * ⚠️ A PICTURE OF WORDS, AND THE WORDS ARE STILL A FIELD.
+   *
+   * Lettering is generated artwork — brush script, painted type, the things no bundled font can do
+   * — so what lands on the slide is an image. The obvious implementation stops there, and it
+   * quietly breaks the one promise this file opens by making: that the changeable text stays OUT of
+   * the layout, so somebody can come back in three months and change a number.
+   *
+   * So the words this artwork DEPICTS stay in `fields[slot]`, exactly as a headline's do. They are
+   * the record: the editor shows them, a regenerate reads them, and they are emitted as the image's
+   * alt text — which means a slide whose headline is a picture is still readable to anything that
+   * cannot see it. What is lost is only that editing the words needs the artwork remade, and the
+   * editor can say so, rather than the words simply ceasing to exist.
+   *
+   * glyphs is false: it draws no text of its own, so it needs no @font-face.
+   */
+  lettering: { text: true,  glyphs: false, live: null,        config: true  },
 });
 
 const clamp = (v, lo, hi, dflt) => {
@@ -238,6 +255,10 @@ function kindConfig(kind, src) {
       // Not marked `config` in KINDS: it has a sensible default, so the AI generator can still be
       // offered image elements without having to reason about it.
       return { fit: pick(IMAGE_FITS, src.fit, 'cover') };
+    case 'lettering':
+      // ⚠️ Always contained, and not settable. Cropping a word is not a styling choice: it removes
+      // letters, and "20% OF" on a wall is worse than no slide at all.
+      return { fit: 'contain' };
     case 'qr':
       /*
        * ⚠️ THE MODULES ARE BLACK ON WHITE BY DEFAULT, AND THEY DO NOT INHERIT style.color.
@@ -638,6 +659,21 @@ function renderSlideHtml(rawConfig, opts = {}) {
         ? `<img${fitCls} src="${escapeHtml(url)}" alt="">`
         // A slide whose photo is missing says so, quietly, rather than leaving a hole an operator
         // has to guess at. It is deliberately unobtrusive: on a wall this is better than a red box.
+        : `<div class="ph"></div>`;
+      return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
+    }
+
+    if (e.kind === 'lettering') {
+      const url = resolveImage(e.contentId);
+      css.push('overflow:hidden');
+      /*
+       * ⚠️ THE ALT TEXT IS THE ACTUAL WORDS, from the field. A headline that is a picture is
+       * invisible to a screen reader, to a search, and to anybody reading this document as text —
+       * and the one thing we reliably know about the picture is what it was asked to say.
+       */
+      const words = escapeHtml(slide.fields[e.slot] || '');
+      const inner = url
+        ? `<img class="fit" src="${escapeHtml(url)}" alt="${words}">`
         : `<div class="ph"></div>`;
       return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
     }

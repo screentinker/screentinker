@@ -39,6 +39,7 @@ const KINDS = {
   date: { icon: '▤', label: 'Date', size: 4, weight: 400 },
   countdown: { icon: '◔', label: 'Countdown', size: 9, weight: 700 },
   qr: { icon: '▦', label: 'QR code', size: 0, weight: 400 },
+  lettering: { icon: '✒', label: 'Lettering', size: 0, weight: 400 },
 };
 
 /*
@@ -53,7 +54,7 @@ const KINDS = {
  * the bug the renderer's KINDS comment describes, and it looks correct in this editor either way —
  * the machine authoring the slide has the fonts installed.
  */
-const TEXT_KINDS = ['head', 'body', 'stat', 'countdown', 'qr'];
+const TEXT_KINDS = ['head', 'body', 'stat', 'countdown', 'qr', 'lettering'];
 const GLYPH_KINDS = ['head', 'body', 'stat', 'clock', 'date', 'countdown'];
 const LIVE_KINDS = ['clock', 'date', 'countdown'];
 
@@ -626,6 +627,18 @@ function renderStage(container) {
             e.fit === 'contain' ? 'contain' : 'cover'};display:block">`
         : `<div style="width:100%;height:100%;display:grid;place-items:center;background:rgba(255,255,255,.07);
              border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.45);font-size:2.2cqw">photo</div>`;
+    } else if (e.kind === 'lettering') {
+      const url = contentUrl(e.content_id);
+      d.style.overflow = 'hidden';
+      if (url) {
+        d.innerHTML = `<img src="${esc(url)}" alt="${esc(s.fields[e.slot] || '')}"
+          style="width:100%;height:100%;object-fit:contain;display:block">`;
+      } else {
+        // No artwork yet: show the words, so the element is placeable before it is generated.
+        d.innerHTML = `<div style="width:100%;height:100%;display:grid;place-items:center;
+          border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.55);font-size:3cqw;
+          text-align:center;padding:2%">${esc(s.fields[e.slot] || 'Lettering')}</div>`;
+      }
     } else if (e.kind === 'qr') {
       d.style.overflow = 'hidden';
       paintQr(d, e, s.fields[e.slot] || '');
@@ -899,6 +912,12 @@ function renderProps(container) {
           + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
                The message replaces the counter once the moment passes, so the slide keeps working
                without anybody editing it that morning.</p>`
+        : e.kind === 'lettering'
+        ? row('Words', `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+               These words are the record — they stay editable, are read out to screen readers, and
+               are what a regenerate is asked for. <strong>The picture will not change until you
+               generate it again.</strong> Check the artwork actually spells them.</p>`
         : isText
         ? row('Text', `<textarea class="input" id="pText" rows="3" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
         : e.kind === 'image'

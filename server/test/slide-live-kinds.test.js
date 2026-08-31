@@ -255,7 +255,7 @@ test('⚠️ the AI generator is not offered kinds it cannot fill', () => {
   // And the flag is actually set on the four that need it, so the filter above has something to bite.
   assert.deepEqual(
     Object.keys(R.KINDS).filter((k) => R.KINDS[k].config).sort(),
-    ['clock', 'countdown', 'date', 'qr'],
+    ['clock', 'countdown', 'date', 'lettering', 'qr'],
   );
 });
 
@@ -506,4 +506,103 @@ test('⚠️ the headline box is sized for the wrap that will happen', () => {
 
 test('the plan asks for text short enough for the size it is set at', () => {
   assert.match(AI_SRC, /at most 14 characters/, 'the headline length must be constrained upstream too');
+});
+
+/* ============ lettering: a picture of words that is still a record ============ */
+
+test('⚠️ the words a lettering element depicts stay in fields', () => {
+  /*
+   * THE PROMISE THIS FEATURE COULD EASILY HAVE BROKEN. slide-render.js opens by arguing that the
+   * changeable text must stay OUT of the layout, so somebody can come back in three months and
+   * change a number. Generated lettering is an image, and the obvious implementation stops there —
+   * at which point the words have ceased to exist as data, and the slide has become the thing this
+   * whole module was written to prevent.
+   */
+  const n = R.normalizeSlide({
+    template: { elements: [{ kind: 'lettering', slot: 'w', content_id: 'c' }] },
+    fields: { w: 'AUTUMN SALE' },
+  });
+  assert.equal(n.fields.w, 'AUTUMN SALE', 'the words must survive normalization');
+  assert.ok(R.KINDS.lettering.text, 'lettering must read its field');
+});
+
+test('⚠️ the artwork carries the words as alt text', () => {
+  // A headline that is a picture is invisible to a screen reader, to a search, and to anyone
+  // reading the document as text — and the words are the one thing we reliably know about it.
+  const html = R.renderSlideHtml({
+    template: { elements: [{ kind: 'lettering', slot: 'w', content_id: 'c' }] },
+    fields: { w: 'AUTUMN SALE' },
+  }, { resolveImage: () => '/uploads/content/a.png' });
+  assert.match(html, /<img class="fit" src="[^"]+" alt="AUTUMN SALE">/);
+});
+
+test('⚠️ words that look like markup are escaped into the alt attribute', () => {
+  const html = R.renderSlideHtml({
+    template: { elements: [{ kind: 'lettering', slot: 'w', content_id: 'c' }] },
+    fields: { w: EVIL },
+  }, { resolveImage: () => '/uploads/content/a.png' });
+  assert.ok(!html.includes('<img src=x'), 'markup breakout through alt');
+  assert.ok(html.includes('&quot;'), 'the words must survive as escaped characters');
+});
+
+test('⚠️ lettering can never be cropped, and the setting is not offered', () => {
+  /*
+   * Cropping a word is not a styling choice — it removes letters, and "20% OF" two feet tall on a
+   * wall is worse than no slide. So `contain` is fixed here rather than defaulted.
+   */
+  for (const attempt of ['cover', 'fill', '', null]) {
+    const n = R.normalizeSlide({ template: { elements: [{ kind: 'lettering', slot: 'w', fit: attempt }] } });
+    assert.equal(n.elements[0].cfg.fit, 'contain', `fit=${String(attempt)} must not take effect`);
+  }
+  const html = R.renderSlideHtml({
+    template: { elements: [{ kind: 'lettering', slot: 'w', content_id: 'c', fit: 'cover' }] },
+    fields: { w: 'HI' },
+  }, { resolveImage: () => '/u/a.png' });
+  assert.match(html, /<img class="fit"/, 'the artwork must always be contained');
+});
+
+test('lettering draws no glyphs of its own, so it pulls no font onto the wire', () => {
+  const html = R.renderSlideHtml({
+    template: { elements: [{ kind: 'lettering', slot: 'w', content_id: 'c' }] },
+    fields: { w: 'HI' },
+  }, { resolveImage: () => '/u/a.png' });
+  assert.ok(!/@font-face/.test(html), 'the words are painted into the image, not set in a face');
+});
+
+test('lettering with no artwork yet shows the placeholder rather than breaking', () => {
+  // The element is placeable before it has been generated, and a missing upload must not throw.
+  const html = R.renderSlideHtml({
+    template: { elements: [{ kind: 'lettering', slot: 'w' }] }, fields: { w: 'HI' },
+  });
+  assert.ok(html.includes('class="ph"'));
+});
+
+test('lettering survives a save, words and all', () => {
+  const deck = deckWith([{ kind: 'lettering', slot: 'w', content_id: 'c' }], { w: 'AUTUMN SALE' });
+  const saved = deckLib.normalizeDeck(deck).slides[0];
+  assert.equal(saved.template.elements[0].kind, 'lettering');
+  assert.equal(saved.template.elements[0].fit, 'contain');
+  assert.equal(saved.fields.w, 'AUTUMN SALE');
+});
+
+test('⚠️ the operator is told to check the spelling, every time', () => {
+  /*
+   * Nothing server-side can verify that the picture spells the headline, and a misspelled word set
+   * two feet tall is the worst thing this feature can produce. The operator is the check, so the
+   * route has to tell them there is something to check.
+   */
+  assert.match(AI_SRC, /check it reads/i, 'the route must warn about generated spelling');
+});
+
+test('⚠️ lettering falls back to real type rather than leaving no headline', () => {
+  // A slide whose whole purpose is to say one thing must not come back saying nothing because an
+  // image endpoint had a bad minute.
+  assert.match(AI_SRC, /letteringDone/, 'there must be a fallback path');
+  assert.match(AI_SRC, /if \(headline && !letteringDone\)/, 'and it must emit a real head element');
+});
+
+test('the AI slide generator is not offered lettering either', () => {
+  // Like qr and countdown: it cannot produce a content_id, so a lettering element from it would be
+  // a permanent empty placeholder.
+  assert.ok(R.KINDS.lettering.config, 'lettering must be a config kind');
 });
