@@ -23,6 +23,11 @@ const R = require('../lib/slide-render');
 const render = (elements, fields = {}) =>
   R.renderSlideHtml({ template: { elements }, fields });
 
+/* An image element only becomes an <img> when its content resolves; without a resolver it is the
+ * missing-photo placeholder, which is a different branch entirely. */
+const renderWithImages = (elements, fields = {}) =>
+  R.renderSlideHtml({ template: { elements }, fields }, { resolveImage: () => '/uploads/content/x.png' });
+
 /** Markup that would execute or restructure the document if any escape were missing. */
 const EVIL = '"><img src=x onerror=alert(1)><script>alert(2)</script>';
 
@@ -233,7 +238,9 @@ test('⚠️ an older server meeting a newer deck degrades instead of throwing',
 });
 
 test('kinds that need no configuration carry none', () => {
-  for (const kind of ['head', 'body', 'stat', 'image', 'rule', 'box']) {
+  // `image` is deliberately absent: it gained a `fit` setting, which has a sensible default and so
+  // does not make it a `config` kind, but does give it a cfg object.
+  for (const kind of ['head', 'body', 'stat', 'rule', 'box']) {
     const n = R.normalizeSlide({ template: { elements: [{ kind }] } });
     assert.equal(n.elements[0].cfg, null, `${kind} should not have gained a cfg`);
   }
@@ -319,7 +326,7 @@ test('⚠️ hostile config does not survive a save either', () => {
 
 test('a kind that needs no config gains no keys on save', () => {
   const e = savedEl(deckWith([{ kind: 'head', slot: 'a' }], { a: 'hi' }));
-  for (const k of ['clock_format', 'date_format', 'tz', 'locale', 'target', 'qr_ec', 'qr_bg']) {
+  for (const k of ['clock_format', 'date_format', 'tz', 'locale', 'target', 'qr_ec', 'qr_bg', 'fit']) {
     assert.ok(!(k in e), `a headline should not carry ${k}`);
   }
 });
@@ -412,4 +419,48 @@ test('a normal QR produces no warning', () => {
 test('the QR foreground survives a save like every other config field', () => {
   const e = savedEl(deckWith([{ kind: 'qr', slot: 'a', qr_fg: '#112233' }], { a: 'https://a.example' }));
   assert.equal(e.qr_fg, '#112233');
+});
+
+/* ============ how a photo sits in its box ============ */
+
+test('⚠️ a cut-out fits inside its box instead of being cropped to fill it', () => {
+  /*
+   * THE DEFECT A SPIKE FOUND, and the reason this option exists. `cover` fills the box and crops
+   * the overflow, which is right for a photograph used as a panel and wrong for an object with
+   * transparency around it — the crop slices through the object. Measured: a generated pumpkin laid
+   * into a 34x62 box lost its bottom third, and it reads as a bad photo rather than a setting
+   * anybody would think to look for.
+   */
+  const cover = renderWithImages([{ kind: 'image', content_id: 'x' }]);
+  const contain = renderWithImages([{ kind: 'image', content_id: 'x', fit: 'contain' }]);
+  assert.ok(!/<img class="fit"/.test(cover), 'cover is the default and needs no class');
+  assert.ok(/<img class="fit"/.test(contain), 'contain must be marked');
+  assert.ok(/\.e img\.fit \{ object-fit:contain; \}/.test(contain), 'and the rule must be present');
+});
+
+test('⚠️ a slide authored before this option renders byte for byte as it did', () => {
+  // A layout change nobody asked for is a worse bug than a missing option: these are on screens.
+  const before = renderWithImages([{ kind: 'image', content_id: 'x' }, { kind: 'head', slot: 'a' }], { a: 'hi' });
+  assert.ok(before.includes('<img src='), 'no class attribute on a default image');
+  assert.ok(!before.includes('class="fit"'));
+});
+
+test('an unknown fit falls back to cover rather than reaching the markup', () => {
+  const html = renderWithImages([{ kind: 'image', content_id: 'x', fit: '" onerror=alert(1)' }]);
+  assert.ok(!html.includes('onerror'), 'markup breakout through fit');
+  assert.ok(!html.includes('class="fit"'));
+});
+
+test('every fit in the allowlist survives, and nothing else does', () => {
+  assert.deepEqual(Object.keys(R.IMAGE_FITS).sort(), ['contain', 'cover']);
+  for (const f of ['fill', 'none', '', null, 7]) {
+    const n = R.normalizeSlide({ template: { elements: [{ kind: 'image', fit: f }] } });
+    assert.equal(n.elements[0].cfg.fit, 'cover', `${String(f)} slipped through`);
+  }
+});
+
+test('fit survives a save like every other per-element setting', () => {
+  // The same silent-loss trap: unnamed keys are dropped by sanitizeStored on every save.
+  assert.equal(savedEl(deckWith([{ kind: 'image', slot: 'a', fit: 'contain' }])).fit, 'contain');
+  assert.equal(savedEl(deckWith([{ kind: 'image', slot: 'a' }])).fit, 'cover');
 });

@@ -139,4 +139,58 @@ async function measureAndThumbnail(src, destPath, width, quality = 70) {
   }
 }
 
-module.exports = { metadata, writeThumbnail, measureAndThumbnail, readImage };
+/*
+ * Cut an object off its flat backdrop and write it as a PNG with alpha.
+ *
+ * ⚠️ ON THE WORKER SIDE FOR THE REASON THIS WHOLE MODULE PAIR EXISTS. Keying is one pass of
+ * arithmetic per pixel, and the images this runs on are what an image endpoint returns — 2048x2048
+ * is 4.2 million pixels, each costing a square root. That is exactly the shape of main-thread work
+ * that produced #240 (blocked loop, missed heartbeats, panels marked offline). It goes where the
+ * decoding already goes.
+ *
+ * ⚠️ PNG, NEVER JPEG. JPEG has no alpha channel at all, so a cut-out saved as one silently gets its
+ * transparency composited onto black — an object with a black box around it, which on a slide is
+ * worse than not having the feature.
+ *
+ * Returns what the caller needs to decide whether to trust the result: how flat the backdrop
+ * actually was, and how much of the frame survived.
+ */
+async function cutout(src, destPath, opts = {}) {
+  const key = require('./image-key');
+  const img = await readImage(src);
+  // Work at a bounded size: the object is laid onto a slide element a fraction of a screen wide, so
+  // a 2048px cut-out is detail nobody sees, at 4x the pixels to key and to ship to every player.
+  const max = opts.maxWidth || 1024;
+  if (img.bitmap.width > max) img.resize({ w: max });
+
+  const keyRgb = opts.key || key.sampleKey(img.bitmap);
+  const spread = key.backdropSpread(img.bitmap, keyRgb);
+  key.keyOut(img.bitmap, keyRgb, opts);
+
+  const bounds = key.contentBounds(img.bitmap);
+  if (!bounds) {
+    // The key removed everything. Refused rather than written: see image-key.contentBounds.
+    return { written: false, reason: 'the backdrop key removed the entire image', keyRgb, spread };
+  }
+  /*
+   * ⚠️ MEASURED AFTER THE CROP, so the numbers describe the asset the caller is about to store
+   * rather than the frame it was cut from. Measured before, a sparse subject reads as alarmingly
+   * empty purely because it was generated small in a large frame — three leaves came back "15%
+   * opaque" pre-crop and 34% post-crop, and the caller would be judging the wrong thing.
+   *
+   * `frame` is the other half of that: how much of the original frame the object occupied. A tiny
+   * value means the generator drew something small in a big empty backdrop, which is worth knowing
+   * separately from how solid the object itself is.
+   */
+  img.crop(bounds);
+  const cov = key.coverage(img.bitmap);
+  await fs.promises.writeFile(destPath, await img.getBuffer('image/png'));
+  return {
+    written: true, keyRgb, spread,
+    width: img.bitmap.width, height: img.bitmap.height,
+    opaque: cov.opaque, feathered: cov.feathered,
+    frame: (bounds.w * bounds.h) / (max * max || 1),
+  };
+}
+
+module.exports = { metadata, writeThumbnail, measureAndThumbnail, readImage, cutout };

@@ -1273,6 +1273,13 @@ app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth 
  */
 app.use('/api/ai/generate-slide', rateLimit(60000, 10));
 app.use('/api/ai/generate-design', rateLimit(60000, 10));
+/*
+ * ⚠️ TIGHTER THAN THE OTHERS, BECAUSE ONE PRESS IS UP TO FIVE GENERATIONS. Layered generation makes
+ * a background plus one call per object, each on the operator's own metered image endpoint, and
+ * each followed by a full-frame key on the image worker. At the rate above that is fifty paid
+ * generations a minute from a held Enter key.
+ */
+app.use('/api/ai/generate-layered', rateLimit(60000, 3));
 app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
 app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview session creation retains rendered HTML in memory for 5min
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });

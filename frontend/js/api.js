@@ -581,6 +581,13 @@ export const api = {
   // slide references its background by id because the file has to reach a screen and be playable
   // with the WAN down, which an inline data: URL never could.
   aiGenerateBackground: (prompt, dims) => request('/ai/generate-background', { method: 'POST', body: JSON.stringify({ prompt, ...(dims || {}) }) }),
+  /*
+   * A background PLUS cut-out objects, each its own animatable element. One press is up to five
+   * paid generations upstream, so the caller must be single-flight about it.
+   */
+  aiGenerateLayered: (prompt, dims, objects) => request('/ai/generate-layered', {
+    method: 'POST', body: JSON.stringify({ prompt, ...(dims || {}), objects }),
+  }),
   aiListModels: (base_url, api_key) => request('/ai/models', { method: 'POST', body: JSON.stringify({ base_url, api_key }) }),
 
   // Instance-level default branding (#15, platform admin).

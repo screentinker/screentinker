@@ -96,9 +96,10 @@ function pump() {
 // is announced rather than silent.
 async function runInline(job) {
   const core = require('./image-ops-core');
-  return job.op === 'metadata'
-    ? core.metadata(job.src)
-    : core.writeThumbnail(job.src, job.dest, job.width, job.quality);
+  if (job.op === 'metadata') return core.metadata(job.src);
+  if (job.op === 'cutout') return core.cutout(job.src, job.dest, job.opts);
+  if (job.op === 'measureAndThumbnail') return core.measureAndThumbnail(job.src, job.dest, job.width, job.quality);
+  return core.writeThumbnail(job.src, job.dest, job.width, job.quality);
 }
 
 function submit(job) {
@@ -144,4 +145,12 @@ async function shutdown() {
   if (w) await w.terminate();
 }
 
-module.exports = { metadata, writeThumbnail, measureAndThumbnail, shutdown };
+/*
+ * Key a flat backdrop out of `src` and write the trimmed result to `destPath` as a PNG with alpha.
+ * See image-ops-core.cutout for why this belongs off the main thread.
+ */
+function cutout(src, dest, opts) {
+  return submit({ op: 'cutout', src, dest, opts: opts || {} });
+}
+
+module.exports = { metadata, writeThumbnail, measureAndThumbnail, cutout, shutdown };

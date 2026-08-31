@@ -517,6 +517,76 @@ router.post('/generate-slide', async (req, res) => {
  * (sniffed, thumbnailed, digested, workspace-scoped), and return the id the slide document already
  * knows how to store in background_content_id.
  */
+
+/* ============ generating one image and putting it in the library ============ */
+
+/**
+ * Generate an image, store it through the REAL ingest, and return the content row.
+ *
+ * ⚠️ ONE COPY, because the tmp-file dance below is not incidental. The bytes are written as
+ * `<uuid>.part` and handed to ingestUploadedFile so they are SNIFFED for their true type rather
+ * than trusted: a generation endpoint that answers with HTML, or with a PNG that is really
+ * something else, has to be refused here exactly as an operator's upload would be. A second
+ * hand-rolled copy of this in the layered route would be the obvious place for that check to
+ * quietly not exist.
+ *
+ * Throws with the upstream's own words. Callers translate that into a status — see UPSTREAM_STATUS
+ * for why it is not 502.
+ */
+async function generateAndIngest({ row, prompt, width, height, name, userId, workspaceId, transform }) {
+  const dataUrl = await generateImage({
+    provider: row.image_provider,
+    baseUrl: row.image_base_url.replace(/\/+$/, ''),
+    apiKey: row.image_api_key_enc ? decrypt(row.image_api_key_enc) : '',
+    model: row.image_model,
+    prompt,
+    width,
+    height,
+    timeoutMs: 180000,
+  });
+  if (!dataUrl || dataUrl.indexOf('base64,') < 0) throw new Error('The image endpoint returned no image.');
+
+  const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf('base64,') + 7), 'base64');
+  const tmpName = `${uuidv4()}.part`;
+  const tmpPath = path.join(config.contentDir, tmpName);
+  fs.mkdirSync(config.contentDir, { recursive: true });
+  fs.writeFileSync(tmpPath, bytes);
+
+  /*
+   * A hook for work that has to happen on the BYTES before they become library content — the
+   * layered route keys the backdrop out here. It returns whatever it wants the caller to know, and
+   * may rewrite the file in place; if it refuses, nothing is ingested and the tmp file is removed.
+   */
+  let extra = null;
+  if (typeof transform === 'function') {
+    try {
+      extra = await transform(tmpPath);
+    } catch (e) {
+      try { fs.unlinkSync(tmpPath); } catch (e2) { /* already gone */ }
+      throw e;
+    }
+    if (extra && extra.reject) {
+      try { fs.unlinkSync(tmpPath); } catch (e2) { /* already gone */ }
+      const err = new Error(extra.reject);
+      err.rejected = true;
+      throw err;
+    }
+  }
+
+  let content;
+  try {
+    content = await ingestUploadedFile({
+      file: { path: tmpPath, originalname: name, size: fs.statSync(tmpPath).size },
+      userId,
+      workspaceId,
+    });
+  } catch (e) {
+    try { fs.unlinkSync(tmpPath); } catch (e2) { /* finalizeUpload may already have removed it */ }
+    throw e;
+  }
+  return { content, extra };
+}
+
 router.post('/generate-background', async (req, res) => {
   const prompt = String(req.body && req.body.prompt || '').trim().slice(0, 500);
   if (!prompt) return res.status(400).json({ error: 'Prompt required' });
@@ -528,13 +598,10 @@ router.post('/generate-background', async (req, res) => {
   }
   if (!endpointAllowed(imgBase)) return res.status(400).json({ error: 'Image endpoint URL not allowed.' });
 
-  let dataUrl;
+  let content;
   try {
-    dataUrl = await generateImage({
-      provider: row.image_provider,
-      baseUrl: imgBase,
-      apiKey: row.image_api_key_enc ? decrypt(row.image_api_key_enc) : '',
-      model: row.image_model,
+    ({ content } = await generateAndIngest({
+      row,
       prompt,
       /*
        * The DECK'S shape, not a fixed 16:9 — a portrait deck given a landscape background crops to
@@ -543,8 +610,10 @@ router.post('/generate-background', async (req, res) => {
        */
       width: clampN(req.body && req.body.width, 256, 4096, 1792),
       height: clampN(req.body && req.body.height, 256, 4096, 1024),
-      timeoutMs: 180000,
-    });
+      name: `ai-background-${prompt.slice(0, 40).replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'slide'}.png`,
+      userId: req.user.id,
+      workspaceId: req.workspaceId,
+    }));
   } catch (e) {
     /*
      * ⚠️ 502 IS NOT USABLE HERE — CLOUDFLARE REPLACES THE BODY. A 502 from the origin is rendered
@@ -557,46 +626,260 @@ router.post('/generate-background', async (req, res) => {
     console.warn('[ai] background generation failed:', why);
     return res.status(400).json({ error: 'Image generation failed: ' + why });
   }
-  if (!dataUrl || dataUrl.indexOf('base64,') < 0) {
-    console.warn('[ai] background generation: endpoint returned no image');
-    return res.status(400).json({ error: 'The image endpoint returned no image.' });
-  }
-
-  /*
-   * ⚠️ WRITTEN AS `<uuid>.part`, because that is what finalizeUpload expects and what makes this go
-   * through the real ingest: the bytes are SNIFFED for their true type rather than trusted. A
-   * generation endpoint that returned HTML, or a PNG that is really something else, must be refused
-   * here exactly as an operator's upload would be — not written into the library because we asked
-   * for an image and assumed we got one.
-   */
-  const tmpName = `${uuidv4()}.part`;
-  const tmpPath = path.join(config.contentDir, tmpName);
-  const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf('base64,') + 7), 'base64');
-  try {
-    fs.mkdirSync(config.contentDir, { recursive: true });
-    fs.writeFileSync(tmpPath, bytes);
-  } catch (e) {
-    return res.status(500).json({ error: 'Could not store the generated image.' });
-  }
-
-  let content;
-  try {
-    content = await ingestUploadedFile({
-      file: {
-        path: tmpPath,
-        originalname: `ai-background-${prompt.slice(0, 40).replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'slide'}.png`,
-        size: bytes.length,
-      },
-      userId: req.user.id,
-      workspaceId: req.workspaceId,
-    });
-  } catch (e) {
-    try { fs.unlinkSync(tmpPath); } catch (e2) { /* finalizeUpload may already have removed it */ }
-    return res.status(400).json({ error: String(e && e.message || e).slice(0, 200) });
-  }
 
   logActivity(req.user.id, 'ai_background_generated', prompt.slice(0, 120), null, getClientIp(req), req.workspaceId);
   res.json({ content_id: content.id, filename: content.filename, width: content.width, height: content.height });
+});
+
+
+/* ============ layered slides: a background plus cut-out objects that animate ============ */
+
+/*
+ * ⚠️ THE BACKDROP INSTRUCTION IS WRITTEN BY THE SERVER, NOT BY THE MODEL.
+ *
+ * The whole feature rests on each object arriving on a flat, uniform backdrop, because that is what
+ * lib/image-key.js removes. Left to describe an object freely a model writes "a pumpkin on a wooden
+ * table in soft autumn light" — which is a better picture and completely unusable, since keying it
+ * takes the table, the light and half the pumpkin. So the model supplies the SUBJECT and this
+ * supplies the staging, every time, in words measured against real output.
+ */
+const CHROMA = Object.freeze({
+  green:   { rgb: '#0BC314', words: 'a perfectly flat uniform chroma-key green (#0BC314)' },
+  magenta: { rgb: '#FF00FF', words: 'a perfectly flat uniform chroma-key magenta (#FF00FF)' },
+  blue:    { rgb: '#0047FF', words: 'a perfectly flat uniform chroma-key blue (#0047FF)' },
+});
+
+function objectPrompt(subject, backdrop) {
+  const c = CHROMA[backdrop] || CHROMA.green;
+  return `${subject}. A single subject, centred, complete and not cropped, photographed straight on, `
+    + `isolated on ${c.words} background. No shadow on the background, no gradient, no vignette, `
+    + `no text, no border. Product cutout style.`;
+}
+
+/*
+ * ⚠️ A CAP, AND IT IS ABOUT MONEY. Each object is a separate call to an image endpoint the operator
+ * pays for, on top of the background — so this route costs (objects + 1) generations per press,
+ * and a request for "twelve leaves" would quietly spend twelve times what the operator expected.
+ * Four is enough for the compositions this is for and keeps the worst case legible.
+ */
+const MAX_OBJECTS = 4;
+
+/*
+ * ⚠️ REFUSAL THRESHOLDS, because a bad cut-out still looks like a cut-out.
+ *
+ * spread  — how far the backdrop's border pixels wander from its median. A flat backdrop measures
+ *           low single digits; real output that drifted into a gradient measured far above this,
+ *           and keying a gradient leaves a torn edge or a ghost of the backdrop still attached.
+ * opaque  — a value near 1 means the key removed nothing, i.e. the generator ignored the backdrop
+ *           instruction entirely and the "cut-out" is a rectangular photo with its scene intact.
+ *           Laid onto a slide that reads as a broken image rather than a missing one.
+ */
+const MAX_BACKDROP_SPREAD = 70;
+const MAX_OPAQUE = 0.985;
+
+function layeredSystemPrompt(maxObjects) {
+  return 'You plan a digital-signage slide as SEPARATE LAYERS so each part can animate on its own.\n'
+    + 'Answer with ONE JSON object and nothing else:\n'
+    + '{"background_prompt":"...","headline":"...","subhead":"...",'
+    + '"objects":[{"subject":"...","backdrop":"green|magenta|blue","x":N,"y":N,"w":N,"h":N,'
+    + '"animation":"fade|slideL|slideR|slideU|slideD|zoom|wipe","delay":N}]}\n'
+    + '\n'
+    + `Rules. At most ${maxObjects} objects. x, y, w and h are PERCENTAGES of the slide, 0-100; `
+    + 'objects must not cover the middle-left area where the headline sits. '
+    + 'delay is seconds, 0-2, and each object should differ so they arrive in sequence. '
+    + '\n'
+    + 'subject names ONE physical thing with no setting and no background — "a ripe orange pumpkin '
+    + 'with a curled stem", never "a pumpkin on a table". The background is described separately '
+    + 'and must contain NO text and none of the objects.\n'
+    + '\n'
+    + 'backdrop is the screen colour the object will be photographed against and then removed from, '
+    + 'so it MUST NOT be a colour that appears in the object itself: choose magenta for green or '
+    + 'blue subjects, green for red, orange, pink or purple subjects, blue for yellow subjects.';
+}
+
+/**
+ * POST /api/ai/generate-layered — editor+; a slide whose parts are separate, animatable images.
+ *
+ * This is the thing the designer could never do and no other signage product does: the operator
+ * describes a scene, and gets back a background plus individually cut-out objects, each its own
+ * element with its own entrance — rather than one flat picture with text on top.
+ */
+router.post('/generate-layered', async (req, res) => {
+  if (!canEdit(req)) return res.status(403).json({ error: 'Editor access required' });
+  const prompt = String(req.body && req.body.prompt || '').trim().slice(0, 500);
+  if (!prompt) return res.status(400).json({ error: 'Prompt required' });
+
+  const row = db.prepare('SELECT image_base_url, image_model, image_provider, image_api_key_enc FROM ai_settings WHERE workspace_id = ?').get(req.workspaceId);
+  if (!row || !row.image_base_url || !row.image_provider) {
+    return res.status(400).json({ error: 'No image endpoint configured for this workspace.' });
+  }
+  if (!endpointAllowed(row.image_base_url)) return res.status(400).json({ error: 'Image endpoint URL not allowed.' });
+
+  const want = clampN(req.body && req.body.objects, 1, MAX_OBJECTS, 3);
+  const W = clampN(req.body && req.body.width, 256, 4096, 1792);
+  const H = clampN(req.body && req.body.height, 256, 4096, 1024);
+
+  const plan = await askModelForJson({
+    workspaceId: req.workspaceId,
+    system: layeredSystemPrompt(want),
+    user: prompt,
+  });
+  if (plan.error) return res.status(plan.status === 400 ? 400 : UPSTREAM_STATUS).json({ error: plan.error });
+
+  const p = plan.parsed && typeof plan.parsed === 'object' ? plan.parsed : {};
+  const objects = (Array.isArray(p.objects) ? p.objects : []).slice(0, want)
+    .filter((o) => o && typeof o.subject === 'string' && o.subject.trim());
+  const bgPrompt = String(p.background_prompt || prompt).slice(0, 500);
+
+  const ops = require('../lib/image-ops');
+  const elements = [];
+  const fields = {};
+  const notes = [];
+
+  /*
+   * ⚠️ THE BACKGROUND FIRST, AND A FAILURE HERE IS FATAL WHILE AN OBJECT FAILURE IS NOT.
+   * Losing one object costs a layer; losing the background costs the slide, and continuing would
+   * hand back cut-outs floating on a flat colour that nobody asked for.
+   */
+  let backgroundId = null;
+  try {
+    const { content } = await generateAndIngest({
+      row, prompt: `${bgPrompt}. No text, no words, no lettering anywhere in the image.`,
+      width: W, height: H,
+      name: `ai-layer-bg-${prompt.slice(0, 32).replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'slide'}.png`,
+      userId: req.user.id, workspaceId: req.workspaceId,
+    });
+    backgroundId = content.id;
+  } catch (e) {
+    const why = String(e && e.message || e).slice(0, 200);
+    console.warn('[ai] layered background failed:', why);
+    return res.status(400).json({ error: 'Background generation failed: ' + why });
+  }
+
+  /*
+   * ⚠️ SEQUENTIAL, NOT Promise.all. Each of these holds a full RGBA bitmap while it is keyed, and
+   * the image worker runs one job at a time by design (see lib/image-ops) — firing four at once
+   * would queue behind each other anyway while holding four decoded images in heap, on the small
+   * hosts this product is expected to run on.
+   */
+  for (let i = 0; i < objects.length; i++) {
+    const o = objects[i];
+    const backdrop = Object.prototype.hasOwnProperty.call(CHROMA, o.backdrop) ? o.backdrop : 'green';
+    const subject = String(o.subject).slice(0, 300);
+    let cut = null;
+    let content = null;
+    try {
+      ({ content, extra: cut } = await generateAndIngest({
+        row,
+        prompt: objectPrompt(subject, backdrop),
+        width: 1024, height: 1024,
+        name: `ai-layer-${subject.slice(0, 32).replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'object'}.png`,
+        userId: req.user.id, workspaceId: req.workspaceId,
+        transform: async (tmpPath) => {
+          const r = await ops.cutout(tmpPath, tmpPath, {});
+          if (!r.written) return { reject: r.reason };
+          if (r.spread > MAX_BACKDROP_SPREAD) {
+            return { reject: `the generated backdrop was not flat (spread ${r.spread.toFixed(0)})` };
+          }
+          if (r.opaque > MAX_OPAQUE) {
+            return { reject: 'the generated image had no backdrop to remove' };
+          }
+          return r;
+        },
+      }));
+    } catch (e) {
+      // One layer lost is a slide with fewer layers, which is still a slide. Reported, never silent.
+      notes.push(`"${subject.slice(0, 60)}" was skipped: ${String(e && e.message || e).slice(0, 120)}`);
+      continue;
+    }
+
+    elements.push({
+      slot: `obj_${i}`,
+      kind: 'image',
+      content_id: content.id,
+      box: {
+        x: clampN(o.x, -20, 110, 60), y: clampN(o.y, -20, 110, 40),
+        w: clampN(o.w, 5, 100, 30), h: clampN(o.h, 5, 100, 40),
+      },
+      // ⚠️ contain, always. A cut-out cropped to fill its box is sliced through the object itself.
+      fit: 'contain',
+      motion: {
+        animation: Object.prototype.hasOwnProperty.call(SLIDE_RENDER.ANIMATIONS, o.animation) ? o.animation : 'slideU',
+        delay: clampN(o.delay, 0, 2, 0.4 + i * 0.25),
+        duration: 0.7,
+        easing: 'soft',
+      },
+      style: { opacity: 1 },
+    });
+  }
+
+  // Text last, so it paints over the objects rather than under them.
+  const headline = String(p.headline || '').slice(0, SLIDE_RENDER.MAX_FIELD_CHARS);
+  const subhead = String(p.subhead || '').slice(0, SLIDE_RENDER.MAX_FIELD_CHARS);
+  if (headline) {
+    elements.push({
+      slot: 'headline', kind: 'head', box: { x: 6, y: 30, w: 52 },
+      style: { color: '#FFFFFF', size_cqw: 12, weight: 900, align: 'left' },
+      motion: { animation: 'slideD', delay: 0.15, duration: 0.6, easing: 'soft' },
+    });
+    fields.headline = headline;
+  }
+  if (subhead) {
+    elements.push({
+      slot: 'subhead', kind: 'body', box: { x: 6, y: 52, w: 46 },
+      style: { color: '#FFFFFF', size_cqw: 4.5, weight: 600, align: 'left' },
+      motion: { animation: 'wipe', delay: 0.5, duration: 0.7, easing: 'soft' },
+    });
+    fields.subhead = subhead;
+  }
+
+  const spec = {
+    template: {
+      background: '#101318',
+      background_content_id: backgroundId,
+      // A scrim by default: these backgrounds are photographic and the headline sits on top of one.
+      background_dim: 0.28,
+      elements,
+    },
+    fields,
+  };
+
+  /*
+   * ⚠️ THROUGH THE RENDERER'S OWN NORMALIZER BEFORE ANSWERING, exactly as generate-slide does.
+   * Anything this route builds that the renderer would reject is a slide that looks right in the
+   * editor and is wrong on a screen.
+   */
+  const settled = SLIDE_RENDER.normalizeSlide(spec);
+
+  logActivity(req.user.id, 'ai_layered_generated',
+    `${prompt.slice(0, 90)} (${elements.filter((e) => e.kind === 'image').length} layers)`,
+    null, getClientIp(req), req.workspaceId);
+
+  res.json({
+    template: {
+      background: settled.background,
+      background_content_id: settled.backgroundContentId,
+      background_dim: settled.backgroundDim,
+      elements: settled.elements.map((e, i) => ({
+        slot: e.slot, kind: e.kind,
+        box: { x: e.x, y: e.y, w: e.w, ...(e.h == null ? {} : { h: e.h }) },
+        content_id: e.contentId,
+        style: {
+          color: e.style.color, font: e.style.font, size_cqw: e.style.size,
+          weight: e.style.weight, align: e.style.align,
+          radius_cqw: e.style.radius, opacity: e.style.opacity,
+        },
+        motion: e.motion,
+        ...(e.kind === 'image' ? { fit: e.cfg.fit } : {}),
+      })),
+    },
+    fields: settled.fields,
+    // What was asked for versus what arrived, so the editor can say so rather than quietly showing
+    // fewer layers than the operator paid for.
+    generated: elements.filter((e) => e.kind === 'image').length,
+    requested: objects.length,
+    notes,
+  });
 });
 
 router.post('/generate-design', async (req, res) => {

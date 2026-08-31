@@ -300,6 +300,8 @@ function renderEditor(container) {
                placeholder="${esc(t('slides.ai.placeholder'))}" maxlength="500">
         <button class="btn btn-secondary btn-sm" id="aiGenBtn">${esc(t('slides.ai.generate'))}</button>
         <button class="btn btn-secondary btn-sm" id="aiBgBtn" title="Generate a background image from the same prompt">Generate background</button>
+        <button class="btn btn-secondary btn-sm" id="aiLayerBtn"
+          title="Generate a background plus separate cut-out objects, each with its own entrance. Uses several image generations.">Generate layers</button>
         <button class="btn-icon" id="aiCfgBtn" title="${esc(t('slides.ai.settings'))}" aria-label="${esc(t('slides.ai.settings'))}" style="padding:4px 8px">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
@@ -359,6 +361,7 @@ function renderEditor(container) {
   });
   container.querySelector('#aiGenBtn').addEventListener('click', () => aiGenerate(container));
   container.querySelector('#aiBgBtn').addEventListener('click', () => aiGenerateBackground(container));
+  container.querySelector('#aiLayerBtn').addEventListener('click', () => aiGenerateLayered(container));
   container.querySelector('#aiPrompt').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); aiGenerate(container); }
   });
@@ -619,7 +622,8 @@ function renderStage(container) {
       const url = contentUrl(e.content_id);
       d.style.overflow = 'hidden';
       d.innerHTML = url
-        ? `<img src="${esc(url)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
+        ? `<img src="${esc(url)}" alt="" style="width:100%;height:100%;object-fit:${
+            e.fit === 'contain' ? 'contain' : 'cover'};display:block">`
         : `<div style="width:100%;height:100%;display:grid;place-items:center;background:rgba(255,255,255,.07);
              border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.45);font-size:2.2cqw">photo</div>`;
     } else if (e.kind === 'qr') {
@@ -901,8 +905,14 @@ function renderProps(container) {
           ? row('Photo', `<select class="input" id="pImg"><option value="">— none —</option>${
               (state.contentIndex || []).map((c) => `<option value="${esc(c.id)}" ${
                 c.id === e.content_id ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select>`)
+            + row('Fit', `<select class="input" id="pFit">
+                 <option value="cover" ${(e.fit || 'cover') === 'cover' ? 'selected' : ''}>Fill the box (crop)</option>
+                 <option value="contain" ${e.fit === 'contain' ? 'selected' : ''}>Fit inside (whole image)</option>
+               </select>`)
             + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
-                 Pick from the content library — the slide stores a reference, not a copy.</p>`
+                 Pick from the content library — the slide stores a reference, not a copy.
+                 Use <strong>Fit inside</strong> for a cut-out with transparency — filling the box
+                 crops it, which slices through the object itself.</p>`
           : `<p style="font-size:12px;color:var(--text-muted)">Decorative — no text.</p>`)
       + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
            <button class="btn btn-secondary btn-sm" id="pFwd">↑ Forward</button>
@@ -932,6 +942,7 @@ function renderProps(container) {
       return el;
     };
     bindCfg('#pQrEc', (v) => { e.qr_ec = v; });
+    bindCfg('#pFit', (v) => { e.fit = v; });
     bindCfg('#pQrFg', (v) => { e.qr_fg = v; });
     bindCfg('#pQrBg', (v) => { e.qr_bg = v; });
     bindCfg('#pFmt', (v) => { if (e.kind === 'clock') e.clock_format = v; else e.date_format = v; });
@@ -1306,6 +1317,7 @@ async function publish(container) {
  */
 let aiBusy = false;
 let aiBgBusy = false;   // an image generation costs money per click; never let two run
+let aiLayerBusy = false; // and this one is up to FIVE generations per click
 
 /*
  * Generate a background PICTURE for the slide you are on.
@@ -1383,6 +1395,73 @@ async function aiGenerateBackground(container) {
     say(String((e && e.message) || e).slice(0, 200), true);
   } finally {
     aiBgBusy = false;
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+/*
+ * A background plus cut-out objects, each landing as its own element with its own entrance.
+ *
+ * ⚠️ THE EXPENSIVE ONE. A press is one generation for the background and one per object, all on the
+ * operator's metered endpoint, so this is single-flight on its own flag and says what it is about
+ * to spend before it spends it.
+ */
+async function aiGenerateLayered(container) {
+  const promptEl = container.querySelector('#aiPrompt');
+  const statusEl = container.querySelector('#aiStatus');
+  const btn = container.querySelector('#aiLayerBtn');
+  const prompt = (promptEl.value || '').trim();
+  const say = (msg, bad) => {
+    statusEl.textContent = msg;
+    statusEl.style.color = bad ? 'var(--danger, #e05252)' : 'var(--text-muted)';
+  };
+  if (!prompt) { say('Describe the scene first.', true); promptEl.focus(); return; }
+  if (aiLayerBusy) return;
+  if (!state.deck.doc.slides.length) { say('Add a slide first.', true); return; }
+
+  const OBJECTS = 3;
+  /*
+   * ⚠️ ASKED, NOT ASSUMED. Every other button here costs at most one generation; this one costs
+   * four and replaces the whole slide. Both of those are surprises worth one click to avoid.
+   */
+  if (!window.confirm(
+    `Generate a layered slide?\n\nThis makes ${OBJECTS + 1} images on your image endpoint `
+    + '(one background and one per object) and replaces the current slide.')) return;
+
+  // Same identity trick as the background button: this takes a minute and the operator can move.
+  const target = state.deck.doc.slides[state.si];
+
+  aiLayerBusy = true;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Generating…';
+  say(`Generating ${OBJECTS + 1} images and cutting the objects out — this takes a few minutes.`);
+  try {
+    const out = await api.aiGenerateLayered(prompt, aspectPixels(), OBJECTS);
+    if (!out || !out.template) throw new Error('nothing came back');
+    const idx = state.deck.doc.slides.indexOf(target);
+    if (idx < 0) { say('That slide is gone — nothing changed.', true); return; }
+    target.template = out.template;
+    target.fields = out.fields || {};
+    // The new cut-outs are content created seconds ago, so the cached index cannot resolve them and
+    // every layer would render as an empty placeholder. Same trap as the background button.
+    await loadContent();
+    touch(container);
+    paintAll(container);
+    /*
+     * ⚠️ SAY WHAT DID NOT ARRIVE. An object whose backdrop came back as a gradient is refused
+     * server-side rather than laid on as a torn cut-out — so the operator can get four layers, or
+     * two, and the difference must not be something they have to notice for themselves.
+     */
+    const short = out.generated === out.requested
+      ? `Built ${out.generated} layers.`
+      : `Built ${out.generated} of ${out.requested} layers.`;
+    say(out.notes && out.notes.length ? `${short} ${out.notes[0]}` : short, out.generated < out.requested);
+  } catch (e) {
+    say(String((e && e.message) || e).slice(0, 200), true);
+  } finally {
+    aiLayerBusy = false;
     btn.disabled = false;
     btn.textContent = label;
   }
