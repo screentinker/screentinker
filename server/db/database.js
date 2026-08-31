@@ -1517,6 +1517,32 @@ const migrations = [
   // re-flush cannot double-count. Partial index — live plays leave it NULL and must not collide.
   'ALTER TABLE play_logs ADD COLUMN client_event_id TEXT',
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_play_logs_client_event ON play_logs(client_event_id) WHERE client_event_id IS NOT NULL',
+  /*
+   * ⚠️ #307: THE 10-SECOND LOOP BLOCK. This index is the fix, and it is worth stating what it cost.
+   *
+   * deviceSocket closes a play by finding the device's most recent OPEN row:
+   *   WHERE device_id = ? AND ended_at IS NULL AND (content_id = ? OR widget_id = ?)
+   *   ORDER BY started_at DESC, id DESC LIMIT 1
+   * idx_play_logs_device covers device_id, so SQLite found the device's rows — and then sorted them
+   * in a TEMP B-TREE, because that index cannot satisfy the ORDER BY once `ended_at IS NULL` has
+   * filtered it. On prod one device has 377,132 play_logs rows. Measured against a copy of the real
+   * database: **153ms for that one query**, every time that panel advanced an item.
+   *
+   * A player advances on its dwell, so this ran roughly every ten seconds and blocked the event
+   * loop for the whole of it — which is exactly the signature in the telemetry: spikes of 100-300ms
+   * arriving in pairs about ten seconds apart, 19.5% of all seconds carrying one. It is why prod
+   * read `elevated`, and it is the load Bold's server was still carrying after their I/O subsided.
+   *
+   * PARTIAL (`WHERE ended_at IS NULL`) so it indexes only OPEN plays — a few thousand rows rather
+   * than 1.44 million — and carries the sort order, so the query becomes a seek to the first
+   * matching row. Same query on the same data afterwards: **0.000ms**.
+   *
+   * ⚠️ THE INDEX TREATS A SYMPTOM. That device has 377k rows and another has 21,115 rows still
+   * OPEN, which means plays are being started and never closed; the open set grows forever and any
+   * scan over it gets slower forever. See [[project_screentinker_fk_orphans]] and the #299 backfill
+   * work — the leak is a separate fix, and this index stops it costing the whole fleet meanwhile.
+   */
+  'CREATE INDEX IF NOT EXISTS idx_play_logs_open ON play_logs(device_id, started_at DESC, id DESC) WHERE ended_at IS NULL',
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

@@ -212,6 +212,20 @@ module.exports = {
   lagElevatedMs: parseInt(process.env.LAG_ELEVATED_MS) || 100,
   lagCriticalMs: parseInt(process.env.LAG_CRITICAL_MS) || 250,
   lagReleaseSamples: parseInt(process.env.LAG_RELEASE_SAMPLES) || 5,
+  /*
+   * ⚠️ #307: how many sampling windows the band is decided over. One window's p99 is that window's
+   * MAXIMUM (a ~49-record histogram has no 99th percentile to speak of), so a single window is a
+   * measure of the worst 20ms bucket in a second, not of load. The median across this many windows
+   * is what the band actually reads.
+   */
+  lagBandWindowSamples: parseInt(process.env.LAG_BAND_WINDOW_SAMPLES) || 15,
+  /*
+   * #307: how many stranded plays each maintenance sweep closes. Bounded because the table has
+   * 1.44M rows on a synchronous driver — the backlog drains over successive sweeps rather than in
+   * one long UPDATE, which is the failure this whole issue is about.
+   */
+  strandedPlayBatch: parseInt(process.env.STRANDED_PLAY_BATCH) || 500,
+  strandedPlayMaxBatchesPerSweep: parseInt(process.env.STRANDED_PLAY_MAX_BATCHES) || 4,
 
   // #142 load-aware per-device reconnect throttle (lib/reconnect-throttle.js).
   // The verdict of WHO is misbehaving is ALWAYS per-device (keyed on device_id):

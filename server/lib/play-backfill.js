@@ -148,10 +148,65 @@ function closeStrandedPlays(db, deviceId, unknownMaxSec = INFER_UNKNOWN_MAX_SEC)
   return info.changes;
 }
 
+/**
+ * Close plays that have been open longer than they could possibly have played.
+ *
+ * ⚠️ THE LEAK closeStrandedPlays CANNOT REACH, and it is not small: prod carries 36,096 open rows,
+ * 35,982 of them more than a day old, the oldest from June.
+ *
+ * closeStrandedPlays infers an end from THE NEXT PLAY on the same device and zone. That is the
+ * better answer when it exists — it is a measurement rather than an assumption — but it needs a
+ * next row, and it deliberately leaves the row open when the gap exceeds the item's own length,
+ * rather than crediting a screen with hours it spent switched off. Both are right. The consequence
+ * is that the last play before a device goes quiet, and every play interrupted by a power cut, is
+ * left open with nothing that will ever revisit it.
+ *
+ * So this is the other half: once a play has been open longer than its own content could have run,
+ * the end event is never arriving. It is closed AT ITS CEILING — started_at + its own length —
+ * which keeps the original promise that downtime is never credited as playback, while ending the
+ * row. `completed` is set to 0 because we do not know that it finished; only that it stopped.
+ *
+ * ⚠️ CHUNKED, and that is the lesson of this very issue. This runs against a table with 1.44M rows
+ * on a synchronous driver; an unbounded UPDATE here would be the thing it was written to prevent.
+ */
+function expireStrandedPlays(db, opts = {}) {
+  const limit = opts.limit || 500;
+  const graceSec = opts.graceSec == null ? INFER_GRACE_SEC : opts.graceSec;
+  const unknownMaxSec = opts.unknownMaxSec == null ? INFER_UNKNOWN_MAX_SEC : opts.unknownMaxSec;
+  const now = opts.now == null ? Math.floor(Date.now() / 1000) : opts.now;
+
+  /*
+   * The ceiling is computed in the subquery for the same reason closeStrandedPlays does it there:
+   * SQLite's UPDATE ... FROM cannot see the target table from a join in the FROM list.
+   */
+  const info = db.prepare(`
+    UPDATE play_logs
+       SET ended_at = exp.deadline,
+           duration_sec = exp.deadline - play_logs.started_at,
+           completed = 0
+      FROM (SELECT p.id AS id,
+                   p.started_at + CASE
+                     WHEN c.duration_sec IS NOT NULL AND c.duration_sec > 0 THEN c.duration_sec + ?
+                     ELSE ?
+                   END AS deadline
+              FROM play_logs p
+              LEFT JOIN content c ON c.id = p.content_id
+             WHERE p.ended_at IS NULL
+               AND p.started_at + CASE
+                     WHEN c.duration_sec IS NOT NULL AND c.duration_sec > 0 THEN c.duration_sec + ?
+                     ELSE ?
+                   END < ?
+             LIMIT ?) AS exp
+     WHERE play_logs.id = exp.id
+  `).run(graceSec, unknownMaxSec, graceSec, unknownMaxSec, now, limit);
+  return info.changes;
+}
+
 module.exports = {
   normalizeBackfillPlay,
   boundBatch,
   closeStrandedPlays,
+  expireStrandedPlays,
   MAX_BACKFILL_BATCH,
   BACKFILL_MAX_AGE_SEC,
   BACKFILL_FUTURE_SKEW_SEC,

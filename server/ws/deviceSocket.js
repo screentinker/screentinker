@@ -53,6 +53,77 @@ const evictedSockets = new Set();
 // event is still forwarded every time, so the UI is unaffected. In-memory only.
 const lastPlayLogAt = new Map();
 const PLAY_LOG_MIN_GAP_MS = 2000;
+
+/*
+ * Close the device's most recent OPEN play. Hoisted out of the message handler (#307): it was
+ * `db.prepare(...)` inline, recompiled on every advance.
+ *
+ * ⚠️ The comment that used to sit inside this template literal became SQL. Keep prose out of it.
+ */
+/*
+ * The row this process most recently opened per device, so closing it is a primary-key update.
+ *
+ * ⚠️ BOUNDED BY DESIGN: one entry per device, replaced on each play_start, deleted on close and on
+ * disconnect. It is a cache of something the database already knows — losing it costs a fallback
+ * query, never correctness.
+ */
+const openPlayRow = new Map();
+const playKey = (contentId, widgetId) => `${contentId || ''}|${widgetId || ''}`;
+
+function rememberOpenPlay(deviceId, contentId, widgetId, rowid) {
+  openPlayRow.set(deviceId, { rowid, key: playKey(contentId, widgetId) });
+}
+
+/*
+ * The remembered rowid for this device IF it describes the play being closed, and forget it either
+ * way. The key check matters: a player can report the end of something this process never saw it
+ * start, and closing our remembered row for it would end the WRONG play — silently, with a
+ * plausible duration. When the keys disagree we fall back to the search, which is what the
+ * database can still answer correctly.
+ */
+function takeOpenPlay(deviceId, contentId, widgetId) {
+  const e = openPlayRow.get(deviceId);
+  if (!e) return null;
+  openPlayRow.delete(deviceId);
+  return e.key === playKey(contentId, widgetId) ? e.rowid : null;
+}
+
+/*
+ * #299 offline backfill insert. Hoisted for the same reason as the others (#307) and with more
+ * cause: this one runs in a LOOP over a replayed batch, so an inline prepare recompiled the
+ * statement once per replayed play.
+ */
+const _insertBackfillPlay = db.prepare(`
+  INSERT OR IGNORE INTO play_logs
+    (device_id, content_id, widget_id, zone_id, content_name, started_at, ended_at,
+     duration_sec, completed, trigger_type, client_event_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'playlist', ?)
+`);
+
+const _insertPlay = db.prepare(`
+  INSERT INTO play_logs (device_id, content_id, widget_id, zone_id, content_name, started_at, trigger_type)
+  VALUES (?, ?, ?, ?, ?, strftime('%s','now'), 'playlist')
+`);
+
+/* Close by rowid — the whole point of remembering it. */
+const _closePlayById = db.prepare(`
+  UPDATE play_logs SET ended_at = strftime('%s','now'),
+    duration_sec = strftime('%s','now') - started_at,
+    completed = ?
+  WHERE rowid = ? AND ended_at IS NULL
+`);
+
+const _closePlay = db.prepare(`
+  UPDATE play_logs SET ended_at = strftime('%s','now'),
+    duration_sec = strftime('%s','now') - started_at,
+    completed = ?
+  WHERE id = (
+    SELECT id FROM play_logs
+    WHERE device_id = ? AND ended_at IS NULL
+      AND (content_id = ? OR widget_id = ?)
+    ORDER BY started_at DESC, id DESC LIMIT 1
+  )
+`);
 /*
  * #299 offline backfill. The rules live in lib/play-backfill so they can be tested without a
  * socket; the batch cap is what replaces the throttle above for replayed plays, since a flush
@@ -1557,16 +1628,21 @@ module.exports = function setupDeviceSocket(io) {
             const explicitWidget = widget_id && widgetExists.get(widget_id) ? widget_id : null;
             const isContent = (!explicitWidget && content_id) ? !!contentExists.get(content_id) : false;
             const isWidget = (!explicitWidget && !isContent && content_id) ? !!widgetExists.get(content_id) : false;
-            db.prepare(`
-              INSERT INTO play_logs (device_id, content_id, widget_id, zone_id, content_name, started_at, trigger_type)
-              VALUES (?, ?, ?, ?, ?, strftime('%s','now'), 'playlist')
-            `).run(
-              device_id,
-              isContent ? content_id : null,
-              explicitWidget || (isWidget ? content_id : null),
-              zone_id || null,
-              content_name || 'Unknown'
-            );
+            const wid = explicitWidget || (isWidget ? content_id : null);
+            const cid = isContent ? content_id : null;
+            const info = _insertPlay.run(device_id, cid, wid, zone_id || null, content_name || 'Unknown');
+            /*
+             * ⚠️ #307: REMEMBER THE ROW WE JUST OPENED.
+             *
+             * Closing it used to mean SEARCHING for it — the device's most recent row with
+             * ended_at IS NULL matching this content or widget. That is a query over the device's
+             * whole play history to find something this line created seconds earlier, and on prod
+             * one device has 377,132 rows: measured at 153ms, every advance, on the event loop.
+             *
+             * An index makes that search cheap. Not searching at all makes it free, and stays free
+             * however much history accumulates — which matters because history only grows.
+             */
+            rememberOpenPlay(device_id, cid, wid, info.lastInsertRowid);
           }
           /*
            * #299: a new play beginning is the evidence that closes whatever the last outage or
@@ -1618,12 +1694,7 @@ module.exports = function setupDeviceSocket(io) {
              * An event with no id still stores (the column is nullable, the index partial) — an
              * older player replaying is better than no row at all.
              */
-            const info = db.prepare(`
-              INSERT OR IGNORE INTO play_logs
-                (device_id, content_id, widget_id, zone_id, content_name, started_at, ended_at,
-                 duration_sec, completed, trigger_type, client_event_id)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'playlist', ?)
-            `).run(
+            const info = _insertBackfillPlay.run(
               device_id,
               isContent ? p.content_id : null,
               wid || (isWidget ? p.content_id : null),
@@ -1660,20 +1731,21 @@ module.exports = function setupDeviceSocket(io) {
           // widget row could never match itself, so it was never closed and never gained a
           // duration — the other half of what made widget reporting useless.
           // (Any comment must stay OUT of the template literal below; inside it, it becomes SQL.)
-          db.prepare(`
-            UPDATE play_logs SET ended_at = strftime('%s','now'),
-              duration_sec = strftime('%s','now') - started_at,
-              completed = ?
-            WHERE id = (
-              SELECT id FROM play_logs
-              WHERE device_id = ? AND ended_at IS NULL
-                AND (content_id = ? OR widget_id = ?)
-              -- started_at has second granularity, so two plays inside one second tie. Break
-              -- on id so this always closes the most recently INSERTED open row rather than an
-              -- arbitrary one of the tied set.
-              ORDER BY started_at DESC, id DESC LIMIT 1
-            )
-          `).run(completed ? 1 : 0, device_id, content_id || null, widget_id || content_id || null);
+          /*
+           * ⚠️ #307: PREPARED ONCE, at module load. This ran on every play advance for every device
+           * and recompiled the statement each time — paid on the hot path, for nothing. The
+           * statement text is unchanged; see idx_play_logs_open in db/database.js for the index
+           * that made the query itself stop costing 153ms.
+           */
+          /*
+           * ⚠️ #307: the remembered rowid first — a primary-key update, no search, no sort.
+           * The search remains as the fallback, and it is not vestigial: it is what closes a play
+           * this process did not open (a restart mid-play, a play replayed by the #299 offline
+           * backfill, a second server behind the same database).
+           */
+          const known = takeOpenPlay(device_id, content_id || null, widget_id || content_id || null);
+          if (known != null) _closePlayById.run(completed ? 1 : 0, known);
+          else _closePlay.run(completed ? 1 : 0, device_id, content_id || null, widget_id || content_id || null);
         }
       } catch (err) {
         // Include the identifiers. Without them this is undiagnosable in production: it
@@ -1777,6 +1849,13 @@ module.exports = function setupDeviceSocket(io) {
       if (evictedSockets.delete(socket.id)) return;
 
       if (!currentDeviceId) return;
+      /*
+       * #307: whatever this device had open, this process is no longer the thing that will close
+       * it — the play is stranded, and #299's closeStrandedPlays repairs it from the database on
+       * the next play_start. Holding the rowid would only risk closing a row a LATER session
+       * legitimately reopened.
+       */
+      openPlayRow.delete(currentDeviceId);
 
       // Stale-disconnect guard: a newer socket already took over this device_id
       // via eviction. Skip the offline transition entirely - don't even start a
@@ -1892,4 +1971,5 @@ module.exports.__resetTimers = () => {
 // Test seam: which protocol a group runs, and whether a request was refused, is the one piece of
 // branching in this file with nothing to do with sockets. Exposing it lets that decision be tested
 // against a real database without standing up a socket server.
+
 module.exports.__test = { resolveGroupSync, resolveGroupLeader, groupSyncMembers };

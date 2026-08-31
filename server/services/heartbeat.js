@@ -3,6 +3,7 @@ const config = require('../config');
 const { deviceRoom, emitToWorkspace } = require('../lib/socket-rooms');
 const statusLogWriter = require('../lib/status-log-writer');
 const { chunkedDelete, currentBand, yieldTick } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
+const { expireStrandedPlays } = require('../lib/play-backfill');
 
 const liveness = require('../lib/liveness'); // v4 core pass: server-derived 3-state liveness
 
@@ -165,6 +166,32 @@ async function capDeviceEvents() {
 // re-entrancy-guarded (a long run never stacks with the next interval). Never throws
 // into the interval. NOT for startup (see the un-gated startup prune above).
 let _maintRunning = false;
+/*
+ * #307: close plays that have been open longer than their content could possibly have run.
+ *
+ * lib/play-backfill.closeStrandedPlays already infers an end from the NEXT play, which is a
+ * measurement and always preferable — but it needs a next row, and it declines when the gap exceeds
+ * the item's own length rather than crediting a dark screen with playback. So the last play before
+ * a device goes quiet, and every play cut short by a power failure, was left open with nothing that
+ * would ever revisit it: **36,096 open rows on prod, 35,982 of them over a day old.**
+ *
+ * ⚠️ CHUNKED AND BOUNDED PER SWEEP, because the table has 1.44M rows and the driver is synchronous.
+ * An unbounded UPDATE here would block the event loop in exactly the way #307 is about. It drains
+ * over successive sweeps rather than in one.
+ */
+async function expireStrandedPlaysChunked() {
+  let total = 0;
+  for (let i = 0; i < config.strandedPlayMaxBatchesPerSweep; i++) {
+    const n = expireStrandedPlays(db, { limit: config.strandedPlayBatch });
+    total += n;
+    if (n < config.strandedPlayBatch) break;
+    // Yield between batches so a long drain cannot hold the loop for its whole duration.
+    await new Promise((r) => setImmediate(r));
+  }
+  if (total > 0) console.log(`[maintenance] closed ${total} stranded play(s) past their ceiling`);
+  return total;
+}
+
 async function runMaintenance() {
   if (_maintRunning) return;
   if (config.maintenanceBandGateEnabled && currentBand() !== 'normal') return;   // #146 P1.3 kill switch
@@ -177,6 +204,7 @@ async function runMaintenance() {
     await pruneDeviceEvents();                   // offline-cause log: incident-feed age retention (chunked)
     await capDeviceEvents();                     // offline-cause log: per-device incident row cap
     await pruneUsageDaily();                     // #146 BILLING rollup retention (chunked)
+    await expireStrandedPlaysChunked();          // #307 close plays nothing else will ever close
     // Expiry sweeps on small tables — single cheap statements, bounded by table size.
     db.prepare("DELETE FROM team_invites WHERE expires_at < strftime('%s','now')").run();
     db.prepare("DELETE FROM workspace_invites WHERE expires_at < strftime('%s','now')").run();
