@@ -1543,6 +1543,26 @@ const migrations = [
    * work — the leak is a separate fix, and this index stops it costing the whole fleet meanwhile.
    */
   'CREATE INDEX IF NOT EXISTS idx_play_logs_open ON play_logs(device_id, started_at DESC, id DESC) WHERE ended_at IS NULL',
+  /*
+   * One row per Stripe invoice we have emailed a receipt for.
+   *
+   * ⚠️ THE POINT IS "ONCE", AND STRIPE MAKES THAT NON-TRIVIAL. Webhooks are retried until they get
+   * a 2xx, and the same event can be delivered more than once even after one — so a send sitting
+   * directly in the handler mails a paying customer a fresh receipt on every delivery. There is no
+   * dedup anywhere in routes/stripe.js today; every other handler happens to survive it because
+   * they are UPDATEs to a target state, which a repeat simply reapplies. An email is not.
+   *
+   * Keyed on the INVOICE id rather than the event id: an invoice is the payment, and that is the
+   * thing a customer should hear about once. Two different events about one invoice must still
+   * produce one email.
+   */
+  `CREATE TABLE IF NOT EXISTS billing_receipts (
+     invoice_id  TEXT PRIMARY KEY,
+     user_id     TEXT,
+     amount      INTEGER,
+     currency    TEXT,
+     sent_at     INTEGER NOT NULL
+   )`,
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
