@@ -5217,11 +5217,33 @@
       if (v && !videoCompositingAvailable(v)) return null;   // hardware plane -> no from-frame -> hard cut
       if (v && v.readyState >= 2 && v.videoWidth > 0 && isMediaReadable(v)) {
         try {
-          const r = c.getBoundingClientRect();
-          return fitToCanvas(v, Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
+          const g = stageGeometry();
+          return g ? fitToCanvas(v, g.w, g.h) : null;
         } catch (e) { return null; } // snapshot threw (taint slipped through) -> no from-frame -> hard cut
       }
       return null;
+    }
+    // The stage's own box and placement, which a wipe must reproduce exactly. A portrait panel rotates
+    // #playerContainer with a CSS transform (server/lib/orientation-style.js), and a transform does not
+    // move the layout box: clientWidth/clientHeight are the box the <img> is fitted into, while
+    // getBoundingClientRect() is the rotated, axis-aligned envelope. On a portrait panel those two are
+    // each other's transposes, so fitting to the rect and painting an unrotated fixed overlay drew every
+    // wipe in landscape framing over a portrait frame: the picture jumped to 1.8x at the start of each
+    // transition and back at the end, on every effect. The canvas therefore takes the container's own
+    // size and its COMPUTED left/top/transform/transform-origin, which is the landscape case unchanged
+    // (0px, 0px, none) and the rotated case turned exactly as the stage is. Computed rather than inline
+    // so the wipe follows whatever placed the stage (the orientation rule, the stylesheet, a host that
+    // rotated the output and cleared the inline transform) instead of re-deriving any of it here.
+    // A stage with no box (display:none, e.g. suspended) yields null and the caller hard-cuts; the old
+    // code fabricated a 2x2 wipe from a 0x0 rect and ran it.
+    function stageGeometry() {
+      const c = document.getElementById('playerContainer');
+      if (!c || !c.clientWidth || !c.clientHeight) return null;
+      const cs = getComputedStyle(c);
+      return {
+        w: Math.round(c.clientWidth), h: Math.round(c.clientHeight),
+        left: cs.left, top: cs.top, transform: cs.transform, transformOrigin: cs.transformOrigin,
+      };
     }
     // draw a source (img | video | canvas) onto a container-sized canvas with object-fit:contain framing,
     // so the transition matches the static letterboxing exactly (stays CORS-clean iff the source is). A
@@ -5272,8 +5294,9 @@
       if (!gl) { hardCut(); return; }
       const canvas = gl.canvas, renderer = gl.renderer;
       const container = document.getElementById('playerContainer');
-      const rect = container.getBoundingClientRect();
-      const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
+      const geo = stageGeometry();
+      if (!geo) { hardCut(); return; }                  // no stage box to draw in -> hard cut
+      const w = geo.w, h = geo.h;
       let raf = 0, startTs = 0, done = false, deadline = 0;
       const finish = () => { // end the wipe; mount the incoming element, KEEP the renderer/context alive
         if (done) return; done = true;
@@ -5284,9 +5307,11 @@
         canvas.style.display = 'none';                  // HIDE after the incoming frame is mounted (no flash); NEVER detach
       };
       try {
-        canvas.style.left = rect.left + 'px'; canvas.style.top = rect.top + 'px';
+        canvas.style.left = geo.left; canvas.style.top = geo.top;
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
-        renderer.resize(w, h);                          // size the persistent canvas to the stage
+        canvas.style.transform = geo.transform;         // turned exactly as the stage is (portrait), 'none' otherwise
+        canvas.style.transformOrigin = geo.transformOrigin;
+        renderer.resize(w, h);                          // size the persistent canvas to the stage's OWN box
         renderer.setFrom(fitToCanvas(fromFrame, w, h));
         renderer.setTo(fitToCanvas(toTex, w, h));
         renderer.setShader(src);                        // throws on a bad shader
@@ -5433,8 +5458,8 @@
         let to = null;
         if (canTexture) {
           try {
-            const r = document.getElementById('playerContainer').getBoundingClientRect();
-            to = fitToCanvas(video, Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
+            const g = stageGeometry();
+            to = g ? fitToCanvas(video, g.w, g.h) : null;
           } catch (e) { to = null; }                    // snapshot tainted/threw -> hard cut below
         }
         if (from && to && t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady()) {
