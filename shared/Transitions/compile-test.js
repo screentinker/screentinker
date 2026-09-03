@@ -1,5 +1,5 @@
 'use strict';
-// Shader compile test — compiles + links all 14 transition shaders in a REAL WebGL context
+// Shader compile test — compiles + links every transition shader on disk in a REAL WebGL context
 // (Chrome via puppeteer-core, ANGLE/SwiftShader) so we catch GLSL ES errors the way a panel would,
 // not a lenient CPU validator. Also enforces manifest<->file consistency and that the manifest's
 // params never drift from what params.js parses out of the shader source (the single source of truth).

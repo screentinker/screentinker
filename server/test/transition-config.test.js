@@ -86,3 +86,23 @@ test('normalizeTransitions: non-transition widgets pass through untouched', () =
   assert.equal(out[1].transition, undefined);
   assert.equal(out[2].transition.effects[0].shader, 'Etch');
 });
+
+// The plain effect. The library shipped with fourteen set pieces and no dissolve, so these two pin
+// the addition: Crossfade resolves like any other shader, and it is the FIRST manifest entry, which
+// is what the dashboard previews and pre-checks for a brand-new transition widget. The order comes
+// from generate-manifest.js sorting case-insensitively; a byte sort would file CRTCollapse first and
+// hand a new widget a power-cycle by default.
+test('Crossfade: resolves with its declared defaults, params clamped to 0..1', () => {
+  const r = resolveTransitionConfig({ shader: 'Crossfade' });
+  assert.deepEqual(r.effects, [{ shader: 'Crossfade', params: { ease: 1, dipToBlack: 0 } }]);
+  const c = resolveTransitionConfig({ shader: 'Crossfade', params: { ease: 5, dipToBlack: -1 } });
+  assert.deepEqual(c.effects[0].params, { ease: 1, dipToBlack: 0 }, 'out-of-range params clamp to the shader range');
+});
+
+test('Crossfade heads the manifest, so it is the default effect a new transition widget previews', () => {
+  const { MANIFEST } = require('../lib/transition-config');
+  assert.equal(MANIFEST[0].id, 'Crossfade');
+  const ids = MANIFEST.map((m) => m.id);
+  const lower = ids.map((s) => s.toLowerCase());
+  assert.deepEqual(lower, lower.slice().sort(), 'manifest order is case-insensitive alphabetical');
+});

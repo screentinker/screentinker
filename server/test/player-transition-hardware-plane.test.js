@@ -140,3 +140,15 @@ test('#BS-guard: undetermined is treated as available, so a fresh player is not 
   assert.match(fn, /return true/, 'an undecided probe must not latch off');
   assert.match(fn, /_videoCompositingOk !== null/, 'the platform answer must be cached once known');
 });
+
+// The checked-in Tizen bundle is a BUILD OUTPUT (tizen/build-wgt.sh regenerates it from
+// transition-bundle.bundle() on every .wgt build), and the #BS-UMD guard above reads the checked-in
+// copy. A copy that drifts from the bundler is therefore a copy the guard is silently not guarding.
+// Same discipline as compile-test.js for manifest.json: staleness is a test failure, and the fix is
+// to regenerate, never to hand-edit.
+test('#BS-UMD: the checked-in tizen/js/transitions.js is byte-identical to transition-bundle.bundle()', () => {
+  const committed = fs.readFileSync(path.join(__dirname, '../../tizen/js/transitions.js'), 'utf8');
+  const fresh = require('../lib/transition-bundle').bundle();
+  assert.equal(committed, fresh,
+    'tizen/js/transitions.js is stale — regenerate it: cd tizen && node -e "require(\'fs\').writeFileSync(\'js/transitions.js\', require(\'../server/lib/transition-bundle\').bundle())"');
+});
