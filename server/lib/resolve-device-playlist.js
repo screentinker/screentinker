@@ -72,4 +72,15 @@ function resolvedLayoutId(deviceId) {
     .get(deviceId)?.layout_id ?? null;
 }
 
-module.exports = { resolveDevicePlaylist, resolveDevicePlaylistId, resolvedLayoutId, clearInheritedCopy };
+/** Single-query lookup for both playlist_id and layout_id */
+function resolveDeviceContext(deviceId) {
+  if (!deviceId) return { playlist_id: null, layout_id: null, source: null };
+  const row = db.prepare('SELECT playlist_id, layout_id, source FROM device_resolved_playlist WHERE device_id = ?').get(deviceId);
+  return {
+    playlist_id: row?.playlist_id ?? null,
+    layout_id: row?.layout_id ?? null,
+    source: row?.source ?? null,
+  };
+}
+
+module.exports = { resolveDevicePlaylist, resolveDevicePlaylistId, resolvedLayoutId, resolveDeviceContext, clearInheritedCopy };

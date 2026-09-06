@@ -1,0 +1,59 @@
+# ScreenTinker Server Image with Embedded E-Paper & Full Widget/Slide Rendering Support
+# Includes Chromium and system fonts for server-side rasterization to E-Paper displays
+# (Seeed Studio reTerminal Sticky, TRMNL, Inky, ESP32-S3 E-Paper displays).
+
+# --- builder: install production + optional deps (better-sqlite3, puppeteer-core) ---
+FROM node:20-slim AS builder
+WORKDIR /app/server
+# build toolchain in case a native prebuild is missing for the target arch
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 build-essential \
+    && rm -rf /var/lib/apt/lists/*
+COPY server/package.json server/package-lock.json ./
+RUN npm ci --omit=dev
+
+# --- runtime ---
+FROM node:20-slim
+# ffmpeg (video thumbnails/duration extraction) + chromium & fonts for headless rendering
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ffmpeg \
+       chromium \
+       fonts-liberation \
+       fonts-noto-color-emoji \
+       fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CHROME_PATH=/usr/bin/chromium
+ENV NODE_ENV=production
+ENV DATA_DIR=/data
+WORKDIR /app/server
+
+# App source (node_modules/test/db/uploads/certs are excluded via .dockerignore),
+# then the built deps, the frontend the server serves, and the VERSION file it
+# reads as ../VERSION.
+COPY server/ /app/server/
+COPY --from=builder /app/server/node_modules /app/server/node_modules
+COPY frontend/ /app/frontend/
+# shared/Transitions is a RUNTIME dependency: server/lib/transition-config.js + transition-bundle.js
+# require the shader manifest/params/sources from ../../shared at load time (the server won't boot
+# without it). Small, and keeps the .glsl files the single source across server + player + Tizen.
+COPY shared/ /app/shared/
+COPY VERSION /app/VERSION
+# ⚠️ AND THE RELEASE NOTES, which the server reads from the repo ROOT at runtime
+# (server/lib/release-notes.js). Missing here, the API answers `current: null` and the "what's new"
+# panel is empty on every containerised install.
+COPY release-notes.json /app/release-notes.json
+# the /openapi.yaml route serves ../docs/openapi.yaml (the spec Redoc on /docs fetches);
+# without this it 404s in the image even though it serves fine from a dev checkout.
+COPY docs/openapi.yaml /app/docs/openapi.yaml
+# database.js requires scripts/migrate-multitenancy at boot
+COPY scripts/ /app/scripts/
+# The BrightSign bridge and sync modules are served to the player from ../brightsign so the copy
+# the player loads can never drift from the one on the player's own storage.
+COPY brightsign/ /app/brightsign/
+
+VOLUME ["/data"]
+EXPOSE 3001
+CMD ["node", "server.js"]
+

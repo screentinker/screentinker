@@ -39,10 +39,10 @@ const { db }                = require('../db/database');
 const { deviceTokenAuth }   = require('../middleware/deviceTokenAuth');
 const { bearerAuth }        = require('../middleware/apiToken');
 const { resolveTenancy }    = require('../lib/tenancy');
-const { resolveDevicePlaylist } = require('../lib/resolve-device-playlist');
+const { resolveDevicePlaylist, resolvedLayoutId, resolveDeviceContext } = require('../lib/resolve-device-playlist');
 const { parseProfile, listPresets } = require('../lib/embedded-profiles');
 const { cacheKey, toETag, isNotModified, get: cacheGet, set: cacheSet } = require('../lib/embedded-cache');
-const { render }            = require('../lib/embedded-render');
+const { render, renderLayout, isLayoutImageOnly, isBrowserAvailable } = require('../lib/embedded-render');
 const { postprocess }       = require('../lib/embedded-postprocess');
 const pairLockout           = require('../lib/pair-lockout');
 const { sixDigitCode }      = require('../lib/numeric-code');
@@ -140,12 +140,12 @@ const CURSOR_UPSERT = db.prepare(`
  *   null when no playlist or no items.
  */
 function resolveCurrentItem(deviceId, forceIndex) {
-  const { playlist_id } = resolveDevicePlaylist(deviceId);
+  const { playlist_id } = resolveDeviceContext(deviceId);
   if (!playlist_id) return null;
 
   // Fetch all active, published items in playlist order (joining content and widgets).
   const items = db.prepare(`
-    SELECT pi.*, c.mime_type, c.filepath, c.remote_url, c.thumbnail_path,
+    SELECT pi.*, pl.workspace_id, c.mime_type, c.filepath, c.remote_url, c.thumbnail_path,
            c.updated_at AS content_updated_at, c.id AS content_id,
            w.widget_type, w.config AS widget_config, w.name AS widget_name,
            w.updated_at AS widget_updated_at
@@ -165,7 +165,9 @@ function resolveCurrentItem(deviceId, forceIndex) {
 
   // If caller forces an index (for testing), honour it directly.
   if (forceIndex !== undefined && forceIndex !== null) {
-    const idx  = Math.max(0, Math.min(Number(forceIndex), items.length - 1));
+    const raw = Number(forceIndex);
+    const parsed = Number.isInteger(raw) ? raw : 0;
+    const idx  = Math.max(0, Math.min(parsed, items.length - 1));
     const item = items[idx];
     return { item, content: item, itemIndex: idx, expiresIn: item.duration_sec || 30, total: items.length };
   }
@@ -200,6 +202,155 @@ function resolveCurrentItem(deviceId, forceIndex) {
     itemIndex: idx,
     expiresIn,
     total: items.length,
+  };
+}
+
+const ZONE_CURSOR_GET = db.prepare(
+  'SELECT item_index, started_at FROM embedded_zone_cursor WHERE device_id = ? AND zone_id = ?'
+);
+const ZONE_CURSOR_UPSERT = db.prepare(`
+  INSERT INTO embedded_zone_cursor (device_id, zone_id, item_index, started_at)
+  VALUES (?, ?, ?, strftime('%s','now'))
+  ON CONFLICT(device_id, zone_id) DO UPDATE SET item_index = excluded.item_index,
+                                                 started_at = strftime('%s','now')
+`);
+
+/*
+ * Resolve all active items per zone for a device's assigned layout.
+ *
+ * @param {string} deviceId
+ * @param {string|number|null} forceIndex
+ * @param {{ advance?: boolean }} [options]
+ * @returns {{ layout, zoneEntries, expiresIn, dynamicRev } | null}
+ *   null when device has no layout or layout has no zones.
+ */
+function resolveLayoutItems(deviceId, forceIndex, { advance = true } = {}) {
+  const { playlist_id, layout_id: layoutId } = resolveDeviceContext(deviceId);
+  if (!layoutId) return null;
+
+  const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(layoutId);
+  if (!layout) return null;
+
+  const zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order ASC, id ASC').all(layoutId);
+  if (!zones || !zones.length) return null;
+
+  let allItems = [];
+  if (playlist_id) {
+    allItems = db.prepare(`
+      SELECT pi.*, pl.workspace_id, c.mime_type, c.filepath, c.remote_url, c.thumbnail_path,
+             c.updated_at AS content_updated_at, c.id AS content_id,
+             w.widget_type, w.config AS widget_config, w.name AS widget_name,
+             w.updated_at AS widget_updated_at
+      FROM playlist_items pi
+      JOIN playlists pl ON pl.id = pi.playlist_id
+      LEFT JOIN content c ON c.id = pi.content_id
+      LEFT JOIN widgets w ON pi.widget_id = w.id
+      WHERE pi.playlist_id = ?
+        AND (pl.status = 'published' OR pl.status IS NULL)
+        AND (c.id IS NULL OR c.is_active IS NULL OR c.is_active = 1)
+      ORDER BY pi.sort_order ASC, pi.id ASC
+    `).all(playlist_id);
+  }
+
+  // If the device has no items in its assigned playlist, return null so caller returns 404
+  if (!allItems.length) return null;
+
+  // Identify valid zones and find the largest zone by area for orphan assignment
+  // Area calculation matches player/index.html:5769 ((w||0)*(h||0))
+  const validZoneIds = new Set(zones.map(z => z.id));
+  const fallbackZone = zones.reduce(
+    (a, b) => (((Number(b.width_percent) || 0) * (Number(b.height_percent) || 0)) > ((Number(a.width_percent) || 0) * (Number(a.height_percent) || 0)) ? b : a),
+    zones[0]
+  );
+
+  // Bucket items per zone matching player parity (player/index.html:5767-5801)
+  const byZone = {};
+  for (const a of allItems) {
+    let zid = a.zone_id || '__none__';
+    if (a.zone_id && !validZoneIds.has(a.zone_id) && fallbackZone) {
+      zid = fallbackZone.id;
+    }
+    (byZone[zid] = byZone[zid] || []).push(a);
+  }
+  for (const k in byZone) byZone[k].sort((x, y) => (x.sort_order || 0) - (y.sort_order || 0));
+
+  let unassignedUsed = false;
+  const now = Math.floor(Date.now() / 1000);
+  const zoneEntries = [];
+  const expiresList = [];
+  const dynamicRevParts = [layout.updated_at || layout.id];
+
+  for (let i = 0; i < zones.length; i++) {
+    const zone = zones[i];
+    let matchingItems = byZone[zone.id];
+    if ((!matchingItems || !matchingItems.length) && !unassignedUsed && byZone['__none__']) {
+      unassignedUsed = true;
+      matchingItems = byZone['__none__'];
+    }
+    matchingItems = matchingItems || [];
+
+    if (!matchingItems.length) {
+      zoneEntries.push({ zone, item: null, content: null });
+      dynamicRevParts.push(`z_${zone.id}_empty`);
+      continue;
+    }
+
+    let idx;
+    let startedAt;
+
+    if (forceIndex !== undefined && forceIndex !== null) {
+      const raw = Number(forceIndex);
+      const parsed = Number.isInteger(raw) ? raw : 0;
+      idx = Math.max(0, Math.min(parsed, matchingItems.length - 1));
+      startedAt = now;
+    } else {
+      let cursor = ZONE_CURSOR_GET.get(deviceId, zone.id);
+      if (!cursor) {
+        if (advance) {
+          ZONE_CURSOR_UPSERT.run(deviceId, zone.id, 0);
+        }
+        cursor = { item_index: 0, started_at: now };
+      }
+
+      idx = cursor.item_index % matchingItems.length;
+      startedAt = cursor.started_at;
+      const currentItem = matchingItems[idx];
+      const duration = currentItem.duration_sec || 30;
+      const elapsed = now - startedAt;
+
+      if (elapsed >= duration) {
+        idx = (idx + 1) % matchingItems.length;
+        if (advance) {
+          ZONE_CURSOR_UPSERT.run(deviceId, zone.id, idx);
+        }
+        startedAt = now;
+      }
+    }
+
+    const item = matchingItems[idx];
+    const itemDuration = item.duration_sec || 30;
+    const expiresIn = Math.max(1, itemDuration - (now - startedAt));
+    expiresList.push(expiresIn);
+
+    let dRev = item.widget_updated_at || item.content_updated_at || item.updated_at || 0;
+    if (item.widget_type === 'clock') {
+      dRev = `clock_${Math.floor(now / 60)}`;
+    } else if (item.widget_type === 'weather') {
+      dRev = `weather_${Math.floor(now / 600)}`;
+    } else if (item.widget_type === 'slide') {
+      dRev = `slide_${Math.floor(now / 60)}`;
+    }
+    dynamicRevParts.push(`z_${zone.id}_${item.id}_${dRev}`);
+
+    zoneEntries.push({ zone, item, content: item });
+  }
+
+  const expiresIn = expiresList.length ? Math.min(...expiresList) : 60;
+  return {
+    layout,
+    zoneEntries,
+    expiresIn,
+    dynamicRev: dynamicRevParts.join(';'),
   };
 }
 
@@ -373,6 +524,67 @@ router.get('/render', resolveAuth, async (req, res) => {
     }
   }
 
+  // Query mode overrides
+  if (req.query.mode === 'layout') {
+    return handleRenderLayout(req, res, device, profile, { explicitMode: true });
+  }
+  if (req.query.mode === 'single') {
+    return handleRenderStandard(req, res, device, profile);
+  }
+
+  // Automatic multi-zone layout detection
+  const { layout_id: layoutId } = resolveDeviceContext(device.id);
+  if (layoutId) {
+    const zoneCount = db.prepare('SELECT COUNT(*) AS count FROM layout_zones WHERE layout_id = ?').get(layoutId)?.count || 0;
+    if (zoneCount >= 1) {
+      const forceIndex = req.query.item !== undefined ? req.query.item : null;
+      const probe = resolveLayoutItems(device.id, forceIndex, { advance: false });
+      if (probe) {
+        const isImageOnly = isLayoutImageOnly(probe.zoneEntries);
+        if (!isImageOnly && !isBrowserAvailable()) {
+          // Browser is not available and layout has non-image items (widgets/web).
+          // Fall back to single-item standard render with fallback header.
+          return handleRenderStandard(req, res, device, profile, { isFallback: true });
+        }
+        return handleRenderLayout(req, res, device, profile, { explicitMode: false });
+      }
+    }
+  }
+
+  return handleRenderStandard(req, res, device, profile);
+});
+
+// ─── GET /api/embedded/render-layout ────────────────────────────────────────────
+
+router.get('/render-layout', resolveAuth, async (req, res) => {
+  const device = resolveDevice(req, res);
+  if (!device) return;
+
+  const profile = parseProfile(device.screen_profile);
+  if (!profile) {
+    return res.status(400).json({
+      error: 'Embedded rendering not configured for this device.',
+      hint: 'Set devices.screen_profile (use GET /api/embedded/presets for options).',
+    });
+  }
+
+  if (req.query.format) {
+    const fmt = String(req.query.format).toLowerCase();
+    if (fmt === 'png' || fmt === 'jpeg' || fmt === 'jpg' || fmt === 'bmp' || fmt === 'raw' || fmt === 'x-epd-packed') {
+      profile.outputFormat = fmt;
+    }
+  }
+  if (req.query.dither) {
+    const d = String(req.query.dither).toLowerCase();
+    if (d === 'floyd-steinberg' || d === 'atkinson' || d === 'none') {
+      profile.dither = d;
+    }
+  }
+
+  return handleRenderLayout(req, res, device, profile, { explicitMode: true });
+});
+
+async function handleRenderStandard(req, res, device, profile, opts = {}) {
   const forceIndex = req.query.item !== undefined ? req.query.item : null;
   const resolved = resolveCurrentItem(device.id, forceIndex);
   if (!resolved) {
@@ -391,6 +603,8 @@ router.get('/render', resolveAuth, async (req, res) => {
     dynamicRev = `clock_${Math.floor(Date.now() / 60000)}`; // invalidate every minute
   } else if (item.widget_type === 'weather') {
     dynamicRev = `weather_${Math.floor(Date.now() / 600000)}`; // invalidate every 10 min
+  } else if (item.widget_type === 'slide') {
+    dynamicRev = `slide_${Math.floor(Date.now() / 60000)}`; // invalidate every minute for dynamic content/clocks
   }
 
   const key = cacheKey(
@@ -410,6 +624,9 @@ router.get('/render', resolveAuth, async (req, res) => {
     'X-ST-Item-Index': String(itemIndex),
     'X-ST-Total-Items': String(total),
   };
+  if (opts.isFallback) {
+    headers['X-ST-Layout-Fallback'] = '1';
+  }
 
   if (!isPreview && isNotModified(key, req.headers['if-none-match'])) {
     res.set(headers).status(304).end();
@@ -471,7 +688,123 @@ router.get('/render', resolveAuth, async (req, res) => {
 
   res.set({ ...headers, 'Content-Type': processed.contentType });
   res.status(200).send(processed.buffer);
-});
+}
+
+async function handleRenderLayout(req, res, device, profile, opts = {}) {
+  const isExplicit = opts.explicitMode || req.query.mode === 'layout' || req.baseUrl?.endsWith('render-layout') || req.path?.includes('render-layout');
+  const forceIndex = req.query.item !== undefined ? req.query.item : null;
+
+  // Probe layout first without advancing cursors
+  const probe = resolveLayoutItems(device.id, forceIndex, { advance: false });
+  // Fall back to standard single-item render if device has no multi-zone layout
+  if (!probe) {
+    if (isExplicit) {
+      return res.status(404).json({ error: 'Device has no multi-zone layout assigned or no active items.' });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
+  }
+
+  const isImageOnly = isLayoutImageOnly(probe.zoneEntries);
+  if (!isImageOnly && !isBrowserAvailable()) {
+    if (isExplicit) {
+      return res.status(501).json({
+        error: 'Multi-zone layout rendering failed or not supported.',
+        detail: 'Browser unavailable for multi-zone rendering with widgets or web pages',
+      });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
+  }
+
+  // Advance cursors and resolve actual items
+  const resolved = resolveLayoutItems(device.id, forceIndex, { advance: true });
+  if (!resolved) {
+    if (isExplicit) {
+      return res.status(404).json({ error: 'Device has no multi-zone layout assigned or no active items.' });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
+  }
+
+  const clientIp = touchDeviceHeartbeat(device, req);
+  const { layout, zoneEntries, expiresIn, dynamicRev } = resolved;
+  const isPreview = req.query.preview === '1';
+
+  console.log(`[embedded] Device '${device.name}' (${device.id}) requested multi-zone frame [layout=${layout.name || layout.id}] from ${clientIp}`);
+
+  // ── Cache check ─────────────────────────────────────────────────────────────
+  const key = cacheKey(
+    device.id,
+    'layout_' + layout.id,
+    dynamicRev,
+    profile
+  );
+
+  const headers = {
+    'ETag': toETag(key),
+    'Cache-Control': 'no-store',
+    'X-ST-Device-Id': device.id,
+    'X-ST-Layout-Id': layout.id,
+    'X-ST-Content-Id': layout.id,
+    'X-ST-Expires-In': String(expiresIn),
+    'X-ST-Item-Index': '0',
+    'X-ST-Total-Zones': String(zoneEntries.length),
+  };
+
+  if (!isPreview && isNotModified(key, req.headers['if-none-match'])) {
+    res.set(headers).status(304).end();
+    return;
+  }
+
+  // ── Cache hit ───────────────────────────────────────────────────────────────
+  if (!isPreview) {
+    const cached = cacheGet(key);
+    if (cached.hit) {
+      res.set({ ...headers, 'Content-Type': detectContentType(profile) });
+      return res.status(200).send(cached.buffer);
+    }
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+  let renderResult;
+  try {
+    renderResult = await renderLayout(layout, zoneEntries, profile);
+  } catch (e) {
+    console.error(`[embedded] multi-zone layout render error: ${e.message}`);
+    if (isExplicit) {
+      return res.status(500).json({
+        error: 'Multi-zone layout rendering failed.',
+        detail: 'An unexpected error occurred while rendering the layout.',
+      });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
+  }
+
+  if (!renderResult || renderResult.unsupported) {
+    if (isExplicit) {
+      return res.status(501).json({
+        error: 'Multi-zone layout rendering failed or not supported.',
+        detail: renderResult?.reason || 'Browser unavailable for multi-zone rendering',
+      });
+    }
+    // Auto mode fallback to standard single-item rendering
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
+  }
+
+  // ── Post-process ─────────────────────────────────────────────────────────────
+  let processed;
+  try {
+    processed = await postprocess(renderResult.png, profile);
+  } catch (e) {
+    console.error('[embedded] postprocess error:', e.message);
+    return res.status(500).json({ error: `Post-processing failed: ${e.message}` });
+  }
+
+  if (!isPreview) {
+    try { cacheSet(key, processed.buffer); } catch { /* best-effort */ }
+  }
+
+  res.set({ ...headers, 'Content-Type': processed.contentType });
+  res.status(200).send(processed.buffer);
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -486,3 +819,10 @@ function detectContentType(profile) {
 }
 
 module.exports = router;
+module.exports.resolveCurrentItem = resolveCurrentItem;
+module.exports.resolveLayoutItems = resolveLayoutItems;
+module.exports.resolveDevicePlaylist = resolveDevicePlaylist;
+module.exports.resolvedLayoutId = resolvedLayoutId;
+module.exports.resolveDeviceContext = resolveDeviceContext;
+
+

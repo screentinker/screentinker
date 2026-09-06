@@ -1620,6 +1620,14 @@ const migrations = [
      item_index  INTEGER NOT NULL DEFAULT 0,
      started_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
    )`,
+
+  `CREATE TABLE IF NOT EXISTS embedded_zone_cursor (
+     device_id   TEXT REFERENCES devices(id) ON DELETE CASCADE,
+     zone_id     TEXT NOT NULL,
+     item_index  INTEGER NOT NULL DEFAULT 0,
+     started_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     PRIMARY KEY (device_id, zone_id)
+   )`,
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

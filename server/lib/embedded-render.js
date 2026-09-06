@@ -36,6 +36,15 @@ function contentDir() {
   return config.contentDir;
 }
 
+// Coerce an untrusted dimension (from a screen_profile row) to a positive integer.
+// Returns `fallback` for anything non-numeric, non-finite, or out of range — so a
+// malformed profile can never inject arbitrary values into CSS or viewport dimensions.
+function safeDimension(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0 || n > 100000) return fallback;
+  return Math.floor(n);
+}
+
 // MIME types Jimp can decode natively
 const IMAGE_MIMES = new Set([
   'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
@@ -47,13 +56,18 @@ const EXT_MIME = {
   '.gif': 'image/gif',  '.webp': 'image/webp',  '.bmp': 'image/bmp',
 };
 
-function looksLikeImage(url, contentType) {
+function looksLikeImage(urlOrPath, contentType) {
   if (contentType) {
     const base = contentType.split(';')[0].trim().toLowerCase();
     if (IMAGE_MIMES.has(base)) return true;
   }
+  if (typeof urlOrPath !== 'string' || !urlOrPath) return false;
   try {
-    const ext = path.extname(new URL(url).pathname).toLowerCase();
+    let pathname = urlOrPath;
+    if (urlOrPath.includes('://')) {
+      pathname = new URL(urlOrPath).pathname;
+    }
+    const ext = path.extname(pathname).toLowerCase();
     return !!EXT_MIME[ext];
   } catch {
     return false;
@@ -87,6 +101,20 @@ function findChromePath() {
 }
 
 let browserInstance = null;
+let browserAvailableCached = null;
+let lastBrowserProbe = 0;
+
+function isBrowserAvailable() {
+  const now = Date.now();
+  if (browserAvailableCached !== null && (now - lastBrowserProbe < 30000)) {
+    return browserAvailableCached;
+  }
+  const puppeteer = getPuppeteer();
+  const chromePath = findChromePath();
+  browserAvailableCached = Boolean(puppeteer && chromePath);
+  lastBrowserProbe = now;
+  return browserAvailableCached;
+}
 
 function getPuppeteer() {
   try {
@@ -156,11 +184,17 @@ process.on('SIGINT', () => { closeBrowser(); });
 // ─── Native Image Renderers (Jimp) ───────────────────────────────────────────
 
 async function renderLocalImage(content, profile) {
-  const filepath = path.join(contentDir(), content.filepath);
-  if (!fs.existsSync(filepath)) {
+  // Guard against a `filepath` escaping the content directory (mirrors the
+  // same path.basename() + startsWith() check used when rendering layout zones).
+  const base = path.resolve(contentDir());
+  const safe = path.resolve(base, path.basename(String(content.filepath || '')));
+  if (!safe.startsWith(base + path.sep) && safe !== base) {
+    throw Object.assign(new Error('Invalid content file path'), { code: 'INVALID_PATH' });
+  }
+  if (!fs.existsSync(safe)) {
     throw Object.assign(new Error('Content file not found on disk'), { code: 'NOT_FOUND' });
   }
-  const img = await Jimp.fromBuffer(fs.readFileSync(filepath));
+  const img = await Jimp.fromBuffer(fs.readFileSync(safe));
   img.cover({ w: profile.width, h: profile.height });
   return img.getBuffer('image/png');
 }
@@ -200,12 +234,68 @@ async function renderRemoteImage(content, profile) {
   return img.getBuffer('image/png');
 }
 
-async function renderWidgetOrHtml(html, profile) {
+function localBaseUrl() {
+  return global.__localApiOrigin || process.env.BASE_URL || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`;
+}
+
+async function renderWidgetOrHtml(html, profile, widgetType = '') {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: profile.width, height: profile.height });
-    await page.setContent(html, { waitUntil: 'load', timeout: 5000 });
+
+    const baseUrl = localBaseUrl();
+    const staticStyle = '<style>*, *::before, *::after { animation: none !important; transition: none !important; }</style>';
+    let finalHtml = html;
+    if (/<head[^>]*>/i.test(finalHtml)) {
+      finalHtml = finalHtml.replace(/(<head[^>]*>)/i, `$1\n<base href="${baseUrl}/">\n${staticStyle}`);
+    } else if (/<html[^>]*>/i.test(finalHtml)) {
+      finalHtml = finalHtml.replace(/(<html[^>]*>)/i, `$1\n<head><base href="${baseUrl}/">\n${staticStyle}</head>`);
+    } else {
+      finalHtml = `<!DOCTYPE html><html><head><base href="${baseUrl}/">\n${staticStyle}</head><body>${finalHtml}</body></html>`;
+    }
+
+    // Single-widget / slide / webpage items wait for 'load'.
+    // Do NOT swallow timeouts: let TimeoutError propagate so callers advance without caching broken frames.
+    await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 });
+
+    // Wait for any async network fetches (e.g. weather, RSS, remote data) to settle if present
+    if (widgetType === 'weather' || widgetType === 'rss' || widgetType === 'layout') {
+      await page.waitForNetworkIdle({ idleTime: 200, timeout: 2500 }).catch(() => {});
+    }
+
+    // Template-agnostic settlement: fonts, animations, and all images (including inside srcdoc iframes)
+    await page.evaluate(async () => {
+      try { if (document.fonts?.ready) await document.fonts.ready; } catch (_) {}
+      try { document.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
+
+      const getNestedImages = (root) => {
+        let imgs = Array.from(root.querySelectorAll('img'));
+        const iframes = Array.from(root.querySelectorAll('iframe'));
+        for (const iframe of iframes) {
+          try {
+            const doc = iframe.contentDocument || iframe.contentWindow?.document;
+            if (doc) {
+              imgs = imgs.concat(Array.from(doc.querySelectorAll('img')));
+              try { if (doc.fonts?.ready) doc.fonts.ready; } catch (_) {}
+              try { doc.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
+            }
+          } catch (_) {}
+        }
+        return imgs;
+      };
+
+      const imgs = getNestedImages(document);
+      await Promise.all(imgs.map(img => {
+        if (img.complete && img.naturalHeight !== 0) return Promise.resolve();
+        return new Promise(resolve => {
+          img.addEventListener('load', resolve, { once: true });
+          img.addEventListener('error', resolve, { once: true });
+          setTimeout(resolve, 1500);
+        });
+      }));
+    }).catch(() => {});
+
     const snap = await page.screenshot({ type: 'png' });
     return Buffer.from(snap);
   } finally {
@@ -233,9 +323,25 @@ async function render(item, content, profile) {
     }
 
     try {
-      const { renderWidgetHtml } = require('../routes/widgets');
-      const html = renderWidgetHtml(type, config);
-      const png = await renderWidgetOrHtml(html, profile);
+      const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
+      const { fontResolverFor } = require('../routes/fonts');
+      const { db } = require('../db/database');
+
+      let wsId = item.workspace_id || content?.workspace_id || profile?.workspace_id;
+      if (!wsId && item.widget_id) {
+        try {
+          const w = db.prepare('SELECT workspace_id FROM widgets WHERE id = ?').get(item.widget_id);
+          if (w) wsId = w.workspace_id;
+        } catch (_) {}
+      }
+
+      const html = renderWidgetHtml(type, config, {
+        iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
+        resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
+        resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
+        resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
+      });
+      const png = await renderWidgetOrHtml(html, profile, type);
       return { png };
     } catch (e) {
       if (e.code === 'BROWSER_UNAVAILABLE' || e.code === 'BROWSER_NOT_FOUND') {
@@ -285,4 +391,242 @@ async function render(item, content, profile) {
   return { unsupported: true, reason: 'No renderable source found for this content item.' };
 }
 
-module.exports = { render, closeBrowser, getBrowser };
+function escapeHtmlAttr(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function isLayoutImageOnly(zoneEntries) {
+  if (!Array.isArray(zoneEntries) || !zoneEntries.length) return false;
+  for (const entry of zoneEntries) {
+    const { item, content } = entry;
+    if (!item && !content) continue;
+    if (item && (item.widget_id || item.widget_type)) return false;
+    if (content) {
+      if (content.remote_url) {
+        if (!looksLikeImage(content.remote_url, content.mime_type)) return false;
+      } else if (content.filepath) {
+        if (!looksLikeImage(content.filepath, content.mime_type)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Pure Jimp native composite for multi-zone layouts containing only images.
+ * Zero browser dependency — runs anywhere in production.
+ */
+async function renderLayoutNative(layout, zoneEntries, profile) {
+  const canvas = new Jimp({ width: profile.width, height: profile.height, color: 0x000000FF });
+
+  const sorted = [...zoneEntries].sort((a, b) => {
+    const za = Number.isFinite(Number(a.zone?.z_index)) ? Number(a.zone.z_index) : 0;
+    const zb = Number.isFinite(Number(b.zone?.z_index)) ? Number(b.zone.z_index) : 0;
+    return za - zb;
+  });
+
+  for (const entry of sorted) {
+    const { zone, content } = entry;
+    if (!content) continue;
+
+    const x = Number.isFinite(Number(zone.x_percent)) ? Math.max(0, Math.min(100, Number(zone.x_percent))) : 0;
+    const y = Number.isFinite(Number(zone.y_percent)) ? Math.max(0, Math.min(100, Number(zone.y_percent))) : 0;
+    const w = Number.isFinite(Number(zone.width_percent)) ? Math.max(0, Math.min(100, Number(zone.width_percent))) : 100;
+    const h = Number.isFinite(Number(zone.height_percent)) ? Math.max(0, Math.min(100, Number(zone.height_percent))) : 100;
+
+    const pixelX = Math.round((x / 100) * profile.width);
+    const pixelY = Math.round((y / 100) * profile.height);
+    const pixelW = Math.max(1, Math.round((w / 100) * profile.width));
+    const pixelH = Math.max(1, Math.round((h / 100) * profile.height));
+
+    let img = null;
+    const fileToLoad = content.filepath || content.thumbnail_path;
+    if (fileToLoad) {
+      const base = path.resolve(contentDir());
+      const safe = path.resolve(base, path.basename(String(fileToLoad)));
+      if (!safe.startsWith(base + path.sep) && safe !== base) {
+        throw Object.assign(new Error('Invalid content file path'), { code: 'INVALID_PATH' });
+      }
+      if (!fs.existsSync(safe)) {
+        throw Object.assign(new Error('Content file not found on disk'), { code: 'NOT_FOUND' });
+      }
+      img = await Jimp.fromBuffer(fs.readFileSync(safe));
+    } else if (content.remote_url) {
+      let res;
+      try {
+        res = await fetch(content.remote_url, {
+          signal: AbortSignal.timeout(10000),
+          headers: { 'User-Agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
+        });
+      } catch (e) {
+        throw Object.assign(new Error(`Failed to fetch remote content: ${e.message}`), { code: 'FETCH_ERROR' });
+      }
+      if (!res.ok) {
+        throw Object.assign(new Error(`Remote content returned HTTP ${res.status}`), { code: 'FETCH_ERROR' });
+      }
+      const contentType = res.headers.get('content-type') || '';
+      if (!looksLikeImage(content.remote_url, contentType)) {
+        throw Object.assign(new Error('Remote content is not an image'), { code: 'FETCH_ERROR' });
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      img = await Jimp.fromBuffer(buf);
+    }
+
+    if (img) {
+      img.cover({ w: pixelW, h: pixelH });
+      canvas.composite(img, pixelX, pixelY);
+    }
+  }
+
+  const png = await canvas.getBuffer('image/png');
+  return { png };
+}
+
+/**
+ * Render a multi-zone layout composition into a composite PNG Buffer.
+ *
+ * @param {object} layout - Layout record
+ * @param {Array<{ zone: object, item: object|null, content: object|null }>} zoneEntries
+ * @param {object} profile - screen_profile
+ * @returns {Promise<{ png: Buffer } | { unsupported: true, reason: string }>}
+ */
+async function renderLayout(layout, zoneEntries, profile) {
+  // Safely coerce numeric dimensions we later interpolate into CSS/viewport
+  // (width/height come from the screen_profile row). Default on unparseable input
+  // so a malformed profile cannot inject into the composite HTML.
+  const width = safeDimension(profile.width, 800);
+  const height = safeDimension(profile.height, 480);
+  profile = { ...profile, width, height };
+
+  // If the layout consists entirely of images, composite natively via Jimp
+  // with zero browser dependency.
+  if (isLayoutImageOnly(zoneEntries)) {
+    return renderLayoutNative(layout, zoneEntries, profile);
+  }
+
+  const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
+  const { fontResolverFor } = require('../routes/fonts');
+  const { db } = require('../db/database');
+
+  const zoneHtmls = [];
+
+  for (const entry of zoneEntries) {
+    const { zone, item, content } = entry;
+    const x = Number.isFinite(Number(zone.x_percent)) ? Math.max(0, Math.min(100, Number(zone.x_percent))) : 0;
+    const y = Number.isFinite(Number(zone.y_percent)) ? Math.max(0, Math.min(100, Number(zone.y_percent))) : 0;
+    const w = Number.isFinite(Number(zone.width_percent)) ? Math.max(0, Math.min(100, Number(zone.width_percent))) : 100;
+    const h = Number.isFinite(Number(zone.height_percent)) ? Math.max(0, Math.min(100, Number(zone.height_percent))) : 100;
+    const zIndex = Number.isFinite(Number(zone.z_index)) ? Math.floor(Number(zone.z_index)) : 0;
+
+    let innerHtml = '<div style="width:100%;height:100%;background:transparent;"></div>';
+
+    if (item && (item.widget_id || item.widget_type)) {
+      const type = item.widget_type || 'clock';
+      let config = {};
+      if (typeof item.widget_config === 'string') {
+        try { config = JSON.parse(item.widget_config); } catch (_) {}
+      } else if (typeof item.widget_config === 'object' && item.widget_config !== null) {
+        config = item.widget_config;
+      }
+
+      let wsId = item.workspace_id || layout?.workspace_id || profile?.workspace_id;
+      if (!wsId && item.widget_id) {
+        try {
+          const row = db.prepare('SELECT workspace_id FROM widgets WHERE id = ?').get(item.widget_id);
+          if (row) wsId = row.workspace_id;
+        } catch (_) {}
+      }
+
+      try {
+        const widgetHtml = renderWidgetHtml(type, config, {
+          iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
+          resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
+          resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
+          resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
+        });
+
+        innerHtml = `<iframe srcdoc="${escapeHtmlAttr(widgetHtml)}" style="width:100%;height:100%;border:none;overflow:hidden;display:block;" scrolling="no"></iframe>`;
+      } catch (zoneErr) {
+        console.warn(`[embedded] zone widget render error for ${type}:`, zoneErr.message);
+        innerHtml = `<div style="width:100%;height:100%;background:transparent;"></div>`;
+      }
+    } else if (content && content.remote_url) {
+      if (looksLikeImage(content.remote_url, content.mime_type)) {
+        innerHtml = `<img src="${escapeHtmlAttr(content.remote_url)}" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
+      } else {
+        innerHtml = `<iframe src="${escapeHtmlAttr(content.remote_url)}" style="width:100%;height:100%;border:none;overflow:hidden;display:block;" scrolling="no"></iframe>`;
+      }
+    } else if (content && content.filepath) {
+      if (looksLikeImage(content.filepath, content.mime_type)) {
+        const safeFilename = path.basename(content.filepath);
+        innerHtml = `<img src="/uploads/content/${encodeURIComponent(safeFilename)}" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
+      } else if (content.thumbnail_path) {
+        const safeThumb = path.basename(content.thumbnail_path);
+        innerHtml = `<img src="/uploads/content/${encodeURIComponent(safeThumb)}" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
+      } else {
+        const safeFilename = path.basename(content.filepath);
+        innerHtml = `<video src="/uploads/content/${encodeURIComponent(safeFilename)}" style="width:100%;height:100%;object-fit:cover;display:block;" muted playsinline></video>`;
+      }
+    }
+
+    zoneHtmls.push(`
+      <div class="zone-slot" style="position:absolute;left:${x}%;top:${y}%;width:${w}%;height:${h}%;z-index:${zIndex};overflow:hidden;">
+        ${innerHtml}
+      </div>
+    `);
+  }
+
+  const baseUrl = localBaseUrl();
+  const compositeHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<base href="${baseUrl}/">
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    width: ${profile.width}px; height: ${profile.height}px;
+    background: #000000; overflow: hidden; position: relative;
+    box-sizing: border-box;
+  }
+  *, *:before, *:after { box-sizing: inherit; }
+  .zone-slot { position: absolute; overflow: hidden; }
+  .zone-slot iframe, .zone-slot img { width: 100%; height: 100%; display: block; border: 0; }
+</style>
+</head>
+<body>
+  ${zoneHtmls.join('\n')}
+</body>
+</html>`;
+
+  try {
+    const png = await renderWidgetOrHtml(compositeHtml, profile, 'layout');
+    return { png };
+  } catch (e) {
+    if (e.code === 'BROWSER_UNAVAILABLE' || e.code === 'BROWSER_NOT_FOUND') {
+      return {
+        unsupported: true,
+        reason: 'Multi-zone layout rendering with widgets or web pages requires a browser (set CHROME_PATH).',
+      };
+    }
+    throw e;
+  }
+}
+
+module.exports = {
+  render,
+  renderLayout,
+  renderLayoutNative,
+  closeBrowser,
+  getBrowser,
+  looksLikeImage,
+  isLayoutImageOnly,
+  isBrowserAvailable,
+};
+
