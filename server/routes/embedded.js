@@ -165,7 +165,9 @@ function resolveCurrentItem(deviceId, forceIndex) {
 
   // If caller forces an index (for testing), honour it directly.
   if (forceIndex !== undefined && forceIndex !== null) {
-    const idx  = Math.max(0, Math.min(Number(forceIndex), items.length - 1));
+    const raw = Number(forceIndex);
+    const parsed = Number.isInteger(raw) ? raw : 0;
+    const idx  = Math.max(0, Math.min(parsed, items.length - 1));
     const item = items[idx];
     return { item, content: item, itemIndex: idx, expiresIn: item.duration_sec || 30, total: items.length };
   }
@@ -249,43 +251,29 @@ function resolveLayoutItems(deviceId, forceIndex) {
     `).all(playlist_id);
   }
 
+  // If the device has no items in its assigned playlist, return null so caller returns 404
+  if (!allItems.length) return null;
+
   // Identify valid zones and find the largest zone by area for orphan assignment
+  // Area calculation matches player/index.html:5769 ((w||0)*(h||0))
   const validZoneIds = new Set(zones.map(z => z.id));
-  let largestZone = zones[0];
-  let maxArea = 0;
-  for (const z of zones) {
-    const area = (Number(z.width_percent) || 100) * (Number(z.height_percent) || 100);
-    if (area > maxArea) {
-      maxArea = area;
-      largestZone = z;
+  const fallbackZone = zones.reduce(
+    (a, b) => (((Number(b.width_percent) || 0) * (Number(b.height_percent) || 0)) > ((Number(a.width_percent) || 0) * (Number(a.height_percent) || 0)) ? b : a),
+    zones[0]
+  );
+
+  // Bucket items per zone matching player parity (player/index.html:5767-5801)
+  const byZone = {};
+  for (const a of allItems) {
+    let zid = a.zone_id || '__none__';
+    if (a.zone_id && !validZoneIds.has(a.zone_id) && fallbackZone) {
+      zid = fallbackZone.id;
     }
+    (byZone[zid] = byZone[zid] || []).push(a);
   }
+  for (const k in byZone) byZone[k].sort((x, y) => (x.sort_order || 0) - (y.sort_order || 0));
 
-  // Bucket items per zone matching player parity (player/index.html:5767-5782)
-  const zoneBuckets = new Map(zones.map(z => [z.id, []]));
-  const unassigned = [];
-  const orphans = [];
-
-  for (const item of allItems) {
-    if (item.zone_id && validZoneIds.has(item.zone_id)) {
-      zoneBuckets.get(item.zone_id).push(item);
-    } else if (!item.zone_id) {
-      unassigned.push(item);
-    } else {
-      orphans.push(item);
-    }
-  }
-
-  for (const item of unassigned) {
-    const firstEmpty = zones.find(z => zoneBuckets.get(z.id).length === 0);
-    const target = firstEmpty || largestZone;
-    zoneBuckets.get(target.id).push(item);
-  }
-
-  for (const item of orphans) {
-    zoneBuckets.get(largestZone.id).push(item);
-  }
-
+  let unassignedUsed = false;
   const now = Math.floor(Date.now() / 1000);
   const zoneEntries = [];
   const expiresList = [];
@@ -293,7 +281,12 @@ function resolveLayoutItems(deviceId, forceIndex) {
 
   for (let i = 0; i < zones.length; i++) {
     const zone = zones[i];
-    const matchingItems = zoneBuckets.get(zone.id) || [];
+    let matchingItems = byZone[zone.id];
+    if ((!matchingItems || !matchingItems.length) && !unassignedUsed && byZone['__none__']) {
+      unassignedUsed = true;
+      matchingItems = byZone['__none__'];
+    }
+    matchingItems = matchingItems || [];
 
     if (!matchingItems.length) {
       zoneEntries.push({ zone, item: null, content: null });
@@ -305,7 +298,9 @@ function resolveLayoutItems(deviceId, forceIndex) {
     let startedAt;
 
     if (forceIndex !== undefined && forceIndex !== null) {
-      idx = Math.max(0, Math.min(Number(forceIndex), matchingItems.length - 1));
+      const raw = Number(forceIndex);
+      const parsed = Number.isInteger(raw) ? raw : 0;
+      idx = Math.max(0, Math.min(parsed, matchingItems.length - 1));
       startedAt = now;
     } else {
       let cursor = ZONE_CURSOR_GET.get(deviceId, zone.id);
@@ -536,7 +531,7 @@ router.get('/render', resolveAuth, async (req, res) => {
   const layoutId = resolvedLayoutId(device.id);
   if (layoutId) {
     const zoneCount = db.prepare('SELECT COUNT(*) AS count FROM layout_zones WHERE layout_id = ?').get(layoutId)?.count || 0;
-    if (zoneCount > 1) {
+    if (zoneCount >= 1) {
       return handleRenderLayout(req, res, device, profile);
     }
   }
@@ -704,7 +699,10 @@ async function handleRenderLayout(req, res, device, profile) {
     'Cache-Control': 'no-store',
     'X-ST-Device-Id': device.id,
     'X-ST-Layout-Id': layout.id,
+    'X-ST-Content-Id': layout.id,
     'X-ST-Expires-In': String(expiresIn),
+    'X-ST-Item-Index': '0',
+    'X-ST-Total-Items': String(zoneEntries.length),
     'X-ST-Total-Zones': String(zoneEntries.length),
   };
 
@@ -735,10 +733,14 @@ async function handleRenderLayout(req, res, device, profile) {
   }
 
   if (!renderResult || renderResult.unsupported) {
-    return res.status(501).json({
-      error: 'Multi-zone layout rendering failed or not supported.',
-      detail: renderResult?.reason || 'Browser unavailable for multi-zone rendering',
-    });
+    if (req.query.mode === 'layout') {
+      return res.status(501).json({
+        error: 'Multi-zone layout rendering failed or not supported.',
+        detail: renderResult?.reason || 'Browser unavailable for multi-zone rendering',
+      });
+    }
+    // Auto mode fallback to standard single-item rendering
+    return handleRenderStandard(req, res, device, profile);
   }
 
   // ── Post-process ─────────────────────────────────────────────────────────────
@@ -771,3 +773,8 @@ function detectContentType(profile) {
 }
 
 module.exports = router;
+module.exports.resolveCurrentItem = resolveCurrentItem;
+module.exports.resolveLayoutItems = resolveLayoutItems;
+module.exports.resolveDevicePlaylist = resolveDevicePlaylist;
+module.exports.resolvedLayoutId = resolvedLayoutId;
+

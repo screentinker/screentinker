@@ -126,7 +126,9 @@ Fetches the pre-rendered image for the current playlist item.
 - **`If-None-Match`** *(header, optional)*: ETag received in previous request.
 - **`format`** *(query, optional)*: Override output format (`x-epd-packed`, `png`, `jpeg`, `bmp`, `raw`).
 - **`dither`** *(query, optional)*: Override dithering algorithm (`floyd-steinberg`, `atkinson`, `none`).
-- **`mode`** *(query, optional)*: `layout` (forces multi-zone layout rendering), `single` (forces single-item rendering). When omitted, automatically renders in multi-zone layout mode if the device's assigned playlist has a multi-zone layout (`zones.length > 1`), or single-item mode otherwise.
+- **`mode`** *(query, optional)*: `layout` (forces multi-zone layout rendering), `single` (forces single-item rendering). When omitted, automatically renders in multi-zone layout mode if the device has an assigned multi-zone layout (`zones.length >= 1`), or single-item mode otherwise.
+- **`item`** *(query, optional)*: Force a specific playlist item index (0-based integer) for step testing or previewing.
+- **`preview`** *(query, optional)*: Set `preview=1` to bypass ETag 304 check and cache read/write (always renders live).
 
 #### Responses
 - **`200 OK`**: Binary image body formatted per the device's `screen_profile`.
@@ -134,18 +136,21 @@ Fetches the pre-rendered image for the current playlist item.
   - Response Headers:
     - `ETag`: `"sha256-hash..."`
     - `X-ST-Expires-In`: Seconds until the current item ends (sleep timer for MCU).
-    - `X-ST-Item-Index`: Current playlist item index (0-based) or `X-ST-Total-Zones` (in layout mode).
-    - `X-ST-Total-Items`: Total active items in playlist.
+    - `X-ST-Item-Index`: Current playlist item index (0-based) in single mode or `'0'` in layout mode.
+    - `X-ST-Total-Items`: Total active items in playlist (or total zones in layout mode).
+    - `X-ST-Total-Zones`: Total zones in the layout (in layout mode).
     - `X-ST-Device-Id`: Device UUID.
-    - `X-ST-Content-Id`: Content ID or `X-ST-Layout-Id`.
+    - `X-ST-Content-Id`: Content ID (or Layout ID in layout mode).
+    - `X-ST-Layout-Id`: Layout UUID (in layout mode).
 - **`304 Not Modified`**: Sent when `If-None-Match` matches the current content digest. Body is empty.
 - **`400 Bad Request`**: Device lacks a configured `screen_profile`.
 - **`401 Unauthorized`**: Invalid or missing device token.
 - **`404 Not Found`**: Device not found or no playlist assigned.
+- **`501 Not Implemented`**: Content type or multi-zone layout contains widgets requiring a browser when Chromium is not installed on the server.
 
 ---
 
-### 2.2 Multi-Zone Layout Rendering & Zero-Browser Fallback
+### 3.2 Multi-Zone Layout Rendering & Zero-Browser Fallback
 
 Devices assigned to multi-zone layouts are automatically composited on the server:
 - **Native Image-Only Layouts (Zero Browser):** When all zones contain static images (local uploads or remote image URLs), the multi-zone canvas is composited natively using Jimp with zero external browser dependencies.
@@ -166,7 +171,7 @@ Devices assigned to multi-zone layouts are automatically composited on the serve
 
 ---
 
-### 2.3 `GET /api/embedded/info`
+### 3.3 `GET /api/embedded/info`
 
 Returns JSON metadata describing device status, screen profile, timing, and playlist configuration.
 
@@ -198,13 +203,13 @@ Returns JSON metadata describing device status, screen profile, timing, and play
 
 ---
 
-### 3.3 `GET /api/embedded/presets`
+### 3.4 `GET /api/embedded/presets`
 
 Returns the list of built-in hardware presets.
 
 ---
 
-### 3.4 `POST /api/embedded/pair/register`
+### 3.5 `POST /api/embedded/pair/register`
 
 Requests a new unassigned embedded device registration. The server assigns a secure CSPRNG 6-digit pairing code and a 32-byte `claim_secret`.
 Rate-limited and protected by `pairLockout`.
@@ -229,12 +234,9 @@ Rate-limited and protected by `pairLockout`.
 }
 ```
 
->   ```
-> - **Local Development (macOS / Windows):** Automatically detects your installed Google Chrome or Microsoft Edge.
-
 ---
 
-### 3.5 `GET /api/embedded/pair/status`
+### 3.6 `GET /api/embedded/pair/status`
 
 Polled by the MCU during setup to detect when the user claims the display in the web dashboard via `POST /api/provision/pair`.
 Protected by `pairLockout` and constant-time `claim_secret` validation.
@@ -248,7 +250,7 @@ Protected by `pairLockout` and constant-time `claim_secret` validation.
 - **Unclaimed:** `{"paired": false, "status": "provisioning", "pairing_code": "545658"}`
 - **Claimed / Paired:** `{"paired": true, "status": "online", "device_id": "<UUID>", "device_token": "<SECRET_TOKEN>"}` *(burns `claim_secret` on delivery)*
 
-## 3. Screen Profiles & Output Formats
+## 4. Screen Profiles & Output Formats
 
 A device's screen configuration is stored in the `devices.screen_profile` JSON column.
 

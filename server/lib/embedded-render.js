@@ -134,6 +134,7 @@ async function getBrowser() {
       '--disable-gpu',
       '--disable-extensions',
       '--hide-scrollbars',
+      '--ignore-certificate-errors',
     ],
   });
 
@@ -215,8 +216,9 @@ async function renderRemoteImage(content, profile) {
   return img.getBuffer('image/png');
 }
 
-const PORT = process.env.PORT || 3001;
-const BASE_URL = process.env.BASE_URL || `http://127.0.0.1:${PORT}`;
+function localBaseUrl() {
+  return global.__localApiOrigin || process.env.BASE_URL || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`;
+}
 
 async function renderWidgetOrHtml(html, profile, widgetType = '') {
   const browser = await getBrowser();
@@ -224,66 +226,53 @@ async function renderWidgetOrHtml(html, profile, widgetType = '') {
   try {
     await page.setViewport({ width: profile.width, height: profile.height });
 
-    // Inject static styles to disable animations/transitions for embedded screenshots
-    // and inject <base href> so origin-relative URLs (/uploads, /fonts) resolve correctly in about:blank
+    const baseUrl = localBaseUrl();
     const staticStyle = '<style>*, *::before, *::after { animation: none !important; transition: none !important; }</style>';
     let finalHtml = html;
     if (/<head>/i.test(finalHtml)) {
-      finalHtml = finalHtml.replace(/<head>/i, `<head><base href="${BASE_URL}/">\n${staticStyle}`);
+      finalHtml = finalHtml.replace(/<head>/i, `<head><base href="${baseUrl}/">\n${staticStyle}`);
     } else {
-      finalHtml = `<base href="${BASE_URL}/">\n${staticStyle}\n` + finalHtml;
+      finalHtml = `<base href="${baseUrl}/">\n${staticStyle}\n` + finalHtml;
     }
 
-    // Single-widget / slide / webpage items wait for 'load'
-    await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 }).catch(async () => {
-      // Fallback if external resources or fonts take longer than timeout
-      await page.setContent(finalHtml, { waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {});
-    });
+    // Single-widget / slide / webpage items wait for 'load'.
+    // Do NOT swallow timeouts: let TimeoutError propagate so callers advance without caching broken frames.
+    await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 });
 
-    // Ensure all web fonts are loaded and any lingering animations are finished
+    // Wait for any async network fetches (e.g. weather, RSS, remote data) to settle
+    await page.waitForNetworkIdle({ idleTime: 200, timeout: 2500 }).catch(() => {});
+
+    // Template-agnostic settlement: fonts, animations, and all images (including inside srcdoc iframes)
     await page.evaluate(async () => {
-      try {
-        if (document.fonts?.ready) await document.fonts.ready;
-      } catch (_) {}
-      try {
-        document.getAnimations().forEach(a => a.finish());
-      } catch (_) {}
+      try { if (document.fonts?.ready) await document.fonts.ready; } catch (_) {}
+      try { document.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
+
+      const getNestedImages = (root) => {
+        let imgs = Array.from(root.querySelectorAll('img'));
+        const iframes = Array.from(root.querySelectorAll('iframe'));
+        for (const iframe of iframes) {
+          try {
+            const doc = iframe.contentDocument || iframe.contentWindow?.document;
+            if (doc) {
+              imgs = imgs.concat(Array.from(doc.querySelectorAll('img')));
+              try { if (doc.fonts?.ready) doc.fonts.ready; } catch (_) {}
+              try { doc.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
+            }
+          } catch (_) {}
+        }
+        return imgs;
+      };
+
+      const imgs = getNestedImages(document);
+      await Promise.all(imgs.map(img => {
+        if (img.complete && img.naturalHeight !== 0) return Promise.resolve();
+        return new Promise(resolve => {
+          img.addEventListener('load', resolve, { once: true });
+          img.addEventListener('error', resolve, { once: true });
+          setTimeout(resolve, 1500);
+        });
+      }));
     }).catch(() => {});
-
-    // Dynamic widgets with async network requests (e.g. weather)
-    if (widgetType === 'weather') {
-      await page.waitForFunction(() => {
-        const temp = document.getElementById('temp');
-        const desc = document.getElementById('desc');
-        return (temp && temp.textContent !== '--') || (desc && desc.textContent.length > 0);
-      }, { timeout: 3500 }).catch(() => {});
-    } else if (widgetType === 'layout') {
-      // Multi-zone layout: wait for all zone iframes and images to settle
-      await page.evaluate(async () => {
-        const imgs = Array.from(document.querySelectorAll('img'));
-        await Promise.all(imgs.map(img => {
-          if (img.complete && img.naturalHeight !== 0) return Promise.resolve();
-          return new Promise(resolve => {
-            img.addEventListener('load', resolve, { once: true });
-            img.addEventListener('error', resolve, { once: true });
-            setTimeout(resolve, 2500);
-          });
-        }));
-
-        const iframes = Array.from(document.querySelectorAll('iframe'));
-        await Promise.all(iframes.map(iframe => {
-          return new Promise(resolve => {
-            try {
-              const doc = iframe.contentDocument || iframe.contentWindow?.document;
-              if (doc && doc.readyState === 'complete') return resolve();
-            } catch (_) {}
-            iframe.addEventListener('load', resolve, { once: true });
-            iframe.addEventListener('error', resolve, { once: true });
-            setTimeout(resolve, 2500);
-          });
-        }));
-      }).catch(() => {});
-    }
 
     const snap = await page.screenshot({ type: 'png' });
     return Buffer.from(snap);
@@ -394,7 +383,13 @@ function isLayoutImageOnly(zoneEntries) {
     const { item, content } = entry;
     if (!item && !content) continue;
     if (item && (item.widget_id || item.widget_type)) return false;
-    if (content && content.remote_url && !looksLikeImage(content.remote_url, content.mime_type)) return false;
+    if (content) {
+      if (content.remote_url) {
+        if (!looksLikeImage(content.remote_url, content.mime_type)) return false;
+      } else if (content.filepath) {
+        if (!looksLikeImage(content.filepath, content.mime_type)) return false;
+      }
+    }
   }
   return true;
 }
@@ -427,9 +422,10 @@ async function renderLayoutNative(layout, zoneEntries, profile) {
     const pixelH = Math.max(1, Math.round((h / 100) * profile.height));
 
     let img = null;
-    if (content.filepath) {
+    const fileToLoad = content.filepath || content.thumbnail_path;
+    if (fileToLoad) {
       const base = path.resolve(contentDir());
-      const safe = path.resolve(base, path.basename(String(content.filepath || '')));
+      const safe = path.resolve(base, path.basename(String(fileToLoad)));
       if (safe.startsWith(base + path.sep) && fs.existsSync(safe)) {
         try {
           img = await Jimp.fromBuffer(fs.readFileSync(safe));
@@ -524,8 +520,16 @@ async function renderLayout(layout, zoneEntries, profile) {
         innerHtml = `<iframe src="${escapeHtmlAttr(content.remote_url)}" style="width:100%;height:100%;border:none;overflow:hidden;display:block;" scrolling="no"></iframe>`;
       }
     } else if (content && content.filepath) {
-      const safeFilename = path.basename(content.filepath);
-      innerHtml = `<img src="/uploads/content/${encodeURIComponent(safeFilename)}" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
+      if (looksLikeImage(content.filepath, content.mime_type)) {
+        const safeFilename = path.basename(content.filepath);
+        innerHtml = `<img src="/uploads/content/${encodeURIComponent(safeFilename)}" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
+      } else if (content.thumbnail_path) {
+        const safeThumb = path.basename(content.thumbnail_path);
+        innerHtml = `<img src="/uploads/content/${encodeURIComponent(safeThumb)}" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
+      } else {
+        const safeFilename = path.basename(content.filepath);
+        innerHtml = `<video src="/uploads/content/${encodeURIComponent(safeFilename)}" style="width:100%;height:100%;object-fit:cover;display:block;" muted playsinline></video>`;
+      }
     }
 
     zoneHtmls.push(`
@@ -535,11 +539,12 @@ async function renderLayout(layout, zoneEntries, profile) {
     `);
   }
 
+  const baseUrl = localBaseUrl();
   const compositeHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<base href="${BASE_URL}/">
+<base href="${baseUrl}/">
 <style>
   html, body {
     margin: 0; padding: 0;
