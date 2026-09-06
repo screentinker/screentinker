@@ -28,6 +28,7 @@ const EASES = { 'ease-out': 'Ease out', soft: 'Soft', linear: 'Linear', 'ease-in
  * have — which makes the tool a liar about the one thing it exists to show.
  */
 let FONT_CATALOGUE = [];
+let DATA_SOURCES_LIST = [];
 const KINDS = {
   head: { icon: 'H', label: 'Headline', size: 7, weight: 700 },
   body: { icon: 'T', label: 'Text', size: 3, weight: 400 },
@@ -73,6 +74,23 @@ const slide = () => state.deck && state.deck.doc.slides[state.si];
 
 /* The document stores template.elements; this is just a shorthand so the code below reads. */
 function elementsOf(s) { return (s.template && Array.isArray(s.template.elements)) ? s.template.elements : []; }
+
+function resolveInterpolatedText(str) {
+  if (typeof str !== 'string' || !str.includes('{{ds:')) return str;
+  return str.replace(/\{\{ds:([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)\}\}/g, (match, slug, key) => {
+    const ds = DATA_SOURCES_LIST.find((x) => x.slug === slug || x.slug === slug.toLowerCase());
+    if (ds) {
+      if (ds.data && ds.data[key] !== undefined && ds.data[key] !== null) return String(ds.data[key]);
+      if (ds.cached_data) {
+        try {
+          const parsed = typeof ds.cached_data === 'string' ? JSON.parse(ds.cached_data) : ds.cached_data;
+          if (parsed && parsed[key] !== undefined && parsed[key] !== null) return String(parsed[key]);
+        } catch (_) {}
+      }
+    }
+    return '';
+  });
+}
 
 const uid = (p) => `${p}_${Math.random().toString(36).slice(2, 9)}`;
 
@@ -221,6 +239,194 @@ function newSlide(name = 'Untitled slide') {
   };
 }
 
+function buildRoomSignSlide(slug = 'room') {
+  const head = {
+    id: uid('el'), kind: 'head', slot: 'room_name',
+    box: { x: 5, y: 8, w: 60, h: null },
+    style: { color: '#FFFFFF', font: 'sans', size_cqw: 5, weight: 700, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const clock = {
+    id: uid('el'), kind: 'clock', slot: 'clock', clock_format: '24', tz: '', locale: '',
+    box: { x: 70, y: 8, w: 25, h: null },
+    style: { color: '#94A3B8', font: 'sans', size_cqw: 4.5, weight: 600, align: 'right', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const rule = {
+    id: uid('el'), kind: 'rule', slot: 'rule_top',
+    box: { x: 5, y: 22, w: 90, h: 0.5 },
+    style: { color: '#334155', font: 'sans', size_cqw: 0, weight: 400, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const stat = {
+    id: uid('el'), kind: 'stat', slot: 'status_badge',
+    box: { x: 5, y: 28, w: 90, h: null },
+    style: { color: '#38BDF8', font: 'sans', size_cqw: 9, weight: 700, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const detail = {
+    id: uid('el'), kind: 'body', slot: 'status_detail',
+    box: { x: 5, y: 48, w: 90, h: null },
+    style: { color: '#F8FAFC', font: 'sans', size_cqw: 3.5, weight: 500, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const nextMeet = {
+    id: uid('el'), kind: 'body', slot: 'next_meeting',
+    box: { x: 5, y: 68, w: 90, h: null },
+    style: { color: '#94A3B8', font: 'sans', size_cqw: 3, weight: 400, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+
+  return {
+    id: uid('s'), name: 'Room Status', dwell_sec: 30, widget_id: null,
+    template: {
+      background: '#0F172A',
+      aspect: '5:3', // 800:480 for e-paper / Sticky
+      elements: [head, clock, rule, stat, detail, nextMeet],
+    },
+    fields: {
+      room_name: 'Konferenzraum Berlin',
+      status_badge: `{{ds:${slug}.status}}`,
+      status_detail: `{{ds:${slug}.status_detail}}`,
+      next_meeting: `Nächstes Meeting: {{ds:${slug}.next_title}} ({{ds:${slug}.next_time}})`,
+    }
+  };
+}
+
+function buildWasteCalendarSlide(slug = 'abfall') {
+  const head = {
+    id: uid('el'), kind: 'head', slot: 'headline',
+    box: { x: 6, y: 10, w: 88, h: null },
+    style: { color: '#FFFFFF', font: 'sans', size_cqw: 4.5, weight: 700, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const stat = {
+    id: uid('el'), kind: 'stat', slot: 'waste_type',
+    box: { x: 6, y: 28, w: 88, h: null },
+    style: { color: '#FACC15', font: 'sans', size_cqw: 8, weight: 700, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const date = {
+    id: uid('el'), kind: 'body', slot: 'waste_date',
+    box: { x: 6, y: 50, w: 88, h: null },
+    style: { color: '#F8FAFC', font: 'sans', size_cqw: 4, weight: 600, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+  const sub = {
+    id: uid('el'), kind: 'body', slot: 'waste_note',
+    box: { x: 6, y: 72, w: 88, h: null },
+    style: { color: '#94A3B8', font: 'sans', size_cqw: 2.8, weight: 400, align: 'left', opacity: 1, radius_cqw: 0 },
+    motion: { animation: 'none', delay: 0, duration: 0, easing: 'linear' },
+  };
+
+  return {
+    id: uid('s'), name: 'Waste Pickup', dwell_sec: 30, widget_id: null,
+    template: {
+      background: '#0F172A',
+      aspect: '5:3',
+      elements: [head, stat, date, sub],
+    },
+    fields: {
+      headline: '🗑️ Nächste Müllabfuhr',
+      waste_type: `{{ds:${slug}.next_title}}`,
+      waste_date: `Termin: {{ds:${slug}.next_time}}`,
+      waste_note: 'Bitte die Tonne bis spätestens 06:00 Uhr am Straßenrand bereitstellen.',
+    }
+  };
+}
+
+async function openNewDeckModal(container) {
+  if (!DATA_SOURCES_LIST || !DATA_SOURCES_LIST.length) {
+    try { DATA_SOURCES_LIST = await api.getDataSources(); } catch (_) { DATA_SOURCES_LIST = []; }
+  }
+
+  const defaultRoomSlug = DATA_SOURCES_LIST[0]?.slug || 'testraum';
+  const defaultWasteSlug = DATA_SOURCES_LIST.find(x => x.slug.includes('abfall') || x.slug.includes('waste'))?.slug || DATA_SOURCES_LIST[0]?.slug || 'abfall';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px';
+
+  overlay.innerHTML = `
+    <div class="modal" style="background:var(--bg-card,#1e293b);border-radius:12px;border:1px solid var(--border,#334155);width:100%;max-width:540px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5)">
+      <div class="modal-header" style="padding:18px 24px;border-bottom:1px solid var(--border,#334155);display:flex;justify-content:space-between;align-items:center">
+        <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-primary,#f8fafc)">${esc(t('slides.template_modal_title'))}</h2>
+        <button id="closeNewDeckModal" style="background:none;border:none;color:var(--text-muted,#94a3b8);font-size:20px;cursor:pointer">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:24px;display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">${esc(t('slides.deck_name_label'))}</label>
+          <input type="text" id="deckNameInput" class="input" style="width:100%" placeholder="${esc(t('slides.deck_name_placeholder'))}" value="New Slide Deck">
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">${esc(t('slides.choose_template'))}</label>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--bg-input)">
+              <input type="radio" name="deckTpl" value="blank" checked style="margin-top:3px">
+              <div>
+                <strong style="display:block;font-size:13px">${esc(t('slides.tpl_blank_title'))}</strong>
+                <span style="font-size:11px;color:var(--text-muted)">${esc(t('slides.tpl_blank_desc'))}</span>
+              </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--bg-input)">
+              <input type="radio" name="deckTpl" value="room" style="margin-top:3px">
+              <div>
+                <strong style="display:block;font-size:13px">${esc(t('slides.tpl_room_title'))}</strong>
+                <span style="font-size:11px;color:var(--text-muted)">${esc(t('slides.tpl_room_desc'))}</span>
+              </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--bg-input)">
+              <input type="radio" name="deckTpl" value="waste" style="margin-top:3px">
+              <div>
+                <strong style="display:block;font-size:13px">${esc(t('slides.tpl_waste_title'))}</strong>
+                <span style="font-size:11px;color:var(--text-muted)">${esc(t('slides.tpl_waste_desc'))}</span>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="padding:16px 24px;border-top:1px solid var(--border,#334155);display:flex;justify-content:flex-end;gap:10px">
+        <button type="button" id="cancelNewDeckBtn" class="btn btn-secondary">${esc(t('common.cancel'))}</button>
+        <button type="button" id="submitNewDeckBtn" class="btn btn-primary">${esc(t('slides.create_deck_btn'))}</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector('#closeNewDeckModal').onclick = close;
+  overlay.querySelector('#cancelNewDeckBtn').onclick = close;
+
+  overlay.querySelector('#submitNewDeckBtn').onclick = async () => {
+    const name = overlay.querySelector('#deckNameInput').value.trim() || 'New Slide Deck';
+    const tpl = overlay.querySelector('input[name="deckTpl"]:checked').value;
+
+    let initialSlide;
+    let initialAspect = '16:9';
+    if (tpl === 'room') {
+      initialSlide = buildRoomSignSlide(defaultRoomSlug);
+      initialAspect = '5:3';
+    } else if (tpl === 'waste') {
+      initialSlide = buildWasteCalendarSlide(defaultWasteSlug);
+      initialAspect = '5:3';
+    } else {
+      initialSlide = newSlide('Slide 1');
+    }
+
+    try {
+      const d = await api.post('/slide-decks', {
+        name,
+        doc: { aspect: initialAspect, slides: [initialSlide] }
+      });
+      state.decks.unshift({ id: d.id, name: d.name, slide_count: d.doc.slides.length });
+      close();
+      await openDeck(container, d.id);
+    } catch (e) {
+      showToast(e.message || 'Could not create the deck', 'error');
+    }
+  };
+}
+
 /* ============================================================ render */
 
 export async function render(container) {
@@ -229,15 +435,7 @@ export async function render(container) {
     <button class="btn btn-primary" id="newDeck">+ New deck</button></div>
     <div id="deckArea"><p style="color:var(--text-muted)">Loading…</p></div>`;
 
-  container.querySelector('#newDeck').addEventListener('click', async () => {
-    const name = prompt('Name this deck');           // eslint-disable-line no-alert
-    if (!name || !name.trim()) return;
-    try {
-      const d = await api.post('/slide-decks', { name: name.trim(), doc: { slides: [newSlide('Slide 1')] } });
-      state.decks.unshift({ id: d.id, name: d.name, slide_count: d.doc.slides.length });
-      await openDeck(container, d.id);
-    } catch (e) { showToast(e.message || 'Could not create the deck', 'error'); }
-  });
+  container.querySelector('#newDeck').addEventListener('click', () => openNewDeckModal(container));
 
   // Loaded alongside the decks so the photo picker has something in it. Failure is not fatal:
   // a deck without its image list is still perfectly editable, and every other control works.
@@ -298,6 +496,7 @@ function renderList(container) {
 async function openDeck(container, id) {
   try {
     state.deck = await api.get(`/slide-decks/${id}`);
+    try { DATA_SOURCES_LIST = await api.getDataSources(); } catch (_) { DATA_SOURCES_LIST = []; }
     state.si = 0; state.ei = 0; state.dirty = false;
     renderEditor(container);
   } catch (e) { showToast(e.message || 'Could not open the deck', 'error'); }
@@ -305,19 +504,31 @@ async function openDeck(container, id) {
 
 function renderEditor(container) {
   const d = state.deck;
+  const tabLabels = {
+    content: t('slides.tab_content'),
+    style: t('slides.tab_style'),
+    motion: t('slides.tab_motion'),
+    slide: t('slides.tab_slide'),
+  };
+
   container.innerHTML = `
-    <div class="page-header">
-      <div><h1>${esc(d.name)}</h1>
-        <div class="subtitle" id="deckStatus"></div></div>
+    <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="text" id="deckNameHeaderInput" class="input" style="font-size:22px;font-weight:700;padding:2px 8px;border:1px solid transparent;background:transparent;color:var(--text-primary);border-radius:6px;max-width:380px" value="${esc(d.name)}" title="${esc(t('slides.deck_name_label'))}">
+          <span style="font-size:14px;color:var(--text-muted);cursor:pointer" onclick="const i=document.getElementById('deckNameHeaderInput');i.focus();i.select()">✏️</span>
+        </div>
+        <div class="subtitle" id="deckStatus"></div>
+      </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary" id="backBtn">← All decks</button>
-        <button class="btn btn-secondary" id="saveBtn">Save</button>
+        <button class="btn btn-secondary" id="backBtn">← ${esc(t('slides.all_decks'))}</button>
+        <button class="btn btn-secondary" id="saveBtn">${esc(t('common.save'))}</button>
         <!--
           Preview opens the real player in preview mode against this deck's playlist, so what plays
           is the payload a screen would get — same renderer, same transitions, same audio.
         -->
-        <button class="btn btn-secondary" id="previewBtn">▶ Preview</button>
-        <button class="btn btn-primary" id="pubBtn">Publish</button>
+        <button class="btn btn-secondary" id="previewBtn">▶ ${esc(t('common.preview'))}</button>
+        <button class="btn btn-primary" id="pubBtn">${esc(t('common.publish'))}</button>
       </div>
     </div>
     <div id="warnBox"></div>
@@ -396,12 +607,18 @@ function renderEditor(container) {
           ${['content', 'style', 'motion', 'slide'].map((tab) => `
             <button class="tabBtn" data-tab="${tab}" style="flex:1;padding:8px 2px;border:0;background:none;
               cursor:pointer;font-size:12px;font-weight:600;border-bottom:2px solid transparent">
-              ${tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
+              ${esc(tabLabels[tab] || (tab[0].toUpperCase() + tab.slice(1)))}</button>`).join('')}
         </div>
         <div id="layers" style="max-height:170px;overflow-y:auto;border-bottom:1px solid var(--border)"></div>
         <div id="props" style="padding:11px 12px 14px;display:grid;gap:9px"></div>
       </div>
     </div>`;
+
+  container.querySelector('#deckNameHeaderInput').addEventListener('input', (e) => {
+    state.deck.name = e.target.value.trim() || 'Untitled Deck';
+    state.dirty = true;
+    container.querySelector('#deckStatus').textContent = 'Unsaved changes';
+  });
 
   container.querySelector('#backBtn').addEventListener('click', async () => {
     if (state.dirty && !confirm('Leave without saving? Your changes will be lost.')) return; // eslint-disable-line no-alert
@@ -772,7 +989,7 @@ function renderStage(container) {
       d.dataset.live = e.kind;
       paintLive(d, e);
     } else if (TEXT_KINDS.includes(e.kind)) {
-      d.textContent = s.fields[e.slot] || '';
+      d.textContent = resolveInterpolatedText(s.fields[e.slot] || '');
     }
     d.addEventListener('pointerdown', (ev) => startDrag(ev, i, d, container));
     stage.appendChild(d);
@@ -869,9 +1086,9 @@ function renderStrip(container) {
         ${elementsOf(s).map((e) => `<div style="position:absolute;overflow:hidden;${esc(styleFor(e))}">${
           // A thumbnail shows what the slide shows: a clock reads as a clock, and a QR is a shape
           // rather than the raw URL behind it, which at 124px is unreadable noise either way.
-          LIVE_KINDS.includes(e.kind) ? esc(liveText(e, Date.now()) || (s.fields[e.slot] || ''))
+          LIVE_KINDS.includes(e.kind) ? esc(liveText(e, Date.now()) || resolveInterpolatedText(s.fields[e.slot] || ''))
             : e.kind === 'qr' ? ''
-            : TEXT_KINDS.includes(e.kind) ? esc(s.fields[e.slot] || '') : ''}</div>`).join('')}
+            : TEXT_KINDS.includes(e.kind) ? esc(resolveInterpolatedText(s.fields[e.slot] || '')) : ''}</div>`).join('')}
       </div>
       <div style="display:flex;gap:6px;padding:4px 6px;border-top:1px solid var(--border)">
         <span style="flex:1;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name)}</span>
@@ -881,9 +1098,23 @@ function renderStrip(container) {
     + `<button id="addSlide" style="flex:0 0 auto;width:124px;border:1px dashed var(--border);
         border-radius:4px;background:none;color:var(--text-muted);cursor:pointer;font-size:12px">+ Add slide</button>`;
 
-  container.querySelectorAll('[data-slide]').forEach((b) => b.addEventListener('click', () => {
-    state.si = +b.dataset.slide; state.ei = 0; paintAll(container); play();
-  }));
+  container.querySelectorAll('[data-slide]').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.si = +b.dataset.slide; state.ei = 0; paintAll(container); play();
+    });
+    b.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation();
+      const idx = +b.dataset.slide;
+      const targetSlide = state.deck.doc.slides[idx];
+      if (!targetSlide) return;
+      const newName = prompt(t('slides.prompt_rename_slide'), targetSlide.name);
+      if (newName !== null && newName.trim()) {
+        targetSlide.name = newName.trim();
+        touch(container);
+        paintAll(container);
+      }
+    });
+  });
   container.querySelector('#addSlide').addEventListener('click', () => {
     state.deck.doc.slides.splice(state.si + 1, 0, newSlide(`Slide ${state.deck.doc.slides.length + 1}`));
     state.si++; state.ei = 0; touch(container); play();
@@ -1080,7 +1311,26 @@ function renderProps(container) {
                are what a regenerate is asked for. <strong>The picture will not change until you
                generate it again.</strong> Check the artwork actually spells them.</p>`
         : isText
-        ? row('Text', `<textarea class="input" id="pText" rows="3" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
+        ? row('Text', `
+            <textarea class="input" id="pText" rows="3" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>
+            ${DATA_SOURCES_LIST && DATA_SOURCES_LIST.length > 0 ? `
+              <div style="margin-top:6px">
+                <select class="input" id="pDsVarPicker" style="font-size:11px;padding:3px 6px;margin:0;width:100%">
+                  <option value="">⚡ Insert Variable...</option>
+                  ${DATA_SOURCES_LIST.map(ds => `
+                    <optgroup label="${esc(ds.name)} ({{ds:${esc(ds.slug)}}})">
+                      <option value="{{ds:${esc(ds.slug)}.status}}">Status (${esc(ds.slug)}.status)</option>
+                      <option value="{{ds:${esc(ds.slug)}.status_detail}}">Status Detail (${esc(ds.slug)}.status_detail)</option>
+                      <option value="{{ds:${esc(ds.slug)}.current_title}}">Current Event (${esc(ds.slug)}.current_title)</option>
+                      <option value="{{ds:${esc(ds.slug)}.next_title}}">Next Event (${esc(ds.slug)}.next_title)</option>
+                      <option value="{{ds:${esc(ds.slug)}.next_time}}">Next Time (${esc(ds.slug)}.next_time)</option>
+                      <option value="{{ds:${esc(ds.slug)}.agenda_text}}">Agenda Text (${esc(ds.slug)}.agenda_text)</option>
+                    </optgroup>
+                  `).join('')}
+                </select>
+              </div>
+            ` : ''}
+          `)
         : e.kind === 'image'
           ? row('Photo', `<select class="input" id="pImg"><option value="">— none —</option>${
               imageContent().map((c) => `<option value="${esc(c.id)}" ${
@@ -1109,6 +1359,23 @@ function renderProps(container) {
          * most obvious and was somehow the last to be found; a source guard caught it, not use.
          */
         s.fields[e.slot] = ev.target.value; touchValue(container);
+      };
+    }
+    const dsPicker = host.querySelector('#pDsVarPicker');
+    if (dsPicker) {
+      dsPicker.onchange = (ev) => {
+        const val = ev.target.value;
+        if (!val) return;
+        const textEl = host.querySelector('#pText');
+        if (textEl) {
+          const start = textEl.selectionStart || textEl.value.length;
+          const end = textEl.selectionEnd || textEl.value.length;
+          const old = textEl.value;
+          textEl.value = old.substring(0, start) + val + old.substring(end);
+          s.fields[e.slot] = textEl.value;
+          touchValue(container);
+          ev.target.value = '';
+        }
       };
     }
     /*
@@ -1764,6 +2031,7 @@ const ASPECT_CHOICES = [
   ['16:9', 'Landscape 16:9'], ['9:16', 'Portrait 9:16'],
   ['4:3', 'Landscape 4:3'], ['3:4', 'Portrait 3:4'],
   ['1:1', 'Square'], ['21:9', 'Ultrawide 21:9'],
+  ['5:3', 'E-Paper 5:3'],
 ];
 
 function deckAspect() {

@@ -129,8 +129,13 @@ function pinnedLookup(vettedAddresses) {
   const addr = vettedAddresses[0];
   const family = net.isIP(addr);
   return (hostname, options, cb) => {
-    if (typeof options === 'function') { cb = options; }
-    process.nextTick(() => cb(null, addr, family));
+    if (typeof options === 'function') {
+      cb = options;
+      options = {};
+    }
+    const isAll = Boolean(options && options.all);
+    const result = isAll ? [{ address: addr, family }] : addr;
+    process.nextTick(() => cb(null, result, family));
   };
 }
 

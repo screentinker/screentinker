@@ -775,6 +775,7 @@ const LIMIT_PATH_SHAPES = [
   [/^\/api\/organizations\/[^/]+\/sso\/[^/]+\/test$/, () => '/api/organizations/:id/sso/:id/test'],
   [/^\/api\/organizations\/[^/]+\/sso\/[^/]+$/, () => '/api/organizations/:id/sso/:id'],
   [/^\/api\/organizations\/[^/]+\/sso$/, () => '/api/organizations/:id/sso'],
+  [/^\/api\/data-sources\/[^/]+\/refresh$/, () => '/api/data-sources/:id/refresh'],
 ];
 
 function canonicalLimitPath(rawPath) {
@@ -1300,6 +1301,10 @@ app.use('/api/ai/generate-design', rateLimit(60000, 10));
 app.use('/api/ai/generate-layered', rateLimit(60000, 3));
 app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
 app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview session creation retains rendered HTML in memory for 5min
+// `/test` triggers an outbound fetch of an arbitrary calendar feed; cap it so a single
+// workspace cannot fan out unbounded requests to third-party URLs.
+app.use('/api/data-sources/test', rateLimit(60000, 10));
+app.use('/api/data-sources', rateLimit(60000, 30));
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 
 for (const r of PUBLIC_ROUTERS) {
@@ -1332,7 +1337,7 @@ function updateFrontendHash() {
       'js/views/settings.js', 'js/views/login.js', 'js/views/billing.js',
       'js/views/layout-editor.js', 'js/views/schedule.js', 'js/views/widgets.js',
       'js/views/video-wall.js', 'js/views/reports.js', 'js/views/designer.js',
-      'js/views/activity.js', 'js/views/kiosk.js'].map(f => {
+      'js/views/activity.js', 'js/views/kiosk.js', 'js/views/data-sources.js'].map(f => {
       try { return fs.readFileSync(path.join(config.frontendDir, f)); } catch { return ''; }
     });
     // Include player files in hash so web players detect code updates

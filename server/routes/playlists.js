@@ -128,11 +128,16 @@ function buildSnapshotItems(playlistId) {
       )
     ORDER BY pi.sort_order ASC
   `).all(playlistId);
-  // #74/#75: attach per-item schedule blocks (the player honours these in its own
-  // local time via the shared evaluator). An item with zero blocks gets no
-  // `schedules` field -> always on. Additive: old players ignore the field. _iid is
-  // only used here to fetch blocks and is then dropped (snapshot stays id-free).
+  const dsMax = db.prepare(`
+    SELECT MAX(updated_at) AS max_ds
+    FROM data_sources
+    WHERE workspace_id = (SELECT workspace_id FROM playlists WHERE id = ?)
+  `).get(playlistId)?.max_ds || 0;
+
   for (const it of items) {
+    if (it.widget_id && it.widget_config && it.widget_config.includes('{{ds:') && dsMax > (it.widget_rev || 0)) {
+      it.widget_rev = dsMax;
+    }
     const blocks = schedulesForItem(it._iid);
     if (blocks.length) it.schedules = blocks;
     delete it._iid;

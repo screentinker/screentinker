@@ -389,8 +389,8 @@ router.get('/render', resolveAuth, async (req, res) => {
   let dynamicRev = item.widget_updated_at || content?.content_updated_at || item.updated_at || 0;
   if (item.widget_type === 'clock') {
     dynamicRev = `clock_${Math.floor(Date.now() / 60000)}`; // invalidate every minute
-  } else if (item.widget_type === 'weather') {
-    dynamicRev = `weather_${Math.floor(Date.now() / 600000)}`; // invalidate every 10 min
+  } else if (item.widget_type === 'slide') {
+    dynamicRev = `slide_${Math.floor(Date.now() / 60000)}`; // invalidate every minute for dynamic content/variables
   }
 
   const key = cacheKey(

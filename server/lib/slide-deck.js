@@ -44,7 +44,7 @@ const nowSec = () => Math.floor(Date.now() / 1000);
  * exists so the EDITOR can show the operator the canvas they are actually designing for: a portrait
  * screen laid out on a 16:9 stage looks right in the editor and wrong on the wall.
  */
-const ASPECTS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'];
+const ASPECTS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9', '5:3'];
 
 function normalizeDeck(raw) {
   const doc = (raw && typeof raw === 'object') ? raw : {};

@@ -187,6 +187,26 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
      * exactly what it can already do with /api/content, at larger sizes.
      */
     '/api/fonts',
+    /*
+     * Data sources (iCal/API feeds) for slide-template interpolation, added deliberately. The
+     * authoring value a workspace stores here is a feed URL plus the subscription config, and the
+     * objects it affects (slide decks, widgets, playlists) are already on this door, so an
+     * integrator provisioning feeds from their own tooling is the intended caller — the same
+     * reasoning that put slide-decks and triggers here.
+     *
+     * ⚠️ Two things review should weigh, both already mitigated:
+     *  1. `/test` (and background sync) fetch an OPERATOR-SUPPLIED URL. Callers can therefore cause
+     *     the server to make an outbound request, so the fetch path is SSRF-guarded (scheme
+     *     allowlist, DNS + private-IP vetting, socket pinning, per-hop redirect re-vetting), the
+     *     `/test` trigger is rate-limited to 10/min, and in-flight fetches are bounded by a
+     *     process-wide concurrency cap; errors are deliberately not echoed back (they would aid
+     *     SSRF reconnaissance). Note the actual FIRE of these feeds to screens happens on the
+     *     device/client, not here.
+     *  2. Credentials in feed URLs are stored in the workspace's data-source config and are only
+     *     readable by that workspace's members (and the server's own render path), matching the
+     *     promise siblings on this door already make.
+     */
+    '/api/data-sources',
   ].sort();
   assert.deepEqual(PUBLIC_ROUTERS.map(r => r.path).sort(), EXPECTED_PUBLIC);
 });

@@ -283,6 +283,7 @@ function renderWidgetHtml(type, config, opts = {}) {
      */
     case 'slide': return slideRender.renderSlideHtml(config, {
       resolveImage: opts.resolveImage, resolveFont: opts.resolveFont,
+      resolveData: opts.resolveData, dataSources: opts.dataSources,
     });
     default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
   }
@@ -347,8 +348,32 @@ router.get('/:id/render', (req, res) => {
     iframeSandbox,
     resolveImage: imageResolverFor(widget),
     resolveFont: require('./fonts').fontResolverFor(widget),
+    resolveData: dataResolverFor(widget),
   }));
 });
+
+/*
+ * Data source dynamic variable resolver scoped to the widget's workspace.
+ */
+function dataResolverFor(widgetOrWorkspaceId) {
+  const wsId = typeof widgetOrWorkspaceId === 'string' ? widgetOrWorkspaceId : (widgetOrWorkspaceId?.workspace_id || null);
+  if (!wsId) return () => null;
+  let dataMap = null;
+  let loaded = false;
+  return (slug, key) => {
+    try {
+      if (!loaded) {
+        dataMap = require('../lib/data-sources/service').getWorkspaceDataMapSync(wsId);
+        loaded = true;
+      }
+      const dsData = dataMap ? (dataMap[slug] || dataMap[slug.toLowerCase()]) : null;
+      if (dsData && dsData[key] !== undefined && dsData[key] !== null) {
+        return dsData[key];
+      }
+    } catch (_) {}
+    return null;
+  };
+}
 
 /*
  * Turn a slide's `content_id` into a URL, or into nothing.
@@ -456,7 +481,13 @@ router.post('/preview', (req, res) => {
   if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
   // Preview renders inside the DASHBOARD origin, so it never opts into same-origin —
   // see PREVIEW_IFRAME_SANDBOX.
-  let html = renderWidgetHtml(widget_type, config || {}, { iframeSandbox: PREVIEW_IFRAME_SANDBOX });
+  const resolveData = dataResolverFor(req.workspaceId);
+  const resolveFont = req.workspaceId ? require('./fonts').fontResolverFor({ workspace_id: req.workspaceId }) : undefined;
+  let html = renderWidgetHtml(widget_type, config || {}, {
+    iframeSandbox: PREVIEW_IFRAME_SANDBOX,
+    resolveData,
+    resolveFont,
+  });
   if (req.workspaceId) html = inlineUserContent(html, req.workspaceId);
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
@@ -479,7 +510,13 @@ router.post('/preview-session', (req, res) => {
   if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
   const id = uuidv4();
   // Same reasoning as /preview — dashboard origin, never same-origin.
-  const html = renderWidgetHtml(widget_type, config || {}, { iframeSandbox: PREVIEW_IFRAME_SANDBOX });
+  const resolveData = dataResolverFor(req.workspaceId);
+  const resolveFont = req.workspaceId ? require('./fonts').fontResolverFor({ workspace_id: req.workspaceId }) : undefined;
+  const html = renderWidgetHtml(widget_type, config || {}, {
+    iframeSandbox: PREVIEW_IFRAME_SANDBOX,
+    resolveData,
+    resolveFont,
+  });
   previewStore.set(id, { html, widget_type, created: Date.now() });
   res.json({ id, url: `/api/widgets/preview-session/${id}` });
 });
@@ -1526,3 +1563,5 @@ function renderDiagSmoothness(config) {
 
 module.exports = router;
 module.exports.renderWidgetHtml = renderWidgetHtml;
+module.exports.dataResolverFor = dataResolverFor;
+module.exports.imageResolverFor = imageResolverFor;

@@ -642,3 +642,24 @@ CREATE TABLE IF NOT EXISTS embedded_cursor (
     item_index  INTEGER NOT NULL DEFAULT 0,
     started_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
+-- ===================== DATA SOURCES & INTEGRATIONS ENGINE =====================
+-- Universal data sources (iCal feeds, REST APIs, Google Sheets, SQL queries).
+-- Server polls on a configured interval, caches structured JSON state,
+-- and injects dynamic fields into slide templates and widgets.
+CREATE TABLE IF NOT EXISTS data_sources (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    slug            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    type            TEXT NOT NULL,                            -- 'ical' | 'json_api' | 'google_sheets' | 'mysql'
+    config          TEXT NOT NULL,                            -- JSON: { url, interval_min, filters, auth, locale, ... }
+    cached_data     TEXT,                                     -- JSON payload of last successful fetch
+    last_fetched_at INTEGER DEFAULT 0,                        -- Unix seconds
+    last_status     TEXT DEFAULT 'ok',                        -- 'ok' | 'error' | 'pending'
+    last_error      TEXT,                                     -- Diagnostic message on failure
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(workspace_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_data_sources_workspace ON data_sources(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_data_sources_slug ON data_sources(workspace_id, slug);

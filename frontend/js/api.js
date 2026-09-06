@@ -709,4 +709,26 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ user_id, plan_id })
   }),
+
+  // Data Sources (iCal, APIs, etc.)
+  getDataSources: () => request('/data-sources'),
+  getDataSource: (id) => request(`/data-sources/${id}`),
+  testDataSource: (type, config) => request('/data-sources/test', {
+    method: 'POST',
+    body: JSON.stringify({ type, config })
+  }),
+  createDataSource: (data) => request('/data-sources', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }),
+  updateDataSource: (id, data) => request(`/data-sources/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  }),
+  refreshDataSource: (id) => request(`/data-sources/${id}/refresh`, {
+    method: 'POST'
+  }),
+  deleteDataSource: (id) => request(`/data-sources/${id}`, {
+    method: 'DELETE'
+  }),
 };

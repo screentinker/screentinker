@@ -4,6 +4,9 @@
   "license": "MIT",
   "description": "ScreenTinker - Digital Signage Management Server",
   "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --watch --env-file-if-exists=.env server.js",
@@ -23,6 +26,7 @@
     "jimp": "^1.6.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^1.4.5-lts.1",
+    "node-ical": "^0.26.1",
     "nodemailer": "^9.0.5",
     "otplib": "^12.0.1",
     "qrcode": "^1.5.4",
