@@ -170,3 +170,82 @@ test('#245: the Wayland cursor claim is backed by something that runs', () => {
   // Non-destructive: a Pi whose owner already tuned wayfire must not silently lose it.
   assert.match(code, /screentinker-bak/, 'wayfire.ini is edited without a backup');
 });
+
+// ---------------------------------------------------------------------------------------------
+// One launcher per install: the desktop "fallback" unit was the renderer leak.
+//
+// A Pi OS Desktop install used to get two launchers for the same Chromium profile: the desktop
+// autostart entry AND a systemd unit written "as fallback". The unit ran outside the Wayland
+// session, so its Chromium could not reach the compositor and exited; systemd restarted it every
+// ~10s; each retry found the autostart's browser holding SingletonLock, forwarded its URL into it
+// as a NEW TAB, and exited again. One more tab and one more renderer per cycle, forever. A six-Pi
+// headless deployment reported it as "a major memory leak in the renderers", and fixed it in the
+// field with `systemctl disable --now screentinker-kiosk.service` -- which also removed the only
+// crash recovery those Pis had. So: Desktop gets the autostart only, the launcher supervises
+// Chromium itself, and it refuses to start against a profile another instance already holds.
+
+// The two arms of section 8, so a test can say which launcher each Pi OS variant gets.
+function kioskLaunchArms() {
+  const start = SRC.indexOf('# 8. Kiosk launcher supervision');
+  const end = SRC.indexOf('# 9. Auto-login on tty1');
+  assert.ok(start > 0 && end > start, 'section 8 not found -- did the installer restructure?');
+  const sec = SRC.slice(start, end);
+  const split = sec.indexOf('\nelse\n');
+  assert.ok(split > 0, 'section 8 is expected to be one if/else on HAS_DESKTOP');
+  return { lite: sec.slice(0, split), desktop: sec.slice(split) };
+}
+
+test('one launcher: a Desktop install writes the autostart entry and NO systemd unit', () => {
+  const { lite, desktop } = kioskLaunchArms();
+  assert.match(lite, /cat > \/etc\/systemd\/system\/screentinker-kiosk\.service/,
+    'Lite has no session to autostart from; it still needs the unit that starts X');
+  assert.doesNotMatch(desktop, /cat > \/etc\/systemd\/system\/screentinker-kiosk\.service/,
+    'Desktop must not get a second launcher racing the autostart for the profile lock');
+  assert.match(desktop, /\.config\/autostart"\n[\s\S]*?screentinker\.desktop/, 'the autostart entry is THE launcher on Desktop');
+  assert.doesNotMatch(lite, /screentinker\.desktop/);
+});
+
+test('one launcher: re-running the installer removes the unit an earlier install left on a Desktop Pi', () => {
+  const { desktop } = kioskLaunchArms();
+  assert.match(desktop, /systemctl disable --now screentinker-kiosk\.service/);
+  assert.match(desktop, /rm -f \/etc\/systemd\/system\/screentinker-kiosk\.service/);
+});
+
+test('one launcher: the launcher refuses to start against a profile another Chromium already holds', () => {
+  const kiosk = generatedKioskScript();
+  const guard = kiosk.slice(kiosk.indexOf('SingletonLock'), kiosk.indexOf('while :; do'));
+  assert.ok(guard.length > 0, 'the lock guard must come before the restart loop');
+  assert.match(guard, /kill -0 "\$LOCK_PID"/, 'a stale lock (dead pid) must not block a start');
+  assert.match(guard, /exit 0/, 'a live lock is a clean no-op, not a failure to be retried');
+});
+
+test('one launcher: the launcher supervises Chromium itself instead of exec-ing it', () => {
+  // The unit's Restart=always was the only crash recovery Desktop had. With the unit gone the
+  // loop is it, so Chromium must NOT be exec'd (exec hands the process over and nothing restarts).
+  const kiosk = generatedKioskScript();
+  assert.doesNotMatch(kiosk, /\bexec \/usr\/bin\/chromium-browser/);
+  const loop = kiosk.slice(kiosk.indexOf('while :; do'), kiosk.lastIndexOf('\ndone'));
+  assert.match(loop, /\/usr\/bin\/chromium-browser \\\n\s+--kiosk/, 'Chromium runs inside the loop');
+  assert.match(loop, /sleep 5/, 'a crashed browser comes back after a pause, not in a busy loop');
+  assert.match(loop, /clean_crash_flags/,
+    'the crash flags must be cleaned before EVERY start, or the restart restores the "crashed" session');
+});
+
+test('one launcher: the management scripts no longer assume the kiosk unit exists', () => {
+  // screentinker-status / -logs / -update used to query the unit unconditionally; on a Desktop
+  // Pi that now reads "STOPPED" forever and follows an empty journal.
+  // Each use must be guarded somewhere between the start of ITS management script and the use.
+  const guarded = (idx) => {
+    const scriptStart = SRC.lastIndexOf('cat > /usr/local/bin/', idx);
+    assert.ok(scriptStart > 0, `kiosk-unit use at offset ${idx} is outside any management script`);
+    return /list-unit-files[^\n]*screentinker-kiosk\.service|KIOSK_UNIT/.test(SRC.slice(scriptStart, idx));
+  };
+  for (const m of SRC.matchAll(/systemctl (?:is-active|start|stop) screentinker-kiosk\.service/g)) {
+    // Section 8 itself may reference the unit; only the generated management scripts are in scope.
+    if (m.index < SRC.indexOf('# 11. Management scripts')) continue;
+    assert.ok(guarded(m.index), `'${m[0]}' at offset ${m.index} assumes the unit exists`);
+  }
+  for (const m of SRC.matchAll(/journalctl -u screentinker-kiosk\.service/g)) {
+    assert.ok(guarded(m.index), `journalctl on the kiosk unit at offset ${m.index} assumes the unit exists`);
+  }
+});

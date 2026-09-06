@@ -309,6 +309,15 @@ cat > "$PI_HOME/screentinker-kiosk.sh" << KIOSKEOF
 # ScreenTinker Kiosk - launches Chromium in fullscreen player mode
 KIOSK_URL="${KIOSK_URL}"
 
+# Under systemd (Lite) stdout is the journal and JOURNAL_STREAM is set. Under the desktop
+# autostart entry there is no journal at all, so keep a log file — screentinker-logs reads it.
+if [ -z "\${JOURNAL_STREAM:-}" ]; then
+    KLOG="\$HOME/screentinker-kiosk.log"
+    [ -f "\$KLOG" ] && [ "\$(stat -c %s "\$KLOG" 2>/dev/null || echo 0)" -gt 1048576 ] && : > "\$KLOG"
+    exec >> "\$KLOG" 2>&1
+    echo "=== \$(date '+%F %T') kiosk launcher start ==="
+fi
+
 # Wait for display
 sleep 2
 
@@ -352,12 +361,15 @@ fi
 # surface, not the player). Rewriting the flags is not enough on its own because Chromium
 # also replays the previous window set from Sessions/, so those go too.
 CDIR="\$HOME/.config/chromium/Default"
-mkdir -p "\$CDIR"
-if [ -f "\$CDIR/Preferences" ]; then
-    sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' "\$CDIR/Preferences" 2>/dev/null || true
-    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "\$CDIR/Preferences" 2>/dev/null || true
-fi
-rm -rf "\$CDIR/Sessions" "\$CDIR/Session Storage" 2>/dev/null || true
+clean_crash_flags() {
+    mkdir -p "\$CDIR"
+    if [ -f "\$CDIR/Preferences" ]; then
+        sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' "\$CDIR/Preferences" 2>/dev/null || true
+        sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "\$CDIR/Preferences" 2>/dev/null || true
+    fi
+    rm -rf "\$CDIR/Sessions" "\$CDIR/Session Storage" 2>/dev/null || true
+}
+clean_crash_flags
 
 # Wait for local server if running all-in-one
 if echo "\$KIOSK_URL" | grep -q "localhost"; then
@@ -385,7 +397,30 @@ fi
 OZONE=""
 [ "\$SESSION_TYPE" = "wayland" ] && OZONE="--ozone-platform=wayland"
 
-exec ${CHROMIUM_BIN} \\
+# ONE kiosk per profile. Chromium holds SingletonLock (a symlink named host-pid) on the profile
+# it is using; a second launch against the same profile does not open a second browser, it
+# forwards its URL into the running one as a NEW TAB and exits. Under a supervisor that exit is
+# a "crash", it is retried every ~10s, and each retry adds another tab and another renderer
+# process to the browser that is actually on screen — a Pi OS Desktop install used to have two
+# launchers (a systemd unit and the desktop autostart) racing for exactly this lock, and the
+# loser leaked renderers until the Pi ran out of memory. The installer no longer writes the
+# second launcher; this guard is what stops a future one from doing it again.
+LOCK="\$HOME/.config/chromium/SingletonLock"
+if [ -L "\$LOCK" ]; then
+    LOCK_PID=\$(readlink "\$LOCK" 2>/dev/null | sed 's/.*-//')
+    if [ -n "\$LOCK_PID" ] && kill -0 "\$LOCK_PID" 2>/dev/null; then
+        echo "A kiosk browser is already running (pid \$LOCK_PID) — not starting a second one"
+        exit 0
+    fi
+fi
+
+# Crash recovery lives HERE, not in a second launcher. Chromium is run in a loop rather than
+# exec'd: when it dies the loop cleans the crash flags again (else the restart restores the
+# "crashed" session on top of the player) and brings it back after a short pause. On Lite the
+# systemd unit still restarts the X session if THIS script dies; on Desktop this loop is the
+# only supervisor, by design.
+while :; do
+    ${CHROMIUM_BIN} \\
     --kiosk \\
     \$OZONE \\
     --password-store=basic \\
@@ -413,6 +448,11 @@ exec ${CHROMIUM_BIN} \\
     --safebrowsing-disable-auto-update \\
     --ignore-certificate-errors \\
     "\$KIOSK_URL"
+    RC=\$?
+    echo "Chromium exited (code \$RC) — restarting in 5s"
+    sleep 5
+    clean_crash_flags
+done
 KIOSKEOF
 
 chmod +x "$PI_HOME/screentinker-kiosk.sh"
@@ -431,9 +471,22 @@ EOF
 fi
 
 # ============================================================
-# 8. Kiosk systemd service
+# 8. Kiosk launcher supervision
 # ============================================================
-log "Creating kiosk service..."
+#
+# Lite has no session to autostart from, so a systemd unit starts X (and through .xinitrc the
+# launcher) on tty1. Desktop already HAS a session: the desktop autostart entry launches the
+# kiosk at login, inside the compositor's environment, and the launcher restarts Chromium itself.
+#
+# ⚠️ EXACTLY ONE LAUNCHER PER INSTALL. Desktop used to get both — the autostart entry AND a
+# systemd unit, "as fallback". The unit ran outside the Wayland session (no WAYLAND_DISPLAY), so
+# its Chromium could not reach the compositor and exited; systemd restarted it every ~10s; each
+# retry found the autostart's browser holding the profile lock, handed it the URL as a new tab,
+# and exited again. One more tab and one more renderer per cycle, forever. Reported from a
+# six-Pi headless deployment as "a major memory leak in the renderers", which is exactly what
+# it looked like. The fallback was the fault; it is gone, and re-running the installer removes
+# it from Pis that already have it.
+log "Configuring kiosk launch..."
 
 if [ "$HAS_DESKTOP" = false ]; then
     # Lite: start X ourselves
@@ -470,46 +523,17 @@ SyslogIdentifier=screentinker-kiosk
 [Install]
 WantedBy=multi-user.target
 EOF
+    systemctl daemon-reload
+    systemctl enable screentinker-kiosk.service
+    log "Kiosk service enabled (Lite: starts X on tty1)"
 else
-    # Desktop: X already running, just launch Chromium
-    if [ "$PLAYER_ONLY" = false ]; then
-        KIOSK_AFTER="After=screentinker-server.service graphical.target"
-        KIOSK_REQ="Requires=screentinker-server.service"
-    else
-        KIOSK_AFTER="After=graphical.target"
-        KIOSK_REQ="Wants=graphical.target"
+    # Desktop: the autostart entry is THE launcher. Remove the unit an earlier install wrote.
+    if [ -f /etc/systemd/system/screentinker-kiosk.service ]; then
+        log "Removing the redundant kiosk systemd unit (the desktop autostart is the launcher)..."
+        systemctl disable --now screentinker-kiosk.service 2>/dev/null || true
+        rm -f /etc/systemd/system/screentinker-kiosk.service
+        systemctl daemon-reload
     fi
-
-    cat > /etc/systemd/system/screentinker-kiosk.service << EOF
-[Unit]
-Description=ScreenTinker Kiosk Display
-${KIOSK_AFTER}
-${KIOSK_REQ}
-
-[Service]
-Type=simple
-User=${PI_USER}
-Environment=DISPLAY=:0
-ExecStartPre=/bin/sleep 5
-ExecStart=/bin/bash ${PI_HOME}/screentinker-kiosk.sh
-Restart=always
-RestartSec=10
-
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=screentinker-kiosk
-
-[Install]
-WantedBy=graphical.target
-EOF
-fi
-
-systemctl daemon-reload
-systemctl enable screentinker-kiosk.service
-log "Kiosk service enabled"
-
-# Desktop: autostart entry as fallback
-if [ "$HAS_DESKTOP" = true ]; then
     AUTOSTART_DIR="$PI_HOME/.config/autostart"
     mkdir -p "$AUTOSTART_DIR"
     cat > "$AUTOSTART_DIR/screentinker.desktop" << EOF
@@ -520,6 +544,7 @@ Exec=${PI_HOME}/screentinker-kiosk.sh
 X-GNOME-Autostart-enabled=true
 EOF
     chown -R "$PI_USER":"$PI_USER" "$AUTOSTART_DIR"
+    log "Kiosk autostart entry written (Desktop: launches at login, restarts itself on crash)"
 fi
 
 # ============================================================
@@ -634,8 +659,11 @@ if [ "$PLAYER_ONLY" = false ]; then
 
     cat > /usr/local/bin/screentinker-update << 'UPDATEEOF'
 #!/bin/bash
+KIOSK_UNIT=false
+systemctl list-unit-files 2>/dev/null | grep -q '^screentinker-kiosk.service' && KIOSK_UNIT=true
+
 echo "Stopping services..."
-sudo systemctl stop screentinker-kiosk.service 2>/dev/null || true
+[ "$KIOSK_UNIT" = true ] && sudo systemctl stop screentinker-kiosk.service 2>/dev/null || true
 sudo systemctl stop screentinker-server.service 2>/dev/null || true
 
 echo "Pulling latest..."
@@ -647,11 +675,17 @@ cd server && npm install --production
 echo "Starting services..."
 sudo systemctl start screentinker-server.service
 sleep 3
-sudo systemctl start screentinker-kiosk.service
+if [ "$KIOSK_UNIT" = true ]; then
+    sudo systemctl start screentinker-kiosk.service
+    KIOSK_STATE=$(systemctl is-active screentinker-kiosk.service)
+else
+    # Desktop: the kiosk is a session app. The player reconnects on its own once the server is up.
+    KIOSK_STATE="desktop autostart (reconnects on its own)"
+fi
 
 echo ""
 echo "Done! Server: $(systemctl is-active screentinker-server.service)"
-echo "      Kiosk:  $(systemctl is-active screentinker-kiosk.service)"
+echo "      Kiosk:  $KIOSK_STATE"
 UPDATEEOF
     chmod +x /usr/local/bin/screentinker-update
 
@@ -668,10 +702,18 @@ else
     echo "Server:    STOPPED"
 fi
 
-if systemctl is-active screentinker-kiosk.service &>/dev/null; then
-    echo "Kiosk:     RUNNING"
+# Lite runs the kiosk as a unit; Desktop runs it from the session autostart, where the only
+# evidence is the browser process itself.
+if systemctl list-unit-files 2>/dev/null | grep -q '^screentinker-kiosk.service'; then
+    if systemctl is-active screentinker-kiosk.service &>/dev/null; then
+        echo "Kiosk:     RUNNING"
+    else
+        echo "Kiosk:     STOPPED   (screentinker-logs kiosk to see why)"
+    fi
+elif pgrep -f -- '--kiosk' >/dev/null 2>&1; then
+    echo "Kiosk:     RUNNING   (desktop autostart)"
 else
-    echo "Kiosk:     STOPPED"
+    echo "Kiosk:     STOPPED   (desktop autostart: starts at login; screentinker-logs kiosk)"
 fi
 
 echo ""
@@ -687,12 +729,27 @@ echo ""
 STATUSEOF
     chmod +x /usr/local/bin/screentinker-status
 
-    cat > /usr/local/bin/screentinker-logs << 'LOGSEOF'
+    cat > /usr/local/bin/screentinker-logs << LOGSEOF
 #!/bin/bash
-case "${1:-server}" in
+# The kiosk logs to the journal under its unit on Lite, and to a file on Desktop (a session
+# autostart has no journal of its own).
+KIOSK_LOG="${PI_HOME}/screentinker-kiosk.log"
+kiosk_logs() {
+    if systemctl list-unit-files 2>/dev/null | grep -q '^screentinker-kiosk.service'; then
+        journalctl -u screentinker-kiosk.service -f --no-hostname
+    else
+        tail -n 200 -F "\$KIOSK_LOG"
+    fi
+}
+case "\${1:-server}" in
     server) journalctl -u screentinker-server.service -f --no-hostname ;;
-    kiosk)  journalctl -u screentinker-kiosk.service -f --no-hostname ;;
-    all)    journalctl -u screentinker-server.service -u screentinker-kiosk.service -f --no-hostname ;;
+    kiosk)  kiosk_logs ;;
+    all)    if systemctl list-unit-files 2>/dev/null | grep -q '^screentinker-kiosk.service'; then
+                journalctl -u screentinker-server.service -u screentinker-kiosk.service -f --no-hostname
+            else
+                echo "(kiosk log is a file on Desktop installs: \$KIOSK_LOG)"
+                journalctl -u screentinker-server.service -f --no-hostname
+            fi ;;
     *)      echo "Usage: screentinker-logs [server|kiosk|all]" ;;
 esac
 LOGSEOF
@@ -710,10 +767,16 @@ else
 echo ""
 echo "=== ScreenTinker Player Status ==="
 echo ""
-if systemctl is-active screentinker-kiosk.service &>/dev/null; then
-    echo "Kiosk:     RUNNING"
+if systemctl list-unit-files 2>/dev/null | grep -q '^screentinker-kiosk.service'; then
+    if systemctl is-active screentinker-kiosk.service &>/dev/null; then
+        echo "Kiosk:     RUNNING"
+    else
+        echo "Kiosk:     STOPPED   (screentinker-logs to see why)"
+    fi
+elif pgrep -f -- '--kiosk' >/dev/null 2>&1; then
+    echo "Kiosk:     RUNNING   (desktop autostart)"
 else
-    echo "Kiosk:     STOPPED   (screentinker-logs to see why)"
+    echo "Kiosk:     STOPPED   (desktop autostart: starts at login; screentinker-logs to see why)"
 fi
 echo "Server:    ${SERVER_URL}"
 # Whether this player can actually reach the server it was pointed at — the first question worth
@@ -732,12 +795,18 @@ echo ""
 PSTATUSEOF
     chmod +x /usr/local/bin/screentinker-status
 
-    cat > /usr/local/bin/screentinker-logs << 'PLOGSEOF'
+    cat > /usr/local/bin/screentinker-logs << PLOGSEOF
 #!/bin/bash
 # Only the kiosk exists on a player, so it is the default AND the only target. Accepting
 # "server" here and following an empty unit would be a worse answer than saying so.
-case "${1:-kiosk}" in
-    kiosk|all) journalctl -u screentinker-kiosk.service -f --no-hostname ;;
+# Lite logs to the journal under the unit; Desktop logs to a file (no journal for a session app).
+KIOSK_LOG="${PI_HOME}/screentinker-kiosk.log"
+case "\${1:-kiosk}" in
+    kiosk|all) if systemctl list-unit-files 2>/dev/null | grep -q '^screentinker-kiosk.service'; then
+                   journalctl -u screentinker-kiosk.service -f --no-hostname
+               else
+                   tail -n 200 -F "\$KIOSK_LOG"
+               fi ;;
     server)    echo "This is a player-only install — there is no local server. Point at your server's logs instead." ;;
     *)         echo "Usage: screentinker-logs [kiosk]" ;;
 esac
@@ -844,7 +913,12 @@ echo "Services:"
 if [ "$PLAYER_ONLY" = false ]; then
     echo "  sudo systemctl [start|stop|restart] screentinker-server"
 fi
-echo "  sudo systemctl [start|stop|restart] screentinker-kiosk"
+if [ "$HAS_DESKTOP" = false ]; then
+    echo "  sudo systemctl [start|stop|restart] screentinker-kiosk"
+else
+    echo "  Kiosk: launched at desktop login from ~/.config/autostart/screentinker.desktop"
+    echo "         (restarts itself if Chromium crashes; log in ~/screentinker-kiosk.log)"
+fi
 echo ""
 echo -e "${YELLOW}Reboot to start:  sudo reboot${NC}"
 echo ""
