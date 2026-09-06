@@ -178,7 +178,9 @@ test('every call site goes through the helper — one leak is enough to bring th
 test('every media error handler goes through the shared skip', () => {
   // Four handlers existed (buffered + non-buffered, video + image) and they had drifted apart:
   // only one carried a once-guard. Four copies is how they drifted in the first place.
-  for (const marker of ["video.onerror = () => mediaFailureSkip(video, 'video', src)",
+  // (The two video copies have since merged into wireSoloVideoPlayback; the marker below is its
+  // shared wiring — the assertion is still that no handler skips mediaFailureSkip.)
+  for (const marker of ["video.onerror = () => mediaFailureSkip(video, 'video', src, o.mayAdvance)",
                         "img.onerror = () => mediaFailureSkip(img, 'image', src, !isFollower)",
                         "mediaFailureSkip(video, 'video(buffered)', src)",
                         "mediaFailureSkip(null, 'image', src)"]) {

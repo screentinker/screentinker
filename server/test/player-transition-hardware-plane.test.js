@@ -124,21 +124,183 @@ test('#BS-guard: the transition path consults capturability, not just CORS', () 
     'the capturability guard must run BEFORE the CORS check short-circuits the branch');
 });
 
-test('#BS-guard: an incoming video is not wiped in from a texture it cannot supply', () => {
+test('#BS-guard: the hold is not gated on the plane probe or a transition', () => {
+  // The dispatch gate must route EVERY solo video through the buffered hold — including
+  // hardware-plane platforms (the fix's whole point) and plain transition-less clips. This is
+  // deliberately the only text assertion left here: the gate is a renderContent fragment, too
+  // entangled for the new-Function harness below, while the hold behaviour itself IS asserted
+  // behaviourally. The probe still protects the wipe's `to` texture inside renderVideoBuffered.
   const at = PLAYER.indexOf('const isVideoBufferable');
   assert.ok(at > 0);
   const decl = PLAYER.slice(at, PLAYER.indexOf(';', at));
-  assert.match(decl, /_videoCompositingOk !== false/,
-    'image→video would otherwise fade in from a transparent texture');
-  // Plain solo videos also route through the buffered path (first-frame hold, no wipe), so the
-  // gate itself must NOT require a transition runtime — the wipe decision inside
-  // renderVideoBuffered does that instead. Assert both halves of that split.
+  assert.ok(!/_videoCompositingOk/.test(decl),
+    'a plane probe on the gate sends BrightSign/Tizen back to the teardown-first legacy branch');
   assert.ok(!/transitionRuntimeReady\(\)/.test(decl),
-    'the gate holds the old frame for every solo video; requiring a runtime here would ' +
-    'send plain videos back to the teardown-first legacy branch (black blink on every boundary)');
-  const wipe = extract('renderVideoBuffered');
-  assert.match(wipe, /transitionRuntimeReady\(\)/,
-    'the wipe itself still requires the runtime — a hold is not a transition');
+    'a runtime requirement on the gate sends plain videos back to the black blink');
+});
+
+// ---------------------------------------------------------------- buffered-hold behaviour
+//
+// Run the REAL renderVideoBuffered (+ the real wireSoloVideoPlayback) against a fake element
+// and a fake clock: "teardown is invoked exactly once, from the first-frame callback" as fact,
+// not as a reading of the source. Outer mutable bindings are boxed (SEQ/BOX) because new
+// Function parameters cannot see reassignment.
+
+function harnessBuffered({ transition = null, planeOk = true, rvfc = true, interacted = true } = {}) {
+  const calls = { teardown: 0, order: [], appended: [], mutedAtMount: null, skips: [], wipes: [] };
+  const timers = new Map();
+  let seq = 0;
+  const SEQ = { v: 7 };
+  const BOX = { cur: null, pend: -1 };
+  const listeners = {};
+  const video = {
+    style: {}, children: [],
+    muted: false, loop: false, paused: true, readyState: 0, videoWidth: 0, volume: 0,
+    src: '',
+    play() { calls.order.push('play'); this.paused = false; return Promise.resolve(); },
+    pause() { calls.order.push('pause'); this.paused = true; },
+    load() {},
+    removeAttribute() {},
+    addEventListener(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
+    appendChild(c) { this.children.push(c); },
+  };
+  if (rvfc) video.requestVideoFrameCallback = (cb) => { video.__rvfc = cb; };
+  const container = { style: {}, appendChild(c) { calls.appended.push(c); } };
+  const outgoing = {
+    onended: () => {}, onerror: () => {}, onloadeddata: () => {},
+    paused: false,
+    pause() { this.paused = true; calls.order.push('out-pause'); },
+  };
+  BOX.cur = outgoing;
+  const trackStub = () => ({ addEventListener() {}, track: {} });
+  const env = {
+    document: {
+      createElement: (tag) => (tag === 'video' ? video : trackStub()),
+      getElementById: () => container,
+    },
+    mediaUrl: () => 'http://x/clip.mp4',
+    currentTexturableFrame: () => 'FROM',
+    isMediaReadable: () => true,
+    stageGeometry: () => ({ w: 1920, h: 1080 }),
+    fitToCanvas: () => 'TO',
+    videoCompositingAvailable: () => planeOk,
+    transitionRuntimeReady: () => true,
+    runGlWipe: (from, to, t, ms, onStart, mount) => { calls.wipes.push([from, to]); video.__mount = mount; },
+    teardownCurrentMedia: () => { calls.teardown++; SEQ.v++; },  // the real one invalidates in-flight warm-ups
+    playlist: [{ id: 'a' }, { id: 'b' }],
+    wallConfig: null,   // the gate excluded wall/group at dispatch; mount re-reads for mid-window flips
+    groupSync: null,
+    userHasInteracted: interacted,
+    config: { serverUrl: 'http://x' },
+    nextItem: () => {},
+    mediaFailureSkip: (el, label) => calls.skips.push(label),
+    setTimeout: (fn, ms) => { const id = ++seq; timers.set(id, { fn, ms }); return id; },
+    clearTimeout: (id) => { timers.delete(id); },
+    console: { log() {}, warn() {}, error() {} },
+    SEQ,
+    BOX,
+  };
+  const names = Object.keys(env);
+  const body = `${extract('wireSoloVideoPlayback')};${extract('attachSubtitleTrack')};` +
+    extract('renderVideoBuffered')
+      .replace(/\brenderSeq\b/g, 'SEQ.v')
+      .replace(/\bcurrentVideoEl\b/g, 'BOX.cur')
+      .replace(/\bpendingVideoSeq\b/g, 'BOX.pend') +
+    '; return renderVideoBuffered;';
+  const renderVideoBuffered = new Function(...names, body)(...names.map((k) => env[k]));
+  const item = { mime_type: 'video/mp4', filename: 'clip.mp4', muted: false, transition };
+  renderVideoBuffered(item);
+  const fire = (ev) => { for (const fn of (listeners[ev] || [])) fn(); };
+  const fireDue = (limit) => {
+    for (const [id, t] of [...timers]) {
+      if (t.ms <= limit) { timers.delete(id); t.fn(); }
+    }
+  };
+  const present = async () => {
+    video.readyState = 4; video.videoWidth = 1280;
+    fire('loadeddata');
+    await Promise.resolve();  // play().then(armFrame)
+    await Promise.resolve();
+  };
+  return { calls, timers, SEQ, BOX, video, outgoing, container, listeners, fire, fireDue, present, item };
+}
+
+test('hold: dispatch mounts nothing — teardown runs once, from the first frame', async () => {
+  // The bug being fixed: the legacy branch tore down BEFORE the clip loaded (black blink).
+  const h = harnessBuffered();
+  assert.equal(h.calls.teardown, 0, 'dispatch must hold the old frame, not tear it down');
+  assert.equal(h.calls.appended.length, 0, 'nothing mounts before the first frame');
+  assert.equal(h.BOX.pend, 7, 'the pending-mount sentinel is armed for the health check');
+
+  await h.present();
+  assert.equal(h.calls.teardown, 0, 'loadeddata alone still mounts nothing — only a presented frame does');
+  h.video.__rvfc();
+  assert.equal(h.calls.teardown, 1, 'teardown runs exactly once, from the first-frame callback');
+  assert.deepEqual(h.calls.appended, [h.video], 'the warmed clip (not a fresh element) is what mounts');
+  assert.ok(h.BOX.pend !== h.SEQ.v, 'mount clears the pending sentinel via the teardown bump');
+});
+
+test('hold: mount pauses before it plays, so the document play hook runs', async () => {
+  // A still-playing element fires no 'play' event on play(): the screen-off hold, alarm-mute
+  // and mediaVolume hook would be skipped and the mount forces volume 1.0.
+  const h = harnessBuffered();
+  await h.present();
+  h.video.__rvfc();
+  assert.deepEqual(h.calls.order, ['out-pause', 'play', 'pause', 'play'],
+    'outgoing yields its decoder, then warm-play, then pause-before-mount, then the play that fires the hook');
+  assert.equal(h.video.muted, false, 'real (un)mute policy applies at mount, not the warm-play mute');
+  assert.equal(h.video.volume, 1.0);
+});
+
+test('hold: the outgoing clip is disarmed at dispatch and yields its decoder', async () => {
+  const h = harnessBuffered();
+  assert.equal(h.outgoing.onended, null, 'a natural ended mid-window must not skip past the incoming clip');
+  assert.equal(h.outgoing.onerror, null);
+  assert.equal(h.outgoing.paused, true, 'no wipe needs its frame: pause it for single-decoder boxes');
+  await h.present();
+  h.video.__rvfc();
+  assert.equal(h.calls.teardown, 1);
+});
+
+test('hold: a superseded warm-up that fails must not cut the new item short', async () => {
+  const h = harnessBuffered();
+  h.SEQ.v++;  // a newer dispatch took over (renderContent bump)
+  h.fire('error');
+  assert.deepEqual(h.calls.skips, [], 'mediaFailureSkip would scheduleAdvance(3000) against the NEW item');
+  assert.equal(h.calls.teardown, 0, 'the orphan is abandoned, never mounted');
+});
+
+test('hold: without rVFC the short timer still releases the hold', async () => {
+  // A detached element may never PRESENT (no compositor layer) — rVFC then never fires and the
+  // full 800ms watchdog would be the release. The 150ms fallback mounts a decoding element instead.
+  const h = harnessBuffered({ rvfc: false });
+  await h.present();
+  assert.equal(h.calls.teardown, 0);
+  h.fireDue(150);
+  assert.equal(h.calls.teardown, 1, 'fallback mounts; the 800ms watchdog stays only for slow loads');
+  assert.deepEqual(h.calls.appended, [h.video]);
+});
+
+test('plane: no wipe from a transparent texture, but the hold still runs', async () => {
+  // BrightSign/Tizen: the warm-play snapshot comes back transparent, so the wipe must not run —
+  // and the clip must STILL hold-then-mount instead of falling back to the blinking legacy branch.
+  const h = harnessBuffered({ transition: { effects: ['fade'], durationMs: 300 }, planeOk: false });
+  await h.present();
+  h.video.__rvfc();
+  assert.deepEqual(h.calls.wipes, [], 'no wipe fades in from nothing');
+  assert.equal(h.calls.teardown, 1, 'plain hard-cut hold, on the first frame');
+  assert.deepEqual(h.calls.appended, [h.video]);
+});
+
+test('wipe: a texturable platform still wipes from the outgoing into the incoming frame', async () => {
+  const h = harnessBuffered({ transition: { effects: ['fade'], durationMs: 300 }, planeOk: true });
+  assert.equal(h.outgoing.paused, false, 'the wipe needs the outgoing frame: it keeps playing behind the GL overlay');
+  await h.present();
+  h.video.__rvfc();
+  assert.deepEqual(h.calls.wipes, [['FROM', 'TO']], 'wipe runs from the held frame into the snapshot');
+  assert.equal(h.calls.teardown, 0, 'nothing mounts until the wipe completes');
+  h.video.__mount();
+  assert.equal(h.calls.teardown, 1, 'then the warmed clip mounts exactly once');
 });
 
 test('#BS-guard: undetermined is treated as available, so a fresh player is not crippled', () => {
