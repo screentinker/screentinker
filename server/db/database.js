@@ -2438,6 +2438,22 @@ try {
   }
 } catch (e) { console.error('[migrate] template-zone dedupe failed:', e.message); }
 
+// Content-only schedules invent a `Scheduled: <filename>` playlist, but the insert
+// omitted is_auto_generated=1 — so the playlists page "Show auto-generated" toggle
+// (which filters on that flag) never hid them. New rows are flagged at insert time
+// (routes/schedules.js); this one-shot backfills rows that pre-date the fix.
+try {
+  const SCHED_PL_BACKFILL_ID = 'backfill_scheduled_playlists_auto_generated_v1';
+  if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(SCHED_PL_BACKFILL_ID)) {
+    const fixed = db.prepare(`
+      UPDATE playlists SET is_auto_generated = 1
+      WHERE name LIKE 'Scheduled: %' AND COALESCE(is_auto_generated, 0) = 0
+    `).run().changes;
+    if (fixed > 0) console.log(`[migrate] flagged ${fixed} Scheduled playlist(s) as auto-generated`);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(SCHED_PL_BACKFILL_ID);
+  }
+} catch (e) { console.error('[migrate] scheduled-playlist backfill failed:', e.message); }
+
 // #37: fail fast (loud) if migrations left the DB missing schema the code needs.
 const { verifyAndRepairSchema } = require('../lib/schema-check');
 verifyAndRepairSchema(db);

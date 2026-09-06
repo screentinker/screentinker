@@ -321,7 +321,7 @@ router.post('/', (req, res) => {
   if (!effectivePlaylistId && content_id) {
     const c = db.prepare('SELECT filename, duration_sec FROM content WHERE id = ?').get(content_id);
     const genId = uuidv4();
-    db.prepare('INSERT INTO playlists (id, name, workspace_id, user_id, status) VALUES (?, ?, ?, ?, ?)')
+    db.prepare('INSERT INTO playlists (id, name, workspace_id, user_id, status, is_auto_generated) VALUES (?, ?, ?, ?, ?, 1)')
       .run(genId, `Scheduled: ${(c && c.filename) || 'item'}`, targetWorkspaceId, req.user.id, 'published');
     // #237: a scheduled video is a one-item playlist with nowhere to edit the duration, so a
     // flat 10 here would cut the clip off with no visible knob to fix it.
