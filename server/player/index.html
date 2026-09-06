@@ -1138,6 +1138,13 @@
     // is long before line ~2400 where the buffered-video code lives. A `let` down there left renderSeq in
     // the temporal dead zone on that early path → "can't access 'renderSeq' before initialization".
     let renderSeq = 0;
+    // The renderSeq value of the in-flight buffered-video warm-up, if any. While a warm-up is
+    // pending, currentVideoEl is null (after an image) or the old ended element (after a video),
+    // which the media-health check reads as "surface lost" → it re-renders the current item →
+    // duplicate play_start plus a restarted warm-up. Pending is a COMPARISON, not a flag, so no
+    // lifecycle can leak it: any renderContent dispatch or synchronous teardown moves renderSeq
+    // and the pending state clears itself. Declared here for the same TDZ reason as renderSeq.
+    let pendingVideoSeq = -1;
     // Followers in a video wall must stay silent — N copies of the same audio
     // slightly out of sync produce a flanged echo across the wall. Only the
     // leader is allowed to make sound. This helper is the single source of
@@ -4438,7 +4445,7 @@
               : null,
             surfaceAttached: !!(container && container.querySelector('video,img,iframe,.wall-stage')),
           };
-          if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === 'function' && PlayerMediaHealth.needsReattach(state)) {
+          if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === 'function' && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {
             console.log('[refresh] media surface lost on no-change refresh — re-attaching current item');
             playCurrentItem();
           } else if (isPlaying) {
@@ -4946,6 +4953,12 @@
     }
 
     function teardownCurrentMedia(keep) {
+      // Every synchronous teardown invalidates an in-flight buffered-video warm-up. renderContent's
+      // renderSeq++ is the only other invalidation, and the playlist-emptied / idle-card / group
+      // out-of-hours / wall-flip paths all bypass renderContent — without this a warm-up dispatched
+      // just before one of them mounts its ghost clip over the idle card up to 800ms later (a
+      // single-video playlist unassigned while warming loops forever under "Waiting for content").
+      renderSeq++;
       // On a buffered widget reveal (keep set) the widget's advance/refresh timer was just
       // armed by renderContent and must survive; only a real teardown cancels it.
       if (!keep && advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
@@ -5416,33 +5429,90 @@
     // render captures the value at start and bails if it changes — the warm-play is async (first-frame wait
     // + the wipe), and a playlist push mid-window must not let a stale clip tear down the newer content that
     // already took over.
+    // One place wires a video element for playback. The buffered solo hold (mountVideo) and the
+    // legacy wall/group branch below BOTH load-bear this setup, and the copies had already drifted
+    // (subtitles only buffered, [wall/audio] diagnostics only legacy). opts: { forceMuted,
+    // mayAdvance, loop, role } — the follower policy is re-read at mount because a wall role flip
+    // mid-warm-up must not mount unmuted + self-advancing.
+    function wireSoloVideoPlayback(video, item, src, opts) {
+      const o = opts || {};
+      video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted); // autoplay policy + per-item mute (#129)
+      // Explicit max volume when audio is allowed so it's at full level when
+      // unmute happens (default is 1.0 but make it visible in logs).
+      if (!o.forceMuted) video.volume = 1.0;
+      video.loop = !!o.loop;
+      video.onended = () => { if (!video.loop && o.mayAdvance) nextItem(); };
+      video.onerror = () => mediaFailureSkip(video, 'video', src, o.mayAdvance);
+      video.onloadeddata = () => {
+        console.log('[wall/audio] video loaded file=' + item.filename + ' role=' + (o.role || 'solo') + ' muted=' + video.muted + ' volume=' + video.volume);
+      };
+      // A force-muted follower snaps back any stray unmute (the wall echo safety net).
+      if (o.forceMuted) {
+        video.addEventListener('volumechange', () => { if (!video.muted) { video.muted = true; } });
+      }
+      // Try playing as mounted above. If the browser blocks unmuted autoplay, retry muted — with
+      // the rejection LOGGED: swallowing it made autoplay policy and decode failure
+      // indistinguishable in remote debug on solo screens.
+      video.play().then(() => {
+        console.log('[wall/audio] play() ok muted=' + video.muted + ' volume=' + video.volume);
+      }).catch((err) => {
+        console.warn('[wall/audio] play() rejected, falling back to muted: ' + (err?.name || err?.message || err));
+        video.muted = true;
+        video.play()
+          .then(() => console.log('[wall/audio] muted-fallback play() ok'))
+          .catch((e2) => console.error('[wall/audio] muted-fallback play() also failed: ' + (e2?.name || e2?.message || e2)));
+      });
+      // Fallback: force play if not started after 2s
+      setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000);
+    }
+
+    // #216: a WebVTT subtitle track when the content carries one (uploaded videos only;
+    // remote/proxied clips are skipped). Served same-origin, so CORS-clean like the video.
+    // Shared: the buffered copy had it, the legacy branch did not. Called at element creation
+    // (before src is set), when the track can still engage with the load.
+    function attachSubtitleTrack(video, item) {
+      if (!item.subtitle_url || item.remote_url) return;
+      const track = document.createElement('track');
+      track.kind = 'subtitles';
+      track.srclang = item.subtitle_lang || 'en';
+      track.label = item.subtitle_lang || 'Subtitles';
+      track.default = true;
+      track.src = `${config.serverUrl}/uploads/content/${item.subtitle_url}`;
+      video.appendChild(track);
+      // The `default` attribute alone doesn't always engage without controls; force it on
+      // once the track has loaded its cues. Old players ignore an absent subtitle_url.
+      track.addEventListener('load', () => { try { track.track.mode = 'showing'; } catch (e) {} });
+    }
+
     function renderVideoBuffered(item) {
       const src = mediaUrl(item);
-      const from = currentTexturableFrame();            // capture the outgoing frame NOW, before any teardown
       const t = item.transition;
+      // Decided ONCE: snapshots exist only to feed a wipe. Every plain boundary used to pay two
+      // full-stage canvas readbacks (~8MB at 1080p, ~33MB at 4K) on the main thread at the exact
+      // moment the new clip decodes, then discard them — with `from` pinned in the closure for the
+      // clip's whole duration.
+      const wantsWipe = !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
+      const from = wantsWipe ? currentTexturableFrame() : null;  // capture the outgoing frame NOW, before any teardown
       const mySeq = renderSeq;
-      const stale = () => renderSeq !== mySeq;          // a newer renderContent superseded this one
+      pendingVideoSeq = mySeq;                        // a warm-up is pending (see the media-health check)
+      const stale = () => renderSeq !== mySeq;        // a newer dispatch or teardown superseded this one
       const abandon = () => { try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {} };
+      // The outgoing element's handlers belong to the item being left: a natural 'ended' inside the
+      // warm-up window would nextItem() PAST the incoming clip (the legacy branch nulled these
+      // synchronously at teardown). When no wipe needs its frame, pause it too — a single-decoder
+      // box must not decode both at once. Mounted-but-paused keeps showing its last frame.
+      const outgoing = currentVideoEl;
+      if (outgoing) {
+        try {
+          outgoing.onended = null; outgoing.onerror = null; outgoing.onloadeddata = null;
+          if (!wantsWipe) outgoing.pause();
+        } catch (e) {}
+      }
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';                  // texturable (CORS-clean) + matches the legacy branch
       video.playsInline = true;
       video.preload = 'auto';
-      // #216: attach a WebVTT subtitle track when the content carries one (uploaded videos
-      // only; remote/proxied clips are skipped). Served same-origin from /uploads/content,
-      // so it's CORS-clean like the video. `default` + mode='showing' makes it visible with
-      // no player controls. Old players ignore an absent subtitle_url.
-      if (item.subtitle_url && !item.remote_url) {
-        const track = document.createElement('track');
-        track.kind = 'subtitles';
-        track.srclang = item.subtitle_lang || 'en';
-        track.label = item.subtitle_lang || 'Subtitles';
-        track.default = true;
-        track.src = `${config.serverUrl}/uploads/content/${item.subtitle_url}`;
-        video.appendChild(track);
-        // The `default` attribute alone doesn't always engage without controls; force it on
-        // once the track has loaded its cues.
-        track.addEventListener('load', () => { try { track.track.mode = 'showing'; } catch (e) {} });
-      }
+      attachSubtitleTrack(video, item);
       video.muted = true;                               // warm-play MUST be muted (autoplay policy); real mute set at mount
       video.loop = (playlist.length === 1);             // single-item playlist holds by looping
       video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';
@@ -5450,62 +5520,78 @@
       // Full teardown + append + resume. The incoming <video> is detached until now, so teardown's
       // container-wide video cleanup can't touch it; we claim currentVideoEl only AFTER teardown (which
       // unconditionally releases the old currentVideoEl). Sets the REAL mute state here (warm-play was
-      // muted) and resumes from the snapshot frame, so there's no forward jump on reveal.
+      // muted) and resumes, so there's no forward jump on reveal.
       const mountVideo = () => {
         if (stale()) { abandon(); return; }             // a newer item took over during the wipe — don't clobber it
+        // Pause-then-play so the document-level 'play' hook runs (screen-off hold,
+        // baseAudioSuppressed alarm mute, mediaVolume): mounting an already-playing element fires
+        // no 'play' event, and the mount forces volume — a slow clip would otherwise light the
+        // plane while the screen is "off". pause() on an already-paused element is a no-op.
+        try { video.pause(); } catch (e) {}
         const c = document.getElementById('playerContainer');
         teardownCurrentMedia();                         // drop the outgoing frame (new video still detached)
         c.style.display = 'block';
         c.appendChild(video);
         currentVideoEl = video;
-        video.muted = (!userHasInteracted || !!item.muted); // autoplay policy + per-item mute (#129)
-        if (!video.muted) video.volume = 1.0;
-        video.onended = () => { if (!video.loop) nextItem(); };
-        video.onerror = () => mediaFailureSkip(video, 'video', src);
-        video.play().catch(() => { video.muted = true; video.play().catch(() => {}); }); // autoplay-policy fallback
-        setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000); // last-resort kick
+        // A wall/group role flip mid-warm-up must not mount unmuted + self-advancing: re-read the
+        // follower policy here (the gate excluded wall/group at dispatch, but that was then).
+        const followerNow = !!((wallConfig && !wallConfig.is_leader) || groupSync);
+        wireSoloVideoPlayback(video, item, src, {
+          forceMuted: followerNow,
+          mayAdvance: !followerNow,
+          loop: (playlist.length === 1) || followerNow,
+          role: wallConfig ? (wallConfig.is_leader ? 'leader' : 'follower') : (groupSync ? 'group' : 'solo'),
+        });
       };
-      // First PRESENTED frame reached (or watchdog): freeze it, snapshot, wipe if we have from+to+runtime.
+      // First PRESENTED frame reached (or fallback/watchdog): wipe if we have from+to, else hard-cut.
       const onFirstFrame = () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
         if (stale()) { abandon(); return; }             // superseded before the wipe even started
-        try { video.pause(); } catch (e) {}             // hold at the snapshot frame; mountVideo resumes from here
-        const canTexture = video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video);
+        // The plane probe protects ONLY the wipe's `to` texture — and the warm-played incoming
+        // video is precisely the playing element it needs, so a hardware plane settles the verdict
+        // one boundary earlier than the outgoing frame could. The hold below runs regardless.
         let to = null;
-        if (canTexture) {
+        if (wantsWipe && video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video)
+            && videoCompositingAvailable(video)) {
           try {
             const g = stageGeometry();
             to = g ? fitToCanvas(video, g.w, g.h) : null;
           } catch (e) { to = null; }                    // snapshot tainted/threw -> hard cut below
         }
-        if (from && to && t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady()) {
-          runGlWipe(from, to, t, t.durationMs + 200,     // video has no image-dwell; bound only keeps the full duration
+        if (from && to) {
+          try { video.pause(); } catch (e) {}           // hold at the snapshot frame; mountVideo resumes from here
+          runGlWipe(from, to, t, t.durationMs + 200,    // video has no image-dwell; bound only keeps the full duration
             () => {},                                    // onStart: video advance is driven by 'ended', not a dwell timer
             mountVideo, mountVideo);                      // mount AND hardCut both mount+resume the real video
         } else {
-          mountVideo();                                  // no from-frame / un-texturable / no runtime -> hard cut
+          mountVideo();                                  // no transition / un-texturable / no runtime -> hard cut
         }
       };
-      // Warm-play until the first frame is PRESENTED. rVFC is the precise "a frame just painted" signal;
-      // without it, fall back to a short beat after playback starts. If play() is somehow rejected we still
-      // arm the frame wait (the watchdog is the final backstop).
+      // Warm-play until the first frame is PRESENTED. rVFC is the precise "a frame just painted"
+      // signal — but a DETACHED element may never present (no compositor layer), in which case rVFC
+      // never fires and every boundary would wait out the full watchdog. The short timer guarantees
+      // the hold still releases promptly; onFirstFrame's done-guard makes it once-only.
+      // If play() is somehow rejected we still arm the frame wait (the watchdog is the final backstop).
       const armFrame = () => {
         if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(() => onFirstFrame());
-        else setTimeout(onFirstFrame, 150);
+        setTimeout(() => onFirstFrame(), 150);
       };
       video.addEventListener('loadeddata', () => { video.play().then(armFrame).catch(armFrame); }, { once: true });
-      // A decode failure or a hung load must never stall the playlist.
+      // A decode failure or a hung load must never stall the playlist — but a SUPERSEDED,
+      // never-mounted clip failing must not cut the NEW item's dwell short either (the legacy
+      // branch could not do this: teardown nulled onerror on the element it removed).
       video.addEventListener('error', () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
+        if (stale()) { abandon(); return; }
         mediaFailureSkip(video, 'video(buffered)', src);   // skip broken clip; hold prior frame
       });
-      // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary hanging
-      // (mirrors renderImageBuffered's watchdog).
+      // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary
+      // hanging. 800ms — deliberately shorter than renderImageBuffered's 3s: a video either
+      // presents fast or will never present detached.
       watchdog = setTimeout(() => { if (done) return; done = true; if (stale()) { abandon(); return; } mountVideo(); }, 800);
       video.src = src;
-      video.load();
     }
 
     function renderContent(item) {
@@ -5549,20 +5635,23 @@
         renderImageBuffered(item);
         return;
       }
-      // Same buffered path for a SOLO video that has a transition: wipe the outgoing frame into it
-      // (image→video / video→video). Only when a runtime + transition are actually present — a plain
-      // solo video falls through to the legacy branch, which keeps its preload/mute/loop handling. Wall/
-      // zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube) too.
+      // Buffered SOLO-video render: hold the outgoing frame while the incoming clip warms
+      // up offscreen, then mount on its first PRESENTED frame — wiping into it when the item
+      // carries a transition, hard-cutting otherwise (image→video / video→video). Plain videos
+      // used to fall through to the legacy branch below, which tears down the stage BEFORE the
+      // clip has loaded — a short black blink on every boundary. Android avoids the same gap by
+      // holding a freeze-frame until onRenderedFirstFrame; the old DOM here is that freeze-frame.
+      // Wall/zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube)
+      // too.
       const isVideoBufferable = item && typeof item.mime_type === 'string'
         && item.mime_type.startsWith('video/') && item.mime_type !== 'video/youtube'
-        && !item.widget_id && !wallConfig && !isZones && !groupSync
-        && item.transition && Array.isArray(item.transition.effects) && item.transition.effects.length
-        && transitionRuntimeReady()
-        // A platform whose video sits on a hardware plane cannot supply the incoming frame either:
-        // the warm-play snapshot comes back transparent, so the wipe would fade in from nothing.
-        // `null` means "not yet determined" and is treated as available — the probe needs a
-        // playing video, and the first one on a fresh player has not run yet.
-        && _videoCompositingOk !== false;
+        && !item.widget_id && !wallConfig && !isZones && !groupSync;
+      // NOTE: no hardware-plane probe here on purpose. The probe protects only the wipe's
+      // `to` texture (a transparent snapshot would fade in from nothing), so it lives in
+      // renderVideoBuffered's onFirstFrame — while the first-frame HOLD runs everywhere,
+      // including BrightSign/Tizen, which are the platforms that blink most. `null`
+      // (not yet determined) is treated as available: the probe needs a playing video,
+      // and the first one on a fresh player has not run yet.
       if (isVideoBufferable) {
         renderVideoBuffered(item);
         return;
@@ -5666,10 +5755,7 @@
           // Followers stay muted unconditionally (leader-only audio); leaders
           // start muted only if the user hasn't gestured yet (autoplay policy).
           // #129: a per-item mute (set in the admin console) also forces muted.
-          video.muted = forceMuted ? true : (!userHasInteracted || !!item.muted);
-          // Explicit max volume when audio is allowed so it's at full level when
-          // unmute happens (default is 1.0 but make it visible in logs).
-          if (!forceMuted) video.volume = 1.0;
+          attachSubtitleTrack(video, item);
           video.playsInline = true;
           video.crossOrigin = 'anonymous';
           // Wall mode uses object-fit:fill so the source stretches to the
@@ -5683,36 +5769,14 @@
             : 'width:100%;height:100%;object-fit:contain;background:#000';
           // Group members loop so a clip shorter than its schedule slot holds until the schedule
           // advances the index (and the tick seeks position % duration to stay aligned).
-          video.loop = (playlist.length === 1) || !!groupSync;
-          video.onended = () => { if (!video.loop && !isFollower) nextItem(); };
-          video.onerror = () => mediaFailureSkip(video, 'video', src, !isFollower);
-          video.onloadeddata = () => {
-            console.log('[wall/audio] video loaded file=' + item.filename + ' role=' + (wallConfig ? (wallConfig.is_leader ? 'leader' : 'follower') : 'solo') + ' muted=' + video.muted + ' volume=' + video.volume);
-          };
-          // If anything (browser, scripts, the user) tries to unmute a WALL
-          // follower, snap it back. This is the safety net for the audio
-          // bug — without it, a single stray unmute call causes echo. Group
-          // members are NOT force-muted (per-item mute governs them).
-          if (forceMuted) {
-            video.addEventListener('volumechange', () => {
-              if (!video.muted) { video.muted = true; }
-            });
-          }
           mount.appendChild(video);
           currentVideoEl = video;
-          // Try playing as we set muted above. If the browser blocks
-          // unmuted autoplay (e.g. no user gesture yet), retry muted.
-          video.play().then(() => {
-            console.log('[wall/audio] play() ok muted=' + video.muted + ' volume=' + video.volume);
-          }).catch((err) => {
-            console.warn('[wall/audio] play() rejected, falling back to muted: ' + (err?.name || err?.message || err));
-            video.muted = true;
-            video.play()
-              .then(() => console.log('[wall/audio] muted-fallback play() ok'))
-              .catch((e2) => console.error('[wall/audio] muted-fallback play() also failed: ' + (e2?.name || e2?.message || e2)));
+          wireSoloVideoPlayback(video, item, src, {
+            forceMuted: forceMuted,
+            mayAdvance: !isFollower,
+            loop: (playlist.length === 1) || !!groupSync,
+            role: wallConfig ? (wallConfig.is_leader ? 'leader' : 'follower') : (groupSync ? 'group' : 'solo'),
           });
-          // Fallback: force play if not started after 2s
-          setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000);
         } else if (isImage) {
           const img = document.createElement('img');
           img.src = src;

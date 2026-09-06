@@ -68,19 +68,24 @@ test('every CODE read of it happens after the declaration', () => {
     `${early.length} code read(s) precede the declaration — each one is a temporal-dead-zone throw`);
 });
 
-test('the boot path really does render a cached item before the old declaration site', () => {
+test('the boot path really does render a cached item before the probe is consumed', () => {
   // Documents WHY the ordering matters, so a future reader can see the hazard is structural and
   // not a style preference. If this ever stops being true the guard above is merely harmless.
+  // The probe moved OFF the dispatch gate (it excluded plane platforms from the hold) INTO
+  // onFirstFrame — still consumed at runtime, after boot, and still only for video: the gate's
+  // mime short-circuit is what kept image-first playlists alive, and the declaration must stay
+  // hoisted above boot all the same.
   const restore = PLAYER.indexOf('const cachedPlaylist = loadPlaylistCache();');
-  const consumer = PLAYER.indexOf('&& _videoCompositingOk !== false;');
+  const consumer = PLAYER.indexOf('function videoCompositingAvailable(v)');
   assert.ok(restore > 0 && consumer > 0);
   assert.ok(
     restore < consumer,
-    'boot restores and renders the cached playlist before the consumer appears in source order — ' +
+    'boot restores and renders the cached playlist before the probe is consumed in source order — ' +
     'which is the whole reason the declaration must be hoisted above boot',
   );
-  // And the consumer is reached only for video, which is why an image-first playlist survived it.
-  const decl = PLAYER.slice(PLAYER.indexOf('const isVideoBufferable'), consumer + 40);
+  // And the hold is still reached only for video, which is why an image-first playlist survived it.
+  const gateAt = PLAYER.indexOf('const isVideoBufferable');
+  const decl = PLAYER.slice(gateAt, PLAYER.indexOf(';', gateAt));
   assert.match(decl, /mime_type\.startsWith\('video\/'\)/,
     'the short-circuit on video mime is what kept image-first playlists alive');
 });
