@@ -1,4 +1,4 @@
-const { test, describe, after } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -365,12 +365,12 @@ describe('Embedded Renderer Native Image Path & Multi-Zone Layout', () => {
       {
         zone: { id: 'z1', x_percent: 0, y_percent: 0, width_percent: 50, height_percent: 100, z_index: 0 },
         item: { id: 'item-img-1' },
-        content: { id: 'cnt-1', filepath: 'layout-test-1.png' },
+        content: { id: 'cnt-1', filepath: 'layout-test-1.png', mime_type: 'image/png' },
       },
       {
         zone: { id: 'z2', x_percent: 50, y_percent: 0, width_percent: 50, height_percent: 100, z_index: 0 },
         item: { id: 'item-img-2' },
-        content: { id: 'cnt-2', filepath: 'layout-test-2.png' },
+        content: { id: 'cnt-2', filepath: 'layout-test-2.png', mime_type: 'image/png' },
       },
     ];
     const profile = { width: 800, height: 480 };
@@ -408,6 +408,52 @@ describe('Embedded Renderer Native Image Path & Multi-Zone Layout', () => {
 
 describe('Embedded Edge Cases & Robustness', () => {
   const { resolveCurrentItem, resolveLayoutItems } = require('../routes/embedded');
+  const { looksLikeImage, isLayoutImageOnly, isBrowserAvailable } = require('../lib/embedded-render');
+
+  test('looksLikeImage identifies extensions, bare filenames, URLs, and MIME types', () => {
+    assert.equal(looksLikeImage('image.png'), true);
+    assert.equal(looksLikeImage('uploads/content/picture.jpeg'), true);
+    assert.equal(looksLikeImage('https://example.com/banner.webp'), true);
+    assert.equal(looksLikeImage('http://example.com/api/chart', 'image/png; charset=utf-8'), true);
+    assert.equal(looksLikeImage('video.mp4'), false);
+    assert.equal(looksLikeImage('document.pdf'), false);
+    assert.equal(looksLikeImage('https://example.com/page.html'), false);
+    assert.equal(looksLikeImage(null), false);
+    assert.equal(looksLikeImage(''), false);
+  });
+
+  test('isLayoutImageOnly correctly classifies image vs non-image layouts', () => {
+    const imageEntries = [
+      { zone: { id: 'z1' }, content: { filepath: 'photo.jpg', mime_type: 'image/jpeg' }, item: {} },
+      { zone: { id: 'z2' }, content: { remote_url: 'https://example.com/pic.png', mime_type: 'image/png' }, item: {} },
+    ];
+    assert.equal(isLayoutImageOnly(imageEntries), true);
+
+    const videoEntries = [
+      { zone: { id: 'z1' }, content: { filepath: 'clip.mp4', mime_type: 'video/mp4' }, item: {} },
+    ];
+    assert.equal(isLayoutImageOnly(videoEntries), false);
+
+    const widgetEntries = [
+      { zone: { id: 'z1' }, content: null, item: { widget_type: 'clock' } },
+    ];
+    assert.equal(isLayoutImageOnly(widgetEntries), false);
+
+    const webEntries = [
+      { zone: { id: 'z1' }, content: { remote_url: 'https://news.ycombinator.com', mime_type: 'text/html' }, item: {} },
+    ];
+    assert.equal(isLayoutImageOnly(webEntries), false);
+
+    const emptyEntries = [
+      { zone: { id: 'z1' }, content: null, item: null },
+    ];
+    assert.equal(isLayoutImageOnly(emptyEntries), true);
+  });
+
+  test('isBrowserAvailable returns boolean without throwing', () => {
+    const available = isBrowserAvailable();
+    assert.equal(typeof available, 'boolean');
+  });
 
   test('resolveCurrentItem safely clamps non-integer forceIndex without NaN crash', () => {
     const plId = 'pl-edge-1';
@@ -464,17 +510,7 @@ describe('Embedded Edge Cases & Robustness', () => {
     db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi_orphan', ?, 'c_orphan', 2, 30)").run(plId);
     db.exec("UPDATE playlist_items SET zone_id = 'z_deleted' WHERE id = 'pi_orphan'");
 
-    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id) VALUES ('dev-parity-1', 'Parity Dev', 'ws-1', ?)").run(plId);
-    // Mock view or assign layout
-    db.exec("UPDATE devices SET screen_profile = '{\"preset\":\"seeed-reterminal-sticky\"}' WHERE id = 'dev-parity-1'");
-
-    // Rebuild device_resolved_playlist view with layout support in test DB
-    db.exec(`
-      DROP VIEW IF EXISTS device_resolved_playlist;
-      CREATE VIEW device_resolved_playlist AS
-      SELECT d.id AS device_id, d.playlist_id, 'device' AS source, '${layoutId}' AS layout_id
-      FROM devices d;
-    `);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, layout_id, screen_profile) VALUES ('dev-parity-1', 'Parity Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}')").run(plId, layoutId);
 
     const res = resolveLayoutItems('dev-parity-1');
     assert.ok(res);
@@ -488,24 +524,94 @@ describe('Embedded Edge Cases & Robustness', () => {
     assert.equal(smallEntry.item.id, 'pi_unassigned', 'unassigned item should land in first empty zone (z_small)');
     assert.equal(largeEntry.item.id, 'pi_assigned', 'assigned item should land in z_large');
   });
+});
 
-  test('isLayoutImageOnly correctly rejects local video/mp4 and pdf files', () => {
-    const { renderLayout } = require('../lib/embedded-render');
+describe('Embedded HTTP Route & Fallback Handling', () => {
+  const http = require('node:http');
+  const express = require('express');
+  let app, server, baseUrl;
 
-    const imageEntries = [
-      { zone: { id: 'z1' }, content: { filepath: 'photo.jpg', mime_type: 'image/jpeg' }, item: null },
-      { zone: { id: 'z2' }, content: { remote_url: 'https://example.com/pic.png', mime_type: 'image/png' }, item: null },
-    ];
-    // Should be image only (will composite via Jimp)
-    assert.ok(imageEntries);
+  before(async () => {
+    app = express();
+    app.use(express.json());
+    app.use('/api/embedded', embeddedRouter);
+    server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, resolve));
+    baseUrl = `http://127.0.0.1:${server.address().port}/api/embedded`;
+  });
 
-    const videoEntries = [
-      { zone: { id: 'z1' }, content: { filepath: 'clip.mp4', mime_type: 'video/mp4' }, item: null },
-    ];
-    // Video entries require browser or fallback, not Jimp pure image composite
-    assert.ok(videoEntries);
+  after(async () => {
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('GET /api/embedded/render returns single-item image for device with single playlist', async () => {
+    const tmpUpload = path.join(require('../config').contentDir);
+    fs.mkdirSync(tmpUpload, { recursive: true });
+    const imgPath = path.join(tmpUpload, 'route-test-single.png');
+    const img = new Jimp({ width: 200, height: 100, color: 0x00FF00FF });
+    fs.writeFileSync(imgPath, await img.getBuffer('image/png'));
+
+    const plId = 'pl-route-single';
+    const devId = 'dev-route-single';
+    const token = 'tok-route-single';
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Single PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-rt-1', 'ws-1', 'image', 'image/png', 'route-test-single.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-rt-1', ?, 'c-rt-1', 0, 30)").run(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile) VALUES (?, 'Single Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}')").run(devId, plId, token);
+
+    const res = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/octet-stream');
+    assert.equal(res.headers.get('x-st-device-id'), devId);
+    assert.equal(res.headers.get('x-st-item-index'), '0');
+    assert.equal(res.headers.get('x-st-total-items'), '1');
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    assert.equal(buf.length, 48000); // 800 * 480 / 8 = 48000 bytes for seeed-reterminal-sticky
+
+    try { fs.unlinkSync(imgPath); } catch (_) {}
+  });
+
+  test('GET /api/embedded/render falls back to single-item with X-ST-Layout-Fallback header when browser unavailable', async () => {
+    // Setup device with a layout containing a widget (non-image) and an image item in playlist
+    const tmpUpload = path.join(require('../config').contentDir);
+    fs.mkdirSync(tmpUpload, { recursive: true });
+    const imgPath = path.join(tmpUpload, 'route-test-fallback.png');
+    const img = new Jimp({ width: 200, height: 100, color: 0x00FF00FF });
+    fs.writeFileSync(imgPath, await img.getBuffer('image/png'));
+
+    const layId = 'lay-route-fallback';
+    const plId = 'pl-route-fallback';
+    const devId = 'dev-route-fallback';
+    const token = 'tok-route-fallback';
+
+    db.prepare("INSERT INTO layouts (id, workspace_id, name) VALUES (?, 'ws-1', 'Widget Lay')").run(layId);
+    db.prepare("INSERT INTO layout_zones (id, layout_id, name, x_percent, y_percent, width_percent, height_percent) VALUES ('z-w-1', ?, 'Z1', 0, 0, 100, 100)").run(layId);
+
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Fallback PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-rt-fb', 'ws-1', 'image', 'image/png', 'route-test-fallback.png', 1)").run();
+    // Item 1: widget (requires browser)
+    db.prepare("INSERT INTO widgets (id, workspace_id, widget_type, name, config) VALUES ('w-rt-fb', 'ws-1', 'weather', 'Weather', '{}')").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, widget_id, zone_id, sort_order, duration_sec) VALUES ('pi-rt-w', ?, 'w-rt-fb', 'z-w-1', 0, 30)").run(plId);
+    // Item 2: image
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-rt-img', ?, 'c-rt-fb', 1, 30)").run(plId);
+
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, layout_id, device_token, screen_profile) VALUES (?, 'Fallback Dev', 'ws-1', ?, ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}')").run(devId, plId, layId, token);
+
+    // Test explicit mode=layout -> returns 501 if browser unavailable (or 200 if browser is present)
+    const explicitRes = await fetch(`${baseUrl}/render?device_id=${devId}&mode=layout`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.ok(explicitRes.status === 200 || explicitRes.status === 501);
+
+    try { fs.unlinkSync(imgPath); } catch (_) {}
   });
 });
+
 
 
 

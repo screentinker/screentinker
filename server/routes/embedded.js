@@ -39,10 +39,10 @@ const { db }                = require('../db/database');
 const { deviceTokenAuth }   = require('../middleware/deviceTokenAuth');
 const { bearerAuth }        = require('../middleware/apiToken');
 const { resolveTenancy }    = require('../lib/tenancy');
-const { resolveDevicePlaylist, resolvedLayoutId } = require('../lib/resolve-device-playlist');
+const { resolveDevicePlaylist, resolvedLayoutId, resolveDeviceContext } = require('../lib/resolve-device-playlist');
 const { parseProfile, listPresets } = require('../lib/embedded-profiles');
 const { cacheKey, toETag, isNotModified, get: cacheGet, set: cacheSet } = require('../lib/embedded-cache');
-const { render, renderLayout } = require('../lib/embedded-render');
+const { render, renderLayout, isLayoutImageOnly, isBrowserAvailable } = require('../lib/embedded-render');
 const { postprocess }       = require('../lib/embedded-postprocess');
 const pairLockout           = require('../lib/pair-lockout');
 const { sixDigitCode }      = require('../lib/numeric-code');
@@ -140,7 +140,7 @@ const CURSOR_UPSERT = db.prepare(`
  *   null when no playlist or no items.
  */
 function resolveCurrentItem(deviceId, forceIndex) {
-  const { playlist_id } = resolveDevicePlaylist(deviceId);
+  const { playlist_id } = resolveDeviceContext(deviceId);
   if (!playlist_id) return null;
 
   // Fetch all active, published items in playlist order (joining content and widgets).
@@ -219,12 +219,13 @@ const ZONE_CURSOR_UPSERT = db.prepare(`
  * Resolve all active items per zone for a device's assigned layout.
  *
  * @param {string} deviceId
+ * @param {string|number|null} forceIndex
+ * @param {{ advance?: boolean }} [options]
  * @returns {{ layout, zoneEntries, expiresIn, dynamicRev } | null}
  *   null when device has no layout or layout has no zones.
  */
-function resolveLayoutItems(deviceId, forceIndex) {
-  const { playlist_id } = resolveDevicePlaylist(deviceId);
-  const layoutId = resolvedLayoutId(deviceId);
+function resolveLayoutItems(deviceId, forceIndex, { advance = true } = {}) {
+  const { playlist_id, layout_id: layoutId } = resolveDeviceContext(deviceId);
   if (!layoutId) return null;
 
   const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(layoutId);
@@ -305,7 +306,9 @@ function resolveLayoutItems(deviceId, forceIndex) {
     } else {
       let cursor = ZONE_CURSOR_GET.get(deviceId, zone.id);
       if (!cursor) {
-        ZONE_CURSOR_UPSERT.run(deviceId, zone.id, 0);
+        if (advance) {
+          ZONE_CURSOR_UPSERT.run(deviceId, zone.id, 0);
+        }
         cursor = { item_index: 0, started_at: now };
       }
 
@@ -317,7 +320,9 @@ function resolveLayoutItems(deviceId, forceIndex) {
 
       if (elapsed >= duration) {
         idx = (idx + 1) % matchingItems.length;
-        ZONE_CURSOR_UPSERT.run(deviceId, zone.id, idx);
+        if (advance) {
+          ZONE_CURSOR_UPSERT.run(deviceId, zone.id, idx);
+        }
         startedAt = now;
       }
     }
@@ -521,18 +526,28 @@ router.get('/render', resolveAuth, async (req, res) => {
 
   // Query mode overrides
   if (req.query.mode === 'layout') {
-    return handleRenderLayout(req, res, device, profile);
+    return handleRenderLayout(req, res, device, profile, { explicitMode: true });
   }
   if (req.query.mode === 'single') {
     return handleRenderStandard(req, res, device, profile);
   }
 
   // Automatic multi-zone layout detection
-  const layoutId = resolvedLayoutId(device.id);
+  const { layout_id: layoutId } = resolveDeviceContext(device.id);
   if (layoutId) {
     const zoneCount = db.prepare('SELECT COUNT(*) AS count FROM layout_zones WHERE layout_id = ?').get(layoutId)?.count || 0;
     if (zoneCount >= 1) {
-      return handleRenderLayout(req, res, device, profile);
+      const forceIndex = req.query.item !== undefined ? req.query.item : null;
+      const probe = resolveLayoutItems(device.id, forceIndex, { advance: false });
+      if (probe) {
+        const isImageOnly = isLayoutImageOnly(probe.zoneEntries);
+        if (!isImageOnly && !isBrowserAvailable()) {
+          // Browser is not available and layout has non-image items (widgets/web).
+          // Fall back to single-item standard render with fallback header.
+          return handleRenderStandard(req, res, device, profile, { isFallback: true });
+        }
+        return handleRenderLayout(req, res, device, profile, { explicitMode: false });
+      }
     }
   }
 
@@ -566,10 +581,10 @@ router.get('/render-layout', resolveAuth, async (req, res) => {
     }
   }
 
-  return handleRenderLayout(req, res, device, profile);
+  return handleRenderLayout(req, res, device, profile, { explicitMode: true });
 });
 
-async function handleRenderStandard(req, res, device, profile) {
+async function handleRenderStandard(req, res, device, profile, opts = {}) {
   const forceIndex = req.query.item !== undefined ? req.query.item : null;
   const resolved = resolveCurrentItem(device.id, forceIndex);
   if (!resolved) {
@@ -609,6 +624,9 @@ async function handleRenderStandard(req, res, device, profile) {
     'X-ST-Item-Index': String(itemIndex),
     'X-ST-Total-Items': String(total),
   };
+  if (opts.isFallback) {
+    headers['X-ST-Layout-Fallback'] = '1';
+  }
 
   if (!isPreview && isNotModified(key, req.headers['if-none-match'])) {
     res.set(headers).status(304).end();
@@ -672,12 +690,38 @@ async function handleRenderStandard(req, res, device, profile) {
   res.status(200).send(processed.buffer);
 }
 
-async function handleRenderLayout(req, res, device, profile) {
+async function handleRenderLayout(req, res, device, profile, opts = {}) {
+  const isExplicit = opts.explicitMode || req.query.mode === 'layout' || req.baseUrl?.endsWith('render-layout') || req.path?.includes('render-layout');
   const forceIndex = req.query.item !== undefined ? req.query.item : null;
-  const resolved = resolveLayoutItems(device.id, forceIndex);
+
+  // Probe layout first without advancing cursors
+  const probe = resolveLayoutItems(device.id, forceIndex, { advance: false });
   // Fall back to standard single-item render if device has no multi-zone layout
+  if (!probe) {
+    if (isExplicit) {
+      return res.status(404).json({ error: 'Device has no multi-zone layout assigned or no active items.' });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
+  }
+
+  const isImageOnly = isLayoutImageOnly(probe.zoneEntries);
+  if (!isImageOnly && !isBrowserAvailable()) {
+    if (isExplicit) {
+      return res.status(501).json({
+        error: 'Multi-zone layout rendering failed or not supported.',
+        detail: 'Browser unavailable for multi-zone rendering with widgets or web pages',
+      });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
+  }
+
+  // Advance cursors and resolve actual items
+  const resolved = resolveLayoutItems(device.id, forceIndex, { advance: true });
   if (!resolved) {
-    return handleRenderStandard(req, res, device, profile);
+    if (isExplicit) {
+      return res.status(404).json({ error: 'Device has no multi-zone layout assigned or no active items.' });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
   }
 
   const clientIp = touchDeviceHeartbeat(device, req);
@@ -702,7 +746,6 @@ async function handleRenderLayout(req, res, device, profile) {
     'X-ST-Content-Id': layout.id,
     'X-ST-Expires-In': String(expiresIn),
     'X-ST-Item-Index': '0',
-    'X-ST-Total-Items': String(zoneEntries.length),
     'X-ST-Total-Zones': String(zoneEntries.length),
   };
 
@@ -726,21 +769,24 @@ async function handleRenderLayout(req, res, device, profile) {
     renderResult = await renderLayout(layout, zoneEntries, profile);
   } catch (e) {
     console.error(`[embedded] multi-zone layout render error: ${e.message}`);
-    return res.status(500).json({
-      error: 'Multi-zone layout rendering failed.',
-      detail: 'An unexpected error occurred while rendering the layout.',
-    });
+    if (isExplicit) {
+      return res.status(500).json({
+        error: 'Multi-zone layout rendering failed.',
+        detail: 'An unexpected error occurred while rendering the layout.',
+      });
+    }
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
   }
 
   if (!renderResult || renderResult.unsupported) {
-    if (req.query.mode === 'layout') {
+    if (isExplicit) {
       return res.status(501).json({
         error: 'Multi-zone layout rendering failed or not supported.',
         detail: renderResult?.reason || 'Browser unavailable for multi-zone rendering',
       });
     }
     // Auto mode fallback to standard single-item rendering
-    return handleRenderStandard(req, res, device, profile);
+    return handleRenderStandard(req, res, device, profile, { isFallback: true });
   }
 
   // ── Post-process ─────────────────────────────────────────────────────────────
@@ -777,4 +823,6 @@ module.exports.resolveCurrentItem = resolveCurrentItem;
 module.exports.resolveLayoutItems = resolveLayoutItems;
 module.exports.resolveDevicePlaylist = resolveDevicePlaylist;
 module.exports.resolvedLayoutId = resolvedLayoutId;
+module.exports.resolveDeviceContext = resolveDeviceContext;
+
 

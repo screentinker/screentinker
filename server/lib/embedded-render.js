@@ -56,13 +56,18 @@ const EXT_MIME = {
   '.gif': 'image/gif',  '.webp': 'image/webp',  '.bmp': 'image/bmp',
 };
 
-function looksLikeImage(url, contentType) {
+function looksLikeImage(urlOrPath, contentType) {
   if (contentType) {
     const base = contentType.split(';')[0].trim().toLowerCase();
     if (IMAGE_MIMES.has(base)) return true;
   }
+  if (typeof urlOrPath !== 'string' || !urlOrPath) return false;
   try {
-    const ext = path.extname(new URL(url).pathname).toLowerCase();
+    let pathname = urlOrPath;
+    if (urlOrPath.includes('://')) {
+      pathname = new URL(urlOrPath).pathname;
+    }
+    const ext = path.extname(pathname).toLowerCase();
     return !!EXT_MIME[ext];
   } catch {
     return false;
@@ -96,6 +101,20 @@ function findChromePath() {
 }
 
 let browserInstance = null;
+let browserAvailableCached = null;
+let lastBrowserProbe = 0;
+
+function isBrowserAvailable() {
+  const now = Date.now();
+  if (browserAvailableCached !== null && (now - lastBrowserProbe < 30000)) {
+    return browserAvailableCached;
+  }
+  const puppeteer = getPuppeteer();
+  const chromePath = findChromePath();
+  browserAvailableCached = Boolean(puppeteer && chromePath);
+  lastBrowserProbe = now;
+  return browserAvailableCached;
+}
 
 function getPuppeteer() {
   try {
@@ -134,7 +153,6 @@ async function getBrowser() {
       '--disable-gpu',
       '--disable-extensions',
       '--hide-scrollbars',
-      '--ignore-certificate-errors',
     ],
   });
 
@@ -229,18 +247,22 @@ async function renderWidgetOrHtml(html, profile, widgetType = '') {
     const baseUrl = localBaseUrl();
     const staticStyle = '<style>*, *::before, *::after { animation: none !important; transition: none !important; }</style>';
     let finalHtml = html;
-    if (/<head>/i.test(finalHtml)) {
-      finalHtml = finalHtml.replace(/<head>/i, `<head><base href="${baseUrl}/">\n${staticStyle}`);
+    if (/<head[^>]*>/i.test(finalHtml)) {
+      finalHtml = finalHtml.replace(/(<head[^>]*>)/i, `$1\n<base href="${baseUrl}/">\n${staticStyle}`);
+    } else if (/<html[^>]*>/i.test(finalHtml)) {
+      finalHtml = finalHtml.replace(/(<html[^>]*>)/i, `$1\n<head><base href="${baseUrl}/">\n${staticStyle}</head>`);
     } else {
-      finalHtml = `<base href="${baseUrl}/">\n${staticStyle}\n` + finalHtml;
+      finalHtml = `<!DOCTYPE html><html><head><base href="${baseUrl}/">\n${staticStyle}</head><body>${finalHtml}</body></html>`;
     }
 
     // Single-widget / slide / webpage items wait for 'load'.
     // Do NOT swallow timeouts: let TimeoutError propagate so callers advance without caching broken frames.
     await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 });
 
-    // Wait for any async network fetches (e.g. weather, RSS, remote data) to settle
-    await page.waitForNetworkIdle({ idleTime: 200, timeout: 2500 }).catch(() => {});
+    // Wait for any async network fetches (e.g. weather, RSS, remote data) to settle if present
+    if (widgetType === 'weather' || widgetType === 'rss' || widgetType === 'layout') {
+      await page.waitForNetworkIdle({ idleTime: 200, timeout: 2500 }).catch(() => {});
+    }
 
     // Template-agnostic settlement: fonts, animations, and all images (including inside srcdoc iframes)
     await page.evaluate(async () => {
@@ -301,7 +323,7 @@ async function render(item, content, profile) {
     }
 
     try {
-      const { renderWidgetHtml, imageResolverFor, dataResolverFor } = require('../routes/widgets');
+      const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
       const { fontResolverFor } = require('../routes/fonts');
       const { db } = require('../db/database');
 
@@ -314,6 +336,7 @@ async function render(item, content, profile) {
       }
 
       const html = renderWidgetHtml(type, config, {
+        iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
         resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
         resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
         resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
@@ -379,6 +402,7 @@ function escapeHtmlAttr(str) {
 }
 
 function isLayoutImageOnly(zoneEntries) {
+  if (!Array.isArray(zoneEntries) || !zoneEntries.length) return false;
   for (const entry of zoneEntries) {
     const { item, content } = entry;
     if (!item && !content) continue;
@@ -426,19 +450,32 @@ async function renderLayoutNative(layout, zoneEntries, profile) {
     if (fileToLoad) {
       const base = path.resolve(contentDir());
       const safe = path.resolve(base, path.basename(String(fileToLoad)));
-      if (safe.startsWith(base + path.sep) && fs.existsSync(safe)) {
-        try {
-          img = await Jimp.fromBuffer(fs.readFileSync(safe));
-        } catch (_) {}
+      if (!safe.startsWith(base + path.sep) && safe !== base) {
+        throw Object.assign(new Error('Invalid content file path'), { code: 'INVALID_PATH' });
       }
+      if (!fs.existsSync(safe)) {
+        throw Object.assign(new Error('Content file not found on disk'), { code: 'NOT_FOUND' });
+      }
+      img = await Jimp.fromBuffer(fs.readFileSync(safe));
     } else if (content.remote_url) {
+      let res;
       try {
-        const res = await fetch(content.remote_url, { signal: AbortSignal.timeout(10000) });
-        if (res.ok) {
-          const buf = Buffer.from(await res.arrayBuffer());
-          img = await Jimp.fromBuffer(buf);
-        }
-      } catch (_) {}
+        res = await fetch(content.remote_url, {
+          signal: AbortSignal.timeout(10000),
+          headers: { 'User-Agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
+        });
+      } catch (e) {
+        throw Object.assign(new Error(`Failed to fetch remote content: ${e.message}`), { code: 'FETCH_ERROR' });
+      }
+      if (!res.ok) {
+        throw Object.assign(new Error(`Remote content returned HTTP ${res.status}`), { code: 'FETCH_ERROR' });
+      }
+      const contentType = res.headers.get('content-type') || '';
+      if (!looksLikeImage(content.remote_url, contentType)) {
+        throw Object.assign(new Error('Remote content is not an image'), { code: 'FETCH_ERROR' });
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      img = await Jimp.fromBuffer(buf);
     }
 
     if (img) {
@@ -473,7 +510,7 @@ async function renderLayout(layout, zoneEntries, profile) {
     return renderLayoutNative(layout, zoneEntries, profile);
   }
 
-  const { renderWidgetHtml, imageResolverFor, dataResolverFor } = require('../routes/widgets');
+  const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
   const { fontResolverFor } = require('../routes/fonts');
   const { db } = require('../db/database');
 
@@ -506,13 +543,19 @@ async function renderLayout(layout, zoneEntries, profile) {
         } catch (_) {}
       }
 
-      const widgetHtml = renderWidgetHtml(type, config, {
-        resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
-        resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
-        resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
-      });
+      try {
+        const widgetHtml = renderWidgetHtml(type, config, {
+          iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
+          resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
+          resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
+          resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
+        });
 
-      innerHtml = `<iframe srcdoc="${escapeHtmlAttr(widgetHtml)}" style="width:100%;height:100%;border:none;overflow:hidden;display:block;" scrolling="no"></iframe>`;
+        innerHtml = `<iframe srcdoc="${escapeHtmlAttr(widgetHtml)}" style="width:100%;height:100%;border:none;overflow:hidden;display:block;" scrolling="no"></iframe>`;
+      } catch (zoneErr) {
+        console.warn(`[embedded] zone widget render error for ${type}:`, zoneErr.message);
+        innerHtml = `<div style="width:100%;height:100%;background:transparent;"></div>`;
+      }
     } else if (content && content.remote_url) {
       if (looksLikeImage(content.remote_url, content.mime_type)) {
         innerHtml = `<img src="${escapeHtmlAttr(content.remote_url)}" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
@@ -576,5 +619,14 @@ async function renderLayout(layout, zoneEntries, profile) {
   }
 }
 
-module.exports = { render, renderLayout, renderLayoutNative, closeBrowser, getBrowser };
+module.exports = {
+  render,
+  renderLayout,
+  renderLayoutNative,
+  closeBrowser,
+  getBrowser,
+  looksLikeImage,
+  isLayoutImageOnly,
+  isBrowserAvailable,
+};
 

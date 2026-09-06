@@ -137,8 +137,9 @@ Fetches the pre-rendered image for the current playlist item.
     - `ETag`: `"sha256-hash..."`
     - `X-ST-Expires-In`: Seconds until the current item ends (sleep timer for MCU).
     - `X-ST-Item-Index`: Current playlist item index (0-based) in single mode or `'0'` in layout mode.
-    - `X-ST-Total-Items`: Total active items in playlist (or total zones in layout mode).
-    - `X-ST-Total-Zones`: Total zones in the layout (in layout mode).
+    - `X-ST-Total-Items`: Total active items in playlist (in single-item mode).
+    - `X-ST-Total-Zones`: Total zones in the layout (in multi-zone layout mode).
+    - `X-ST-Layout-Fallback`: Set to `'1'` when automatic layout rendering falls back to single-item mode due to missing browser dependencies.
     - `X-ST-Device-Id`: Device UUID.
     - `X-ST-Content-Id`: Content ID (or Layout ID in layout mode).
     - `X-ST-Layout-Id`: Layout UUID (in layout mode).
@@ -146,7 +147,7 @@ Fetches the pre-rendered image for the current playlist item.
 - **`400 Bad Request`**: Device lacks a configured `screen_profile`.
 - **`401 Unauthorized`**: Invalid or missing device token.
 - **`404 Not Found`**: Device not found or no playlist assigned.
-- **`501 Not Implemented`**: Content type or multi-zone layout contains widgets requiring a browser when Chromium is not installed on the server.
+- **`501 Not Implemented`**: Content type or multi-zone layout contains widgets requiring a browser when Chromium is not installed on the server (returned when explicitly requesting `?mode=layout` or `/render-layout`). In default auto mode, the server degrades gracefully to single-item rendering with `X-ST-Layout-Fallback: 1`.
 
 ---
 
