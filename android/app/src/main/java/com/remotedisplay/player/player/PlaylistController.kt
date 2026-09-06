@@ -472,8 +472,32 @@ class PlaylistController(
     fun onVideoComplete() {
         // Called when a video finishes naturally. Wall followers don't self-advance —
         // they hold (and loop) the leader's item until a wall:sync changes the index.
+        // ⚠️ Completions ONLY. A fault goes through onVideoFault(): routing it here is what
+        // switched every self-heal off in follower/group mode (#333).
         if (wallFollower) return
         next()
+    }
+
+    /**
+     * #333: the video FAILED — a playback error, or the #297 watchdog saw the decoder wedge. See
+     * PlaybackFault for the rule. Solo: skip it (unchanged). Follower / group member: the sync owns
+     * the index, so keep it and re-mount the same item; the sync tick then snaps the position back
+     * to the group. Re-mounting is the cold path (MediaPlayerManager has already dropped the
+     * players a wedge left behind), which is the part of "restart the app" that actually fixed it.
+     */
+    private val fault = PlaybackFault()
+
+    fun onVideoFault() {
+        when (fault.recovery(wallFollower, currentIndex, System.currentTimeMillis())) {
+            PlaybackFault.Recovery.ADVANCE -> next()
+            PlaybackFault.Recovery.REPLAY_CURRENT -> {
+                val item = currentItem ?: return
+                Log.w("PlaylistController", "video fault in follower/group mode — replaying ${item.filename} (index $currentIndex)")
+                playCurrentItem()
+            }
+            PlaybackFault.Recovery.HOLD ->
+                Log.w("PlaylistController", "video fault in follower/group mode — just replayed index $currentIndex, holding")
+        }
     }
 
     /**

@@ -32,6 +32,13 @@ class MediaPlayerManager(
     private val imageView: ImageView,
     private val youtubeWebView: WebView? = null,
     private val onVideoComplete: () -> Unit,
+    /*
+     * #333: a video that FAILED (playback error, wedged decoder), as opposed to one that finished.
+     * Kept apart from onVideoComplete because the two are gated differently downstream: a
+     * follower / group member ignores a completion (the sync owns the index) but must recover
+     * from a fault. Defaults to onVideoComplete for callers that never sync (zones).
+     */
+    private val onVideoFault: () -> Unit = onVideoComplete,
     private val onImageError: (() -> Unit)? = null,
     // feat/transition-engine: the full-screen GL overlay that plays a from->to wipe. Null = no
     // transitions (every render hard-cuts, exactly as before).
@@ -62,7 +69,8 @@ class MediaPlayerManager(
     // engaged when preloadVideo() is called ahead of a boundary (group sync); the wall/solo paths are
     // untouched (they never preload, so playVideo takes the normal cold path).
     private var preloadPlayer: ExoPlayer? = null
-    private var preloadedFile: File? = null
+    // #333: which clip is parked, and whether the parked player may be promoted. See PreloadSlot.
+    private val preloadSlot = PreloadSlot()
     // Throwaway offscreen surface for the preload player: it forces the preload clip to decode frame 0
     // and populate its video size BEFORE the swap, so PlayerView doesn't reset the aspect to "fill"
     // (a one-frame landscape stretch) while it waits for the new player's first video-size report.
@@ -86,11 +94,24 @@ class MediaPlayerManager(
             }
             // Root-2: a corrupt/undecodable video used to freeze the playlist forever — only
             // STATE_ENDED advanced, and an error goes to STATE_IDLE, so onVideoComplete never
-            // fired. Treat a playback error like a completion so the loop moves on instead of
-            // wedging on the broken item (mirrors the web/.wgt onerror -> advance).
+            // fired. A playback error is a FAULT (#333): the solo path still advances past it
+            // (mirrors the web/.wgt onerror -> advance), a follower re-mounts instead.
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Log.e("MediaPlayerManager", "Playback error (${error.errorCodeName}) — advancing: ${error.message}")
-                if (player === exoPlayer) onVideoComplete()
+                if (player === exoPlayer) {
+                    Log.e("MediaPlayerManager", "Playback error (${error.errorCodeName}) — recovering: ${error.message}")
+                    onVideoFault()
+                    return
+                }
+                /*
+                 * #333: the PARKED player failed — typically DECODER_INIT_FAILED / resources
+                 * reclaimed, because the preload is the one moment this app asks a TV SoC for a
+                 * second hardware decoder. This used to be dropped on the floor, and the boundary
+                 * then promoted the dead player (see PreloadSlot). Forget the file so the
+                 * boundary takes the cold path, and let go of whatever the failed prepare holds.
+                 */
+                Log.w("MediaPlayerManager", "Preload failed (${error.errorCodeName}) — next boundary takes the cold path: ${error.message}")
+                preloadSlot.fail()
+                try { player.clearMediaItems() } catch (_: Throwable) {}
             }
 
             /*
@@ -223,8 +244,9 @@ class MediaPlayerManager(
                     stall.tick(SystemClock.elapsedRealtime(), p.playbackState, p.playWhenReady, p.currentPosition)
                 } catch (e: Throwable) { false }
                 if (wedged) {
-                    Log.w("MediaPlayerManager", "Playback stalled with no error or end — advancing")
-                    onVideoComplete()
+                    Log.w("MediaPlayerManager", "Playback stalled with no error or end — recovering")
+                    resetPlayersAfterWedge()
+                    onVideoFault()
                 }
             } else {
                 stall.reset()
@@ -236,6 +258,24 @@ class MediaPlayerManager(
     private companion object {
         const val STALL_POLL_MS = 2_000L
         const val COVER_MAX_MS = 2_500L
+    }
+
+    /*
+     * #333: a wedged decoder is in an unknown state, and on the Xiaomi P1s the wedge was CAUSED by
+     * the second decoder the double buffer asked for. "Restart the app" is what recovered it in the
+     * field, and the part of a restart that matters is fresh players — so build one. Both players
+     * go: the parked one because it is the extra decoder, the active one because reusing a wedged
+     * codec is what a plain re-prepare would do. The preload slot is cleared with it, so the
+     * re-mount that follows (onVideoFault -> replay) takes the cold path on a player that owns the
+     * decoder outright.
+     */
+    private fun resetPlayersAfterWedge() {
+        preloadPlayer?.let { p -> try { p.release() } catch (_: Throwable) {} }
+        preloadPlayer = null
+        preloadSlot.clear()
+        exoPlayer?.let { p -> try { p.release() } catch (_: Throwable) {} }
+        exoPlayer = buildPlayer().also { playerView.player = it }
+        stall.reset()
     }
 
     /*
@@ -549,7 +589,7 @@ class MediaPlayerManager(
      * Cheap to call every tick — it no-ops if this file is already the preloaded one. Main thread only.
      */
     fun preloadVideo(file: File) {
-        if (preloadedFile?.absolutePath == file.absolutePath) return
+        if (preloadSlot.isParked(file.absolutePath)) return
         val p = preloadPlayer ?: buildPlayer().also { preloadPlayer = it }
         if (warmSurface == null) { warmTexture = SurfaceTexture(0).apply { setDefaultBufferSize(16, 16) }; warmSurface = Surface(warmTexture) }
         p.apply {
@@ -560,7 +600,7 @@ class MediaPlayerManager(
             playWhenReady = false                         // buffer/parse/decode-frame-0 now, don't start
             prepare()
         }
-        preloadedFile = file
+        preloadSlot.park(file.absolutePath)
         Log.i("MediaPlayerManager", "Preloaded next video: ${file.name}")
     }
 
@@ -603,15 +643,19 @@ class MediaPlayerManager(
         // Warm swap: if this exact file was preloaded, promote the parked player instead of a cold
         // prepare — the container is already open/buffered so the first frame renders near-instantly.
         val pp = preloadPlayer
-        if (pp != null && preloadedFile?.absolutePath == file.absolutePath) {
-            Log.i("MediaPlayerManager", "Playing video (warm swap): ${file.name}")
+        val claim = if (pp == null) PreloadSlot.Claim.COLD
+                    else preloadSlot.claim(file.absolutePath, playerIsIdle = pp.playbackState == Player.STATE_IDLE)
+        if (pp != null && claim != PreloadSlot.Claim.COLD) {
+            Log.i("MediaPlayerManager", "Playing video (warm swap${if (claim == PreloadSlot.Claim.WARM_NEEDS_PREPARE) ", re-preparing" else ""}): ${file.name}")
             val old = exoPlayer
             exoPlayer = pp
             preloadPlayer = old
-            preloadedFile = null
             pp.apply {
                 volume = if (muted || wallMute || triggerMute) 0f else 1f
                 repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                // #333: a parked player that is still IDLE was never prepared (or lost its
+                // prepare); playWhenReady alone would leave it sitting on 0:00 forever.
+                if (claim == PreloadSlot.Claim.WARM_NEEDS_PREPARE) prepare()
                 playWhenReady = true
             }
             playerView.player = pp
@@ -661,7 +705,7 @@ class MediaPlayerManager(
         exoPlayer = null
         preloadPlayer?.release()
         preloadPlayer = null
-        preloadedFile = null
+        preloadSlot.clear()
         warmSurface?.release(); warmSurface = null
         warmTexture?.release(); warmTexture = null
     }

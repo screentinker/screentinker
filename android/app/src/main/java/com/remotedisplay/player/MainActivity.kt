@@ -343,6 +343,7 @@ class MainActivity : AppCompatActivity() {
             imageView = imageView,
             youtubeWebView = youtubeWebView,
             onVideoComplete = { playlistController.onVideoComplete() },
+            onVideoFault = { playlistController.onVideoFault() },   // #333
             onImageError = {
                 Log.w("MainActivity", "Image failed to load, skipping to next item")
                 handler.postDelayed({ playlistController.next() }, 500)
