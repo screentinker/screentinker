@@ -69,6 +69,7 @@ test('the generated playlist contains exactly that item, published', () => {
   const pl = db.prepare('SELECT * FROM playlists WHERE id = ?').get(s.playlist_id);
   assert.equal(pl.workspace_id, WS, 'and it belongs to the right workspace');
   assert.equal(pl.status, 'published');
+  assert.equal(pl.is_auto_generated, 1, 'or the Playlists toggle can never hide it');
   const items = db.prepare('SELECT content_id FROM playlist_items WHERE playlist_id = ?').all(s.playlist_id);
   assert.deepEqual(items.map(i => i.content_id), [C]);
 });
@@ -97,6 +98,88 @@ test('a schedule with neither content nor playlist is unchanged', async () => {
   const s = db.prepare('SELECT playlist_id FROM schedules WHERE device_id = ? ORDER BY rowid DESC').get(DEV);
   assert.equal(s.playlist_id, null);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM playlists').get().n, before);
+});
+
+// A PUT that changes content_id must rewrite the generated playlist's item: the playlist
+// holds a COPY of the content, not a reference, so without this the screen keeps playing
+// the old file while the calendar shows the new one.
+test('PUT with a new content_id rewrites the generated item and republishes', async () => {
+  db.prepare(`INSERT OR IGNORE INTO devices (id,name,workspace_id,created_at,updated_at)
+              VALUES ('dev-put','Screen PUT',?,strftime('%s','now'),strftime('%s','now'))`).run(WS);
+  db.prepare("INSERT OR IGNORE INTO content (id,workspace_id,user_id,filename,filepath,mime_type,file_size,duration_sec) VALUES ('c-put2',?,?,'clip.mp4','clip.mp4','video/mp4',999,32)").run(WS, U);
+  const created = await createSchedule({ ...BASE, device_id: 'dev-put', content_id: C });
+  assert.equal(created.status, 201);
+  const schedId = created.body.id;
+  const plId = created.body.playlist_id;
+  assert.ok(plId);
+
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/api/schedules/${schedId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content_id: 'c-put2' }),
+  });
+  assert.equal(res.status, 200);
+
+  const items = db.prepare('SELECT content_id, duration_sec FROM playlist_items WHERE playlist_id = ?').all(plId);
+  assert.deepEqual(items.map(i => i.content_id), ['c-put2']);
+  assert.equal(items[0].duration_sec, 32, 'the new clip keeps its own length, not the flat default');
+  const snap = JSON.parse(db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(plId).published_snapshot || '[]');
+  assert.equal(snap.length, 1);
+  assert.equal(snap[0].content_id, 'c-put2', 'players read the snapshot, so the rewrite republishes');
+});
+
+// Same PUT on a schedule with an explicit playlist override must NOT touch that playlist:
+// content_id is vestigial there, the override wins.
+test('PUT content change leaves an explicit playlist override alone', async () => {
+  db.prepare("INSERT OR IGNORE INTO playlists (id,name,workspace_id,user_id) VALUES ('pl-keep','Kept',?,?)").run(WS, U);
+  const created = await createSchedule({ ...BASE, device_id: 'dev-put', content_id: C, playlist_id: 'pl-keep' });
+  assert.equal(created.status, 201);
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/api/schedules/${created.body.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content_id: 'c-put2' }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM playlist_items WHERE playlist_id = ?').get('pl-keep').n, 0);
+  assert.equal(db.prepare('SELECT playlist_id FROM schedules WHERE id = ?').get(created.body.id).playlist_id, 'pl-keep');
+});
+
+// Deleting the schedule must collect the throwaway it invented — otherwise one orphaned
+// single-item playlist accumulates per deleted schedule, invisible once the toggle hides them.
+test('DELETE removes the orphaned generated playlist', async () => {
+  const created = await createSchedule({ ...BASE, device_id: 'dev-put', content_id: C });
+  assert.equal(created.status, 201);
+  const plId = created.body.playlist_id;
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/api/schedules/${created.body.id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(db.prepare('SELECT id FROM playlists WHERE id = ?').get(plId), undefined);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM playlist_items WHERE playlist_id = ?').get(plId).n, 0);
+});
+
+test('DELETE keeps a generated playlist a human adopted or still shares', async () => {
+  // Adopted: an extra hand-added item means it no longer looks like a throwaway.
+  const adopted = await createSchedule({ ...BASE, device_id: 'dev-put', content_id: C });
+  const adoptedPl = adopted.body.playlist_id;
+  db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, 1, 10)')
+    .run(adoptedPl, C);
+  await fetch(`http://127.0.0.1:${server.address().port}/api/schedules/${adopted.body.id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.ok(db.prepare('SELECT id FROM playlists WHERE id = ?').get(adoptedPl), 'adopted playlist survives');
+
+  // Shared: a second schedule still points at it.
+  const first = await createSchedule({ ...BASE, device_id: 'dev-put', content_id: C });
+  const sharedPl = first.body.playlist_id;
+  const second = await createSchedule({ ...BASE, device_id: 'dev-put', playlist_id: sharedPl });
+  await fetch(`http://127.0.0.1:${server.address().port}/api/schedules/${first.body.id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.ok(db.prepare('SELECT id FROM playlists WHERE id = ?').get(sharedPl), 'referenced playlist survives');
+  await fetch(`http://127.0.0.1:${server.address().port}/api/schedules/${second.body.id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  });
 });
 
 test.after(() => { server.close(); try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {} });
