@@ -5549,19 +5549,22 @@
         renderImageBuffered(item);
         return;
       }
-      // Same buffered path for a SOLO video that has a transition: wipe the outgoing frame into it
-      // (image→video / video→video). Only when a runtime + transition are actually present — a plain
-      // solo video falls through to the legacy branch, which keeps its preload/mute/loop handling. Wall/
-      // zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube) too.
+      // Buffered SOLO-video render: hold the outgoing frame while the incoming clip warms
+      // up offscreen, then mount on its first PRESENTED frame — wiping into it when the item
+      // carries a transition, hard-cutting otherwise (image→video / video→video). Plain videos
+      // used to fall through to the legacy branch below, which tears down the stage BEFORE the
+      // clip has loaded — a short black blink on every boundary. Android avoids the same gap by
+      // holding a freeze-frame until onRenderedFirstFrame; the old DOM here is that freeze-frame.
+      // Wall/zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube)
+      // too.
       const isVideoBufferable = item && typeof item.mime_type === 'string'
         && item.mime_type.startsWith('video/') && item.mime_type !== 'video/youtube'
         && !item.widget_id && !wallConfig && !isZones && !groupSync
-        && item.transition && Array.isArray(item.transition.effects) && item.transition.effects.length
-        && transitionRuntimeReady()
-        // A platform whose video sits on a hardware plane cannot supply the incoming frame either:
-        // the warm-play snapshot comes back transparent, so the wipe would fade in from nothing.
-        // `null` means "not yet determined" and is treated as available — the probe needs a
-        // playing video, and the first one on a fresh player has not run yet.
+        // A platform whose video sits on a hardware plane cannot supply the incoming frame:
+        // the warm-play snapshot comes back transparent, so a wipe would fade in from nothing
+        // (plain holds still route here — without a transition there is no wipe, just the
+        // first-frame hold). `null` means "not yet determined" and is treated as available —
+        // the probe needs a playing video, and the first one on a fresh player has not run yet.
         && _videoCompositingOk !== false;
       if (isVideoBufferable) {
         renderVideoBuffered(item);

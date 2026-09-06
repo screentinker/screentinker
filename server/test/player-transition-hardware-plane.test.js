@@ -124,13 +124,21 @@ test('#BS-guard: the transition path consults capturability, not just CORS', () 
     'the capturability guard must run BEFORE the CORS check short-circuits the branch');
 });
 
-test('#BS-guard: an incoming video is not buffered for a wipe it cannot supply', () => {
+test('#BS-guard: an incoming video is not wiped in from a texture it cannot supply', () => {
   const at = PLAYER.indexOf('const isVideoBufferable');
   assert.ok(at > 0);
   const decl = PLAYER.slice(at, PLAYER.indexOf(';', at));
   assert.match(decl, /_videoCompositingOk !== false/,
     'image→video would otherwise fade in from a transparent texture');
-  assert.match(decl, /transitionRuntimeReady\(\)/, 'the runtime is still required');
+  // Plain solo videos also route through the buffered path (first-frame hold, no wipe), so the
+  // gate itself must NOT require a transition runtime — the wipe decision inside
+  // renderVideoBuffered does that instead. Assert both halves of that split.
+  assert.ok(!/transitionRuntimeReady\(\)/.test(decl),
+    'the gate holds the old frame for every solo video; requiring a runtime here would ' +
+    'send plain videos back to the teardown-first legacy branch (black blink on every boundary)');
+  const wipe = extract('renderVideoBuffered');
+  assert.match(wipe, /transitionRuntimeReady\(\)/,
+    'the wipe itself still requires the runtime — a hold is not a transition');
 });
 
 test('#BS-guard: undetermined is treated as available, so a fresh player is not crippled', () => {
