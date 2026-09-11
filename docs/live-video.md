@@ -103,8 +103,14 @@ remotely, this is almost always the cause.
   gesture**, so the player starts capture on its next on-screen interaction (or immediately if one
   is already active). Unattended kiosks need Chromium's capture flag; that is a large part of why
   the Android publisher below, which needs neither gesture nor picker, is the real signage path.
-- **Android / Tizen / webOS / BrightSign:** no native publisher yet. These keep the screenshot
-  stream. Android via MediaProjection is the obvious next one; it is **not** in this pass.
+- **Android** (`android/`): publishes via **MediaProjection + WebRTC** (`LiveVideoPublisher` driven
+  by `LiveVideoService`, an FGS of type `mediaProjection`). This is the robust signage path: the OS
+  captures the framebuffer, so there is no browser, no per-frame gesture, and none of the web
+  player's `resistFingerprinting` fragility. Consent to MediaProjection is required once (the system
+  dialog, or a device-owner auto-grant); the dashboard's publish request triggers it via
+  `ScreenCapturePermissionActivity.requestForLive`, then the sender runs in `LiveVideoService`.
+  Uses the `io.getstream:stream-webrtc-android` AAR.
+- **Tizen / webOS / BrightSign:** no native publisher yet. These keep the screenshot stream.
 - **Any device that cannot publish** keeps the screenshot fallback, so nothing regresses.
 
 ## How publishing into go2rtc works (verified)

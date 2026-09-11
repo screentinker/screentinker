@@ -520,6 +520,31 @@ class WebSocketService : Service() {
                     handler.post { try { onRemoteStop?.invoke() } catch (e: Throwable) { Log.e("WebSocketService", "onRemoteStop cb: ${e.message}") } }
                 }
 
+                // #go2rtc: live-video publish. The dashboard asks this panel to stream its screen
+                // over WebRTC. MediaProjection captures at the OS level (no browser, no per-frame
+                // gesture, immune to a browser's resistFingerprinting), so it is the robust signage
+                // path the web player only approximates. Best-effort: consent + capture run in
+                // LiveVideoService; a failure there never touches playback.
+                safeOn("device:live-publish") { args ->
+                    val data = args.firstOrNull() as? JSONObject
+                    val action = data?.optString("action", "start") ?: "start"
+                    if (action == "stop") {
+                        try { LiveVideoService.stop(this@WebSocketService) } catch (e: Throwable) { Log.e("WebSocketService", "live stop: ${e.message}") }
+                        return@safeOn
+                    }
+                    val id = config.deviceId; val token = config.deviceToken; val srvUrl = config.serverUrl
+                    if (id.isEmpty() || token.isEmpty() || srvUrl.isEmpty()) {
+                        Log.w("WebSocketService", "live-publish requested but device is not provisioned"); return@safeOn
+                    }
+                    val iceJson = (data?.optJSONArray("iceServers") ?: org.json.JSONArray()).toString()
+                    try {
+                        // Requests MediaProjection consent if not already held, then starts the
+                        // sender in LiveVideoService (its own mediaProjection FGS).
+                        com.remotedisplay.player.ScreenCapturePermissionActivity.requestForLive(
+                            this@WebSocketService, srvUrl, id, token, iceJson)
+                    } catch (e: Throwable) { Log.e("WebSocketService", "live-publish start: ${e.message}") }
+                }
+
                 safeOn("device:remote-touch") { args ->
                     val data = args.firstOrNull() as? JSONObject ?: return@safeOn
                     val x = data.optDouble("x", 0.0).toFloat()

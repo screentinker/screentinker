@@ -104,6 +104,14 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <!-- #go2rtc: live-video MediaProjection sender FGS. Same mediaProjection FGS type as the
+             screenshot service above, kept separate so live video and screenshots never share a
+             single-use projection consent token. Started only after consent is granted. -->
+        <service
+            android:name=".service.LiveVideoService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <!-- Accessibility service for power controls -->
         <service
             android:name=".service.PowerAccessibilityService"
