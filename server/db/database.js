@@ -2454,6 +2454,13 @@ try {
   // workspaces is created by the multitenancy phase, after the migrations array above has run,
   // so its column is added here where the table exists. Idempotent: a duplicate column throws.
   try { db.prepare('ALTER TABLE workspaces ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] workspaces.require_approval added (default off)'); } catch (_) { /* present */ }
+  // Live video (go2rtc). Off by default at every level so enabling the sidecar never silently
+  // starts streaming: server master gate (config.liveVideoEnabled) AND the workspace flag AND the
+  // device flag must all be on. The publish secret is per device and rotatable, never the go2rtc
+  // admin password. See docs/live-video.md and lib/go2rtc.js.
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] workspaces.live_video_enabled added (default off)'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN live_publish_secret TEXT').run(); } catch (_) { /* present */ }
 
   const BASELINE_ID = 'revisions_baseline_v1';
   if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(BASELINE_ID)) {

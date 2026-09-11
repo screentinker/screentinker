@@ -1,0 +1,17 @@
+# Sample go2rtc config for ScreenTinker live video. Copy to `go2rtc.yaml` beside your
+# docker-compose.yml. See docs/live-video.md. Streams are created at runtime by ScreenTinker via
+# the API, so `streams` starts empty.
+api:
+  listen: ":1984"
+  # Uncomment and match GO2RTC_API_TOKEN on the screentinker service to protect the admin API.
+  # token: "change-me-to-a-long-random-string"
+
+webrtc:
+  listen: ":8555"
+  candidates:
+    # LAN with network_mode: host — discovered automatically, leave empty.
+    # Bridge network or public — advertise a reachable address:
+    # - "203.0.113.10:8555"
+    # - "stun:8555"
+
+streams: {}

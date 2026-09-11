@@ -441,4 +441,23 @@ module.exports = {
   // #143 throttle the reclaim-deferred log to once per device per window, so a
   // retrying/stuck device can't flood stdout (same discipline as the content-ack shed log).
   reclaimRejectLogWindowMs: parseInt(process.env.RECLAIM_REJECT_LOG_WINDOW_MS) || 60000,
+
+  // ── go2rtc media plane (OPTIONAL live video; see docs/live-video.md) ──────────────────────────
+  // Unset GO2RTC_URL and the app behaves exactly as before: live view stays the screenshot stream.
+  // The server is the ONLY thing that talks to this URL; the browser signals through a proxied
+  // ScreenTinker route, so the admin API port (1984) is never exposed to a dashboard user.
+  go2rtcUrl: process.env.GO2RTC_URL || null,
+  go2rtcApiToken: process.env.GO2RTC_API_TOKEN || null,
+  go2rtcBasicAuth: process.env.GO2RTC_BASIC_AUTH || null,   // "user:pass" if go2rtc's API is basic-auth'd
+  go2rtcTimeoutMs: parseInt(process.env.GO2RTC_TIMEOUT_MS) || 4000,
+  go2rtcHealthTtlMs: parseInt(process.env.GO2RTC_HEALTH_TTL_MS) || 5000,
+  // ICE handed to the browser. STUN helps every NAT; TURN is only needed when host candidates and
+  // UDP 8555 are both unreachable (public internet, or Cloudflare's orange cloud eating UDP).
+  go2rtcStunUrls: (process.env.GO2RTC_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s) => s.trim()).filter(Boolean),
+  go2rtcTurnUrl: process.env.GO2RTC_TURN_URL || null,
+  go2rtcTurnUser: process.env.GO2RTC_TURN_USER || null,
+  go2rtcTurnPass: process.env.GO2RTC_TURN_PASS || null,
+  // Live video must be switched on per workspace as well; this is the server-wide master gate. Off
+  // by default so enabling the sidecar does not silently start offering video everywhere.
+  liveVideoEnabled: process.env.LIVE_VIDEO_ENABLED === 'true',
 };

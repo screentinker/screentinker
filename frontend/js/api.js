@@ -1,6 +1,6 @@
 const API_BASE = '/api';
 
-function getAuthHeaders() {
+export function getAuthHeaders() {
   const token = localStorage.getItem('token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -323,6 +323,7 @@ export const api = {
 
   // Devices
   getDevices: () => request('/devices'),
+  getDeviceLive: (id) => request(`/devices/${id}/live`),
   reorderDevices: (order) => request('/devices/reorder', { method: 'POST', body: JSON.stringify({ order }) }),
   getDevice: (id) => request(`/devices/${id}`),
   getDeviceOwnerQR: () => request('/provision/device-owner-qr'),   // #161: device-owner provisioning
