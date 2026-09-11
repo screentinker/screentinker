@@ -172,6 +172,13 @@ function isScheduleActiveNow(schedule, now, tz) {
   // Day-of-week in the device's local zone.
   if (rule.byDay && !rule.byDay.includes(L.dow)) return false;
 
+  // Day-of-month, for FREQ=MONTHLY. This function never branched on FREQ, so a monthly rule had
+  // no filter at all and played EVERY day, while the calendar (routes/schedules.js expandSchedule,
+  // which does check the day-of-month) drew it once a month. The dashboard now offers Monthly, so
+  // the two have to agree; this is the same comparison the calendar makes. BYDAY-less on purpose:
+  // an nth-weekday form ("1MO") is dropped by both parsers and is not offered anywhere.
+  if (rule.freq === 'MONTHLY' && L.day !== Number(startStamp.slice(8, 10))) return false;
+
   // Time-of-day window in the device's local zone (HH:MM string compare).
   const nowHM = nowStamp.slice(11), startHM = startStamp.slice(11), endHM = endStamp.slice(11);
   return nowHM >= startHM && nowHM <= endHM;

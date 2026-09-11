@@ -1745,3 +1745,136 @@ body {
 @media (max-width: 700px) {
   .tg-row, .assign-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Schedule: Outlook-style calendar chrome. Everything is built on the existing variables; the
+   grid geometry (HOUR_PX and friends) stays in JS because the drag maths depends on it.
+   --------------------------------------------------------------------------------------------- */
+.sched-shell { display: flex; gap: 14px; align-items: flex-start; }
+.sched-rail {
+  width: 232px; flex: 0 0 232px; display: flex; flex-direction: column; gap: 14px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px;
+}
+.sched-rail.collapsed { display: none; }
+.sched-rail h4 { margin: 0 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.sched-mini { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; font-size: 11px; }
+.sched-mini-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 12px; font-weight: 600; }
+.sched-mini-dow { text-align: center; color: var(--text-muted); font-size: 10px; padding: 2px 0; }
+.sched-mini-day {
+  text-align: center; padding: 4px 0; border-radius: var(--radius); cursor: pointer; color: var(--text-secondary);
+  background: transparent; border: 1px solid transparent; font: inherit; line-height: 1.2;
+}
+.sched-mini-day:hover { background: var(--bg-card-hover); }
+.sched-mini-day.out { color: var(--text-muted); opacity: .55; }
+.sched-mini-day.today { color: var(--accent); font-weight: 700; }
+.sched-mini-day.selected { border-color: var(--accent); }
+.sched-mini-day.busy::after { content: ''; display: block; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); margin: 1px auto 0; }
+.sched-cal-list { display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow: auto; }
+.sched-cal-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--radius); cursor: pointer;
+  font-size: 13px; color: var(--text-primary); user-select: none;
+}
+.sched-cal-item:hover { background: var(--bg-card-hover); }
+.sched-cal-item input { width: auto; margin: 0; accent-color: var(--accent); }
+.sched-cal-item .name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sched-cal-swatch { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px; }
+.sched-cal-swatch.group { border: 1.5px dashed rgba(255,255,255,.7); box-sizing: border-box; }
+.sched-main { flex: 1; min-width: 0; }
+.sched-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.sched-toolbar .spacer { flex: 1; }
+.sched-datelabel {
+  font: inherit; font-size: 15px; font-weight: 600; color: var(--text-primary); background: transparent;
+  border: 1px solid transparent; border-radius: var(--radius); padding: 4px 8px; cursor: pointer;
+}
+.sched-datelabel:hover { border-color: var(--border); background: var(--bg-card-hover); }
+.sched-views { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.sched-views button {
+  font: inherit; font-size: 12px; padding: 5px 10px; background: var(--bg-input); color: var(--text-secondary);
+  border: 0; border-right: 1px solid var(--border); cursor: pointer;
+}
+.sched-views button:last-child { border-right: 0; }
+.sched-views button.active { background: var(--accent); color: #fff; }
+.sched-kbd { font-size: 11px; color: var(--text-muted); }
+.sched-frame { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg-primary); }
+.sched-allday { display: grid; border-bottom: 2px solid var(--border); background: var(--bg-secondary); min-height: 26px; }
+.sched-allday-label { font-size: 10px; color: var(--text-muted); padding: 5px 6px; text-align: right; }
+.sched-allday-cell { border-left: 1px solid var(--border); padding: 3px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sched-chip, .sched-pill {
+  display: block; font-size: 11px; line-height: 1.3; padding: 2px 6px; border-radius: 3px; color: #fff; cursor: pointer;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: .95; border: 0; text-align: left; font-family: inherit; width: 100%;
+}
+.sched-chip.group, .sched-pill.group, .sched-block.group { border: 1.5px dashed rgba(255,255,255,.65); }
+.sched-scroll { position: relative; overflow: auto; max-height: calc(100vh - 300px); }
+.sched-grid { display: grid; min-width: 0; }
+.sched-corner, .sched-daycol-head { background: var(--bg-secondary); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 6; }
+.sched-daycol-head { padding: 6px 4px; text-align: center; border-left: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.sched-daycol-head .num { display: inline-block; min-width: 24px; line-height: 24px; border-radius: 12px; font-weight: 600; }
+.sched-daycol-head.today .num { background: var(--accent); color: #fff; }
+.sched-daycol-head.selected { box-shadow: inset 0 -2px 0 var(--accent); }
+.sched-hour-label { padding: 2px 6px; font-size: 10px; color: var(--text-muted); border-bottom: 1px solid var(--border); text-align: right; }
+.sched-hour { position: relative; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); background: var(--bg-primary); }
+.sched-hour.work { background: var(--bg-card); }
+.sched-hour.offday { background: var(--bg-primary); opacity: .92; }
+.sched-block {
+  position: absolute; border-radius: 3px; padding: 2px 4px; font-size: 10px; color: #fff; overflow: hidden; cursor: grab;
+  z-index: 1; opacity: .93; line-height: 1.25; box-sizing: border-box; border-left: 3px solid rgba(0,0,0,.25);
+}
+.sched-block .who { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sched-block .what { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sched-block.continues { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.sched-block.continued { border-top-left-radius: 0; border-top-right-radius: 0; }
+.sched-resize-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; cursor: ns-resize; background: linear-gradient(to bottom, transparent, rgba(0,0,0,.28)); }
+.sched-ghost {
+  position: absolute; left: 2px; right: 2px; border-radius: 3px; z-index: 5; pointer-events: none; background: var(--accent);
+  opacity: .55; color: #fff; font-size: 10px; padding: 2px 4px; line-height: 1.2; border: 1px solid rgba(255,255,255,.8); overflow: hidden;
+}
+.sched-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid var(--danger); z-index: 4; pointer-events: none; }
+.sched-now::before { content: ''; position: absolute; left: -5px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+.sched-month { display: grid; grid-template-columns: repeat(7, 1fr); }
+.sched-month-dow { padding: 6px 4px; text-align: center; font-size: 11px; color: var(--text-secondary); background: var(--bg-secondary); border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); }
+.sched-month-cell {
+  min-height: 96px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 4px;
+  display: flex; flex-direction: column; gap: 2px; background: var(--bg-primary); box-sizing: border-box; min-width: 0;
+}
+.sched-month-cell.out { background: var(--bg-secondary); }
+.sched-month-cell.out .sched-month-daynum { color: var(--text-muted); opacity: .6; }
+.sched-month-cell.selected { box-shadow: inset 0 0 0 2px var(--accent); }
+.sched-month-cell.drop { background: var(--accent-dim); }
+.sched-month-daynum {
+  align-self: flex-end; font: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary); background: transparent;
+  border: 0; border-radius: 12px; min-width: 24px; line-height: 24px; text-align: center; cursor: pointer; padding: 0 4px;
+}
+.sched-month-daynum:hover { background: var(--bg-card-hover); }
+.sched-month-cell.today .sched-month-daynum { background: var(--accent); color: #fff; }
+.sched-pill { font-size: 11px; }
+.sched-pill .tm { opacity: .85; margin-right: 4px; }
+.sched-pill.dragging { opacity: .35; }
+.sched-more { font: inherit; font-size: 11px; color: var(--accent); background: transparent; border: 0; text-align: left; cursor: pointer; padding: 1px 4px; }
+.sched-more:hover { text-decoration: underline; }
+.sched-pop {
+  position: fixed; z-index: 2100; width: 320px; max-width: calc(100vw - 16px); background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 12px; font-size: 13px;
+}
+.sched-pop h3 { margin: 0 0 4px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.sched-pop .sw { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 10px; }
+.sched-pop .meta { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.sched-pop .row { display: flex; gap: 8px; margin-top: 8px; }
+.sched-pop .row > * { flex: 1; min-width: 0; }
+.sched-pop label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+.sched-pop .input { background: var(--bg-input); }
+.sched-pop-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
+.sched-pop-actions .left { margin-right: auto; }
+.sched-daystrip { display: none; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+.sched-daystrip button { flex: 1; min-width: 40px; padding: 6px 4px; font-size: 11px; }
+.sched-daystrip button.on { background: var(--accent); color: #fff; border-color: transparent; }
+.sched-empty { margin: 0 0 8px; padding: 8px 12px; border-radius: var(--radius); background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+@media (max-width: 900px) {
+  .sched-rail { position: absolute; z-index: 20; box-shadow: var(--shadow); }
+  .sched-shell { position: relative; }
+}
+@media (max-width: 700px) {
+  .sched-month-cell { min-height: 56px; padding: 2px; }
+  .sched-pill .tm, .sched-pill .lbl { display: none; }
+  .sched-pill { height: 6px; padding: 0; border-radius: 3px; }
+  .sched-kbd { display: none; }
+}

@@ -223,8 +223,12 @@ router.get('/week', (req, res) => {
   if (Number.isNaN(weekStart.getTime())) return res.status(400).json({ error: 'Invalid calendar date' });
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  // `days` lets the month view ask for its six-week grid (42 days from the grid's first Sunday)
+  // in ONE request instead of six. Absent, this is exactly the seven-day week it always was.
+  // Capped so a stray value cannot turn one poll into a year of recurrence expansion.
+  const days = Math.min(42, Math.max(1, parseInt(req.query.days, 10) || 7));
   const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 7);
+  weekEnd.setDate(weekEnd.getDate() + days);
 
   const schedules = device_id
     ? db.prepare(getDeviceSchedulesQuery()).all(device_id, device_id)
@@ -438,7 +442,16 @@ function expandSchedule(schedule, rangeStart, rangeEnd) {
     return events;
   }
 
-  const recEnd = schedule.recurrence_end ? new Date(schedule.recurrence_end) : rangeEnd;
+  // recurrence_end is a calendar DATE ('2026-09-05' from the date picker) and the engine treats it
+  // as INCLUSIVE, string-compared on the first ten characters. new Date('2026-09-05') is UTC
+  // midnight, which on any server west of Greenwich is the evening of the 4th, so the last day of
+  // every series vanished from the calendar while the panel still played it. Parse it as a local
+  // date and run it to the end of that day, so the drawing matches the engine.
+  let recEnd = rangeEnd;
+  if (schedule.recurrence_end) {
+    const d = parseCalendarDate(String(schedule.recurrence_end).slice(0, 10));
+    if (!Number.isNaN(d.getTime())) { d.setHours(23, 59, 59, 999); recEnd = d; }
+  }
 
   // Walk DAY BY DAY across the visible range and draw every day the rule actually fires.
   //
