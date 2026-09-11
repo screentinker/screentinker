@@ -36,6 +36,32 @@ function streamBelongsTo(name, workspaceId, deviceId) {
   return !!name && name === streamName(workspaceId, deviceId);
 }
 
+// #talk — two-way intercom rides two one-directional Opus streams per device (go2rtc streams are
+// one-producer, so a bidirectional call needs one each way):
+//   dir 'dn' (downlink): operator mic -> device speaker  (dashboard publishes, device subscribes)
+//   dir 'up' (uplink):   device mic   -> operator speaker (device publishes, dashboard subscribes)
+// Same hashing as streamName so raw ids never sit in a go2rtc name; a distinct prefix keeps talk
+// streams greppable and separate from the video stream.
+function talkStreamName(workspaceId, deviceId, dir) {
+  if (!workspaceId || !deviceId || (dir !== 'dn' && dir !== 'up')) return null;
+  const h = crypto.createHash('sha256').update(`talk:${dir}:${workspaceId}:${deviceId}`).digest('hex').slice(0, 24);
+  return `tk_${dir}_${h}`;
+}
+
+function talkStreamBelongsTo(name, workspaceId, deviceId) {
+  return !!name && (name === talkStreamName(workspaceId, deviceId, 'dn') ||
+                    name === talkStreamName(workspaceId, deviceId, 'up'));
+}
+
+// #talk broadcast (one-way PA): one shared downlink stream per group or per workspace. The operator
+// publishes their mic to it once; every device in scope subscribes and plays it (listen-only). kind
+// is 'group' or 'workspace', id the group/workspace id.
+function broadcastTalkStreamName(kind, id) {
+  if ((kind !== 'group' && kind !== 'workspace') || !id) return null;
+  const h = crypto.createHash('sha256').update(`talkcast:${kind}:${id}`).digest('hex').slice(0, 24);
+  return `tk_cast_${kind === 'group' ? 'g' : 'w'}_${h}`;
+}
+
 function baseUrl() {
   const u = config.go2rtcUrl;
   return u ? String(u).replace(/\/+$/, '') : null;
@@ -171,7 +197,7 @@ function iceServers() {
 }
 
 module.exports = {
-  streamName, streamBelongsTo, enabled, healthy, iceServers,
+  streamName, streamBelongsTo, talkStreamName, talkStreamBelongsTo, broadcastTalkStreamName, enabled, healthy, iceServers,
   putStream, deleteStream, hasStream, ensureStream, hasActiveProducer, webrtcExchange,
   _call: call, _resetHealth, _adminHeaders: adminHeaders,
 };

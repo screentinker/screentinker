@@ -47,6 +47,9 @@ services:
 #
 #   go2rtc:
 #     image: alexxit/go2rtc:latest
+#     # Publishing from a device with NO H264 encoder (e.g. the Android emulator)? Stock go2rtc
+#     # accepts only H264/H265 on WebRTC ingest and rejects VP8. Build docker/go2rtc-vp8 and use
+#     # `image: screentinker/go2rtc-vp8:1.9.14` instead. See docs/live-video.md ("Codecs").
 #     restart: unless-stopped
 #     network_mode: host          # simplest path to working ICE on a LAN: go2rtc sees the real host
 #                                 # IP as a candidate. Drop this and publish 8555 instead if you must

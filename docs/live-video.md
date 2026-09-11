@@ -110,6 +110,14 @@ remotely, this is almost always the cause.
   dialog, or a device-owner auto-grant); the dashboard's publish request triggers it via
   `ScreenCapturePermissionActivity.requestForLive`, then the sender runs in `LiveVideoService`.
   Uses the `io.getstream:stream-webrtc-android` AAR.
+  Unlike the web player's one-shot HTTP WHIP, the Android publisher signals over a **WebSocket with
+  trickle ICE** — it connects to `…/api/devices/:id/live/publish/ws?token=<device_token>`
+  (`lib/live-publish-ws.js`), which proxies to go2rtc's `/api/ws?dst=<stream>`. This is go2rtc's own
+  client protocol and is required here: go2rtc's HTTP answer inlines its ICE candidates, and native
+  libwebrtc drops candidates that arrive before its transport exists ("JsepTransport doesn't exist"),
+  so it never connects. The WS answer carries no inline candidates and trickles them afterwards,
+  which lands cleanly. Browsers tolerate the inline form, so the web player keeps the simpler HTTP
+  route.
 - **Tizen / webOS / BrightSign:** no native publisher yet. These keep the screenshot stream.
 - **Any device that cannot publish** keeps the screenshot fallback, so nothing regresses.
 
@@ -127,6 +135,23 @@ logs that it could not persist the definition), so per-device `st_<hash>` entrie
 never accumulate in the config. They vanish on a go2rtc restart and are recreated on the next
 publish. A writable config also works if you want the definitions to survive restarts.
 
+## Codecs (H264 vs VP8)
+
+go2rtc's WebRTC MediaEngine registers **only H264/H265** for video, for both send and receive
+(`RegisterDefaultCodecs` in `pkg/webrtc/api.go`). A publisher that offers no H264 gets its video
+m-line rejected in the answer (`m=video 0`), the transport is never built, and no media flows.
+
+In practice this is invisible: every browser and virtually every real Android phone has a hardware
+H264 encoder and offers it. The one environment that does not is the **Android emulator** — its only
+H264 codec is a software OMX encoder that libwebrtc's `DefaultVideoEncoderFactory` excludes, so it
+offers VP8/VP9/AV1 only and stock go2rtc rejects it.
+
+If you need to publish from a device without an H264 encoder (emulator testing, or unusual hardware),
+build the **VP8/VP9-capable go2rtc** in [`docker/go2rtc-vp8/`](../docker/go2rtc-vp8/README.md) and
+use that image in place of `alexxit/go2rtc`. It adds VP8/VP9 to the receive set with a one-function
+patch. Caveat: a VP8/VP9 producer feeds only go2rtc's WebRTC consumers (which is what the dashboard
+live view uses); its RTSP/MP4/HLS/MSE outputs still require H264.
+
 `GET /api/devices/:id/live` reports `mode: "webrtc"` only when a publisher is **actually connected**
 (a go2rtc producer with a real `remote_addr`), not merely when the placeholder stream exists — so a
 tile shows the live feed only when there is one, and the snapshot otherwise. On a clean stop the
@@ -136,6 +161,37 @@ go2rtc's ICE-consent timeout (~30s) before the producer drops.
 Verified end to end against go2rtc 1.9.14 with a real headless Chromium: a WHEP viewer decodes
 frames straight from go2rtc and through the ScreenTinker signaling proxy, and a browser publisher
 pushes a track that a viewer then watches back through the proxy.
+
+## Talk (voice intercom + group PA)
+
+Two-way voice rides the same go2rtc path as live video, in **Opus** (which go2rtc registers by
+default, so no patched sidecar is needed for talk — only VP8 video needs the patch). Gated on the
+same three live-video flags plus the `remote.talk` capability, which a device declares only if it
+runs the WebRTC audio publisher/subscriber.
+
+- **Per-device (two-way):** the **🎙️ Talk** button in a device's top action bar. The operator's mic
+  plays on the device and the device's mic plays back to the operator. Two one-directional streams
+  per device (`tk_dn_<hash>` operator→device, `tk_up_<hash>` device→operator), because a go2rtc
+  stream has a single producer. The device runs a `microphone` foreground service ([`TalkService`]
+  → [`AudioTalker`], two audio legs); the operator runs two browser peer connections
+  ([`talk-client.js`]). Hardware echo-cancellation on the device stops the operator hearing
+  themselves. Each side publishes first and its subscribe leg RETRIES until the far producer exists
+  (an SFU intercom is a mutual-subscribe race).
+- **Group / workspace (one-way PA):** the **🎙️ Talk** button on a group header, and **🎙️ Talk to
+  all** in the dashboard header. The operator publishes their mic ONCE to a shared broadcast stream
+  (`tk_cast_g_<hash>` / `tk_cast_w_<hash>`); every device in scope SUBSCRIBES and plays it
+  (listen-only — no device mic, so a whole group's mics never mix into noise, and listening needs no
+  RECORD_AUDIO). The server fans a `device:talk-start{mode:"listen"}` out to each in-scope device,
+  filtered by the same per-device gates (write access + `remote.talk` + the device's live flags), so
+  a broadcast never makes a device play audio it is not individually cleared for. The device's
+  listen leg resolves its channel through the device-authenticated proxy, which validates the device
+  belongs to that group/workspace before subscribing.
+
+Signaling for the device legs uses the WebSocket + trickle proxy (`lib/live-publish-ws.js`, routes
+`talk/publish`, `talk/subscribe`, `talk/listen`) for the same reason live video does; the operator's
+browser legs use the plain HTTP WHIP/WHEP routes (`/talk/publish`, `/talk/view`, and the group /
+workspace `/talk/publish`). Talk is fail-soft: any failure just leaves no audio, never touching
+playback or live video.
 
 ## If go2rtc is down
 

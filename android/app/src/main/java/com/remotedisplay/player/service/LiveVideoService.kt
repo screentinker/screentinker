@@ -13,6 +13,7 @@ import com.remotedisplay.player.RemoteDisplayApp
 import com.remotedisplay.player.remote.LiveVideoPublisher
 import org.json.JSONArray
 import org.webrtc.PeerConnection
+import java.util.concurrent.Executors
 
 /**
  * #go2rtc — foreground service that owns the live-video MediaProjection sender.
@@ -28,7 +29,17 @@ import org.webrtc.PeerConnection
  */
 class LiveVideoService : Service() {
 
-    private var publisher: LiveVideoPublisher? = null
+    @Volatile private var publisher: LiveVideoPublisher? = null
+
+    // Building and tearing down a WebRTC sender is heavy (PeerConnectionFactory init, screen capture
+    // start, and — on teardown — native dispose that blocks until WebRTC's own threads drain). Doing
+    // that inline in onStartCommand runs it on the MAIN thread, and under the dashboard's rapid
+    // start->stop->start (it re-requests publish on every not_publishing, and reopening the tile
+    // repeats it) the main thread blocks past the foreground-service deadline -> "Timeout executing
+    // service" ANR. So all start/stop work runs on this single background thread, which also
+    // serializes it: no two starts or a start racing a stop. onStartCommand only enters the
+    // foreground (fast, must stay on main) and hands off.
+    private val ctl = Executors.newSingleThreadExecutor { r -> Thread(r, "live-video-ctl") }
 
     companion object {
         private const val TAG = "LiveVideoService"
@@ -64,13 +75,16 @@ class LiveVideoService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            try { publisher?.stop() } catch (_: Throwable) {}
-            publisher = null
+            // Tear down off the main thread; stop the foreground/service now. onDestroy also stops
+            // the publisher, but stop() is idempotent so a double call is harmless.
+            ctl.execute { try { publisher?.stop() } catch (_: Throwable) {}; publisher = null }
             stopSelf()
             return START_NOT_STICKY
         }
 
-        // Enter the foreground with the mediaProjection type FIRST (Android 14+ requirement).
+        // Enter the foreground with the mediaProjection type FIRST (Android 14+ requirement, and it
+        // must happen on the main thread before we return). getMediaProjection() runs later on the
+        // ctl thread, after this has registered the foreground state.
         startForegroundCompat()
 
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
@@ -92,15 +106,28 @@ class LiveVideoService : Service() {
         val ice = try { LiveVideoPublisher.parseIceServers(JSONArray(intent?.getStringExtra(EXTRA_ICE) ?: "[]")) }
                   catch (_: Throwable) { emptyList<PeerConnection.IceServer>() }
 
-        return try {
-            publisher?.stop()
-            publisher = LiveVideoPublisher(applicationContext, serverUrl, deviceId, deviceToken).also {
-                it.start(data, ice)
+        // All the heavy lifting happens on the ctl thread; onStartCommand returns immediately.
+        ctl.execute {
+            try {
+                val cur = publisher
+                if (cur != null && cur.isLive) {
+                    // Already publishing — a duplicate request (dashboard retry / tile reopened).
+                    // Keep the live sender; drop this now-spent projection token rather than churn.
+                    Log.i(TAG, "already live; ignoring duplicate start")
+                    return@execute
+                }
+                cur?.stop()
+                publisher = LiveVideoPublisher(applicationContext, serverUrl, deviceId, deviceToken).also {
+                    it.start(data, ice)
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "start failed: ${t.message}", t)
+                try { publisher?.stop() } catch (_: Throwable) {}
+                publisher = null
+                stopSelf()
             }
-            START_STICKY
-        } catch (t: Throwable) {
-            Log.e(TAG, "start failed: ${t.message}", t); stopSelf(); START_NOT_STICKY
         }
+        return START_STICKY
     }
 
     private fun startForegroundCompat() {
@@ -116,8 +143,10 @@ class LiveVideoService : Service() {
     }
 
     override fun onDestroy() {
-        try { publisher?.stop() } catch (_: Throwable) {}
-        publisher = null
+        // Final teardown on the ctl thread (dispose can block), then let it drain and shut down.
+        val p = publisher; publisher = null
+        ctl.execute { try { p?.stop() } catch (_: Throwable) {} }
+        ctl.shutdown()
         super.onDestroy()
     }
 }

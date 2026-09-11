@@ -6,18 +6,19 @@ import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONArray
+import org.json.JSONObject
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
-import org.webrtc.RTCStatsReport
 import org.webrtc.RtpTransceiver
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
@@ -37,12 +38,19 @@ import java.util.concurrent.TimeUnit
  * to MediaProjection is still required once (the system dialog, or a device-owner auto-grant); this
  * class is handed the granted result Intent and drives the WebRTC sender from there.
  *
- * The wire contract is identical to the web player:
+ * SIGNALING — WebSocket + trickle ICE, matching go2rtc's own web client. We first tried one-shot
+ * WHIP-over-HTTP (offer with candidates inline -> single answer). It failed on real libwebrtc: the
+ * answer's inline candidates were applied while the JsepTransport was still being created and were
+ * silently dropped ("JsepTransport doesn't exist"), so the peer never learned go2rtc's candidates
+ * and never connected — even though a browser pulling the SAME stream through the SAME go2rtc+TURN
+ * rig worked, proving the fault was ours, not the network. go2rtc's answer over its WS API instead
+ * carries NO inline candidates and trickles them afterwards, which lands cleanly. So:
  *   1. build a sendonly PeerConnection whose only track is the screen capture,
- *   2. createOffer, gather ICE (non-trickle), POST the SDP to the device-authenticated route
- *        POST /api/devices/:id/live/publish?token=<device_token>
- *      which proxies to go2rtc's dst= endpoint,
- *   3. setRemoteDescription(answer).
+ *   2. createOffer, setLocalDescription, and open a WebSocket to the device-authenticated route
+ *        ws(s)://<server>/api/devices/:id/live/publish/ws?token=<device_token>
+ *      which proxies to go2rtc's  /api/ws?dst=<stream>  (server never exposes go2rtc's url/token),
+ *   3. send {type:"webrtc/offer", value:<sdp>}; receive {type:"webrtc/answer", value:<sdp>} ->
+ *      setRemoteDescription; trickle both ways with {type:"webrtc/candidate", value:<candidate>}.
  *
  * Fail-soft like every other capture path: any failure logs and stops; nothing here can interrupt
  * playback (MediaProjection reads the framebuffer, it does not touch the player's surfaces).
@@ -57,8 +65,10 @@ class LiveVideoPublisher(
     private val deviceToken: String,
 ) {
     private val tag = "LiveVideoPublisher"
-    private val http = OkHttpClient.Builder()
-        .callTimeout(8, TimeUnit.SECONDS)
+    // Long-lived client for the signaling WebSocket: NO call timeout (that would kill the socket),
+    // a ping keeps it open through NATs/proxies.
+    private val wsClient = OkHttpClient.Builder()
+        .pingInterval(20, TimeUnit.SECONDS)
         .build()
 
     private var factory: PeerConnectionFactory? = null
@@ -68,11 +78,13 @@ class LiveVideoPublisher(
     private var videoSource: VideoSource? = null
     private var videoTrack: VideoTrack? = null
     private var surfaceHelper: SurfaceTextureHelper? = null
+    private var ws: WebSocket? = null
+    @Volatile private var wsOpen = false
     @Volatile private var live = false
     @Volatile private var stopped = false
-    @Volatile private var posted = false
     private val main = Handler(Looper.getMainLooper())
-    private val iceGatherCapMs = 2500L   // non-trickle: publish after this even if gathering has not COMPLETEd
+    // Local candidates produced before the WS is open; flushed on open. Guarded by `this`.
+    private val pendingLocal = ArrayList<IceCandidate>()
 
     val isLive: Boolean get() = live
 
@@ -120,119 +132,100 @@ class LiveVideoPublisher(
 
             val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-                continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
+                // Trickle ICE: gather continually and ship each candidate over the WS as it appears.
+                continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             }
             val pc = f.createPeerConnection(rtcConfig, PcObserver()) ?: run {
                 Log.e(tag, "createPeerConnection returned null"); stop(); return
             }
             peer = pc
+            Log.i(tag, "ICE servers: " + iceServers.size)
             // Sendonly: the panel only publishes; it never wants media back.
             pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
 
-            createOfferAndPublish(pc)
+            createOfferAndSignal(pc)
         } catch (t: Throwable) {
             Log.e(tag, "start failed: ${t.message}", t)
             stop()
         }
     }
 
-    private fun createOfferAndPublish(pc: PeerConnection) {
+    private fun createOfferAndSignal(pc: PeerConnection) {
         val constraints = MediaConstraints()
         pc.createOffer(object : SimpleSdpObserver("createOffer") {
             override fun onCreateSuccess(sdp: SessionDescription) {
                 pc.setLocalDescription(object : SimpleSdpObserver("setLocalDescription") {
                     override fun onSetSuccess() {
-                        // Non-trickle: publish when gathering completes OR the cap elapses, whichever
-                        // is first, so a slow/failing STUN (common behind NAT) never wedges publishing.
-                        main.postDelayed({ postOfferAndAnswer() }, iceGatherCapMs)
+                        // Trickle: open the WS and send the offer NOW (candidate-less); candidates
+                        // follow over the socket as gathering produces them.
+                        openSignaling(pc, sdp.description)
                     }
                 }, sdp)
             }
         }, constraints)
     }
 
-    // Called once ICE gathering completes: the localDescription now carries the candidates, so we
-    // POST the full offer to the device-authenticated publish route and apply the answer.
     @Synchronized
-    private fun postOfferAndAnswer() {
-        if (posted || stopped) return
-        posted = true
-        val pc = peer ?: return
-        val offer = pc.localDescription ?: run { Log.e(tag, "no local description after gathering"); return }
-        Thread {
-            try {
-                val base = serverUrl.trimEnd('/')
-                val url = "$base/api/devices/" + java.net.URLEncoder.encode(deviceId, "UTF-8") +
-                    "/live/publish?token=" + java.net.URLEncoder.encode(deviceToken, "UTF-8")
-                val req = Request.Builder()
-                    .url(url)
-                    .post(offer.description.toRequestBody("application/sdp".toMediaType()))
-                    .build()
-                http.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) { Log.w(tag, "publish rejected: HTTP ${resp.code}"); stop(); return@Thread }
-                    val answerSdp = resp.body?.string().orEmpty()
-                    if (answerSdp.isBlank()) { Log.w(tag, "empty answer"); stop(); return@Thread }
-                    pc.setRemoteDescription(object : SimpleSdpObserver("setRemoteDescription") {
-                        override fun onSetSuccess() {
-                            live = true; Log.i(tag, "publishing live")
-                            // ⚠️ Feed go2rtc's ICE candidates via addIceCandidate, but DEFERRED. go2rtc
-                            // returns a non-trickle WHIP answer with candidates inline; libwebrtc
-                            // applies those (and even ones added synchronously in this callback) while
-                            // the JsepTransport is still being created, and silently drops them
-                            // ("JsepTransport doesn't exist"), so the peer ends up with no remote
-                            // candidates and never connects. go2rtc's own web client dodges this by
-                            // trickling over a websocket AFTER setup. We replicate that: post the
-                            // candidates onto the loop so they land once the transport exists.
-                            main.postDelayed({
-                                if (stopped || peer !== pc) return@postDelayed
-                                var added = 0
-                                for (line in answerSdp.split("\n")) {
-                                    val t = line.trim()
-                                    if (t.startsWith("a=candidate:")) {
-                                        try { pc.addIceCandidate(IceCandidate("0", 0, t.substring(2))); added++ } catch (_: Throwable) {}
-                                    }
-                                }
-                                Log.i(tag, "re-added $added answer ICE candidate(s) [deferred]")
-                            }, 800)
-                            startStatsProbe(pc)
-                        }
-                        override fun onSetFailure(error: String?) { Log.e(tag, "setRemote failed: $error"); stop() }
-                    }, SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
+    private fun openSignaling(pc: PeerConnection, offerSdp: String) {
+        if (stopped || peer !== pc) return
+        val base = serverUrl.trimEnd('/')
+        val url = "$base/api/devices/" + enc(deviceId) + "/live/publish/ws?token=" + enc(deviceToken)
+        val req = Request.Builder().url(url).build()
+        ws = wsClient.newWebSocket(req, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                synchronized(this@LiveVideoPublisher) {
+                    if (stopped) { try { webSocket.close(1000, null) } catch (_: Throwable) {}; return }
+                    wsOpen = true
+                    Log.i(tag, "signaling WS open -> sending offer")
+                    webSocket.send(msg("webrtc/offer", offerSdp))
+                    // Flush any candidates that were gathered before the socket opened.
+                    for (c in pendingLocal) webSocket.send(msg("webrtc/candidate", c.sdp))
+                    pendingLocal.clear()
                 }
-            } catch (t: Throwable) {
-                Log.e(tag, "publish exchange failed: ${t.message}", t)
-                stop()
             }
-        }.start()
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                try {
+                    val o = JSONObject(text)
+                    when (o.optString("type")) {
+                        "webrtc/answer" -> {
+                            val ans = o.optString("value")
+                            if (ans.isNullOrBlank()) { Log.w(tag, "empty answer"); return }
+                            main.post { applyAnswer(pc, ans) }
+                        }
+                        "webrtc/candidate" -> {
+                            val cand = o.optString("value")
+                            if (!cand.isNullOrBlank()) main.post {
+                                if (!stopped && peer === pc) {
+                                    try { pc.addIceCandidate(IceCandidate("0", 0, cand)) } catch (t: Throwable) { Log.w(tag, "addIceCandidate failed: ${t.message}") }
+                                }
+                            }
+                        }
+                        "error" -> { Log.w(tag, "go2rtc error: ${o.optString("value")}"); stop() }
+                        else -> { /* ignore other go2rtc chatter */ }
+                    }
+                } catch (t: Throwable) { Log.w(tag, "bad signaling message: ${t.message}") }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.w(tag, "signaling WS failure: ${t.message} (http ${response?.code})"); stop()
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.i(tag, "signaling WS closed ($code $reason)")
+                // A close after we are live is go2rtc dropping signaling; media may keep flowing over
+                // the already-negotiated transport, so do NOT tear down a live session here.
+                if (!live) stop()
+            }
+        })
     }
 
-    // Definitive proof the encoder is producing and the transport is sending: poll outbound-rtp
-    // (framesEncoded / bytesSent) and the selected ICE candidate pair. Independent of go2rtc.
-    private var statsCount = 0
-    private fun startStatsProbe(pc: PeerConnection) {
-        statsCount = 0
-        val poll = object : Runnable {
-            override fun run() {
-                if (stopped || peer !== pc) return
-                pc.getStats { report: RTCStatsReport ->
-                    var fe = 0L; var bs = 0L; var kind = ""
-                    var pair = ""
-                    for (st in report.statsMap.values) {
-                        if (st.type == "outbound-rtp" && (st.members["kind"] == "video")) {
-                            fe = (st.members["framesEncoded"] as? Number)?.toLong() ?: fe
-                            bs = (st.members["bytesSent"] as? Number)?.toLong() ?: bs
-                            kind = "video"
-                        }
-                        if (st.type == "candidate-pair" && (st.members["nominated"] == true || st.members["state"] == "succeeded")) {
-                            pair = "state=" + st.members["state"] + " bytesSent=" + st.members["bytesSent"]
-                        }
-                    }
-                    Log.i(tag, "STATS outbound-rtp[$kind] framesEncoded=$fe bytesSent=$bs | selectedPair{$pair}")
-                }
-                if (++statsCount < 6 && !stopped) main.postDelayed(this, 2000)
-            }
-        }
-        main.postDelayed(poll, 2000)
+    private fun applyAnswer(pc: PeerConnection, answerSdp: String) {
+        if (stopped || peer !== pc) return
+        pc.setRemoteDescription(object : SimpleSdpObserver("setRemoteDescription") {
+            override fun onSetSuccess() { live = true; Log.i(tag, "publishing live (answer applied; candidates trickling)") }
+            override fun onSetFailure(error: String?) { Log.e(tag, "setRemote failed: $error"); stop() }
+        }, SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
     }
 
     @Synchronized
@@ -240,6 +233,9 @@ class LiveVideoPublisher(
         if (stopped) return
         stopped = true
         live = false
+        wsOpen = false
+        pendingLocal.clear()
+        try { ws?.close(1000, "stop") } catch (_: Throwable) {}
         try { capturer?.stopCapture() } catch (_: Throwable) {}
         try { videoTrack?.dispose() } catch (_: Throwable) {}
         try { videoSource?.dispose() } catch (_: Throwable) {}
@@ -248,20 +244,34 @@ class LiveVideoPublisher(
         try { peer?.close(); peer?.dispose() } catch (_: Throwable) {}
         try { factory?.dispose() } catch (_: Throwable) {}
         try { eglBase?.release() } catch (_: Throwable) {}
+        ws = null
         capturer = null; videoTrack = null; videoSource = null; surfaceHelper = null
         peer = null; factory = null; eglBase = null
         Log.i(tag, "stopped")
     }
 
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+    private fun msg(type: String, value: String) = JSONObject().put("type", type).put("value", value).toString()
+
     private inner class PcObserver : PeerConnection.Observer {
-        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
-            if (state == PeerConnection.IceGatheringState.COMPLETE) postOfferAndAnswer()
+        // Trickle: ship each local candidate over the WS as it is gathered (queue until WS open).
+        override fun onIceCandidate(candidate: IceCandidate?) {
+            val c = candidate ?: return
+            synchronized(this@LiveVideoPublisher) {
+                val sock = ws
+                if (wsOpen && sock != null) sock.send(msg("webrtc/candidate", c.sdp))
+                else pendingLocal.add(c)
+            }
         }
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+            Log.i(tag, "ICE connection state: $state")
             if (state == PeerConnection.IceConnectionState.FAILED ||
                 state == PeerConnection.IceConnectionState.CLOSED) { Log.w(tag, "ICE $state"); stop() }
         }
-        override fun onIceCandidate(candidate: IceCandidate?) { /* non-trickle: candidates ride the offer */ }
+        override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
+            Log.i(tag, "peer connection state: $newState")
+        }
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
         override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
         override fun onIceConnectionReceivingChange(p0: Boolean) {}
         override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}

@@ -85,6 +85,15 @@ const io = new Server(server, {
   pingTimeout: config.pingTimeout,
 });
 
+// #go2rtc — WebSocket signaling proxy for native (Android) live-video publishers. Attaches its own
+// handler to server 'upgrade' for /api/devices/:id/live/publish/ws only; every other upgrade (all of
+// socket.io's) is left untouched. See lib/live-publish-ws.js for why WS+trickle beats HTTP WHIP here.
+try {
+  require('./lib/live-publish-ws').attach(server);
+} catch (e) {
+  console.warn('[go2rtc] live-publish WS proxy not attached:', e && e.message);
+}
+
 // Middleware
 const helmet = require('helmet');
 
@@ -409,6 +418,13 @@ app.get('/player/offline-play-queue.js', (req, res) => {
 app.get('/player/live-publish.js', (req, res) => {
   res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'lib', 'live-publish.js'));
+});
+
+// #talk: the web-player voice-intercom module (lib/talk-web.js), same serving pattern. Harmless
+// when talk is unused — it only acts on a device:talk-start.
+app.get('/player/talk.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'talk-web.js'));
 });
 
 // Offline content-cache policy, imported by the service worker via importScripts and by the Node

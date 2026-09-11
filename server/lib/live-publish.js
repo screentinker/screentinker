@@ -87,6 +87,30 @@
         const vids = tracks.filter((t) => t.kind === 'video');
         if (vids[0]) vids[0].onended = () => stop('share_ended');
 
+        // Prefer H264 for video. go2rtc restreams H264/H265 natively and every browser decodes
+        // H264, so it is the codec that reliably reaches a viewer. VP8/VP9 exist in the sidecar only
+        // as a fallback for a publisher with NO H264 encoder (the Android emulator). Chrome, left to
+        // itself, OFFERS VP8 first and go2rtc mirrors that order — and some capture sources produce
+        // no VP8 frames, so the viewer connects but sees a black tile. Reordering the offer so H264
+        // leads keeps this browser path exactly as it was before VP8 was added to the sidecar.
+        // Guarded: absent in the node test harness (mock pc, no RTCRtpSender).
+        try {
+          const RS = (typeof window !== 'undefined') && window.RTCRtpSender;
+          if (RS && RS.getCapabilities && pc.getTransceivers) {
+            const caps = RS.getCapabilities('video');
+            if (caps && caps.codecs && caps.codecs.length) {
+              const pref = caps.codecs.slice().sort((a, b) => {
+                const h = (c) => /h264/i.test(c.mimeType) ? 0 : 1;   // H264 first, rest keep order
+                return h(a) - h(b);
+              });
+              for (const tr of pc.getTransceivers()) {
+                const kind = tr.sender && tr.sender.track && tr.sender.track.kind;
+                if (kind === 'video' && tr.setCodecPreferences) { try { tr.setCodecPreferences(pref); } catch (_) {} }
+              }
+            }
+          }
+        } catch (_) { /* codec preference is best-effort; go2rtc still negotiates without it */ }
+
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         await waitForIce(pc, iceGatherWaitMs);
