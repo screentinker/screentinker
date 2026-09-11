@@ -175,20 +175,25 @@ class LiveVideoPublisher(
                     pc.setRemoteDescription(object : SimpleSdpObserver("setRemoteDescription") {
                         override fun onSetSuccess() {
                             live = true; Log.i(tag, "publishing live")
-                            // ⚠️ Re-add the answer's ICE candidates EXPLICITLY. go2rtc returns a
-                            // non-trickle answer with candidates inline, but libwebrtc applies those
-                            // inline candidates while the JsepTransport is still being created and
-                            // silently drops them ("JsepTransport doesn't exist"), leaving the peer
-                            // with no remote candidates and no connection. Adding them here, after
-                            // the transport exists, is what actually feeds go2rtc's candidates to ICE.
-                            var added = 0
-                            for (line in answerSdp.split("\n")) {
-                                val t = line.trim()
-                                if (t.startsWith("a=candidate:")) {
-                                    try { pc.addIceCandidate(IceCandidate("0", 0, t.substring(2))); added++ } catch (_: Throwable) {}
+                            // ⚠️ Feed go2rtc's ICE candidates via addIceCandidate, but DEFERRED. go2rtc
+                            // returns a non-trickle WHIP answer with candidates inline; libwebrtc
+                            // applies those (and even ones added synchronously in this callback) while
+                            // the JsepTransport is still being created, and silently drops them
+                            // ("JsepTransport doesn't exist"), so the peer ends up with no remote
+                            // candidates and never connects. go2rtc's own web client dodges this by
+                            // trickling over a websocket AFTER setup. We replicate that: post the
+                            // candidates onto the loop so they land once the transport exists.
+                            main.postDelayed({
+                                if (stopped || peer !== pc) return@postDelayed
+                                var added = 0
+                                for (line in answerSdp.split("\n")) {
+                                    val t = line.trim()
+                                    if (t.startsWith("a=candidate:")) {
+                                        try { pc.addIceCandidate(IceCandidate("0", 0, t.substring(2))); added++ } catch (_: Throwable) {}
+                                    }
                                 }
-                            }
-                            Log.i(tag, "re-added $added answer ICE candidate(s)")
+                                Log.i(tag, "re-added $added answer ICE candidate(s) [deferred]")
+                            }, 800)
                             startStatsProbe(pc)
                         }
                         override fun onSetFailure(error: String?) { Log.e(tag, "setRemote failed: $error"); stop() }
