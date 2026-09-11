@@ -2610,6 +2610,22 @@
       // security taints the canvas) - those frames simply hold the last drawable frame. The real
       // signage answer for those is the deferred Android MediaProjection publisher.
       let liveCaptureStop = null;
+      // Direct capture of the playing <video> element: RFP-safe (no canvas readback) and cheap.
+      // Firefox uses mozCaptureStream(). Returns a MediaStream or null if there is no usable video.
+      function captureVideoDirect() {
+        const container = document.getElementById('playerContainer') || document.body;
+        const isVis = (el) => { if (!el || el.offsetParent === null) return false; try { const st = getComputedStyle(el); if (st.visibility === 'hidden' || parseFloat(st.opacity || '1') < 0.05) return false; } catch (_) {} return (el.offsetWidth || 0) > 0; };
+        const v = Array.from(container.querySelectorAll('video')).filter((x) => x.readyState >= 2 && (x.videoWidth || 0) > 0 && !x.paused && !x.ended && isVis(x)).pop();
+        if (!v) return null;
+        try {
+          const s = v.captureStream ? v.captureStream() : (v.mozCaptureStream ? v.mozCaptureStream() : null);
+          if (s && s.getVideoTracks && s.getVideoTracks().length) { console.log('[live] capture: direct video element'); return s; }
+        } catch (e) { console.log('[live] direct video capture failed:', e && e.name); }
+        return null;
+      }
+      // Canvas mirror: the fallback for image/mixed content (drawImage of same-origin images).
+      // NOTE: under Firefox privacy.resistFingerprinting this may be blanked/black - that is a
+      // browser anti-fingerprinting measure, not our bug; direct video capture above avoids it.
       function startStageCapture(fps) {
         const container = document.getElementById('playerContainer') || document.body;
         const canvas = document.createElement('canvas');
@@ -2678,7 +2694,7 @@
             deviceToken: config.deviceToken,
             serverUrl: config.serverUrl || '',
             iceServers: (data && data.iceServers) || undefined,
-            getStream: () => startStageCapture(15),
+            getStream: () => captureVideoDirect() || startStageCapture(15),   // direct video (RFP-safe) else canvas mirror
             onState: (st, reason) => {
               console.log('[live] publish', st, reason || '');
               if (st === 'stopped' && liveCaptureStop) { try { liveCaptureStop(); } catch (_) {} liveCaptureStop = null; }

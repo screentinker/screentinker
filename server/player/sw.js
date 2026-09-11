@@ -1,3 +1,5 @@
+// v27: web-player live capture now prefers direct video.captureStream (RFP-safe, no canvas) with
+// the canvas mirror as an image fallback. Bumped so cache-first players re-fetch.
 // v26: shipped the web-player live self-capture (index.html device:live-publish handler +
 // /player/live-publish.js). Bumped so cache-first players pick up the new code on next load.
 // v25: the rev-pinned cache-first branch now also covers /api/content/:id/bundle, and the player
@@ -19,7 +21,7 @@
 // — a player then ran a new index.html against a stale st-bridge.js and threw on every heartbeat.
 // Bump whenever a shipped /player asset changes shape; content lives in its own cache, so this
 // costs a small re-download and never re-fetches the playlist.
-const CACHE_NAME = 'rd-player-v26';
+const CACHE_NAME = 'rd-player-v27';
 // Content lives in its own cache so the shell can be re-versioned (the activate handler deletes
 // every cache that is not CACHE_NAME) WITHOUT throwing away megabytes of media that are still
 // perfectly valid. Rolling the shell used to mean a player re-downloaded its entire playlist.
