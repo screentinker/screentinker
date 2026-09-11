@@ -17,6 +17,7 @@ import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RTCStatsReport
 import org.webrtc.RtpTransceiver
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
@@ -172,7 +173,24 @@ class LiveVideoPublisher(
                     val answerSdp = resp.body?.string().orEmpty()
                     if (answerSdp.isBlank()) { Log.w(tag, "empty answer"); stop(); return@Thread }
                     pc.setRemoteDescription(object : SimpleSdpObserver("setRemoteDescription") {
-                        override fun onSetSuccess() { live = true; Log.i(tag, "publishing live") }
+                        override fun onSetSuccess() {
+                            live = true; Log.i(tag, "publishing live")
+                            // ⚠️ Re-add the answer's ICE candidates EXPLICITLY. go2rtc returns a
+                            // non-trickle answer with candidates inline, but libwebrtc applies those
+                            // inline candidates while the JsepTransport is still being created and
+                            // silently drops them ("JsepTransport doesn't exist"), leaving the peer
+                            // with no remote candidates and no connection. Adding them here, after
+                            // the transport exists, is what actually feeds go2rtc's candidates to ICE.
+                            var added = 0
+                            for (line in answerSdp.split("\n")) {
+                                val t = line.trim()
+                                if (t.startsWith("a=candidate:")) {
+                                    try { pc.addIceCandidate(IceCandidate("0", 0, t.substring(2))); added++ } catch (_: Throwable) {}
+                                }
+                            }
+                            Log.i(tag, "re-added $added answer ICE candidate(s)")
+                            startStatsProbe(pc)
+                        }
                         override fun onSetFailure(error: String?) { Log.e(tag, "setRemote failed: $error"); stop() }
                     }, SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
                 }
@@ -181,6 +199,35 @@ class LiveVideoPublisher(
                 stop()
             }
         }.start()
+    }
+
+    // Definitive proof the encoder is producing and the transport is sending: poll outbound-rtp
+    // (framesEncoded / bytesSent) and the selected ICE candidate pair. Independent of go2rtc.
+    private var statsCount = 0
+    private fun startStatsProbe(pc: PeerConnection) {
+        statsCount = 0
+        val poll = object : Runnable {
+            override fun run() {
+                if (stopped || peer !== pc) return
+                pc.getStats { report: RTCStatsReport ->
+                    var fe = 0L; var bs = 0L; var kind = ""
+                    var pair = ""
+                    for (st in report.statsMap.values) {
+                        if (st.type == "outbound-rtp" && (st.members["kind"] == "video")) {
+                            fe = (st.members["framesEncoded"] as? Number)?.toLong() ?: fe
+                            bs = (st.members["bytesSent"] as? Number)?.toLong() ?: bs
+                            kind = "video"
+                        }
+                        if (st.type == "candidate-pair" && (st.members["nominated"] == true || st.members["state"] == "succeeded")) {
+                            pair = "state=" + st.members["state"] + " bytesSent=" + st.members["bytesSent"]
+                        }
+                    }
+                    Log.i(tag, "STATS outbound-rtp[$kind] framesEncoded=$fe bytesSent=$bs | selectedPair{$pair}")
+                }
+                if (++statsCount < 6 && !stopped) main.postDelayed(this, 2000)
+            }
+        }
+        main.postDelayed(poll, 2000)
     }
 
     @Synchronized
