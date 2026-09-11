@@ -287,6 +287,7 @@
   <script src="/player/schedule-eval.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
+  <script src="/player/live-publish.js"></script>
   <script src="/player/trigger-resolve.js"></script>
   <script src="/player/media-mute.js"></script>
   <script src="/player/orientation-style.js"></script>
@@ -2598,6 +2599,35 @@
 
       // #109: PiP overlay — a pushed floating layer above the playlist. The player
       // fetches uri itself (same trust model as remote_url content).
+      // #go2rtc live publish. The dashboard requests a screen; the player pushes it into go2rtc.
+      // A browser only grants getDisplayMedia from a user gesture, so start on an active activation
+      // now, else arm the next tap/key. Publishing is best-effort: if the player cannot (no
+      // support, no credentials, denied) it simply keeps rendering. Never blocks content.
+      socket.on('device:live-publish', (data) => {
+        const LP = window.STLivePublish;
+        if (!LP) return;
+        const action = data && data.action;
+        if (action === 'stop') { try { LP.stop(); } catch (_) {} return; }
+        if (action !== 'start') return;
+        if (!config || !config.deviceId || !config.deviceToken || !LP.isSupported()) {
+          console.log('[live] publish requested but not available on this player'); return;
+        }
+        const opts = {
+          deviceId: config.deviceId,
+          deviceToken: config.deviceToken,
+          serverUrl: config.serverUrl || '',
+          iceServers: (data && data.iceServers) || undefined,
+          onState: (st, reason) => console.log('[live] publish', st, reason || ''),
+        };
+        const go = () => { try { LP.start(opts); } catch (_) {} };
+        // navigator.userActivation is not everywhere; treat its absence as "needs a gesture".
+        if (navigator.userActivation && navigator.userActivation.isActive) { go(); return; }
+        console.log('[live] publish armed - waiting for a screen interaction to grant capture');
+        const arm = () => { window.removeEventListener('pointerdown', arm); window.removeEventListener('keydown', arm); go(); };
+        window.addEventListener('pointerdown', arm, { once: true });
+        window.addEventListener('keydown', arm, { once: true });
+      });
+
       socket.on('device:pip-show', (data) => pipShow(data));
       socket.on('device:pip-clear', (data) => pipClear(data && data.pip_id));
     }

@@ -636,6 +636,7 @@ export default {
   'device.confirm_discard_draft': 'Discard all unpublished changes and revert to the last published version?',
   'device.failed_load': 'Failed to load device',
   'device.no_screenshot': 'No screenshot available. Click "Screenshot" to capture one.',
+  'device.live_badge': 'Live',
   // Shown instead of the line above on a player that cannot capture its own screen — pointing at
   // a "Screenshot" button that is correctly not rendered reads as a broken dashboard.
   'device.no_screenshot_unsupported': 'This player cannot capture its own screen.',

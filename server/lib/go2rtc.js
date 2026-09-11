@@ -108,13 +108,21 @@ async function hasStream(name) {
   return !!(streams && typeof streams === 'object' && Object.prototype.hasOwnProperty.call(streams, name));
 }
 
-// Proxy a WebRTC SDP exchange (WHEP-style) for one stream. The browser POSTs its offer to a
-// ScreenTinker route; that route calls this after checking workspace access. go2rtc answers with
-// the SDP answer. dir is 'sub' (watch) or 'pub' (publish); go2rtc uses the same endpoint and infers
-// direction from the SDP, so dir is advisory for logging today.
+// Proxy a WebRTC SDP exchange for one stream. A ScreenTinker route POSTs the client's offer here
+// after checking access; go2rtc answers with the SDP answer.
+//
+//   dir 'sub' (watch)    -> ?src=NAME : go2rtc SENDS this stream's media to the client (a dashboard
+//                           watching a screen). The client offered recvonly.
+//   dir 'pub' (publish)  -> ?dst=NAME : go2rtc RECEIVES the client's media INTO this stream (a web
+//                           player publishing its screen), creating the stream if it does not exist.
+//                           The client offered sendonly.
+//
+// The two are different query params to go2rtc, so this is not merely advisory: a publisher must
+// hit dst or go2rtc has nothing to add the producer to.
 async function webrtcExchange(name, sdpOffer, dir = 'sub') {
   if (!name || !sdpOffer) return null;
-  const r = await call('POST', '/api/webrtc?src=' + encodeURIComponent(name), {
+  const param = dir === 'pub' ? 'dst' : 'src';
+  const r = await call('POST', `/api/webrtc?${param}=` + encodeURIComponent(name), {
     body: sdpOffer,
     headers: { 'Content-Type': 'application/sdp' },
     raw: true,

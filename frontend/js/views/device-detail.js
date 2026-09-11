@@ -1,11 +1,12 @@
 import { api } from '../api.js';
-import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand } from '../socket.js';
+import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish } from '../socket.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge, hydrateAuthImages, screenshotUrl } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
 import * as gettingStarted from '../components/getting-started.js';
+import { LiveViewer, whenVisible } from '../lib/webrtc-viewer.js';
 
 // The player distinguishes three cases for the Wi-Fi name, because "--" was hiding a real
 // answer: Android 8.1+ refuses to reveal the SSID to an app without location permission, and a
@@ -19,6 +20,62 @@ function frameNowPlaying() {
   if (stage && img && img.tagName === 'IMG') frameDeviceOutput(stage, img, currentDevice?.orientation);
 }
 
+// #go2rtc — put a live WebRTC feed in the Now Playing tile when the server, workspace and device
+// all have live video enabled and a publisher is connected. The screenshot underneath is the
+// always-present fallback: the viewer only reveals the <video> once a stream actually connects and
+// re-hides it on any failure, so a missing sidecar or a panel that never publishes just shows the
+// same screenshot tile as before. Connect only while the tile is on screen (a hidden tab does not
+// intersect), so navigating away or switching tabs tears the peer down.
+function startLiveTile(deviceId) {
+  stopLiveTile();
+  const stage = document.getElementById('screenshotStage');
+  const video = document.getElementById('liveVideo');
+  const badge = document.getElementById('liveBadge');
+  if (!stage || !video) return;
+
+  const hideLive = () => {
+    video.hidden = true;
+    if (badge) badge.hidden = true;
+    try { video.srcObject = null; } catch (_) {}
+  };
+  let publishRequested = false;   // ask a player to publish at most once per visible session
+  let retryTimer = null;
+  const connect = () => {
+    if (liveViewer) liveViewer.stop();
+    liveViewer = new LiveViewer(deviceId, video, {
+      muted: true,
+      onConnected: () => { video.hidden = false; if (badge) badge.hidden = false; },
+      onFallback: (reason) => {
+        hideLive();
+        // Live is enabled and the sidecar is up, but nobody is publishing yet. Nudge the panel to
+        // start (a web player arms capture on its next interaction; the deferred Android publisher
+        // will start directly), then retry the viewer once so a stream that comes up is picked up.
+        if (reason === 'not_publishing' && !publishRequested) {
+          publishRequested = true;
+          requestLivePublish(deviceId);
+          retryTimer = setTimeout(() => { if (liveViewer) liveViewer.connect(); }, 3000);
+        }
+      },
+    });
+    liveViewer.connect();
+  };
+  const disconnect = () => {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (liveViewer) { liveViewer.stop(); liveViewer = null; }
+    hideLive();
+  };
+  liveViewerDispose = whenVisible(stage, { onVisible: connect, onHidden: disconnect });
+}
+
+function stopLiveTile() {
+  if (liveViewerDispose) { liveViewerDispose(); liveViewerDispose = null; }
+  if (liveViewer) { liveViewer.stop(); liveViewer = null; }
+  const video = document.getElementById('liveVideo');
+  const badge = document.getElementById('liveBadge');
+  if (video) { video.hidden = true; try { video.srcObject = null; } catch (_) {} }
+  if (badge) badge.hidden = true;
+}
+
 let currentDevice = null;
 let statusHandler = null;
 let screenshotHandler = null;
@@ -27,6 +84,8 @@ let logHandler = null;
 let shellHandler = null;
 let diagPollTimer = null; // polls a diag-smoothness widget's reported frame stats while the page is open
 let screenshotInterval = null;
+let liveViewer = null;        // #go2rtc WebRTC viewer for the Now Playing tile
+let liveViewerDispose = null; // IntersectionObserver disposer for the live tile
 let remoteActive = false;
 // Mirrors the Debug-logging checkbox so cleanup() can switch the device's stream back off.
 // Without this, leaving the screen left the panel streaming into nothing: the device kept
@@ -389,6 +448,10 @@ async function loadDevice(deviceId, activeTab = null) {
       <!-- Now Playing Tab -->
       <div class="tab-content active" id="tab-nowplaying">
         <div class="screenshot-container" id="screenshotStage">
+          <!-- Live WebRTC overlay (#go2rtc). Present but hidden; the viewer reveals it only once a
+               stream connects, and re-hides on any failure so the screenshot below shows through. -->
+          <video id="liveVideo" class="live-video" hidden autoplay playsinline muted></video>
+          <span id="liveBadge" class="live-badge" hidden>${t('device.live_badge')}</span>
           ${device.screenshot
             ? `<img id="currentScreenshot" src="${screenshotUrl(device.id, Date.now())}" alt="Current screen">`
             : `<div class="no-screenshot" id="currentScreenshot">
@@ -1118,6 +1181,7 @@ async function loadDevice(deviceId, activeTab = null) {
       screenshotInterval = setInterval(() => {
         if (!document.hidden) requestScreenshot(deviceId);
       }, 5000);
+      startLiveTile(deviceId);
     }
 
   } catch (err) {
@@ -2739,6 +2803,7 @@ export function cleanup() {
   if (logHandler) off('device-log', logHandler);
   if (shellHandler) off('shell-result', shellHandler);   // #161 owner-tools listener
   if (screenshotInterval) clearInterval(screenshotInterval);
+  stopLiveTile();
   if (remoteActive && currentDevice) stopRemote(currentDevice.id);
   // Same reasoning as stopRemote above: an operator who navigates away has stopped watching, so
   // the display should stop talking. Must run BEFORE currentDevice is cleared.

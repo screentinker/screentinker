@@ -78,3 +78,41 @@ test('a missing device is 404, not a crash', async () => {
   const r = await live(A.token, 'does-not-exist');
   assert.equal(r.status, 404);
 });
+
+// ── Publish endpoint (web player -> go2rtc). Device-authenticated (device_token), app-level, and
+// fail-soft: with no GO2RTC_URL it refuses with 409 rather than attempting anything.
+const sdpBody = (tok, id, token) => jfetch(
+  `/api/devices/${id}/live/publish${token ? '?token=' + encodeURIComponent(token) : ''}`,
+  { method: 'POST', headers: { 'Content-Type': 'application/sdp', ...(tok ? { 'X-Device-Token': tok } : {}) }, body: 'v=0\r\n' }
+);
+
+test('publish rejects a bad or missing device token with 401', async () => {
+  const id = crypto.randomUUID();
+  db.prepare("INSERT INTO devices (id,name,status,workspace_id,device_token,created_at) VALUES (?,?,'online',?,?,strftime('%s','now'))").run(id, 'Pub', A.wsId, 'realtoken123');
+  let r = await sdpBody(null, id);                 // no token
+  assert.equal(r.status, 401);
+  r = await sdpBody('wrongtoken', id);             // wrong token
+  assert.equal(r.status, 401);
+});
+
+test('publish with a valid token but no sidecar refuses with 409 (never a crash)', async () => {
+  const id = crypto.randomUUID();
+  db.prepare("INSERT INTO devices (id,name,status,workspace_id,device_token,live_video_enabled,created_at) VALUES (?,?,'online',?,?,1,strftime('%s','now'))").run(id, 'Pub2', A.wsId, 'tok-abc');
+  db.prepare('UPDATE workspaces SET live_video_enabled = 1 WHERE id = ?').run(A.wsId);
+  // device flag on, workspace flag on, master gate on — but GO2RTC_URL is '' so go2rtc is disabled.
+  const r = await sdpBody('tok-abc', id, 'tok-abc');
+  assert.equal(r.status, 409);
+});
+
+test('publish token gate accepts the query-param form too', async () => {
+  const id = crypto.randomUUID();
+  db.prepare("INSERT INTO devices (id,name,status,workspace_id,device_token,created_at) VALUES (?,?,'online',?,?,strftime('%s','now'))").run(id, 'Pub3', A.wsId, 'qtok');
+  // Correct token via ?token= but live disabled for this device -> 409 (auth passed, gate failed).
+  const r = await sdpBody(null, id, 'qtok');
+  assert.equal(r.status, 409);
+});
+
+test('publish for a token that matches no device is 401, not 404 (no id oracle)', async () => {
+  const r = await sdpBody('whatever', crypto.randomUUID(), 'whatever');
+  assert.equal(r.status, 401);
+});

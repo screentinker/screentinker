@@ -95,7 +95,14 @@ remotely, this is almost always the cause.
 ## Publishing (players)
 
 - **Web player** (`/player`, and the desktop/Electron shell): publishes the screen with
-  `getDisplayMedia` when live video is enabled. This is the reference publisher.
+  `getDisplayMedia` when live video is enabled. This is the reference publisher. Opening a device's
+  Now Playing tile asks the panel to publish (`dashboard:live-publish` -> relayed to the player as
+  `device:live-publish`); the player offers sendonly WebRTC to the device-authenticated route
+  `POST /api/devices/:id/live/publish` (auth = the same `device_token` the socket uses), which
+  proxies to go2rtc's `dst=` endpoint. **Browsers only grant `getDisplayMedia` from a user
+  gesture**, so the player starts capture on its next on-screen interaction (or immediately if one
+  is already active). Unattended kiosks need Chromium's capture flag; that is a large part of why
+  the Android publisher below, which needs neither gesture nor picker, is the real signage path.
 - **Android / Tizen / webOS / BrightSign:** no native publisher yet. These keep the screenshot
   stream. Android via MediaProjection is the obvious next one; it is **not** in this pass.
 - **Any device that cannot publish** keeps the screenshot fallback, so nothing regresses.

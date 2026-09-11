@@ -10,6 +10,8 @@ const bsSnapshotQueue = require('../lib/brightsign-snapshot-queue');
 // Server-side framebuffer capture, for a BrightSign whose player cannot capture itself.
 const bsCapture = require('../lib/brightsign-capture');
 const bsDeviceSocketRef = require('./deviceSocket');
+const go2rtc = require('../lib/go2rtc');
+const appConfig = require('../config');
 
 // Phase 2.3: workspace-scoped socket rooms + per-command permission gates.
 // Replaces the previous flat dashboardNs.emit broadcast (which leaked every
@@ -197,6 +199,33 @@ module.exports = function setupDashboardSocket(io) {
       socket.remoteSessions.delete(device_id);
       deviceNs.to(device_id).emit('device:remote-stop', {});
       console.log(`Remote session stopped for device ${device_id}`);
+    });
+
+    // #go2rtc: ask a player to PUBLISH its screen into go2rtc so this dashboard can watch it live.
+    // Read-gated exactly like a screenshot (watching a screen is a read). Only relayed when live
+    // video is enabled at all three levels AND a sidecar is configured; otherwise the dashboard
+    // stays on snapshots and there is nothing for the player to publish to. The player needs a
+    // user gesture to grant capture, so this is a request, not a guarantee (see the player's
+    // device:live-publish handler and the deferred Android publisher).
+    socket.on('dashboard:live-publish', (data, ack) => {
+      const { device_id, action } = data || {};
+      if (!canActOnDevice(socket, device_id, 'read')) return;
+      if (action === 'stop') {
+        deviceNs.to(device_id).emit('device:live-publish', { action: 'stop' });
+        if (typeof ack === 'function') ack({ delivered: true });
+        return;
+      }
+      const device = db.prepare('SELECT workspace_id, live_video_enabled FROM devices WHERE id = ?').get(device_id);
+      const ws = device && device.workspace_id
+        ? db.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(device.workspace_id) : null;
+      const on = !!(appConfig.liveVideoEnabled && ws && ws.live_video_enabled && device && device.live_video_enabled);
+      if (!on || !go2rtc.enabled()) {
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'live_disabled' });
+        return;
+      }
+      const conn = heartbeat.getConnection(device_id);
+      deviceNs.to(device_id).emit('device:live-publish', { action: 'start', iceServers: go2rtc.iceServers() });
+      if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
     });
 
     socket.on('dashboard:device-command', (data, ack) => {
