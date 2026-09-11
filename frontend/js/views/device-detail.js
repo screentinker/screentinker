@@ -1,5 +1,6 @@
 import { api } from '../api.js';
-import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish } from '../socket.js';
+import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish, startTalk, stopTalk } from '../socket.js';
+import { TalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge, hydrateAuthImages, screenshotUrl } from '../utils.js';
 import { t, tn } from '../i18n.js';
@@ -40,6 +41,12 @@ function startLiveTile(deviceId) {
   };
   let publishRequested = false;   // ask a player to publish at most once per visible session
   let retryTimer = null;
+  let retryIdx = 0;
+  // A panel's cold start (MediaProjection consent + WebRTC init + ICE) is variable — often under a
+  // second, but sometimes several. Retrying the viewer only once gave up before a slow start came
+  // up ("live isn't working"), so we re-check a handful of times over ~16s before settling on the
+  // snapshot. The publish request itself still goes out only once.
+  const RETRY_DELAYS = [2000, 2500, 3000, 4000, 5000];
   const connect = () => {
     if (liveViewer) liveViewer.stop();
     liveViewer = new LiveViewer(deviceId, video, {
@@ -48,12 +55,13 @@ function startLiveTile(deviceId) {
       onFallback: (reason) => {
         hideLive();
         // Live is enabled and the sidecar is up, but nobody is publishing yet. Nudge the panel to
-        // start (a web player arms capture on its next interaction; the deferred Android publisher
-        // will start directly), then retry the viewer once so a stream that comes up is picked up.
-        if (reason === 'not_publishing' && !publishRequested) {
-          publishRequested = true;
-          requestLivePublish(deviceId);
-          retryTimer = setTimeout(() => { if (liveViewer) liveViewer.connect(); }, 3000);
+        // start (a web player arms capture on its next interaction; the Android publisher starts
+        // directly), then keep retrying the viewer so a stream that comes up is picked up.
+        if (reason === 'not_publishing') {
+          if (!publishRequested) { publishRequested = true; requestLivePublish(deviceId); }
+          if (retryIdx < RETRY_DELAYS.length) {
+            retryTimer = setTimeout(() => { if (liveViewer) liveViewer.connect(); }, RETRY_DELAYS[retryIdx++]);
+          }
         }
       },
     });
@@ -87,6 +95,14 @@ let screenshotInterval = null;
 let liveViewer = null;        // #go2rtc WebRTC viewer for the Now Playing tile
 let liveViewerDispose = null; // IntersectionObserver disposer for the live tile
 let remoteActive = false;
+let talkClient = null;        // #talk: active two-way intercom client, or null
+
+// #talk: tear down any live intercom. Safe to call unconditionally (leaving the view, ending a
+// session, or an error). Also tells the device to leave so it stops capturing its mic.
+function stopTalkSession(deviceId) {
+  if (talkClient) { try { talkClient.stop(); } catch (_) {} talkClient = null; }
+  if (deviceId) { try { stopTalk(deviceId); } catch (_) {} }
+}
 // Mirrors the Debug-logging checkbox so cleanup() can switch the device's stream back off.
 // Without this, leaving the screen left the panel streaming into nothing: the device kept
 // emitting, the dashboard kept relaying, and nobody was listening. The player carries its own
@@ -168,6 +184,7 @@ async function copyToClipboard(text) {
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', () => {
     if (remoteActive && currentDevice) { remoteActive = false; try { stopRemote(currentDevice.id); } catch (e) {} }
+    if (talkClient && currentDevice) { try { stopTalkSession(currentDevice.id); } catch (e) {} }
   });
 }
 
@@ -410,6 +427,11 @@ async function loadDevice(deviceId, activeTab = null) {
             </svg>
             ${t('device.screenshot_btn')}
           </button>` : ''}
+          ${can('remote.talk') ? `
+          <button class="btn btn-secondary btn-sm" id="startTalkBtn">🎙️ ${t('device.talk.start')}</button>
+          ${can('remote.mic') ? `<button class="btn btn-secondary btn-sm" id="start2wayBtn">🎙️ ${t('device.talk.two_way')}</button>` : ''}
+          <button class="btn btn-danger btn-sm" id="stopTalkBtn" style="display:none">${t('device.talk.stop')}</button>
+          <button class="btn btn-secondary btn-sm" id="muteTalkBtn" style="display:none">${t('device.talk.mute')}</button>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <button class="btn btn-secondary btn-sm" id="deviceOwnerBtn" title="${t('device.owner_provision.tip')}">${t('device.owner_provision.btn')}</button>` : ''}
           <button class="btn btn-secondary btn-sm" id="blockDeviceBtn">${device.blocked ? 'Unblock' : 'Block'}</button>
@@ -2114,6 +2136,59 @@ function setupRemote(device) {
     overlay.style.display = 'flex';
   });
 
+  // #talk: two-way voice intercom. Start = tell the device to join (socket) AND open the operator's
+  // mic/speaker peer connections (talk-client). The click satisfies the browser's getUserMedia +
+  // autoplay gesture requirement. Stop tears both down; a failure falls back cleanly (no audio).
+  const talkStartBtn = document.getElementById('startTalkBtn');
+  const talk2wayBtn = document.getElementById('start2wayBtn');
+  const talkStopBtn = document.getElementById('stopTalkBtn');
+  const talkMuteBtn = document.getElementById('muteTalkBtn');
+  let talkMuted = false;
+  const showTalk = (live) => {
+    if (talkStartBtn) talkStartBtn.style.display = live ? 'none' : '';
+    if (talk2wayBtn) talk2wayBtn.style.display = live ? 'none' : '';
+    if (talkStopBtn) talkStopBtn.style.display = live ? '' : 'none';
+    if (talkMuteBtn) talkMuteBtn.style.display = live ? '' : 'none';
+  };
+  // #talk: duplex=false is one-way (your mic+webcam -> the device, works on any screen); duplex=true
+  // is 2-way (the device sends its mic back too — only offered when it declares remote.mic).
+  const beginTalk = async (duplex) => {
+    if (talkStartBtn) talkStartBtn.disabled = true;
+    if (talk2wayBtn) talk2wayBtn.disabled = true;
+    try {
+      startTalk(device.id, duplex, (ack) => {
+        if (ack && ack.delivered === false) showToast(t('device.talk.device_unreachable'), 'warning');
+      });
+      talkClient = new TalkClient(device.id, {
+        duplex,
+        onError: (e) => { showToast((t('device.talk.failed')) + (e?.message ? ': ' + e.message : ''), 'error'); },
+      });
+      await talkClient.start();
+      talkMuted = false;
+      if (talkMuteBtn) talkMuteBtn.textContent = t('device.talk.mute');
+      showTalk(true);
+      showToast(t('device.talk.started'), 'info');
+    } catch (e) {
+      stopTalkSession(device.id);
+      showTalk(false);
+      showToast((t('device.talk.failed')) + (e?.message ? ': ' + e.message : ''), 'error');
+    } finally {
+      if (talkStartBtn) talkStartBtn.disabled = false;
+      if (talk2wayBtn) talk2wayBtn.disabled = false;
+    }
+  };
+  talkStartBtn?.addEventListener('click', () => beginTalk(false));
+  talk2wayBtn?.addEventListener('click', () => beginTalk(true));
+  talkStopBtn?.addEventListener('click', () => {
+    stopTalkSession(device.id);
+    showTalk(false);
+  });
+  talkMuteBtn?.addEventListener('click', () => {
+    talkMuted = !talkMuted;
+    try { talkClient?.setMuted(talkMuted); } catch (_) {}
+    talkMuteBtn.textContent = talkMuted ? t('device.talk.unmute') : t('device.talk.mute');
+  });
+
   // #159: mouse-as-finger. A click = tap; a drag = swipe (scroll). Pointer events so a press-move-
   // release maps to a gesture with the same normalized start/end + duration the device replays.
   let drag = null;
@@ -2820,6 +2895,8 @@ export function cleanup() {
   if (screenshotInterval) clearInterval(screenshotInterval);
   stopLiveTile();
   if (remoteActive && currentDevice) stopRemote(currentDevice.id);
+  // #talk: leaving the view ends any intercom (and tells the device to stop capturing its mic).
+  if (talkClient && currentDevice) stopTalkSession(currentDevice.id);
   // Same reasoning as stopRemote above: an operator who navigates away has stopped watching, so
   // the display should stop talking. Must run BEFORE currentDevice is cleared.
   if (debugStreamOn && currentDevice) sendCommand(currentDevice.id, 'set_debug', { enabled: false });

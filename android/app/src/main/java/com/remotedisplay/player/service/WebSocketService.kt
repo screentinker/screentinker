@@ -124,6 +124,8 @@ class WebSocketService : Service() {
     var onScreenshotRequest: (() -> Unit)? = null
     var onRemoteStart: (() -> Unit)? = null
     var onRemoteStop: (() -> Unit)? = null
+    // #talk: duck (true) / restore (false) the content playback while a call/PA is active.
+    var onTalkDuck: ((Boolean) -> Unit)? = null
     var onRemoteTouch: ((Float, Float, String) -> Unit)? = null
     var onRemoteKey: ((String) -> Unit)? = null
     var onCommand: ((String, JSONObject?) -> Unit)? = null
@@ -543,6 +545,37 @@ class WebSocketService : Service() {
                         com.remotedisplay.player.ScreenCapturePermissionActivity.requestForLive(
                             this@WebSocketService, srvUrl, id, token, iceJson)
                     } catch (e: Throwable) { Log.e("WebSocketService", "live-publish start: ${e.message}") }
+                }
+
+                // #talk: two-way voice intercom. The dashboard asks this device to join a call —
+                // subscribe the operator's mic (play it) and publish its own mic. Runs in TalkService
+                // (a microphone FGS); best-effort, never touches playback. Needs RECORD_AUDIO.
+                safeOn("device:talk-start") { args ->
+                    val data = args.firstOrNull() as? JSONObject
+                    val id = config.deviceId; val token = config.deviceToken; val srvUrl = config.serverUrl
+                    if (id.isEmpty() || token.isEmpty() || srvUrl.isEmpty()) {
+                        Log.w("WebSocketService", "talk requested but device is not provisioned"); return@safeOn
+                    }
+                    // Only a 2-way per-device call captures this device's mic (needs RECORD_AUDIO).
+                    // A broadcast listen and a one-way per-device call just play the operator's audio.
+                    val listen = data?.optString("mode") == "listen"
+                    val duplex = !listen && (data?.optBoolean("duplex", false) ?: false)
+                    if (duplex && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        Log.w("WebSocketService", "2-way talk requested but RECORD_AUDIO not granted"); return@safeOn
+                    }
+                    val iceJson = (data?.optJSONArray("iceServers") ?: org.json.JSONArray()).toString()
+                    val scope = data?.optJSONObject("scope")
+                    val scopeKind = if (listen) scope?.optString("kind") else null
+                    val scopeId = if (listen) scope?.optString("id") else null
+                    try { com.remotedisplay.player.service.TalkService.start(this@WebSocketService, srvUrl, id, token, iceJson, scopeKind, scopeId, duplex) }
+                    catch (e: Throwable) { Log.e("WebSocketService", "talk start: ${e.message}") }
+                    handler.post { try { onTalkDuck?.invoke(true) } catch (e: Throwable) { Log.e("WebSocketService", "talk duck: ${e.message}") } }
+                }
+
+                safeOn("device:talk-stop") {
+                    try { com.remotedisplay.player.service.TalkService.stop(this@WebSocketService) }
+                    catch (e: Throwable) { Log.e("WebSocketService", "talk stop: ${e.message}") }
+                    handler.post { try { onTalkDuck?.invoke(false) } catch (e: Throwable) { Log.e("WebSocketService", "talk unduck: ${e.message}") } }
                 }
 
                 safeOn("device:remote-touch") { args ->

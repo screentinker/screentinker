@@ -849,4 +849,60 @@ router.post('/:id/live/webrtc', express.text({ type: ['application/sdp', 'text/p
   res.type('application/sdp').send(answer.sdp);
 });
 
+/*
+ * #talk — two-way voice intercom. Gated exactly like live video (same three flags + a live go2rtc),
+ * because it rides the same sidecar; the dashboard additionally shows the control only for a device
+ * that declares remote.talk. Audio is Opus, which go2rtc registers by default, so no patched sidecar
+ * is needed (unlike VP8 video). Two one-directional streams per device:
+ *   dn (downlink): operator mic -> device speaker  — operator PUBLISHES here (this route), device subscribes
+ *   up (uplink):   device mic   -> operator speaker — operator SUBSCRIBES here (this route), device publishes
+ * The device's own two exchanges (subscribe dn, publish up) go through the device-authenticated WS
+ * proxy (lib/live-publish-ws.js), never these session routes.
+ */
+router.get('/:id/talk', async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  const off = { mode: 'off' };
+  if (!liveVideoOn(device)) return res.json({ ...off, reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ ...off, reason: 'no_sidecar' });
+  if (!(await go2rtc.healthy())) return res.json({ ...off, reason: 'sidecar_down' });
+  res.json({
+    mode: 'webrtc',
+    // Operator publishes mic to the downlink, subscribes to the uplink. Proxied like /live/webrtc.
+    publishPath: `/api/devices/${device.id}/talk/publish`,
+    viewPath: `/api/devices/${device.id}/talk/view`,
+    iceServers: go2rtc.iceServers(),
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+// Operator -> device audio: proxy the operator's PUBLISH offer into the downlink stream (dst=).
+router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!liveVideoOn(device) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'dn');
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  try { await go2rtc.ensureStream(name); } catch (_) { /* go2rtc may auto-create on dst */ }
+  const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
+  res.type('application/sdp').send(answer.sdp);
+});
+
+// Device -> operator audio: proxy the operator's SUBSCRIBE offer against the uplink stream (src=).
+router.post('/:id/talk/view', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!liveVideoOn(device) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'up');
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  // No ensureStream on a subscribe: a placeholder-only stream cannot be consumed ("unsupported
+  // url"). The device's uplink publish creates the real producer; the operator retries until then.
+  const answer = await go2rtc.webrtcExchange(name, offer, 'sub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer', reason: 'not_publishing' });
+  res.type('application/sdp').send(answer.sdp);
+});
+
 module.exports = router;

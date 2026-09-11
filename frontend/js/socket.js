@@ -139,6 +139,24 @@ export function stopRemote(deviceId) {
   if (dashboardSocket) dashboardSocket.emit('dashboard:remote-stop', { device_id: deviceId });
 }
 
+// #talk: ask a device to join / leave the two-way voice intercom. Server-relayed and gated like
+// remote control; the audio itself flows over WebRTC (see lib/talk-client.js), not this socket.
+export function startTalk(deviceId, duplex, cb) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:talk-start', { device_id: deviceId, duplex: !!duplex }, cb);
+}
+export function stopTalk(deviceId) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:talk-stop', { device_id: deviceId });
+}
+
+// #talk broadcast: tell every device in a group/workspace to LISTEN to the shared channel. scope is
+// { kind: 'group'|'workspace', id }. The operator's mic is published separately (BroadcastTalkClient).
+export function startGroupTalk(scope, cb) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:group-talk-start', { scope }, cb);
+}
+export function stopGroupTalk(scope) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:group-talk-stop', { scope });
+}
+
 // #go2rtc: ask a player to start/stop publishing its screen live. Best-effort — the server only
 // relays it when live video is enabled for the device, and the player needs a user gesture to
 // grant screen capture, so a delivered ack means the request reached the panel, not that a stream

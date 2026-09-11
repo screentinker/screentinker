@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const { db } = require('../db/database');
 const { canAdminWorkspace, canAccessWorkspace } = require('../lib/permissions');
 const { isPlatformRole } = require('../middleware/auth');
+const go2rtc = require('../lib/go2rtc');
+const appConfig = require('../config');
 const { logActivity, getClientIp } = require('../services/activity');
 const { sendEmail } = require('../services/email');
 
@@ -520,6 +522,47 @@ router.delete('/:id/members/:userId', (req, res) => {
   db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
     .run(ws.id, req.params.userId);
   res.json({ success: true });
+});
+
+/*
+ * #talk broadcast (one-way PA to every device in the workspace). Same shape as the per-group
+ * routes in device-groups.js: the operator publishes their mic to the workspace's shared go2rtc
+ * stream, and the dashboard tells every device in the workspace to listen. Gated on the live-video
+ * master switch + the workspace flag + a live sidecar. Any workspace member may talk.
+ */
+function loadTalkWorkspace(req, res) {
+  const ws = db.prepare('SELECT id, live_video_enabled FROM workspaces WHERE id = ?').get(req.params.id);
+  if (!ws) { res.status(404).json({ error: 'Workspace not found' }); return null; }
+  if (!canAccessWorkspace(db, req.user, ws)) { res.status(403).json({ error: 'Access denied' }); return null; }
+  return ws;
+}
+
+router.get('/:id/talk', async (req, res) => {
+  const ws = loadTalkWorkspace(req, res); if (!ws) return;
+  if (!(appConfig.liveVideoEnabled && ws.live_video_enabled)) return res.json({ mode: 'off', reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ mode: 'off', reason: 'no_sidecar' });
+  if (!(await go2rtc.healthy())) return res.json({ mode: 'off', reason: 'sidecar_down' });
+  res.json({
+    mode: 'webrtc',
+    scope: { kind: 'workspace', id: ws.id },
+    publishPath: `/api/workspaces/${ws.id}/talk/publish`,
+    iceServers: go2rtc.iceServers(),
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const ws = loadTalkWorkspace(req, res); if (!ws) return;
+  if (!(appConfig.liveVideoEnabled && ws.live_video_enabled) || !go2rtc.enabled()) {
+    return res.status(409).json({ error: 'Talk is not available for this workspace' });
+  }
+  const name = go2rtc.broadcastTalkStreamName('workspace', ws.id);
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  try { await go2rtc.ensureStream(name); } catch (_) { /* go2rtc may auto-create on dst */ }
+  const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
+  res.type('application/sdp').send(answer.sdp);
 });
 
 module.exports = router;

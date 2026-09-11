@@ -86,6 +86,11 @@ object PlayerCapabilities {
                 "remote.screenshot", "remote.stream",
                 // Input is plain view dispatch and works regardless of privilege.
                 "remote.input",
+                // #talk: voice intercom (TalkService + AudioTalker). WebRTC audio over the same
+                // go2rtc path as remote.stream; needs only RECORD_AUDIO, no MediaProjection.
+                // remote.talk = can play the operator's audio/webcam (one-way / PA); remote.mic =
+                // also has a microphone to send back (unlocks 2-way). Android has both.
+                "remote.talk", "remote.mic",
                 // The player restarts itself; the OTA checker updates the APK.
                 "system.restart_player", "system.self_update",
                 // Clock-derived group sync is platform-independent.

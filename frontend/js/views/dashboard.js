@@ -1,5 +1,6 @@
 import { api } from '../api.js';
-import { on, off, requestScreenshot } from '../socket.js';
+import { on, off, requestScreenshot, startGroupTalk, stopGroupTalk } from '../socket.js';
+import { BroadcastTalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge, isPlatformAdmin, screenshotUrl } from '../utils.js';
 import { t, tn } from '../i18n.js';
@@ -298,6 +299,8 @@ function renderGroupSection(group, devices, playlists) {
                 title="${esc(group.sync_reason || '')}">${group.sync_downgraded ? '&#9888; ' : ''}${esc(group.sync_effective)}${group.sync_reason ? ' — ' + esc(group.sync_reason) : ''}</span>` : ''}
           <button class="btn group-resync-btn" data-group-id="${group.id}" style="padding:4px 10px;font-size:12px" title="${esc(t('dashboard.group_sync.resync_hint'))}">${t('dashboard.group_sync.resync')}</button>` : ''}
           ` : ''}
+          <!-- #talk broadcast: PA to every device in this group. Hidden until live video is confirmed. -->
+          <button class="btn talk-scope-btn" data-scope-kind="group" data-group-id="${group.id}" style="display:none;padding:4px 10px;font-size:12px">🎙️ ${t('dashboard.talk_group')}</button>
           <button class="btn" data-group-delete="${group.id}" style="padding:4px 8px;font-size:12px;color:var(--danger)" title="${t('dashboard.delete_group_tooltip')}">&#x2715;</button>
         </div>
       </div>
@@ -418,6 +421,9 @@ export function render(container) {
         <div class="subtitle">${t('dashboard.subtitle')}</div>
       </div>
       <div style="display:flex;gap:8px">
+        <!-- #talk broadcast: PA to every device in the workspace. Hidden until we confirm live video
+             is available (see wireTalkScopeButtons). -->
+        <button class="btn btn-secondary talk-scope-btn" data-scope-kind="workspace" style="display:none">🎙️ ${t('dashboard.talk_all')}</button>
         <button class="btn btn-primary" id="addDeviceBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -1386,9 +1392,89 @@ function attachGroupHandlers(groupsWithDevices) {
     });
   });
 
+  wireTalkScopeButtons();
+}
+
+// #talk broadcast (one-way PA). One active broadcast at a time across the whole dashboard.
+let activeBroadcast = null;   // { key, client, btn, label, scope }
+let dashLiveVideoChecked = false;
+let dashLiveVideo = false;
+
+// Reveal + wire the group/workspace Talk buttons, but only once we've confirmed the server has live
+// video enabled (talk rides the same go2rtc path). Hidden otherwise so we never show a dead button.
+function wireTalkScopeButtons() {
+  const reveal = () => {
+    document.querySelectorAll('.talk-scope-btn').forEach((btn) => {
+      if (!dashLiveVideo) { btn.style.display = 'none'; return; }
+      btn.style.display = '';
+      if (btn._talkWired) return;
+      btn._talkWired = true;
+      btn.addEventListener('click', () => toggleBroadcast(btn));
+    });
+  };
+  if (dashLiveVideoChecked) { reveal(); return; }
+  api.getServerStatus()
+    .then((s) => { dashLiveVideo = !!(s && s.features && s.features.live_video); })
+    .catch(() => { dashLiveVideo = false; })
+    .finally(() => { dashLiveVideoChecked = true; reveal(); });
+}
+
+function scopeForButton(btn) {
+  const kind = btn.dataset.scopeKind;
+  if (kind === 'group') return { kind, id: btn.dataset.groupId };
+  if (kind === 'workspace') {
+    let id = null;
+    try { id = JSON.parse(localStorage.getItem('user'))?.current_workspace_id || null; } catch (_) {}
+    return { kind, id };
+  }
+  return null;
+}
+
+async function toggleBroadcast(btn) {
+  const scope = scopeForButton(btn);
+  if (!scope || !scope.id) { showToast(t('dashboard.talk.failed'), 'error'); return; }
+  const key = scope.kind + ':' + scope.id;
+
+  // Toggle off if this exact scope is live.
+  if (activeBroadcast && activeBroadcast.key === key) { endBroadcast(); return; }
+  // Only one PA at a time — end any other before starting this one.
+  if (activeBroadcast) endBroadcast();
+
+  const descriptorPath = scope.kind === 'group'
+    ? `/api/device-groups/${scope.id}/talk`
+    : `/api/workspaces/${scope.id}/talk`;
+  const label = btn.textContent;
+  btn.disabled = true;
+  try {
+    startGroupTalk(scope, (afterAck) => {
+      if (afterAck && afterAck.delivered === false) showToast(t('dashboard.talk.no_devices'), 'warning');
+    });
+    const client = new BroadcastTalkClient(descriptorPath, {});
+    await client.start();
+    activeBroadcast = { key, client, btn, label, scope };
+    btn.textContent = '⏹ ' + t('dashboard.talk.end');
+    btn.classList.add('btn-danger');
+    showToast(t('dashboard.talk.on_air'), 'info');
+  } catch (e) {
+    try { stopGroupTalk(scope); } catch (_) {}
+    showToast(t('dashboard.talk.failed') + (e && e.message ? ': ' + e.message : ''), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function endBroadcast() {
+  const b = activeBroadcast;
+  if (!b) return;
+  activeBroadcast = null;
+  try { b.client.stop(); } catch (_) {}
+  try { stopGroupTalk(b.scope); } catch (_) {}
+  try { b.btn.textContent = b.label; b.btn.classList.remove('btn-danger'); } catch (_) {}
 }
 
 export function cleanup() {
+  // #talk: leaving the dashboard ends any live PA (and tells the devices to stop listening).
+  endBroadcast();
   /*
    * ⚠️ The delegated DOM listeners go too. They live on #app, which outlives this view — so
    * "the view was torn down" is only true if they are removed here. render() also detaches before

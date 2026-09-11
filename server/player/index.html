@@ -288,6 +288,7 @@
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
   <script src="/player/live-publish.js"></script>
+  <script src="/player/talk.js"></script>
   <script src="/player/trigger-resolve.js"></script>
   <script src="/player/media-mute.js"></script>
   <script src="/player/orientation-style.js"></script>
@@ -915,10 +916,12 @@
       if (!on) {
         if (remoteDebug) debugEmitLine('debug', 'i', 'Remote debug logging OFF');
         remoteDebug = false;
+        try { window.__stTalkDebug = false; } catch (e) {}   // #talk: gate STTalk's console logs
         return;
       }
       const wasOn = remoteDebug;
       remoteDebug = true;
+      try { window.__stTalkDebug = true; } catch (e) {}   // #talk: STTalk logs now stream to the dashboard
       debugWindowAt = 0; debugWindowCount = 0; debugSuppressed = 0;
       if (!debugSubscribed) {
         debugSubscribed = true;
@@ -2707,6 +2710,32 @@
         } catch (_) { /* publishing is best-effort; never break playback */ }
       });
 
+      // #talk: two-way intercom / one-way PA. Mirror of the live-publish handler — STTalk speaks the
+      // device-authenticated WS proxy with this player's device_token. Listen (broadcast) needs no
+      // mic; duplex requests the mic and falls back to listen-only if denied.
+      socket.on('device:talk-start', (data) => {
+        const TK = window.STTalk;
+        if (!TK || !TK.isSupported()) { console.log('[talk] requested but not available on this player'); return; }
+        if (!config || !config.deviceId || !config.deviceToken) return;
+        try {
+          setTalkDucking(true);   // duck the playlist so the announcement is heard
+          TK.start({
+            deviceId: config.deviceId,
+            deviceToken: config.deviceToken,
+            serverUrl: config.serverUrl || '',
+            mode: (data && data.mode) === 'listen' ? 'listen' : 'device',
+            duplex: !!(data && data.duplex),   // 2-way: also send this device's mic
+            scope: data && data.scope,
+            iceServers: (data && data.iceServers) || undefined,
+            onState: (st, reason) => { if (window.__stTalkDebug) console.log('[talk]', st, reason || ''); },
+          });
+        } catch (_) { /* intercom is best-effort; never break playback */ }
+      });
+      socket.on('device:talk-stop', () => {
+        try { window.STTalk && window.STTalk.stop(); } catch (_) {}
+        try { setTalkDucking(false); } catch (_) {}   // restore playlist audio + resume video
+      });
+
       socket.on('device:pip-show', (data) => pipShow(data));
       socket.on('device:pip-clear', (data) => pipClear(data && data.pip_id));
     }
@@ -2890,7 +2919,22 @@
      */
     function triggerSyncAudio() {
       if (typeof setBaseAudioSuppressed !== 'function') return;
-      try { setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase)); } catch (e) {}
+      // Base audio is ducked when a trigger covers the screen OR a voice call/PA is active
+      // (talkDucking) — combined here so neither source clobbers the other.
+      try { setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase) || talkDucking); } catch (e) {}
+    }
+
+    // #talk: while a voice call / PA announcement is active on this device, duck the playlist so the
+    // announcement is heard — mute the base audio AND pause the current video (frozen, silent). The
+    // announcement's own <audio> is __stOverlay, so setBaseAudioSuppressed leaves it alone.
+    let talkDucking = false;
+    function setTalkDucking(on) {
+      talkDucking = !!on;
+      triggerSyncAudio();   // re-evaluate the combined base-audio suppression
+      try {
+        if (on) { if (currentVideoEl) currentVideoEl.pause(); }
+        else if (currentVideoEl && !currentVideoEl.__stOverlay) { const p = currentVideoEl.play(); if (p && p.catch) p.catch(() => {}); }
+      } catch (e) { /* torn down */ }
     }
 
     /*
@@ -3688,6 +3732,9 @@
         'display.rotation',
         'remote.input',
         'remote.stream',
+        // #talk: this browser player is a full WebRTC audio peer (window.STTalk), so it does the
+        // two-way intercom and the one-way PA listen just like the native player.
+        'remote.talk',
         // restartPlayer() always resolves to something: the host rebuilds the widget, or the page
         // reloads. It is the one lifecycle action a browser tab can genuinely perform.
         'system.restart_player',
@@ -3699,6 +3746,10 @@
        * and a port that never bound are different facts, and the operator picking screens for an
        * integrator needs the second one. Same rule as offline.cache: claim what was verified.
        */
+      // #talk: only claim a microphone (unlocks the dashboard's 2-way control) when this browser
+      // actually has an audio input. Detected async at startup (detectMic); a screen without a mic
+      // stays one-way Talk / PA only.
+      if (window.__stHasMic) caps.push('remote.mic');
       if (typeof triggerStats === 'object' && triggerStats.listeners && triggerStats.listeners.http) {
         caps.push('trigger.http');
       }
@@ -3842,7 +3893,23 @@
       socket.emit('device:info', { device_id: config.deviceId, device_info: buildDeviceInfo() });
     }
 
+    // #talk: does this browser have a microphone? enumerateDevices exposes the PRESENCE of an
+    // audioinput even without permission. Sets window.__stHasMic and re-registers once, so the
+    // dashboard's 2-way control appears only where a mic actually exists.
+    let __micDetected = false;
+    function detectMic() {
+      if (__micDetected || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      __micDetected = true;
+      navigator.mediaDevices.enumerateDevices().then(function (devs) {
+        if (devs.some(function (d) { return d.kind === 'audioinput'; }) && !window.__stHasMic) {
+          window.__stHasMic = true;
+          try { register(); } catch (_) {}
+        }
+      }).catch(function () {});
+    }
+
     function register() {
+      detectMic();
       const data = {};
       // #163: always send device identity when we have it, regardless of paired
       // status. Before this fix, a reconnect before pairing would omit device_id
