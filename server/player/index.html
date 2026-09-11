@@ -439,6 +439,10 @@
     // Falls through to reload() whenever the host isn't there to take the request — a browser, or
     // a widget built without nodejs_enabled — so a caller is never left with nothing done.
     function restartPlayer(reason) {
+      // Log EVERY reload with its reason so a mystery "the player keeps resetting" is answerable
+      // from the player console: 'operator refresh', 'server code updated', 'service worker
+      // activated', 'operator reset', etc.
+      console.log('[player] restart requested — reason:', reason);
       try {
         if (BS && BS.hasHost() && BS.restart(reason)) {
           console.log('[bs] restart delegated to host:', reason);
@@ -3990,7 +3994,7 @@
       versionCheckTimer = setInterval(() => {
         fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
           if (knownServerHash && data.hash !== knownServerHash) {
-            console.log('Server code updated, reloading...', knownServerHash, '->', data.hash);
+            console.log('[player] /api/version hash changed', knownServerHash, '->', data.hash, '- triggering reload (a code edit/restart on the server, NOT a dashboard action)');
             // THE deploy path — this is the exact line that darkened a BrightSign panel on
             // 2026-07-28, when every connected player self-reloaded and that one never returned.
             restartPlayer('server code updated');
@@ -6679,17 +6683,33 @@
             }
           } catch (e) { console.warn('[cache] boot pin failed: ' + ((e && e.message) || e)); }
         }).catch(() => { /* no controller yet; the next playlist update pins */ });
-        // When a new SW activates, reload so the fresh code takes effect immediately
+        // When a new version of OUR OWN worker activates, reload so the fresh code takes effect.
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
-          if (newWorker) {
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-                console.log('New Service Worker activated — reloading for fresh code');
-                restartPlayer('service worker activated');
+          if (!newWorker) return;
+          const url = newWorker.scriptURL || '';
+          console.log('[sw] updatefound; installing worker =', url);
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+              /*
+               * ⚠️ ONLY reload for OUR OWN /sw.js. The player registers /sw.js at ROOT scope (it must,
+               * to cache /uploads + /api/content for offline). The dashboard registers /sw-admin.js
+               * at the SAME root scope. Two root workers share one registration, so when the
+               * dashboard is opened or refreshed in the same browser, sw-admin registers INTO this
+               * registration and surfaces here as a new installing worker — and reloading for it made
+               * the player reset every time the operator touched the dashboard. Ignore any worker
+               * that is not our own sw.js. (In production the player and dashboard are different
+               * origins and never share a scope; this only bites a single-origin/single-browser setup
+               * such as a server-on-a-player or local testing.)
+               */
+              if (!/\/sw\.js(?:[?#]|$)/.test(url)) {
+                console.log('[sw] a FOREIGN worker took the scope (' + url + ') — NOT reloading the player');
+                return;
               }
-            });
-          }
+              console.log('New Service Worker activated — reloading for fresh code');
+              restartPlayer('service worker activated');
+            }
+          });
         });
       }, (err) => {
         // A registration that fails has to be VISIBLE. This one went to console.warn on a display
