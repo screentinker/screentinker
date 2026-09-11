@@ -107,6 +107,30 @@ remotely, this is almost always the cause.
   stream. Android via MediaProjection is the obvious next one; it is **not** in this pass.
 - **Any device that cannot publish** keeps the screenshot fallback, so nothing regresses.
 
+## How publishing into go2rtc works (verified)
+
+go2rtc's WHIP publish endpoint is `POST /api/webrtc?dst=<stream>`, and it **404s on a stream that
+does not exist yet**. The streams API cannot create a truly empty stream (PUT requires a source),
+so ScreenTinker creates the stream with go2rtc's inert `webrtc:` source (an "expects an inbound
+WebRTC producer" placeholder) the moment a player publishes, then runs the `dst=` exchange. This is
+`ensureStream()` in `lib/go2rtc.js`, called by `POST /api/devices/:id/live/publish`.
+
+Because ScreenTinker creates streams at runtime, mounting `go2rtc.yaml` read-only (`:ro`, as in the
+compose sample) is fine and slightly preferable: go2rtc still creates the stream in memory (it just
+logs that it could not persist the definition), so per-device `st_<hash>` entries stay ephemeral and
+never accumulate in the config. They vanish on a go2rtc restart and are recreated on the next
+publish. A writable config also works if you want the definitions to survive restarts.
+
+`GET /api/devices/:id/live` reports `mode: "webrtc"` only when a publisher is **actually connected**
+(a go2rtc producer with a real `remote_addr`), not merely when the placeholder stream exists — so a
+tile shows the live feed only when there is one, and the snapshot otherwise. On a clean stop the
+player's `device:live-publish` stop tears the stream down immediately; a hard tab close lingers for
+go2rtc's ICE-consent timeout (~30s) before the producer drops.
+
+Verified end to end against go2rtc 1.9.14 with a real headless Chromium: a WHEP viewer decodes
+frames straight from go2rtc and through the ScreenTinker signaling proxy, and a browser publisher
+pushes a track that a viewer then watches back through the proxy.
+
 ## If go2rtc is down
 
 Live view silently uses the screenshot stream and the tile shows a small "video unavailable" hint.

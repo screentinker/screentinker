@@ -108,6 +108,32 @@ async function hasStream(name) {
   return !!(streams && typeof streams === 'object' && Object.prototype.hasOwnProperty.call(streams, name));
 }
 
+// go2rtc's WHIP publish (POST /api/webrtc?dst=NAME) returns 404 for a stream that does not exist,
+// and the streams API cannot create a truly empty one (PUT requires a src). 'webrtc:' is the
+// documented inert placeholder for a stream that expects an inbound WebRTC producer, so we create
+// the stream with that source before a player publishes into it. Idempotent: only creates when the
+// stream is absent, so it never stacks duplicate placeholders. Verified against go2rtc 1.9.14 — a
+// dst= publish to a webrtc:-sourced stream succeeds and a WHEP viewer receives the pushed frames.
+async function ensureStream(name) {
+  if (!name) return false;
+  if (await hasStream(name)) return true;
+  const r = await call('PUT', '/api/streams?name=' + encodeURIComponent(name) + '&src=webrtc:', { raw: true });
+  return !!(r && r.ok);
+}
+
+// Is a publisher ACTUALLY connected to this stream right now? A stream created by ensureStream
+// always lists its inert placeholder producer ({url:"webrtc:"}), so mere existence is not enough to
+// answer "is someone publishing?". A live WHIP producer shows up as an ADDITIONAL producer with a
+// real connection: a remote_addr, medias and received bytes. So the honest signal is "any producer
+// with a remote_addr". Used by GET /:id/live to choose webrtc vs the not_publishing snapshot.
+async function hasActiveProducer(name) {
+  if (!name) return false;
+  const streams = await call('GET', '/api/streams');
+  const st = streams && typeof streams === 'object' ? streams[name] : null;
+  const producers = st && Array.isArray(st.producers) ? st.producers : [];
+  return producers.some((pr) => pr && pr.remote_addr);
+}
+
 // Proxy a WebRTC SDP exchange for one stream. A ScreenTinker route POSTs the client's offer here
 // after checking access; go2rtc answers with the SDP answer.
 //
@@ -146,6 +172,6 @@ function iceServers() {
 
 module.exports = {
   streamName, streamBelongsTo, enabled, healthy, iceServers,
-  putStream, deleteStream, hasStream, webrtcExchange,
+  putStream, deleteStream, hasStream, ensureStream, hasActiveProducer, webrtcExchange,
   _call: call, _resetHealth, _adminHeaders: adminHeaders,
 };

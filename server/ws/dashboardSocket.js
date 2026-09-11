@@ -212,6 +212,13 @@ module.exports = function setupDashboardSocket(io) {
       if (!canActOnDevice(socket, device_id, 'read')) return;
       if (action === 'stop') {
         deviceNs.to(device_id).emit('device:live-publish', { action: 'stop' });
+        // Clean up the placeholder stream so idle st_<hash> entries do not accumulate in go2rtc's
+        // config. Best-effort and fire-and-forget: a failure just leaves an inert stream behind,
+        // which the next publish reuses anyway.
+        try {
+          const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(device_id);
+          if (d && d.workspace_id) { const nm = go2rtc.streamName(d.workspace_id, device_id); if (nm) go2rtc.deleteStream(nm); }
+        } catch (_) { /* cleanup is never load-bearing */ }
         if (typeof ack === 'function') ack({ delivered: true });
         return;
       }

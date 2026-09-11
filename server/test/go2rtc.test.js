@@ -89,3 +89,60 @@ test('health is cached so a page of tiles does not hammer the sidecar', async ()
     assert.equal(calls, 1, 'three health checks inside the TTL make one network call');
   } finally { global.fetch = realFetch; for (const k of ['GO2RTC_URL', 'GO2RTC_HEALTH_TTL_MS', 'GO2RTC_TIMEOUT_MS']) delete process.env[k]; }
 });
+
+// ensureStream + hasActiveProducer: the publish-path pieces found necessary during live
+// verification against a real go2rtc 1.9.14. go2rtc's WHIP (POST /api/webrtc?dst=NAME) 404s on a
+// stream that does not exist, and the streams API cannot create an empty one, so ensureStream
+// creates it with the inert 'webrtc:' source. hasActiveProducer then answers "is a publisher
+// really connected?" — true only for a producer with a real remote_addr, not the placeholder.
+test('ensureStream creates a webrtc: placeholder only when the stream is absent', async () => {
+  process.env.GO2RTC_URL = 'http://go2rtc:1984';
+  delete require.cache[require.resolve('../config')]; delete require.cache[require.resolve('../lib/go2rtc')];
+  const g = require('../lib/go2rtc');
+  const calls = [];
+  const realFetch = global.fetch;
+  // First: stream absent -> GET returns {}, then a PUT with src=webrtc: must be issued.
+  global.fetch = async (url, opts) => {
+    calls.push({ method: opts.method, url });
+    if (opts.method === 'GET') return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({}) };
+    return { ok: true, status: 200, headers: { get: () => '' }, text: async () => '' };
+  };
+  try {
+    assert.equal(await g.ensureStream('st_abc'), true);
+    const put = calls.find((c) => c.method === 'PUT');
+    assert.ok(put, 'a PUT was issued to create the stream');
+    assert.match(put.url, /\/api\/streams\?name=st_abc&src=webrtc:/, 'created with the inert webrtc: source');
+  } finally { global.fetch = realFetch; delete process.env.GO2RTC_URL; }
+});
+
+test('ensureStream is a no-op when the stream already exists (no duplicate placeholder)', async () => {
+  process.env.GO2RTC_URL = 'http://go2rtc:1984';
+  delete require.cache[require.resolve('../config')]; delete require.cache[require.resolve('../lib/go2rtc')];
+  const g = require('../lib/go2rtc');
+  let puts = 0;
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    if (opts.method === 'PUT') puts++;
+    return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ st_abc: { producers: [{ url: 'webrtc:' }] } }) };
+  };
+  try {
+    assert.equal(await g.ensureStream('st_abc'), true);
+    assert.equal(puts, 0, 'an existing stream is not re-created');
+  } finally { global.fetch = realFetch; delete process.env.GO2RTC_URL; }
+});
+
+test('hasActiveProducer is false for a placeholder-only stream, true once a producer is connected', async () => {
+  process.env.GO2RTC_URL = 'http://go2rtc:1984';
+  delete require.cache[require.resolve('../config')]; delete require.cache[require.resolve('../lib/go2rtc')];
+  const g = require('../lib/go2rtc');
+  const realFetch = global.fetch;
+  const withStreams = (obj) => { global.fetch = async () => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => obj }); };
+  try {
+    withStreams({ st_abc: { producers: [{ url: 'webrtc:' }], consumers: [] } });
+    assert.equal(await g.hasActiveProducer('st_abc'), false, 'inert placeholder is not "publishing"');
+    withStreams({ st_abc: { producers: [{ url: 'webrtc:' }, { url: 'webrtc:', remote_addr: '10.0.0.5:33666 host', bytes_recv: 59800 }] } });
+    assert.equal(await g.hasActiveProducer('st_abc'), true, 'a producer with a real remote_addr IS publishing');
+    withStreams({});
+    assert.equal(await g.hasActiveProducer('st_abc'), false, 'absent stream is not publishing');
+  } finally { global.fetch = realFetch; delete process.env.GO2RTC_URL; }
+});

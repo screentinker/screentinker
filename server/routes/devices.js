@@ -815,7 +815,10 @@ router.get('/:id/live', async (req, res) => {
   if (!liveVideoOn(device)) return res.json({ ...snapshot, reason: 'disabled' });
   if (!go2rtc.enabled()) return res.json({ ...snapshot, reason: 'no_sidecar' });
   const name = go2rtc.streamName(device.workspace_id, device.id);
-  const [healthy, present] = await Promise.all([go2rtc.healthy(), go2rtc.hasStream(name)]);
+  // "present" must mean a publisher is ACTUALLY streaming, not just that ensureStream left an inert
+  // placeholder behind (see go2rtc.hasActiveProducer). Otherwise the dashboard would try webrtc,
+  // ICE-connect to a stream with no media, and sit on a black frame instead of the snapshot.
+  const [healthy, present] = await Promise.all([go2rtc.healthy(), go2rtc.hasActiveProducer(name)]);
   if (!healthy) return res.json({ ...snapshot, reason: 'sidecar_down' });
   if (!present) return res.json({ ...snapshot, reason: 'not_publishing' });
   res.json({

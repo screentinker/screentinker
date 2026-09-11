@@ -583,6 +583,9 @@ app.post('/api/devices/:id/live/publish',
     // The stream name is derived server-side from workspace+device: a player cannot publish into
     // another device's stream even with valid credentials for its own.
     const name = go2rtc.streamName(device.workspace_id, deviceId);
+    // go2rtc's dst= publish 404s on a stream that does not exist yet, so create the inert
+    // placeholder stream first (idempotent). Best-effort: if it fails the exchange below will 502.
+    await go2rtc.ensureStream(name);
     const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
     if (!answer) return res.status(502).json({ error: 'go2rtc did not accept the publish' });
     res.type('application/sdp').send(answer.sdp);
