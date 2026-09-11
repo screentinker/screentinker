@@ -45,16 +45,11 @@ class ScreenCapturePermissionActivity : Activity() {
             private set
 
         fun requestForLive(context: Context, serverUrl: String, deviceId: String, deviceToken: String, iceJson: String) {
-            val params = LiveParams(serverUrl, deviceId, deviceToken, iceJson)
-            val cached = resultData
-            if (hasPermission && cached != null) {
-                // Consent already held: start straight away (a fresh clone of the token for the
-                // live projection; the screenshot path holds its own).
-                LiveVideoService.start(context, resultCode, cached.clone() as Intent,
-                    params.serverUrl, params.deviceId, params.deviceToken, params.iceJson)
-                return
-            }
-            pendingLive = params
+            // ALWAYS request a fresh consent token. A MediaProjection permission result is SINGLE-USE
+            // — getMediaProjection() consumes it, so a cached token cannot start a second capture
+            // (re-publishing would fail). On a device-owner/signage panel this is dialog-free
+            // (PROJECT_MEDIA is auto-allowed), so a fresh grant each publish is cheap and correct.
+            pendingLive = LiveParams(serverUrl, deviceId, deviceToken, iceJson)
             val intent = Intent(context, ScreenCapturePermissionActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }

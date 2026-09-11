@@ -3,6 +3,8 @@ package com.remotedisplay.player.remote
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -67,6 +69,9 @@ class LiveVideoPublisher(
     private var surfaceHelper: SurfaceTextureHelper? = null
     @Volatile private var live = false
     @Volatile private var stopped = false
+    @Volatile private var posted = false
+    private val main = Handler(Looper.getMainLooper())
+    private val iceGatherCapMs = 2500L   // non-trickle: publish after this even if gathering has not COMPLETEd
 
     val isLive: Boolean get() = live
 
@@ -135,7 +140,11 @@ class LiveVideoPublisher(
         pc.createOffer(object : SimpleSdpObserver("createOffer") {
             override fun onCreateSuccess(sdp: SessionDescription) {
                 pc.setLocalDescription(object : SimpleSdpObserver("setLocalDescription") {
-                    override fun onSetSuccess() { /* wait for ICE gathering complete (non-trickle) */ }
+                    override fun onSetSuccess() {
+                        // Non-trickle: publish when gathering completes OR the cap elapses, whichever
+                        // is first, so a slow/failing STUN (common behind NAT) never wedges publishing.
+                        main.postDelayed({ postOfferAndAnswer() }, iceGatherCapMs)
+                    }
                 }, sdp)
             }
         }, constraints)
@@ -143,7 +152,10 @@ class LiveVideoPublisher(
 
     // Called once ICE gathering completes: the localDescription now carries the candidates, so we
     // POST the full offer to the device-authenticated publish route and apply the answer.
+    @Synchronized
     private fun postOfferAndAnswer() {
+        if (posted || stopped) return
+        posted = true
         val pc = peer ?: return
         val offer = pc.localDescription ?: run { Log.e(tag, "no local description after gathering"); return }
         Thread {
