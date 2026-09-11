@@ -367,8 +367,12 @@ export function render(container, deviceId) {
 async function loadDevice(deviceId, activeTab = null) {
   const contentEl = document.getElementById('deviceContent');
   try {
-    const device = await api.getDevice(deviceId);
+    const [device, serverStatus] = await Promise.all([
+      api.getDevice(deviceId),
+      api.getServerStatus().catch(() => null),   // best-effort; absence just hides the live toggle
+    ]);
     currentDevice = device;
+    const liveVideoAvailable = !!(serverStatus && serverStatus.features && serverStatus.features.live_video);
 
     /*
      * Does this display support `cap`? Drives which controls render at all.
@@ -863,6 +867,13 @@ async function loadDevice(deviceId, activeTab = null) {
               </label>
               <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ota.beta_hint')}</div>
           </div>
+          ${liveVideoAvailable ? `
+          <div style="margin:12px 0">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="liveVideoToggle" ${device.live_video_enabled === 1 ? 'checked' : ''}> ${t('device.live_video.toggle')}
+            </label>
+            <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.live_video.hint')}</div>
+          </div>` : ''}
           <div class="form-group" style="max-width:280px">
             <label>${t('device.reboot_schedule.label')}</label>
             <input type="time" id="rebootSchedule" class="input" style="background:var(--bg-input)" value="${esc(device.reboot_schedule || '')}">
@@ -1728,6 +1739,10 @@ function setupActions(device) {
         ota_enabled: document.getElementById('otaToggle')?.checked ? 1 : 0,
         ota_beta: document.getElementById('otaBetaToggle')?.checked ? 1 : 0,
         reboot_schedule: document.getElementById('rebootSchedule')?.value || null,
+        // Only present when the live-video toggle rendered (server master on); otherwise omitted so
+        // a save never flips a flag the operator could not see.
+        ...(document.getElementById('liveVideoToggle')
+          ? { live_video_enabled: document.getElementById('liveVideoToggle').checked ? 1 : 0 } : {}),
       });
       showToast(t('device.toast.settings_saved'), 'success');
     } catch (err) {

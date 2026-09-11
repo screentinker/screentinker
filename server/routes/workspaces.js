@@ -186,6 +186,13 @@ router.patch('/:id', (req, res) => {
     }
   }
 
+  // #go2rtc: opt this workspace into live video. Off by default; only meaningful when the server
+  // master switch (LIVE_VIDEO_ENABLED) is also on. Admin-gated by the canAdminWorkspace check above.
+  if (req.body.live_video_enabled !== undefined) {
+    updates.push('live_video_enabled = ?');
+    values.push(req.body.live_video_enabled ? 1 : 0);
+  }
+
   if (updates.length === 0) {
     return res.status(400).json({ error: 'No fields to update' });
   }
@@ -202,7 +209,7 @@ router.patch('/:id', (req, res) => {
     throw e;
   }
 
-  const updated = db.prepare('SELECT id, name, slug, organization_id FROM workspaces WHERE id = ?').get(req.params.id);
+  const updated = db.prepare('SELECT id, name, slug, organization_id, live_video_enabled FROM workspaces WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 

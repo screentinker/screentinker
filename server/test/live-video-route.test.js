@@ -116,3 +116,33 @@ test('publish for a token that matches no device is 401, not 404 (no id oracle)'
   const r = await sdpBody('whatever', crypto.randomUUID(), 'whatever');
   assert.equal(r.status, 401);
 });
+
+// ── Settings surface: the /api/status feature flag and the admin-gated toggles that turn live
+// video on per workspace (PATCH /workspaces/:id) and per device (PUT /devices/:id).
+test('/api/status advertises features.live_video when the master switch is on', async () => {
+  const r = await jfetch('/api/status');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.features && r.body.features.live_video, true);
+});
+
+test('workspace live-video toggle round-trips for an admin and is refused cross-workspace', async () => {
+  // B (another tenant) cannot flip A's workspace.
+  let r = await jfetch(`/api/workspaces/${A.wsId}`, { method: 'PATCH', headers: auth(B.token), body: JSON.stringify({ live_video_enabled: true }) });
+  assert.equal(r.status, 403);
+  // A's admin can, and it reflects in accessible_workspaces.
+  r = await jfetch(`/api/workspaces/${A.wsId}`, { method: 'PATCH', headers: auth(A.token), body: JSON.stringify({ live_video_enabled: true }) });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.live_video_enabled, 1);
+  const me = await jfetch('/api/auth/me', { headers: auth(A.token) });
+  const ws = me.body.accessible_workspaces.find((w) => w.id === A.wsId);
+  assert.equal(ws.live_video_enabled, 1);
+});
+
+test('device live-video toggle round-trips via PUT /devices/:id', async () => {
+  const id = crypto.randomUUID();
+  db.prepare("INSERT INTO devices (id,name,status,workspace_id,created_at) VALUES (?,?,'online',?,strftime('%s','now'))").run(id, 'Toggle', A.wsId);
+  const r = await jfetch(`/api/devices/${id}`, { method: 'PUT', headers: auth(A.token), body: JSON.stringify({ live_video_enabled: true }) });
+  assert.equal(r.status, 200);
+  const row = db.prepare('SELECT live_video_enabled FROM devices WHERE id = ?').get(id);
+  assert.equal(row.live_video_enabled, 1);
+});

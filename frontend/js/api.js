@@ -324,6 +324,9 @@ export const api = {
   // Devices
   getDevices: () => request('/devices'),
   getDeviceLive: (id) => request(`/devices/${id}/live`),
+  // #go2rtc: public status carries features.live_video (the server master switch) so the UI
+  // only offers the live-video toggles when the server actually supports them.
+  getServerStatus: () => request('/status'),
   reorderDevices: (order) => request('/devices/reorder', { method: 'POST', body: JSON.stringify({ order }) }),
   getDevice: (id) => request(`/devices/${id}`),
   getDeviceOwnerQR: () => request('/provision/device-owner-qr'),   // #161: device-owner provisioning

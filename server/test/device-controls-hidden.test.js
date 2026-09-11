@@ -40,6 +40,11 @@ function render(device, telemetry) {
     device,
     caps,
     can: (cap) => (caps ? caps.includes(cap) : true),
+    // #go2rtc: the server master switch for live video, resolved in loadDevice() OUTSIDE the sliced
+    // template. It gates the per-device live-video toggle in the Settings tab (a dashboard setting,
+    // not a device capability, so it is platform-independent). Rendered here so the branch is
+    // exercised; it is not one of the platform-gated controls this file is about.
+    liveVideoAvailable: true,
     latestTelemetry: telemetry || {},
     diagWidget: null,
     // Stubs. Each returns something recognisable so a control cannot be "found" by accident.

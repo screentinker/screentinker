@@ -760,6 +760,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     ? db.prepare(`
         SELECT w.id, w.name, w.organization_id, o.name AS organization_name,
                wm.role AS workspace_role, om.role AS org_role,
+               COALESCE(w.live_video_enabled, 0) AS live_video_enabled,
                (SELECT COUNT(*) FROM devices WHERE workspace_id = w.id) AS device_count
         FROM workspaces w
         JOIN organizations o ON o.id = w.organization_id
@@ -770,6 +771,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     : db.prepare(`
         SELECT w.id, w.name, w.organization_id, o.name AS organization_name,
                wm.role AS workspace_role, om.role AS org_role,
+               COALESCE(w.live_video_enabled, 0) AS live_video_enabled,
                (SELECT COUNT(*) FROM devices WHERE workspace_id = w.id) AS device_count
         FROM workspaces w
         JOIN organizations o ON o.id = w.organization_id

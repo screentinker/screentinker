@@ -637,6 +637,8 @@ export default {
   'device.failed_load': 'Failed to load device',
   'device.no_screenshot': 'No screenshot available. Click "Screenshot" to capture one.',
   'device.live_badge': 'Live',
+  'device.live_video.toggle': 'Enable live video for this screen',
+  'device.live_video.hint': 'Shows a live WebRTC feed in Now Playing when a player is publishing. Also requires live video enabled for this workspace and configured on the server. Falls back to screenshots otherwise.',
   // Shown instead of the line above on a player that cannot capture its own screen — pointing at
   // a "Screenshot" button that is correctly not rendered reads as a broken dashboard.
   'device.no_screenshot_unsupported': 'This player cannot capture its own screen.',
@@ -2459,6 +2461,13 @@ export default {
   'review.toast.saved_as_draft': 'Saved as a draft. Screens keep the live version until it is reviewed and published.',
 
   // Workspace setting
+  'live_video.title': 'Live video',
+  'live_video.explain': 'Let operators watch a live WebRTC feed of a screen from its Now Playing tab, instead of periodic screenshots. Requires a go2rtc sidecar configured on the server and enabling live video per screen. Screens that cannot publish keep using screenshots.',
+  'live_video.toggle': 'Enable live video for this workspace',
+  'live_video.on_effects': 'Screens with live video enabled will show a live feed when a player is publishing. Nothing is recorded; the stream is peer-to-peer through the sidecar.',
+  'live_video.enabled_toast': 'Live video enabled for this workspace',
+  'live_video.disabled_toast': 'Live video disabled for this workspace',
+  'live_video.save_failed': 'Could not update live video setting',
   'approval.title': 'Content approval',
   'approval.explain': 'When enabled, publishing anything in this workspace (playlists, slide decks, widgets, layouts, replaced media) needs approval from a reviewer first. Drafts never change what screens show. What is live today keeps playing and does not need retroactive approval.',
   'approval.toggle': 'Require approval before publishing',

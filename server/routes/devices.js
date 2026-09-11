@@ -320,7 +320,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule } = req.body;
+  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled } = req.body;
   // #150: validate orientation against the known enum (previously accepted any string, which
   // let a bad value reach the player -> unknown rotation falls back to landscape silently).
   // #325: a CSS colour that reaches the player's inline style, so it is constrained to a hex
@@ -363,6 +363,11 @@ router.put('/:id', (req, res) => {
     // Per-display pre-release opt-in (#234 follow-up). Stops a test build being reverted by the
     // next OTA check, which is what a prerelease version sorting below its own release causes.
     updates.push('ota_beta = ?'); values.push(ota_beta ? 1 : 0);
+  }
+  // #go2rtc: per-device live-video opt-in. Only meaningful when the workspace flag and the server
+  // master switch are also on (see liveVideoOn); off by default. Write-gated by checkDeviceOwnership.
+  if (live_video_enabled !== undefined) {
+    updates.push('live_video_enabled = ?'); values.push(live_video_enabled ? 1 : 0);
   }
   // #12 scheduled reboot: device-local "HH:MM" (null/'' clears -> off). Reset the
   // once-per-day guard on any change so a newly-set time can still fire later today.
