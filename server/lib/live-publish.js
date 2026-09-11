@@ -59,13 +59,17 @@
 
     async function start(iceServers) {
       const mine = ++seq;
-      if (typeof deps.createPeer !== 'function' || typeof deps.getDisplayMedia !== 'function') {
+      // getStream is the general capture source: a page capturing its OWN content
+      // (canvas/video captureStream, no gesture) or, as a fallback, getDisplayMedia.
+      const getStream = deps.getStream || deps.getDisplayMedia;
+      if (typeof deps.createPeer !== 'function' || typeof getStream !== 'function') {
         setState('stopped', 'unsupported'); return false;
       }
       setState('starting');
-      // Capture the screen. A denied prompt is the common case and is not an error worth shouting.
+      // Acquire the media. Self-capture never prompts; getDisplayMedia may be denied, which is not
+      // an error worth shouting.
       try {
-        stream = await deps.getDisplayMedia();
+        stream = await getStream();
       } catch (_) {
         setState('stopped', 'capture_denied'); return false;
       }
@@ -132,9 +136,13 @@
       let pub = null;
       return {
         isSupported: function () {
-          return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.RTCPeerConnection);
+          // Publishing needs a peer connection and SOME capture source. Self-capture
+          // (canvas/video.captureStream) is the primary path and needs no getDisplayMedia.
+          return !!window.RTCPeerConnection;
         },
-        // opts: { deviceId, deviceToken, iceServers, onState }
+        // opts: { deviceId, deviceToken, iceServers, onState, getStream }
+        //   getStream: () => MediaStream  — the player's OWN content (canvas/video captureStream,
+        //   no gesture). If omitted, falls back to getDisplayMedia (which DOES need a gesture).
         start: async function (opts) {
           opts = opts || {};
           if (!this.isSupported() || !opts.deviceId || !opts.deviceToken) return false;
@@ -147,7 +155,9 @@
                       '/live/publish?token=' + encodeURIComponent(opts.deviceToken);
           pub = createPublisher({
             onState: opts.onState,
-            getDisplayMedia: function () {
+            getStream: opts.getStream || function () {
+              // Fallback only: capturing ANOTHER surface needs a gesture + picker. The player
+              // supplies its own gesture-free self-capture via opts.getStream.
               return navigator.mediaDevices.getDisplayMedia({
                 video: { frameRate: { ideal: 15, max: 30 } },
                 audio: false,

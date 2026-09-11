@@ -2603,29 +2603,88 @@
       // A browser only grants getDisplayMedia from a user gesture, so start on an active activation
       // now, else arm the next tap/key. Publishing is best-effort: if the player cannot (no
       // support, no credentials, denied) it simply keeps rendering. Never blocks content.
+      // #go2rtc self-capture: publish the player's OWN rendered content, NO getDisplayMedia and NO
+      // gesture. A page can capture its own pixels freely, so we mirror the stage into a canvas and
+      // captureStream() it. This covers the player's video and image content (same-origin, so the
+      // canvas is not tainted). It CANNOT capture cross-origin web-page/widget iframes (browser
+      // security taints the canvas) - those frames simply hold the last drawable frame. The real
+      // signage answer for those is the deferred Android MediaProjection publisher.
+      let liveCaptureStop = null;
+      function startStageCapture(fps) {
+        const container = document.getElementById('playerContainer') || document.body;
+        const canvas = document.createElement('canvas');
+        canvas.width = container.clientWidth || window.innerWidth || 1280;
+        canvas.height = container.clientHeight || window.innerHeight || 720;
+        const ctx = canvas.getContext('2d');
+        let stopped = false;
+        const visible = (el) => {
+          if (!el || el.offsetParent === null) return false;   // display:none / detached
+          try { const st = getComputedStyle(el); if (st.visibility === 'hidden' || parseFloat(st.opacity || '1') < 0.05) return false; } catch (_) {}
+          return (el.offsetWidth || 0) > 0 && (el.offsetHeight || 0) > 0;
+        };
+        const pickSource = () => {
+          // The ACTUAL on-screen content, not a hidden double-buffer. The player keeps a paused,
+          // often-offscreen preload <video> (see preloadVideo/#187); drawing that gives a black
+          // frame. So require a video that is visible AND actually playing; fall back to a visible
+          // loaded image (image content), then last-resort any ready video.
+          const allV = Array.from(container.querySelectorAll('video')).filter((v) => v.readyState >= 2 && (v.videoWidth || 0) > 0);
+          const playing = allV.filter((v) => !v.paused && !v.ended && visible(v));
+          if (playing.length) return playing[playing.length - 1];
+          const imgs = Array.from(container.querySelectorAll('img')).filter((i) => i.complete && (i.naturalWidth || 0) > 0 && visible(i));
+          if (imgs.length) return imgs[imgs.length - 1];
+          const visV = allV.filter((v) => visible(v));
+          if (visV.length) return visV[visV.length - 1];
+          return null;
+        };
+        const tick = () => {
+          if (stopped) return;
+          const src = pickSource();
+          if (src) {
+            const sw = src.videoWidth || src.naturalWidth, sh = src.videoHeight || src.naturalHeight;
+            if (sw && sh) {
+              try {
+                ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                const scale = Math.min(canvas.width / sw, canvas.height / sh);
+                const dw = sw * scale, dh = sh * scale;
+                ctx.drawImage(src, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+              } catch (_) { /* cross-origin taint: keep the last frame rather than throw */ }
+            }
+          }
+        };
+        tick();
+        const timer = setInterval(tick, Math.round(1000 / (fps || 15)));
+        const stream = canvas.captureStream(fps || 15);
+        liveCaptureStop = () => { stopped = true; clearInterval(timer); };
+        return stream;
+      }
+
       socket.on('device:live-publish', (data) => {
         const LP = window.STLivePublish;
         if (!LP) return;
         const action = data && data.action;
-        if (action === 'stop') { try { LP.stop(); } catch (_) {} return; }
+        if (action === 'stop') {
+          try { LP.stop(); } catch (_) {}
+          if (liveCaptureStop) { try { liveCaptureStop(); } catch (_) {} liveCaptureStop = null; }
+          return;
+        }
         if (action !== 'start') return;
         if (!config || !config.deviceId || !config.deviceToken || !LP.isSupported()) {
           console.log('[live] publish requested but not available on this player'); return;
         }
-        const opts = {
-          deviceId: config.deviceId,
-          deviceToken: config.deviceToken,
-          serverUrl: config.serverUrl || '',
-          iceServers: (data && data.iceServers) || undefined,
-          onState: (st, reason) => console.log('[live] publish', st, reason || ''),
-        };
-        const go = () => { try { LP.start(opts); } catch (_) {} };
-        // navigator.userActivation is not everywhere; treat its absence as "needs a gesture".
-        if (navigator.userActivation && navigator.userActivation.isActive) { go(); return; }
-        console.log('[live] publish armed - waiting for a screen interaction to grant capture');
-        const arm = () => { window.removeEventListener('pointerdown', arm); window.removeEventListener('keydown', arm); go(); };
-        window.addEventListener('pointerdown', arm, { once: true });
-        window.addEventListener('keydown', arm, { once: true });
+        // Self-capture needs no user gesture, so start immediately when the dashboard asks.
+        try {
+          LP.start({
+            deviceId: config.deviceId,
+            deviceToken: config.deviceToken,
+            serverUrl: config.serverUrl || '',
+            iceServers: (data && data.iceServers) || undefined,
+            getStream: () => startStageCapture(15),
+            onState: (st, reason) => {
+              console.log('[live] publish', st, reason || '');
+              if (st === 'stopped' && liveCaptureStop) { try { liveCaptureStop(); } catch (_) {} liveCaptureStop = null; }
+            },
+          });
+        } catch (_) { /* publishing is best-effort; never break playback */ }
       });
 
       socket.on('device:pip-show', (data) => pipShow(data));
