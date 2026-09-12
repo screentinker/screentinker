@@ -88,6 +88,12 @@ import { esc } from './utils.js';
 
 const app = document.getElementById('app');
 const sidebar = document.querySelector('.sidebar');
+// The sidebar offset lives on .main-wrapper (margin-left: var(--sidebar-width)), NOT on
+// #app. The sidebar-hidden routes (login, onboarding, no-workspace, change-password) must
+// zero THIS margin, or the content stays pushed right by the sidebar width and reads as
+// off-centre. Toggling #app's own margin (as this used to) did nothing once #app was
+// wrapped. #login-centre
+const mainWrapper = document.querySelector('.main-wrapper');
 let currentView = null;
 
 // ==================== Slice 2C: accept-invite plumbing ====================
@@ -472,7 +478,7 @@ function route() {
         return;
       }
       sidebar.style.display = 'none';
-      app.style.marginLeft = '0';
+      if (mainWrapper) mainWrapper.style.marginLeft = '0';
       const mb = document.getElementById('mobileMenuBtn');
       if (mb) mb.style.display = 'none';
       currentView = forcePasswordChange;
@@ -495,7 +501,7 @@ function route() {
     if (hash === '#/no-workspace') {
       if (!hasNoAccessibleWorkspace(u)) { window.location.hash = '#/'; return; }
       sidebar.style.display = 'none';
-      app.style.marginLeft = '0';
+      if (mainWrapper) mainWrapper.style.marginLeft = '0';
       const mb = document.getElementById('mobileMenuBtn');
       if (mb) mb.style.display = 'none';
       currentView = noWorkspace;
@@ -507,7 +513,7 @@ function route() {
   // Onboarding for new users
   if (hash === '#/onboarding' && isAuthenticated()) {
     sidebar.style.display = 'none';
-    app.style.marginLeft = '0';
+    if (mainWrapper) mainWrapper.style.marginLeft = '0';
     currentView = onboarding;
     onboarding.render(app);
     return;
@@ -518,7 +524,7 @@ function route() {
   // and an exact comparison meant the login view was never rendered for either.
   if (isLoginRoute || isResetRoute) {
     sidebar.style.display = 'none';
-    app.style.marginLeft = '0';
+    if (mainWrapper) mainWrapper.style.marginLeft = '0';
     const mb = document.getElementById('mobileMenuBtn');
     if (mb) mb.style.display = 'none';
     currentView = login;
@@ -528,7 +534,7 @@ function route() {
 
   // Show sidebar for authenticated views
   sidebar.style.display = '';
-  app.style.marginLeft = '';
+  if (mainWrapper) mainWrapper.style.marginLeft = '';
   const mb = document.getElementById('mobileMenuBtn');
   if (mb) mb.style.display = '';
 
