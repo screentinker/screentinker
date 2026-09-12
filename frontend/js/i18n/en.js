@@ -2097,6 +2097,8 @@ export default {
   'billing.trial_days_left': 'Trial - {n} days left',
   'billing.trial_ends': 'Your {plan} trial ends in {n} days',
   'billing.trial_after': "After the trial, you'll be moved to the Free plan (1 device). Upgrade now to keep all your devices and features.",
+  'billing.trial_ended': 'Your {plan} trial ended on {date}',
+  'billing.trial_ended_after': "You're on the Free plan ({n} device). Screens beyond that limit show a Trial Expired card until you upgrade. Nothing was deleted.",
   'billing.devices': 'Devices',
   'billing.devices_lc': 'devices',
   'billing.storage': 'Storage',

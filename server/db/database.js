@@ -651,6 +651,14 @@ const migrations = [
   // additive — existing rows are unaffected and a code-only rollback leaves dead columns.
   "ALTER TABLE users ADD COLUMN password_reset_hash TEXT",
   "ALTER TABLE users ADD COLUMN password_reset_expires INTEGER",
+  // Trial expiry (nightly sweep + emails, services/trialExpiry.js). trial_expired_at is stamped
+  // when a lapsed trial is flipped to Free — by the sweep or the lazy getUserPlan path — and is
+  // what the player reads to say "Trial Expired" rather than "Device Limit Reached" (the
+  // downgrade nulls trial_started, so that column cannot carry the message). The two *_sent_at
+  // columns are the once-per-user idempotency stamps for the T-3 and expiry emails.
+  "ALTER TABLE users ADD COLUMN trial_expired_at INTEGER",
+  "ALTER TABLE users ADD COLUMN trial_ending_email_sent_at INTEGER",
+  "ALTER TABLE users ADD COLUMN trial_expired_email_sent_at INTEGER",
   "ALTER TABLE organizations ADD COLUMN widget_sandbox_isolation_disabled INTEGER NOT NULL DEFAULT 0",
   // AUTH-05: make break-glass recovery revocable, single-use and auditable.
   //

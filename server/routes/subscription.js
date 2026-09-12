@@ -47,6 +47,9 @@ router.get('/me', requireAuth, (req, res) => {
       days_left: plan.trial_days_left || 0,
       end: plan.trial_end ? new Date(plan.trial_end * 1000).toISOString() : null,
       plan: plan.trial_plan || null,
+      // Set once the trial has lapsed and the account was moved to Free (null while active or
+      // for accounts that never trialed). Lets the Billing page say "ended on" instead of nothing.
+      expired_at: plan.trial_expired_at ? new Date(plan.trial_expired_at * 1000).toISOString() : null,
     },
     self_hosted: config.selfHosted,
   });

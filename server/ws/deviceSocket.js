@@ -144,7 +144,7 @@ const widgetExists = db.prepare('SELECT 1 FROM widgets WHERE id = ?').pluck();
 // #143 fingerprint-reclaim deferral log throttle: deviceId -> last-logged ms, so a
 // device retrying reclaim every ~2s logs at most once per reclaimRejectLogWindowMs.
 const lastReclaimRejectLogAt = new Map();
-const { getUserPlan, getUserDeviceCount } = require('../middleware/subscription');
+const { getUserPlan } = require('../middleware/subscription');
 // Phase 2.3: deviceRoom() resolves a device_id to its workspace room so
 // dashboardNs.emit can be scoped instead of broadcast platform-wide.
 const { deviceRoom, emitToWorkspace } = require('../lib/socket-rooms');
@@ -468,7 +468,7 @@ function refreshContentRevs(assignments) {
 
 const { triggersForDevice, projectTrigger } = require('../lib/device-triggers');
 
-function buildPlaylistPayload(deviceId) {
+function buildPlaylistPayloadUnchecked(deviceId) {
   /*
    * ⚠️ playlist_id comes from the RESOLVER, not from the devices row.
    *
@@ -724,9 +724,14 @@ function checkDeviceAccess(deviceId) {
   const plan = getUserPlan(device.user_id);
   if (!plan) return { allowed: true };
 
-  // Check if trial expired and over free limit
-  if (plan.trial_started && !plan.trial_active && plan.plan_name === 'free') {
-    const deviceCount = getUserDeviceCount(device.user_id);
+  // A lapsed trial that landed on Free: the extra screens are told WHY (their trial ended), not
+  // just that a limit was hit — different message, different action for the owner.
+  //
+  // Keyed on trial_expired_at, which expireTrial() stamps at downgrade. The previous guard was
+  // `plan.trial_started && !plan.trial_active`, but the downgrade NULLs trial_started first, so
+  // this branch could never fire and every expired-trial screen fell through to the generic
+  // "Device Limit Reached" card below.
+  if (plan.trial_expired_at && plan.plan_name === 'free' && plan.max_devices > 0) {
     // Get this device's position (ordered by created_at)
     const userDevices = db.prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at ASC').all(device.user_id);
     const deviceIndex = userDevices.findIndex(d => d.id === deviceId);
@@ -737,7 +742,7 @@ function checkDeviceAccess(deviceId) {
         allowed: false,
         reason: 'trial_expired',
         message: 'Trial Expired',
-        detail: 'Upgrade your plan to continue using this display.',
+        detail: 'Your free Pro trial has ended and this display is beyond the Free plan\'s limit. Upgrade your plan to keep it running.',
       };
     }
   }
@@ -757,6 +762,24 @@ function checkDeviceAccess(deviceId) {
   }
 
   return { allowed: true };
+}
+
+// The payload a device is ALLOWED to receive. This is the only builder exported for delivery:
+// every push path — register/reconnect here, the offline flush in lib/command-queue, and the ~20
+// dashboard-side queueOrEmitPlaylistUpdate callers (playlist/content/layout/widget/group edits,
+// the scheduler, mute-sync, data-source refresh, video walls, releases) — goes through it. Before,
+// only the three register paths consulted checkDeviceAccess, so assigning content from the
+// dashboard sent a blocked screen its real playlist and quietly re-enabled it until its next
+// reconnect. A paywall with a side door is not a paywall.
+//
+// The suspended shape is the one the players already understand (web handlePlaylistUpdate,
+// Android MainActivity, Tizen app.js): no items, a card with message/detail.
+function buildPlaylistPayload(deviceId) {
+  const access = checkDeviceAccess(deviceId);
+  if (!access.allowed) {
+    return { assignments: [], suspended: true, reason: access.reason, message: access.message, detail: access.detail };
+  }
+  return buildPlaylistPayloadUnchecked(deviceId);
 }
 
 // v4 core-pass helpers (module scope; db is a ready singleton at require time).
@@ -816,6 +839,8 @@ module.exports = function setupDeviceSocket(io) {
   // Expose helpers for use by route handlers
   module.exports.lastScreenshots = lastScreenshots;
   module.exports.buildPlaylistPayload = buildPlaylistPayload;
+  module.exports.buildPlaylistPayloadUnchecked = buildPlaylistPayloadUnchecked; // dashboard preview only
+  module.exports.checkDeviceAccess = checkDeviceAccess;
   module.exports.assemblePayload = assemblePayload;
   module.exports.generateDeviceToken = generateDeviceToken;
   const deviceNs = io.of('/device');
@@ -1183,12 +1208,7 @@ module.exports = function setupDeviceSocket(io) {
                 // Flush any commands/playlist-updates queued while this device was offline.
                 commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                 // Send playlist
-                const access = checkDeviceAccess(existing.device_id);
-                if (!access.allowed) {
-                  socket.emit('device:playlist-update', { assignments: [], suspended: true, message: access.message, detail: access.detail });
-                } else {
-                  socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
-                }
+                socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
                 return;
                 }
                 // The old row is UNCLAIMED (never paired). Reclaiming it would leave it carrying a
@@ -1232,12 +1252,7 @@ module.exports = function setupDeviceSocket(io) {
                   // Flush any commands/playlist-updates queued while this device was offline.
                   commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                   // Send playlist
-                  const access = checkDeviceAccess(existing.device_id);
-                  if (!access.allowed) {
-                    socket.emit('device:playlist-update', { assignments: [], suspended: true, message: access.message, detail: access.detail });
-                  } else {
-                    socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
-                  }
+                  socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
                   return;
                 }
               }
@@ -1437,12 +1452,7 @@ module.exports = function setupDeviceSocket(io) {
           } catch (e) { console.error('Group sync re-push failed:', e.message); }
 
           // Check subscription/trial status before sending playlist
-          const access = checkDeviceAccess(device_id);
-          if (!access.allowed) {
-            socket.emit('device:playlist-update', { assignments: [], suspended: true, message: access.message, detail: access.detail });
-          } else {
-            socket.emit('device:playlist-update', buildPlaylistPayload(device_id));
-          }
+          socket.emit('device:playlist-update', buildPlaylistPayload(device_id));
 
           emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', { device_id, status: 'online' });
           // Only log a genuine reconnect (new socket). Same-socket periodic refreshes stay

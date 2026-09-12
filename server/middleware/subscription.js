@@ -3,6 +3,56 @@ const config = require('../config');
 
 const TRIAL_DAYS = 14;
 
+// The ONE way a lapsed trial becomes Free. Used by the lazy path below (getUserPlan) and by the
+// nightly sweep (services/trialExpiry.js) so the two can never disagree on what "expired" writes.
+//
+// Sets plan_id='free', clears trial_started (so a later hand-granted plan is never re-downgraded
+// — see the comment in getUserPlan) and stamps trial_expired_at with the moment the trial
+// actually ended (trial_started + TRIAL_DAYS), NOT "now": the sweep may run days after the fact
+// and the expiry email + the player's "Trial Expired" card both key on this column.
+//
+// Guarded by the same predicate as getUserPlan so a stray call on a paying / comped / active
+// account is a no-op. Returns true when a row was flipped.
+// Prepared lazily: some test fixtures build a minimal users table without the trial columns and
+// require this module before any migration runs; a module-load prepare would throw there.
+let _expireTrialStmt;
+const EXPIRE_TRIAL_SQL = `
+  UPDATE users
+     SET plan_id = 'free',
+         trial_expired_at = trial_started + ${TRIAL_DAYS * 86400},
+         trial_started = NULL
+   WHERE id = ?
+     AND trial_started IS NOT NULL
+     AND trial_started + ${TRIAL_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+     AND stripe_subscription_id IS NULL
+     AND plan_id = trial_plan
+     AND plan_id != 'free'
+`;
+function expireTrial(userId) {
+  if (!_expireTrialStmt) _expireTrialStmt = db.prepare(EXPIRE_TRIAL_SQL);
+  return _expireTrialStmt.run(userId).changes === 1;
+}
+
+// Ids of every user whose trial has lapsed but who still sits on the trial plan. Same predicate
+// as expireTrial; the sweep feeds these back through expireTrial one at a time.
+//
+// ⚠️ CAST(strftime(...) AS INTEGER): strftime returns TEXT, and in SQLite an INTEGER compares
+// LESS THAN any TEXT, so `trial_started + N <= strftime('%s','now')` is ALWAYS true and
+// `> strftime(...)` ALWAYS false. Compare against an integer or the predicate lies silently.
+let _expiredTrialIdsStmt;
+const EXPIRED_TRIAL_IDS_SQL = `
+  SELECT id FROM users
+   WHERE trial_started IS NOT NULL
+     AND trial_started + ${TRIAL_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+     AND stripe_subscription_id IS NULL
+     AND plan_id = trial_plan
+     AND plan_id != 'free'
+`;
+function findExpiredTrialUserIds() {
+  if (!_expiredTrialIdsStmt) _expiredTrialIdsStmt = db.prepare(EXPIRED_TRIAL_IDS_SQL);
+  return _expiredTrialIdsStmt.all().map(r => r.id);
+}
+
 function getUserPlan(userId) {
   const user = db.prepare(`
     SELECT u.*, p.name as plan_name, p.display_name as plan_display_name,
@@ -43,7 +93,7 @@ function getUserPlan(userId) {
     // being silently downgraded. Grandfathered users (trial_started IS NULL) never reach this
     // block at all.
     if (!user.trial_active && !user.stripe_subscription_id && user.plan_id === user.trial_plan && user.plan_name !== 'free') {
-      db.prepare("UPDATE users SET plan_id = 'free', trial_started = NULL WHERE id = ?").run(userId);
+      expireTrial(userId);
       // Re-fetch with free plan
       return getUserPlan(userId);
     }
@@ -154,6 +204,9 @@ function checkActiveSubscription(req, res, next) {
 }
 
 module.exports = {
+  TRIAL_DAYS,
+  expireTrial,
+  findExpiredTrialUserIds,
   getUserPlan,
   getUserDeviceCount,
   getUserStorageMB,

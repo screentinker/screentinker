@@ -39,6 +39,15 @@ export async function render(container) {
           </div>
         </div>
         ` : ''}
+        ${(!subData.trial?.active && subData.trial?.expired_at && subData.plan.name === 'free') ? `
+        <div style="background:var(--bg-secondary);border:1px solid var(--warning);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
+          <span style="font-size:20px">&#9201;</span>
+          <div>
+            <div style="font-size:13px;font-weight:500">${t('billing.trial_ended', { plan: (subData.trial.plan?.charAt(0).toUpperCase() + subData.trial.plan?.slice(1)) || '', date: esc(new Date(subData.trial.expired_at).toLocaleDateString()) })}</div>
+            <div style="font-size:12px;color:var(--text-muted)">${t('billing.trial_ended_after', { n: subData.plan.max_devices })}</div>
+          </div>
+        </div>
+        ` : ''}
         <div class="info-grid" style="margin-bottom:0">
           <div class="info-card">
             <div class="info-card-label">${t('billing.devices')}</div>

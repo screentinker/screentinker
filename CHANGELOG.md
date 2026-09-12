@@ -41,6 +41,32 @@ and talk alike, falling back to the sidecar's `GO2RTC_*` servers when unset. `li
 resolves both from a device or workspace up to its org, and every talk endpoint enforces the flag
 server-side.
 
+**Trial expiry actually happens.** The 14-day Pro trial used to end only when the user next opened
+Billing, paired a screen, uploaded content, or a screen reconnected; anyone who went quiet stayed on
+Pro indefinitely (283 of 421 hosted accounts on 2026-09-12). A nightly sweep (`services/trialExpiry.js`,
+14:00 UTC) now moves every lapsed trial to Free through the same `expireTrial()` the lazy path uses,
+and pushes each affected screen its access-gated playlist so an extra screen that is connected stops
+at once. Two emails go with it, once per user: "your Pro trial ends in N days" at three days out, and
+"your Pro trial has ended" after the downgrade, each naming which screens stop and what it costs to
+keep them. Off entirely under `SELF_HOSTED=true`; emails also need `HOSTED_INSTANCE=true`. The
+expiry email only reaches trials that lapsed within `TRIAL_EXPIRED_EMAIL_MAX_AGE_DAYS` (default 30),
+so the first sweep on a deep backlog downgrades silently rather than mailing months-old signups. New
+columns `users.trial_expired_at`, `trial_ending_email_sent_at`, `trial_expired_email_sent_at`; the
+Billing page shows "Your Pro trial ended on …" for a downgraded account.
+
+### Fixed
+
+**A dashboard push could re-enable a paywalled screen.** Only the three device-register paths
+consulted `checkDeviceAccess`; the ~20 dashboard-side pushes (playlist, content, layout, widget and
+group edits, the scheduler, mute-sync, data-source refresh, video walls, releases) and the offline
+flush in `lib/command-queue` all sent the raw playlist, so assigning content to a blocked screen
+brought it back until its next reconnect. `buildPlaylistPayload` — the only builder exported for
+delivery — is now the gated one; the dashboard preview uses `buildPlaylistPayloadUnchecked`.
+
+**Blocked screens said "Device Limit Reached" instead of "Trial Expired".** The trial-expired branch
+was keyed on `trial_started`, which the downgrade nulls first, so it could never fire. It now keys on
+`trial_expired_at` and tells the owner their trial ended.
+
 ## 2.0.8
 
 The first release since 2.0.7, and a large one: two new subsystems, a new player platform, and

@@ -267,8 +267,10 @@ router.get('/:id/preview-payload', (req, res) => {
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
   const ctx = ws && accessContext(req.user.id, req.user.role, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
-  const { buildPlaylistPayload } = require('../ws/deviceSocket');
-  const payload = buildPlaylistPayload(req.params.id);
+  // Unchecked on purpose: this is the dashboard's "what would it play" preview, not a delivery
+  // channel. The gated buildPlaylistPayload would render a suspended card for a blocked screen.
+  const { buildPlaylistPayloadUnchecked } = require('../ws/deviceSocket');
+  const payload = buildPlaylistPayloadUnchecked(req.params.id);
   payload.wall_config = null; // v1: wall members preview full-frame (no socket-free follower freeze)
   res.json(payload);
 });
