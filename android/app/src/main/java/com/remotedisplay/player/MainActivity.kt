@@ -327,12 +327,18 @@ class MainActivity : AppCompatActivity() {
         playlistController.setSlideAudioPlayer(slideAudioPlayer)
         playlistController.setServerBase { config.serverUrl }
 
-        // feat/transition-engine: full-screen GLES2 overlay that plays image/video wipes. Inserted just
-        // BELOW the status overlay (so the connecting/idle screen still covers it) and ABOVE the image/
-        // video layers, so a wipe composites over the outgoing content. Hidden except during a wipe.
+        // feat/transition-engine: full-screen GLES2 overlay that plays image/video wipes.
+        //
+        // #344: attach it to the WINDOW CONTENT ROOT (android.R.id.content), NOT the rotated stage,
+        // just below pipLayout — the same move #109 made for the PiP. A SurfaceView is not guaranteed
+        // to inherit a rotated ancestor's transform on every ROM, so keeping the overlay on the raw,
+        // unrotated screen and baking the stage's rotation into the fitted bitmaps (see
+        // fitTransitionBitmapRotated + setTransitionStage) makes the wipe match the mounted content
+        // regardless of the composer. It was previously on rootView, which is what made the wipe draw
+        // in the panel's native orientation on ROMs that do not rotate the surface.
         val transitionView = TransitionGLView(this)
-        (rootView as FrameLayout).let { root ->
-            val idx = root.indexOfChild(statusOverlay).coerceAtLeast(0)
+        (captureRoot as ViewGroup).let { root ->
+            val idx = root.indexOfChild(pipLayout).coerceAtLeast(0)
             root.addView(transitionView, idx,
                 FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         }
@@ -351,6 +357,18 @@ class MainActivity : AppCompatActivity() {
             },
             transitionView = transitionView
         )
+
+        // #344: applyOrientation() may have already run before mediaPlayer existed (its isInitialized
+        // guard skipped the geometry push then), so seed the transition-stage geometry now from
+        // whatever orientation is currently applied. Later orientation changes push it themselves.
+        if (appliedStageW > 0f && appliedStageH > 0f) {
+            val (rot0, swap0) = orientationRotSwap(currentOrientation)
+            val screenW0 = appliedStageW.toInt(); val screenH0 = appliedStageH.toInt()
+            mediaPlayer.setTransitionStage(
+                if (swap0) screenH0 else screenW0, if (swap0) screenW0 else screenH0,
+                screenW0, screenH0, rot0
+            )
+        }
 
         // Video-wall controller. The emit lambdas read wsService lazily (it's bound after
         // onCreate), and they no-op until the socket is connected (guarded in the service).
@@ -524,6 +542,15 @@ class MainActivity : AppCompatActivity() {
         applyOrientation(currentOrientation ?: "landscape")
     }
 
+    // #344: (rotation, transpose?) for an orientation string. One source, shared by applyOrientation
+    // and the initial transition-stage push so the two can never disagree on what "portrait" means.
+    private fun orientationRotSwap(o: String?): Pair<Float, Boolean> = when (o) {
+        "portrait" -> 90f to true
+        "portrait-flipped" -> 270f to true
+        "landscape-flipped" -> 180f to false
+        else -> 0f to false   // landscape
+    }
+
     private fun applyOrientation(orientation: String) {
         val (w, h) = windowSize()
         // The guard compares the measured SIZE as well as the orientation. Comparing the string
@@ -532,12 +559,7 @@ class MainActivity : AppCompatActivity() {
         currentOrientation = orientation
         appliedStageW = w
         appliedStageH = h
-        val (rot, swap) = when (orientation) {
-            "portrait" -> 90f to true
-            "portrait-flipped" -> 270f to true
-            "landscape-flipped" -> 180f to false
-            else -> 0f to false   // landscape
-        }
+        val (rot, swap) = orientationRotSwap(orientation)
         val lp = rootView.layoutParams
         lp.width = (if (swap) h else w).toInt()
         lp.height = (if (swap) w else h).toInt()
@@ -547,6 +569,10 @@ class MainActivity : AppCompatActivity() {
         rootView.rotation = rot
         rootView.requestLayout()
         mirrorTransformToPip()
+        // #344: tell the wipe compositor the box it must fit into. The overlay lives on the unrotated
+        // content root, so it needs the stage box (lp.width/height), the screen box (w/h) and the
+        // rotation to bake in — NOT its own measured size, which is 0 while it is GONE between wipes.
+        if (::mediaPlayer.isInitialized) mediaPlayer.setTransitionStage(lp.width, lp.height, w.toInt(), h.toInt(), rot)
         Log.i("MainActivity", "Applied orientation: $orientation (rotation=$rot, swap=$swap)")
     }
 

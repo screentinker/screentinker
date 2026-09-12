@@ -299,6 +299,29 @@ class MediaPlayerManager(
     // loop sync (they own their own frame timing). ----
     private fun transitionsActive(): Boolean = transitionView != null && !wallMute && !videoLooping
 
+    /*
+     * #344 — the stage/screen geometry a wipe is fitted to, pushed from MainActivity.applyOrientation.
+     *
+     * The overlay draws onto an UNROTATED, screen-sized surface, so the fit must be done in stage
+     * space and rotated into screen space here (see fitTransitionBitmapRotated). We take these numbers
+     * from the orientation code rather than the overlay's own measured size, because the overlay is
+     * GONE until play() and a GONE view measures 0 — reading it was what hard-cut every wipe (#344).
+     * Zero until the first orientation is applied, so a wipe hard-cuts rather than fitting to nothing.
+     */
+    @Volatile private var stageW = 0
+    @Volatile private var stageH = 0
+    @Volatile private var screenW = 0
+    @Volatile private var screenH = 0
+    @Volatile private var stageRotation = 0f
+    private var geomWarned = false
+
+    fun setTransitionStage(stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotationDeg: Float) {
+        this.stageW = stageW; this.stageH = stageH
+        this.screenW = screenW; this.screenH = screenH
+        this.stageRotation = rotationDeg
+        geomWarned = false   // a real geometry change resets the one-shot diagnostic
+    }
+
     // The frame on screen now, as a bitmap, for the wipe's `from`. Image -> the ImageView bitmap; video
     // -> the ExoPlayer TextureView's current frame. Null (youtube/widget/none/unavailable) -> hard cut.
     private fun captureCurrentFrame(): Bitmap? = try {
@@ -327,23 +350,36 @@ class MediaPlayerManager(
         val view = transitionView
         if (view == null || spec == null || from == null || !transitionsActive()) return false
         val picked = pickEffect(spec) ?: return false
-        // #326: THE STAGE'S OWN BOX, NOT THE DEVICE'S.
-        //
-        // MainActivity rotates rootView for a portrait screen and TRANSPOSES its layout params
-        // (lp.width = h, lp.height = w) before setting rotation. A View's rotation does not change
-        // its layout bounds, so on a portrait panel the stage is laid out 1080x1920 while
-        // displayMetrics still reports 1920x1080 — each the other's transpose. Fitting both bitmaps
-        // to displayMetrics therefore played every wipe at the wrong aspect and snapped back when
-        // the plain mount took over, which is the same fault #315 fixed in the web player.
-        //
-        // transitionView is added to that same rootView with MATCH_PARENT in both axes, so its own
-        // measured size IS the stage box. Zero means it has not been laid out yet, and the existing
-        // guard below turns that into a hard cut rather than a wipe fitted to nothing.
-        val w = view.width; val h = view.height
-        if (w <= 0 || h <= 0) return false
+        /*
+         * #344 — fit to the KNOWN stage/screen geometry, NOT the overlay's measured size.
+         *
+         * #326 changed this to read view.width/height, meaning to use "the stage's own box". But the
+         * overlay is GONE until play() and a GONE view measures 0, so the old `w<=0` guard fired on
+         * EVERY wipe and hard-cut before play() was ever reached — transitions silently stopped
+         * working in all orientations. And even once shown, its size went stale after a rotation
+         * because a GONE view is skipped by later layout passes. So we take the geometry from the
+         * orientation code (setTransitionStage) instead, and fit in stage space + rotate into the
+         * screen box, which the overlay (on the unrotated content root) then draws 1:1.
+         */
+        val sw = stageW; val sh = stageH; val cw = screenW; val ch = screenH; val rot = stageRotation
+        if (sw <= 0 || sh <= 0 || cw <= 0 || ch <= 0) return false   // geometry not applied yet -> hard cut
+        // The invariant #344 asked for: the rotated stage box MUST equal the screen box we draw onto.
+        // If it does not, we would fit to the wrong thing (the exact silent fault) -> hard-cut and log once.
+        if (!TransitionGeometry.rotatedStageMatchesScreen(sw, sh, cw, ch, rot.toInt())) {
+            if (!geomWarned) { geomWarned = true; Log.w("MediaPlayerManager", "wipe geometry mismatch: stage ${sw}x${sh} rot ${rot} vs screen ${cw}x${ch} — hard-cutting") }
+            return false
+        }
+        // Diagnostic cross-check against the overlay's own surface once it is laid out. Never blocks
+        // the wipe (the surface is 0 while GONE); just surfaces drift this whole class of bug hides.
+        val vw = view.width; val vh = view.height
+        if (vw > 0 && vh > 0 && (vw != cw || vh != ch) && !geomWarned) {
+            geomWarned = true; Log.w("MediaPlayerManager", "wipe surface ${vw}x${vh} != screen box ${cw}x${ch}")
+        }
         val fromFit: Bitmap; val toFit: Bitmap
-        try { fromFit = fitTransitionBitmap(from, w, h); toFit = fitTransitionBitmap(toBitmap, w, h) }
-        catch (e: Throwable) { Log.w("MediaPlayerManager", "wipe fit failed: ${e.message}"); return false }
+        try {
+            fromFit = fitTransitionBitmapRotated(from, sw, sh, cw, ch, rot)
+            toFit = fitTransitionBitmapRotated(toBitmap, sw, sh, cw, ch, rot)
+        } catch (e: Throwable) { Log.w("MediaPlayerManager", "wipe fit failed: ${e.message}"); return false }
         view.play(fromFit, toFit, picked.first, picked.second, spec.durationMs) { swap() }
         return true
     }
