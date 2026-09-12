@@ -7,6 +7,7 @@ import { t, tn } from '../i18n.js';
 import * as gettingStarted from '../components/getting-started.js';
 import * as whatsNew from '../components/whats-new.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
+import { openMoveServerModal } from '../components/move-server-modal.js';
 import { frameDeviceOutput } from '../lib/device-frame.js';
 import { selectedRemoteOrg } from '../components/workspace-switcher.js';
 
@@ -429,9 +430,10 @@ export function render(container) {
         <!-- #talk broadcast: PA to every device in the workspace. Hidden until we confirm live video
              is available (see wireTalkScopeButtons). -->
         <button class="btn btn-secondary talk-scope-btn" data-scope-kind="workspace" style="display:none">🎙️ ${t('dashboard.talk_all')}</button>
-        <!-- #312 follow-up: point EVERY device in the workspace at a new server URL (server move).
-             Admin-gated server-side; a non-admin gets a refusal toast. Each panel verifies-then-commits. -->
-        <button class="btn btn-secondary" id="wsSetServerUrlBtn" title="${t('dashboard.ws_set_server_url_tip')}">🔗 ${t('dashboard.ws_set_server_url')}</button>
+        <!-- #312 follow-up: move EVERY device in the workspace to a new server address. Shown only to
+             a workspace admin (server also enforces it); opens a warning + type-to-commit modal.
+             Each panel verifies-then-commits and rolls back an unreachable address. -->
+        ${currentWorkspaceCanAdmin() ? `<button class="btn btn-secondary" id="wsSetServerUrlBtn" title="${t('dashboard.ws_set_server_url_tip')}">🔗 ${t('dashboard.ws_set_server_url')}</button>` : ''}
         <button class="btn btn-primary" id="addDeviceBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -460,24 +462,23 @@ export function render(container) {
     <div id="groupedDevices"></div>
   `;
 
-  // #312 follow-up: point every device in the workspace at a new server URL (server relocation).
-  // Admin-gated on the server; a non-admin gets a refusal toast. Each panel verifies-then-commits.
-  container.querySelector('#wsSetServerUrlBtn')?.addEventListener('click', async () => {
-    let wsId = null;
-    try { wsId = JSON.parse(localStorage.getItem('user'))?.current_workspace_id || null; } catch (_) {}
-    if (!wsId) { showToast(t('dashboard.ws_set_server_url_no_ws'), 'error'); return; }
-    const url = (prompt(t('dashboard.ws_set_server_url_prompt'), window.location.origin) || '').trim().replace(/\/+$/, '');
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url)) { showToast(t('device.ctl.set_server_url_bad'), 'error'); return; }
-    if (!confirm(t('dashboard.ws_set_server_url_confirm', { url }))) return;
-    try {
-      const r = await api.sendWorkspaceCommand(wsId, 'set_server_url', { url });
-      let msg = t('dashboard.toast.command_sent', { cmd: t('dashboard.cmd.set_server_url'), sent: r.sent, total: r.total });
-      if (r.unsupported > 0) msg += ' ' + t('dashboard.toast.command_unsupported_n', { n: r.unsupported });
-      showToast(msg, r.unsupported > 0 || r.offline > 0 ? 'warning' : 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
+  // #312 follow-up: move every device in the workspace to a new server address (server relocation).
+  // The button only renders for a workspace admin; the /command route enforces admin too. The modal
+  // is a warning + type-the-workspace-name commit, because this is a whole-workspace blast radius.
+  container.querySelector('#wsSetServerUrlBtn')?.addEventListener('click', () => {
+    const ws = currentWorkspaceInfo();
+    if (!ws?.id) { showToast(t('dashboard.ws_set_server_url_no_ws'), 'error'); return; }
+    openMoveServerModal({
+      workspaceName: ws.name || '',
+      deviceCount: ws.device_count || 0,
+      suggestedUrl: window.location.origin,
+      onConfirm: async (url) => {
+        const r = await api.sendWorkspaceCommand(ws.id, 'set_server_url', { url });
+        let msg = t('dashboard.toast.command_sent', { cmd: t('dashboard.cmd.set_server_url'), sent: r.sent, total: r.total });
+        if (r.unsupported > 0) msg += ' ' + t('dashboard.toast.command_unsupported_n', { n: r.unsupported });
+        showToast(msg, r.unsupported > 0 || r.offline > 0 ? 'warning' : 'success');
+      },
+    });
   });
 
   const addBtn = container.querySelector('#addDeviceBtn');
@@ -1458,6 +1459,24 @@ function wireTalkScopeButtons() {
     .then((s) => { dashTalk = !!(s && s.features && s.features.talk); })
     .catch(() => { dashTalk = false; })
     .finally(() => { dashTalkChecked = true; reveal(); });
+}
+
+// #312 follow-up: the current workspace row from the cached /me (accessible_workspaces carries
+// name, device_count and can_admin). Returns null if not loaded or no workspace selected.
+function currentWorkspaceInfo() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user'));
+    const id = u?.current_workspace_id;
+    if (!id || !Array.isArray(u.accessible_workspaces)) return null;
+    const ws = u.accessible_workspaces.find(w => w.id === id);
+    return ws ? { ...ws, id } : { id };
+  } catch (_) { return null; }
+}
+
+// Only a workspace admin may move the whole workspace to a new server. The server enforces this on
+// the /command route regardless; this just keeps the button from rendering for everyone else.
+function currentWorkspaceCanAdmin() {
+  return !!currentWorkspaceInfo()?.can_admin;
 }
 
 function scopeForButton(btn) {
