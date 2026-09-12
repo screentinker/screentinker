@@ -383,7 +383,17 @@ function sendPlayer(res, legacy) {
     if (stamped === modified) {
       console.warn('[player] ST_PLAYER_VERSION marker not found — page will report a stale client_version');
     }
-    modified = legacy ? legacyPlayer.html(stamped) : stamped;
+    if (legacy) {
+      try {
+        modified = legacyPlayer.html(stamped);
+      } catch (error) {
+        // A transform failure is a bad response for this request, not a process-wide failure.
+        console.error('[player] legacy transform failed:', error.message);
+        return res.status(500).type('text/plain').send('legacy player unavailable');
+      }
+    } else {
+      modified = stamped;
+    }
     res.type('html').setHeader('Cache-Control', 'no-cache');
     res.send(modified);
   });
