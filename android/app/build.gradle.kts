@@ -7,6 +7,39 @@ android {
     namespace = "com.remotedisplay.player"
     compileSdk = 34
 
+    /*
+     * Compress the native libraries in the APK; Android unpacks the one matching ABI at INSTALL
+     * time. AGP's default since minSdk 23 is `useLegacyPackaging = false`, which stores the .so
+     * entries uncompressed so they can be mmap'd straight out of the APK — the right default when
+     * Play delivers a per-ABI split and the APK therefore carries exactly ONE .so.
+     *
+     * We are the other case. ScreenTinker sideloads a universal APK over its own OTA, so every
+     * device carries all four ABIs and executes exactly one. #340's WebRTC publisher made that
+     * costly: libjingle_peerconnection_so.so is ~43MB of the APK across arm64-v8a, armeabi-v7a,
+     * x86 and x86_64, stored at 0% compression.
+     *
+     * Measured on the 2.0.9 build:
+     *                     download      installed
+     *   stored (default)  52,724,535    ~52.7MB
+     *   compressed        29,557,559    ~41MB   (29.5MB APK + ~11.5MB extracted arm64)
+     *
+     * Smaller on BOTH axes, which only looks paradoxical until you notice that just one ABI is
+     * ever extracted: the three nobody runs go from stored to deflated (~45%) and stay packed.
+     * Download size is what actually matters here — the OTA path has no Range/resume, so a shorter
+     * transfer is a transfer more likely to finish on a weak link.
+     *
+     * ⚠️ Do NOT reach for `splits { abi }` to solve the same problem. It renames the output to
+     * app-<abi>-release.apk, and `resignReleaseV1` below is pinned to a single hardcoded path
+     * behind `onlyIf { apk.exists() }` — it would silently stop running and ship v2-only APKs,
+     * which #81 documents MDM signage uninstalls on reboot. Compression changes no filename, so
+     * that task is untouched (verified: jarsigner reports "jar verified." on this build).
+     */
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     defaultConfig {
         applicationId = "com.remotedisplay.player"
         minSdk = 23

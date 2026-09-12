@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+**The Android APK is 44% smaller.** 2.0.9's live-video publisher added the WebRTC native library for
+all four ABIs, and AGP's default packaging stored those ~43MB uncompressed so they could be mapped
+straight out of the APK. That default assumes a per-ABI split delivered by Play; ScreenTinker
+sideloads one universal APK over its own OTA, so every device carries four copies and runs one.
+Compressing them (`useLegacyPackaging`) takes the download from 52,724,535 to 29,557,559 bytes and
+the installed footprint from ~52.7MB to ~41MB — smaller on both counts, because only the matching
+ABI is ever unpacked and the other three go from stored to deflated. Android does the unpacking at
+install time; nothing in the player changed. The v1 JAR signature MDM signage requires is unaffected
+(the output filename is unchanged, so `resignReleaseV1` still runs — verified with jarsigner).
+
 ## 2.0.9
 
 ### Added
