@@ -59,4 +59,28 @@ class ServerConfigStoreChoiceTest {
         assertTrue(StoreChoice.score(empty) == 0)
         assertTrue(StoreChoice.score(paired()) == 4)
     }
+
+    // #312 (write side / sticky flag): the full decision, including "this board's encrypted store
+    // has failed before, so stop betting on it".
+
+    @Test fun `a healthy device with a working encrypted store still prefers it`() {
+        assertTrue(StoreChoice.preferSecure(secure = paired(), plain = empty, secureEverFailed = false))
+    }
+
+    @Test fun `an encrypted store that would not open this boot forces plain`() {
+        // secure == null means it did not open or read on this boot.
+        assertFalse(StoreChoice.preferSecure(secure = null, plain = paired(), secureEverFailed = false))
+    }
+
+    @Test fun `once the encrypted store has ever failed, it is never chosen again`() {
+        // Even a fully-populated, currently-openable encrypted store loses when the sticky flag is set:
+        // on these boards a store that opens today may not tomorrow, and a dark panel is the cost.
+        assertFalse(StoreChoice.preferSecure(secure = paired(), plain = paired(), secureEverFailed = true))
+        assertFalse(StoreChoice.preferSecure(secure = paired(), plain = empty, secureEverFailed = true))
+    }
+
+    @Test fun `sticky flag clear, the normal content rule still applies`() {
+        assertFalse(StoreChoice.preferSecure(secure = empty, plain = paired(), secureEverFailed = false))
+        assertTrue(StoreChoice.preferSecure(secure = empty, plain = empty, secureEverFailed = false))
+    }
 }

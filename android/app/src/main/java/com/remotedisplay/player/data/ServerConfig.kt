@@ -36,6 +36,16 @@ internal object StoreChoice {
      * device stay encrypted; only a store that demonstrably holds MORE of the identity wins.
      */
     fun useSecure(secure: Snapshot?, plain: Snapshot?): Boolean = score(secure) >= score(plain)
+
+    /**
+     * The full store decision, including the #312 sticky flag. `secure` is null when the encrypted
+     * store would not open or read on this boot; `secureEverFailed` is true once it has EVER failed
+     * on this device (recorded in the plain store). Either one forces the plain store, so a board
+     * with a flaky Keystore stops betting the display's reachability on it. Otherwise the
+     * content-scored rule above decides.
+     */
+    fun preferSecure(secure: Snapshot?, plain: Snapshot?, secureEverFailed: Boolean): Boolean =
+        !secureEverFailed && secure != null && useSecure(secure, plain)
 }
 
 class ServerConfig(context: Context) {
@@ -101,29 +111,99 @@ class ServerConfig(context: Context) {
         null
     }
 
-    private val prefs: SharedPreferences =
-        if (StoreChoice.useSecure(snapshotOf(securePrefs), snapshotOf(plainPrefs)) && securePrefs != null) {
-            securePrefs
-        } else {
-            plainPrefs
-        }
+    /*
+     * ⚠️ STICKY: once the encrypted store has EVER failed to open or read on this device, stop
+     * trusting it for identity. #312. Recorded in the plain store, which always opens. On these
+     * boards the Keystore is intermittent, and encryption we cannot reliably open is not the
+     * protection its presence implies — so we give it up here rather than risk another dark panel
+     * on the next boot the Keystore is slow. (Diagnostics via getReasonUnavailable would be nicer,
+     * but a single boolean is enough and cannot itself throw.)
+     */
+    private fun encryptedEverFailed(): Boolean =
+        try { plainPrefs.getBoolean("encrypted_unusable", false) } catch (e: Exception) { false }
+
+    private fun markEncryptedUnusable() {
+        try {
+            if (!plainPrefs.getBoolean("encrypted_unusable", false)) {
+                plainPrefs.edit().putBoolean("encrypted_unusable", true).apply()
+                Log.w("ServerConfig", "encrypted store failed; recording it as unusable on this device")
+            }
+        } catch (e: Exception) { /* plain store should always take a write; nothing else we can do */ }
+    }
+
+    private val secureSnapshot: StoreChoice.Snapshot? = snapshotOf(securePrefs)
+    private val plainSnapshot: StoreChoice.Snapshot? = snapshotOf(plainPrefs)
+
+    // secureSnapshot is null when the store would not open (create threw -> securePrefs null) OR a
+    // read threw. Both are an encrypted-store failure on this boot, so record it as sticky.
+    private val useSecureStore: Boolean = run {
+        if (securePrefs == null || secureSnapshot == null) markEncryptedUnusable()
+        StoreChoice.preferSecure(secureSnapshot, plainSnapshot, encryptedEverFailed())
+    }
+
+    private val prefs: SharedPreferences = if (useSecureStore) securePrefs!! else plainPrefs
+
+    // The store we did NOT pick. The non-secret identity is mirrored into it on write and
+    // reconciled from the winner at construction, so the two can never drift on the address. #312.
+    private val otherStore: SharedPreferences? = if (useSecureStore) plainPrefs else securePrefs
 
     /** Diagnostics only. It reports the choice; it must never be what MAKES the choice. */
     val isUsingFallbackStorage: Boolean get() = prefs !== securePrefs
 
     init {
         Log.i("ServerConfig", "using ${if (isUsingFallbackStorage) "plain" else "encrypted"} store " +
-            "(secure=${StoreChoice.score(snapshotOf(securePrefs))} plain=${StoreChoice.score(snapshotOf(plainPrefs))})")
+            "(secure=${StoreChoice.score(secureSnapshot)} plain=${StoreChoice.score(plainSnapshot)}" +
+            "${if (encryptedEverFailed()) " secureEverFailed" else ""})")
+        reconcileIdentity()
     }
 
+    /*
+     * ⚠️ MIRROR + RECONCILE, not migrate. #312.
+     *
+     * The non-secret identity — server_url, device_id, is_paired — is written to BOTH stores (see
+     * the setters) and copied from the winner into the other here, COPY-ONLY, never the token and
+     * never a delete. So:
+     *   - a store cannot go stale on the address, which is the write-side failure the reporter hit:
+     *     "Change server" wrote the new URL to one store while a still-running instance kept reading
+     *     the old URL from the other, and the socket dialled the old address forever;
+     *   - the device_token stays in the winning store alone, so it is never written in cleartext to
+     *     a second file on a healthy device (that was the objection to migrating);
+     *   - scoring still favours the token-holding store (it scores one higher), so selection stays
+     *     correct, and copy-only means an upgrade can never lose a pairing.
+     */
+    private fun reconcileIdentity() {
+        val other = otherStore ?: return
+        try {
+            val e = other.edit()
+            var wrote = false
+            for (k in MIRRORED_STRING_KEYS) {
+                val v = prefs.getString(k, "") ?: ""
+                if (v.isNotEmpty() && (other.getString(k, "") ?: "") != v) { e.putString(k, v); wrote = true }
+            }
+            // Copy is_paired only when the winner is paired: an unpair is applied to both stores
+            // explicitly (editBoth), so reconcile must never propagate a false that could blank a
+            // store, nor resurrect a true the winner does not hold.
+            if (prefs.getBoolean("is_paired", false) && !other.getBoolean("is_paired", false)) {
+                e.putBoolean("is_paired", true); wrote = true
+            }
+            if (wrote) { e.apply(); Log.i("ServerConfig", "reconciled identity into the ${if (useSecureStore) "plain" else "encrypted"} store") }
+        } catch (e: Exception) {
+            Log.w("ServerConfig", "could not reconcile the other store: ${e.message}")
+        }
+    }
+
+    // #312: non-secret identity is mirrored to BOTH stores so they cannot drift on the address.
     var serverUrl: String
         get() = prefs.getString("server_url", "") ?: ""
-        set(value) = prefs.edit().putString("server_url", value).apply()
+        set(value) = editBoth { it.putString("server_url", value) }
 
     var deviceId: String
         get() = prefs.getString("device_id", "") ?: ""
-        set(value) = prefs.edit().putString("device_id", value).apply()
+        set(value) = editBoth { it.putString("device_id", value) }
 
+    // #312: the token stays in the WINNING store only — never mirrored, so it is not written in
+    // cleartext to a second file on a healthy device. Selection still favours the store that holds
+    // it (it scores one higher), so a read never lands on a tokenless store by preference.
     var deviceToken: String
         get() = prefs.getString("device_token", "") ?: ""
         set(value) = prefs.edit().putString("device_token", value).apply()
@@ -177,9 +257,9 @@ class ServerConfig(context: Context) {
     val isPaired: Boolean
         get() = prefs.getBoolean("is_paired", false)
 
-    fun setPaired(paired: Boolean) {
-        prefs.edit().putBoolean("is_paired", paired).apply()
-    }
+    // #312: is_paired is part of the mirrored identity — write it to both stores, or a one-sided
+    // flag would skew the content score and could flip which store wins on the next boot.
+    fun setPaired(paired: Boolean) = editBoth { it.putBoolean("is_paired", paired) }
 
     /*
      * ⚠️ BOTH STORES, not just the selected one. #312.
@@ -200,7 +280,13 @@ class ServerConfig(context: Context) {
         it.remove("device_id").remove("device_token").remove("is_paired")
     }
 
-    fun clear() = editBoth { it.clear() }
+    fun clear() {
+        // #312: a full wipe must not un-learn that the encrypted store is flaky on this board, or
+        // the next pairing would bet reachability on it again. Preserve the sticky flag across it.
+        val everFailed = encryptedEverFailed()
+        editBoth { it.clear() }
+        if (everFailed) markEncryptedUnusable()
+    }
 
     // Playlist cache for offline cold-start
     var cachedPlaylist: String
@@ -253,5 +339,12 @@ class ServerConfig(context: Context) {
             .remove("ota_last_attempt_at")
             .remove("ota_backoff_reported")
             .apply()
+    }
+
+    private companion object {
+        // #312: the non-secret identity keys mirrored into both stores. The token is deliberately
+        // NOT here — it stays in the winning store only. In a companion so it is ready before any
+        // instance init block (reconcileIdentity runs from init).
+        val MIRRORED_STRING_KEYS = listOf("server_url", "device_id")
     }
 }
