@@ -194,7 +194,7 @@ router.post('/orgs', requirePlatformAdmin, (req, res) => {
 // its workspaces (#36, drives the Organizations admin section). Platform-admin only.
 router.get('/orgs', requirePlatformAdmin, (req, res) => {
   const orgs = db.prepare(`
-    SELECT o.id, o.name, o.created_at, u.email AS owner_email, u.name AS owner_name,
+    SELECT o.id, o.name, o.created_at, o.talk_enabled, o.ice_servers, u.email AS owner_email, u.name AS owner_name,
       (SELECT COUNT(*) FROM organization_members m WHERE m.organization_id = o.id) AS member_count,
       (SELECT COUNT(*) FROM workspaces w WHERE w.organization_id = o.id) AS workspace_count,
       (SELECT COUNT(*) FROM devices d JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = o.id) AS device_count
@@ -227,6 +227,38 @@ router.delete('/orgs/:id', requirePlatformAdmin, (req, res) => {
   }
   logActivity(req.user.id, 'admin_delete_org', `org: ${org.name} (${org.id})`, null, getClientIp(req), null);
   res.json({ deleted: true, id: org.id });
+});
+
+// PUT /api/admin/orgs/:id/talk - platform-admin toggle for the per-org #talk feature and an
+// optional per-org ICE (STUN/TURN) override. talk_enabled gates the voice intercom / PA on top of
+// the global TALK_ENABLED master switch; ice_servers (a JSON array of {urls, username?, credential?})
+// overrides the sidecar's ICE servers for this org's live video AND talk, or NULL to fall back.
+router.put('/orgs/:id/talk', requirePlatformAdmin, (req, res) => {
+  const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+
+  const enabled = req.body?.talk_enabled ? 1 : 0;
+
+  // ice_servers: accept null/'' (clear -> fall back to sidecar), or a JSON array of ICE entries.
+  // Validate shape here so a malformed override can never reach a device's RTCPeerConnection.
+  let iceJson = null;
+  if (req.body?.ice_servers !== undefined && req.body.ice_servers !== null && req.body.ice_servers !== '') {
+    let arr = req.body.ice_servers;
+    if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch (_) { return res.status(400).json({ error: 'ice_servers must be valid JSON' }); } }
+    if (!Array.isArray(arr)) return res.status(400).json({ error: 'ice_servers must be a JSON array' });
+    for (const e of arr) {
+      if (!e || typeof e !== 'object') return res.status(400).json({ error: 'each ice_servers entry must be an object' });
+      const urls = e.urls;
+      const ok = typeof urls === 'string' || (Array.isArray(urls) && urls.length && urls.every(u => typeof u === 'string'));
+      if (!ok) return res.status(400).json({ error: 'each ice_servers entry needs a urls string or non-empty string[]' });
+    }
+    iceJson = JSON.stringify(arr);
+  }
+
+  db.prepare("UPDATE organizations SET talk_enabled = ?, ice_servers = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(enabled, iceJson, org.id);
+  logActivity(req.user.id, 'admin_org_talk', `org: ${org.name} (${org.id}) talk=${enabled} ice=${iceJson ? 'custom' : 'default'}`, null, getClientIp(req), null);
+  res.json({ id: org.id, talk_enabled: enabled, ice_servers: iceJson });
 });
 
 // DELETE /api/admin/workspaces/:id - cascade-delete a single workspace + its

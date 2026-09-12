@@ -768,8 +768,30 @@ class MediaPlayerManager(
     fun setTriggerMute(mute: Boolean) {
         if (triggerMute == mute) return
         triggerMute = mute
-        exoPlayer?.volume = if (mute || wallMute) 0f else 1f
-        setYoutubeMuted(youtubeMuted || mute)
+        exoPlayer?.volume = if (triggerMute || talkMute || wallMute) 0f else 1f
+        setYoutubeMuted(youtubeMuted || triggerMute || talkMute)
+    }
+
+    /**
+     * #talk: duck the content while a voice call / PA announcement is active on this device, so the
+     * announcement is heard. Mutes the base video + YouTube (and pauses the video for a visible cue),
+     * restoring on clear. A separate flag from triggerMute so the two never clobber each other. The
+     * talk audio itself plays through the WebRTC AudioTrack (a different stream), untouched by this.
+     */
+    private var talkMute = false
+    private var talkPausedByUs = false
+    fun setTalkMute(mute: Boolean) {
+        if (talkMute == mute) return
+        talkMute = mute
+        exoPlayer?.volume = if (triggerMute || talkMute || wallMute) 0f else 1f
+        setYoutubeMuted(youtubeMuted || triggerMute || talkMute)
+        // Pause the video for a clear "announcement in progress" cue; only resume what WE paused, so
+        // a player parked for another reason (group-sync buffering) is left alone.
+        try {
+            val p = exoPlayer ?: return
+            if (mute) { if (p.playWhenReady) { p.playWhenReady = false; talkPausedByUs = true } }
+            else if (talkPausedByUs) { p.playWhenReady = true; talkPausedByUs = false }
+        } catch (_: Throwable) {}
     }
 
     /**

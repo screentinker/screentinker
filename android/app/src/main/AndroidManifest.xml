@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- #talk: two-way voice intercom mic capture + microphone FGS -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- OPTIONAL, and never requested at startup. Android 8.1+ hides the connected Wi-Fi network
@@ -103,6 +106,22 @@
             android:name=".service.MediaProjectionService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- #go2rtc: live-video MediaProjection sender FGS. Same mediaProjection FGS type as the
+             screenshot service above, kept separate so live video and screenshots never share a
+             single-use projection consent token. Started only after consent is granted. -->
+        <service
+            android:name=".service.LiveVideoService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- #talk: two-way voice intercom sender/receiver FGS. Captures the mic (uplink) and plays
+             operator audio (downlink) over WebRTC. microphone FGS type because it records audio in
+             the background on Android 14+; no MediaProjection is involved. -->
+        <service
+            android:name=".service.TalkService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Accessibility service for power controls -->
         <service

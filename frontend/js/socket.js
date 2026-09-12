@@ -139,6 +139,42 @@ export function stopRemote(deviceId) {
   if (dashboardSocket) dashboardSocket.emit('dashboard:remote-stop', { device_id: deviceId });
 }
 
+// #talk: ask a device to join / leave the two-way voice intercom. Server-relayed and gated like
+// remote control; the audio itself flows over WebRTC (see lib/talk-client.js), not this socket.
+export function startTalk(deviceId, duplex, cb) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:talk-start', { device_id: deviceId, duplex: !!duplex }, cb);
+}
+export function stopTalk(deviceId) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:talk-stop', { device_id: deviceId });
+}
+
+// #talk broadcast: tell every device in a group/workspace to LISTEN to the shared channel. scope is
+// { kind: 'group'|'workspace', id }. The operator's mic is published separately (BroadcastTalkClient).
+export function startGroupTalk(scope, cb) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:group-talk-start', { scope }, cb);
+}
+export function stopGroupTalk(scope) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:group-talk-stop', { scope });
+}
+
+// #go2rtc: ask a player to start/stop publishing its screen live. Best-effort — the server only
+// relays it when live video is enabled for the device, and the player needs a user gesture to
+// grant screen capture, so a delivered ack means the request reached the panel, not that a stream
+// is up. The viewer tile re-polls the live descriptor to find out.
+export function requestLivePublish(deviceId, callback) {
+  if (!dashboardSocket) return;
+  if (callback) {
+    dashboardSocket.timeout(5000).emit('dashboard:live-publish', { device_id: deviceId, action: 'start' }, (err, ack) => {
+      callback(err ? { delivered: false, reason: 'timeout' } : ack);
+    });
+  } else {
+    dashboardSocket.emit('dashboard:live-publish', { device_id: deviceId, action: 'start' });
+  }
+}
+export function stopLivePublish(deviceId) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:live-publish', { device_id: deviceId, action: 'stop' });
+}
+
 export function sendTouch(deviceId, x, y, action) {
   if (dashboardSocket) dashboardSocket.emit('dashboard:remote-touch', { device_id: deviceId, x, y, action });
 }

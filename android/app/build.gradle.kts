@@ -118,6 +118,11 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // #go2rtc — WebRTC for the Android live-video publisher (MediaProjection -> WebRTC sender).
+    // stream-webrtc-android is the maintained successor to the abandoned org.webrtc:google-webrtc,
+    // and ships the same org.webrtc.* API (PeerConnectionFactory, ScreenCapturerAndroid, ...).
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
+
     // #74/#75: unit tests for the Kotlin schedule evaluator (vector drift guard)
     testImplementation("junit:junit:4.13.2")
     // feat/transition-engine: real org.json on the unit-test classpath (the stubbed android.jar one

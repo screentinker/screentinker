@@ -45,6 +45,15 @@ const CAPABILITIES = [
   'display.rotation', 'display.power', 'display.resolution', 'display.brightness',
   // remote view / control
   'remote.screenshot', 'remote.stream', 'remote.input',
+  /* Voice: play the operator's audio (+ optional webcam) — one-way Talk / PA. Over the same go2rtc
+   * path as remote.stream, in Opus. Brand-new, so NOT in any baseline: only a player new enough to
+   * run the WebRTC audio subscriber declares it, and the dashboard shows the Talk control only for a
+   * device that does. */
+  'remote.talk',
+  /* The device also has a MICROPHONE it can send back — unlocks the two-way "2-way audio" control.
+   * A screen (signage) declares remote.talk but NOT this; a phone/tablet (or a browser tab with a
+   * mic) declares both. Implies remote.talk. */
+  'remote.mic',
   // lifecycle
   'system.reboot', 'system.restart_player', 'system.self_update',
   // device management (Android device-owner territory)

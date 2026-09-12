@@ -4,6 +4,9 @@ const crypto = require('crypto');
 const { db } = require('../db/database');
 const { canAdminWorkspace, canAccessWorkspace } = require('../lib/permissions');
 const { isPlatformRole } = require('../middleware/auth');
+const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
+const appConfig = require('../config');
 const { logActivity, getClientIp } = require('../services/activity');
 const { sendEmail } = require('../services/email');
 
@@ -186,6 +189,13 @@ router.patch('/:id', (req, res) => {
     }
   }
 
+  // #go2rtc: opt this workspace into live video. Off by default; only meaningful when the server
+  // master switch (LIVE_VIDEO_ENABLED) is also on. Admin-gated by the canAdminWorkspace check above.
+  if (req.body.live_video_enabled !== undefined) {
+    updates.push('live_video_enabled = ?');
+    values.push(req.body.live_video_enabled ? 1 : 0);
+  }
+
   if (updates.length === 0) {
     return res.status(400).json({ error: 'No fields to update' });
   }
@@ -202,7 +212,7 @@ router.patch('/:id', (req, res) => {
     throw e;
   }
 
-  const updated = db.prepare('SELECT id, name, slug, organization_id FROM workspaces WHERE id = ?').get(req.params.id);
+  const updated = db.prepare('SELECT id, name, slug, organization_id, live_video_enabled FROM workspaces WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 
@@ -513,6 +523,47 @@ router.delete('/:id/members/:userId', (req, res) => {
   db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
     .run(ws.id, req.params.userId);
   res.json({ success: true });
+});
+
+/*
+ * #talk broadcast (one-way PA to every device in the workspace). Same shape as the per-group
+ * routes in device-groups.js: the operator publishes their mic to the workspace's shared go2rtc
+ * stream, and the dashboard tells every device in the workspace to listen. Gated on the live-video
+ * master switch + the workspace flag + a live sidecar. Any workspace member may talk.
+ */
+function loadTalkWorkspace(req, res) {
+  const ws = db.prepare('SELECT id, live_video_enabled FROM workspaces WHERE id = ?').get(req.params.id);
+  if (!ws) { res.status(404).json({ error: 'Workspace not found' }); return null; }
+  if (!canAccessWorkspace(db, req.user, ws)) { res.status(403).json({ error: 'Access denied' }); return null; }
+  return ws;
+}
+
+router.get('/:id/talk', async (req, res) => {
+  const ws = loadTalkWorkspace(req, res); if (!ws) return;
+  if (!orgWebrtc.talkEnabledForWorkspace(ws.id)) return res.json({ mode: 'off', reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ mode: 'off', reason: 'no_sidecar' });
+  if (!(await go2rtc.healthy())) return res.json({ mode: 'off', reason: 'sidecar_down' });
+  res.json({
+    mode: 'webrtc',
+    scope: { kind: 'workspace', id: ws.id },
+    publishPath: `/api/workspaces/${ws.id}/talk/publish`,
+    iceServers: orgWebrtc.iceServersForWorkspace(ws.id),
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const ws = loadTalkWorkspace(req, res); if (!ws) return;
+  if (!orgWebrtc.talkEnabledForWorkspace(ws.id) || !go2rtc.enabled()) {
+    return res.status(409).json({ error: 'Talk is not available for this workspace' });
+  }
+  const name = go2rtc.broadcastTalkStreamName('workspace', ws.id);
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  try { await go2rtc.ensureStream(name); } catch (_) { /* go2rtc may auto-create on dst */ }
+  const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
+  res.type('application/sdp').send(answer.sdp);
 });
 
 module.exports = router;

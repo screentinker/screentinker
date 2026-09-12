@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var rootView: View
     private lateinit var pipLayout: FrameLayout       // #109: reparented above rootView (see onCreate)
+    private var talkRenderer: org.webrtc.SurfaceViewRenderer? = null   // #talk video: operator webcam overlay
     private lateinit var captureRoot: View            // window content; capture source (includes pipLayout)
     private var currentOrientation: String? = null
 
@@ -1022,6 +1023,38 @@ class MainActivity : AppCompatActivity() {
             stopScreenshotStreaming()
         }
 
+        // #talk: duck the playlist (mute + freeze video) while a call/PA is active, so the
+        // announcement is heard; restore on stop. Same ducking the trigger overlay uses.
+        wsService?.onTalkDuck = { on ->
+            try { if (::mediaPlayer.isInitialized) mediaPlayer.setTalkMute(on) } catch (e: Throwable) { }
+            try { slideAudioPlayer?.setMuted(on) } catch (e: Throwable) { }
+        }
+
+        // #talk video: render the operator's optional webcam fullscreen over the (paused) content.
+        // The track + its EglBase context arrive from AudioTalker via TalkVideoBus; a null track
+        // means the call ended, so tear the surface down.
+        com.remotedisplay.player.remote.TalkVideoBus.listener = { track, egl ->
+            runOnUiThread {
+                try {
+                    if (track != null && egl != null) {
+                        if (talkRenderer == null) {
+                            val r = org.webrtc.SurfaceViewRenderer(this)
+                            r.init(egl, null)
+                            r.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                            r.setEnableHardwareScaler(true)
+                            r.setZOrderMediaOverlay(true)   // above the content video surface
+                            pipLayout.addView(r, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                            talkRenderer = r
+                        }
+                        try { track.addSink(talkRenderer) } catch (e: Throwable) { }
+                    } else {
+                        talkRenderer?.let { rr -> try { pipLayout.removeView(rr); rr.release() } catch (e: Throwable) { } }
+                        talkRenderer = null
+                    }
+                } catch (e: Throwable) { }
+            }
+        }
+
         wsService?.onRemoteTouch = { x, y, action ->
             when (action) {
                 "tap" -> touchInjector.injectTap(rootView, x, y)
@@ -1816,6 +1849,9 @@ class MainActivity : AppCompatActivity() {
         try { triggerManager?.stop() } catch (e: Throwable) { }
         triggerManager = null
         remoteStreaming = false
+        // #talk video: drop the bus listener (it holds `this`) and release the renderer.
+        try { com.remotedisplay.player.remote.TalkVideoBus.listener = null } catch (e: Throwable) { }
+        try { talkRenderer?.let { pipLayout.removeView(it); it.release() }; talkRenderer = null } catch (e: Throwable) { }
         // Everything below this line exists for the same reason the wall/group shutdown does, and
         // was missing: these Handlers are on the MAIN LOOPER, which outlives the Activity.
         //

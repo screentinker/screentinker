@@ -14,6 +14,16 @@ services:
       SELF_HOSTED: "true"            # first registered user becomes admin, no billing
       # JWT_SECRET: "set-a-long-random-string"   # else one is generated under /data/certs
       # DISABLE_HOMEPAGE: "true"     # redirect / to the app instead of the landing page
+      # ---- Live video (optional; see docs/live-video.md and the go2rtc service below) ----
+      # LIVE_VIDEO_ENABLED: "true"           # server master gate; also enable per workspace + per device
+      # GO2RTC_URL: "http://go2rtc:1984"     # the sidecar's API, reached over the compose network only
+      # GO2RTC_API_TOKEN: "a-long-random-string"   # if you protect go2rtc's API; must match go2rtc.yaml
+      # GO2RTC_STUN_URLS: "stun:stun.l.google.com:19302"   # comma-separated; a public STUN helps most NATs
+      # GO2RTC_TURN_URL: "turn:turn.example.com:3478"      # only needed when UDP 8555 + host candidates are both unreachable
+      # GO2RTC_TURN_USER: "user"
+      # GO2RTC_TURN_PASS: "pass"
+      # TALK_ENABLED: "true"                 # master switch for voice Talk / PA; then enable per org under Admin -> Organizations
+      #                                      # (an org can also set its own STUN/TURN there, overriding GO2RTC_* for its video + talk)
     volumes:
       - st-data:/data               # db, uploads, and the jwt secret persist here
       # To enable OTA APK downloads, mount a built APK read-only:
@@ -25,6 +35,33 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s             # first boot runs db migrations
+
+# ---- Optional: go2rtc sidecar for sub-second WebRTC live view --------------------------------
+# ScreenTinker works fully without this; live view falls back to the screenshot stream. Uncomment
+# this service AND the LIVE_VIDEO_* env above, drop a go2rtc.yaml beside this file (sample in
+# docs/live-video.md), then enable live video per workspace and per device in Settings.
+#
+#   1984  go2rtc HTTP API. Reached only by the screentinker container over the compose network,
+#         NEVER published to the host or the internet - the dashboard signals through ScreenTinker,
+#         which keeps this admin port private. Do not add it to ports:.
+#   8555  WebRTC. tcp works behind a reverse proxy and on plain-HTTP LANs; udp is lower latency but
+#         needs the port open end to end (a Cloudflare orange-cloud proxy drops UDP - see the docs).
+#
+#   go2rtc:
+#     image: alexxit/go2rtc:latest
+#     # Publishing from a device with NO H264 encoder (e.g. the Android emulator)? Stock go2rtc
+#     # accepts only H264/H265 on WebRTC ingest and rejects VP8. Build docker/go2rtc-vp8 and use
+#     # `image: screentinker/go2rtc-vp8:1.9.14` instead. See docs/live-video.md ("Codecs").
+#     restart: unless-stopped
+#     network_mode: host          # simplest path to working ICE on a LAN: go2rtc sees the real host
+#                                 # IP as a candidate. Drop this and publish 8555 instead if you must
+#                                 # keep it on the bridge network (then set the host IP in go2rtc.yaml).
+#     volumes:
+#       - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+#     # If NOT using network_mode: host, publish WebRTC instead (and remove network_mode above):
+#     # ports:
+#     #   - "8555:8555/tcp"
+#     #   - "8555:8555/udp"
 
 # Locked out of the admin account? Reset it with:
 #   docker exec -it screentinker node scripts/reset-admin.js

@@ -13,6 +13,10 @@ const playerCapabilities = require('../lib/player-capabilities');
 const { resolveItemDuration } = require('../lib/item-duration');
 const { resolveDevicePlaylistId, clearInheritedCopy } = require('../lib/resolve-device-playlist');
 const { stripDeviceSecretsForList } = require('../lib/device-sanitize');
+const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
+const appConfig = require('../config');
+const express_ = express; // for express.text() below
 
 const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
 // ⚠️ Moved to lib/device-command.js — this list and the delivery logic below existed in three
@@ -452,6 +456,44 @@ router.post('/:id/command', requireScope('full'), requireGroupWrite, (req, res) 
   const unsupported = results.filter(r => r.status === 'unsupported').length;
   console.log(`Group command '${type}' sent to group '${req.group.name}': ${sent} sent, ${offline} offline, ${unsupported} unsupported`);
   res.json({ success: true, sent, offline, unsupported, total: devices.length, results });
+});
+
+/*
+ * #talk broadcast (one-way PA to a whole group). The operator publishes their mic once to the
+ * group's shared go2rtc stream; the dashboard separately tells every device in the group to listen
+ * (dashboard:group-talk-start -> device:talk-start{mode:'listen'}). Gated on the same live-video
+ * master switch + workspace flag + a live sidecar (talk rides the go2rtc path); per-device consent
+ * to actually play is each device's own gate. requireGroupWrite = you can act on this group.
+ */
+function groupTalkGate(req, res) {
+  if (!orgWebrtc.talkEnabledForWorkspace(req.group.workspace_id)) { res.json({ mode: 'off', reason: 'disabled' }); return false; }
+  if (!go2rtc.enabled()) { res.json({ mode: 'off', reason: 'no_sidecar' }); return false; }
+  return true;
+}
+
+router.get('/:id/talk', requireGroupRead, async (req, res) => {
+  if (!groupTalkGate(req, res)) return;
+  if (!(await go2rtc.healthy())) return res.json({ mode: 'off', reason: 'sidecar_down' });
+  res.json({
+    mode: 'webrtc',
+    scope: { kind: 'group', id: req.group.id },
+    publishPath: `/api/device-groups/${req.group.id}/talk/publish`,
+    iceServers: orgWebrtc.iceServersForWorkspace(req.group.workspace_id),
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+router.post('/:id/talk/publish', requireGroupWrite, express_.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  if (!orgWebrtc.talkEnabledForWorkspace(req.group.workspace_id) || !go2rtc.enabled()) {
+    return res.status(409).json({ error: 'Talk is not available for this group' });
+  }
+  const name = go2rtc.broadcastTalkStreamName('group', req.group.id);
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  try { await go2rtc.ensureStream(name); } catch (_) { /* go2rtc may auto-create on dst */ }
+  const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
+  res.type('application/sdp').send(answer.sdp);
 });
 
 module.exports = router;

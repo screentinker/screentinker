@@ -85,6 +85,15 @@ const io = new Server(server, {
   pingTimeout: config.pingTimeout,
 });
 
+// #go2rtc — WebSocket signaling proxy for native (Android) live-video publishers. Attaches its own
+// handler to server 'upgrade' for /api/devices/:id/live/publish/ws only; every other upgrade (all of
+// socket.io's) is left untouched. See lib/live-publish-ws.js for why WS+trickle beats HTTP WHIP here.
+try {
+  require('./lib/live-publish-ws').attach(server);
+} catch (e) {
+  console.warn('[go2rtc] live-publish WS proxy not attached:', e && e.message);
+}
+
 // Middleware
 const helmet = require('helmet');
 
@@ -403,6 +412,21 @@ app.get('/player/offline-play-queue.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'lib', 'offline-play-queue.js'));
 });
 
+// #go2rtc: the web-player live PUBLISHER, from its single source (lib/live-publish.js) that the
+// Node tests also require — same anti-drift rule as the queue above. Loading it is harmless when
+// live video is off: it only does anything when start() is called from a user gesture.
+app.get('/player/live-publish.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'live-publish.js'));
+});
+
+// #talk: the web-player voice-intercom module (lib/talk-web.js), same serving pattern. Harmless
+// when talk is unused — it only acts on a device:talk-start.
+app.get('/player/talk.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'talk-web.js'));
+});
+
 // Offline content-cache policy, imported by the service worker via importScripts and by the Node
 // tests via require — one source, so the range arithmetic the player depends on cannot drift from
 // the arithmetic that is actually tested. A service worker cannot require(), which is why this is
@@ -542,6 +566,46 @@ app.post('/api/brightsign/snapshot', express.text({ type: '*/*', limit: '4mb' })
   if (!ok) return res.status(503).json({ error: 'sockets not ready' });
   res.json({ ok: true, bytes: b64.length });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Live video PUBLISH (#go2rtc): a web player offers its own screen INTO go2rtc so the dashboard
+// can watch it live. Mounted here at app level, and DEVICE-authenticated with the same
+// device_id + device_token pair the socket and the BrightSign snapshot use — because a player
+// holds device credentials, not a user session, and routes/devices.js sits behind the user/token
+// front door a device cannot pass. The WATCH side (dashboard) is the opposite: user-authenticated,
+// and lives in routes/devices.js.
+//
+// Fail-soft, exactly like the watch side: if live video is not enabled at all three levels
+// (server master switch, workspace flag, device flag) or go2rtc is absent, this refuses with 409
+// and the player simply keeps rendering — publishing is best-effort telemetry, never load-bearing.
+app.post('/api/devices/:id/live/publish',
+  express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }),
+  async (req, res) => {
+    const deviceId = req.params.id;
+    const token = req.query.token || req.get('X-Device-Token');
+    if (!bsDeviceSocket.validateDeviceToken(deviceId, token)) {
+      return res.status(401).json({ error: 'device authentication failed' });
+    }
+    const { db: ldb } = require('./db/database');
+    const go2rtc = require('./lib/go2rtc');
+    const liveCfg = require('./config');
+    const device = ldb.prepare('SELECT id, workspace_id, live_video_enabled FROM devices WHERE id = ?').get(deviceId);
+    if (!device || !device.workspace_id) return res.status(404).json({ error: 'device not found' });
+    const ws = ldb.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(device.workspace_id);
+    const on = !!(liveCfg.liveVideoEnabled && ws && ws.live_video_enabled && device.live_video_enabled);
+    if (!on || !go2rtc.enabled()) return res.status(409).json({ error: 'live video not enabled for this device' });
+    const offer = typeof req.body === 'string' ? req.body : '';
+    if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+    // The stream name is derived server-side from workspace+device: a player cannot publish into
+    // another device's stream even with valid credentials for its own.
+    const name = go2rtc.streamName(device.workspace_id, deviceId);
+    // go2rtc's dst= publish 404s on a stream that does not exist yet, so create the inert
+    // placeholder stream first (idempotent). Best-effort: if it fails the exchange below will 502.
+    await go2rtc.ensureStream(name);
+    const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+    if (!answer) return res.status(502).json({ error: 'go2rtc did not accept the publish' });
+    res.type('application/sdp').send(answer.sdp);
+  });
 
 // BrightSign bridge, served from its single source (brightsign/st-bridge.js) so the copy the
 // player loads can never drift from the one sitting on the SD card next to autorun.brs — the two

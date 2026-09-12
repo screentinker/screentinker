@@ -287,6 +287,8 @@
   <script src="/player/schedule-eval.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
+  <script src="/player/live-publish.js"></script>
+  <script src="/player/talk.js"></script>
   <script src="/player/trigger-resolve.js"></script>
   <script src="/player/media-mute.js"></script>
   <script src="/player/orientation-style.js"></script>
@@ -438,6 +440,10 @@
     // Falls through to reload() whenever the host isn't there to take the request — a browser, or
     // a widget built without nodejs_enabled — so a caller is never left with nothing done.
     function restartPlayer(reason) {
+      // Log EVERY reload with its reason so a mystery "the player keeps resetting" is answerable
+      // from the player console: 'operator refresh', 'server code updated', 'service worker
+      // activated', 'operator reset', etc.
+      console.log('[player] restart requested — reason:', reason);
       try {
         if (BS && BS.hasHost() && BS.restart(reason)) {
           console.log('[bs] restart delegated to host:', reason);
@@ -910,10 +916,12 @@
       if (!on) {
         if (remoteDebug) debugEmitLine('debug', 'i', 'Remote debug logging OFF');
         remoteDebug = false;
+        try { window.__stTalkDebug = false; } catch (e) {}   // #talk: gate STTalk's console logs
         return;
       }
       const wasOn = remoteDebug;
       remoteDebug = true;
+      try { window.__stTalkDebug = true; } catch (e) {}   // #talk: STTalk logs now stream to the dashboard
       debugWindowAt = 0; debugWindowCount = 0; debugSuppressed = 0;
       if (!debugSubscribed) {
         debugSubscribed = true;
@@ -2598,6 +2606,136 @@
 
       // #109: PiP overlay — a pushed floating layer above the playlist. The player
       // fetches uri itself (same trust model as remote_url content).
+      // #go2rtc live publish. The dashboard requests a screen; the player pushes it into go2rtc.
+      // A browser only grants getDisplayMedia from a user gesture, so start on an active activation
+      // now, else arm the next tap/key. Publishing is best-effort: if the player cannot (no
+      // support, no credentials, denied) it simply keeps rendering. Never blocks content.
+      // #go2rtc self-capture: publish the player's OWN rendered content, NO getDisplayMedia and NO
+      // gesture. A page can capture its own pixels freely, so we mirror the stage into a canvas and
+      // captureStream() it. This covers the player's video and image content (same-origin, so the
+      // canvas is not tainted). It CANNOT capture cross-origin web-page/widget iframes (browser
+      // security taints the canvas) - those frames simply hold the last drawable frame. The real
+      // signage answer for those is the deferred Android MediaProjection publisher.
+      let liveCaptureStop = null;
+      // Direct capture of the playing <video> element: RFP-safe (no canvas readback) and cheap.
+      // Firefox uses mozCaptureStream(). Returns a MediaStream or null if there is no usable video.
+      function captureVideoDirect() {
+        const container = document.getElementById('playerContainer') || document.body;
+        const isVis = (el) => { if (!el || el.offsetParent === null) return false; try { const st = getComputedStyle(el); if (st.visibility === 'hidden' || parseFloat(st.opacity || '1') < 0.05) return false; } catch (_) {} return (el.offsetWidth || 0) > 0; };
+        const v = Array.from(container.querySelectorAll('video')).filter((x) => x.readyState >= 2 && (x.videoWidth || 0) > 0 && !x.paused && !x.ended && isVis(x)).pop();
+        if (!v) return null;
+        try {
+          const s = v.captureStream ? v.captureStream() : (v.mozCaptureStream ? v.mozCaptureStream() : null);
+          if (s && s.getVideoTracks && s.getVideoTracks().length) { console.log('[live] capture: direct video element'); return s; }
+        } catch (e) { console.log('[live] direct video capture failed:', e && e.name); }
+        return null;
+      }
+      // Canvas mirror: the fallback for image/mixed content (drawImage of same-origin images).
+      // NOTE: under Firefox privacy.resistFingerprinting this may be blanked/black - that is a
+      // browser anti-fingerprinting measure, not our bug; direct video capture above avoids it.
+      function startStageCapture(fps) {
+        const container = document.getElementById('playerContainer') || document.body;
+        const canvas = document.createElement('canvas');
+        canvas.width = container.clientWidth || window.innerWidth || 1280;
+        canvas.height = container.clientHeight || window.innerHeight || 720;
+        const ctx = canvas.getContext('2d');
+        let stopped = false;
+        const visible = (el) => {
+          if (!el || el.offsetParent === null) return false;   // display:none / detached
+          try { const st = getComputedStyle(el); if (st.visibility === 'hidden' || parseFloat(st.opacity || '1') < 0.05) return false; } catch (_) {}
+          return (el.offsetWidth || 0) > 0 && (el.offsetHeight || 0) > 0;
+        };
+        const pickSource = () => {
+          // The ACTUAL on-screen content, not a hidden double-buffer. The player keeps a paused,
+          // often-offscreen preload <video> (see preloadVideo/#187); drawing that gives a black
+          // frame. So require a video that is visible AND actually playing; fall back to a visible
+          // loaded image (image content), then last-resort any ready video.
+          const allV = Array.from(container.querySelectorAll('video')).filter((v) => v.readyState >= 2 && (v.videoWidth || 0) > 0);
+          const playing = allV.filter((v) => !v.paused && !v.ended && visible(v));
+          if (playing.length) return playing[playing.length - 1];
+          const imgs = Array.from(container.querySelectorAll('img')).filter((i) => i.complete && (i.naturalWidth || 0) > 0 && visible(i));
+          if (imgs.length) return imgs[imgs.length - 1];
+          const visV = allV.filter((v) => visible(v));
+          if (visV.length) return visV[visV.length - 1];
+          return null;
+        };
+        const tick = () => {
+          if (stopped) return;
+          const src = pickSource();
+          if (src) {
+            const sw = src.videoWidth || src.naturalWidth, sh = src.videoHeight || src.naturalHeight;
+            if (sw && sh) {
+              try {
+                ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                const scale = Math.min(canvas.width / sw, canvas.height / sh);
+                const dw = sw * scale, dh = sh * scale;
+                ctx.drawImage(src, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+              } catch (_) { /* cross-origin taint: keep the last frame rather than throw */ }
+            }
+          }
+        };
+        tick();
+        const timer = setInterval(tick, Math.round(1000 / (fps || 15)));
+        const stream = canvas.captureStream(fps || 15);
+        liveCaptureStop = () => { stopped = true; clearInterval(timer); };
+        return stream;
+      }
+
+      socket.on('device:live-publish', (data) => {
+        const LP = window.STLivePublish;
+        if (!LP) return;
+        const action = data && data.action;
+        if (action === 'stop') {
+          try { LP.stop(); } catch (_) {}
+          if (liveCaptureStop) { try { liveCaptureStop(); } catch (_) {} liveCaptureStop = null; }
+          return;
+        }
+        if (action !== 'start') return;
+        if (!config || !config.deviceId || !config.deviceToken || !LP.isSupported()) {
+          console.log('[live] publish requested but not available on this player'); return;
+        }
+        // Self-capture needs no user gesture, so start immediately when the dashboard asks.
+        try {
+          LP.start({
+            deviceId: config.deviceId,
+            deviceToken: config.deviceToken,
+            serverUrl: config.serverUrl || '',
+            iceServers: (data && data.iceServers) || undefined,
+            getStream: () => captureVideoDirect() || startStageCapture(15),   // direct video (RFP-safe) else canvas mirror
+            onState: (st, reason) => {
+              console.log('[live] publish', st, reason || '');
+              if (st === 'stopped' && liveCaptureStop) { try { liveCaptureStop(); } catch (_) {} liveCaptureStop = null; }
+            },
+          });
+        } catch (_) { /* publishing is best-effort; never break playback */ }
+      });
+
+      // #talk: two-way intercom / one-way PA. Mirror of the live-publish handler — STTalk speaks the
+      // device-authenticated WS proxy with this player's device_token. Listen (broadcast) needs no
+      // mic; duplex requests the mic and falls back to listen-only if denied.
+      socket.on('device:talk-start', (data) => {
+        const TK = window.STTalk;
+        if (!TK || !TK.isSupported()) { console.log('[talk] requested but not available on this player'); return; }
+        if (!config || !config.deviceId || !config.deviceToken) return;
+        try {
+          setTalkDucking(true);   // duck the playlist so the announcement is heard
+          TK.start({
+            deviceId: config.deviceId,
+            deviceToken: config.deviceToken,
+            serverUrl: config.serverUrl || '',
+            mode: (data && data.mode) === 'listen' ? 'listen' : 'device',
+            duplex: !!(data && data.duplex),   // 2-way: also send this device's mic
+            scope: data && data.scope,
+            iceServers: (data && data.iceServers) || undefined,
+            onState: (st, reason) => { if (window.__stTalkDebug) console.log('[talk]', st, reason || ''); },
+          });
+        } catch (_) { /* intercom is best-effort; never break playback */ }
+      });
+      socket.on('device:talk-stop', () => {
+        try { window.STTalk && window.STTalk.stop(); } catch (_) {}
+        try { setTalkDucking(false); } catch (_) {}   // restore playlist audio + resume video
+      });
+
       socket.on('device:pip-show', (data) => pipShow(data));
       socket.on('device:pip-clear', (data) => pipClear(data && data.pip_id));
     }
@@ -2781,7 +2919,22 @@
      */
     function triggerSyncAudio() {
       if (typeof setBaseAudioSuppressed !== 'function') return;
-      try { setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase)); } catch (e) {}
+      // Base audio is ducked when a trigger covers the screen OR a voice call/PA is active
+      // (talkDucking) — combined here so neither source clobbers the other.
+      try { setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase) || talkDucking); } catch (e) {}
+    }
+
+    // #talk: while a voice call / PA announcement is active on this device, duck the playlist so the
+    // announcement is heard — mute the base audio AND pause the current video (frozen, silent). The
+    // announcement's own <audio> is __stOverlay, so setBaseAudioSuppressed leaves it alone.
+    let talkDucking = false;
+    function setTalkDucking(on) {
+      talkDucking = !!on;
+      triggerSyncAudio();   // re-evaluate the combined base-audio suppression
+      try {
+        if (on) { if (currentVideoEl) currentVideoEl.pause(); }
+        else if (currentVideoEl && !currentVideoEl.__stOverlay) { const p = currentVideoEl.play(); if (p && p.catch) p.catch(() => {}); }
+      } catch (e) { /* torn down */ }
     }
 
     /*
@@ -3579,6 +3732,9 @@
         'display.rotation',
         'remote.input',
         'remote.stream',
+        // #talk: this browser player is a full WebRTC audio peer (window.STTalk), so it does the
+        // two-way intercom and the one-way PA listen just like the native player.
+        'remote.talk',
         // restartPlayer() always resolves to something: the host rebuilds the widget, or the page
         // reloads. It is the one lifecycle action a browser tab can genuinely perform.
         'system.restart_player',
@@ -3590,6 +3746,10 @@
        * and a port that never bound are different facts, and the operator picking screens for an
        * integrator needs the second one. Same rule as offline.cache: claim what was verified.
        */
+      // #talk: only claim a microphone (unlocks the dashboard's 2-way control) when this browser
+      // actually has an audio input. Detected async at startup (detectMic); a screen without a mic
+      // stays one-way Talk / PA only.
+      if (window.__stHasMic) caps.push('remote.mic');
       if (typeof triggerStats === 'object' && triggerStats.listeners && triggerStats.listeners.http) {
         caps.push('trigger.http');
       }
@@ -3733,7 +3893,23 @@
       socket.emit('device:info', { device_id: config.deviceId, device_info: buildDeviceInfo() });
     }
 
+    // #talk: does this browser have a microphone? enumerateDevices exposes the PRESENCE of an
+    // audioinput even without permission. Sets window.__stHasMic and re-registers once, so the
+    // dashboard's 2-way control appears only where a mic actually exists.
+    let __micDetected = false;
+    function detectMic() {
+      if (__micDetected || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      __micDetected = true;
+      navigator.mediaDevices.enumerateDevices().then(function (devs) {
+        if (devs.some(function (d) { return d.kind === 'audioinput'; }) && !window.__stHasMic) {
+          window.__stHasMic = true;
+          try { register(); } catch (_) {}
+        }
+      }).catch(function () {});
+    }
+
     function register() {
+      detectMic();
       const data = {};
       // #163: always send device identity when we have it, regardless of paired
       // status. Before this fix, a reconnect before pairing would omit device_id
@@ -3885,7 +4061,7 @@
       versionCheckTimer = setInterval(() => {
         fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
           if (knownServerHash && data.hash !== knownServerHash) {
-            console.log('Server code updated, reloading...', knownServerHash, '->', data.hash);
+            console.log('[player] /api/version hash changed', knownServerHash, '->', data.hash, '- triggering reload (a code edit/restart on the server, NOT a dashboard action)');
             // THE deploy path — this is the exact line that darkened a BrightSign panel on
             // 2026-07-28, when every connected player self-reloaded and that one never returned.
             restartPlayer('server code updated');
@@ -6574,17 +6750,33 @@
             }
           } catch (e) { console.warn('[cache] boot pin failed: ' + ((e && e.message) || e)); }
         }).catch(() => { /* no controller yet; the next playlist update pins */ });
-        // When a new SW activates, reload so the fresh code takes effect immediately
+        // When a new version of OUR OWN worker activates, reload so the fresh code takes effect.
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
-          if (newWorker) {
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-                console.log('New Service Worker activated — reloading for fresh code');
-                restartPlayer('service worker activated');
+          if (!newWorker) return;
+          const url = newWorker.scriptURL || '';
+          console.log('[sw] updatefound; installing worker =', url);
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+              /*
+               * ⚠️ ONLY reload for OUR OWN /sw.js. The player registers /sw.js at ROOT scope (it must,
+               * to cache /uploads + /api/content for offline). The dashboard registers /sw-admin.js
+               * at the SAME root scope. Two root workers share one registration, so when the
+               * dashboard is opened or refreshed in the same browser, sw-admin registers INTO this
+               * registration and surfaces here as a new installing worker — and reloading for it made
+               * the player reset every time the operator touched the dashboard. Ignore any worker
+               * that is not our own sw.js. (In production the player and dashboard are different
+               * origins and never share a scope; this only bites a single-origin/single-browser setup
+               * such as a server-on-a-player or local testing.)
+               */
+              if (!/\/sw\.js(?:[?#]|$)/.test(url)) {
+                console.log('[sw] a FOREIGN worker took the scope (' + url + ') — NOT reloading the player');
+                return;
               }
-            });
-          }
+              console.log('New Service Worker activated — reloading for fresh code');
+              restartPlayer('service worker activated');
+            }
+          });
         });
       }, (err) => {
         // A registration that fails has to be VISIBLE. This one went to console.warn on a display

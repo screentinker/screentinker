@@ -25,7 +25,8 @@
     "org.jetbrains":              { "license": "Apache-2.0", "evidence": "JetBrains annotations" },
     "org.jetbrains.kotlin":       { "license": "Apache-2.0", "evidence": "Kotlin stdlib" },
     "org.jetbrains.kotlinx":      { "license": "Apache-2.0", "evidence": "kotlinx coroutines" },
-    "io.socket":                  { "license": "MIT",        "evidence": "socket.io-client-java LICENSE (MIT)" }
+    "io.socket":                  { "license": "MIT",        "evidence": "socket.io-client-java LICENSE (MIT)" },
+    "io.getstream":               { "license": "Apache-2.0",  "evidence": "GetStream/stream-webrtc-android LICENSE (Apache-2.0); prebuilt of Google WebRTC (BSD-3-Clause)" }
   },
 
   "artifacts": {},

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../db/database');
+const config = require('../config');
 const enrolKey = require('../lib/enrol-key');   // #313
 const { resolveDevicePlaylist, resolvedLayoutId } = require('../lib/resolve-device-playlist');
 const { PLATFORM_ROLES, ELEVATED_ROLES, isPlatformStaff } = require('../middleware/auth');
@@ -319,7 +320,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule } = req.body;
+  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled } = req.body;
   // #150: validate orientation against the known enum (previously accepted any string, which
   // let a bad value reach the player -> unknown rotation falls back to landscape silently).
   // #325: a CSS colour that reaches the player's inline style, so it is constrained to a hex
@@ -362,6 +363,11 @@ router.put('/:id', (req, res) => {
     // Per-display pre-release opt-in (#234 follow-up). Stops a test build being reverted by the
     // next OTA check, which is what a prerelease version sorting below its own release causes.
     updates.push('ota_beta = ?'); values.push(ota_beta ? 1 : 0);
+  }
+  // #go2rtc: per-device live-video opt-in. Only meaningful when the workspace flag and the server
+  // master switch are also on (see liveVideoOn); off by default. Write-gated by checkDeviceOwnership.
+  if (live_video_enabled !== undefined) {
+    updates.push('live_video_enabled = ?'); values.push(live_video_enabled ? 1 : 0);
   }
   // #12 scheduled reboot: device-local "HH:MM" (null/'' clears -> off). Reset the
   // once-per-day guard on any change so a newly-set time can still fire later today.
@@ -767,6 +773,137 @@ router.delete('/:id', (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+// ── Live video (go2rtc). All READ-gated: watching a screen is a read, exactly like a screenshot.
+// The publish path (the player offering video INTO go2rtc) authenticates as a DEVICE, not a user,
+// and lives with the player-publisher work; it is deliberately not here. See docs/live-video.md.
+const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE (TURN/STUN) override
+
+// Resolve read access to a device via its workspace, the same shape GET /:id uses. Returns the
+// device row (with workspace) or null after sending the response.
+function checkDeviceRead(req, res) {
+  const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
+  if (!device) { res.status(404).json({ error: 'Device not found' }); return null; }
+  if (!device.workspace_id) { res.status(403).json({ error: 'Device not assigned to a workspace' }); return null; }
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
+  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
+  device._workspace = ws;
+  return device;
+}
+
+// Whether live VIDEO is on for this device: the server master gate, the workspace flag, and the
+// device flag must all be set. Independent of whether a publisher is actually connected right now.
+function liveVideoOn(device) {
+  return !!(config.liveVideoEnabled && device._workspace && device._workspace.live_video_enabled && device.live_video_enabled);
+}
+
+/*
+ * What the dashboard should do to watch this screen right now.
+ *
+ * mode 'webrtc' only when live video is enabled at all three levels AND go2rtc is healthy AND a
+ * stream for this device actually exists (a publisher is connected). Anything short of that is
+ * mode 'snapshot' — the existing screenshot path — so the Devices page never breaks when the
+ * sidecar is absent, down, or nobody is publishing. The browser signals through signalPath (a
+ * proxied ScreenTinker route), never straight to go2rtc, so the admin API stays private.
+ */
+router.get('/:id/live', async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  const snapshot = { mode: 'snapshot', fallback: 'snapshot' };
+  if (!liveVideoOn(device)) return res.json({ ...snapshot, reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ ...snapshot, reason: 'no_sidecar' });
+  const name = go2rtc.streamName(device.workspace_id, device.id);
+  // "present" must mean a publisher is ACTUALLY streaming, not just that ensureStream left an inert
+  // placeholder behind (see go2rtc.hasActiveProducer). Otherwise the dashboard would try webrtc,
+  // ICE-connect to a stream with no media, and sit on a black frame instead of the snapshot.
+  const [healthy, present] = await Promise.all([go2rtc.healthy(), go2rtc.hasActiveProducer(name)]);
+  if (!healthy) return res.json({ ...snapshot, reason: 'sidecar_down' });
+  if (!present) return res.json({ ...snapshot, reason: 'not_publishing' });
+  res.json({
+    mode: 'webrtc',
+    fallback: 'snapshot',
+    // Proxied signaling: the browser POSTs its SDP offer here, the server forwards to go2rtc.
+    signalPath: `/api/devices/${device.id}/live/webrtc`,
+    iceServers: orgWebrtc.iceServersForDevice(device.id),
+    // A viewer URL is not minted; the proxy holds the session. expiresAt bounds how long the
+    // dashboard should trust this descriptor before re-asking (a publisher can drop meanwhile).
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+// Proxy one WebRTC SDP exchange for WATCHING. Read-gated, and the requested stream must belong to
+// this exact workspace+device: streamBelongsTo recomputes the name, so a caller cannot hand us
+// another workspace's stream even with a valid session on their own device.
+router.post('/:id/live/webrtc', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!liveVideoOn(device) || !go2rtc.enabled()) return res.status(409).json({ error: 'Live video is not available for this device' });
+  const name = go2rtc.streamName(device.workspace_id, device.id);
+  if (!go2rtc.streamBelongsTo(name, device.workspace_id, device.id)) return res.status(403).json({ error: 'Stream does not belong to this device' });
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  const answer = await go2rtc.webrtcExchange(name, offer, 'sub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer', fallback: 'snapshot' });
+  res.type('application/sdp').send(answer.sdp);
+});
+
+/*
+ * #talk — two-way voice intercom. Gated exactly like live video (same three flags + a live go2rtc),
+ * because it rides the same sidecar; the dashboard additionally shows the control only for a device
+ * that declares remote.talk. Audio is Opus, which go2rtc registers by default, so no patched sidecar
+ * is needed (unlike VP8 video). Two one-directional streams per device:
+ *   dn (downlink): operator mic -> device speaker  — operator PUBLISHES here (this route), device subscribes
+ *   up (uplink):   device mic   -> operator speaker — operator SUBSCRIBES here (this route), device publishes
+ * The device's own two exchanges (subscribe dn, publish up) go through the device-authenticated WS
+ * proxy (lib/live-publish-ws.js), never these session routes.
+ */
+router.get('/:id/talk', async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  const off = { mode: 'off' };
+  if (!orgWebrtc.talkEnabledForDevice(device.id)) return res.json({ ...off, reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ ...off, reason: 'no_sidecar' });
+  if (!(await go2rtc.healthy())) return res.json({ ...off, reason: 'sidecar_down' });
+  res.json({
+    mode: 'webrtc',
+    // Operator publishes mic to the downlink, subscribes to the uplink. Proxied like /live/webrtc.
+    publishPath: `/api/devices/${device.id}/talk/publish`,
+    viewPath: `/api/devices/${device.id}/talk/view`,
+    iceServers: orgWebrtc.iceServersForDevice(device.id),
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+// Operator -> device audio: proxy the operator's PUBLISH offer into the downlink stream (dst=).
+router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'dn');
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  try { await go2rtc.ensureStream(name); } catch (_) { /* go2rtc may auto-create on dst */ }
+  const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
+  res.type('application/sdp').send(answer.sdp);
+});
+
+// Device -> operator audio: proxy the operator's SUBSCRIBE offer against the uplink stream (src=).
+router.post('/:id/talk/view', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'up');
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  // No ensureStream on a subscribe: a placeholder-only stream cannot be consumed ("unsupported
+  // url"). The device's uplink publish creates the real producer; the operator retries until then.
+  const answer = await go2rtc.webrtcExchange(name, offer, 'sub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer', reason: 'not_publishing' });
+  res.type('application/sdp').send(answer.sdp);
 });
 
 module.exports = router;

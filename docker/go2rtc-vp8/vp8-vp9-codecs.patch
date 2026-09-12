@@ -1,0 +1,26 @@
+--- a/pkg/webrtc/api.go
++++ b/pkg/webrtc/api.go
+@@ -306,6 +306,23 @@
+ 			},
+ 			PayloadType: 100,
+ 		},
++		// #screentinker-vp8: VP8/VP9 as FALLBACK codecs (listed last so they are NOT preferred over
++		// H264/H265 — a browser or H264-capable device negotiates H264 exactly as upstream does).
++		// They exist so a publisher with NO H264 encoder (notably the Android emulator, whose only
++		// H264 codec is a software OMX one libwebrtc excludes) can still publish. go2rtc upstream
++		// registers H264/H265 only.
++		{
++			RTPCodecCapability: webrtc.RTPCodecCapability{
++				MimeType: webrtc.MimeTypeVP8, ClockRate: 90000, RTCPFeedback: videoRTCPFeedback,
++			},
++			PayloadType: 102,
++		},
++		{
++			RTPCodecCapability: webrtc.RTPCodecCapability{
++				MimeType: webrtc.MimeTypeVP9, ClockRate: 90000, SDPFmtpLine: "profile-id=0", RTCPFeedback: videoRTCPFeedback,
++			},
++			PayloadType: 103,
++		},
+ 	} {
+ 		if err := m.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+ 			return err

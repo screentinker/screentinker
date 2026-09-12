@@ -14,6 +14,7 @@ import { showToast } from '../components/toast.js';
 import { openInviteMemberModal } from '../components/workspace-members-invite-modal.js';
 import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
 import { renderApprovalSettings } from '../components/approval-settings.js';
+import { renderLiveVideoSettings } from '../components/live-video-settings.js';
 
 export async function render(container, workspaceId) {
   container.innerHTML = `
@@ -117,10 +118,12 @@ export async function render(container, workspaceId) {
       rows: invites.map(inv => renderInviteRow(inv, { canAdmin })).join(''),
     }) : ''}
     <div id="approvalSettingsCard"></div>
+    <div id="liveVideoSettingsCard"></div>
   `;
 
   if (canAdmin) attachMutationHandlers(container, workspaceId);
   if (canAdmin) renderApprovalSettings(content.querySelector('#approvalSettingsCard'));
+  if (canAdmin) renderLiveVideoSettings(content.querySelector('#liveVideoSettingsCard'), { workspaceId, workspace: meWorkspace });
 }
 
 function renderSection({ titleKey, count, emptyKey, rows }) {
