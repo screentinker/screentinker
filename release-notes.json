@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "2.0.9",
+      "date": "2026-09-12",
+      "notes": [
+        "You can now watch live, sub-second video of what a screen is playing, next to the screenshot you already had. It needs the optional go2rtc sidecar and is off at every level until you turn it on, so nothing starts streaming by itself.",
+        "Talk to a screen. Operators can open a voice intercom to one screen or broadcast a PA announcement to many. Off by default, switched on per organization, and an organization can bring its own TURN and STUN servers.",
+        "Free trials now end when they are supposed to. A nightly check moves lapsed trials to the Free plan, and you get an email three days before the trial ends and another when it does, saying which screens will stop and how to keep them.",
+        "A screen that had been blocked by the plan limit could be quietly switched back on just by assigning it content from the dashboard. It cannot any more.",
+        "Screens stopped by an expired trial now say the trial expired, not that a device limit was hit, so it is clear what to do."
+      ]
+    },
+    {
       "version": "2.0.8",
       "date": "2026-09-09",
       "notes": [
