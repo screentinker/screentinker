@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ScreenTinker Public API
-  version: 2.0.8
+  version: 2.0.9
   description: |
     Public, token-scoped REST API for ScreenTinker digital signage.
 
