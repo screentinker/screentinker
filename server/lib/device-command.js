@@ -29,6 +29,11 @@ const ALLOWED_COMMANDS = Object.freeze([
   // #160 Track-A system control (no device owner): media volume + per-window brightness (Tier 0),
   // system brightness + screen-off timeout (Tier 1 / WRITE_SETTINGS). Panel no-ops if unsupported.
   'set_volume', 'set_brightness', 'set_system_brightness', 'set_screen_timeout',
+  // #312 follow-up: rewrite the device's stored server URL, so a relocated server can be pointed at
+  // from the dashboard instead of visiting every panel. The panel VERIFIES the new address is
+  // reachable before committing and rolls back if not (a fat-fingered URL must not strand a fleet),
+  // which is why it is gated on remote.set_server_url — a player only declares it once it does that.
+  'set_server_url',
 ]);
 
 /*
@@ -99,4 +104,25 @@ function deliverCommand(deviceNs, device, type, payload) {
   return { status: queued ? 'queued' : 'offline' };
 }
 
-module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, isMeshCommand, deliverCommand };
+/**
+ * Payload validation for the commands that carry one that can do harm if malformed. Checked ONCE
+ * per operator request, before any fan-out, so a bad `set_server_url` is refused at the door rather
+ * than pushed to a fleet. Commands with no dangerous payload pass through.
+ *
+ * @returns {{ok: true} | {ok: false, error: string}}
+ */
+function validateCommand(type, payload) {
+  if (type === 'set_server_url') {
+    const url = payload && typeof payload.url === 'string' ? payload.url.trim() : '';
+    if (!url) return { ok: false, error: 'set_server_url requires payload.url' };
+    let u;
+    try { u = new URL(url); } catch (_) { return { ok: false, error: 'payload.url is not a valid URL' }; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return { ok: false, error: 'payload.url must be http or https' };
+    }
+    if (!u.hostname) return { ok: false, error: 'payload.url must have a host' };
+  }
+  return { ok: true };
+}
+
+module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, isMeshCommand, deliverCommand, validateCommand };

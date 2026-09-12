@@ -5,7 +5,7 @@ const { accessContext, accessibleWorkspaceIds } = require('../lib/tenancy');
 const { workspaceRoom } = require('../lib/socket-rooms');
 const { protectSocket } = require('../lib/safe-socket');
 const playerCapabilities = require('../lib/player-capabilities');
-const { deliverCommand } = require('../lib/device-command');
+const { deliverCommand, validateCommand } = require('../lib/device-command');
 const bsSnapshotQueue = require('../lib/brightsign-snapshot-queue');
 // Server-side framebuffer capture, for a BrightSign whose player cannot capture itself.
 const bsCapture = require('../lib/brightsign-capture');
@@ -329,6 +329,9 @@ module.exports = function setupDashboardSocket(io) {
       // controls. A command the panel cannot honour is refused HERE, with the capability named, so
       // it fails loudly instead of being delivered and silently ignored — which is the failure
       // this whole mechanism exists to end.
+      // #312 follow-up: a malformed set_server_url must never reach a panel. Validate before deliver.
+      const v = validateCommand(type, payload);
+      if (!v.ok) { if (typeof ack === 'function') ack({ delivered: false, reason: 'invalid', error: v.error }); return; }
       const devRow = db.prepare('SELECT * FROM devices WHERE id = ?').get(device_id);
       // ⚠️ One definition of "deliver a command", shared with the group route and the mesh path —
       // see lib/device-command.js for why it was extracted.

@@ -1496,7 +1496,8 @@ paths:
                          power_menu, lock_now, kiosk_lock, kiosk_unlock,
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
-                         set_volume, set_brightness, set_system_brightness, set_screen_timeout]
+                         set_volume, set_brightness, set_system_brightness, set_screen_timeout,
+                         set_server_url]
                 payload: { type: object }
       responses:
         '200': { description: '{ success, sent, offline, total, results }.' }
@@ -1536,7 +1537,8 @@ paths:
                          power_menu, lock_now, kiosk_lock, kiosk_unlock,
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
-                         set_volume, set_brightness, set_system_brightness, set_screen_timeout]
+                         set_volume, set_brightness, set_system_brightness, set_screen_timeout,
+                         set_server_url]
                 payload: { type: object }
       responses:
         '200':

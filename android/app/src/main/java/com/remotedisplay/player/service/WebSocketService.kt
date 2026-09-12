@@ -28,7 +28,9 @@ import com.remotedisplay.player.telemetry.DeviceInfo
 import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
+import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URL
 
 class WebSocketService : Service() {
 
@@ -747,6 +749,36 @@ class WebSocketService : Service() {
                                     })
                                 } catch (_: Throwable) {}
                             }.start()
+                        }
+                        // #312 follow-up: rewrite the stored server URL, e.g. after a server move,
+                        // pushed from the dashboard to one device / a group / a whole workspace.
+                        // VERIFY-THEN-COMMIT: keep the old URL, confirm the new one is a reachable
+                        // ScreenTinker server, and only then persist it (mirrored to both stores by
+                        // ServerConfig, #312) and reconnect. A bad address rolls back, so a
+                        // fat-fingered URL cannot strand the panel — the failure this whole issue is
+                        // about. Runs off the socket thread because it does blocking network I/O.
+                        "set_server_url" -> {
+                            val newUrl = (payload?.optString("url", "") ?: "").trim().trimEnd('/')
+                            val old = config.serverUrl
+                            when {
+                                newUrl.isEmpty() ->
+                                    emitCommandLog("set_server_url refused: no url in payload")
+                                !(newUrl.startsWith("http://") || newUrl.startsWith("https://")) ->
+                                    emitCommandLog("set_server_url refused: not http(s): $newUrl")
+                                newUrl == old ->
+                                    emitCommandLog("set_server_url: already $newUrl, no change")
+                                else -> Thread {
+                                    if (probeServerReachable(newUrl)) {
+                                        // Confirm success on the CURRENT socket before we tear it down,
+                                        // so the operator who issued the change sees it land.
+                                        emitCommandLog("set_server_url: verified $newUrl, switching (was $old)")
+                                        config.serverUrl = newUrl
+                                        handler.post { try { connect(newUrl) } catch (e: Throwable) { Log.e("WebSocketService", "set_server_url reconnect: ${e.message}") } }
+                                    } else {
+                                        emitCommandLog("set_server_url: $newUrl unreachable, kept $old")
+                                    }
+                                }.start()
+                            }
                         }
                         else -> handler.post { try { onCommand?.invoke(type, payload) } catch (e: Throwable) { Log.e("WebSocketService", "onCommand cb: ${e.message}") } }
                     }
@@ -1563,6 +1595,50 @@ class WebSocketService : Service() {
         }
         found
     } catch (e: Throwable) { null }
+
+    // #312 follow-up: operator-visible result for set_server_url, on the dashboard log stream (same
+    // channel set_debug/shell use). Logged locally too, since on a successful switch the socket this
+    // went out on is about to be torn down.
+    private fun emitCommandLog(msg: String) {
+        Log.i("WebSocketService", msg)
+        try { socket?.emit("device:log", JSONObject().apply { put("tag", "set_server_url"); put("level", "info"); put("message", msg) }) } catch (_: Throwable) {}
+    }
+
+    /*
+     * #312 follow-up: is `url` a reachable ScreenTinker server? The verify half of verify-then-commit.
+     * A GET of /api/status returns JSON carrying version/features on our server; we accept a 2xx that
+     * looks like that. Deliberately conservative — a redirect, a 401/404, a captive portal or a
+     * timeout all read as "not reachable", so the caller keeps the old URL. Blocking; call off the
+     * main thread. Two short attempts, because the first packet after a network change is often lost.
+     */
+    private fun probeServerReachable(url: String): Boolean {
+        repeat(2) { attempt ->
+            var conn: HttpURLConnection? = null
+            try {
+                conn = (URL("$url/api/status").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 6000
+                    readTimeout = 6000
+                    instanceFollowRedirects = false
+                    setRequestProperty("Accept", "application/json")
+                }
+                val code = conn.responseCode
+                if (code in 200..299) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }.take(4000)
+                    if (body.contains("\"version\"") || body.contains("\"features\"") || body.contains("\"status\"")) return true
+                    Log.w("WebSocketService", "probe: $url answered $code but not a ScreenTinker /api/status")
+                } else {
+                    Log.w("WebSocketService", "probe: $url returned HTTP $code")
+                }
+            } catch (e: Throwable) {
+                Log.w("WebSocketService", "probe attempt ${attempt + 1} to $url failed: ${e.message}")
+            } finally {
+                try { conn?.disconnect() } catch (_: Throwable) {}
+            }
+            if (attempt == 0) try { Thread.sleep(1200) } catch (_: InterruptedException) {}
+        }
+        return false
+    }
 
     fun disconnect() {
         stopHeartbeat()
