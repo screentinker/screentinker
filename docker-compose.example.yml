@@ -22,6 +22,8 @@ services:
       # GO2RTC_TURN_URL: "turn:turn.example.com:3478"      # only needed when UDP 8555 + host candidates are both unreachable
       # GO2RTC_TURN_USER: "user"
       # GO2RTC_TURN_PASS: "pass"
+      # TALK_ENABLED: "true"                 # master switch for voice Talk / PA; then enable per org under Admin -> Organizations
+      #                                      # (an org can also set its own STUN/TURN there, overriding GO2RTC_* for its video + talk)
     volumes:
       - st-data:/data               # db, uploads, and the jwt secret persist here
       # To enable OTA APK downloads, mount a built APK read-only:

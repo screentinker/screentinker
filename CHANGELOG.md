@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Live video (WebRTC).** An optional path that shows sub-second video of what a screen is actually
+playing, alongside the existing screenshot stream. With a [go2rtc](https://github.com/AlexxIT/go2rtc)
+sidecar and a publishing player, one screen can be watched by many dashboards without asking the
+device to encode a separate stream per viewer; ScreenTinker is only ever the signaling proxy and
+never becomes an SFU. Off by default at every level (server master gate `LIVE_VIDEO_ENABLED`, per
+workspace, per device), so enabling the sidecar never silently starts streaming. The Android
+publisher was rewritten onto a WebSocket + trickle-ICE path (native libwebrtc drops the inline
+HTTP-answer candidates that browsers tolerate), and its foreground service was hardened against the
+ANR and native crashes that came from disposing a `PeerConnection` from its own callback. The
+dashboard plays WebRTC first, then falls back to MSE/HLS, then to the screenshot stream. Documented
+in `docs/live-video.md`.
+
+**A VP8/VP9-capable go2rtc image.** Stock go2rtc registers only H264/H265 for WebRTC ingest, so a
+publisher with no H264 encoder gets its video rejected and no frames flow. This is invisible for
+browsers and real phones (all offer H264) but bites the Android emulator, whose only H264 codec is a
+software encoder libwebrtc excludes. `docker/go2rtc-vp8/` builds an image that adds VP8/VP9 to the
+receive set with a one-function patch, for emulator testing and unusual hardware. Real hardware does
+not need it.
+
+**Talk: voice intercom and PA broadcast.** Operators can now talk to screens over the same go2rtc
+path, in Opus. Per device, Talk is one-way by default (operator mic to the screen's speaker, so it
+works on a mic-less display) with a separate 2-way button that appears only when the device declares
+a microphone. Per group and per workspace, a one-way PA broadcast fans a single operator stream out
+to every device in scope, listen-only, so a whole group's mics never mix into noise. The operator
+can optionally share a webcam, shown fullscreen over the content on the screen; content audio and
+video duck while talk is active and restore on stop, and hardware echo-cancellation on the device
+stops the operator hearing themselves. Talk is fail-soft: any failure just leaves no audio and never
+touches playback or live video.
+
+**Talk is gated per organization, with a per-org TURN/STUN.** Talk is off by default and enabled per
+org: a global `TALK_ENABLED` master switch plus each organization's own `talk_enabled` flag, both
+required. A platform admin sets it under Admin → Organizations, where an organization can also
+provide its **own ICE (STUN/TURN) servers** — a JSON override that applies to that org's live video
+and talk alike, falling back to the sidecar's `GO2RTC_*` servers when unset. `lib/org-webrtc.js`
+resolves both from a device or workspace up to its org, and every talk endpoint enforces the flag
+server-side.
+
 ## 2.0.8
 
 The first release since 2.0.7, and a large one: two new subsystems, a new player platform, and

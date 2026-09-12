@@ -28,6 +28,7 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 - **Multi-zone layouts** — split screens into zones with drag-and-drop editor; 7 built-in templates (fullscreen, split, L-bar, PiP, grid)
 - **Video walls** — combine multiple displays into one screen with bezel compensation, device rotation, and leader-based sync
 - **Remote control** — live view, touch injection, key input, power on/off
+- **Live video & Talk** — optional WebRTC path via a [go2rtc](https://github.com/AlexxIT/go2rtc) sidecar: sub-second live video of what a screen is actually playing (one screen watched by many dashboards without re-encoding), plus **Talk** — one-way announce or two-way intercom to a single screen, and one-way PA broadcast to a whole group or workspace, with an optional operator webcam shown fullscreen. Off by default and enabled per organization; an org can bring its own TURN/STUN. See [`docs/live-video.md`](docs/live-video.md)
 - **Scheduling** — visual weekly calendar with recurrence rules (daily/weekly/monthly), priority-based conflict resolution, both device-level and group-level schedules (device-level overrides win over group-level), timezone support
 - **Widgets** — clocks, weather, RSS tickers, text/HTML, webpages, social feeds, and Directory Board (scrolling lobby tenant/room/staff directories with dark/light themes, category management, and anti-burn-in motion)
 - **Kiosk mode** — interactive touchscreen interfaces
@@ -325,6 +326,45 @@ an LLM, and optional background/foreground imagery from an image model. Each
 workspace brings its own **OpenAI-compatible** endpoints (cloud, or fully local
 and free via Ollama + stable-diffusion.cpp). See
 **[docs/local-ai-setup.md](docs/local-ai-setup.md)**.
+
+#### Live Video & Talk (WebRTC via go2rtc)
+
+Off by default. With a [go2rtc](https://github.com/AlexxIT/go2rtc) sidecar and a
+publishing player, the dashboard shows **sub-second live video** of what a screen
+is playing (one screen can be watched by many dashboards without asking the device
+to encode a separate stream per viewer), and operators can **Talk** to screens:
+one-way announce or two-way intercom to a single display, one-way PA broadcast to a
+whole group or workspace, and an optional operator webcam shown fullscreen on the
+screen. Without go2rtc, nothing changes — live view stays the screenshot stream.
+
+Enable the sidecar and set `LIVE_VIDEO_ENABLED=true` + the `GO2RTC_*` environment
+(TURN/STUN as needed); Talk additionally needs the `TALK_ENABLED=true` master switch,
+after which a platform admin turns it on **per organization** under
+**Admin → Organizations**. An org can also set its **own ICE (STUN/TURN) servers**
+there, which override the sidecar's for that org's video and talk. Full setup,
+ports, and the WebRTC/TURN/Cloudflare gotchas are in
+**[docs/live-video.md](docs/live-video.md)**.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LIVE_VIDEO_ENABLED` | Master switch for live video. Also enable per workspace + per device. | `false` |
+| `TALK_ENABLED` | Master switch for Talk (voice intercom / PA). Then enable per organization under Admin → Organizations. | `false` |
+| `GO2RTC_URL` | The sidecar's API, reached over the compose network only (never exposed to the browser). | `http://go2rtc:1984` |
+| `GO2RTC_API_TOKEN` | Shared secret if you protect go2rtc's API; must match `go2rtc.yaml`. | _(none)_ |
+| `GO2RTC_STUN_URLS` | Comma-separated STUN servers; a public STUN helps most NATs. | `stun:stun.l.google.com:19302` |
+| `GO2RTC_TURN_URL` / `_USER` / `_PASS` | TURN relay, only needed when UDP 8555 and host candidates are both unreachable. | _(none)_ |
+
+Per-org ICE (STUN/TURN) set in the dashboard overrides `GO2RTC_STUN_URLS` / `GO2RTC_TURN_*` for that org.
+
+**Patched go2rtc for VP8/VP9 (emulator / no-H264 publishers).** Stock go2rtc accepts
+**only H264/H265** on WebRTC ingest, so a publisher with no H264 encoder gets its
+video rejected and no frames flow. Every browser and virtually every real phone
+offers H264, so this is invisible in practice — the one environment it bites is the
+**Android emulator** (its lone H264 codec is a software encoder libwebrtc excludes,
+so it offers VP8/VP9/AV1 only). If you need to publish from such a device, build the
+VP8/VP9-capable image in [`docker/go2rtc-vp8/`](docker/go2rtc-vp8/README.md) (a
+one-function patch adding VP8/VP9 to the receive set) and use it in place of
+`alexxit/go2rtc`. Real hardware does not need it.
 
 #### Stripe (Billing)
 

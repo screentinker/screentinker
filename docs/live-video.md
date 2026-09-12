@@ -164,25 +164,32 @@ pushes a track that a viewer then watches back through the proxy.
 
 ## Talk (voice intercom + group PA)
 
-Two-way voice rides the same go2rtc path as live video, in **Opus** (which go2rtc registers by
-default, so no patched sidecar is needed for talk — only VP8 video needs the patch). Gated on the
-same three live-video flags plus the `remote.talk` capability, which a device declares only if it
-runs the WebRTC audio publisher/subscriber.
+Voice rides the same go2rtc path as live video, in **Opus** (which go2rtc registers by
+default, so no patched sidecar is needed for talk — only VP8 video needs the patch). Talk is
+**off by default** and turned on per organization: it is gated on the `TALK_ENABLED` master switch
+(`config.talkEnabled`) **and** the org's own `talk_enabled` flag (see
+[Per-organization settings](#per-organization-settings-talk-flag--ice-override) below), plus the
+`remote.talk` capability, which a device declares only if it runs the WebRTC audio
+publisher/subscriber. Two-way additionally needs `remote.mic` (the device has a microphone).
 
-- **Per-device (two-way):** the **🎙️ Talk** button in a device's top action bar. The operator's mic
-  plays on the device and the device's mic plays back to the operator. Two one-directional streams
-  per device (`tk_dn_<hash>` operator→device, `tk_up_<hash>` device→operator), because a go2rtc
-  stream has a single producer. The device runs a `microphone` foreground service ([`TalkService`]
-  → [`AudioTalker`], two audio legs); the operator runs two browser peer connections
-  ([`talk-client.js`]). Hardware echo-cancellation on the device stops the operator hearing
-  themselves. Each side publishes first and its subscribe leg RETRIES until the far producer exists
-  (an SFU intercom is a mutual-subscribe race).
+- **Per-device:** the **🎙️ Talk** button in a device's top action bar. It is **one-way by default**
+  (operator mic → device speaker), so it works on a mic-less screen. A device that declares
+  `remote.mic` also gets a **🎙️ 2-way audio** button, which additionally plays the device's mic
+  back to the operator. Each direction is a one-directional stream (`tk_dn_<hash>` operator→device,
+  `tk_up_<hash>` device→operator), because a go2rtc stream has a single producer. The device runs a
+  `microphone` foreground service ([`TalkService`] → [`AudioTalker`]); the operator runs the browser
+  peer connections ([`talk-client.js`]). Hardware echo-cancellation on the device stops the operator
+  hearing themselves. Each side publishes first and its subscribe leg RETRIES until the far producer
+  exists (an SFU intercom is a mutual-subscribe race). The operator can optionally share a **webcam**
+  on the downlink; the device renders it fullscreen over the content (Android [`TalkVideoBus`] →
+  a `SurfaceViewRenderer`, web player a fullscreen `<video>`). Content audio and video are ducked
+  while talk is active, and restored on stop.
 - **Group / workspace (one-way PA):** the **🎙️ Talk** button on a group header, and **🎙️ Talk to
   all** in the dashboard header. The operator publishes their mic ONCE to a shared broadcast stream
   (`tk_cast_g_<hash>` / `tk_cast_w_<hash>`); every device in scope SUBSCRIBES and plays it
   (listen-only — no device mic, so a whole group's mics never mix into noise, and listening needs no
   RECORD_AUDIO). The server fans a `device:talk-start{mode:"listen"}` out to each in-scope device,
-  filtered by the same per-device gates (write access + `remote.talk` + the device's live flags), so
+  filtered by the same per-device gates (write access + `remote.talk` + the org's talk flag), so
   a broadcast never makes a device play audio it is not individually cleared for. The device's
   listen leg resolves its channel through the device-authenticated proxy, which validates the device
   belongs to that group/workspace before subscribing.
@@ -192,6 +199,25 @@ Signaling for the device legs uses the WebSocket + trickle proxy (`lib/live-publ
 browser legs use the plain HTTP WHIP/WHEP routes (`/talk/publish`, `/talk/view`, and the group /
 workspace `/talk/publish`). Talk is fail-soft: any failure just leaves no audio, never touching
 playback or live video.
+
+## Per-organization settings (talk flag + ICE override)
+
+Two org-level knobs live on the `organizations` row and are resolved from a device or workspace up
+to its org by [`lib/org-webrtc.js`](../server/lib/org-webrtc.js):
+
+- **`talk_enabled`** (INTEGER, default `0`) — turns Talk on for that org, **on top of** the global
+  `TALK_ENABLED` master switch. Both must be true. Off by default for every org, so enabling the
+  master alone changes nothing until an org is opted in.
+- **`ice_servers`** (TEXT, JSON, default NULL) — an **optional per-org ICE (STUN/TURN) override**, a
+  JSON array of `[{urls, username?, credential?}]`. NULL falls back to the sidecar's global
+  `GO2RTC_*` ICE servers, so an org can bring its own TURN without touching the sidecar. It applies
+  to **live video and talk** alike.
+
+A **platform admin** sets both in the dashboard under **Admin → Organizations** (the Talk toggle and
+ICE box appear once `TALK_ENABLED` is on), or over the API with `PUT /api/admin/orgs/:id/talk`
+(`{ talk_enabled, ice_servers }`; the ICE JSON shape is validated server-side). The master switch is
+reported to the frontend at `GET /api/status` as `features.talk`, which gates whether the Talk
+controls render at all; the per-org flag is then enforced server-side on every talk exchange.
 
 ## If go2rtc is down
 
