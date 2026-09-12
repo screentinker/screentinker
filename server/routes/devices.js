@@ -11,7 +11,7 @@ const { accessContext } = require('../lib/tenancy');
 // requireScope gates by API-token scope; the workspace WRITE gate is checkDeviceOwnership, which
 // already rejects workspace_viewer — the same check requireFleetWrite performs in routes/triggers.js.
 const { requireScope } = require('../middleware/apiToken');
-const { ALLOWED_COMMANDS, deliverCommand } = require('../lib/device-command');
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
 const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens } = require('../lib/device-sanitize');
 const { layoutZones, orphanCountsByDevice } = require('../lib/zone-validate');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings preservation
@@ -444,6 +444,8 @@ router.post('/:id/command', requireScope('full'), (req, res) => {
   const { type, payload } = req.body || {};
   if (!type) return res.status(400).json({ error: 'command type required' });
   if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
+  const v = validateCommand(type, payload);   // #312 follow-up: reject a malformed set_server_url at the door
+  if (!v.ok) return res.status(400).json({ error: v.error });
 
   const deviceNs = req.app.get('io')?.of('/device');
   if (!deviceNs) return res.status(503).json({ error: 'The realtime layer is not available.' });

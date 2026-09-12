@@ -549,6 +549,9 @@ export const api = {
   addDeviceToGroup: (groupId, device_id) => request(`/groups/${groupId}/devices`, { method: 'POST', body: JSON.stringify({ device_id }) }),
   removeDeviceFromGroup: (groupId, deviceId) => request(`/groups/${groupId}/devices/${deviceId}`, { method: 'DELETE' }),
   sendGroupCommand: (groupId, type, payload) => request(`/groups/${groupId}/command`, { method: 'POST', body: JSON.stringify({ type, payload }) }),
+  // #312 follow-up: fan a command out to every device in a workspace (admin-gated server-side).
+  // Used for the workspace-wide server-URL rewrite when a server is relocated.
+  sendWorkspaceCommand: (workspaceId, type, payload) => request(`/workspaces/${workspaceId}/command`, { method: 'POST', body: JSON.stringify({ type, payload }) }),
 
   // Video walls
   getWalls: () => request('/walls'),

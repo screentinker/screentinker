@@ -1,6 +1,8 @@
 'use strict';
 
 const playerCapabilities = require('./player-capabilities');
+const { db } = require('../db/database');
+const enrolKey = require('./enrol-key');   // #312/#313: URL-carried identity for a web-player move
 
 /*
  * DELIVERING ONE COMMAND TO ONE SCREEN — the single definition.
@@ -29,6 +31,11 @@ const ALLOWED_COMMANDS = Object.freeze([
   // #160 Track-A system control (no device owner): media volume + per-window brightness (Tier 0),
   // system brightness + screen-off timeout (Tier 1 / WRITE_SETTINGS). Panel no-ops if unsupported.
   'set_volume', 'set_brightness', 'set_system_brightness', 'set_screen_timeout',
+  // #312 follow-up: rewrite the device's stored server URL, so a relocated server can be pointed at
+  // from the dashboard instead of visiting every panel. The panel VERIFIES the new address is
+  // reachable before committing and rolls back if not (a fat-fingered URL must not strand a fleet),
+  // which is why it is gated on remote.set_server_url — a player only declares it once it does that.
+  'set_server_url',
 ]);
 
 /*
@@ -81,9 +88,24 @@ function deliverCommand(deviceNs, device, type, payload) {
   const verdict = playerCapabilities.commandAllowed(device, type);
   if (!verdict.ok) return { status: 'unsupported', capability: verdict.capability };
 
+  // #312/#313: a web player (browser tab) has origin-scoped storage, so it cannot follow a server
+  // move without carrying its identity in the URL. On an operator's set_server_url — and ONLY then,
+  // which is why the mint lives on this operator-gated path and not in the device socket — hand the
+  // web player an enrol key to redirect with. The native Android app (client_type 'apk') carries
+  // its own token, so it needs none. Reuse an existing key rather than rolling one on every send.
+  let outPayload = payload || {};
+  if (type === 'set_server_url' && device.client_type === 'player') {
+    let key = null;
+    try {
+      const row = db.prepare('SELECT enrol_key FROM devices WHERE id = ?').get(device.id);
+      key = (row && row.enrol_key) || enrolKey.setEnrolKey(db, device.id);
+    } catch (_) { /* if we cannot mint, the redirect falls back to a re-pair on the new origin */ }
+    if (key) outPayload = Object.assign({}, outPayload, { enrol_key: key });
+  }
+
   const room = deviceNs.adapter.rooms.get(device.id);
   if (room && room.size > 0) {
-    deviceNs.to(device.id).emit('device:command', { type, payload: payload || {} });
+    deviceNs.to(device.id).emit('device:command', { type, payload: outPayload });
     return { status: 'sent' };
   }
 
@@ -94,9 +116,30 @@ function deliverCommand(deviceNs, device, type, payload) {
    */
   let queued = false;
   try {
-    queued = require('./command-queue').queueCommand(device.id, type, payload);
+    queued = require('./command-queue').queueCommand(device.id, type, outPayload);
   } catch (e) { /* queue module absent — the command is simply lost, and says so */ }
   return { status: queued ? 'queued' : 'offline' };
 }
 
-module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, isMeshCommand, deliverCommand };
+/**
+ * Payload validation for the commands that carry one that can do harm if malformed. Checked ONCE
+ * per operator request, before any fan-out, so a bad `set_server_url` is refused at the door rather
+ * than pushed to a fleet. Commands with no dangerous payload pass through.
+ *
+ * @returns {{ok: true} | {ok: false, error: string}}
+ */
+function validateCommand(type, payload) {
+  if (type === 'set_server_url') {
+    const url = payload && typeof payload.url === 'string' ? payload.url.trim() : '';
+    if (!url) return { ok: false, error: 'set_server_url requires payload.url' };
+    let u;
+    try { u = new URL(url); } catch (_) { return { ok: false, error: 'payload.url is not a valid URL' }; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return { ok: false, error: 'payload.url must be http or https' };
+    }
+    if (!u.hostname) return { ok: false, error: 'payload.url must have a host' };
+  }
+  return { ok: true };
+}
+
+module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, isMeshCommand, deliverCommand, validateCommand };

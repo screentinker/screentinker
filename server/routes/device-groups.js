@@ -21,7 +21,7 @@ const express_ = express; // for express.text() below
 const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
 // ⚠️ Moved to lib/device-command.js — this list and the delivery logic below existed in three
 // places and had already drifted (the socket path queued for an offline device; this one did not).
-const { ALLOWED_COMMANDS, deliverCommand } = require('../lib/device-command');
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
 
 // Phase 2.2i: split read/write access checks. Both attach req.group on success.
 function loadGroupAccessCtx(req, res) {
@@ -429,6 +429,8 @@ router.post('/:id/command', requireScope('full'), requireGroupWrite, (req, res) 
   const { type, payload } = req.body;
   if (!type) return res.status(400).json({ error: 'command type required' });
   if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
+  const v = validateCommand(type, payload);   // #312 follow-up: validate once, before the fan-out
+  if (!v.ok) return res.status(400).json({ error: v.error });
 
   // SELECT * because the capability check needs the platform/declaration columns, not just the
   // three fields the response uses.

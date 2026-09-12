@@ -6,6 +6,7 @@ const { canAdminWorkspace, canAccessWorkspace } = require('../lib/permissions');
 const { isPlatformRole } = require('../middleware/auth');
 const go2rtc = require('../lib/go2rtc');
 const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
 const appConfig = require('../config');
 const { logActivity, getClientIp } = require('../services/activity');
 const { sendEmail } = require('../services/email');
@@ -564,6 +565,40 @@ router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/
   const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
   if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
   res.type('application/sdp').send(answer.sdp);
+});
+
+/*
+ * #312 follow-up: fan a command out to EVERY device in a workspace. Today this exists for the
+ * workspace-wide server-URL rewrite (relocating a server without visiting every panel), but it is
+ * the same shape as the per-group /command route and takes any ALLOWED_COMMANDS type.
+ *
+ * Admin-gated (loadWorkspace requireAdmin), not editor: a fleet-wide command — a reboot, or
+ * pointing every screen at a new address — is a workspace-owner decision, and the blast radius is
+ * the whole workspace. Per-device capability refusals are reported rather than failing the lot, so
+ * a mixed fleet (a browser tab that cannot honour set_server_url among Android panels) still does
+ * the right thing for the members that can.
+ */
+router.post('/:id/command', (req, res) => {
+  const ws = loadWorkspace(req, res, /* requireAdmin */ true);
+  if (!ws) return;
+  const { type, payload } = req.body || {};
+  if (!type) return res.status(400).json({ error: 'command type required' });
+  if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
+  const v = validateCommand(type, payload);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+  const deviceNs = req.app.get('io')?.of('/device');
+  if (!deviceNs) return res.status(503).json({ error: 'The realtime layer is not available.' });
+
+  const devices = db.prepare('SELECT * FROM devices WHERE workspace_id = ?').all(ws.id);
+  const results = devices.map((device) => ({
+    device_id: device.id, name: device.name, ...deliverCommand(deviceNs, device, type, payload),
+  }));
+  const sent = results.filter(r => r.status === 'sent').length;
+  const offline = results.filter(r => r.status === 'offline' || r.status === 'queued').length;
+  const unsupported = results.filter(r => r.status === 'unsupported').length;
+  logActivity(req.user.id, 'workspace_command', `workspace: ${ws.name} (${ws.id}) type=${type} sent=${sent}`, null, getClientIp(req), ws.id);
+  res.json({ success: true, type, total: results.length, sent, offline, unsupported, results });
 });
 
 module.exports = router;

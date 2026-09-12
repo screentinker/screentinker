@@ -612,6 +612,13 @@ async function loadDevice(deviceId, activeTab = null) {
             </svg>
             ${t('device.ctl.shutdown')}
           </button>` : ''}
+          ${can('remote.set_server_url') ? `
+          <button class="btn btn-secondary btn-sm" id="setServerUrlBtn" title="${t('device.ctl.set_server_url_tip')}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+            ${t('device.ctl.set_server_url')}
+          </button>` : ''}
         </div>
 
         <div class="info-grid">
@@ -2025,6 +2032,24 @@ function setupActions(device) {
       shutdownBtn.style.background = '';
       shutdownBtn.style.color = '';
     }, 3000);
+  });
+
+  // #312 follow-up: point this device at a new server URL. The panel VERIFIES the address before
+  // committing and rolls back if unreachable, but a typo still costs a round-trip and (on a healthy
+  // switch) a reconnect, so confirm the exact old -> new here first.
+  document.getElementById('setServerUrlBtn')?.addEventListener('click', () => {
+    const suggested = window.location.origin;
+    const url = (prompt(t('device.ctl.set_server_url_prompt'), suggested) || '').trim().replace(/\/+$/, '');
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) { showToast(t('device.ctl.set_server_url_bad'), 'error'); return; }
+    if (!confirm(t('device.ctl.set_server_url_confirm', { url }))) return;
+    sendCommand(device.id, 'set_server_url', { url }, (ack) => {
+      if (ack?.delivered) showToast(t('device.ctl.set_server_url_dispatched', { url }), 'success');
+      else if (ack?.reason === 'unsupported') showToast(t('device.toast.command_unsupported', { cmd: 'Set server URL', cap: ack.capability || '' }), 'error');
+      else if (ack?.reason === 'invalid') showToast(ack.error || t('device.ctl.set_server_url_bad'), 'error');
+      else if (ack?.queued) showToast(t('device.toast.command_queued', { cmd: 'Set server URL' }), 'warning');
+      else showToast(t('device.toast.command_undeliverable', { cmd: 'Set server URL' }), 'error');
+    });
   });
 
   // Screen Off

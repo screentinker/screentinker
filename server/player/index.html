@@ -710,6 +710,48 @@
     let config = getConfig();
 
     /*
+     * #312 follow-up — move this player to a new server address.
+     *
+     * A browser tab's identity (device_token, cache, service worker) is localStorage scoped to the
+     * ORIGIN it was loaded from, so it cannot simply follow a redirect. The bridge is the enrol key
+     * (#313), the one identity that travels in a URL: verify the new address answers, mint a key
+     * over the authenticated socket, then redirect to `<newUrl>/player?k=<key>`. On the new origin
+     * the existing `?k=` path resolves the key back to this device — and because the key stays in
+     * the URL, a later reload/reboot re-enrolls, so the move survives a restart. If the new address
+     * is a genuinely different server the key is unknown there and the screen re-pairs, which is the
+     * right outcome. Verify-then-commit: a dead/typo address leaves the tab exactly where it is.
+     */
+    async function moveToServer(rawUrl, handoffKey) {
+      const emitLog = (m) => { console.log('[move]', m); try { socket && socket.emit('device:log', { tag: 'set_server_url', level: 'info', message: m }); } catch (_) {} };
+      const newUrl = String(rawUrl || '').trim().replace(/\/+$/, '');
+      const currentOrigin = window.location.origin.replace(/\/+$/, '');
+      if (!newUrl) { emitLog('set_server_url refused: no url'); return; }
+      if (!/^https?:\/\//i.test(newUrl)) { emitLog('set_server_url refused: not http(s): ' + newUrl); return; }
+      if (newUrl === currentOrigin) { emitLog('set_server_url: already served from ' + newUrl + ', no change'); return; }
+
+      // The enrol key the server minted for this move (or one we already carry). Without it a
+      // redirect would land on the new origin unpaired, so verify we have it before touching anything.
+      const key = handoffKey || config.enrolKey || null;
+      if (!key) { emitLog('set_server_url: no enrol key in payload (would land unpaired) — staying put'); return; }
+
+      /*
+       * No client-side reachability probe here, unlike the Android player.
+       *
+       * A browser tab cannot reliably test the new address before navigating: a cross-origin fetch
+       * is intercepted by our own service worker (and CORS makes the response opaque anyway), and an
+       * <img> probe cannot tell a live server that answers with non-image content from a dead port —
+       * onerror fires for both. So the check the Android app does over a raw socket has no honest
+       * equivalent here. Instead the OPERATOR is the verification: the dashboard's move dialog states
+       * the blast radius and requires typing the workspace name to confirm. If the address turns out
+       * wrong the enrol key stays valid on the old server, and the new origin shows the pairing screen
+       * (unknown key) rather than silently adopting the screen — a visible, recoverable outcome.
+       */
+      emitLog('set_server_url: switching to ' + newUrl);
+      const target = newUrl + '/player?k=' + encodeURIComponent(key);
+      try { window.location.replace(target); } catch (_) { window.location.href = target; }
+    }
+
+    /*
      * Does a <video> on this platform actually yield pixels to a canvas? Cached: it is a property
      * of the platform, not of the clip. Consumed by videoCompositingAvailable() ~2900 lines below.
      *
@@ -2587,6 +2629,9 @@
         // relay wraps it in `payload`, but the queued-command replay path and the public API have
         // both been seen to deliver it flat.
         if (data.type === 'set_debug') setRemoteDebug(!!(data.payload?.enabled ?? data.enabled));
+        // #312 follow-up: move this player to a new server address. The server hands us an enrol key
+        // in the payload (only an operator's move mints one) so our identity can cross the origin.
+        if (data.type === 'set_server_url') moveToServer((data.payload && data.payload.url) || data.url, data.payload && data.payload.enrol_key);
       });
 
       // #129: real-time mute. Apply immediately if the toggled item is the one playing now;
@@ -3738,6 +3783,11 @@
         // restartPlayer() always resolves to something: the host rebuilds the widget, or the page
         // reloads. It is the one lifecycle action a browser tab can genuinely perform.
         'system.restart_player',
+        // #312 follow-up: this player can be MOVED to a new server address. A browser tab's storage
+        // is origin-scoped, so it carries its identity across via an enrol key in the URL (#313):
+        // it verifies the new address is reachable, mints its key, and redirects to
+        // `<newUrl>/player?k=<key>` — see the set_server_url handler in device:command.
+        'remote.set_server_url',
         'sync.clock',
       ];
 

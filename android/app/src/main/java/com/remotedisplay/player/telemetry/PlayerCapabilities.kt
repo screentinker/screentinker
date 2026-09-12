@@ -91,6 +91,11 @@ object PlayerCapabilities {
                 // remote.talk = can play the operator's audio/webcam (one-way / PA); remote.mic =
                 // also has a microphone to send back (unlocks 2-way). Android has both.
                 "remote.talk", "remote.mic",
+                // #312 follow-up: accept a server-URL rewrite from the dashboard, VERIFYING the new
+                // address is reachable before committing and rolling back if not (see
+                // WebSocketService's set_server_url handler). Declared because we do that
+                // verify-then-commit, which is the whole reason the command is gated.
+                "remote.set_server_url",
                 // The player restarts itself; the OTA checker updates the APK.
                 "system.restart_player", "system.self_update",
                 // Clock-derived group sync is platform-independent.

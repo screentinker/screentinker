@@ -54,6 +54,11 @@ const CAPABILITIES = [
    * A screen (signage) declares remote.talk but NOT this; a phone/tablet (or a browser tab with a
    * mic) declares both. Implies remote.talk. */
   'remote.mic',
+  /* #312 follow-up: the player can accept a server-URL rewrite from the dashboard AND verify the new
+   * address is reachable before committing, rolling back if not. Declared only by a player that
+   * implements that verify-then-commit path (so a fat-fingered URL cannot strand it), which is why
+   * the command is gated on it rather than sent blind. NOT in any baseline — brand new. */
+  'remote.set_server_url',
   // lifecycle
   'system.reboot', 'system.restart_player', 'system.self_update',
   // device management (Android device-owner territory)
@@ -402,6 +407,11 @@ const COMMAND_CAPABILITY = {
   set_timezone: 'system.time',
   shell: 'system.shell',
   install_apk: 'system.install_apk',
+
+  // #312 follow-up: rewrite the stored server URL. Gated so only a player that verifies-then-commits
+  // (and rolls back an unreachable address) is ever sent it — a web player, whose "server" is its
+  // page origin, does not declare it and is correctly skipped by a group/workspace push.
+  set_server_url: 'remote.set_server_url',
 
   /*
    * Remote view. Ungated, and the reason is a circle: enable_system_capture asks Android to raise
