@@ -64,22 +64,72 @@ object TransitionGlsl {
     }
 }
 
+/*
+ * #344 — the wipe's geometry, pure and testable.
+ *
+ * The overlay draws its textures 1:1 across an UNROTATED, screen-sized GL surface (see the #344 note
+ * in MainActivity: it lives on the window content root, not the rotated stage, because a SurfaceView
+ * is not guaranteed to inherit an ancestor's rotation on every ROM). So the rotation the stage gets
+ * for a portrait screen has to be baked into the bitmap instead of relied upon from the compositor.
+ *
+ * This object holds only the box arithmetic — no Android graphics — so it can be unit-tested on the
+ * JVM (which the Android graphics path cannot). See TransitionGeometryTest.
+ */
+object TransitionGeometry {
+    /** The box content is laid out in: the stage is transposed for a portrait (swap) screen. */
+    fun stageBox(screenW: Int, screenH: Int, swap: Boolean): Pair<Int, Int> =
+        if (swap) screenH to screenW else screenW to screenH
+
+    /** true for the orientations MainActivity transposes the stage for (90 / 270). */
+    fun swapForRotation(rotDeg: Int): Boolean = ((rotDeg % 360) + 360) % 360 == 90 || ((rotDeg % 360) + 360) % 360 == 270
+
+    /**
+     * The invariant the reporter asked for: the box the bitmaps were fitted to (once rotated) must
+     * equal the surface they are drawn on. Rotating the stage box by 90/270 must give the screen box;
+     * 0/180 leaves it. A mismatch means we fitted to the wrong thing and MUST hard-cut, not wipe.
+     */
+    fun rotatedStageMatchesScreen(stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotDeg: Int): Boolean {
+        if (stageW <= 0 || stageH <= 0 || screenW <= 0 || screenH <= 0) return false
+        val (rw, rh) = if (swapForRotation(rotDeg)) stageH to stageW else stageW to stageH
+        return rw == screenW && rh == screenH
+    }
+}
+
 // Fit a source bitmap into a w×h frame with object-fit:contain letterboxing (matches the static
 // ImageView/PlayerView framing), AND flip it vertically — GLES2 has no UNPACK_FLIP_Y_WEBGL, so the flip
 // here replicates exactly what the web renderer's upload() does, keeping the shader uv convention (and
 // therefore the transition geometry) identical across platforms. Returns an ARGB_8888 bitmap.
-fun fitTransitionBitmap(src: Bitmap, w: Int, h: Int): Bitmap {
-    val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+//
+// Landscape (no rotation) keeps calling this directly; it is unchanged.
+fun fitTransitionBitmap(src: Bitmap, w: Int, h: Int): Bitmap =
+    fitTransitionBitmapRotated(src, w, h, w, h, 0f)
+
+/*
+ * #344 — fit into the STAGE box, then rotate the result into the SCREEN box, in one Matrix, onto a
+ * screen-sized bitmap. The overlay surface is the unrotated screen, so baking the stage's rotation
+ * into the texture here is what makes the wipe match the mounted (rotated) content on every ROM,
+ * whether or not the composer would have rotated the surface for us.
+ *
+ * Order (postX appends): contain-fit in stage space -> recentre on origin -> rotate -> recentre in
+ * the screen box -> vertical GL flip on the final texture. For rot=0 with stage==screen this reduces
+ * to exactly the old contain+flip, so landscape is byte-identical.
+ */
+fun fitTransitionBitmapRotated(src: Bitmap, stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotDeg: Float): Bitmap {
+    val out = Bitmap.createBitmap(screenW, screenH, Bitmap.Config.ARGB_8888)
     val c = Canvas(out)
     c.drawColor(android.graphics.Color.BLACK)
     val iw = src.width.toFloat(); val ih = src.height.toFloat()
-    if (iw > 0f && ih > 0f) {
-        val s = minOf(w / iw, h / ih)         // contain
+    if (iw > 0f && ih > 0f && stageW > 0 && stageH > 0) {
+        val s = minOf(stageW / iw, stageH / ih)   // contain, in stage space
         val dw = iw * s; val dh = ih * s
         val m = Matrix()
         m.postScale(s, s)
-        m.postTranslate((w - dw) / 2f, (h - dh) / 2f)
-        m.postScale(1f, -1f, w / 2f, h / 2f)  // vertical flip == UNPACK_FLIP_Y_WEBGL
+        m.postTranslate((stageW - dw) / 2f, (stageH - dh) / 2f)   // placed in the stage box
+        // rotate the stage box about its centre and drop it, centred, into the screen box
+        m.postTranslate(-stageW / 2f, -stageH / 2f)
+        m.postRotate(rotDeg)
+        m.postTranslate(screenW / 2f, screenH / 2f)
+        m.postScale(1f, -1f, screenW / 2f, screenH / 2f)          // vertical flip == UNPACK_FLIP_Y_WEBGL
         c.drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG))
     }
     return out
