@@ -1,6 +1,8 @@
 'use strict';
 
 const playerCapabilities = require('./player-capabilities');
+const { db } = require('../db/database');
+const enrolKey = require('./enrol-key');   // #312/#313: URL-carried identity for a web-player move
 
 /*
  * DELIVERING ONE COMMAND TO ONE SCREEN — the single definition.
@@ -86,9 +88,24 @@ function deliverCommand(deviceNs, device, type, payload) {
   const verdict = playerCapabilities.commandAllowed(device, type);
   if (!verdict.ok) return { status: 'unsupported', capability: verdict.capability };
 
+  // #312/#313: a web player (browser tab) has origin-scoped storage, so it cannot follow a server
+  // move without carrying its identity in the URL. On an operator's set_server_url — and ONLY then,
+  // which is why the mint lives on this operator-gated path and not in the device socket — hand the
+  // web player an enrol key to redirect with. The native Android app (client_type 'apk') carries
+  // its own token, so it needs none. Reuse an existing key rather than rolling one on every send.
+  let outPayload = payload || {};
+  if (type === 'set_server_url' && device.client_type === 'player') {
+    let key = null;
+    try {
+      const row = db.prepare('SELECT enrol_key FROM devices WHERE id = ?').get(device.id);
+      key = (row && row.enrol_key) || enrolKey.setEnrolKey(db, device.id);
+    } catch (_) { /* if we cannot mint, the redirect falls back to a re-pair on the new origin */ }
+    if (key) outPayload = Object.assign({}, outPayload, { enrol_key: key });
+  }
+
   const room = deviceNs.adapter.rooms.get(device.id);
   if (room && room.size > 0) {
-    deviceNs.to(device.id).emit('device:command', { type, payload: payload || {} });
+    deviceNs.to(device.id).emit('device:command', { type, payload: outPayload });
     return { status: 'sent' };
   }
 
@@ -99,7 +116,7 @@ function deliverCommand(deviceNs, device, type, payload) {
    */
   let queued = false;
   try {
-    queued = require('./command-queue').queueCommand(device.id, type, payload);
+    queued = require('./command-queue').queueCommand(device.id, type, outPayload);
   } catch (e) { /* queue module absent — the command is simply lost, and says so */ }
   return { status: queued ? 'queued' : 'offline' };
 }

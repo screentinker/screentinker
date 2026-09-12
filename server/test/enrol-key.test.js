@@ -199,10 +199,23 @@ test('nothing mints an enrolment key unless it was asked for', () => {
   const pairBody = pair.slice(0, pair.indexOf('\napp.'));
   assert.ok(!/enrol/i.test(pairBody), 'pairing a display the ordinary way must not mint a key');
 
-  // Exactly two mint sites, both reached only by an explicit operator action.
+  // Exactly three mint sites, each reached only by an explicit operator action:
+  //   server.js       — create-web-player
+  //   routes/devices  — mint/roll from the display's page
+  //   lib/device-command — #312: a web player's set_server_url move needs a key to carry its
+  //                        identity across the origin boundary. Still operator-gated: it fires only
+  //                        on an operator's move command, and only for a browser player (client_type
+  //                        'player'), reusing an existing key rather than rolling one each time.
   const routes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'devices.js'), 'utf8');
-  const sites = (server.match(/setEnrolKey\(/g) || []).length + (routes.match(/setEnrolKey\(/g) || []).length;
-  assert.equal(sites, 2, `expected 2 mint sites (create-web-player, mint/roll), found ${sites}`);
+  const command = fs.readFileSync(path.join(__dirname, '..', 'lib', 'device-command.js'), 'utf8');
+  const sites = (server.match(/setEnrolKey\(/g) || []).length
+    + (routes.match(/setEnrolKey\(/g) || []).length
+    + (command.match(/setEnrolKey\(/g) || []).length;
+  assert.equal(sites, 3, `expected 3 mint sites (create-web-player, mint/roll, web-player move), found ${sites}`);
+
+  // The move mint is gated on set_server_url AND a browser player, never a blanket mint.
+  assert.match(command, /set_server_url' && device\.client_type === 'player'/,
+    'the move mint must be gated on set_server_url + a browser player');
 });
 
 test('the Web player tab is shown only for a display that has a key', () => {
