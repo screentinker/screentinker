@@ -11,6 +11,7 @@ const bsSnapshotQueue = require('../lib/brightsign-snapshot-queue');
 const bsCapture = require('../lib/brightsign-capture');
 const bsDeviceSocketRef = require('./deviceSocket');
 const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
 const appConfig = require('../config');
 
 // Phase 2.3: workspace-scoped socket rooms + per-command permission gates.
@@ -214,13 +215,10 @@ module.exports = function setupDashboardSocket(io) {
       // microphone) — the dashboard only shows the 2-way control for a device that has one.
       if (capabilityRefused(device_id, 'remote.talk', ack)) return;
       if (duplex && capabilityRefused(device_id, 'remote.mic', ack)) return;
-      const device = db.prepare('SELECT workspace_id, live_video_enabled FROM devices WHERE id = ?').get(device_id);
-      const ws = device && device.workspace_id
-        ? db.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(device.workspace_id) : null;
-      const on = !!(appConfig.liveVideoEnabled && ws && ws.live_video_enabled && device && device.live_video_enabled);
+      const on = orgWebrtc.talkEnabledForDevice(device_id);
       if (!on || !go2rtc.enabled()) { if (typeof ack === 'function') ack({ delivered: false, reason: 'talk_unavailable' }); return; }
       const conn = heartbeat.getConnection(device_id);
-      deviceNs.to(device_id).emit('device:talk-start', { mode: 'device', duplex, iceServers: go2rtc.iceServers() });
+      deviceNs.to(device_id).emit('device:talk-start', { mode: 'device', duplex, iceServers: orgWebrtc.iceServersForDevice(device_id) });
       if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
     });
 
@@ -260,8 +258,7 @@ module.exports = function setupDashboardSocket(io) {
       const kind = data && data.scope && data.scope.kind;
       const id = data && data.scope && data.scope.id;
       if ((kind !== 'group' && kind !== 'workspace') || !id) { if (typeof ack === 'function') ack({ delivered: false, reason: 'bad_scope' }); return; }
-      if (!go2rtc.enabled() || !appConfig.liveVideoEnabled) { if (typeof ack === 'function') ack({ delivered: false, reason: 'talk_unavailable' }); return; }
-      const ice = go2rtc.iceServers();
+      if (!go2rtc.enabled()) { if (typeof ack === 'function') ack({ delivered: false, reason: 'talk_unavailable' }); return; }
       let sent = 0, skipped = 0;
       for (const d of scopeDevices(kind, id)) {
         // write access to this device, the device declares remote.talk, and live video is on for it
@@ -269,9 +266,8 @@ module.exports = function setupDashboardSocket(io) {
         if (!canActOnDevice(socket, d.id, 'write')) { skipped++; continue; }
         const devRow = db.prepare('SELECT * FROM devices WHERE id = ?').get(d.id);
         if (!playerCapabilities.supports(devRow, 'remote.talk')) { skipped++; continue; }
-        const w = d.workspace_id ? db.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(d.workspace_id) : null;
-        if (!(w && w.live_video_enabled && d.live_video_enabled)) { skipped++; continue; }
-        deviceNs.to(d.id).emit('device:talk-start', { mode: 'listen', scope: { kind, id }, iceServers: ice });
+        if (!orgWebrtc.talkEnabledForDevice(d.id)) { skipped++; continue; }
+        deviceNs.to(d.id).emit('device:talk-start', { mode: 'listen', scope: { kind, id }, iceServers: orgWebrtc.iceServersForDevice(d.id) });
         sent++;
       }
       if (typeof ack === 'function') ack({ delivered: sent > 0, sent, skipped });
@@ -317,7 +313,7 @@ module.exports = function setupDashboardSocket(io) {
         return;
       }
       const conn = heartbeat.getConnection(device_id);
-      deviceNs.to(device_id).emit('device:live-publish', { action: 'start', iceServers: go2rtc.iceServers() });
+      deviceNs.to(device_id).emit('device:live-publish', { action: 'start', iceServers: orgWebrtc.iceServersForDevice(device_id) });
       if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
     });
 

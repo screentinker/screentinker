@@ -779,6 +779,7 @@ router.delete('/:id', (req, res) => {
 // The publish path (the player offering video INTO go2rtc) authenticates as a DEVICE, not a user,
 // and lives with the player-publisher work; it is deliberately not here. See docs/live-video.md.
 const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE (TURN/STUN) override
 
 // Resolve read access to a device via its workspace, the same shape GET /:id uses. Returns the
 // device row (with workspace) or null after sending the response.
@@ -826,7 +827,7 @@ router.get('/:id/live', async (req, res) => {
     fallback: 'snapshot',
     // Proxied signaling: the browser POSTs its SDP offer here, the server forwards to go2rtc.
     signalPath: `/api/devices/${device.id}/live/webrtc`,
-    iceServers: go2rtc.iceServers(),
+    iceServers: orgWebrtc.iceServersForDevice(device.id),
     // A viewer URL is not minted; the proxy holds the session. expiresAt bounds how long the
     // dashboard should trust this descriptor before re-asking (a publisher can drop meanwhile).
     expiresAt: Date.now() + 30000,
@@ -863,7 +864,7 @@ router.get('/:id/talk', async (req, res) => {
   const device = checkDeviceRead(req, res);
   if (!device) return;
   const off = { mode: 'off' };
-  if (!liveVideoOn(device)) return res.json({ ...off, reason: 'disabled' });
+  if (!orgWebrtc.talkEnabledForDevice(device.id)) return res.json({ ...off, reason: 'disabled' });
   if (!go2rtc.enabled()) return res.json({ ...off, reason: 'no_sidecar' });
   if (!(await go2rtc.healthy())) return res.json({ ...off, reason: 'sidecar_down' });
   res.json({
@@ -871,7 +872,7 @@ router.get('/:id/talk', async (req, res) => {
     // Operator publishes mic to the downlink, subscribes to the uplink. Proxied like /live/webrtc.
     publishPath: `/api/devices/${device.id}/talk/publish`,
     viewPath: `/api/devices/${device.id}/talk/view`,
-    iceServers: go2rtc.iceServers(),
+    iceServers: orgWebrtc.iceServersForDevice(device.id),
     expiresAt: Date.now() + 30000,
   });
 });
@@ -880,7 +881,7 @@ router.get('/:id/talk', async (req, res) => {
 router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
   const device = checkDeviceRead(req, res);
   if (!device) return;
-  if (!liveVideoOn(device) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
   const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'dn');
   const offer = typeof req.body === 'string' ? req.body : '';
   if (!offer) return res.status(400).json({ error: 'SDP offer required' });
@@ -894,7 +895,7 @@ router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/
 router.post('/:id/talk/view', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
   const device = checkDeviceRead(req, res);
   if (!device) return;
-  if (!liveVideoOn(device) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
   const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'up');
   const offer = typeof req.body === 'string' ? req.body : '';
   if (!offer) return res.status(400).json({ error: 'SDP offer required' });

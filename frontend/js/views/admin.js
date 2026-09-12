@@ -249,6 +249,10 @@ async function loadOrgs() {
     el.innerHTML = `<p style="color:var(--danger)">${esc(err.message || 'Failed to load organizations')}</p>`;
     return;
   }
+  // #talk: the per-org Talk controls are only meaningful when the TALK_ENABLED master switch is on.
+  // (The per-org flag gates on top of it, so with the master off the toggle would be a no-op.)
+  let talkMaster = false;
+  try { const s = await api.getServerStatus(); talkMaster = !!(s && s.features && s.features.talk); } catch (_) {}
   if (!orgs.length) {
     el.innerHTML = `<p style="color:var(--text-muted)">${t('admin.orgs.empty')}</p>`;
     return;
@@ -273,9 +277,30 @@ async function loadOrgs() {
           </div>
           <button class="btn btn-danger btn-sm" data-del-org="${esc(o.id)}" data-org-name="${esc(o.name)}">${t('admin.orgs.delete_org')}</button>
         </div>
+        ${talkMaster ? `
+        <div style="padding:10px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+            <input type="checkbox" data-org-talk="${esc(o.id)}"${o.talk_enabled ? ' checked' : ''}>
+            ${t('admin.orgs.talk_enable')}
+          </label>
+          <label style="font-size:12px;color:var(--text-muted)">${t('admin.orgs.talk_ice_label')}</label>
+          <textarea data-org-ice="${esc(o.id)}" rows="2" placeholder='[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]'
+            style="font-family:monospace;font-size:12px;width:100%;box-sizing:border-box">${esc(o.ice_servers || '')}</textarea>
+          <div><button class="btn btn-secondary btn-sm" data-org-talk-save="${esc(o.id)}">${t('admin.orgs.talk_save')}</button></div>
+        </div>` : ''}
         ${wsRows}
       </div>`;
   }).join('');
+
+  if (talkMaster) el.querySelectorAll('[data-org-talk-save]').forEach(btn => btn.addEventListener('click', async () => {
+    const id = btn.dataset.orgTalkSave;
+    const enabled = el.querySelector(`[data-org-talk="${id}"]`)?.checked ? 1 : 0;
+    const ice = (el.querySelector(`[data-org-ice="${id}"]`)?.value || '').trim();
+    try {
+      await api.adminSetOrgTalk(id, { talk_enabled: enabled, ice_servers: ice || null });
+      showToast(t('admin.orgs.talk_saved'), 'success');
+    } catch (e) { showToast((e && e.message) || t('admin.orgs.talk_save_failed'), 'error'); }
+  }));
 
   el.querySelectorAll('[data-del-org]').forEach(btn => btn.addEventListener('click', () => {
     const id = btn.dataset.delOrg, name = btn.dataset.orgName;

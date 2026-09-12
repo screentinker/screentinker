@@ -54,7 +54,7 @@ router.get('/', (req, res) => {
     // #go2rtc: whether live video is enabled server-wide (the master switch). The dashboard uses
     // this to decide whether to OFFER the per-workspace/per-device toggles at all; both of those
     // flags are inert unless this is on. A boolean, no sidecar detail leaks here.
-    features: { live_video: !!config.liveVideoEnabled },
+    features: { live_video: !!config.liveVideoEnabled, talk: !!config.talkEnabled },
   };
 
   /*

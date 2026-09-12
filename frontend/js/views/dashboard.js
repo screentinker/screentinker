@@ -1397,26 +1397,27 @@ function attachGroupHandlers(groupsWithDevices) {
 
 // #talk broadcast (one-way PA). One active broadcast at a time across the whole dashboard.
 let activeBroadcast = null;   // { key, client, btn, label, scope }
-let dashLiveVideoChecked = false;
-let dashLiveVideo = false;
+let dashTalkChecked = false;
+let dashTalk = false;   // #talk master switch (features.talk); per-org flag enforced server-side
 
-// Reveal + wire the group/workspace Talk buttons, but only once we've confirmed the server has live
-// video enabled (talk rides the same go2rtc path). Hidden otherwise so we never show a dead button.
+// Reveal + wire the group/workspace Talk buttons, but only once we've confirmed talk is enabled on
+// the server (the TALK_ENABLED master switch). The per-org talk flag is enforced server-side on
+// every publish/listen, so an org that has it off gets a 'talk_unavailable' reason if it tries.
 function wireTalkScopeButtons() {
   const reveal = () => {
     document.querySelectorAll('.talk-scope-btn').forEach((btn) => {
-      if (!dashLiveVideo) { btn.style.display = 'none'; return; }
+      if (!dashTalk) { btn.style.display = 'none'; return; }
       btn.style.display = '';
       if (btn._talkWired) return;
       btn._talkWired = true;
       btn.addEventListener('click', () => toggleBroadcast(btn));
     });
   };
-  if (dashLiveVideoChecked) { reveal(); return; }
+  if (dashTalkChecked) { reveal(); return; }
   api.getServerStatus()
-    .then((s) => { dashLiveVideo = !!(s && s.features && s.features.live_video); })
-    .catch(() => { dashLiveVideo = false; })
-    .finally(() => { dashLiveVideoChecked = true; reveal(); });
+    .then((s) => { dashTalk = !!(s && s.features && s.features.talk); })
+    .catch(() => { dashTalk = false; })
+    .finally(() => { dashTalkChecked = true; reveal(); });
 }
 
 function scopeForButton(btn) {

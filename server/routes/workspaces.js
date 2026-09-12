@@ -5,6 +5,7 @@ const { db } = require('../db/database');
 const { canAdminWorkspace, canAccessWorkspace } = require('../lib/permissions');
 const { isPlatformRole } = require('../middleware/auth');
 const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
 const appConfig = require('../config');
 const { logActivity, getClientIp } = require('../services/activity');
 const { sendEmail } = require('../services/email');
@@ -539,21 +540,21 @@ function loadTalkWorkspace(req, res) {
 
 router.get('/:id/talk', async (req, res) => {
   const ws = loadTalkWorkspace(req, res); if (!ws) return;
-  if (!(appConfig.liveVideoEnabled && ws.live_video_enabled)) return res.json({ mode: 'off', reason: 'disabled' });
+  if (!orgWebrtc.talkEnabledForWorkspace(ws.id)) return res.json({ mode: 'off', reason: 'disabled' });
   if (!go2rtc.enabled()) return res.json({ mode: 'off', reason: 'no_sidecar' });
   if (!(await go2rtc.healthy())) return res.json({ mode: 'off', reason: 'sidecar_down' });
   res.json({
     mode: 'webrtc',
     scope: { kind: 'workspace', id: ws.id },
     publishPath: `/api/workspaces/${ws.id}/talk/publish`,
-    iceServers: go2rtc.iceServers(),
+    iceServers: orgWebrtc.iceServersForWorkspace(ws.id),
     expiresAt: Date.now() + 30000,
   });
 });
 
 router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
   const ws = loadTalkWorkspace(req, res); if (!ws) return;
-  if (!(appConfig.liveVideoEnabled && ws.live_video_enabled) || !go2rtc.enabled()) {
+  if (!orgWebrtc.talkEnabledForWorkspace(ws.id) || !go2rtc.enabled()) {
     return res.status(409).json({ error: 'Talk is not available for this workspace' });
   }
   const name = go2rtc.broadcastTalkStreamName('workspace', ws.id);

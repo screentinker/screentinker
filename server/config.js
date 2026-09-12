@@ -460,4 +460,7 @@ module.exports = {
   // Live video must be switched on per workspace as well; this is the server-wide master gate. Off
   // by default so enabling the sidecar does not silently start offering video everywhere.
   liveVideoEnabled: process.env.LIVE_VIDEO_ENABLED === 'true',
+  // #talk: dedicated master switch for the voice intercom / PA feature, separate from live video.
+  // Per-org enablement lives in organizations.talk_enabled; this is the global gate. Off by default.
+  talkEnabled: process.env.TALK_ENABLED === 'true',
 };

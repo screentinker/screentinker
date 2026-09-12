@@ -390,6 +390,8 @@ async function loadDevice(deviceId, activeTab = null) {
     ]);
     currentDevice = device;
     const liveVideoAvailable = !!(serverStatus && serverStatus.features && serverStatus.features.live_video);
+    // #talk master switch. Per-org talk_enabled is enforced server-side on every talk exchange.
+    const talkAvailable = !!(serverStatus && serverStatus.features && serverStatus.features.talk);
 
     /*
      * Does this display support `cap`? Drives which controls render at all.
@@ -427,7 +429,7 @@ async function loadDevice(deviceId, activeTab = null) {
             </svg>
             ${t('device.screenshot_btn')}
           </button>` : ''}
-          ${can('remote.talk') ? `
+          ${talkAvailable && can('remote.talk') ? `
           <button class="btn btn-secondary btn-sm" id="startTalkBtn">🎙️ ${t('device.talk.start')}</button>
           ${can('remote.mic') ? `<button class="btn btn-secondary btn-sm" id="start2wayBtn">🎙️ ${t('device.talk.two_way')}</button>` : ''}
           <button class="btn btn-danger btn-sm" id="stopTalkBtn" style="display:none">${t('device.talk.stop')}</button>

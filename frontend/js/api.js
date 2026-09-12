@@ -667,6 +667,8 @@ export const api = {
   // Platform-admin view: EVERY plan incl. hidden ones, with subscriber counts.
   adminListPlans: () => request('/admin/plans'),
   adminDeleteOrg: (id) => request(`/admin/orgs/${id}`, { method: 'DELETE' }),
+  // #talk: per-org talk flag + optional per-org ICE (STUN/TURN) override. data = { talk_enabled, ice_servers }.
+  adminSetOrgTalk: (id, data) => request(`/admin/orgs/${id}/talk`, { method: 'PUT', body: JSON.stringify(data) }),
   adminDeleteWorkspace: (id) => request(`/admin/workspaces/${id}`, { method: 'DELETE' }),
   aiGetSettings: () => request('/ai/settings'),
   aiSaveSettings: (data) => request('/ai/settings', { method: 'PUT', body: JSON.stringify(data) }),

@@ -14,6 +14,7 @@ const { resolveItemDuration } = require('../lib/item-duration');
 const { resolveDevicePlaylistId, clearInheritedCopy } = require('../lib/resolve-device-playlist');
 const { stripDeviceSecretsForList } = require('../lib/device-sanitize');
 const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
 const appConfig = require('../config');
 const express_ = express; // for express.text() below
 
@@ -465,9 +466,7 @@ router.post('/:id/command', requireScope('full'), requireGroupWrite, (req, res) 
  * to actually play is each device's own gate. requireGroupWrite = you can act on this group.
  */
 function groupTalkGate(req, res) {
-  const wsRow = db.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(req.group.workspace_id);
-  const on = !!(appConfig.liveVideoEnabled && wsRow && wsRow.live_video_enabled);
-  if (!on) { res.json({ mode: 'off', reason: 'disabled' }); return false; }
+  if (!orgWebrtc.talkEnabledForWorkspace(req.group.workspace_id)) { res.json({ mode: 'off', reason: 'disabled' }); return false; }
   if (!go2rtc.enabled()) { res.json({ mode: 'off', reason: 'no_sidecar' }); return false; }
   return true;
 }
@@ -479,14 +478,13 @@ router.get('/:id/talk', requireGroupRead, async (req, res) => {
     mode: 'webrtc',
     scope: { kind: 'group', id: req.group.id },
     publishPath: `/api/device-groups/${req.group.id}/talk/publish`,
-    iceServers: go2rtc.iceServers(),
+    iceServers: orgWebrtc.iceServersForWorkspace(req.group.workspace_id),
     expiresAt: Date.now() + 30000,
   });
 });
 
 router.post('/:id/talk/publish', requireGroupWrite, express_.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
-  const wsRow = db.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(req.group.workspace_id);
-  if (!(appConfig.liveVideoEnabled && wsRow && wsRow.live_video_enabled) || !go2rtc.enabled()) {
+  if (!orgWebrtc.talkEnabledForWorkspace(req.group.workspace_id) || !go2rtc.enabled()) {
     return res.status(409).json({ error: 'Talk is not available for this group' });
   }
   const name = go2rtc.broadcastTalkStreamName('group', req.group.id);

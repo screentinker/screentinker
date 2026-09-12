@@ -19,6 +19,7 @@
 const WebSocket = require('ws');
 const config = require('../config');
 const go2rtc = require('./go2rtc');
+const orgWebrtc = require('./org-webrtc');   // #talk: per-org talk flag gate
 const deviceSocket = require('../ws/deviceSocket');
 const { db } = require('../db/database');
 
@@ -26,11 +27,11 @@ const { db } = require('../db/database');
 // device sends media into the stream (publish); 'src' = the device receives from it (subscribe).
 const ROUTES = {
   'live/publish': { dir: 'dst', stream: (ws, dev) => go2rtc.streamName(ws, dev) },
-  'talk/publish': { dir: 'dst', stream: (ws, dev) => go2rtc.talkStreamName(ws, dev, 'up') },
-  'talk/subscribe': { dir: 'src', stream: (ws, dev) => go2rtc.talkStreamName(ws, dev, 'dn') },
+  'talk/publish': { dir: 'dst', talk: true, stream: (ws, dev) => go2rtc.talkStreamName(ws, dev, 'up') },
+  'talk/subscribe': { dir: 'src', talk: true, stream: (ws, dev) => go2rtc.talkStreamName(ws, dev, 'dn') },
   // Broadcast listen (#talk PA): the stream is a group/workspace channel, resolved from the query
   // params AFTER validating this device belongs to that scope (see broadcastStreamFor).
-  'talk/listen': { dir: 'src', broadcast: true },
+  'talk/listen': { dir: 'src', talk: true, broadcast: true },
 };
 const PATH_RE = /^\/api\/devices\/([^/]+)\/(live\/publish|talk\/publish|talk\/subscribe|talk\/listen)\/ws$/;
 
@@ -65,6 +66,13 @@ function liveWorkspace(deviceId) {
   } catch (_) { return null; }
 }
 
+// The device's workspace id with no feature gate (used by talk routes, which gate on the per-org
+// talk flag instead of the live-video flags).
+function workspaceOf(deviceId) {
+  try { const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId); return (d && d.workspace_id) || null; }
+  catch (_) { return null; }
+}
+
 function reject(socket, code, text) {
   try { socket.write(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n\r\n`); } catch (_) {}
   try { socket.destroy(); } catch (_) {}
@@ -83,8 +91,12 @@ function attach(server) {
     const route = ROUTES[m[2]];
     const token = u.searchParams.get('token') || req.headers['x-device-token'];
     if (!deviceSocket.validateDeviceToken(deviceId, token)) return reject(socket, 401, 'Unauthorized');
-    const workspaceId = liveWorkspace(deviceId);
-    if (!workspaceId || !route || !go2rtc.enabled()) return reject(socket, 409, 'Conflict');
+    if (!route || !go2rtc.enabled()) return reject(socket, 409, 'Conflict');
+    // Live video gates on the three live-video flags; talk gates on the per-org talk flag.
+    const workspaceId = route.talk
+      ? (orgWebrtc.talkEnabledForDevice(deviceId) ? workspaceOf(deviceId) : null)
+      : liveWorkspace(deviceId);
+    if (!workspaceId) return reject(socket, 409, 'Conflict');
     // A broadcast listen resolves its stream from the (validated) scope; every other route has a
     // fixed per-device stream.
     let name;

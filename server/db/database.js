@@ -2460,6 +2460,11 @@ try {
   // admin password. See docs/live-video.md and lib/go2rtc.js.
   try { db.prepare('ALTER TABLE workspaces ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] workspaces.live_video_enabled added (default off)'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE devices ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
+  // #talk: per-org enablement for the voice intercom / PA feature (off by default).
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN talk_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] organizations.talk_enabled added (default off)'); } catch (_) { /* present */ }
+  // #talk/#go2rtc: optional per-org ICE (STUN/TURN) override as a JSON array [{urls,username?,credential?}].
+  // NULL -> use the global go2rtc ice_servers. Lets an org bring its own TURN.
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN ice_servers TEXT').run(); console.log('[migrate] organizations.ice_servers added'); } catch (_) { /* present */ }
 
   const BASELINE_ID = 'revisions_baseline_v1';
   if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(BASELINE_ID)) {
