@@ -19,6 +19,7 @@ const fs = require('fs');
 const config = require('./config');
 const VERSION = require('./version');
 const ghcrCheck = require('./lib/ghcr-check');
+const legacyPlayer = require('./lib/legacy-player');
 
 // #114: last-resort crash safety net. better-sqlite3 is SYNCHRONOUS, so a constraint
 // violation (e.g. a FK write) inside a socket.io handler with no local try/catch
@@ -361,7 +362,7 @@ app.use(express.static(config.frontendDir, { index: false, etag: true, lastModif
 // server-side endpoint defends in depth, but the kill switch saves network
 // traffic on the device too). Other player assets (JS, sw.js, etc) are still
 // served by the static middleware below; only index.html is dynamic.
-app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
+function sendPlayer(res, legacy) {
   const playerHtmlPath = path.join(__dirname, 'player', 'index.html');
   fs.readFile(playerHtmlPath, 'utf8', (err, html) => {
     if (err) return res.status(500).type('text/plain').send('player HTML unavailable');
@@ -391,10 +392,28 @@ app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
     if (stamped === modified) {
       console.warn('[player] ST_PLAYER_VERSION marker not found — page will report a stale client_version');
     }
-    modified = stamped;
+    if (legacy) {
+      try {
+        modified = legacyPlayer.html(stamped);
+      } catch (error) {
+        // A transform failure is a bad response for this request, not a process-wide failure.
+        console.error('[player] legacy transform failed:', error.message);
+        return res.status(500).type('text/plain').send('legacy player unavailable');
+      }
+    } else {
+      modified = stamped;
+    }
     res.type('html').setHeader('Cache-Control', 'no-cache');
     res.send(modified);
   });
+}
+
+app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
+  sendPlayer(res, false);
+});
+
+app.get(['/player/legacy', '/player/legacy/', '/player/legacy/index.html'], (req, res) => {
+  sendPlayer(res, true);
 });
 
 // #74/#75: serve the canonical schedule evaluator to the web player from the

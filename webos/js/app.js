@@ -53,7 +53,16 @@
     return serverUrl + '/player?host=webos&v=' + encodeURIComponent(APP_VERSION_FALLBACK);
   }
 
+  function supportsModernPlayer() {
+    try { return Function('return ({ value: 1 })?.value ?? 0')() === 1; } catch (e) { return false; }
+  }
+
   function mountPlayer() {
+    // webOS 4.x uses the transpiled player directly.
+    if (!supportsModernPlayer()) {
+      window.location.replace(serverUrl + '/player/legacy');
+      return;
+    }
     var stage = $('stage');
     if (frame) { try { stage.removeChild(frame); } catch (e) {} frame = null; }
     frame = document.createElement('iframe');
