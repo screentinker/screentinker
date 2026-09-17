@@ -709,7 +709,9 @@ function renderEditor(container) {
         : KINDS[e.kind].label;
     }
     state.ei = s.template.elements.length - 1; state.tab = 'content';
-    touch(container); play();
+    // Adding an element no longer auto-plays the entrance (it dropped you into a mid-animation element
+    // you were trying to place). It lands settled and grabbable; "Play entrance" previews motion.
+    touch(container);
   });
 
   paintTabs(container);
@@ -910,6 +912,12 @@ function ensureLiveTick() {
 function renderStage(container) {
   const s = slide(); const stage = container.querySelector('#stage');
   if (!s) { stage.innerHTML = ''; return; }
+  // ⚠️ RENDER AT REST. The entrance animations play ONLY when the operator clicks "Play entrance"
+  // (which adds `.playing`). Leaving `.playing` on across a repaint meant every slide switch, and
+  // every value edit, re-fired the entrance — so on any slide but the one you opened on, elements
+  // were mid-flight (opacity 0, offset) and could not be grabbed until the animation settled. Like
+  // PowerPoint's editor: the canvas shows the settled slide and only previews motion on request.
+  stage.classList.remove('playing');
   stage.style.aspectRatio = aspectCss();      // the shape this deck is authored for
   const sel = container.querySelector('#aspectSel');
   if (sel && sel.value !== deckAspect()) sel.value = deckAspect();
@@ -1113,7 +1121,8 @@ function renderStrip(container) {
 
   container.querySelectorAll('[data-slide]').forEach((b) => {
     b.addEventListener('click', () => {
-      state.si = +b.dataset.slide; state.ei = 0; paintAll(container); play();
+      // Switching to a slide lands it SETTLED (no auto entrance) so elements are grabbable at once.
+      state.si = +b.dataset.slide; state.ei = 0; paintAll(container);
     });
     b.addEventListener('dblclick', (ev) => {
       ev.stopPropagation();
@@ -1130,7 +1139,8 @@ function renderStrip(container) {
   });
   container.querySelector('#addSlide').addEventListener('click', () => {
     state.deck.doc.slides.splice(state.si + 1, 0, newSlide(`Slide ${state.deck.doc.slides.length + 1}`));
-    state.si++; state.ei = 0; touch(container); play();
+    // A newly added slide lands settled too, not mid-entrance.
+    state.si++; state.ei = 0; touch(container);
   });
 }
 

@@ -55,6 +55,13 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**The slide editor no longer plays entrance animations while you are arranging a slide.** Switching to
+any slide but the first replayed its entrance, so elements were mid-flight (faded out, sliding in) and
+could not be grabbed until the animation settled, which made dragging things around maddening. The
+canvas now shows every slide settled, the way PowerPoint's editor does; the entrance plays only when
+you click **Play entrance** (motion still previews while you are editing an element's animation on the
+Motion tab).
+
 **Security: TOTP recovery codes are now 128-bit, and older codes keep working.** Recovery codes were
 40-bit (5 random bytes) stored as an unsalted SHA-256, which is brute-forceable offline if that table
 ever leaked. New codes are 128-bit (16 bytes, shown grouped in fours for legibility). No one is locked
