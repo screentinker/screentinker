@@ -76,13 +76,23 @@ function isReleased(p) { return p.pre === null || /^patch\d+$/i.test(p.pre); }
 
 // decide(clientVersion, latestVersion, deviceId?, now?) ->
 //   { update_available, reason, retry_after_seconds?, log? }
-function decide(clientVersion, latestVersion, deviceId = null, now = Date.now(), betaChannel = false, wasOnBeta = false) {
+function decide(clientVersion, latestVersion, deviceId = null, now = Date.now(), betaChannel = false, wasOnBeta = false, forced = false) {
   // ---- PHANTOM / unrecognized guard (immediate, version-based, no rate state) ----
   if (!clientVersion) return { update_available: false, reason: 'no-version' };
   const pc = parseVer(clientVersion), pl = parseVer(latestVersion);
   if (!pc || !pl) return { update_available: false, reason: 'unrecognized-version', log: logOnce(clientVersion, `[ota] unrecognized client version '${clientVersion}' — no offer (latest=${latestVersion})`) };
   const full = cmpParsed(pc, pl);
   if (full === 0) return { update_available: false, reason: 'up-to-date' };
+  // FORCED: an operator aimed "force update" at ONE device. That outranks every HOLD below —
+  // rate-backoff, no-progress, and the superseded-prerelease guard that otherwise strands a
+  // diag/beta build forever (and makes the force button silently do nothing, since the client's
+  // forced check hits this same endpoint). Only ever a genuine upgrade: full < 0 means the client
+  // is BEHIND, so a forced run never pushes a downgrade or a same-version reinstall (full === 0
+  // already returned up-to-date), and an unparseable version was refused above. The route still
+  // gates on the APK actually existing, so forcing can't offer bytes we don't have.
+  if (forced && full < 0) {
+    return { update_available: true, reason: 'forced-override', log: `[ota] forced override: offering ${latestVersion} to '${clientVersion}' (operator-initiated)` };
+  }
   if (full > 0) {
     // Normally a client ahead of the server is left alone — never offer a downgrade. But a display
     // running a PRE-RELEASE while not opted into betas is a display someone has just switched back
@@ -109,6 +119,11 @@ function decide(clientVersion, latestVersion, deviceId = null, now = Date.now(),
   // builds to. A tester on 1.9.25-fix234d has an older core than a released 1.9.26, so without
   // the exemption they are told "superseded" forever and never rejoin the release line — the
   // opposite of what opting in should mean. Opting in must be reversible by shipping a release.
+  // #144 phantom protection: a non-opted-in display on a genuine older-core prerelease is NOT
+  // chased with offers automatically (a diag/abandoned-beta build can be a phantom that never
+  // installs, and auto-offering floods the check endpoint). The escape hatches are deliberate:
+  // opt the display into the beta channel (below), or FORCE an update (handled above) — a human
+  // aiming at one panel. A -patchN release is NOT a prerelease (isReleased), so it still gets offered.
   if (!betaChannel && !isReleased(pc) && coreCmp(pc, pl) < 0) {                                    // GENUINE superseded old-core prerelease (e.g. 1.9.1-beta4) — a -patchN release is NOT one, so it still gets offered
     return { update_available: false, reason: 'superseded-prerelease', log: logOnce(clientVersion, `[ota] superseded prerelease '${clientVersion}' (older core than latest=${latestVersion}) — no offer`) };
   }

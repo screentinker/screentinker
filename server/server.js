@@ -1568,6 +1568,10 @@ const { getBand } = require('./services/loop-lag');  // #146 Item C: critical-ba
 app.get('/api/update/check', (req, res) => {
   const currentVersion = req.query.version;
   const deviceId = req.query.device_id || null;   // #144: optional; beta4+ clients send it for per-device keying
+  // An operator pressed "force update" on this one device; the client passes it through so the
+  // server-side holds (backoff / superseded-prerelease) can be overridden for a genuine upgrade.
+  // Absent on older clients, so the default (unforced) is unchanged for the whole existing fleet.
+  const forced = req.query.forced === '1' || req.query.forced === 'true';
   /*
    * #341: the version we ADVERTISE must describe the bytes we would SERVE, never the server's own
    * build. Where the stable APK declares its version in a sidecar, that wins; otherwise fall back
@@ -1617,7 +1621,7 @@ app.get('/api/update/check', (req, res) => {
 
   // The hold-my-prerelease guard only applies when we are NOT actively serving a beta: on the beta
   // channel the beta build is the target, so normal comparison does the right thing.
-  const verdict = otaBreaker.decide(currentVersion, latestVersion, deviceId, Date.now(), betaChannel && !onBeta, wasOnBeta);
+  const verdict = otaBreaker.decide(currentVersion, latestVersion, deviceId, Date.now(), betaChannel && !onBeta, wasOnBeta, forced);
 
   // Record that this display is being served beta, so switching it back later is distinguishable
   // from a display that has always run its own build. Written only on a change, not per check.

@@ -168,7 +168,11 @@ class UpdateChecker(private val context: Context) {
                 // per-device (not per-NAT-IP). Reuses the same id we register/socket with; omitted
                 // until provisioned (server then falls back to version-keyed).
                 val deviceParam = if (config.deviceId.isNotEmpty()) "&device_id=${config.deviceId}" else ""
-                val url = "${config.serverUrl}/api/update/check?version=$currentVersion$deviceParam"
+                // #ota-force: tell the server this is an operator-forced check, so it can override a
+                // server-side hold (rate-backoff, superseded-prerelease) that would otherwise make
+                // "force update" silently do nothing on a stranded diag/beta build.
+                val forcedParam = if (forced) "&forced=1" else ""
+                val url = "${config.serverUrl}/api/update/check?version=$currentVersion$deviceParam$forcedParam"
                 Log.i(TAG, "Checking for updates: $url")
 
                 val request = Request.Builder().url(url).build()

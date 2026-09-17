@@ -128,3 +128,44 @@ test('exponential backoff escalates across cooldowns (30s -> 2m)', () => {
   assert.equal(t2.update_available, false);
   assert.equal(t2.retry_after_seconds, 120, 'second cooldown escalates to 2m');
 });
+
+// ---- follow-up: a stranded diag/prerelease build must be rescuable by FORCE (auto-holds intact) ----
+//
+// A device on 1.9.10-diag1 while prod ships 2.1.0 hit reason 'superseded-prerelease' and could not
+// self-recover: even the dashboard "force update" silently reported "already latest", because the
+// client's forced check hit this same endpoint and got the same hold. #144's automatic phantom
+// protection is deliberate (don't chase abandoned betas), so the fix is the ESCAPE HATCH, not
+// removing the hold: an operator-forced check overrides the holds for a genuine upgrade.
+
+const REL = '2.1.0';   // a clean RELEASE latest (prod)
+
+test('an old prerelease is STILL held automatically (phantom protection unchanged)', () => {
+  // Auto-check: 1.9.10-diag1 vs stable 2.1.0 is held, exactly as before this change.
+  const v = ota.decide('1.9.10-diag1', REL, null, T0);
+  assert.equal(v.update_available, false);
+  assert.equal(v.reason, 'superseded-prerelease');
+});
+
+test('FORCED overrides the superseded-prerelease hold for a genuine upgrade', () => {
+  // The field case, forced: 1.9.10-diag1 -> 2.1.0 now offers instead of the silent no-op.
+  const v = ota.decide('1.9.10-diag1', REL, null, T0, false, false, /*forced*/ true);
+  assert.equal(v.update_available, true, 'force update rescues a stranded diag build');
+  assert.equal(v.reason, 'forced-override');
+});
+
+test('FORCED also beats a rate-backoff, but never a downgrade or a same-version reinstall', () => {
+  // Trip the breaker, confirm it holds, then force through it.
+  const key = 'devF';
+  for (let i = 0; i < 6; i++) ota.decide('1.7.12', LATEST, key, T0 + i * 1000);   // flood -> backoff
+  assert.equal(ota.decide('1.7.12', LATEST, key, T0 + 7000).reason, 'rate-backoff');
+  const forcedThrough = ota.decide('1.7.12', LATEST, key, T0 + 8000, false, false, true);
+  assert.equal(forcedThrough.update_available, true, 'a human force-update beats the backoff');
+  assert.equal(forcedThrough.reason, 'forced-override');
+
+  // Forced does NOT push a downgrade (client genuinely newer on a release).
+  assert.equal(ota.decide('2.2.0', REL, null, T0, false, false, true).update_available, false, 'no forced downgrade');
+  // Forced on the current version is still nothing-to-do (never a same-version reinstall loop).
+  assert.equal(ota.decide(REL, REL, null, T0, false, false, true).reason, 'up-to-date');
+  // Forced cannot conjure an offer from an unparseable version.
+  assert.equal(ota.decide('banana', REL, null, T0, false, false, true).update_available, false);
+});
