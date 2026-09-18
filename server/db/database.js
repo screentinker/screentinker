@@ -1784,6 +1784,36 @@ const migrations = [
   "ALTER TABLE playlists ADD COLUMN playback_order TEXT NOT NULL DEFAULT 'sequential'",
   "ALTER TABLE playlists ADD COLUMN published_playback_order TEXT",
   "ALTER TABLE playlist_items ADD COLUMN weight INTEGER NOT NULL DEFAULT 1",
+  // Support access (lib/support-access). Two tables, same shape as recovery_grants:
+  //   support_requests — codes THIS instance minted when an admin asked for support. A support
+  //                      token is only honoured against an open, unexpired, unredeemed one, which
+  //                      is what stops a vendor-signed token from being a key to every install.
+  //   support_grants   — the live sessions. A `support: true` session JWT is good only while its
+  //                      row exists: DELETE revokes on the next request, expires_at bounds it,
+  //                      first_used_at + source_ip attribute it.
+  // Additive and idempotent; a code-only rollback leaves two unused tables behind.
+  `CREATE TABLE IF NOT EXISTS support_requests (
+    code          TEXT PRIMARY KEY,
+    created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    expires_at    INTEGER NOT NULL,
+    requested_by  TEXT,
+    note          TEXT,
+    redeemed_at   INTEGER,
+    redeemed_jti  TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_support_requests_expires ON support_requests(expires_at)",
+  `CREATE TABLE IF NOT EXISTS support_grants (
+    jti            TEXT PRIMARY KEY,
+    request_code   TEXT NOT NULL,
+    org            TEXT,
+    reason         TEXT,
+    issued_by      TEXT,
+    created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    first_used_at  INTEGER,
+    expires_at     INTEGER NOT NULL,
+    source_ip      TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_support_grants_expires ON support_grants(expires_at)",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

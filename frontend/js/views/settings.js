@@ -177,6 +177,51 @@ export async function render(container) {
     </div>
     ` : ''}
 
+    <div class="settings-section" id="supportAccessSection">
+      <h3>${t('support.title')}</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('support.desc')}</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn btn-primary btn-sm" id="supportRequestBtn">${t('support.request_btn')}</button>
+        <span style="font-size:12px;color:var(--text-muted)">${t('support.request_hint')}</span>
+      </div>
+      <div id="supportRequestResult" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-secondary)">
+        <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">${t('support.request_code_label')}</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <code id="supportRequestCodeOut" style="font-size:20px;letter-spacing:2px;user-select:all"></code>
+          <button class="btn btn-secondary btn-sm" id="supportRequestCopyBtn">${t('support.copy')}</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);margin:8px 0 0" id="supportRequestExpiry"></p>
+      </div>
+      <div id="supportStatus"><p style="color:var(--text-muted);font-size:13px">${t('settings.loading_users')}</p></div>
+      <div id="supportIssuer" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+        <h4 style="margin:0 0 4px">${t('support.issue_title')}</h4>
+        <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('support.issue_desc')}</p>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+          <div class="form-group" style="margin-bottom:0;min-width:220px">
+            <label>${t('support.issue_code')}</label>
+            <input type="text" id="supportRequestCode" class="input" placeholder="XXXX-XXXX-XXXX-XXXX" style="font-family:monospace;text-transform:uppercase">
+          </div>
+          <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
+            <label>${t('support.issue_org')}</label>
+            <input type="text" id="supportOrg" class="input" placeholder="${esc(t('support.issue_org_placeholder'))}">
+          </div>
+          <div class="form-group" style="margin-bottom:0;width:90px">
+            <label>${t('support.issue_hours')}</label>
+            <input type="number" id="supportHours" class="input" value="4" min="1" max="72">
+          </div>
+          <div class="form-group" style="margin-bottom:0;flex:2;min-width:180px">
+            <label>${t('support.issue_reason')}</label>
+            <input type="text" id="supportReason" class="input" placeholder="${esc(t('support.issue_reason_placeholder'))}">
+          </div>
+          <button class="btn btn-primary btn-sm" id="generateSupportBtn">${t('support.issue_btn')}</button>
+        </div>
+        <div id="supportTokenResult" style="display:none">
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">${t('support.issue_result')}</p>
+          <textarea id="supportTokenOutput" class="input" readonly rows="3" style="width:100%;font-family:monospace;font-size:11px" onclick="this.select()"></textarea>
+        </div>
+      </div>
+    </div>
+
     ${isSuperAdmin ? `<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${t('settings.platform_admin_link')} <a href="#/admin" style="color:var(--accent)">${t('nav.admin')}</a> ${t('settings.platform_admin_page_suffix')}</p>` : ''}
 
     <div class="settings-section">
@@ -294,26 +339,86 @@ export async function render(container) {
     loadWhiteLabel();
     loadTelemetry();
 
-    // Support token generator
-    document.getElementById('generateSupportBtn')?.addEventListener('click', async () => {
-      const org = document.getElementById('supportOrg').value.trim() || 'Customer';
-      const hours = parseInt(document.getElementById('supportHours').value) || 4;
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/auth/support/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ org, hours, reason: 'Support session' })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          document.getElementById('supportTokenOutput').value = data.token;
-          document.getElementById('supportTokenResult').style.display = 'block';
-          showToast(t('settings.toast.support_token_generated', { hours }), 'success');
-        } else showToast(data.error, 'error');
-      } catch (err) { showToast(err.message, 'error'); }
-    });
+    loadSupportAccess();
   }
+
+  // Support access (server/lib/support-access). The customer half — request code, open requests,
+  // live sessions with a Revoke — renders for every admin. The issuer half (the token generator)
+  // only appears when the server says can_issue, i.e. it holds the signing key: a self-hosted
+  // install never sees it.
+  async function loadSupportAccess() {
+    const box = document.getElementById('supportStatus');
+    if (!box) return;
+    const fmt = (s) => (s ? new Date(s * 1000).toLocaleString() : '—');
+    let st;
+    try { st = await api.get('/auth/support/status'); } catch (err) { box.innerHTML = `<p style="color:var(--danger);font-size:13px">${esc(err.message)}</p>`; return; }
+
+    const grants = st.grants.map((g) => `
+      <tr>
+        <td>${esc(g.org || '')}${g.issued_by ? `<div style="font-size:11px;color:var(--text-muted)">${esc(g.issued_by)}</div>` : ''}</td>
+        <td style="font-size:12px">${esc(g.reason || '')}</td>
+        <td style="font-size:12px">${g.first_used_at ? fmt(g.first_used_at) : `<span style="color:var(--text-muted)">${t('support.not_yet_used')}</span>`}${g.source_ip ? `<div style="font-size:11px;color:var(--text-muted)">${esc(g.source_ip)}</div>` : ''}</td>
+        <td style="font-size:12px">${fmt(g.expires_at)}</td>
+        <td><button class="btn btn-danger btn-sm" data-revoke="${esc(g.jti)}">${t('support.revoke')}</button></td>
+      </tr>`).join('');
+    const requests = st.requests.map((r) => `
+      <tr>
+        <td><code>${esc(r.code)}</code></td>
+        <td style="font-size:12px">${esc(r.requested_by || '')}${r.note ? `<div style="font-size:11px;color:var(--text-muted)">${esc(r.note)}</div>` : ''}</td>
+        <td style="font-size:12px">${fmt(r.expires_at)}</td>
+        <td><button class="btn btn-secondary btn-sm" data-cancel="${esc(r.code)}">${t('support.cancel_request')}</button></td>
+      </tr>`).join('');
+
+    box.innerHTML = `
+      <p style="font-weight:500;margin:12px 0 6px">${t('support.sessions_title')}</p>
+      ${st.grants.length ? `<table class="table" style="width:100%"><thead><tr><th>${t('support.col_org')}</th><th>${t('support.col_reason')}</th><th>${t('support.col_first_used')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${grants}</tbody></table>`
+        : `<p style="color:var(--text-muted);font-size:13px">${t('support.no_sessions')}</p>`}
+      ${st.requests.length ? `<p style="font-weight:500;margin:16px 0 6px">${t('support.requests_title')}</p>
+        <table class="table" style="width:100%"><thead><tr><th>${t('support.col_code')}</th><th>${t('support.col_requested_by')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${requests}</tbody></table>` : ''}`;
+
+    box.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => {
+      try { await api.delete(`/auth/support/grant/${encodeURIComponent(b.dataset.revoke)}`); showToast(t('support.toast_revoked'), 'success'); loadSupportAccess(); }
+      catch (err) { showToast(err.message, 'error'); }
+    }));
+    box.querySelectorAll('[data-cancel]').forEach((b) => b.addEventListener('click', async () => {
+      try { await api.delete(`/auth/support/request/${encodeURIComponent(b.dataset.cancel)}`); loadSupportAccess(); }
+      catch (err) { showToast(err.message, 'error'); }
+    }));
+
+    const issuer = document.getElementById('supportIssuer');
+    if (issuer) issuer.style.display = st.can_issue ? 'block' : 'none';
+    const hours = document.getElementById('supportHours');
+    if (hours && st.max_hours) hours.max = st.max_hours;
+  }
+
+  document.getElementById('supportRequestBtn')?.addEventListener('click', async () => {
+    try {
+      const r = await api.post('/auth/support/request', {});
+      document.getElementById('supportRequestCodeOut').textContent = r.code;
+      document.getElementById('supportRequestExpiry').textContent = t('support.request_expires', { hours: r.ttl_hours });
+      document.getElementById('supportRequestResult').style.display = 'block';
+      loadSupportAccess();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+  document.getElementById('supportRequestCopyBtn')?.addEventListener('click', async () => {
+    const code = document.getElementById('supportRequestCodeOut').textContent;
+    try { await navigator.clipboard.writeText(code); showToast(t('support.toast_copied'), 'success'); } catch { /* selection fallback: the code is user-select:all */ }
+  });
+
+  // Issuer side (only rendered when the server holds the signing key).
+  document.getElementById('generateSupportBtn')?.addEventListener('click', async () => {
+    const request_code = document.getElementById('supportRequestCode').value.trim();
+    const org = document.getElementById('supportOrg').value.trim() || 'Customer';
+    const hours = parseInt(document.getElementById('supportHours').value, 10) || 4;
+    const reason = document.getElementById('supportReason').value.trim();
+    if (!request_code) { showToast(t('support.issue_code_required'), 'error'); return; }
+    try {
+      const data = await api.post('/auth/support/generate', { request_code, org, hours, reason });
+      document.getElementById('supportTokenOutput').value = data.token;
+      document.getElementById('supportTokenResult').style.display = 'block';
+      showToast(t('settings.toast.support_token_generated', { hours }), 'success');
+    } catch (err) { showToast(err.message, 'error'); }
+  });
 
   // Export data handler
   document.getElementById('exportDataBtn')?.addEventListener('click', () => {

@@ -46,6 +46,12 @@ function logActivity(userId, action, details = null, deviceId = null, ipAddress 
       details = `[break-glass ${userId}] ${details || ''}`.trim();
       userId = null;
     }
+    // Same for a support session ('support:<jti>', lib/support-access): everything a support
+    // engineer does on a customer's instance must land in the customer's audit log.
+    if (typeof userId === 'string' && userId.startsWith('support:')) {
+      details = `[support ${userId}] ${details || ''}`.trim();
+      userId = null;
+    }
     let ws = workspaceId || null;
     if (!ws && deviceId) {
       const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);

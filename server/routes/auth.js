@@ -1780,6 +1780,93 @@ function upsertFederatedUser({ claims, email, provider, req }) {
 }
 
 
+// ---------------------------------------------------------------------------
+// Support access (lib/support-access) — the customer's side and ours, in one place.
+//
+// Customer (any self-hosted admin):
+//   POST   /support/request         mint a request code to send to support
+//   GET    /support/status          open requests + live support sessions (+ can_issue for us)
+//   DELETE /support/request/:code   withdraw a request
+//   DELETE /support/grant/:jti      end a support session — takes effect on its next request
+//   POST   /support                 (unauthenticated, rate-limited in server.js) redeem a token
+//
+// Us (the issuing instance only — SUPPORT_SIGNING_KEY_FILE set, platform admin):
+//   POST   /support/generate        sign a token against a customer's request code
+//
+// Every step is written to the customer's activity log. The redeem route is the one that
+// matters for abuse: it is behind the same per-IP limiter as login, the token is a 64-byte
+// Ed25519 signature, and a valid token still needs an open request code from THIS instance.
+// ---------------------------------------------------------------------------
+const supportAccess = require('../lib/support-access');
+const { generateSupportSessionToken } = require('../middleware/auth');
+
+router.post('/support/request', requireAuth, requireAdmin, (req, res) => {
+  const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 200) : null;
+  const { code, expiresAt } = supportAccess.createRequest({ requestedBy: req.user.email, note });
+  logActivity(req.user.id, 'support_request_created', `code=${code} expires=${expiresAt}${note ? ` note=${note}` : ''}`, null, getClientIp(req));
+  res.json({ code, expires_at: expiresAt, ttl_hours: Math.round(supportAccess.REQUEST_TTL_SEC / 3600) });
+});
+
+router.get('/support/status', requireAuth, requireAdmin, (req, res) => {
+  res.json({
+    requests: supportAccess.listOpenRequests(),
+    grants: supportAccess.listActiveGrants(),
+    // Only the hosted instance holds the signing key. The Settings page shows the generator
+    // when this is true, and nothing at all otherwise — a self-hoster never sees our tooling.
+    can_issue: isPlatformRole(req.user.role) && supportAccess.canIssue(),
+    max_hours: supportAccess.MAX_HOURS,
+  });
+});
+
+router.delete('/support/request/:code', requireAuth, requireAdmin, (req, res) => {
+  const n = supportAccess.cancelRequest(req.params.code);
+  if (n) logActivity(req.user.id, 'support_request_cancelled', `code=${supportAccess.normaliseRequestCode(req.params.code)}`, null, getClientIp(req));
+  res.json({ cancelled: n });
+});
+
+router.delete('/support/grant/:jti', requireAuth, requireAdmin, (req, res) => {
+  const jti = String(req.params.jti || '');
+  const n = supportAccess.revokeGrant(jti);
+  if (n) logActivity(req.user.id, 'support_session_revoked', `jti=${jti}`, null, getClientIp(req));
+  res.json({ revoked: n });
+});
+
+router.post('/support', (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!token) return res.status(400).json({ error: 'Support token required' });
+  let grant;
+  try {
+    grant = supportAccess.redeemToken(token, { sourceIp: getClientIp(req) });
+  } catch (err) {
+    // The message set is small and deliberate (lib/support-access.verifyToken/redeemToken); it
+    // tells a support engineer what to fix without telling a stranger anything about this
+    // instance's open requests. Audited so a customer can see failed attempts too.
+    logActivity(null, 'support_login_failed', `${err.message} ip=${getClientIp(req)}`, null, getClientIp(req));
+    return res.status(401).json({ error: err.message });
+  }
+  const sessionToken = generateSupportSessionToken(grant);
+  const user = supportAccess.supportUser({ id: `support:${grant.jti}`, by: grant.issuedBy });
+  logActivity(`support:${grant.jti}`, 'support_login',
+    `org=${grant.org} request=${grant.requestCode} by=${grant.issuedBy || '?'} reason=${grant.reason || ''} expires=${grant.expiresAt}`,
+    null, getClientIp(req));
+  res.json({ token: sessionToken, user, current_workspace_id: null, support_expires_at: grant.expiresAt });
+});
+
+router.post('/support/generate', requireAuth, requireSuperAdmin, (req, res) => {
+  // Deliberately a 404, not a 403: on an instance without the key this endpoint does not exist.
+  if (!supportAccess.canIssue()) return res.status(404).json({ error: 'Not found' });
+  const { org, hours, reason, request_code: requestCode } = req.body || {};
+  try {
+    const { token, jti, expiresAt } = supportAccess.issueToken({ requestCode, org, hours, reason, issuedBy: req.user.email });
+    logActivity(req.user.id, 'support_token_issued',
+      `org=${org || 'Customer'} request=${supportAccess.normaliseRequestCode(requestCode)} jti=${jti} expires=${expiresAt} reason=${reason || ''}`,
+      null, getClientIp(req));
+    res.json({ token, jti, expires_at: expiresAt });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;
 // Exported for tests: these two carry the security decisions of the SSO flow, and testing them
 // through a live identity provider only is how they shipped unverified the first time.

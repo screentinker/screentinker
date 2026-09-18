@@ -972,6 +972,13 @@ function rateLimit(windowMs, maxRequests) {
 // Auth routes (public, rate limited)
 app.use('/api/auth/login', rateLimit(60000, 10)); // 10 attempts per minute
 app.use('/api/auth/register', rateLimit(60000, 5)); // 5 registrations per minute
+// Support-token redemption (lib/support-access) is unauthenticated by nature: the token IS the
+// credential. Guessing one means forging an Ed25519 signature, so this limiter is about noise,
+// not brute force — but it is the one auth surface a stranger can hit without an account, so it
+// gets the tightest cap here. Mounted on the exact path: /api/auth/support/request etc. are
+// authenticated admin routes and must not share this bucket.
+const supportRedeemLimit = rateLimit(60000, 5);
+app.use('/api/auth/support', (req, res, next) => (req.path === '/' ? supportRedeemLimit(req, res, next) : next()));
 // #100 (tightening #2): the TOTP verify endpoint is the brute-force surface for a
 // 6-digit code. Cap attempts/min here; the per-user lockout (lib/totp-lockout) sits
 // on top in the handler.

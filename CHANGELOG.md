@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+**Support access — consent-gated, time-boxed, revocable.** The login page's "Support Access" field
+and the Settings token generator have existed since the first open-source release with no server
+behind them (both endpoints 404'd). They now work, around one rule: a token we sign is only honoured
+against a **request code your instance generated** (Settings → Support Access, 24 h, single use), so
+our key is not a key to every install. The session it opens is a `platform_operator` — cross-org
+read/write, none of the owner powers — expires with the grant, appears in Settings with an *End
+session* button that takes effect on the next request, and is written to your activity log at every
+step. Self-hosters can point `SUPPORT_PUBLIC_KEY` at their own key to trust a different support desk,
+or none. See `docs/support-access.md`.
+
 ## 2.1.4 (2026-09-17)
 
 ### Fixed
