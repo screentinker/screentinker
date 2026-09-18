@@ -556,6 +556,16 @@ class MainActivity : AppCompatActivity() {
             val b = windowManager.currentWindowMetrics.bounds
             return b.width().toFloat() to b.height().toFloat()
         }
+        // Pre-R there is no window-metrics API, and `resources.displayMetrics` is NOT the window:
+        // it is Display.getSize(), which subtracts the navigation bar permanently — even once
+        // immersive mode has hidden it and LAYOUT_HIDE_NAVIGATION has laid our window out
+        // underneath. On an 800x1280 ThinkSmart View (Android 8.1) it reports 800x1208 forever
+        // (dumpsys: `cur=800x1280 app=800x1208`), so the stage was 36px short on the long axis and
+        // the reapply-on-focus above could never heal it: the measurement never changed. The decor
+        // view IS the window — laid out to the window frame, grows when the bars go, and still
+        // honours a firmware that truly reserves space (its frame is smaller then, too).
+        val dv = window.decorView
+        if (dv.width > 0 && dv.height > 0) return dv.width.toFloat() to dv.height.toFloat()
         val m = resources.displayMetrics
         return m.widthPixels.toFloat() to m.heightPixels.toFloat()
     }
@@ -608,7 +618,10 @@ class MainActivity : AppCompatActivity() {
         // content root, so it needs the stage box (lp.width/height), the screen box (w/h) and the
         // rotation to bake in — NOT its own measured size, which is 0 while it is GONE between wipes.
         if (::mediaPlayer.isInitialized) mediaPlayer.setTransitionStage(lp.width, lp.height, w.toInt(), h.toInt(), rot)
-        Log.i("MainActivity", "Applied orientation: $orientation (rotation=$rot, swap=$swap)")
+        // The dashboard models screenshots as a native-landscape framebuffer; on a native-portrait
+        // window the capture has to be turned to match (0 on every landscape panel).
+        ScreenshotCapture.uprightDeg = TransitionGeometry.screenshotUprightDeg(orientation, h > w)
+        Log.i("MainActivity", "Applied orientation: $orientation (rotation=$rot, swap=$swap, window=${w.toInt()}x${h.toInt()}, screenshotTurn=${ScreenshotCapture.uprightDeg})")
     }
 
     // #109: pipLayout was reparented out of rootView (to draw above the WebView), so it no

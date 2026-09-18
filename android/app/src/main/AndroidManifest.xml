@@ -49,11 +49,21 @@
         android:supportsRtl="true">
 
         <!-- Main fullscreen media player activity -->
+        <!-- orientation=nosensor: run in the PANEL'S NATURAL orientation (never sensor-driven), and let
+             the per-device orientation setting rotate content in software (TransitionGeometry
+             .orientationRotSwap + rootView.rotation). Forcing "landscape" here made a natively-PORTRAIT
+             panel (e.g. an 800x1280 room-sign tablet) run at a rotated logical resolution, so the OS/ROM
+             display compositor had to hardware-rotate the framebuffer onto the physical glass — a step
+             some ROMs botch (black bar + edge-clamp smear on the physical panel while the app framebuffer
+             stayed clean). It also made the #344 native-portrait handling dead code, because a locked
+             landscape window can never report windowPortrait=true. nosensor keeps every landscape-natural
+             panel byte-identical (natural == landscape) and lets portrait panels render native, no
+             hardware rotate. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen"
             android:keepScreenOn="true"
             android:launchMode="singleTask">
@@ -70,17 +80,19 @@
         </activity>
 
         <!-- Screen capture permission request (transparent) -->
+        <!-- nosensor: match MainActivity so this transient activity never forces a rotate on a
+             portrait-natural panel (see MainActivity note). -->
         <activity
             android:name=".ScreenCapturePermissionActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="nosensor" />
 
         <!-- Initial setup wizard (permissions) -->
         <activity
             android:name=".SetupActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
 
         <!-- #device-owner: MDM-deploy-only guided screen to enable the accessibility service
@@ -88,14 +100,14 @@
         <activity
             android:name=".OwnerAccessibilityActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
 
         <!-- Provisioning/setup activity -->
         <activity
             android:name=".ProvisioningActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
 
         <!-- WebSocket foreground service. #5: declares ONLY mediaPlayback - the

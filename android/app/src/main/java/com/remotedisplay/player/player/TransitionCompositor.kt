@@ -114,6 +114,24 @@ object TransitionGeometry {
     }
 
     /**
+     * Degrees to turn a raw framebuffer screenshot before sending it to the dashboard.
+     *
+     * The dashboard (server/lib/orientation-style.js, #238) assumes every screenshot is a
+     * native-LANDSCAPE framebuffer with the content rotated inside it by ROTATION_DEG[orientation],
+     * and counter-rotates by that much to stand in for the wall mount. That is exactly what
+     * [orientationRotSwap] applies on a landscape window, so the two cancel. On a native-portrait
+     * window the applied rotation differs by a quarter turn, and the dashboard showed the ThinkSmart
+     * View's live view 90° off. Turning the capture by the difference presents the portrait
+     * framebuffer AS the landscape one the dashboard models, so its existing mount logic — and every
+     * landscape panel in the fleet, where this is 0 — is untouched.
+     */
+    fun screenshotUprightDeg(o: String?, windowPortrait: Boolean): Int {
+        val expected = orientationRotSwap(o, false).first.toInt()
+        val applied = orientationRotSwap(o, windowPortrait).first.toInt()
+        return ((expected - applied) % 360 + 360) % 360
+    }
+
+    /**
      * The invariant the reporter asked for: the box the bitmaps were fitted to (once rotated) must
      * equal the surface they are drawn on. Rotating the stage box by 90/270 must give the screen box;
      * 0/180 leaves it. A mismatch means we fitted to the wrong thing and MUST hard-cut, not wipe.

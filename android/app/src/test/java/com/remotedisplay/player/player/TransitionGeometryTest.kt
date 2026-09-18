@@ -48,6 +48,31 @@ class TransitionGeometryTest {
         assertTrue(TransitionGeometry.rotatedStageMatchesScreen(600, 1024, screenW, screenH, 270))
     }
 
+    @Test fun `screenshot turn is zero on every native-landscape window (no fleet regression)`() {
+        // The dashboard already counter-rotates a landscape framebuffer correctly; a non-zero turn
+        // here would break the live view of every panel currently in the field.
+        for (o in listOf("landscape", "landscape-flipped", "portrait", "portrait-flipped", null, "junk")) {
+            assertEquals(o.toString(), 0, TransitionGeometry.screenshotUprightDeg(o, windowPortrait = false))
+        }
+    }
+
+    @Test fun `screenshot turn presents a native-portrait framebuffer as the landscape one the dashboard models`() {
+        // ThinkSmart View (800x1280) driven landscape-flipped: the player applies 270, the dashboard
+        // undoes ROTATION_DEG[landscape-flipped] = 180, so the capture must be turned 180 - 270.
+        val port = true
+        assertEquals(270, TransitionGeometry.screenshotUprightDeg("landscape-flipped", port))
+        assertEquals(270, TransitionGeometry.screenshotUprightDeg("landscape", port))
+        // Driven in its own portrait: player applies 0, dashboard undoes 90 → turn by 90.
+        assertEquals(90, TransitionGeometry.screenshotUprightDeg("portrait", port))
+        assertEquals(90, TransitionGeometry.screenshotUprightDeg("portrait-flipped", port))
+        // Invariant: turn + applied == what the dashboard expects, for every case.
+        for (o in listOf("landscape", "landscape-flipped", "portrait", "portrait-flipped")) {
+            val applied = TransitionGeometry.orientationRotSwap(o, port).first.toInt()
+            val expected = TransitionGeometry.orientationRotSwap(o, false).first.toInt()
+            assertEquals(o, expected, (applied + TransitionGeometry.screenshotUprightDeg(o, port)) % 360)
+        }
+    }
+
     @Test fun `orientation mapping on a native-landscape window is unchanged (no fleet regression)`() {
         // The whole existing fleet is native-landscape (windowPortrait = false). These are the exact
         // values the old hard-coded mapping returned; if any of them move, working panels break.

@@ -9,11 +9,9 @@ import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.util.Base64
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
-import java.io.ByteArrayOutputStream
 
 /**
  * Manages MediaProjection for system-wide screenshot capture.
@@ -105,11 +103,9 @@ object ScreenCaptureService {
                 c
             } else bitmap
 
-            val stream = ByteArrayOutputStream()
-            cropped.compress(Bitmap.CompressFormat.JPEG, quality, stream)
-            cropped.recycle()
-
-            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+            // Shared encoder: applies the native-portrait upright turn (ScreenshotCapture.uprightDeg)
+            // that the other two capture paths already get, then JPEG + base64. Recycles `cropped`.
+            com.remotedisplay.player.remote.ScreenshotCapture.encode(cropped, quality)
         } catch (e: Exception) {
             Log.e(TAG, "Capture failed: ${e.message}")
             null
