@@ -31,8 +31,12 @@ needs, per model group requested:
 - A **test account on the hosted server** (`https://screentinker.com`): e-mail already verified
   (hosted sign-up hard-blocks otherwise), **not a trial** (the trial-expiry sweep would downgrade it
   mid-certification), device quota ≥ 5, no geo restriction.
-- A playlist named **"Samsung QA"** already assigned as the account's default so content starts the
-  moment a display pairs: 3 images, 1 MP4 with audio, 1 YouTube item, ~10 s each.
+- A playlist named **"Samsung QA"** already published in the account: 3 images + 1 MP4 with audio,
+  10 s each. There is no "default playlist for new displays" — the tester assigns it once after
+  pairing (step 3 below), which is one click on the display's page.
+
+Created 2026-09-18 on the hosted server: `qa@screentinker.com` (Pro, no trial, e-mail verified),
+playlist `6320764a-7358-4212-b702-3afa6e3cca7e`. The password is held by the owner, not in the repo.
 
 Put in the *Verification Info* comment and the UI Description "Use Cases":
 
@@ -40,12 +44,14 @@ Put in the *Verification Info* comment and the UI Description "Use Cases":
    **Connect** (or Enter in the field).
 2. The pairing screen shows a 6-digit code. In a PC browser sign in at
    `https://screentinker.com` with the test account → **Devices → Pair a display** → enter the code.
-   The TV switches to playback within about five seconds.
-3. Playback is full-screen and loops indefinitely — this is a digital-signage player; the screen
+   The TV leaves the pairing screen within about five seconds.
+3. Open the new display's page in the dashboard and assign the **"Samsung QA"** playlist (or drag
+   the playlist onto the display on the Devices page). Playback starts on the TV within seconds.
+4. Playback is full-screen and loops indefinitely — this is a digital-signage player; the screen
    saver is disabled by design while content plays.
-4. **Return** during playback opens "Exit ScreenTinker?" (Exit / Change server / Cancel).
+5. **Return** during playback opens "Exit ScreenTinker?" (Exit / Change server / Cancel).
    Return on the Server URL screen exits the app. The **Exit** key exits from anywhere.
-5. Unplug the network: a status message appears; cached content keeps playing. Re-plug: the message
+6. Unplug the network: a status message appears; cached content keeps playing. Re-plug: the message
    clears and playback continues.
 
 ## 3. UI Description form
