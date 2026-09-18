@@ -3267,6 +3267,26 @@ function startVersionCheck() {
   fetch(config.serverUrl + "/api/version").then((r) => r.json()).then((data) => {
     knownServerHash = data.hash;
     console.log("Server version:", data.version, "hash:", data.hash);
+    try {
+      if (data.version && PLAYER_VERSION && PLAYER_VERSION !== "1.1.0-web" && data.version !== PLAYER_VERSION) {
+        var lastHeal = 0;
+        try {
+          lastHeal = +(localStorage.getItem("st_selfheal_at") || 0);
+        } catch (e) {
+        }
+        if (Date.now() - lastHeal > 5 * 60 * 1e3) {
+          try {
+            localStorage.setItem("st_selfheal_at", String(Date.now()));
+          } catch (e) {
+          }
+          console.log("[player] running", PLAYER_VERSION, "but server serves", data.version, "- self-heal reload (stale cached shell)");
+          restartPlayer("version mismatch self-heal");
+        } else {
+          console.warn("[player] version still", PLAYER_VERSION, "vs server", data.version, "after a recent self-heal - not looping");
+        }
+      }
+    } catch (e) {
+    }
   }).catch(() => {
   });
   versionCheckTimer = setInterval(() => {
