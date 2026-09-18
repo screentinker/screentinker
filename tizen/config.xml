@@ -90,7 +90,10 @@
          when the .wgt is signed with a Samsung Partner distributor certificate on a
          real SSSP panel. On unsigned / URL-Launcher / web / consumer-TV builds they
          are ignored (not fatal) — the APIs are simply absent and device-control.js
-         reports "unsupported". -->
+         reports "unsupported".
+         ⚠️ The Samsung Apps TV STORE is the exception: its pre-test rejects these (and
+         background-support="enable" above) outright. the store build (build-wgt.sh, STORE mode) strips them
+         from a COPY at package time — do not remove them here. -->
     <tizen:privilege name="http://developer.samsung.com/privilege/b2bcontrol"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/systemcontrol"/>
 </widget>

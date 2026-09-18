@@ -50,6 +50,28 @@ Without the Tizen CLI this is an **unsigned** `.wgt`.
 > inspection only). To actually run it, use **path A** (no signing) or sign it
 > yourself with your own certificate (**path B**).
 
+### Samsung Apps TV (Seller Office) package
+```bash
+./build-wgt.sh --store    # -> ScreenTinker-store.wgt
+```
+Same app, one difference: the manifest inside is rewritten for the **consumer** store. The
+Seller Office pre-test (2026-09-18) refuses the SSSP manifest on four counts that are all one thing —
+`background-support="enable"` and every `developer.samsung.com` privilege other than
+`network.public` (`b2bcontrol`, `systemcontrol`, and the `b2b*` family) are **partner-only**. On a
+consumer TV those APIs are absent anyway and `device-control.js` reports `unsupported`, so nothing
+is lost. `config.xml` itself is never edited; the copy in the staging dir is, so the SSSP build keeps
+its fleet-control surface. Never tick extra privileges in a Tizen Studio project for the store
+upload — that is how the rejected 2.0.8 package got fifteen of them.
+
+The store also requires a **Samsung** author + distributor certificate (Tizen Studio → Certificate
+Manager → Samsung, signed in with the seller account). A package signed with the SDK's default
+*Tizen Public Distributor Signer* (test CA) will not be accepted. Re-sign on the machine that holds
+that profile:
+```bash
+tizen package -t wgt -s <SamsungProfile> -- ScreenTinker-store.wgt
+```
+Bump `version` in `config.xml` before each upload — Seller Office rejects a version it has seen.
+
 ## Deploy — two paths
 
 ### A) URL Launcher / TV browser (easiest, no signing)

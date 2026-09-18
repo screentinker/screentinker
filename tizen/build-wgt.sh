@@ -4,11 +4,42 @@
 #    "ScreenTinker") and emit a signed, TV-installable .wgt.
 #  - Otherwise, emit an UNSIGNED .wgt (plain zip) — fine for inspection / the
 #    URL-Launcher path, but TVs need a signed package.
+#  - `--store` builds ScreenTinker-store.wgt for the Samsung Apps TV Seller Office: the SAME app,
+#    with the partner-only parts of config.xml stripped at package time (see store_manifest below).
 # Only the app files are packaged (README/build script/.gitignore are excluded).
 set -e
 cd "$(dirname "$0")"
-OUT="ScreenTinker.wgt"
+STORE=0
+if [ "${1:-}" = "--store" ]; then STORE=1; shift; fi
+OUT="ScreenTinker.wgt"; [ "$STORE" = 1 ] && OUT="ScreenTinker-store.wgt"
 FILES="config.xml index.html icon.png css js"
+
+# Samsung Apps TV Seller Office pre-test (2026-09-18) rejected the consumer submission on four
+# counts, all one thing: config.xml is written for SSSP / B2B signage panels. On a consumer TV the
+# B2B privileges are simply absent and device-control.js reports "unsupported" (README, #125), so
+# the app runs identically without them — but the STORE refuses the manifest outright:
+#   Background Support  background-support="enable" is partner-only
+#   B2B API             developer.samsung.com/privilege/b2b*, serialport, ... not allowed
+#   B2B API             systemcontrol, devicetimer, broadcast, ... are partner-level
+#   B2B API             "wrong API version" — the same partner privileges vs required_version
+# One manifest, two packages: the store build rewrites a COPY in the staging dir and never touches
+# config.xml itself, so the SSSP build keeps its fleet-control surface.
+store_manifest() {
+  # $1 = config.xml to rewrite in place
+  # Drop every developer.samsung.com privilege except network.public (public level), and turn
+  # background support off. Everything under tizen.org stays.
+  sed -i -E \
+    -e '/developer\.samsung\.com\/privilege\/(b2b|serialport|systemcontrol|documentplay|syncplay|devicetimer|streamingtvplayer|broadcast|remotepower)/d' \
+    -e 's/background-support="enable"/background-support="disable"/' "$1"
+  if grep -q 'developer.samsung.com/privilege/' "$1"; then
+    if grep 'developer.samsung.com/privilege/' "$1" | grep -qv 'network.public'; then
+      echo "FATAL: a developer.samsung.com privilege other than network.public survived the store filter:" >&2
+      grep 'developer.samsung.com/privilege/' "$1" | grep -v network.public >&2; exit 1
+    fi
+  fi
+  grep -q 'background-support="enable"' "$1" && { echo "FATAL: background-support still enabled" >&2; exit 1; }
+  echo "Store manifest: partner privileges + background-support stripped."
+}
 
 # Make the Tizen CLI discoverable if installed in the default location.
 [ -d "$HOME/tizen-studio/tools/ide/bin" ] && export PATH="$HOME/tizen-studio/tools/ide/bin:$PATH"
@@ -42,14 +73,26 @@ if command -v tizen >/dev/null 2>&1; then
   echo "Tizen CLI found — signing with profile '$PROFILE'…"
   STAGE="$(mktemp -d)"
   cp -r $FILES "$STAGE"/
-  tizen package -t wgt -s "$PROFILE" -- "$STAGE" -o "$PWD" >/dev/null
+  [ "$STORE" = 1 ] && store_manifest "$STAGE/config.xml"
+  # `tizen package` names its output after <name> in config.xml (ScreenTinker.wgt). Package into a
+  # private dir and move, so a --store build can never clobber the SSSP package beside it.
+  mkdir -p "$STAGE/out"
+  tizen package -t wgt -s "$PROFILE" -- "$STAGE" -o "$STAGE/out" >/dev/null
+  mv "$STAGE/out/"*.wgt "$OUT"
   rm -rf "$STAGE"
   echo "Signed $OUT ready ($(du -h "$OUT" | cut -f1))."
 else
   echo "Tizen CLI not found — building UNSIGNED $OUT."
-  zip -r -X "$OUT" $FILES -x '*.DS_Store' '_*' >/dev/null
+  if [ "$STORE" = 1 ]; then
+    STAGE="$(mktemp -d)"; cp -r $FILES "$STAGE"/; store_manifest "$STAGE/config.xml"
+    (cd "$STAGE" && zip -r -X "$OLDPWD/$OUT" $FILES -x '*.DS_Store' '_*' >/dev/null); rm -rf "$STAGE"
+  else
+    zip -r -X "$OUT" $FILES -x '*.DS_Store' '_*' >/dev/null
+  fi
   echo "Built $OUT ($(du -h "$OUT" | cut -f1), UNSIGNED — sign before installing on a TV)."
 fi
+# sssp_config.xml describes the SSSP / URL-Launcher package only; the store build has no use for it.
+[ "$STORE" = 1 ] && { echo "Store build: sssp_config.xml left untouched."; exit 0; }
 
 # SSSP URL-Launcher manifest. Host this + the .wgt in the SAME folder, then enter that folder's
 # URL in a Samsung panel's URL Launcher / Custom App to natively install (the panel fetches
