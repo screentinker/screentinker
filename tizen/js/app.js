@@ -15,7 +15,7 @@
   // packaged config.xml via the Tizen application API; fall back to a constant that
   // build-wgt.sh stamps from config.xml's version="" so the dashboard always shows the
   // version that is actually installed (never the old hardcoded '1.0.0').
-  var APP_VERSION_FALLBACK = '1.9.29'; // st:app-version — stamped by build-wgt.sh
+  var APP_VERSION_FALLBACK = '2.1.4'; // st:app-version — stamped by build-wgt.sh
   var APP_VERSION = (function () {
     try {
       var v = tizen.application.getCurrentApplication().appInfo.version;
@@ -83,7 +83,9 @@
 
   // Keep the screen awake (best effort across Tizen APIs)
   function keepAwake() {
-    try { if (window.tizen && tizen.power) tizen.power.request('SCREEN', 'SCREEN_NORMAL'); } catch (e) {}
+    // appcommon.setScreenSaver is the keep-awake on a Samsung TV (public level, no privilege).
+    // tizen.power.request used to sit beside it; the Power API is not part of the TV web profile
+    // and its privilege was never declared, so it only ever threw into the catch. Removed.
     try { if (window.webapis && webapis.appcommon) webapis.appcommon.setScreenSaver(webapis.appcommon.AppCommonScreenSaverState.SCREEN_SAVER_OFF); } catch (e) {}
   }
 
@@ -132,9 +134,27 @@
     if (!socketConnected) return 'defer';
     return (hiddenMs >= SUSPEND_HIDE_MS) ? 'reconnect' : 'noop';
   }
+  // Samsung CO-MT-01: media must come back in the same state after Smart Hub / another app. The
+  // platform pauses <video> and AVPlay on hide and nothing restarted them, so a looping video
+  // resumed as a frozen frame. suspend()/resume() live in the player (they walk the shared #stage,
+  // so zones are covered too); a media element that cannot simply play() again is re-mounted by
+  // whichever renderer owns the stage.
+  function replayCurrent() {
+    if (stageOwner === 'zones') {
+      var cp = get(LS.payload);
+      if (cp) { try { onPlaylist(JSON.parse(cp)); } catch (e) {} }
+    } else if (stageOwner === 'player') {
+      player.playCurrent();
+    }
+  }
   function onVisibility() {
-    if (document.visibilityState === 'hidden' || document.hidden) { hiddenAtMs = mono(); return; } // A5: monotonic
+    if (document.visibilityState === 'hidden' || document.hidden) {
+      hiddenAtMs = mono(); // A5: monotonic
+      try { player.suspend(); } catch (e) {}
+      return;
+    }
     keepAwake(); // re-assert immediately on resume
+    try { player.resume(replayCurrent); } catch (e) { replayCurrent(); }
     var hiddenMs = hiddenAtMs ? (mono() - hiddenAtMs) : 0; // A5: monotonic hidden-duration
     hiddenAtMs = 0;
     var action = resumeDecision(!!socket, !!(socket && socket.connected), hiddenMs);
@@ -1014,23 +1034,61 @@
     show(elSetup);
   });
 
-  // TV remote BACK key (10009): from the stage/pairing screen, return to the
-  // server prompt so the operator can always change the server; from setup, exit.
-  document.addEventListener('keydown', function (e) {
-    if (e.keyCode === 10009) { // Samsung RETURN / BACK
-      if (!elSetup.classList.contains('hidden')) {
-        stopKeepAwake(); stopWatchdog(); // FIX A/B: clear timers cleanly before the app exits
-        sendExitSignal('clean_exit', 'back_key'); // exit-signal: operator BACK-key exit = confident clean_exit
-        try { tizen.application.getCurrentApplication().exit(); } catch (x) {}
-      } else {
-        if (socket) { try { socket.disconnect(); } catch (x) {} }
-        teardownSession(); // H4: same clean teardown when BACK returns to setup
-        elUrl.value = serverUrl || '';
-        elSetupStatus.textContent = ''; elSetupStatus.className = 'status';
-        show(elSetup); elUrl.focus();
-      }
-    }
+  // TV remote RETURN key (10009).
+  //
+  // Samsung certification (CO-US-05, "Terminating Applications"): on the application's home page,
+  // Return must exit — ideally after a confirmation popup. For a paired TV the playback stage IS
+  // the home page (boot lands on it), and Return used to drop the operator onto the Server URL
+  // form instead, which a QA tester reads as "Return does not exit". So: on the stage and the
+  // pairing screen, Return opens a three-way popup (Exit / Change server / Cancel) that the D-pad
+  // can drive; "Change server" is the old behaviour. On the setup screen — the first thing an
+  // unpaired TV shows — Return exits directly, as before. The Exit key (10182) is deliberately
+  // not handled anywhere: Samsung asks that it stay with the platform.
+  function exitApp(reason) {
+    stopKeepAwake(); stopWatchdog(); // FIX A/B: clear timers cleanly before the app exits
+    sendExitSignal('clean_exit', reason); // exit-signal: operator-initiated exit = confident clean_exit
+    try { tizen.application.getCurrentApplication().exit(); } catch (x) {}
+  }
+  function backToServerPrompt() {
+    if (socket) { try { socket.disconnect(); } catch (x) {} }
+    teardownSession(); // H4: same clean teardown when BACK returns to setup
+    elUrl.value = serverUrl || '';
+    elSetupStatus.textContent = ''; elSetupStatus.className = 'status';
+    show(elSetup); elUrl.focus();
+  }
+  var elExitDialog = document.getElementById('exitDialog');
+  var exitButtons = Array.prototype.slice.call(elExitDialog.querySelectorAll('button'));
+  var exitFocus = 0;
+  function exitDialogOpen() { return !elExitDialog.classList.contains('hidden'); }
+  function focusExitButton(i) {
+    exitFocus = (i + exitButtons.length) % exitButtons.length;
+    try { exitButtons[exitFocus].focus(); } catch (x) {}
+  }
+  function openExitDialog() { elExitDialog.classList.remove('hidden'); focusExitButton(0); }
+  function closeExitDialog() { elExitDialog.classList.add('hidden'); }
+  function exitDialogAction(action) {
+    closeExitDialog();
+    if (action === 'exit') exitApp('back_key');
+    else if (action === 'server') backToServerPrompt();
+  }
+  exitButtons.forEach(function (b) {
+    b.addEventListener('click', function () { exitDialogAction(b.getAttribute('data-action')); });
   });
+  document.addEventListener('keydown', function (e) {
+    if (exitDialogOpen()) {
+      // The popup owns every key while it is up; nothing leaks to the stage or the URL field.
+      if (e.keyCode === 10009) { closeExitDialog(); }
+      else if (e.keyCode === 37 || e.keyCode === 38) { focusExitButton(exitFocus - 1); }
+      else if (e.keyCode === 39 || e.keyCode === 40) { focusExitButton(exitFocus + 1); }
+      else if (e.keyCode === 13) { exitDialogAction(exitButtons[exitFocus].getAttribute('data-action')); }
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
+    if (e.keyCode === 10009) { // Samsung RETURN / BACK
+      if (!elSetup.classList.contains('hidden')) exitApp('back_key');
+      else openExitDialog();
+    }
+  }, true);
 
   // ---- boot ----
   // Always reach the server prompt until the display is actually paired. Only a

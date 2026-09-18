@@ -27,9 +27,13 @@ FILES="config.xml index.html icon.png css js"
 store_manifest() {
   # $1 = config.xml to rewrite in place
   # Drop every developer.samsung.com privilege except network.public (public level), and turn
-  # background support off. Everything under tizen.org stays.
+  # background support off. Also drop two tizen.org privileges nothing in the player calls
+  # (audit 2026-09-18): application.launch (no launch()/launchAppControl() anywhere) and display
+  # (a NATIVE-app key with no web API behind it). Samsung lists declared privileges to the user on
+  # the store page, so the store copy declares only what the code exercises.
   sed -i -E \
     -e '/developer\.samsung\.com\/privilege\/(b2b|serialport|systemcontrol|documentplay|syncplay|devicetimer|streamingtvplayer|broadcast|remotepower)/d' \
+    -e '/tizen\.org\/privilege\/(application\.launch|display)"/d' \
     -e 's/background-support="enable"/background-support="disable"/' "$1"
   if grep -q 'developer.samsung.com/privilege/' "$1"; then
     if grep 'developer.samsung.com/privilege/' "$1" | grep -qv 'network.public'; then

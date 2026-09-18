@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+**Tizen: multitasking resumes media, Return offers to exit, and a store-ready package.** Hidden
+behind Smart Hub or another app, the TV pauses every `<video>` and the AVPlay session and nothing
+restarted them, so a single looping video came back as a frozen frame (Samsung CO-MT-01). The player
+now suspends on hide and restores on show, re-mounting anything that cannot simply play again.
+Return on the playback screen used to drop the operator onto the Server URL form; it now opens
+Exit / Change server / Cancel, D-pad navigable (CO-US-05). `./build-wgt.sh --store` builds a
+consumer-store `.wgt` with the partner-only privileges and `background-support` stripped — the
+Seller Office pre-test refused the SSSP manifest outright — and `tizen/STORE-SUBMISSION.md` carries
+what to enter for the reviewer.
+
 ### Added
 
 **Support access — consent-gated, time-boxed, revocable.** The login page's "Support Access" field

@@ -48,6 +48,20 @@
     <!-- Tiny on-screen status (offline / errors), auto-hides -->
     <div id="toast" class="toast hidden"></div>
 
+    <!-- RETURN on the playback/pairing screen (Samsung CO-US-05 / Terminating Applications: the
+         home page's Return must offer to exit). Three choices, D-pad navigable; Return again = Cancel. -->
+    <div id="exitDialog" class="dialog hidden" role="dialog" aria-modal="true">
+        <div class="dialog-box">
+            <h2>Exit ScreenTinker?</h2>
+            <p class="sub">The display will stop showing content.</p>
+            <div class="dialog-actions">
+                <button id="exitYesBtn" data-action="exit">Exit</button>
+                <button id="exitServerBtn" data-action="server" class="secondary">Change server</button>
+                <button id="exitCancelBtn" data-action="cancel" class="secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- #125: Samsung device-API bridges. $WEBAPIS / $B2BAPIS are resolved by the
          Tizen platform at runtime; off-hardware (browser / URL Launcher) these 404
          harmlessly and the surfaces are simply absent. -->

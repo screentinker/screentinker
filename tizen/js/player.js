@@ -935,6 +935,50 @@ PlaylistPlayer.prototype.renderVideoAv = function (item, single) {
   } catch (e) { this.avFallback(item); }
 };
 
+// Multitasking (Samsung certification CO-MT-01: "when the application resumes, media playback
+// resumes in the same state"). When the app is hidden (Smart Hub, another app, source change) the
+// platform pauses every <video> and the AVPlay session and, with background-support off, freezes
+// our JS. Nothing here ever restarted anything on resume, so a single looping video came back as
+// a frozen frame for good — the exact test a Samsung QA tester runs. Multi-item playlists only
+// recovered because the advance timer happened to fire.
+//
+// suspend(): note what was playing and pause it (AVPlay: suspend(), which Samsung's multitasking
+// guide requires — the platform does not do it for us). resume(): AVPlay restore(), else play()
+// every element we paused; anything that cannot be resumed (ended, play() rejected) is re-mounted
+// via onReplay, which the app maps to playCurrent() or a zone re-render, whichever owns the stage.
+PlaylistPlayer.prototype.suspend = function () {
+  this._suspended = true;
+  if (this.avActive) { try { webapis.avplay.suspend(); } catch (e) {} }
+  var media = this.stage.querySelectorAll('video, audio');
+  for (var i = 0; i < media.length; i++) {
+    var m = media[i];
+    try { if (!m.paused && !m.ended) { m.__stWasPlaying = true; m.pause(); } } catch (e) {}
+  }
+  if (this._bedEl) { try { if (!this._bedEl.paused) { this._bedEl.__stWasPlaying = true; this._bedEl.pause(); } } catch (e) {} }
+};
+
+PlaylistPlayer.prototype.resume = function (onReplay) {
+  if (!this._suspended) return;
+  this._suspended = false;
+  var replay = false;
+  if (this.avActive) {
+    try { webapis.avplay.restore(); } catch (e) { replay = true; }
+  }
+  var list = Array.prototype.slice.call(this.stage.querySelectorAll('video, audio'));
+  if (this._bedEl) list.push(this._bedEl);
+  for (var i = 0; i < list.length; i++) {
+    var m = list[i];
+    if (!m.__stWasPlaying) continue;
+    delete m.__stWasPlaying;
+    if (m.ended) { replay = true; continue; }
+    try {
+      var p = m.play();
+      if (p && typeof p.catch === 'function') p.catch(function () { if (onReplay) onReplay(); });
+    } catch (e) { replay = true; }
+  }
+  if (replay && onReplay) onReplay();
+};
+
 // AVPlay missing/failed on this device -> honest note (never a silent black), then move on.
 PlaylistPlayer.prototype.avFallback = function (item) {
   this.avStop();
