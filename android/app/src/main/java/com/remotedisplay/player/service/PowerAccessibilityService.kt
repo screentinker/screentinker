@@ -20,6 +20,7 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.remotedisplay.player.remote.DpadGeometry
 import com.remotedisplay.player.remote.ScreenshotCapture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -313,29 +314,19 @@ class PowerAccessibilityService : AccessibilityService() {
     /** The geometrically nearest candidate in the pressed direction: closest along the travel axis,
      *  penalising lateral drift so a press moves to the visually-adjacent element. */
     private fun pickInDirection(from: Rect, candidates: List<AccessibilityNodeInfo>, keycode: String): AccessibilityNodeInfo? {
-        val fcx = from.centerX(); val fcy = from.centerY()
-        var best: AccessibilityNodeInfo? = null
-        var bestScore = Long.MAX_VALUE
-        val r = Rect()
-        for (c in candidates) {
-            c.getBoundsInScreen(r)
-            val dx = r.centerX() - fcx; val dy = r.centerY() - fcy
-            val adx = Math.abs(dx).toLong(); val ady = Math.abs(dy).toLong()
-            val inDir = when (keycode) {
-                "KEYCODE_DPAD_DOWN"  -> dy > 0 && ady >= adx
-                "KEYCODE_DPAD_UP"    -> dy < 0 && ady >= adx
-                "KEYCODE_DPAD_RIGHT" -> dx > 0 && adx >= ady
-                "KEYCODE_DPAD_LEFT"  -> dx < 0 && adx >= ady
-                else -> false
-            }
-            if (!inDir) continue
-            val vertical = keycode == "KEYCODE_DPAD_DOWN" || keycode == "KEYCODE_DPAD_UP"
-            val primary = if (vertical) ady else adx
-            val lateral = if (vertical) adx else ady
-            val score = primary + lateral * 2   // prefer straight-ahead over diagonal
-            if (score in 1 until bestScore) { bestScore = score; best = c }
+        val dir = when (keycode) {
+            "KEYCODE_DPAD_DOWN" -> DpadGeometry.DOWN
+            "KEYCODE_DPAD_UP" -> DpadGeometry.UP
+            "KEYCODE_DPAD_RIGHT" -> DpadGeometry.RIGHT
+            "KEYCODE_DPAD_LEFT" -> DpadGeometry.LEFT
+            else -> return null
         }
-        return best
+        // The geometry is pure + unit-tested (DpadGeometryTest); here we only turn node bounds into
+        // centres and turn the winning index back into a node.
+        val r = Rect()
+        val centres = candidates.map { c -> c.getBoundsInScreen(r); intArrayOf(r.centerX(), r.centerY()) }
+        val idx = DpadGeometry.pick(from.centerX(), from.centerY(), centres, dir)
+        return if (idx >= 0) candidates[idx] else null
     }
 
     /**

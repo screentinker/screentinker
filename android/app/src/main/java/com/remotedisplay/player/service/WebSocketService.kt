@@ -1118,15 +1118,9 @@ class WebSocketService : Service() {
     }
 
     @Volatile private var lastCaptureAtMs = 0L
-    // Steady floor between captures. The accessibility takeScreenshot API is rate-limited to ~333ms
-    // (calling faster returns ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT), so this is set just above it:
-    // going lower cannot produce faster frames on this path, only wasted/skipped calls. A rate-limited
-    // miss now skips cleanly (see captureScreen) rather than flickering. For smoother-than-~3fps remote
-    // control the operator can grant MediaProjection, which has no such limit and is Priority 1.
-    private val CAPTURE_MIN_GAP_MS = 350L
-    // Max backoff when a capture is slow (weak panel decoding video). Was 5s, which froze the remote
-    // view for a beat; capped tighter so control stays usable even under load.
-    private val CAPTURE_MAX_GAP_MS = 1200L
+    // Remote-mirror pacing lives in CaptureThrottle (pure + unit-tested): the floor sits just above the
+    // ~333ms accessibility screenshot rate limit (going lower only wastes calls; a rate-limited miss
+    // skips cleanly in captureScreen), and the cap keeps a slow capture from freezing the view.
 
     private fun streamLoop() {
         if (!streaming) { Log.w("WebSocketService", "streamLoop called but not streaming"); return }
@@ -1149,8 +1143,8 @@ class WebSocketService : Service() {
             // Adaptive throttle: on a weak panel a slow capture (e.g. accessibility takeScreenshot while
             // a video decodes) competes with playback and can starve the decoder. Back off proportional
             // to how long this capture took — ~3× a slow capture, capped at 5s — so the stream
-            // self-throttles under load; when captures are cheap it runs near CAPTURE_MIN_GAP_MS.
-            val next = (captureMs * 3).coerceIn(CAPTURE_MIN_GAP_MS, CAPTURE_MAX_GAP_MS)
+            // self-throttles under load; when captures are cheap it runs near the floor.
+            val next = com.remotedisplay.player.remote.CaptureThrottle.nextDelayMs(captureMs)
             if (streaming) handler.postDelayed(streamRunnable ?: return@Thread, next)
         }.start()
     }
@@ -1165,7 +1159,8 @@ class WebSocketService : Service() {
         if (!streaming) return
         val r = streamRunnable ?: return
         val since = SystemClock.elapsedRealtime() - lastCaptureAtMs
-        val delay = (CAPTURE_MIN_GAP_MS - since).coerceIn(0L, CAPTURE_MIN_GAP_MS)
+        val delay = (com.remotedisplay.player.remote.CaptureThrottle.MIN_GAP_MS - since)
+            .coerceIn(0L, com.remotedisplay.player.remote.CaptureThrottle.MIN_GAP_MS)
         handler.removeCallbacks(r)
         handler.postDelayed(r, delay)
     }

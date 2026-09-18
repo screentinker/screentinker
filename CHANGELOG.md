@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+**Multi-zone panels no longer flash a "Connecting" overlay on cold boot.** A follow-up to the
+cold-start-into-zones fix: a zoned panel renders through the zone manager rather than the single-zone
+controller, so the boot "Connecting to server..." status was shown on top of the restored zones for a
+few seconds until the online catch-up cleared it. It is now suppressed while zones are already up.
+
+Added regression unit tests for the pieces that were breaking: the shared layout-mode decision (so
+the cached cold-start and the live update can never diverge again), the remote-view capture pacing
+(rate-limit floor and backoff cap), the D-pad direction geometry, and the accessibility self-enable
+list merge (preserves other services, no duplicates).
+
 ## 2.1.3 (2026-09-17)
 
 ### Added

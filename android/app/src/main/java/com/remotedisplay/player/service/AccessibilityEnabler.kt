@@ -29,14 +29,27 @@ object AccessibilityEnabler {
     private fun component(context: Context): String =
         ComponentName(context, PowerAccessibilityService::class.java).flattenToString()
 
-    /** Whether OUR accessibility service is already listed as enabled. */
-    fun isEnabled(context: Context): Boolean {
-        val enabled = Settings.Secure.getString(
-            context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: return false
-        val comp = component(context)
-        return enabled.split(':').any { it.equals(comp, ignoreCase = true) }
+    /** Whether [enabledList] (Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, a colon-separated list)
+     *  already contains [component]. Case-insensitive; tolerates null/blank. Pure - unit-tested. */
+    fun listHasService(enabledList: String?, component: String): Boolean {
+        if (enabledList.isNullOrBlank()) return false
+        return enabledList.split(':').any { it.equals(component, ignoreCase = true) }
     }
+
+    /** Merge [component] into [enabledList], PRESERVING any other enabled services (e.g. TalkBack) and
+     *  never duplicating ours. Pure - unit-tested. This is the write we make to enable ourselves. */
+    fun mergeService(enabledList: String?, component: String): String = when {
+        enabledList.isNullOrBlank() -> component
+        listHasService(enabledList, component) -> enabledList
+        else -> "$enabledList:$component"
+    }
+
+    /** Whether OUR accessibility service is already listed as enabled. */
+    fun isEnabled(context: Context): Boolean =
+        listHasService(
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),
+            component(context)
+        )
 
     /** Whether we were granted WRITE_SECURE_SETTINGS (i.e. provisioning opted in). */
     fun canSelfEnable(context: Context): Boolean =
@@ -57,14 +70,8 @@ object AccessibilityEnabler {
         return try {
             val comp = component(context)
             val cr = context.contentResolver
-            val current = Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
-            // Preserve any other enabled services; append ours if absent. Colon-separated list.
-            val merged = when {
-                current.isBlank() -> comp
-                current.split(':').any { it.equals(comp, ignoreCase = true) } -> current
-                else -> "$current:$comp"
-            }
-            Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, merged)
+            val current = Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, mergeService(current, comp))
             Settings.Secure.putInt(cr, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
             Log.i(TAG, "self-enabled accessibility service via WRITE_SECURE_SETTINGS")
             true

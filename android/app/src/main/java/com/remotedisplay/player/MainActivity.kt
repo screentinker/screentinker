@@ -39,6 +39,8 @@ import com.remotedisplay.player.player.PipOverlay
 import com.remotedisplay.player.player.SlideAudioPlayer
 import com.remotedisplay.player.player.WallController
 import com.remotedisplay.player.player.GroupScheduleController
+import com.remotedisplay.player.player.LayoutMode
+import com.remotedisplay.player.player.layoutModeOf
 import com.remotedisplay.player.player.ZoneManager
 import com.remotedisplay.player.player.ItemTiming
 import com.remotedisplay.player.remote.ScreenshotCapture
@@ -452,19 +454,18 @@ class MainActivity : AppCompatActivity() {
                     // zoneManager and wallController are both initialised earlier in onCreate. We are on
                     // the main thread here, so applyMultiZoneLayout can run directly.
                     val cachedOrder = cached.optString("playback_order", "sequential")
-                    val cachedWall = if (cached.isNull("wall_config")) null else cached.optJSONObject("wall_config")
-                    val cachedLayout = if (cached.isNull("layout")) null else cached.optJSONObject("layout")
-                    val cachedZones = cachedLayout?.optJSONArray("zones")
-                    when {
-                        cachedWall != null -> {
-                            wallController.apply(parseWallConfig(cachedWall))
+                    when (layoutModeOf(cached)) {
+                        LayoutMode.WALL -> {
+                            cached.optJSONObject("wall_config")?.let { wallController.apply(parseWallConfig(it)) }
                             playlistController.updatePlaylist(assignments, cachedOrder)
                             playlistController.startIfNeeded()
                         }
-                        cachedZones != null && cachedZones.length() > 1 -> {
-                            applyMultiZoneLayout(cachedZones, cachedLayout?.optString("id", "") ?: "", assignments)
+                        LayoutMode.MULTI_ZONE -> {
+                            val l = cached.optJSONObject("layout")
+                            val z = l?.optJSONArray("zones")
+                            if (z != null) applyMultiZoneLayout(z, l.optString("id", ""), assignments)
                         }
-                        else -> {
+                        LayoutMode.SINGLE -> {
                             playlistController.updatePlaylist(assignments, cachedOrder)
                             playlistController.startIfNeeded()
                         }
@@ -480,7 +481,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        if (!playlistController.isPlaying) {
+        // Only nudge "Connecting..." when nothing is on screen yet. A multi-zone panel restored from
+        // cache above renders through zoneManager (not playlistController), so isPlaying stays false
+        // even though the zones ARE up - without the hasZones guard the connecting overlay flashes on
+        // top of the restored zones on every cold boot until the online catch-up hides it.
+        if (!playlistController.isPlaying && zoneManager?.hasZones() != true) {
             showStatus("Connecting to server...")
         }
 
@@ -863,6 +868,9 @@ class MainActivity : AppCompatActivity() {
             // fullscreen, and WallController owns the root-view slice transform and the
             // leader/follower role. (We're on the main thread here — onPlaylistUpdate is
             // posted to the main looper by WebSocketService.)
+            // Wall > multi-zone > single. This is the inline mirror of layoutModeOf() (player/LayoutMode.kt),
+            // which the offline cached cold-start restore uses directly and LayoutModeTest pins. Keep the
+            // two in step: they diverging is what made a zoned panel cold-start fullscreen then snap into zones.
             val wallObj = if (data.isNull("wall_config")) null else data.optJSONObject("wall_config")
             if (wallObj != null) {
                 com.remotedisplay.player.util.DebugLog.i("Player", "Layout: VIDEO-WALL (${assignments.length()} assignments)")
