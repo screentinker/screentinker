@@ -1670,8 +1670,19 @@ module.exports = function setupDeviceSocket(io) {
       currentDeviceId = device_id;
       heartbeat.updateHeartbeat(device_id);
 
+      // A heartbeat is the device asserting it is alive. Online is normally broadcast to the panel
+      // only at device:register time (one shot); heartbeats just write the DB. So if the panel
+      // missed that single register-time broadcast (its own socket was mid-reconnect, or the emit
+      // raced the device's reconnect), the row reads 'online' while the card still shows OFFLINE,
+      // until the device's next periodic re-register (up to 5 min on the web/BrightSign player).
+      // Re-assert online to the panel on the offline->online transition so a rebooted device flips
+      // its card back within one heartbeat instead of waiting for the fallback re-register.
+      const prevStatus = db.prepare('SELECT status FROM devices WHERE id = ?').get(device_id);
       db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), updated_at = strftime('%s','now') WHERE id = ?")
         .run(device_id);
+      if (prevStatus && prevStatus.status !== 'online') {
+        emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', { device_id, status: 'online' });
+      }
 
       // A device row can vanish mid-session — deleted by an operator, or replaced by a re-pair —
       // while its socket is still heartbeating. The telemetry insert then fails the foreign key,

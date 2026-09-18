@@ -41,6 +41,7 @@ let refreshInterval = null;
 let playbackHandler = null;
 let progressTickInterval = null;
 let wallChangedHandler = null;
+let connectedHandler = null;
 /*
  * ⚠️ DELEGATED DOM LISTENERS ARE TRACKED LIKE THE SOCKET ONES, AND FOR THE SAME REASON.
  *
@@ -769,12 +770,24 @@ export function render(container) {
 
   wallChangedHandler = () => loadDashboard();
 
+  // Re-sync the whole dashboard when our OWN socket (re)connects. Online status is pushed to the
+  // panel only at device:register time; if this panel's socket was down when a device came back
+  // (e.g. after a reboot) it never saw that broadcast and the card stays OFFLINE until the device's
+  // next periodic re-register (up to 5 min). Re-fetching on reconnect closes that gap. Skip the very
+  // first connect - the initial load already ran - so this only fires on genuine reconnects.
+  let sawFirstConnect = false;
+  connectedHandler = () => {
+    if (!sawFirstConnect) { sawFirstConnect = true; return; }
+    loadDashboard();
+  };
+
   on('device-status', statusHandler);
   on('screenshot-ready', screenshotHandler);
   on('device-added', deviceAddedHandler);
   on('device-removed', deviceRemovedHandler);
   on('playback-progress', playbackHandler);
   on('wall-changed', wallChangedHandler);
+  on('connected', connectedHandler);
 
   progressTickInterval = setInterval(() => {
     for (const id of playbackByDevice.keys()) renderProgressFor(id);
@@ -1554,6 +1567,7 @@ export function cleanup() {
   if (screenshotHandler) off('screenshot-ready', screenshotHandler);
   if (playbackHandler) off('playback-progress', playbackHandler);
   if (wallChangedHandler) off('wall-changed', wallChangedHandler);
+  if (connectedHandler) off('connected', connectedHandler);
   off('device-added', () => {});
   off('device-removed', () => {});
   if (refreshInterval) clearInterval(refreshInterval);
@@ -1562,6 +1576,7 @@ export function cleanup() {
   screenshotHandler = null;
   playbackHandler = null;
   wallChangedHandler = null;
+  connectedHandler = null;
   refreshInterval = null;
   progressTickInterval = null;
   playbackByDevice.clear();
