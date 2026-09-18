@@ -4140,6 +4140,26 @@
       fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
         knownServerHash = data.hash;
         console.log('Server version:', data.version, 'hash:', data.hash);
+        // Self-heal a stale shell. The player page is network-first (sw.js), so a reload that lands
+        // during a deploy's brief server blip falls back to the CACHED shell and then records the new
+        // hash here without ever fetching the new code — leaving the panel stranded on old code with
+        // no trigger to reload (the hash-change path below only fires on a CHANGE, and it already
+        // matches). If the running PLAYER_VERSION lags the version the server now serves, force ONE
+        // cache-busting reload so the panel recovers on its own. Guarded via localStorage so a
+        // pathological mismatch (e.g. server briefly unreachable on the reload) cannot loop; skip the
+        // un-stamped '1.1.0-web' literal, which means server-side stamping failed, not a stale shell.
+        try {
+          if (data.version && PLAYER_VERSION && PLAYER_VERSION !== '1.1.0-web' && data.version !== PLAYER_VERSION) {
+            var lastHeal = 0; try { lastHeal = +(localStorage.getItem('st_selfheal_at') || 0); } catch (e) {}
+            if (Date.now() - lastHeal > 5 * 60 * 1000) {
+              try { localStorage.setItem('st_selfheal_at', String(Date.now())); } catch (e) {}
+              console.log('[player] running', PLAYER_VERSION, 'but server serves', data.version, '- self-heal reload (stale cached shell)');
+              restartPlayer('version mismatch self-heal');
+            } else {
+              console.warn('[player] version still', PLAYER_VERSION, 'vs server', data.version, 'after a recent self-heal - not looping');
+            }
+          }
+        } catch (e) { /* never let the self-heal check break the version poll */ }
       }).catch(() => {});
       // Poll every 30s
       versionCheckTimer = setInterval(() => {
