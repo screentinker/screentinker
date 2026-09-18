@@ -2,7 +2,50 @@
 
 ## Unreleased
 
+### Added
+
+**Provisioned panels can enable the ScreenTinker accessibility service by themselves.** The
+accessibility service is the durable way to mirror a panel's whole screen in the remote view (it
+survives updates, unlike the screen-record permission that is wiped on every app restart) and the
+only way the remote arrow keys work. Until now it could only be turned on by hand at the panel or by
+a per-boot ADB command. A panel granted `WRITE_SECURE_SETTINGS` once at provisioning
+(`adb shell pm grant com.remotedisplay.player android.permission.WRITE_SECURE_SETTINGS`) now enables
+its own accessibility service on every boot, so whole-screen remote view and the remote D-pad keep
+working across reboots and updates with nobody at the screen. Without that one-time grant the app
+does nothing new and the operator is still nudged toward Settings. See
+`docs/device-owner-provisioning.md`.
+
 ### Fixed
+
+**A rebooted device no longer shows offline for several minutes while it is actually back.** Online
+status was pushed to the dashboard only when a device re-registered (one shot); heartbeats kept the
+database current but told the panel nothing, and the panel never re-synced when its own socket
+reconnected. So a device that rebooted and resumed playing could sit "offline" on the panel until its
+next periodic re-register, up to five minutes on the web/BrightSign player. The panel now re-syncs
+whenever its own socket reconnects, and a heartbeat re-broadcasts online on the offline-to-online
+transition, so a recovered device flips back within one heartbeat.
+
+**Remote-control arrow keys work again.** In a device's Remote tab, taps and swipes worked but the
+D-pad arrows, Enter, and Center did nothing. They were routed to a shell `input keyevent`, which
+needs `INJECT_EVENTS` (a signature permission the app cannot hold, even as device owner), so they
+failed silently. The arrows now move a highlight box around the on-screen items through the
+accessibility service, and Enter / Center taps the highlighted item, so a panel can be navigated
+entirely from the dashboard even on screens that only respond to a remote. The highlight clears when
+the operator taps directly, leaves the screen, or ends the session. Requires the ScreenTinker
+accessibility service enabled on the panel (see the self-enable note above).
+
+**The remote live view no longer flickers, and keeps up with control.** On a panel using the
+accessibility capture path, the screen mirror occasionally dropped a single frame back to just the
+player's own window (a flicker between the real screen and the playlist) whenever Android rate-limited
+its screenshot API; those misses are now skipped instead of shown. The stream also grabs a fresh
+frame right after each remote tap or key press, and no longer backs off as far under load, so driving
+a panel feels responsive rather than lagging seconds behind.
+
+**Multi-zone panels no longer flash fullscreen on a cold start.** A panel on a multi-zone (or
+video-wall) layout restored its cached playlist on boot through the single-zone path, so after a
+reboot or power cut it came up as one fullscreen rotation and only snapped into its zones once the
+server reconnected. The offline cold-start now restores the layout shape too, so a zoned panel boots
+straight into its zones.
 
 **Operator "force update" now overrides the phantom/backoff OTA holds.** A display on a genuine
 prerelease core (for example a one-off `-diag` build) could not self-recover to stable: the #144

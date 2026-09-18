@@ -152,6 +152,10 @@ class WebSocketService : Service() {
         super.onCreate()
         config = ServerConfig(this)
         deviceInfo = DeviceInfo(this)
+        // Preferred durable path: if provisioning granted WRITE_SECURE_SETTINGS, turn our OWN
+        // accessibility service on here. It captures the whole screen AND survives every OTA (no
+        // MediaProjection consent to lose), and gives remote D-pad. No-op without the grant.
+        AccessibilityEnabler.ensureEnabled(this)
         // An OTA restarts the app, which drops MediaProjection consent and silently downgrades the
         // live view to the player's own window. Re-arm it here when this panel had it and can
         // regrant without a dialog. No-op otherwise; see restoreIfPreviouslyGranted for why.
@@ -605,6 +609,8 @@ class WebSocketService : Service() {
                             handler.post { try { onRemoteTouch?.invoke(x, y, action) } catch (e: Throwable) { Log.e("WebSocketService", "onRemoteTouch cb: ${e.message}") } }
                         }
                     }
+                    svc?.clearDpadCursor()   // direct touch: dismiss the D-pad navigation highlight
+                    nudgeCapture()   // reflect the tap/swipe in the remote view promptly
                 }
 
                 safeOn("device:remote-key") { args ->
@@ -613,6 +619,7 @@ class WebSocketService : Service() {
                     if (keycode.isEmpty()) return@safeOn
                     injectKey(keycode)
                     handler.post { try { onRemoteKey?.invoke(keycode) } catch (e: Throwable) { Log.e("WebSocketService", "onRemoteKey cb: ${e.message}") } }
+                    nudgeCapture()   // reflect the key/D-pad move in the remote view promptly
                 }
 
                 // Video wall. Post to the main thread: the handlers drive ExoPlayer
@@ -1110,6 +1117,17 @@ class WebSocketService : Service() {
         Log.i("WebSocketService", "Screenshot streaming started")
     }
 
+    @Volatile private var lastCaptureAtMs = 0L
+    // Steady floor between captures. The accessibility takeScreenshot API is rate-limited to ~333ms
+    // (calling faster returns ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT), so this is set just above it:
+    // going lower cannot produce faster frames on this path, only wasted/skipped calls. A rate-limited
+    // miss now skips cleanly (see captureScreen) rather than flickering. For smoother-than-~3fps remote
+    // control the operator can grant MediaProjection, which has no such limit and is Priority 1.
+    private val CAPTURE_MIN_GAP_MS = 350L
+    // Max backoff when a capture is slow (weak panel decoding video). Was 5s, which froze the remote
+    // view for a beat; capped tighter so control stays usable even under load.
+    private val CAPTURE_MAX_GAP_MS = 1200L
+
     private fun streamLoop() {
         if (!streaming) { Log.w("WebSocketService", "streamLoop called but not streaming"); return }
         Thread {
@@ -1119,6 +1137,7 @@ class WebSocketService : Service() {
                 val b64 = captureScreen()
                 captureMs = SystemClock.elapsedRealtime() - start
                 if (b64 != null) {
+                    lastCaptureAtMs = SystemClock.elapsedRealtime()
                     sendScreenshot(b64)
                     Log.d("WebSocketService", "Screenshot streamed: ${b64.length} chars in ${captureMs}ms")
                 } else {
@@ -1129,17 +1148,35 @@ class WebSocketService : Service() {
             }
             // Adaptive throttle: on a weak panel a slow capture (e.g. accessibility takeScreenshot while
             // a video decodes) competes with playback and can starve the decoder. Back off proportional
-            // to how long this capture took — base 1s, but ~3× a slow capture, capped at 5s — so the
-            // stream self-throttles under load instead of pinning the device at 1fps and going black.
-            val next = (captureMs * 3).coerceIn(1000L, 5000L)
+            // to how long this capture took — ~3× a slow capture, capped at 5s — so the stream
+            // self-throttles under load; when captures are cheap it runs near CAPTURE_MIN_GAP_MS.
+            val next = (captureMs * 3).coerceIn(CAPTURE_MIN_GAP_MS, CAPTURE_MAX_GAP_MS)
             if (streaming) handler.postDelayed(streamRunnable ?: return@Thread, next)
         }.start()
+    }
+
+    /**
+     * Pull the next stream frame in right after an operator input, so the remote view reflects the
+     * action promptly instead of waiting out the steady interval. Rate-limit aware: schedules the
+     * capture for exactly when the accessibility screenshot API will allow it (never sooner, so we do
+     * not waste a call that would just fail), and coalesces to a single pending capture.
+     */
+    private fun nudgeCapture() {
+        if (!streaming) return
+        val r = streamRunnable ?: return
+        val since = SystemClock.elapsedRealtime() - lastCaptureAtMs
+        val delay = (CAPTURE_MIN_GAP_MS - since).coerceIn(0L, CAPTURE_MIN_GAP_MS)
+        handler.removeCallbacks(r)
+        handler.postDelayed(r, delay)
     }
 
     fun stopScreenshotStream() {
         streaming = false
         streamRunnable?.let { handler.removeCallbacks(it) }
         streamRunnable = null
+        // Remote session is ending: clear the D-pad highlight so the blue box does not linger on the
+        // panel over the signage after the operator stops controlling it.
+        PowerAccessibilityService.instance?.clearDpadCursor()
         Log.i("WebSocketService", "Screenshot streaming stopped")
     }
 
@@ -1174,7 +1211,17 @@ class WebSocketService : Service() {
         // Priority 2 (#161 "see everything"): full display via the accessibility screenshot API — the
         // WHOLE screen (system UI + other apps) with NO MediaProjection consent dialog. Available when
         // the accessibility service is enabled (API 30+); nicely covers device-owner kiosk panels.
-        PowerAccessibilityService.instance?.captureFullScreen(40)?.let { return it }
+        //
+        // ⚠️ When accessibility IS the active tier, a null here is a TRANSIENT miss — takeScreenshot is
+        // rate-limited by Android to ~1/sec and fails on timing jitter — NOT a reason to fall back to
+        // the player-window tier. Doing so flips a single frame from the real screen to the playlist
+        // and back, which the operator sees as the live view flickering between Settings and the
+        // playlist. Return null instead (skip the frame); the dashboard holds the last whole-screen
+        // frame until the next one lands. Only when accessibility is NOT available at all do we fall
+        // through to the player-window tier below.
+        if (CaptureMode.accessibilityCaptureAvailable()) {
+            return PowerAccessibilityService.instance?.captureFullScreen(40)
+        }
 
         // Priority 3: app-content view capture (the player's OWN window only; foreground only).
         val fromActivity = onCaptureScreenshot?.invoke()
@@ -1207,6 +1254,12 @@ class WebSocketService : Service() {
 
         // Use AccessibilityService global actions for system keys (works without INJECT_EVENTS)
         if (svc != null) {
+            // Any key other than a D-pad MOVE dismisses the navigation highlight — the operator is
+            // leaving the screen (Home/Back/Recents) or selecting, so the blue box should not linger.
+            when (keycode) {
+                "KEYCODE_DPAD_UP", "KEYCODE_DPAD_DOWN", "KEYCODE_DPAD_LEFT", "KEYCODE_DPAD_RIGHT" -> {}
+                else -> svc.clearDpadCursor()
+            }
             when (keycode) {
                 "KEYCODE_POWER" -> { handler.post { svc.showPowerDialog() }; return }
                 "KEYCODE_HOME" -> {
@@ -1222,10 +1275,24 @@ class WebSocketService : Service() {
                 }
                 "KEYCODE_BACK" -> { handler.post { svc.pressBack() }; return }
                 "KEYCODE_APP_SWITCH" -> { handler.post { svc.openRecents() }; return }
+                // D-pad + select ride the accessibility focus path (no INJECT_EVENTS needed). The old
+                // shell 'input keyevent' below silently failed for these on a normal APK process, which
+                // is exactly why arrows did nothing on a device the operator could tap on.
+                "KEYCODE_DPAD_UP", "KEYCODE_DPAD_DOWN", "KEYCODE_DPAD_LEFT",
+                "KEYCODE_DPAD_RIGHT", "KEYCODE_DPAD_CENTER", "KEYCODE_ENTER" -> {
+                    handler.post {
+                        if (!svc.pressDpad(keycode)) {
+                            Log.w("WebSocketService", "D-pad $keycode had no focus target (accessibility nav)")
+                        }
+                    }
+                    return
+                }
             }
         }
 
-        // For other keys, use shell input keyevent (works for volume, d-pad on most devices)
+        // For other keys, use shell input keyevent. ⚠️ This needs the shell UID / INJECT_EVENTS, which
+        // this process does NOT hold, so it fails on most hardware — surfaced below instead of swallowed.
+        // (D-pad and system keys above take the accessibility path; only VOLUME/MENU still land here.)
         val code = when (keycode) {
             "KEYCODE_HOME" -> "3"
             "KEYCODE_BACK" -> "4"
@@ -1245,9 +1312,13 @@ class WebSocketService : Service() {
         Log.i("WebSocketService", "Injecting key: $keycode ($code)")
         Thread {
             try {
-                Runtime.getRuntime().exec(arrayOf("input", "keyevent", code)).waitFor()
+                val exit = Runtime.getRuntime().exec(arrayOf("input", "keyevent", code)).waitFor()
+                if (exit != 0) {
+                    Log.w("WebSocketService", "shell 'input keyevent $code' exited $exit " +
+                        "($keycode not injected - process lacks INJECT_EVENTS)")
+                }
             } catch (e: Exception) {
-                Log.e("WebSocketService", "Key injection failed: ${e.message}")
+                Log.e("WebSocketService", "Key injection failed for $keycode: ${e.message}")
             }
         }.start()
     }

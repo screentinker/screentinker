@@ -445,8 +445,30 @@ class MainActivity : AppCompatActivity() {
                     // with no WAN (a LOCAL default is pinned on disk by the download loop; a remote one
                     // can't stream offline and simply won't show).
                     playlistController.setDefaultContent(if (cached.isNull("default_content")) null else cached.optJSONObject("default_content"))
-                    playlistController.updatePlaylist(assignments, cached.optString("playback_order", "sequential"))
-                    playlistController.startIfNeeded()
+                    // Restore the SHAPE too, not just the content: a zoned (or wall) panel must
+                    // cold-start into its zones/tiling, not render flat-fullscreen and then snap into
+                    // zones the moment the server reconnects (the visible "loads fullscreen, then jumps
+                    // to 4 zones" flash). Mirror onPlaylistUpdate's wall / multi-zone / single dispatch;
+                    // zoneManager and wallController are both initialised earlier in onCreate. We are on
+                    // the main thread here, so applyMultiZoneLayout can run directly.
+                    val cachedOrder = cached.optString("playback_order", "sequential")
+                    val cachedWall = if (cached.isNull("wall_config")) null else cached.optJSONObject("wall_config")
+                    val cachedLayout = if (cached.isNull("layout")) null else cached.optJSONObject("layout")
+                    val cachedZones = cachedLayout?.optJSONArray("zones")
+                    when {
+                        cachedWall != null -> {
+                            wallController.apply(parseWallConfig(cachedWall))
+                            playlistController.updatePlaylist(assignments, cachedOrder)
+                            playlistController.startIfNeeded()
+                        }
+                        cachedZones != null && cachedZones.length() > 1 -> {
+                            applyMultiZoneLayout(cachedZones, cachedLayout?.optString("id", "") ?: "", assignments)
+                        }
+                        else -> {
+                            playlistController.updatePlaylist(assignments, cachedOrder)
+                            playlistController.startIfNeeded()
+                        }
+                    }
                     // #group-sync: if this device was in a sync group, resume the schedule immediately
                     // from the cached clock offset — a reboot mid-outage comes back aligned, no server.
                     val cg = if (cached.isNull("group_sync")) null else cached.optJSONObject("group_sync")
@@ -879,10 +901,7 @@ class MainActivity : AppCompatActivity() {
                 // widget_rev belongs in here for the same reason it is in the fullscreen playlist
                 // signature: editing a widget changes its CONTENT, never its id, so without it a
                 // zone assignment looked identical and the re-render was skipped as "unchanged".
-                val assignmentSig = (0 until assignments.length()).map { i ->
-                    val a = assignments.getJSONObject(i)
-                    "${a.optString("content_id")}:${a.optString("zone_id")}:${a.optString("widget_id")}:${a.optLong("widget_rev", 0L)}"
-                }.sorted().joinToString("|")
+                val assignmentSig = zoneAssignmentSig(assignments)
                 val changed = assignmentSig != zoneManager?.lastAssignmentSig
 
                 // The ZONES themselves can change without the layout id changing — editing a layout
@@ -890,28 +909,13 @@ class MainActivity : AppCompatActivity() {
                 // on an id change meant the new zone never appeared: the geometry stayed as it was
                 // and only the assignments re-rendered into the OLD zones, so the change looked like
                 // it had been ignored until the app was force-stopped. Reported on #234.
-                val zoneSig = (0 until layoutZones.length()).map { i ->
-                    val z = layoutZones.getJSONObject(i)
-                    "${z.optString("id")}:${z.optDouble("x_percent", -1.0)}:${z.optDouble("y_percent", -1.0)}:" +
-                        "${z.optDouble("width_percent", -1.0)}:${z.optDouble("height_percent", -1.0)}:" +
-                        "${z.optInt("z_index", 0)}:${z.optString("zone_type")}:${z.optString("fit_mode")}"
-                }.sorted().joinToString("|")
+                val zoneSig = zoneGeometrySig(layoutZones)
                 val zonesChanged = zoneSig != zoneManager?.lastZoneSig
 
                 com.remotedisplay.player.util.DebugLog.i("Player", "Layout: MULTI-ZONE (${layoutZones.length()} zones, layout=$layoutId), ${assignments.length()} assignments")
                 if (zoneManager?.hasZones() != true || layoutId != currentLayoutId || zonesChanged) {
                     Log.i("MainActivity", "Multi-zone layout with ${layoutZones.length()} zones (layout=$layoutId, was=$currentLayoutId)")
-                    handler.post {
-                        hideStatus()
-                        if (::mediaPlayer.isInitialized) mediaPlayer.stop()
-                        playlistController.stop()
-                        playerView.visibility = View.GONE
-                        imageView.visibility = View.GONE
-                        zoneManager?.setupZones(layoutZones, layoutId)
-                        zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache, config.deviceId)
-                        zoneManager?.lastAssignmentSig = assignmentSig
-                        zoneManager?.lastZoneSig = zoneSig
-                    }
+                    handler.post { applyMultiZoneLayout(layoutZones, layoutId, assignments) }
                 } else if (changed) {
                     Log.i("MainActivity", "Multi-zone assignments changed, re-rendering")
                     handler.post {
@@ -1446,6 +1450,39 @@ class MainActivity : AppCompatActivity() {
 
         // Report playback state
         wsService?.sendPlaybackState(item.contentId, 0f)
+    }
+
+    // ---- Multi-zone layout: shared by the live server update AND the cached cold-start restore ----
+    // Extracted so an offline cold boot renders straight into its zones instead of flashing fullscreen
+    // first (the single-zone playlistController path) and snapping into zones only once the server
+    // reconnects. The signatures let a later identical server payload be recognised as unchanged.
+
+    private fun zoneAssignmentSig(assignments: org.json.JSONArray): String =
+        (0 until assignments.length()).map { i ->
+            val a = assignments.getJSONObject(i)
+            "${a.optString("content_id")}:${a.optString("zone_id")}:${a.optString("widget_id")}:${a.optLong("widget_rev", 0L)}"
+        }.sorted().joinToString("|")
+
+    private fun zoneGeometrySig(layoutZones: org.json.JSONArray): String =
+        (0 until layoutZones.length()).map { i ->
+            val z = layoutZones.getJSONObject(i)
+            "${z.optString("id")}:${z.optDouble("x_percent", -1.0)}:${z.optDouble("y_percent", -1.0)}:" +
+                "${z.optDouble("width_percent", -1.0)}:${z.optDouble("height_percent", -1.0)}:" +
+                "${z.optInt("z_index", 0)}:${z.optString("zone_type")}:${z.optString("fit_mode")}"
+        }.sorted().joinToString("|")
+
+    /** Build zones and render assignments into them, recording the change-detection signatures so a
+     *  later identical server payload is a no-op. Call on the main thread. */
+    private fun applyMultiZoneLayout(layoutZones: org.json.JSONArray, layoutId: String, assignments: org.json.JSONArray) {
+        hideStatus()
+        if (::mediaPlayer.isInitialized) mediaPlayer.stop()
+        playlistController.stop()
+        playerView.visibility = View.GONE
+        imageView.visibility = View.GONE
+        zoneManager?.setupZones(layoutZones, layoutId)
+        zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache, config.deviceId)
+        zoneManager?.lastAssignmentSig = zoneAssignmentSig(assignments)
+        zoneManager?.lastZoneSig = zoneGeometrySig(layoutZones)
     }
 
     private fun showStatus(message: String) {
