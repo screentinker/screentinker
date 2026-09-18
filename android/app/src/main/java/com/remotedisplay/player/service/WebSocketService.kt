@@ -686,12 +686,23 @@ class WebSocketService : Service() {
                         }
                         "settings" -> {
                             handler.post {
-                                try {
-                                    val intent = Intent(android.provider.Settings.ACTION_SETTINGS).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    startActivity(intent)
-                                } catch (e: Throwable) { Log.e("WebSocketService", "settings cmd: ${e.message}") }
+                                // Resolve first: a stripped TV/AOSP build may have no ACTION_SETTINGS
+                                // handler, and the app's own App Info page is the next best door. Either
+                                // way say what happened in the log — a silent no-op on a box with no
+                                // touch input is indistinguishable from "the command never arrived".
+                                val candidates = listOf(
+                                    Intent(android.provider.Settings.ACTION_SETTINGS),
+                                    Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        setData(android.net.Uri.parse("package:$packageName"))
+                                    },
+                                )
+                                val opened = candidates.firstOrNull { intent ->
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    val ok = try { packageManager.resolveActivity(intent, 0) != null } catch (_: Throwable) { false }
+                                    ok && try { startActivity(intent); true } catch (e: Throwable) { Log.w("WebSocketService", "settings cmd: ${intent.action}: ${e.message}"); false }
+                                }
+                                if (opened == null) Log.e("WebSocketService", "settings cmd: no Settings activity on this build")
+                                else Log.i("WebSocketService", "settings cmd: opened ${opened.action}")
                             }
                         }
                         "enable_system_capture" -> {

@@ -43,6 +43,11 @@
     <string name="settings_perm_open">Open settings</string>
     <string name="settings_perm_done">Done</string>
     <string name="settings_perm_manage">Manage permissions</string>
+    <!-- Setup rows on Android TV: the Settings screen for a permission may not exist on this build
+         (SetupActivity.openFirstAvailable). Say so, and give the adb command that grants it. -->
+    <string name="setup_screen_unavailable_title">Not available on this Android build</string>
+    <string name="setup_screen_unavailable">This device\'s Settings app has no screen for this permission (common on Android TV boxes). Grant it from a computer with USB/network debugging:\n\n%1$s</string>
+    <string name="setup_screen_unavailable_plain">This device\'s Settings app has no screen for this permission (common on Android TV boxes).</string>
     <string name="device_blocked_status">This screen has been blocked in the dashboard</string>
     <string name="device_unpaired_status">This screen was unpaired — waiting to be re-paired</string>
 </resources>
