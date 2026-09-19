@@ -72,7 +72,7 @@ Put in the *Verification Info* comment and the UI Description "Use Cases":
 - Logo 1920×1080 (32-bit PNG, transparent) + background 1920×1080 (24-bit PNG/JPG)
 - Icon 512×423 PNG
 - Four 1920×1080 JPG screenshots ≤ 500 kB: setup, pairing, image playback, video playback
-- Privacy-policy URL; support e-mail `support@screentinker.net` (must match `config.xml`)
+- Privacy-policy URL; support e-mail `support@screentinker.com` (must match `config.xml`)
 
 ## 5. Known gaps still open after 2026-09-18
 

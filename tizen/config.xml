@@ -4,7 +4,7 @@
     <tizen:application id="ScrnTinkr1.ScreenTinker" package="ScrnTinkr1" required_version="2.4"/>
     <tizen:profile name="tv"/>
     <name>ScreenTinker</name>
-    <author email="support@screentinker.net">ScreenTinker</author>
+    <author email="support@screentinker.com">ScreenTinker</author>
     <description>ScreenTinker digital signage player</description>
     <icon src="icon.png"/>
     <content src="index.html"/>

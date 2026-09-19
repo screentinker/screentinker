@@ -3,7 +3,7 @@
 ## Company
 ByteTinker LLC (byte​tinker) - developer of ScreenTinker
 Website: https://screentinker.com   Repo: https://github.com/screentinker/screentinker
-Support: support@screentinker.net
+Support: support@screentinker.com
 
 ## Request (one line)
 Partner Seller membership so that ScreenTinker's Tizen signage application can be distributed to
