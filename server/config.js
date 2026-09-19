@@ -85,6 +85,18 @@ module.exports = {
   // one running identical code. See server/lib/mesh/node-identity.js.
   meshMinNodeVersion: process.env.MESH_MIN_NODE_VERSION || '2.0.0-0',
 
+  /*
+   * Scale-out (docs/scale-out-design.md §5.2, §10). A replica forwards every write for a COPIED
+   * workspace here. ⚠️ OPERATOR-TYPED, NO DEFAULT (I9): nothing learns this from the edge, nothing
+   * discovers it, and `test_no_builtin_primary_url` asserts no host-shaped literal is ever used as
+   * a fallback. Unset means writes for copied workspaces answer 409 read_only_replica.
+   * PRIMARY_REDIRECT=1 answers 307 instead of proxying — only for a deployment where both nodes
+   * share an origin behind one load balancer, because browsers drop Authorization on a
+   * cross-origin redirect.
+   */
+  primaryUrl: String(process.env.PRIMARY_URL || '').trim().replace(/\/+$/, '') || null,
+  primaryRedirect: ['1', 'true', 'yes'].includes(String(process.env.PRIMARY_REDIRECT || '').toLowerCase()),
+
   /* ==========================================================================================
    * PLUGINS — off by default and INVISIBLE.
    *

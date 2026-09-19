@@ -130,6 +130,11 @@ can change it under **Servers → Rename**. The new name reaches every peer on t
 travels upward only, so nobody above can rename your server for you. Names are labels, never
 identifiers: routing and permissions key on the node id, which never changes.
 
+**A replica** is a server that holds a live copy of another server's workspaces and serves their
+dashboards, so operators far from the primary — or many of them — read locally while every change
+still goes to the one server that owns the data. It is the same pairing with one more grant; see
+[docs/scale-out.md](docs/scale-out.md).
+
 **Topology** shows the estate as a tree: which servers are direct neighbours, which are further
 away, how many hops a screen's data crosses to reach you, and which server relayed it.
 
@@ -212,6 +217,8 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `MESH_ALLOW_UPLINK` | Let this server report to another one. | `false` |
 | `MESH_MAX_DEPTH` | Longest chain of linked servers. | `2` |
 | `MESH_MIN_NODE_VERSION` | Oldest peer version this server will pair with. | `2.0.0-0` |
+| `PRIMARY_URL` | On a replica: where writes for copied workspaces are forwarded. No default — unset, a replica is read-only. See [Scale-out](docs/scale-out.md). | unset |
+| `PRIMARY_REDIRECT` | Answer those writes with a `307` to `PRIMARY_URL` instead of proxying. Only behind one load balancer. | `false` |
 | `PLUGINS_ENABLED` | Load the plugin system (widget types, data-source resolvers, optional routes). Off by default and invisible — see [Plugins](docs/plugins.md). | unset |
 | `PLUGINS_DIR` | Operator-installed plugins. Survives `git pull`. | `$DATA_DIR/plugins` |
 | `PLUGIN_INBOX_DIR` | Quarantine for uploaded plugin zips. Not a plugin root. | `$DATA_DIR/plugin-inbox` |

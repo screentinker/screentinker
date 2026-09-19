@@ -17,6 +17,7 @@ module.exports = function setupWebSockets(io) {
    * its client library and the backpressure accounting into every ordinary install's memory to do
    * nothing.
    */
+  let replica = null;
   let meshNs = null;
   const config = require('../config');
   if (config.meshAcceptEnrollment) {
@@ -44,9 +45,23 @@ module.exports = function setupWebSockets(io) {
            * well. Recording that we HEARD from it is true regardless of whether we managed to keep
            * what it said, and conflating the two would show a healthy site as offline (I6).
            */
+          onConnect: (edge) => { if (replica) replica.onConnect(edge); },
           onEnvelope: (edge, env, meta) => {
             store.touchEdge(db, edge.id);
             if (meta && meta.relayOnly) return;   // I5: relayed, not interpreted, not stored
+
+            /*
+             * Scale-out: a replica edge sees the same stream. A change-notice is consumed here
+             * (it is a nudge to pull, never a row); a device-summary is ALSO handed over so
+             * liveness lands on the copied devices row. Everything else falls through to the
+             * mirror store exactly as before.
+             */
+            if (replica) {
+              try {
+                if (meta && Array.isArray(meta.batch)) { for (const item of meta.batch) replica.onEnvelope(edge, item); }
+                else if (replica.onEnvelope(edge, env)) return;
+              } catch (e) { /* the copy is best-effort; the mirror below still lands */ }
+            }
 
             /*
              * ⚠️ A BATCH IS APPLIED IN ONE TRANSACTION, and its items IN ORDER.
@@ -84,6 +99,17 @@ module.exports = function setupWebSockets(io) {
          * deployment shape this feature exists for.
          */
         if (meshNs && meshNs.readFrom) {
+          /*
+           * Scale-out replica loop (lib/mesh/replica.js): for every down edge carrying
+           * serves-dashboard + workspace-replication, keep a row copy of the shared workspaces by
+           * asking through readFrom. Started only here, because readFrom is the only way it may
+           * obtain a row, and readFrom exists only once the mesh namespace is up.
+           */
+          try {
+            replica = require('../lib/mesh/replica').createReplica(db, { readFrom: meshNs.readFrom, logger: console });
+            replica.start();
+            global.__meshReplica = replica;
+          } catch (e) { console.warn(`[mesh] replica loop not started: ${e && e.message}`); }
           global.__meshReadFrom = meshNs.readFrom;
           // Same publication as the read side: routes reach the live socket layer through this
           // rather than importing it, because the sockets are constructed after routes are mounted.

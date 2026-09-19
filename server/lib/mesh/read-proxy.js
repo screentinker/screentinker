@@ -55,6 +55,16 @@ const READABLE = Object.freeze([
   { pattern: '/api/groups',                   grant: 'identity',         scope: 'workspace' },
   { pattern: '/api/playlists',                grant: 'content-metadata', scope: 'workspace' },
   { pattern: '/api/playlists/:id',            grant: 'content-metadata', scope: 'workspace' },
+  /*
+   * Scale-out (docs/scale-out-design.md §1.4). The replica's copy is built from these two and
+   * nothing else: a bounded page of one table for the initial copy, and the change log after a
+   * revision for everything since. Both are answered on the read worker's readonly handle like
+   * every other row here. Content BYTES are not on this list: a replica fetches them from
+   * PRIMARY_URL over plain HTTP with the requesting user's own token (lib/replica-proxy.js), so the
+   * primary's ordinary content authorisation answers, not a mesh grant.
+   */
+  { pattern: '/api/mesh/snapshot',            grant: 'workspace-replication', scope: 'workspace' },
+  { pattern: '/api/mesh/changes',             grant: 'workspace-replication', scope: 'workspace' },
 ]);
 
 /*

@@ -38,6 +38,17 @@ const CAPABILITIES = Object.freeze({
     // ⚠️ Phase 4: proof-of-play must never be downsampled — averaged evidence is not evidence.
     requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
   },
+  /*
+   * Scale-out (docs/scale-out-design.md). This node holds a full-fidelity ROW COPY of the workspaces
+   * a child shares under the `workspace-replication` grant, in its own tables, and serves the
+   * dashboard for them read-only. It is still a capability, not a permission: declaring it with a
+   * health-only grant gets a fleet page and nothing more. Writes for a copied workspace are never
+   * applied here — they are forwarded to the operator-typed PRIMARY_URL or refused (I9, I10).
+   */
+  'serves-dashboard': {
+    summary: 'Serves a read-only dashboard from a copy of the workspaces a server below shares',
+    requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
+  },
   'redistributes-content': {
     summary: 'Keeps media it was sent, so it can pass it on to servers below it',
     /*

@@ -1814,6 +1814,27 @@ const migrations = [
     source_ip      TEXT
   )`,
   "CREATE INDEX IF NOT EXISTS idx_support_grants_expires ON support_grants(expires_at)",
+  // Scale-out C1 (docs/scale-out-design.md §11). All additive; a stock install gets three NULL
+  // columns and two empty tables and nothing reads them.
+  //   workspaces.origin_node_id — NULL means "mine". Set on a copied workspace to the node UUID of
+  //                               the primary that owns it; it is the ONE column that decides
+  //                               whether a write is local or must go to the primary.
+  //   workspaces.replica_rev/replica_as_of — how far the copy has been applied, and when.
+  //   mesh_edges.acked_rev      — on the primary: the change-log position a replica has confirmed.
+  //   mesh_change_log           — on the primary, filled by triggers that exist ONLY while an up
+  //                               edge carries workspace-replication (lib/mesh/replication.js);
+  //                               never populated by application code.
+  //   (the three workspaces columns are added below the multitenancy phase, where the table exists)
+  "ALTER TABLE mesh_edges ADD COLUMN acked_rev INTEGER",
+  `CREATE TABLE IF NOT EXISTS mesh_change_log (
+    rev          INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT NOT NULL,
+    table_name   TEXT NOT NULL,
+    row_id       TEXT NOT NULL,
+    op           TEXT NOT NULL CHECK (op IN ('upsert','delete')),
+    ts           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_mesh_change_log_ws ON mesh_change_log(workspace_id, rev)",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
@@ -2637,6 +2658,12 @@ try {
   // device flag must all be on. The publish secret is per device and rotatable, never the go2rtc
   // admin password. See docs/live-video.md and lib/go2rtc.js.
   try { db.prepare('ALTER TABLE workspaces ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] workspaces.live_video_enabled added (default off)'); } catch (_) { /* present */ }
+  // Scale-out C1 (docs/scale-out-design.md §3.3): NULL means "mine". Set on a copied workspace to
+  // the node UUID of the primary that owns it — the ONE column that decides whether a write is
+  // local or must go to the primary. replica_rev/replica_as_of record how far the copy is applied.
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN origin_node_id TEXT').run(); console.log('[migrate] workspaces.origin_node_id added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN replica_rev INTEGER').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN replica_as_of INTEGER').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE devices ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
   // #talk: per-org enablement for the voice intercom / PA feature (off by default).
   try { db.prepare('ALTER TABLE organizations ADD COLUMN talk_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] organizations.talk_enabled added (default off)'); } catch (_) { /* present */ }

@@ -45,6 +45,12 @@ const PAYLOAD_TYPES = Object.freeze({
   'proof-of-play': 1,
   'tombstone': 1,
   /*
+   * Scale-out: "my change log has advanced to rev N for workspace W". Tiny, coalesced, and the
+   * replica answers it by PULLING (mesh:read /api/mesh/changes) — the rows themselves never ride
+   * an envelope, so a burst of writes is one notice and one bounded read, never a flood upward.
+   */
+  'change-notice': 1,
+  /*
    * ⚠️ WHAT THE CHILD HAS DECIDED THIS PARENT MAY DO — A COURTESY, NEVER AN AUTHORITY.
    *
    * The hub cannot otherwise know it has been granted anything: the grant lives on the child, is

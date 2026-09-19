@@ -390,6 +390,11 @@ function summariseError(raw) {
  * Origin and path, never the query. "Which widget is failing" is the useful half; the query string
  * is where tokens and identifiers live, and it is not needed to answer that question.
  */
+/** The query string of a proxied read, as URLSearchParams (empty when there is none). */
+function queryOf(url) {
+  try { return new URL(String(url || ''), 'http://127.0.0.1').searchParams; } catch (e) { return new URLSearchParams(); }
+}
+
 function stripQuery(url) {
   if (typeof url !== 'string' || !url) return null;
   try {
@@ -554,6 +559,27 @@ function answerRead(db, edge, req) {
       const rows = db.prepare('SELECT id, name, workspace_id FROM device_groups').all();
       return { ok: true, rows: readProxy.scopeRows(rows, shared), asOf: nowSec() };
     } catch (e) { return { ok: true, rows: [], asOf: nowSec() }; }
+  }
+
+  /*
+   * Scale-out (docs/scale-out-design.md §4): the two reads a replica's copy is built from. The
+   * workspace set is THIS edge's shared list, decided here — a replica names no workspace and is
+   * answered for exactly what was granted. "Share all" (an empty list, owner-only) means every
+   * workspace this node owns; a workspace that is itself a copy (origin_node_id set) is never
+   * re-shared, so a replica of a replica cannot be assembled by accident.
+   */
+  if (path === '/api/mesh/snapshot' || path === '/api/mesh/changes') {
+    const replication = require('./replication');
+    const q = queryOf(req.path);
+    const wsIds = shared && shared.length
+      ? shared
+      : db.prepare('SELECT id FROM workspaces WHERE origin_node_id IS NULL').all().map((w) => w.id);
+    if (path === '/api/mesh/changes') {
+      const r = replication.changesSince(db, wsIds, Number(q.get('since')) || 0, Number(q.get('limit')) || 500);
+      return { ok: true, ...r, workspaces: wsIds, asOf: nowSec() };
+    }
+    const r = replication.snapshotPage(db, String(q.get('table') || ''), wsIds, q.get('after'), Number(q.get('limit')) || 500);
+    return r.ok ? { ...r, asOf: nowSec() } : r;
   }
 
   if (path === '/api/playlists') {

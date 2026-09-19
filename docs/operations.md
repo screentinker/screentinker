@@ -358,6 +358,11 @@ installed it. Run the app — or its tests — under a different major version a
 one clear error. Use the same Node the service runs. See [Upgrading Node.js](#upgrading-nodejs)
 before changing it deliberately.
 
+**A replica shares `JWT_SECRET` with its primary, and login always proxies.** A replica
+([docs/scale-out.md](scale-out.md)) never verifies a password — copied users have no hash — so
+`JWT_SECRET` must be the same value on both nodes or a session minted by the primary is refused
+by the replica. Rotate it on both at once.
+
 **SQLite foreign keys are off unless enabled per connection.** A declared `ON DELETE CASCADE` does
 not fire on its own, so deleting a parent row can leave orphaned children. Check with
 `PRAGMA foreign_key_check;` after any bulk delete.

@@ -16,6 +16,27 @@ what to enter for the reviewer.
 
 ### Added
 
+**Scale-out, phase C1: one writer, many readers.** A second server can now hold a live, read-only
+copy of another server's workspaces and serve their dashboards — the same tables, the same 40
+route files, no mirror schema. It is the mesh, not a new cluster product: the replica is the
+primary's mesh parent, paired with the usual code, carrying a new `serves-dashboard` role and a
+new **workspace-replication** grant whose consent text says, next to the tick, that *passwords,
+tokens and secrets are never copied*. The primary keeps a change log through SQLite triggers that
+exist only while that grant does (`test_change_log_triggers_absent_without_replication_grant`), the
+replica pulls a snapshot then every change over the mesh link, and rows that arrived that way are
+tagged on the workspace (`origin_node_id`). Every write for a copied workspace is caught in the
+tenancy resolver and forwarded to `PRIMARY_URL` with the operator's own token — status, headers and
+body relayed as the primary answered, a `403` staying a `403` — and
+`test_every_mutating_route_passes_resolveTenancy` fails the build on a mutating route that skips
+that resolver. `PRIMARY_URL` has no default; unset, writes answer `409` and nothing is discovered.
+Reads keep working when the primary is down, writes answer `503 primary_unreachable`, and
+`lag_s` reads `null` rather than zero. Sweeps, data-source polling and lifecycle emails run for a
+node's own rows only. Players stay on the primary in this phase; content bytes are fetched through
+per request; playback history is not copied. `server/test/scale-out-e2e.test.js` boots two real
+processes — a self-hosted primary and a hosted-shaped replica — and diffs their answers route by
+route, which is the I8 test ARCHITECTURE.md had been carrying as a gap. Operator guide:
+`docs/scale-out.md`.
+
 **Support access — consent-gated, time-boxed, revocable.** The login page's "Support Access" field
 and the Settings token generator have existed since the first open-source release with no server
 behind them (both endpoints 404'd). They now work, around one rule: a token we sign is only honoured

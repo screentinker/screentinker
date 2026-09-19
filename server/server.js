@@ -17,6 +17,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const config = require('./config');
+const replicaProxy = require('./lib/replica-proxy');
 const VERSION = require('./version');
 const ghcrCheck = require('./lib/ghcr-check');
 
@@ -1145,6 +1146,11 @@ app.get('/api/content/:id/file', (req, res) => {
   if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  // Scale-out (docs/scale-out.md): the row was copied, the bytes were not — fetch through (no cache in C1).
+  if (config.primaryUrl && content.workspace_id && !fs.existsSync(safePath) &&
+      replicaProxy.isCopiedWorkspace(db.prepare('SELECT origin_node_id FROM workspaces WHERE id = ?').get(content.workspace_id))) {
+    return replicaProxy.proxyToPrimary(req, res, config);
+  }
   // Widget boards (logo / background images) render inside the player's sandboxed
   // (opaque-origin) widget iframe, so these image loads are cross-origin. The helmet
   // default CORP: same-origin blocks them (NS_ERROR_DOM_CORP_FAILED, 0 bytes). Allow
@@ -1834,6 +1840,11 @@ app.use('/uploads/content', (req, res, next) => {
    */
   res.removeHeader('Cache-Control');
   res.removeHeader('Content-Disposition');
+  // Scale-out (docs/scale-out.md): a copied workspace's file lives on the primary. Only a name that
+  // belongs to a copied content row is fetched through; anything else stays the miss above.
+  if (config.primaryUrl && replicaProxy.isCopiedUploadName(require('./db/database').db, path.basename(req.path))) {
+    return replicaProxy.proxyToPrimary(req, res, config);
+  }
   res.type('application/json').status(404).json({ error: 'Not found' });
 });
 
@@ -1890,6 +1901,15 @@ startDataSourcesPoller(io);
 try {
   const { startMeshUplinks } = require('./services/mesh-uplink');
   meshUplinks = startMeshUplinks(require('./db/database').db, { config: require('./config') });
+  /*
+   * Scale-out: the change-log triggers exist only while an up edge carries workspace-replication,
+   * and the uplink service maintains them. With the flag OFF that service never runs, so a set left
+   * behind by an operator who turned the flag off is dropped here — a stock install must have none,
+   * and `test_change_log_triggers_absent_without_replication_grant` checks exactly that.
+   */
+  if (!require('./config').meshAllowUplink) {
+    try { require('./lib/mesh/replication').ensureTriggers(require('./db/database').db, { wanted: false }); } catch (e) { /* best effort */ }
+  }
 } catch (e) {
   console.warn(`[mesh] uplinks not started: ${e && e.message}`);
 }

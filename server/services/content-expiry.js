@@ -12,6 +12,8 @@
 // DISTINCT published playlists that referenced an expired item — never a fleet-wide reload.
 
 const { db } = require('../db/database');
+// Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
+const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 
 let io = null;
 
@@ -26,7 +28,7 @@ function startContentExpiry(socketIo) {
 // and playlists are republished (snapshot updated); only the device push is skipped.
 function sweepExpiredContent(socketIo = io) {
   const expired = db.prepare(
-    "SELECT id FROM content WHERE is_active = 1 AND expires_at IS NOT NULL AND expires_at <= strftime('%s','now')"
+    `SELECT id FROM content WHERE is_active = 1 AND expires_at IS NOT NULL AND expires_at <= strftime('%s','now') AND ${LOCAL_ROWS_SQL('content')}`
   ).all().map(r => r.id);
 
   if (expired.length === 0) return { expired: [], republished: [] };

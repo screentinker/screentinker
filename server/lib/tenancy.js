@@ -28,6 +28,8 @@
 
 const { db } = require('../db/database');
 const { isPlatformRole, isPlatformStaff } = require('../middleware/auth');
+const replicaProxy = require('./replica-proxy');
+const config = require('../config');
 
 function membershipOf(userId, workspaceId) {
   return db.prepare(
@@ -151,6 +153,18 @@ function resolveTenancy(req, res, next) {
     req.workspaceRole = null;
     req.orgRole = null;
     req.actingAs = false;
+  }
+
+  /*
+   * Scale-out (docs/scale-out-design.md §5.2): THE interceptor. A workspace whose origin_node_id is
+   * set is a copy held on this replica; a request that could change it is forwarded to the primary
+   * (or refused) and never reaches a route handler here. One check, on the row the resolver already
+   * loaded, on every mutating route — test_every_mutating_route_passes_resolveTenancy holds that
+   * "every" is true, because a route that skipped this resolver would be a second writer.
+   */
+  if (req.workspace && replicaProxy.shouldIntercept(req, req.workspace)) {
+    replicaProxy.proxyToPrimary(req, res, config);
+    return;
   }
 
   next();

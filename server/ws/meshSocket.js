@@ -29,6 +29,7 @@ const pairing = require('../lib/mesh/pairing');
  * @param {() => boolean} deps.acceptEnrollment   the MESH_ACCEPT_ENROLLMENT flag
  * @param {(tokenHash: string) => object|null} deps.findEdgeByTokenHash
  * @param {(edge, env) => void} deps.onEnvelope   persist an accepted payload
+ * @param {(edge) => void}      [deps.onConnect]  optional; called once per accepted connection
  * @param {() => number} [deps.now]
  * @param {object} [deps.logger]
  */
@@ -91,6 +92,8 @@ function setupMeshSocket(io, deps) {
     let edge = socket.data.edge;
     const childId = socket.data.childNodeId;
     log.log(`[mesh] node ${childId} connected on edge ${edge.id}`);
+    // Optional: a replica pull loop wants to know the moment its primary is back, not at the next poll.
+    if (typeof deps.onConnect === 'function') { try { deps.onConnect(edge); } catch (e) { log.warn(`[mesh] onConnect: ${e && e.message}`); } }
 
     /*
      * ⚠️ WHAT THIS PARENT UNDERSTANDS, STATED — never assumed by the child.

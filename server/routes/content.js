@@ -8,6 +8,7 @@ const { devicesPlayingContent } = require('../lib/devices-playing');
 const upload = require('../middleware/upload');
 const multer = require('multer');   // for MulterError only — the configured instance is `upload` above
 const config = require('../config');
+const replicaProxy = require('../lib/replica-proxy');
 const { checkStorageLimit, checkRemoteUrl } = require('../middleware/subscription');
 const { cleanUserText } = require('../middleware/sanitize');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
@@ -842,6 +843,19 @@ function hardenUploadResponse(res, filename) {
   }
 }
 
+/*
+ * Scale-out (docs/scale-out.md): the row was copied from the primary but the bytes were not. When
+ * the local file is absent and the row's workspace is a copy, the request is forwarded to the
+ * primary as-is (the caller's token travels with it) and the answer streamed back. No cache in C1.
+ */
+function fetchThroughIfCopied(req, res, content, localPath) {
+  if (!config.primaryUrl || !content.workspace_id || fs.existsSync(localPath)) return false;
+  const ws = db.prepare('SELECT origin_node_id FROM workspaces WHERE id = ?').get(content.workspace_id);
+  if (!replicaProxy.isCopiedWorkspace(ws)) return false;
+  replicaProxy.proxyToPrimary(req, res, config);
+  return true;
+}
+
 // Serve content file
 router.get('/:id/file', (req, res) => {
   const content = checkContentRead(req, res);
@@ -850,6 +864,7 @@ router.get('/:id/file', (req, res) => {
   // Prevent path traversal
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  if (fetchThroughIfCopied(req, res, content, safePath)) return;
   hardenUploadResponse(res, content.filepath);
   res.sendFile(safePath);
 });
@@ -861,6 +876,7 @@ router.get('/:id/thumbnail', (req, res) => {
   if (!content.thumbnail_path) return res.status(404).json({ error: 'Thumbnail not found' });
   const safePath = path.resolve(config.contentDir, path.basename(content.thumbnail_path));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  if (fetchThroughIfCopied(req, res, content, safePath)) return;
   hardenUploadResponse(res, content.thumbnail_path);
   res.sendFile(safePath);
 });

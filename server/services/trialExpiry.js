@@ -43,6 +43,7 @@ const config = require('../config');
 const { db } = require('../db/database');
 const emailSvc = require('./email');
 const { TRIAL_DAYS, expireTrial, findExpiredTrialUserIds } = require('../middleware/subscription');
+const { LOCAL_USERS_SQL } = require('../lib/replica-proxy');
 
 const SWEEP_HOUR_UTC = 14;     // 14:00 UTC daily: mid-morning US, afternoon EU — the emails land in a workday
 const ENDING_SOON_DAYS = 3;
@@ -184,7 +185,8 @@ const ENDING_SOON_SQL = `
      AND u.stripe_subscription_id IS NULL
      AND u.plan_id = u.trial_plan
      AND u.trial_ending_email_sent_at IS NULL
-     AND ${REACHABLE}`;
+     AND ${REACHABLE}
+     AND ${LOCAL_USERS_SQL('u')}`;
 
 // Downgraded (by the sweep or the lazy path) within the window, still Free, not paid, not yet told.
 const EXPIRED_SQL = `
@@ -196,7 +198,8 @@ const EXPIRED_SQL = `
      AND u.plan_id = 'free'
      AND u.stripe_subscription_id IS NULL
      AND u.trial_expired_email_sent_at IS NULL
-     AND ${REACHABLE}`;
+     AND ${REACHABLE}
+     AND ${LOCAL_USERS_SQL('u')}`;
 
 const USER_DEVICE_IDS_SQL = 'SELECT id FROM devices WHERE user_id = ?';
 

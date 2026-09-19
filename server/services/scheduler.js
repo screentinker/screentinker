@@ -1,4 +1,6 @@
 const { db } = require('../db/database');
+// Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
+const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 const { _localParts } = require('../lib/schedule-eval');
 const playerCapabilities = require('../lib/player-capabilities');
 
@@ -22,7 +24,7 @@ function evaluateSchedules(ioOverride) {
   if (!deviceNs) return;
 
   const now = new Date();
-  const onlineDevices = db.prepare("SELECT * FROM devices WHERE status = 'online'").all();
+  const onlineDevices = db.prepare(`SELECT * FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
   for (const device of onlineDevices) {
     // #12 scheduled reboot — evaluated independently of playlist/layout overrides.

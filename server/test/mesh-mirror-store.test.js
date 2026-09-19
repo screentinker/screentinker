@@ -52,7 +52,9 @@ function freshDb() {
       share_upward INTEGER NOT NULL DEFAULT 0,
       peer_shares_upward INTEGER NOT NULL DEFAULT 0,
       -- Whether this operator passes received content on to that client without being asked.
-      auto_forward INTEGER NOT NULL DEFAULT 0);
+      auto_forward INTEGER NOT NULL DEFAULT 0,
+      -- Scale-out: the change-log position a replica has acknowledged.
+      acked_rev INTEGER);
     CREATE TABLE mesh_mirror_nodes (
       origin_node_id TEXT PRIMARY KEY, via_edge_id TEXT NOT NULL, node_version TEXT,
       -- What the node calls itself. Kept alongside node_version because it has the same lifecycle:

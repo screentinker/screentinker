@@ -1,4 +1,6 @@
 const { db, pruneStatusLog, pruneTelemetryRetention, playsMigrationTouched } = require('../db/database');
+// Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
+const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 const config = require('../config');
 const { deviceRoom, emitToWorkspace } = require('../lib/socket-rooms');
 const statusLogWriter = require('../lib/status-log-writer');
@@ -71,7 +73,7 @@ function startHeartbeatChecker(io) {
     accrueUsage(now).catch(() => {});
 
     // Check database for devices that should be offline
-    const onlineDevices = db.prepare("SELECT id, last_heartbeat FROM devices WHERE status = 'online'").all();
+    const onlineDevices = db.prepare(`SELECT id, last_heartbeat FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
     for (const device of onlineDevices) {
       const conn = deviceConnections.get(device.id);

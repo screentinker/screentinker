@@ -434,7 +434,13 @@ test('every existing install becomes a node with zero edges (migration is a no-o
        *   mesh_pull_tickets — short-lived, single-asset, stored hashed, bound to a filepath.
        *   mesh_write_ops — a retried write returns its first outcome instead of applying twice.
        */
-      'mesh_client_access', 'mesh_clients', 'mesh_content_provenance', 'mesh_edges',
+      /*
+       * Scale-out C1 added one, empty on every install and written by NO application code:
+       *   mesh_change_log — filled only by triggers that exist while an up edge carries the
+       *     workspace-replication grant (lib/mesh/replication.js). Its emptiness here is also what
+       *     test_change_log_triggers_absent_without_replication_grant checks from the outside.
+       */
+      'mesh_change_log', 'mesh_client_access', 'mesh_clients', 'mesh_content_provenance', 'mesh_edges',
       'mesh_mirror_alerts', 'mesh_mirror_devices', 'mesh_mirror_nodes', 'mesh_mirror_play_logs',
       'mesh_mirror_workspaces', 'mesh_node', 'mesh_node_paths', 'mesh_pairing_codes',
       'mesh_pull_tickets', 'mesh_tombstones', 'mesh_write_ops',

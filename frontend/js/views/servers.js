@@ -912,6 +912,10 @@ const GRANTS = [
   ['diagnostics', 'Why something went wrong', ''],
   ['network-wan', 'The public internet address the screens appear from', '⚠️ Locates the premises — a public address is geolocatable to a town or building.'],
   ['display-capture', 'Actual images of what is on screen', '⚠️ Screenshots may contain whatever was on the screen, including anything private behind it.'],
+  // Scale-out (docs/scale-out.md). Last, because it is everything above and the content too. The
+  // consent sentence about secrets stays HERE, next to the tick, not in a help page.
+  ['workspace-replication', 'A complete, live copy of the shared workspaces, so this server can serve their dashboards',
+    '⚠️ Everything in those workspaces — screens, playlists, content, schedules, members — is copied here and kept current. Passwords, tokens and secrets are never copied. This server becomes a read-only replica: every change made here is forwarded to the other server (PRIMARY_URL), and if that server is unreachable, changes fail while reads continue.'],
 ];
 
 /*
@@ -946,7 +950,12 @@ function renderMintPanel(host, caps) {
     const grant = [...host.querySelectorAll('#grantList input:checked')].map((c) => c.value);
     const out = host.querySelector('#mintOut');
     try {
-      const r = await api.post('/mesh/pair/code', { grant, capabilities: ['consumes-telemetry'] });
+      // A replication grant is what makes THIS server a replica of the other: it takes on the
+      // serves-dashboard role for the code, alongside the ordinary telemetry consumer role.
+      const capabilities = grant.includes('workspace-replication')
+        ? ['serves-dashboard', 'consumes-telemetry']
+        : ['consumes-telemetry'];
+      const r = await api.post('/mesh/pair/code', { grant, capabilities });
       out.innerHTML = `
         <div style="font-size:28px;letter-spacing:4px;font-family:monospace">${esc(r.code)}</div>
         <div style="color:var(--text-muted);font-size:12px">

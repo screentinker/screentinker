@@ -29,6 +29,7 @@ const { createLocalApply } = require('../lib/mesh/local-apply');
 const envelope = require('../lib/mesh/envelope');
 const mirror = require('../lib/mesh/mirror');
 const store = require('../lib/mesh/store');
+const replication = require('../lib/mesh/replication');
 
 /*
  * How often a child reports. ⚠️ Not per heartbeat. A 400-screen node whose panels beat every 30s
@@ -210,7 +211,69 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
     link.sendMany(bulk, { nodeId: me, ancestry: [me] });
   }
 
+  /* ======================= scale-out: change log, notices, acks ======================= */
+
+  function recordAck(edge, req) {
+    try {
+      const path = String((req && req.path) || '');
+      if (!path.startsWith('/api/mesh/changes')) return;
+      const since = Number(new URL(path, 'http://127.0.0.1').searchParams.get('since'));
+      if (!Number.isFinite(since) || since < 0) return;
+      db.prepare('UPDATE mesh_edges SET acked_rev = MAX(COALESCE(acked_rev, 0), ?) WHERE id = ?').run(since, edge.id);
+    } catch (e) { /* an ack is advisory; never fail a read over it */ }
+  }
+
+  /*
+   * ⚠️ TRIGGERS FOLLOW THE GRANT, and are re-evaluated on every refresh: revoke the last
+   * workspace-replication edge and the triggers go with it in the same call, so a node that stopped
+   * being a primary stops paying for a change log the moment its operator says so.
+   */
+  function syncTriggers() {
+    try {
+      const r = replication.ensureTriggers(db);
+      if (r.action === 'created' || r.action === 'dropped') {
+        logger.log(`[mesh] change-log triggers ${r.action} (${r.count}) — workspace-replication ${r.action === 'created' ? 'granted' : 'no longer granted'}`);
+      }
+    } catch (e) {
+      logger.warn(`[mesh] could not maintain change-log triggers: ${e && e.message}`);
+    }
+  }
+
+  /*
+   * Notices are a poll of MAX(rev), once a second, sent only when it moved. Cheap (an indexed max),
+   * naturally debounced (a bulk publish is one notice), and it needs no hook in any write path.
+   * The replica answers by pulling; nothing here ever pushes a row.
+   */
+  let lastNoticedRev = 0;
+  let noticeTimer = null;
+  function noticeTick() {
+    let head;
+    try { head = replication.headRev(db); } catch (e) { return; }
+    if (head <= lastNoticedRev) return;
+    lastNoticedRev = head;
+    for (const [edgeId, link] of links) {
+      const edge = db.prepare('SELECT * FROM mesh_edges WHERE id = ?').get(edgeId);
+      if (!edge || edge.revoked_at) continue;
+      if (!store.safeParseArray(edge.grant_categories).includes('workspace-replication')) continue;
+      try {
+        link.send(envelope.createEnvelope({
+          originNodeId: me, type: 'change-notice', bodyVersion: 1,
+          ancestry: [me], originTs: Date.now(), body: { rev: head },
+        }));
+      } catch (e) { /* the 30 s poll on the replica covers a lost notice */ }
+    }
+  }
+  function startNotices() {
+    if (noticeTimer) return;
+    noticeTimer = setInterval(noticeTick, 1000);
+    if (noticeTimer.unref) noticeTimer.unref();
+  }
+
+  let pruneCounter = 0;
+
   function tick() {
+    // Every ~10 minutes: drop change-log rows every replica has acknowledged (7-day floor).
+    if (++pruneCounter % 10 === 0) { try { replication.pruneLog(db); } catch (e) { /* best effort */ } }
     for (const [edgeId, link] of links) {
       const edge = db.prepare('SELECT * FROM mesh_edges WHERE id = ?').get(edgeId);
       /*
@@ -230,6 +293,7 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
   }
 
   function refresh() {
+    syncTriggers();
     /*
      * ⚠️ AN EXISTING LINK IS TOLD AT ONCE, not at the next tick.
      *
@@ -272,6 +336,13 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
             if (!fresh || fresh.revoked_at) {
               return { ok: false, reason: 'This connection is no longer authorised.' };
             }
+            /*
+             * Scale-out: a replica asking for changes after rev N has, by construction, applied
+             * everything up to N — so the ask IS the acknowledgement. Recorded here, on the thread
+             * that holds the writable handle (the worker answering the read is readonly by design),
+             * and it is what lets the change log be pruned behind the slowest replica.
+             */
+            recordAck(fresh, req);
             return reads.run(fresh, req);
           },
 
@@ -442,6 +513,7 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
   refresh();
   tick();
   timer = setInterval(tick, REPORT_INTERVAL_MS);
+  startNotices();
   // ⚠️ Never hold the process open for an observer relationship.
   if (timer.unref) timer.unref();
 
@@ -452,6 +524,7 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
     readMode: () => reads.mode,
     stop() {
       if (timer) clearInterval(timer);
+      if (noticeTimer) clearInterval(noticeTimer);
       reads.stop();
       for (const l of links.values()) { try { l.stop(); } catch (e) { /* best effort */ } }
       links.clear();

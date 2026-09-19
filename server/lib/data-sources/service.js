@@ -11,6 +11,7 @@ const { resolveIcalData } = require('./ical-resolver');
 const pluginRegistry = require('../plugins/registry');
 const { makePluginFetch } = require('../plugins/egress');
 const { decryptSecrets, fieldsForDataSource } = require('../plugins/secrets');
+const { LOCAL_ROWS_SQL } = require('../replica-proxy');
 
 // Bound how many remote calendar feeds may be in flight at once across the whole
 // process. Data source syncs (and `/test`) can fire several fetches near-simultaneously;
@@ -53,7 +54,9 @@ const inFlight = new Set();
 function pollDueDataSources() {
   try {
     const nowSec = Math.floor(Date.now() / 1000);
-    const rows = db.prepare('SELECT id, workspace_id, slug, name, type, config, last_fetched_at, last_status FROM data_sources').all();
+    // Scale-out: a copied data source is fetched by the primary; its cached_data arrives by
+    // replication. The replica could not decrypt its credentials anyway.
+    const rows = db.prepare(`SELECT id, workspace_id, slug, name, type, config, last_fetched_at, last_status FROM data_sources WHERE ${LOCAL_ROWS_SQL('data_sources')}`).all();
     for (const row of rows) {
       if (inFlight.has(row.id)) continue;
       let config = {};

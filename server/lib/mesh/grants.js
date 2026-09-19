@@ -86,6 +86,20 @@ const READ_CATEGORIES = Object.freeze({
     fields: 'device events, status log with offline reason, debug logs',
     consequence: 'Can contain error text and URLs from the running content.',
   },
+  /*
+   * Scale-out (docs/scale-out-design.md §3). A faithful copy, so the projection is "every column
+   * EXCEPT the blocklist" in lib/mesh/replication.js — the one delete-based filter in the mesh, and
+   * a schema test (test_replication_blocklist_covers_every_secret_column) is what keeps a secret
+   * column added later from shipping by omission.
+   */
+  'workspace-replication': {
+    summary: 'A full, kept-current copy of the shared workspaces for a read-only dashboard',
+    fields: 'every configuration and state row of the shared workspaces: content, playlists, ' +
+            'schedules, layouts, devices, groups, activity, play history, members',
+    consequence: 'The other server holds a complete copy of these workspaces and keeps it current. ' +
+                 'Passwords, tokens and secrets are never copied.',
+    implies: ['health', 'identity', 'content-metadata', 'proof-of-play', 'diagnostics'],
+  },
 });
 
 /**

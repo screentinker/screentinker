@@ -16,6 +16,7 @@
 
 const { db } = require('../db/database');
 const { sendEmail } = require('./email');
+const { LOCAL_USERS_SQL } = require('../lib/replica-proxy');
 
 const NUDGE_HOUR_UTC = 15; // 15:00 UTC daily
 
@@ -95,6 +96,7 @@ const ELIGIBLE_SQL = `
       SELECT 1 FROM workspace_members wm
       JOIN devices d2 ON d2.workspace_id = wm.workspace_id
       WHERE wm.user_id = u.id)
+    AND ${LOCAL_USERS_SQL('u')}
 `;
 
 function isHosted() {

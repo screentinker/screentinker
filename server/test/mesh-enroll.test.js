@@ -51,6 +51,8 @@ function freshDb() {
       peer_shares_upward INTEGER NOT NULL DEFAULT 0,
       -- Whether this operator passes received content on to that client without being asked.
       auto_forward INTEGER NOT NULL DEFAULT 0,
+      -- Scale-out: the change-log position a replica has acknowledged (lib/mesh/replication.js).
+      acked_rev INTEGER,
       UNIQUE (peer_node_id, direction));
     CREATE TABLE workspaces (id TEXT PRIMARY KEY, organization_id TEXT, name TEXT);
     CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT);

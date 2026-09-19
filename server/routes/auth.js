@@ -217,6 +217,18 @@ router.post('/register', (req, res) => {
 });
 
 // Login
+/** A user whose every workspace membership is on a COPIED workspace exists here only as a copy. */
+function isCopiedUser(userId) {
+  try {
+    const r = db.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN w.origin_node_id IS NOT NULL THEN 1 ELSE 0 END) AS copied
+        FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
+       WHERE m.user_id = ?`).get(userId);
+    return !!(r && r.total > 0 && r.copied === r.total);
+  } catch (e) { return false; }
+}
+
 router.post('/login', (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
@@ -329,6 +341,18 @@ router.post('/login', (req, res) => {
   if (loginLockout.isLocked(user.id)) {
     logFailedLogin(email, getClientIp(req), 'Locked out (too many failed passwords)');
     return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  /*
+   * Scale-out (docs/scale-out-design.md §5.3): a COPIED account has no password hash here by
+   * design — the replica must never verify a password, or it has become an identity provider. If
+   * this node holds copied workspaces and a primary is configured, the login goes to the primary
+   * as the user's own request; the token that comes back verifies here (shared JWT_SECRET) and the
+   * copied user row carries the rest. Only for a row that is a copy: a local account with no hash
+   * (SSO-only, provisioned) keeps today's refusal below.
+   */
+  if (!user.password_hash && config.primaryUrl && isCopiedUser(user.id)) {
+    return require('../lib/replica-proxy').proxyToPrimary(req, res, config);
   }
 
   if (!user.password_hash || !bcrypt.compareSync(password, user.password_hash)) {
