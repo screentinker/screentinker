@@ -14,6 +14,7 @@
  * node whose screens would change.
  */
 const os = require('node:os');
+const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 process.env.DATA_DIR = path.join(os.tmpdir(), 'st-meshwrite-' + crypto.randomBytes(4).toString('hex'));
@@ -254,6 +255,17 @@ test('⚠️ a grant with categories but no workspaces does not claim the parent
 test('⚠️ every write category the consent screen offers is enforced by a rule', () => {
   const writeProxy = require('../lib/mesh/write-proxy');
   const enforced = new Set(writeProxy.WRITABLE.map((r) => r.grant));
+  /*
+   * Scale-out C2: `player-events` is enforced by lib/mesh/node-write.js applyPlayerOp (the
+   * player-event / player-provision op types) and by read-proxy's verify-device rule — not by an
+   * HTTP-path rule in WRITABLE, because a player event is not an HTTP request. The source is
+   * checked so the category cannot drift back to "offered and enforced by nothing".
+   */
+  const nodeWrite = fs.readFileSync(path.join(__dirname, '..', 'lib', 'mesh', 'node-write.js'), 'utf8');
+  assert.match(nodeWrite, /writeGrant\.includes\('player-events'\)/, 'player-events must gate applyPlayerOp');
+  const readProxySrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'mesh', 'read-proxy.js'), 'utf8');
+  assert.match(readProxySrc, /writeGrant: 'player-events'/, 'player-events must gate verify-device');
+  enforced.add('player-events');
   for (const name of grants.ALL_WRITE) {
     const meta = grants.WRITE_CATEGORIES[name];
     if (meta && meta.available === false) {

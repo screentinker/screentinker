@@ -26,6 +26,7 @@ const loopLag = require('../services/loop-lag');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings restore
 const incidentClassify = require('../lib/incident-classify'); // offline-cause log: disconnect-reason + connectivity classification
 const pluginHooks = require('../lib/plugins/hooks');
+const playerTermination = require('../lib/mesh/player-termination'); // scale-out C2: players on a replica
 
 // Debounce window for marking a device offline on socket disconnect. Brief
 // flap (Wi-Fi blip, Engine.IO ping miss, server-side eviction-then-reconnect)
@@ -103,22 +104,28 @@ const _insertBackfillPlay = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'playlist', ?)
 `);
 
+/*
+ * Scale-out C2: the timestamps are PARAMETERS, not strftime('now'). A play forwarded by a replica
+ * carries the moment the replica received it (`ts`), and a play that waited in the replica's outbox
+ * through an outage must be recorded at the time it happened, not the time the queue drained —
+ * otherwise a day of proof-of-play collapses onto one second. A local socket passes Date.now().
+ */
 const _insertPlay = db.prepare(`
   INSERT INTO play_logs (device_id, content_id, widget_id, zone_id, content_name, started_at, trigger_type)
-  VALUES (?, ?, ?, ?, ?, strftime('%s','now'), 'playlist')
+  VALUES (?, ?, ?, ?, ?, ?, 'playlist')
 `);
 
 /* Close by rowid — the whole point of remembering it. */
 const _closePlayById = db.prepare(`
-  UPDATE play_logs SET ended_at = strftime('%s','now'),
-    duration_sec = strftime('%s','now') - started_at,
+  UPDATE play_logs SET ended_at = ?,
+    duration_sec = ? - started_at,
     completed = ?
   WHERE rowid = ? AND ended_at IS NULL
 `);
 
 const _closePlay = db.prepare(`
-  UPDATE play_logs SET ended_at = strftime('%s','now'),
-    duration_sec = strftime('%s','now') - started_at,
+  UPDATE play_logs SET ended_at = ?,
+    duration_sec = ? - started_at,
     completed = ?
   WHERE id = (
     SELECT id FROM play_logs
@@ -151,6 +158,7 @@ const { getUserPlan } = require('../middleware/subscription');
 const { deviceRoom, emitToWorkspace } = require('../lib/socket-rooms');
 
 function emitToDeviceWorkspace(dashboardNs, deviceId, event, payload) {
+  if (!dashboardNs) return;   // an applier called before the namespaces exist (a unit test, a mesh write at boot)
   emitToWorkspace(dashboardNs, deviceRoom(deviceId), event, payload);
 }
 
@@ -861,6 +869,48 @@ function buildPlaylistPayload(deviceId) {
   return buildPlaylistPayloadUnchecked(deviceId);
 }
 
+/**
+ * The one INSERT that creates a screen. Called by the local pairing path and — scale-out C2 — by
+ * the `player-provision` mesh op, when a screen pairs THROUGH a replica and this node is the only
+ * place a token may be minted (docs/scale-out-design.md §6).
+ */
+function insertProvisioningRow({ id, pairing_code, token, ip, device_info, attachedNodeId = null }) {
+  db.prepare(`
+    INSERT INTO devices (id, pairing_code, device_token, status, ip_address, android_version, app_version, screen_width, screen_height, render_width, render_height, last_heartbeat, attached_node_id)
+    VALUES (?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'), ?)
+  `).run(
+    id, pairing_code, token, ip || null,
+    device_info?.android_version || null,
+    device_info?.app_version || null,
+    device_info?.screen_width || null,
+    device_info?.screen_height || null,
+    device_info?.render_width || null,
+    device_info?.render_height || null,
+    attachedNodeId
+  );
+}
+
+/**
+ * Scale-out C2, PRIMARY side: provision a screen that paired through a replica. Same row, same
+ * token minting, same fingerprint bookkeeping as the local path; the pairing code is what the
+ * operator will claim in a dashboard. Returns what the replica hands the screen ONCE.
+ */
+function provisionViaReplica({ pairing_code, device_info, fingerprint, hw_fingerprint, ip, nodeId }) {
+  const id = uuidv4();
+  const token = generateDeviceToken();
+  insertProvisioningRow({ id, pairing_code, token, ip, device_info, attachedNodeId: nodeId });
+  if (fingerprint) {
+    try {
+      db.prepare("INSERT INTO device_fingerprints (fingerprint, device_id, last_seen, hw_fingerprint) VALUES (?, ?, strftime('%s','now'), ?) ON CONFLICT(fingerprint) DO UPDATE SET device_id = excluded.device_id, last_seen = excluded.last_seen, hw_fingerprint = COALESCE(excluded.hw_fingerprint, device_fingerprints.hw_fingerprint)")
+        .run(fingerprint, id, hw_fingerprint || null);
+      deviceSettings.applyToDevice(id, fingerprint);
+    } catch (e) { /* settings restore is best effort */ }
+  }
+  emitToDeviceWorkspace(_dashboardNsRef, id, 'dashboard:device-added', db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
+  console.log(`New device registered via replica ${nodeId}: ${id} with pairing code: ${pairing_code}`);
+  return { device_id: id, device_token: token };
+}
+
 // v4 core-pass helpers (module scope; db is a ready singleton at require time).
 const _deviceExistsStmt = db.prepare('SELECT 1 FROM devices WHERE id = ?');
 function deviceExists(id) { return !!(id && _deviceExistsStmt.get(id)); }
@@ -892,6 +942,7 @@ function persistIdentity(deviceId, data) {
  * feature. Returns false only when the sockets are not up yet.
  */
 let _dashboardNsRef = null;
+let _deviceNsRef = null;   // same idea, for the offline applier's wall re-push
 function ingestScreenshot(deviceId, imageB64) {
   if (!deviceId || !imageB64) return false;
   // Same cap as the socket path enforced: max 2MB base64 (~1.5MB image).
@@ -914,6 +965,525 @@ function ingestScreenshot(deviceId, imageB64) {
 }
 
 
+/*
+ * ============================================================================================
+ * EVENT APPLIERS — what a player event DOES, callable as (deviceId, data, ctx).
+ *
+ * Scale-out C2 (docs/scale-out-design.md §6): these used to be the bodies of the socket handlers
+ * below, closing over `socket`. A player connected to a REPLICA sends the same events to that
+ * replica, which forwards each one as a `player-event` write to this node; the write is applied by
+ * calling the very same function the local socket handler calls. One definition per event, and
+ * the socket handler is now a guard (authenticated? this device?) plus a call. `ctx` carries what a
+ * socket used to: `reply(event, payload)` answers the player (locally: socket.emit; over the mesh:
+ * collected and relayed back), `session` holds per-connection state (the once-per-session stranded
+ * sweep), `ip` is the client address the player presented, `source` says which door it came in.
+ * ============================================================================================
+ */
+/** When a forwarded event happened (the replica stamps `ts` on receipt); now, for a local socket. */
+function eventTimeMs(data, ctx) {
+  const ts = data && data.ts;
+  if (ctx && ctx.source === 'replica' && typeof ts === 'number' && Number.isFinite(ts) && ts > 0 && ts <= Date.now() + 60_000) return ts;
+  return Date.now();
+}
+
+const EVENT_APPLIERS = Object.freeze({
+  'info'(deviceId, data, ctx) {
+    const di = data && data.device_info;
+    if (di) { try { applyDeviceInfo(deviceId, di); } catch (e) { /* never crash the socket on a bad info blob */ } }
+  },
+
+  'trigger-status'(deviceId, data, ctx) {
+    const { device_id, status } = data || {};
+    if (!device_id || !status || device_id !== deviceId) return;
+    if (!deviceExists(device_id)) return;
+    try {
+      db.prepare('UPDATE devices SET trigger_status = ?, trigger_status_at = ? WHERE id = ?')
+        .run(JSON.stringify(status).slice(0, 8000), Math.floor(Date.now() / 1000), device_id);
+    } catch (e) {
+      // A diagnostic that can break a device socket is worse than no diagnostic.
+      console.warn(`[trigger] could not store status for ${device_id}: ${e && e.message}`);
+    }
+  },
+
+  'heartbeat'(deviceId, data, ctx) {
+    const { device_id, telemetry } = data || {};
+    // The heartbeat ACK is sent by the socket handler, before authentication (see below).
+    if (!device_id || device_id !== deviceId) return;
+
+    heartbeat.updateHeartbeat(device_id);
+
+    // A heartbeat is the device asserting it is alive. Online is normally broadcast to the panel
+    // only at device:register time (one shot); heartbeats just write the DB. So if the panel
+    // missed that single register-time broadcast (its own socket was mid-reconnect, or the emit
+    // raced the device's reconnect), the row reads 'online' while the card still shows OFFLINE,
+    // until the device's next periodic re-register (up to 5 min on the web/BrightSign player).
+    // Re-assert online to the panel on the offline->online transition so a rebooted device flips
+    // its card back within one heartbeat instead of waiting for the fallback re-register.
+    const prevStatus = db.prepare('SELECT status FROM devices WHERE id = ?').get(device_id);
+    db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), updated_at = strftime('%s','now') WHERE id = ?")
+      .run(device_id);
+    if (prevStatus && prevStatus.status !== 'online') {
+      emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:device-status', { device_id, status: 'online' });
+    }
+
+    // A device row can vanish mid-session — deleted by an operator, or replaced by a re-pair —
+    // while its socket is still heartbeating. The telemetry insert then fails the foreign key,
+    // the safe-socket wrapper reads that throw as a broken handler and disconnects the socket
+    // SERVER-side, and socket.io deliberately does not retry that kind of disconnect. The panel
+    // goes dark until a human reloads it; that happened to a live screen. A heartbeat for a
+    // device that no longer exists is not worth killing a connection over — skip the write and
+    // let the register path answer with unpaired, which is what actually helps it recover.
+    if (telemetry && deviceExists(device_id)) {
+      db.prepare(`
+        INSERT INTO device_telemetry (device_id, battery_level, battery_charging, storage_free_mb, storage_total_mb,
+          ram_free_mb, ram_total_mb, cpu_usage, wifi_rssi, uptime_seconds, local_ip, local_ip6, temperature_c,
+          attached_display, video_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        device_id,
+        telemetry.battery_level ?? null,
+        telemetry.battery_charging ? 1 : 0,
+        telemetry.storage_free_mb ?? null,
+        telemetry.storage_total_mb ?? null,
+        telemetry.ram_free_mb ?? null,
+        telemetry.ram_total_mb ?? null,
+        // Rounded to one decimal at the source (Phase −1). It was stored at full float
+        // precision — 34.700234234333, 87,297 distinct values across 248k rows — and no
+        // surface has ever shown more than a whole percent. Free bandwidth on every mesh
+        // hop, and a smaller index, for a digit nobody can read.
+        typeof telemetry.cpu_usage === 'number' && Number.isFinite(telemetry.cpu_usage)
+          ? Math.round(telemetry.cpu_usage * 10) / 10 : null,
+        telemetry.wifi_rssi ?? null,
+        telemetry.uptime_seconds ?? null,
+        // Device-supplied text headed for a column the dashboard renders: trim and cap it.
+        // 45 chars is the longest legitimate value (a full IPv6 address).
+        typeof telemetry.local_ip === 'string' ? telemetry.local_ip.trim().slice(0, 45) || null : null,
+        // Same treatment for the v6 address. 45 is still the cap: it is the longest legitimate
+        // IPv6 text form (an IPv4-mapped one, `::ffff:255.255.255.255`).
+        typeof telemetry.local_ip6 === 'string' ? telemetry.local_ip6.trim().slice(0, 45) || null : null,
+        // ⚠️ BRIGHTSIGN-ONLY, which is exactly why it LOOKS unused. The Phase −1 audit
+        // measured this at 0 of 248,314 rows and nearly concluded it was dead — but
+        // production has no BrightSign players at all, so the zero measured the FLEET,
+        // not the field. It comes from deviceInfo.getTemperature() in st-bridge.js.
+        typeof telemetry.temperature_c === 'number' && Number.isFinite(telemetry.temperature_c)
+          ? telemetry.temperature_c : null,
+        // Only a finite number is a reading. A panel with no sensor sends nothing, and NaN or
+        // Infinity from a flaky one must land as "no reading" rather than poisoning the column.
+        // Free text from the panel's EDID and the mode the output is driving. Trimmed and
+        // bounded like the address fields above: this is a string the DISPLAY chose, not one
+        // we control, and a monitor with a silly name must not be able to grow the row.
+        typeof telemetry.attached_display === 'string' ? telemetry.attached_display.trim().slice(0, 64) || null : null,
+        typeof telemetry.video_mode === 'string' ? telemetry.video_mode.trim().slice(0, 32) || null : null
+      );
+      pruneTelemetry(device_id);
+
+      // #74/#75: capture the player's reported clock (OS IANA zone + its UTC time)
+      // for effective-timezone resolution and the dashboard clock-skew indicator.
+      if (telemetry.timezone || telemetry.device_utc != null) {
+        db.prepare("UPDATE devices SET reported_timezone = COALESCE(?, reported_timezone), reported_utc = ?, reported_at = strftime('%s','now') WHERE id = ?")
+          .run(telemetry.timezone || null, telemetry.device_utc ?? null, device_id);
+      }
+
+      emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:device-status', {
+        device_id,
+        status: 'online',
+        liveness: heartbeat.livenessFor(device_id), // FIX 2: server-derived 3-state (healthy/degraded/offline)
+        telemetry
+      });
+    }
+  },
+
+  'screenshot'(deviceId, data, ctx) {
+    const { device_id, image_b64 } = data;
+    if (!device_id || device_id !== deviceId || !image_b64) return;
+    ingestScreenshot(device_id, image_b64);
+  },
+
+  'shell-result'(deviceId, data, ctx) {
+    const { device_id, cmd, output, exit } = data || {};
+    if (!device_id || device_id !== deviceId) return;
+    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:shell-result', {
+      device_id, cmd: String(cmd || '').slice(0, 500), output: String(output || '').slice(0, 8000), exit,
+    });
+  },
+
+  'content-ack'(deviceId, data, ctx) {
+    const { device_id, content_id, status } = data;
+    if (device_id !== deviceId) return;
+    // #142 dedup + #143 per-device rate budget + global critical-lag valve, in one
+    // control. Anything but 'pass' is dropped BEFORE the log+emit (that per-ack work
+    // is the cost we shed). Drops are SILENT except a single line per device per
+    // window when rate-shedding STARTS (re-logging per drop would recreate the
+    // flood). The valve's open/close is logged once at the band edge in loop-lag.
+    const verdict = contentAckLimiter.check(device_id, content_id, status, loopLag.getBand());
+    if (verdict.action !== 'pass') {
+      if (verdict.action === 'shed-rate' && verdict.logStart) {
+        console.warn(`[content-ack] shedding device ${device_id}: ${verdict.observed}/${verdict.budget} per ${config.contentAckRateWindowMs}ms — flood control engaged`);
+      }
+      return;
+    }
+    console.log(`Device ${device_id} content ${content_id}: ${status}`);
+    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:content-ack', { device_id, content_id, status });
+  },
+
+  'playback-state'(deviceId, data, ctx) {
+    // deviceId is the authenticated device for this socket; use it for the workspace
+    // lookup since data may not carry device_id consistently — and STAMP it over whatever the
+    // payload claims before relaying. This was the only relay forwarding the client's object
+    // verbatim, so a device could report progress attributed to a different screen in the same
+    // workspace and the dashboard would believe it. Every other relay here stamps the
+    // authenticated id; this one now matches.
+    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:playback-state',
+      { ...(data || {}), device_id: deviceId });
+  },
+
+  'log'(deviceId, data, ctx) {
+    const message = typeof data?.message === 'string' ? data.message.slice(0, 2000) : '';
+    if (!message) return;
+    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:device-log', {
+      device_id: deviceId,
+      tag: typeof data?.tag === 'string' ? data.tag.slice(0, 64) : '',
+      level: typeof data?.level === 'string' ? data.level.slice(0, 8) : 'd',
+      message,
+      ts: Date.now(),
+    });
+  },
+
+  'ota-status'(deviceId, data, ctx) {
+    const { device_id, ota_status, ota_target_version, ota_attempts } = data || {};
+    // Unknown / forged / mismatched id -> no-op. WHERE id = ? also makes an unregistered id a
+    // 0-row update (never throws), so a stray event can't error the socket.
+    if (!device_id || device_id !== deviceId) return;
+    db.prepare("UPDATE devices SET ota_status = ?, ota_target_version = ?, ota_attempts = ?, ota_updated_at = strftime('%s','now') WHERE id = ?")
+      .run(ota_status ?? 'none', ota_target_version ?? null, ota_attempts ?? 0, device_id);
+  },
+
+  'exit'(deviceId, data, ctx) {
+    const { device_id, reason, detail } = data || {};
+    if (device_id && device_id !== deviceId) return;                 // forged/mismatched -> no-op
+    const e = liveness.sanitizeExitReason(reason, detail);                  // unknown -> null -> falls to 'silent'
+    if (!e) return;
+    db.prepare("UPDATE devices SET offline_reason = ?, offline_reason_at = strftime('%s','now'), offline_detail = ? WHERE id = ?")
+      .run(e.reason, e.detail, deviceId);
+  },
+
+  'event'(deviceId, data, ctx) {
+    const { device_id, type, reason, detail } = data || {};
+    if (device_id && device_id !== deviceId) return;          // forged/mismatched -> no-op
+    if (!incidentClassify.isAllowedEventType(type)) return;          // unknown type -> ignore
+    try {
+      db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, ?, ?, ?)")
+        .run(deviceId, type, reason ? String(reason).slice(0, 64) : null, detail ? String(detail).slice(0, 500) : null);
+    } catch (_) { /* incident feed is best-effort; never crash the socket */ }
+  },
+
+  'connectivity-report'(deviceId, data, ctx) {
+    const { device_id } = data || {};
+    if (device_id && device_id !== deviceId) return;          // forged/mismatched -> no-op
+    // (deviceId is the authenticated device)
+    try {
+      const { reason, detail, type } = incidentClassify.classifyConnectivity(data);
+      // Ensure any buffered offline transition for this device is on disk before we
+      // reach back to annotate it (the writer coalesces on a ~1s interval otherwise).
+      statusLogWriter.flushNow();
+      // Upgrade the most-recent offline row (server guess) to the device's ground truth.
+      db.prepare(`UPDATE device_status_log SET reason = ?, detail = ?
+        WHERE id = (
+          SELECT id FROM device_status_log
+          WHERE device_id = ? AND status IN ('offline','offline_timeout')
+            AND timestamp > strftime('%s','now') - 900
+          ORDER BY timestamp DESC, id DESC LIMIT 1)`).run(reason, detail, deviceId);
+      db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, ?, ?, ?)")
+        .run(deviceId, type, reason, detail);
+    } catch (_) { /* offline-cause annotation is best-effort; never crash the socket */ }
+  },
+
+  'play-event'(deviceId, data, ctx) {
+    const { device_id, event, content_id, widget_id, content_name, zone_id, completed, duration_sec } = data;
+    if (device_id !== deviceId) return;
+    try {
+      if (event === 'play_start') {
+        // Throttle proof-of-play inserts per device so a runaway player
+        // (0-second items) can't flood play_logs. Skipped cycles simply
+        // don't create a row; the dashboard progress event below still fires.
+        // When the event happened: the replica's receipt time for a forwarded play (it may have
+        // waited in an outbox), this node's clock for a local socket. The throttle compares
+        // event times, so a drained backlog is a sequence of real plays, not one runaway second.
+        const nowMs = eventTimeMs(data, ctx);
+        const lastMs = lastPlayLogAt.get(device_id) || 0;
+        if (nowMs - lastMs >= PLAY_LOG_MIN_GAP_MS) {
+          lastPlayLogAt.set(device_id, nowMs);
+          // Resolve the reported id against what actually exists rather than handing it
+          // straight to a foreign key. content_id references content(id) and widget_id
+          // references widgets(id); a stale id from a cached playlist made the INSERT
+          // throw and the whole row was lost. Widgets were never attributed at all —
+          // widget_id was simply never written. Write whichever column the id belongs
+          // in; an id matching neither degrades to NULL references, so content_name
+          // still records WHAT played instead of the event vanishing.
+          // Prefer an EXPLICIT widget_id. A widget playlist item has no content_id at all, so
+          // sniffing content_id could never attribute it — those plays were recorded with both
+          // columns null, and Reports read empty for any screen showing a widget. Older players
+          // send only content_id (sometimes carrying a widget id), so the sniff stays as their
+          // fallback.
+          const explicitWidget = widget_id && widgetExists.get(widget_id) ? widget_id : null;
+          const isContent = (!explicitWidget && content_id) ? !!contentExists.get(content_id) : false;
+          const isWidget = (!explicitWidget && !isContent && content_id) ? !!widgetExists.get(content_id) : false;
+          const wid = explicitWidget || (isWidget ? content_id : null);
+          const cid = isContent ? content_id : null;
+          const info = _insertPlay.run(device_id, cid, wid, zone_id || null, content_name || 'Unknown', Math.floor(nowMs / 1000));
+          /*
+           * ⚠️ #307: REMEMBER THE ROW WE JUST OPENED.
+           *
+           * Closing it used to mean SEARCHING for it — the device's most recent row with
+           * ended_at IS NULL matching this content or widget. That is a query over the device's
+           * whole play history to find something this line created seconds earlier, and on prod
+           * one device has 377,132 rows: measured at 153ms, every advance, on the event loop.
+           *
+           * An index makes that search cheap. Not searching at all makes it free, and stays free
+           * however much history accumulates — which matters because history only grows.
+           */
+          rememberOpenPlay(device_id, cid, wid, info.lastInsertRowid);
+        }
+        /*
+         * #299: a new play beginning is the evidence that closes whatever the last outage or
+         * reboot left open — the row before this one, in this zone, ran until now. Normally
+         * play_end has already closed it and this is a no-op; it only bites when that end was
+         * lost, which is exactly the case nothing repaired before.
+         *
+         * ⚠️ ONCE PER CONNECTION, NOT ONCE PER PLAY — and the difference is the single most
+         * expensive thing this server was doing.
+         *
+         * The repair is a correlated self-join of play_logs against play_logs plus a join to
+         * content, grouped per row, across the device's whole history. Measured against a copy of
+         * a real fleet database (3.1M rows, 2.7M of them on the busiest device): **362ms**, and
+         * **355ms when there was nothing to close** — the cost is paid in full whether or not it
+         * finds anything. At roughly one play per second across a 78-panel site that is a ~150ms
+         * synchronous block about once a second, for ever, which is exactly the "p50 at the
+         * measurement floor with a single fat outlier per window" signature the customer's
+         * profile showed: 27.1% of sixty seconds of wall time inside this one call.
+         *
+         * A lost play_end happens when a session ends abruptly — a reboot, a network drop, a
+         * crash. The evidence for it is therefore the FIRST play of a NEW connection, not the
+         * four hundredth play of a healthy one: inside a live session every end arrives normally
+         * and there is nothing to repair. So the sweep is armed per socket and disarmed after it
+         * runs, which keeps the repair exactly where it was designed to help and removes it from
+         * the steady state entirely.
+         *
+         * The deeper leak this cannot reach — rows open so long no later play can bound them —
+         * was never this call's job and is still handled by the boot sweep in services/heartbeat.
+         */
+        if (!ctx.session.strandedSweepDone) {
+          ctx.session.strandedSweepDone = true;
+          try { closeStrandedPlays(db, device_id); } catch (e) { /* never block a live play */ }
+        }
+
+        // Forward to dashboard so it can render a per-device progress bar.
+        // Server-side timestamp avoids clock-skew between player and dashboard.
+        emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:playback-progress', {
+          device_id,
+          content_id: content_id || null,
+          content_name: content_name || null,
+          duration_sec: typeof duration_sec === 'number' && duration_sec > 0 ? duration_sec : null,
+          started_at: Date.now(),
+        });
+      } else if (event === 'play_offline') {
+        /*
+         * #299 BACKFILL. A player that kept playing while the socket was down replays what it
+         * recorded, as COMPLETE rows carrying their real times.
+         *
+         * ⚠️ COMPLETE ROWS, NOT REPLAYED start/end PAIRS. play_end closes "the most recent open
+         * row for this device+content", so a backlog replayed alongside live playback could
+         * close the wrong one — the live row that happens to be open right now. Inserting a
+         * closed row in one shot removes that race instead of trying to sequence around it.
+         *
+         * ⚠️ AND IT DELIBERATELY BYPASSES lastPlayLogAt. That throttle bounds a runaway LIVE
+         * player (one row per device per 2s); applied here it would silently decimate a flush
+         * to roughly one surviving row per 2s of real flush time — the very loss the backfill
+         * exists to prevent. boundBatch caps the payload instead.
+         */
+        const nowSec = Math.floor(Date.now() / 1000);
+        const plays = boundBatch(data.plays);
+        let written = 0;
+        let rejected = 0;
+        for (const raw of plays) {
+          const p = normalizeBackfillPlay(raw, nowSec);
+          if (!p) { rejected++; continue; }
+
+          const wid = p.widget_id && widgetExists.get(p.widget_id) ? p.widget_id : null;
+          const isContent = (!wid && p.content_id) ? !!contentExists.get(p.content_id) : false;
+          const isWidget = (!wid && !isContent && p.content_id) ? !!widgetExists.get(p.content_id) : false;
+
+          /*
+           * INSERT OR IGNORE against the unique client_event_id: a player that flushes, dies
+           * before it sees the ack, and flushes again on its next boot must not double-count.
+           * An event with no id still stores (the column is nullable, the index partial) — an
+           * older player replaying is better than no row at all.
+           */
+          const info = _insertBackfillPlay.run(
+            device_id,
+            isContent ? p.content_id : null,
+            wid || (isWidget ? p.content_id : null),
+            p.zone_id,
+            p.content_name,
+            p.started_at,
+            p.ended_at,
+            p.duration_sec,
+            p.completed,
+            p.client_event_id
+          );
+          written += info.changes;
+        }
+        /*
+         * ⚠️ NOW CLOSE WHAT THE OUTAGE STRANDED. The play that was in flight when the link
+         * dropped had its play_start recorded live and its play_end lost, so it sat open with no
+         * duration — one per outage, and the backfill alone does not touch it. The plays just
+         * inserted are the evidence that closes it: the device advancing proves the previous item
+         * ran until the next one started.
+         */
+        const closed = closeStrandedPlays(db, device_id);
+
+        /*
+         * Acked so the player can drop exactly what landed. It keeps its queue until this
+         * arrives — a flush that vanished into a dead socket would otherwise be the same data
+         * loss by a different route.
+         */
+        ctx.reply('device:play-offline-ack', { received: plays.length, written, rejected });
+        if (plays.length) {
+          console.log(`[play] backfill from ${device_id}: ${plays.length} received, ${written} written, ${rejected} rejected, ${closed} stranded closed`);
+        }
+      } else if (event === 'play_end') {
+        // A widget play is closed by its widget id. Binding content_id to BOTH columns meant a
+        // widget row could never match itself, so it was never closed and never gained a
+        // duration — the other half of what made widget reporting useless.
+        // (Any comment must stay OUT of the template literal below; inside it, it becomes SQL.)
+        /*
+         * ⚠️ #307: PREPARED ONCE, at module load. This ran on every play advance for every device
+         * and recompiled the statement each time — paid on the hot path, for nothing. The
+         * statement text is unchanged; see idx_play_logs_open in db/database.js for the index
+         * that made the query itself stop costing 153ms.
+         */
+        /*
+         * ⚠️ #307: the remembered rowid first — a primary-key update, no search, no sort.
+         * The search remains as the fallback, and it is not vestigial: it is what closes a play
+         * this process did not open (a restart mid-play, a play replayed by the #299 offline
+         * backfill, a second server behind the same database).
+         */
+        const known = takeOpenPlay(device_id, content_id || null, widget_id || content_id || null);
+        const endSec = Math.floor(eventTimeMs(data, ctx) / 1000);
+        if (known != null) _closePlayById.run(endSec, endSec, completed ? 1 : 0, known);
+        else _closePlay.run(endSec, endSec, completed ? 1 : 0, device_id, content_id || null, widget_id || content_id || null);
+      }
+    } catch (err) {
+      // Include the identifiers. Without them this is undiagnosable in production: it
+      // fired ~360 times in six hours on prod with nothing in the log to point at.
+      console.error('Play log error:', err.message,
+        `(event=${event} device=${device_id} content=${content_id} zone=${zone_id})`);
+    }
+  },
+
+
+  /*
+   * The offline transition, after the debounce. Locally it runs from the disconnect timer below;
+   * from a replica it arrives as an 'offline' player-event once THAT node's debounce has elapsed.
+   * `ctx.closingSocketId` is the socket whose closing armed it (a newer socket cancels the
+   * transition); over the mesh it is the replica's virtual socket id.
+   */
+  'offline'(deviceId, data, ctx) {
+    pendingOfflines.delete(deviceId);
+    // Re-check at fire time: did a DIFFERENT socket reclaim during the
+    // grace window? If activeConn exists but it's still our (now-closed)
+    // socket's entry, the entry is just stale - heartbeat.removeConnection
+    // hasn't run yet because we defer it inside this same block. Only
+    // abort if a genuinely different socket has registered.
+    const activeNow = heartbeat.getConnection(deviceId);
+    if (activeNow && activeNow.socketId !== ctx.closingSocketId) return;
+
+    // Exit-signal contract (UNCHANGED): devices.offline_reason stays the app's self-reported
+    // manner-of-death — 'crashed'/'clean_exit' if it announced one this session, else 'silent'
+    // (a violent/abrupt death is 'silent', never a socket-inferred value — Bold-critical).
+    db.prepare("UPDATE devices SET status = 'offline', updated_at = strftime('%s','now'), offline_reason = COALESCE(offline_reason, 'silent'), offline_reason_at = COALESCE(offline_reason_at, strftime('%s','now')) WHERE id = ?").run(deviceId);
+    heartbeat.removeConnection(deviceId);
+    const _off = db.prepare("SELECT offline_reason, offline_detail, client_type FROM devices WHERE id = ?").get(deviceId) || {};
+    // The offline-CAUSE log (device_status_log + device_events) gets the richer signal, which is
+    // a SEPARATE axis from the exit-signal field: the app's announced reason if it gave one, else
+    // the normalized socket transport reason (transport_close/ping_timeout/...). This never touches
+    // devices.offline_reason, so the exit-signal 'silent' semantics above are preserved.
+    const finalReason = (_off.offline_reason && _off.offline_reason !== 'silent') ? _off.offline_reason : (data && data.reason) || 'silent';
+    logDeviceStatus(deviceId, 'offline', finalReason, null);
+    // Offline-cause log: also record the transition in the unified incident feed.
+    try { db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, 'offline', ?, NULL)").run(deviceId, finalReason); } catch (_) { /* incident feed is best-effort */ }
+    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:device-status', { device_id: deviceId, status: 'offline', liveness: 'offline', offline_reason: _off.offline_reason || 'silent', offline_detail: _off.offline_detail || null, client_type: _off.client_type || null });
+
+    // If this device was leading a wall, reassign leadership to the next
+    // online member so playback stays driven.
+    try {
+      const wall = db.prepare('SELECT id FROM video_walls WHERE leader_device_id = ?').get(deviceId);
+      if (wall) {
+        const candidates = db.prepare(`
+          SELECT vwd.device_id FROM video_wall_devices vwd
+          JOIN devices d ON d.id = vwd.device_id
+          WHERE vwd.wall_id = ? AND d.status = 'online' AND vwd.device_id != ?
+          ORDER BY vwd.grid_row, vwd.grid_col LIMIT 1
+        `).all(wall.id, deviceId);
+        const newLeader = candidates[0]?.device_id || null;
+        db.prepare('UPDATE video_walls SET leader_device_id = ? WHERE id = ?').run(newLeader, wall.id);
+        const members = db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(wall.id);
+        for (const m of members) {
+          if (m.device_id !== deviceId) {
+            commandQueue.queueOrEmitPlaylistUpdate(_deviceNsRef, m.device_id, buildPlaylistPayload);
+          }
+        }
+      }
+    } catch (e) { console.error('Wall leader reassign failed:', e.message); }
+
+    // Save last screenshot to disk as offline snapshot
+    const lastB64 = lastScreenshots[deviceId];
+    if (lastB64) {
+      try {
+        const filename = `${deviceId}_latest.jpg`;
+        const buffer = Buffer.from(lastB64, 'base64');
+        fs.writeFileSync(path.join(config.screenshotsDir, filename), buffer);
+        const existing = db.prepare('SELECT id FROM screenshots WHERE device_id = ?').get(deviceId);
+        if (existing) {
+          db.prepare('UPDATE screenshots SET filepath = ?, captured_at = strftime(\'%s\',\'now\') WHERE device_id = ?').run(filename, deviceId);
+        } else {
+          db.prepare('INSERT INTO screenshots (device_id, filepath) VALUES (?, ?)').run(deviceId, filename);
+        }
+      } catch (e) {
+        console.error('Failed to save offline screenshot:', e.message);
+      }
+      delete lastScreenshots[deviceId];
+    }
+  },
+
+  /*
+   * A player came online THROUGH A REPLICA (docs/scale-out-design.md §6). The subset of the local
+   * reconnect path that is about the device rather than the socket: status, address, identity,
+   * capabilities, the status log, the dashboard — and attached_node_id, which is what
+   * deliverCommand reads to send this screen's commands up the edge. Queued commands are drained
+   * through the relay. The playlist is NOT sent from here: the replica serves it from its mirror.
+   */
+  'online'(deviceId, data, ctx) {
+    const d = data || {};
+    if (!deviceExists(deviceId)) return;
+    if (pendingOfflines.has(deviceId)) { clearTimeout(pendingOfflines.get(deviceId)); pendingOfflines.delete(deviceId); }
+    db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), ip_address = ?, updated_at = strftime('%s','now'), offline_reason = NULL, offline_reason_at = NULL, offline_detail = NULL, attached_node_id = ? WHERE id = ?")
+      .run(ctx.ip || null, ctx.nodeId || null, deviceId);
+    if (d.device_info && Object.keys(d.device_info).length > 0) { try { applyDeviceInfo(deviceId, d.device_info); } catch (e) { /* bad blob */ } }
+    applyHardwareIdentity(deviceId, d);
+    applyCapabilities(deviceId, d);
+    heartbeat.registerConnection(deviceId, ctx.closingSocketId || `mesh:${ctx.nodeId}`);
+    if (!d.refresh) { heartbeat.recordReconnect(deviceId); persistIdentity(deviceId, d); }
+    logDeviceStatus(deviceId, 'online');
+    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:device-status', { device_id: deviceId, status: 'online', liveness: heartbeat.livenessFor(deviceId), attached_node_id: ctx.nodeId || null });
+    // Commands queued while the screen was away go through the relay; the playlist does not.
+    try {
+      const relayNs = { adapter: { rooms: new Map() }, to: () => ({ emit: (event, payload) => ctx.reply(event, payload) }) };
+      commandQueue.flushQueue(relayNs, deviceId, null);
+    } catch (e) { /* best effort */ }
+  },
+});
+
 module.exports = function setupDeviceSocket(io) {
   // Expose helpers for use by route handlers
   module.exports.lastScreenshots = lastScreenshots;
@@ -924,6 +1494,7 @@ module.exports = function setupDeviceSocket(io) {
   module.exports.generateDeviceToken = generateDeviceToken;
   const deviceNs = io.of('/device');
   _dashboardNsRef = io.of('/dashboard');   // so ingestScreenshot() can relay from an HTTP route too
+  _deviceNsRef = deviceNs;
   const dashboardNs = io.of('/dashboard');
 
 
@@ -982,15 +1553,175 @@ module.exports = function setupDeviceSocket(io) {
     let currentDeviceId = null;
     let authenticated = false; // Track whether this socket has been authenticated
     /*
-     * #299 stranded-play repair runs ONCE per connection, on the first play of the session.
-     * See the call site for why the every-play version was the most expensive thing on the server.
+     * Scale-out C2: set when THIS socket belongs to a screen whose workspace is a copy held here
+     * (docs/scale-out-design.md §6). It is the edge to that screen's primary; every event after
+     * register is forwarded over it instead of being applied to the mirror, and the playlist is
+     * served from the mirror. Null for every screen this node owns — nothing else changes.
      */
-    let strandedSweepDone = false;
+    let viaEdge = null;
 
     // #146: wrap every handler on THIS socket so a throw disconnects only this device
     // (logged with its id) instead of crashing the whole server. Backstop to the
     // per-site try/catch in the handlers below.
     protectSocket(socket, () => currentDeviceId);
+
+    const ctx = {
+      reply: (event, payload) => socket.emit(event, payload),
+      session: { strandedSweepDone: false },
+      get ip() { return getClientIp(socket); },
+      source: 'local',
+    };
+
+    /** The top-level register fields the identity/capability helpers read, forwarded as-is. */
+    function pickIdentityFields(data) {
+      const out = {};
+      for (const k of ['client_type', 'client_version', 'contract_version', 'platform', 'capabilities',
+                       'bs_model', 'bs_serial', 'bs_os_version', 'bs_screen', 'bs_edid']) {
+        if (data && data[k] !== undefined) out[k] = data[k];
+      }
+      return out;
+    }
+
+    /**
+     * Is this register for a screen a PRIMARY owns? Returns null for every local screen.
+     * @returns {null | {origin:string, edge:object|null, row:object|null, provisioning?:boolean}}
+     */
+    function classifyForReplica(device_id, pairing_code) {
+      if (device_id) {
+        const row = db.prepare('SELECT id, user_id, name, workspace_id, blocked FROM devices WHERE id = ?').get(device_id);
+        const origin = row ? playerTermination.copiedOriginOf(db, device_id) : null;
+        if (origin) return { origin, edge: playerTermination.terminatingEdgeFor(db, origin), row };
+        if (!row) {
+          // Provisioned through a primary and not yet claimed: the row lives only there.
+          const v = db.prepare('SELECT edge_id FROM mesh_player_verdicts WHERE device_id = ?').get(device_id);
+          const edge = v && db.prepare('SELECT * FROM mesh_edges WHERE id = ? AND revoked_at IS NULL').get(v.edge_id);
+          if (edge && playerTermination.terminatesPlayers(edge)) return { origin: edge.peer_node_id, edge, row: null };
+        }
+        return null;
+      }
+      if (pairing_code) {
+        const edges = playerTermination.terminatingEdges(db);
+        if (edges.length === 1) return { origin: edges[0].peer_node_id, edge: edges[0], row: null, provisioning: true };
+        if (edges.length > 1) return { origin: null, edge: null, row: null, provisioning: true, ambiguous: edges.length };
+      }
+      return null;
+    }
+
+    async function handleReplicaRegister(replica, data) {
+      const { device_id, device_token, pairing_code } = data;
+      const refuse = (payload) => {
+        socket.emit('device:auth-error', payload);
+        process.nextTick(() => { try { socket.disconnect(true); } catch (_) { /* */ } });
+      };
+      const wait = (reason) => {
+        // ⚠️ WAIT, never reroute. The player retries THIS address (I9).
+        socket.emit('device:throttled', { retry_after_ms: playerTermination.PRIMARY_WAIT_MS, reason });
+        process.nextTick(() => { try { socket.disconnect(true); } catch (_) { /* */ } });
+      };
+      if (replica.ambiguous) {
+        return refuse({ error: `This server holds copies from ${replica.ambiguous} servers, so it cannot tell which one a new screen belongs to. Pair it on that server directly.`, reason: 'read_replica', primary_url: config.primaryUrl || null });
+      }
+      if (!replica.edge) {
+        // C1's answer, unchanged: this node does not terminate players for that primary.
+        return refuse({ error: 'This server holds a read-only copy of that screen\'s workspace. Point the screen at the server that owns it.', reason: 'read_replica', primary_url: config.primaryUrl || null });
+      }
+      if (replica.row && replica.row.blocked) return refuse({ error: 'Device blocked' });
+      const edge = replica.edge;
+      const readFrom = playerTermination.readFrom;
+      const writeTo = global.__meshWriteTo;
+      if (!readFrom || !writeTo) return wait('primary_unreachable');
+
+      /* ---- a NEW screen: provision on the primary, which is the only place a token can be minted ---- */
+      if (replica.provisioning) {
+        const sentAt = Date.now();
+        const res = await writeTo(edge.peer_node_id, {
+          type: 'player-provision', opId: crypto.randomUUID(), sentAt, notAfter: sentAt + 60_000,
+          payload: { pairing_code, device_info: data.device_info || null, fingerprint: data.fingerprint || null,
+                     hw_fingerprint: data.hw_fingerprint || null, ip: getClientIp(socket) },
+        });
+        if (!res || !res.ok) {
+          if (res && (res.offline || res.indeterminate)) return wait('primary_unreachable');
+          console.warn(`[replica] primary ${edge.peer_node_id} refused provisioning: ${res && res.reason}`);
+          return refuse({ error: 'The server that owns this workspace refused to add a screen through this one.', reason: 'read_replica', primary_url: config.primaryUrl || null });
+        }
+        const out = res.outcome || {};
+        if (!out.device_id || !out.device_token) return wait('primary_unreachable');
+        // The token crossed ONCE, primary -> here -> screen. It is not stored; only its hash is.
+        playerTermination.rememberVerdict(db, edge, out.device_id, playerTermination.tokenHash(out.device_token));
+        viaEdge = edge;
+        currentDeviceId = out.device_id;
+        authenticated = true;
+        heartbeat.registerConnection(out.device_id, socket.id);
+        socket.join(out.device_id);
+        socket.emit('device:registered', { device_id: out.device_id, device_token: out.device_token, status: 'provisioning' });
+        console.log(`[replica] new screen ${out.device_id} provisioned on ${edge.peer_node_id} (code ${pairing_code})`);
+        return;
+      }
+
+      /* ---- a KNOWN screen: verify with the primary once per socket, then serve from the mirror ---- */
+      const hash = playerTermination.tokenHash(device_token);
+      const isRefresh = currentDeviceId === device_id && viaEdge && viaEdge.id === edge.id;
+      let verdict = isRefresh ? { verified: true, cached: true } : null;
+      if (!verdict) {
+        const v = await playerTermination.verifyWithPrimary(readFrom, edge, device_id, hash);
+        if (v.unreachable) {
+          const prior = playerTermination.cachedVerdict(db, device_id, hash);
+          if (!prior) return wait('primary_unreachable');
+          verdict = { verified: true, cached: true, offline: true };
+        } else if (!v.verified) {
+          playerTermination.forgetVerdict(db, device_id);
+          console.warn(`Invalid device token for ${device_id} (via ${edge.peer_node_id}) from ${getClientIp(socket)}`);
+          return refuse({ error: 'Invalid device token' });
+        } else {
+          verdict = v;
+          playerTermination.rememberVerdict(db, edge, device_id, hash);
+        }
+      }
+      // Same reconnect discipline as a local screen: throttle, settle, evict the prior socket.
+      if (!isRefresh) {
+        const t = reconnectThrottle.check(device_id);
+        if (!t.allow) {
+          socket.emit('device:throttled', { retry_after_ms: t.retryAfterMs, reason: 'reconnect_rate' });
+          process.nextTick(() => { try { socket.disconnect(true); } catch (_) { /* */ } });
+          return;
+        }
+      }
+      const priorConn = heartbeat.getConnection(device_id);
+      const incumbentAlive = !!(priorConn && priorConn.socketId !== socket.id && deviceNs.sockets.has(priorConn.socketId));
+      if (sessionSettle.shouldHold(device_id, incumbentAlive)) {
+        evictedSockets.add(socket.id);
+        socket.emit('device:throttled', { retry_after_ms: config.sessionSettleWindowMs, reason: 'session_settle' });
+        process.nextTick(() => { try { socket.disconnect(true); } catch (_) { evictedSockets.delete(socket.id); } });
+        return;
+      }
+      viaEdge = edge;
+      currentDeviceId = device_id;
+      authenticated = true;
+      if (pendingOfflines.has(device_id)) { clearTimeout(pendingOfflines.get(device_id)); pendingOfflines.delete(device_id); }
+      evictPriorSocket(device_id, socket.id);
+      sessionSettle.accepted(device_id);
+      heartbeat.registerConnection(device_id, socket.id);
+      socket.join(device_id);
+      // The mirror's volatile columns — the same ones device-summary writes — so this node's own
+      // fleet page sees the screen without waiting for the round trip.
+      if (replica.row) {
+        db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), ip_address = ?, updated_at = strftime('%s','now') WHERE id = ?")
+          .run(getClientIp(socket), device_id);
+        emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', { device_id, status: 'online', liveness: heartbeat.livenessFor(device_id) });
+      }
+      socket.emit('device:registered', { device_id, device_token, status: 'online' });
+      const paired = replica.row ? !!replica.row.user_id : !!verdict.paired;
+      if (paired) socket.emit('device:paired', { device_id, name: (replica.row && replica.row.name) || verdict.name || 'Display' });
+      // Assignments and media come from the mirror; an unclaimed screen has nothing yet.
+      socket.emit('device:playlist-update', replica.row ? buildPlaylistPayload(device_id) : { assignments: [], provisioning: true });
+      // The primary learns the screen is up through the same door every later event uses.
+      playerTermination.forwardEvent(db, edge, device_id, 'online', {
+        device_id, device_info: data.device_info || null, refresh: !!isRefresh,
+        hw_fingerprint: data.hw_fingerprint || null, fingerprint: data.fingerprint || null,
+        ...pickIdentityFields(data),
+      }, ctx, null);
+      if (!isRefresh) logCoalescer.record('device-reconnected', `Device reconnected via replica: ${device_id}${verdict.offline ? ' (primary unreachable — cached verdict)' : ''}`);
+    }
 
     // Device registers with a pairing code (first time) or device_id + device_token (reconnect)
     socket.on('device:register', (data) => {
@@ -1076,6 +1807,23 @@ module.exports = function setupDeviceSocket(io) {
           }
           console.log(`[enrol] ${resolved.id} identified by enrolment key`);
         }
+      }
+
+      /*
+       * ===================== Scale-out C2: a screen that belongs to a PRIMARY =====================
+       *
+       * Decided BEFORE the token check, because this node has no token to check against: a copied
+       * device row carries none. Three shapes arrive here (docs/scale-out-design.md §6):
+       *   - a known device whose workspace is copied  -> verify with the primary, serve from mirror;
+       *   - a device this replica provisioned through the primary and the operator has not yet
+       *     claimed (no local row, a stored verdict)   -> same;
+       *   - a NEW pairing while exactly one edge terminates players -> provision ON the primary.
+       * Without terminates-players on the edge the answer is C1's: read_replica, and the primary's
+       * address as information for the setup screen — never a redirect (I9).
+       */
+      {
+        const replica = classifyForReplica(device_id, pairing_code);
+        if (replica) return handleReplicaRegister(replica, data);
       }
 
       // #146: resolve identity ONCE via the SNAT-safe chain (device_id -> fingerprint
@@ -1561,18 +2309,7 @@ module.exports = function setupDeviceSocket(io) {
         // tell just this device to retry. currentDeviceId/authenticated are set only
         // AFTER the row exists, so a failed insert leaves no half-authenticated socket.
         try {
-          db.prepare(`
-            INSERT INTO devices (id, pairing_code, device_token, status, ip_address, android_version, app_version, screen_width, screen_height, render_width, render_height, last_heartbeat)
-            VALUES (?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
-          `).run(
-            id, pairing_code, newToken, getClientIp(socket),
-            device_info?.android_version || null,
-            device_info?.app_version || null,
-            device_info?.screen_width || null,
-            device_info?.screen_height || null,
-            device_info?.render_width || null,
-            device_info?.render_height || null
-          );
+          insertProvisioningRow({ id, pairing_code, token: newToken, ip: getClientIp(socket), device_info });
         } catch (e) {
           console.warn(`Provisioning rejected for pairing_code ${pairing_code} from ${getClientIp(socket)}: ${e.message}`);
           socket.emit('device:auth-error', { error: 'Registration failed, please retry.' });
@@ -1621,454 +2358,82 @@ module.exports = function setupDeviceSocket(io) {
 
     // #160: lightweight device_info refresh (e.g. after a volume/brightness change) — updates the
     // reported fields WITHOUT a full re-register (no playlist re-push / no reconnect side effects).
-    socket.on('device:info', (data) => {
-      if (!requireDeviceAuth()) return;
-      const di = data && data.device_info;
-      if (di) { try { applyDeviceInfo(currentDeviceId, di); } catch (e) { /* never crash the socket on a bad info blob */ } }
-    });
-
-    // Heartbeat with telemetry
     /*
-     * Trigger diagnostics — CURRENT STATE, stored on the device row rather than as a telemetry row.
-     *
-     * ⚠️ The value of this surface is one distinction: last_datagram_at counts REJECTED traffic, so
-     * a recent timestamp with zero accepts means packets ARE arriving and the token or secret is
-     * wrong, while a null timestamp means nothing is arriving and it is the network. Those are two
-     * different site visits, and without keeping rejected traffic in the count they look identical.
+     * Every post-register event: the same guard, then the shared applier. The heartbeat keeps its
+     * pre-auth ack (a KNOWN device's watchdog stays armed mid-reconnect) exactly as before.
      */
-    socket.on('device:trigger-status', (data) => {
-      const { device_id, status } = data || {};
-      if (!device_id || !status || device_id !== currentDeviceId) return;
-      if (!deviceExists(device_id)) return;
-      try {
-        db.prepare('UPDATE devices SET trigger_status = ?, trigger_status_at = ? WHERE id = ?')
-          .run(JSON.stringify(status).slice(0, 8000), Math.floor(Date.now() / 1000), device_id);
-      } catch (e) {
-        // A diagnostic that can break a device socket is worse than no diagnostic.
-        console.warn(`[trigger] could not store status for ${device_id}: ${e && e.message}`);
-      }
-    });
-
-    socket.on('device:heartbeat', (data) => {
-      const { device_id, telemetry } = data || {};
-      // v4 PRIMARY + FIX 1 — UNIFORM ACK. Emitted from THIS single shared handler for every client
-      // type (APK / .wgt / /player hit the same handler = uniform by construction), and BEFORE the
-      // auth guard so a KNOWN device's watchdog stays armed even mid-reconnect (before this socket
-      // finishes re-registering). Anonymous / never-authenticated sockets are NOT acked (degrade-safe
-      // covers them). Old clients simply ignore the ack — harmless.
-      if (liveness.ackableHeartbeat(currentDeviceId, device_id, deviceExists)) {
-        // #group-sync clock discipline: the server is the time authority. Echo the client's send
-        // time (t1) and stamp the server's clock (t2≈t3, synchronous handler) so the client can do
-        // NTP-style offset+RTT correction: offset = server_ms - (t1 + t4)/2. The offset is CACHED by
-        // the client and used at play-time (local + offset), so schedule-based group sync keeps
-        // working through an internet outage. Absent/old clients just ignore the extra fields.
-        socket.emit('device:heartbeat-ack', { server_ms: Date.now(), client_ms: data?.client_ms ?? null });
-      }
-      if (!requireDeviceAuth()) return;
-      if (!device_id || device_id !== currentDeviceId) return;
-
-      currentDeviceId = device_id;
-      heartbeat.updateHeartbeat(device_id);
-
-      // A heartbeat is the device asserting it is alive. Online is normally broadcast to the panel
-      // only at device:register time (one shot); heartbeats just write the DB. So if the panel
-      // missed that single register-time broadcast (its own socket was mid-reconnect, or the emit
-      // raced the device's reconnect), the row reads 'online' while the card still shows OFFLINE,
-      // until the device's next periodic re-register (up to 5 min on the web/BrightSign player).
-      // Re-assert online to the panel on the offline->online transition so a rebooted device flips
-      // its card back within one heartbeat instead of waiting for the fallback re-register.
-      const prevStatus = db.prepare('SELECT status FROM devices WHERE id = ?').get(device_id);
-      db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now'), updated_at = strftime('%s','now') WHERE id = ?")
-        .run(device_id);
-      if (prevStatus && prevStatus.status !== 'online') {
-        emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', { device_id, status: 'online' });
-      }
-
-      // A device row can vanish mid-session — deleted by an operator, or replaced by a re-pair —
-      // while its socket is still heartbeating. The telemetry insert then fails the foreign key,
-      // the safe-socket wrapper reads that throw as a broken handler and disconnects the socket
-      // SERVER-side, and socket.io deliberately does not retry that kind of disconnect. The panel
-      // goes dark until a human reloads it; that happened to a live screen. A heartbeat for a
-      // device that no longer exists is not worth killing a connection over — skip the write and
-      // let the register path answer with unpaired, which is what actually helps it recover.
-      if (telemetry && deviceExists(device_id)) {
-        db.prepare(`
-          INSERT INTO device_telemetry (device_id, battery_level, battery_charging, storage_free_mb, storage_total_mb,
-            ram_free_mb, ram_total_mb, cpu_usage, wifi_rssi, uptime_seconds, local_ip, local_ip6, temperature_c,
-            attached_display, video_mode)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          device_id,
-          telemetry.battery_level ?? null,
-          telemetry.battery_charging ? 1 : 0,
-          telemetry.storage_free_mb ?? null,
-          telemetry.storage_total_mb ?? null,
-          telemetry.ram_free_mb ?? null,
-          telemetry.ram_total_mb ?? null,
-          // Rounded to one decimal at the source (Phase −1). It was stored at full float
-          // precision — 34.700234234333, 87,297 distinct values across 248k rows — and no
-          // surface has ever shown more than a whole percent. Free bandwidth on every mesh
-          // hop, and a smaller index, for a digit nobody can read.
-          typeof telemetry.cpu_usage === 'number' && Number.isFinite(telemetry.cpu_usage)
-            ? Math.round(telemetry.cpu_usage * 10) / 10 : null,
-          telemetry.wifi_rssi ?? null,
-          telemetry.uptime_seconds ?? null,
-          // Device-supplied text headed for a column the dashboard renders: trim and cap it.
-          // 45 chars is the longest legitimate value (a full IPv6 address).
-          typeof telemetry.local_ip === 'string' ? telemetry.local_ip.trim().slice(0, 45) || null : null,
-          // Same treatment for the v6 address. 45 is still the cap: it is the longest legitimate
-          // IPv6 text form (an IPv4-mapped one, `::ffff:255.255.255.255`).
-          typeof telemetry.local_ip6 === 'string' ? telemetry.local_ip6.trim().slice(0, 45) || null : null,
-          // ⚠️ BRIGHTSIGN-ONLY, which is exactly why it LOOKS unused. The Phase −1 audit
-          // measured this at 0 of 248,314 rows and nearly concluded it was dead — but
-          // production has no BrightSign players at all, so the zero measured the FLEET,
-          // not the field. It comes from deviceInfo.getTemperature() in st-bridge.js.
-          typeof telemetry.temperature_c === 'number' && Number.isFinite(telemetry.temperature_c)
-            ? telemetry.temperature_c : null,
-          // Only a finite number is a reading. A panel with no sensor sends nothing, and NaN or
-          // Infinity from a flaky one must land as "no reading" rather than poisoning the column.
-          // Free text from the panel's EDID and the mode the output is driving. Trimmed and
-          // bounded like the address fields above: this is a string the DISPLAY chose, not one
-          // we control, and a monitor with a silly name must not be able to grow the row.
-          typeof telemetry.attached_display === 'string' ? telemetry.attached_display.trim().slice(0, 64) || null : null,
-          typeof telemetry.video_mode === 'string' ? telemetry.video_mode.trim().slice(0, 32) || null : null
-        );
-        pruneTelemetry(device_id);
-
-        // #74/#75: capture the player's reported clock (OS IANA zone + its UTC time)
-        // for effective-timezone resolution and the dashboard clock-skew indicator.
-        if (telemetry.timezone || telemetry.device_utc != null) {
-          db.prepare("UPDATE devices SET reported_timezone = COALESCE(?, reported_timezone), reported_utc = ?, reported_at = strftime('%s','now') WHERE id = ?")
-            .run(telemetry.timezone || null, telemetry.device_utc ?? null, device_id);
-        }
-
-        emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', {
-          device_id,
-          status: 'online',
-          liveness: heartbeat.livenessFor(device_id), // FIX 2: server-derived 3-state (healthy/degraded/offline)
-          telemetry
-        });
-      }
-    });
-
-    // Screenshot received from device - relay via WebSocket, keep latest in memory
-    socket.on('device:screenshot', (data) => {
-      if (!requireDeviceAuth()) return;
-      const { device_id, image_b64 } = data;
-      if (!device_id || device_id !== currentDeviceId || !image_b64) return;
-      ingestScreenshot(device_id, image_b64);
-    });
-
-    // #161 device-owner tooling: relay a remote-shell result back to the operator's dashboard.
-    socket.on('device:shell-result', (data) => {
-      if (!requireDeviceAuth()) return;
-      const { device_id, cmd, output, exit } = data || {};
-      if (!device_id || device_id !== currentDeviceId) return;
-      emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:shell-result', {
-        device_id, cmd: String(cmd || '').slice(0, 500), output: String(output || '').slice(0, 8000), exit,
-      });
-    });
-
-    // Content download acknowledgement
-    socket.on('device:content-ack', (data) => {
-      if (!requireDeviceAuth()) return;
-      const { device_id, content_id, status } = data;
-      if (device_id !== currentDeviceId) return;
-      // #142 dedup + #143 per-device rate budget + global critical-lag valve, in one
-      // control. Anything but 'pass' is dropped BEFORE the log+emit (that per-ack work
-      // is the cost we shed). Drops are SILENT except a single line per device per
-      // window when rate-shedding STARTS (re-logging per drop would recreate the
-      // flood). The valve's open/close is logged once at the band edge in loop-lag.
-      const verdict = contentAckLimiter.check(device_id, content_id, status, loopLag.getBand());
-      if (verdict.action !== 'pass') {
-        if (verdict.action === 'shed-rate' && verdict.logStart) {
-          console.warn(`[content-ack] shedding device ${device_id}: ${verdict.observed}/${verdict.budget} per ${config.contentAckRateWindowMs}ms — flood control engaged`);
+    /*
+     * Scale-out C2: what a replica keeps for itself while forwarding. Only the mirror's VOLATILE
+     * columns (the ones device-summary already writes) and its own dashboard relays — never a
+     * telemetry row, never a play_logs row: those are the primary's, and arrive there through the
+     * forwarded event.
+     */
+    function localMirrorSideEffects(kind, deviceId, data) {
+      if (kind === 'heartbeat') {
+        heartbeat.updateHeartbeat(deviceId);
+        if (deviceExists(deviceId)) {
+          const prev = db.prepare('SELECT status FROM devices WHERE id = ?').get(deviceId);
+          db.prepare("UPDATE devices SET status = 'online', last_heartbeat = strftime('%s','now') WHERE id = ?").run(deviceId);
+          emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-status', { device_id: deviceId, status: 'online', liveness: heartbeat.livenessFor(deviceId), telemetry: data && data.telemetry });
+          if (prev && prev.status !== 'online') logCoalescer.record(`replica-online:${deviceId}`, `[replica] ${deviceId} back online`);
         }
         return;
       }
-      console.log(`Device ${device_id} content ${content_id}: ${status}`);
-      emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:content-ack', { device_id, content_id, status });
-    });
-
-    // Playback state update
-    socket.on('device:playback-state', (data) => {
-      if (!requireDeviceAuth()) return;
-      // currentDeviceId is the authenticated device for this socket; use it for the workspace
-      // lookup since data may not carry device_id consistently — and STAMP it over whatever the
-      // payload claims before relaying. This was the only relay forwarding the client's object
-      // verbatim, so a device could report progress attributed to a different screen in the same
-      // workspace and the dashboard would believe it. Every other relay here stamps the
-      // authenticated id; this one now matches.
-      emitToDeviceWorkspace(dashboardNs, currentDeviceId, 'dashboard:playback-state',
-        { ...(data || {}), device_id: currentDeviceId });
-    });
-
-    // Live debug log line from the player (only sent when debug logging is toggled
-    // on for this device). Relayed to the device's workspace dashboard room so the
-    // open device-detail screen can stream it. Not persisted.
-    socket.on('device:log', (data) => {
-      if (!requireDeviceAuth() || !currentDeviceId) return;
-      const message = typeof data?.message === 'string' ? data.message.slice(0, 2000) : '';
-      if (!message) return;
-      emitToDeviceWorkspace(dashboardNs, currentDeviceId, 'dashboard:device-log', {
-        device_id: currentDeviceId,
-        tag: typeof data?.tag === 'string' ? data.tag.slice(0, 64) : '',
-        level: typeof data?.level === 'string' ? data.level.slice(0, 8) : 'd',
-        message,
-        ts: Date.now(),
-      });
-    });
-
-    // #139 Phase 2 (Option B): event-driven OTA status. The device announces a status TRANSITION
-    // ('manual_update_required' on enter-backoff, 'none' on clear) so the dashboard badge updates
-    // promptly without waiting for a reconnect. The register path still persists these fields too
-    // (the reconnect backstop if a transition event is missed). Same columns + ?? defaults.
-    socket.on('device:ota-status', (data) => {
-      if (!requireDeviceAuth()) return;
-      const { device_id, ota_status, ota_target_version, ota_attempts } = data || {};
-      // Unknown / forged / mismatched id -> no-op. WHERE id = ? also makes an unregistered id a
-      // 0-row update (never throws), so a stray event can't error the socket.
-      if (!device_id || device_id !== currentDeviceId) return;
-      db.prepare("UPDATE devices SET ota_status = ?, ota_target_version = ?, ota_attempts = ?, ota_updated_at = strftime('%s','now') WHERE id = ?")
-        .run(ota_status ?? 'none', ota_target_version ?? null, ota_attempts ?? 0, device_id);
-    });
-
-    // Exit-signal contract v1 — the device's best-effort "last gasp": it announces its manner of death
-    // (crashed | clean_exit) as (usually) its final act. We record it; when the device then goes Offline
-    // the annotation is applied (else 'silent'). ADDITIVE — never touches offline detection. Cleared on
-    // (re)online (the register UPDATEs) so a stale reason can't mislabel a later death. The same canonical
-    // shape also arrives via the beacon POST /api/device/exit for reliable-on-unload delivery.
-    socket.on('device:exit', (data) => {
-      if (!requireDeviceAuth() || !currentDeviceId) return;
-      const { device_id, reason, detail } = data || {};
-      if (device_id && device_id !== currentDeviceId) return;                 // forged/mismatched -> no-op
-      const e = liveness.sanitizeExitReason(reason, detail);                  // unknown -> null -> falls to 'silent'
-      if (!e) return;
-      db.prepare("UPDATE devices SET offline_reason = ?, offline_reason_at = strftime('%s','now'), offline_detail = ? WHERE id = ?")
-        .run(e.reason, e.detail, currentDeviceId);
-    });
-
-    // Offline-cause log: a typed incident from the player (display_off/display_on, crash,
-    // app_error, ...). Just records a device_events row. Guarded by requireDeviceAuth like
-    // every other device event; unknown/forged types are dropped (never inserted).
-    socket.on('device:event', (data) => {
-      if (!requireDeviceAuth()) return;
-      const { device_id, type, reason, detail } = data || {};
-      if (device_id && device_id !== currentDeviceId) return;          // forged/mismatched -> no-op
-      if (!incidentClassify.isAllowedEventType(type)) return;          // unknown type -> ignore
-      try {
-        db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, ?, ?, ?)")
-          .run(currentDeviceId, type, reason ? String(reason).slice(0, 64) : null, detail ? String(detail).slice(0, 500) : null);
-      } catch (_) { /* incident feed is best-effort; never crash the socket */ }
-    });
-
-    // Offline-cause log: the device's ground-truth account of an in-process disconnect it
-    // just recovered from (app SURVIVED the gap -> not a reboot unless cold_start). Compose
-    // reason+detail per the contract, then UPGRADE the server's earlier guess: flush the
-    // status-log writer so the offline row exists, UPDATE that recent offline row's
-    // reason/detail, and add a device_events row (type network|reboot).
-    socket.on('device:connectivity-report', (data) => {
-      if (!requireDeviceAuth()) return;
-      const { device_id } = data || {};
-      if (device_id && device_id !== currentDeviceId) return;          // forged/mismatched -> no-op
-      const deviceId = currentDeviceId;
-      try {
-        const { reason, detail, type } = incidentClassify.classifyConnectivity(data);
-        // Ensure any buffered offline transition for this device is on disk before we
-        // reach back to annotate it (the writer coalesces on a ~1s interval otherwise).
-        statusLogWriter.flushNow();
-        // Upgrade the most-recent offline row (server guess) to the device's ground truth.
-        db.prepare(`UPDATE device_status_log SET reason = ?, detail = ?
-          WHERE id = (
-            SELECT id FROM device_status_log
-            WHERE device_id = ? AND status IN ('offline','offline_timeout')
-              AND timestamp > strftime('%s','now') - 900
-            ORDER BY timestamp DESC, id DESC LIMIT 1)`).run(reason, detail, deviceId);
-        db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, ?, ?, ?)")
-          .run(deviceId, type, reason, detail);
-      } catch (_) { /* offline-cause annotation is best-effort; never crash the socket */ }
-    });
-
-    // Play event logging (proof-of-play)
-    socket.on('device:play-event', (data) => {
-      if (!requireDeviceAuth()) return;
-      const { device_id, event, content_id, widget_id, content_name, zone_id, completed, duration_sec } = data;
-      if (device_id !== currentDeviceId) return;
-      try {
-        if (event === 'play_start') {
-          // Throttle proof-of-play inserts per device so a runaway player
-          // (0-second items) can't flood play_logs. Skipped cycles simply
-          // don't create a row; the dashboard progress event below still fires.
-          const nowMs = Date.now();
-          const lastMs = lastPlayLogAt.get(device_id) || 0;
-          if (nowMs - lastMs >= PLAY_LOG_MIN_GAP_MS) {
-            lastPlayLogAt.set(device_id, nowMs);
-            // Resolve the reported id against what actually exists rather than handing it
-            // straight to a foreign key. content_id references content(id) and widget_id
-            // references widgets(id); a stale id from a cached playlist made the INSERT
-            // throw and the whole row was lost. Widgets were never attributed at all —
-            // widget_id was simply never written. Write whichever column the id belongs
-            // in; an id matching neither degrades to NULL references, so content_name
-            // still records WHAT played instead of the event vanishing.
-            // Prefer an EXPLICIT widget_id. A widget playlist item has no content_id at all, so
-            // sniffing content_id could never attribute it — those plays were recorded with both
-            // columns null, and Reports read empty for any screen showing a widget. Older players
-            // send only content_id (sometimes carrying a widget id), so the sniff stays as their
-            // fallback.
-            const explicitWidget = widget_id && widgetExists.get(widget_id) ? widget_id : null;
-            const isContent = (!explicitWidget && content_id) ? !!contentExists.get(content_id) : false;
-            const isWidget = (!explicitWidget && !isContent && content_id) ? !!widgetExists.get(content_id) : false;
-            const wid = explicitWidget || (isWidget ? content_id : null);
-            const cid = isContent ? content_id : null;
-            const info = _insertPlay.run(device_id, cid, wid, zone_id || null, content_name || 'Unknown');
-            /*
-             * ⚠️ #307: REMEMBER THE ROW WE JUST OPENED.
-             *
-             * Closing it used to mean SEARCHING for it — the device's most recent row with
-             * ended_at IS NULL matching this content or widget. That is a query over the device's
-             * whole play history to find something this line created seconds earlier, and on prod
-             * one device has 377,132 rows: measured at 153ms, every advance, on the event loop.
-             *
-             * An index makes that search cheap. Not searching at all makes it free, and stays free
-             * however much history accumulates — which matters because history only grows.
-             */
-            rememberOpenPlay(device_id, cid, wid, info.lastInsertRowid);
-          }
-          /*
-           * #299: a new play beginning is the evidence that closes whatever the last outage or
-           * reboot left open — the row before this one, in this zone, ran until now. Normally
-           * play_end has already closed it and this is a no-op; it only bites when that end was
-           * lost, which is exactly the case nothing repaired before.
-           *
-           * ⚠️ ONCE PER CONNECTION, NOT ONCE PER PLAY — and the difference is the single most
-           * expensive thing this server was doing.
-           *
-           * The repair is a correlated self-join of play_logs against play_logs plus a join to
-           * content, grouped per row, across the device's whole history. Measured against a copy of
-           * a real fleet database (3.1M rows, 2.7M of them on the busiest device): **362ms**, and
-           * **355ms when there was nothing to close** — the cost is paid in full whether or not it
-           * finds anything. At roughly one play per second across a 78-panel site that is a ~150ms
-           * synchronous block about once a second, for ever, which is exactly the "p50 at the
-           * measurement floor with a single fat outlier per window" signature the customer's
-           * profile showed: 27.1% of sixty seconds of wall time inside this one call.
-           *
-           * A lost play_end happens when a session ends abruptly — a reboot, a network drop, a
-           * crash. The evidence for it is therefore the FIRST play of a NEW connection, not the
-           * four hundredth play of a healthy one: inside a live session every end arrives normally
-           * and there is nothing to repair. So the sweep is armed per socket and disarmed after it
-           * runs, which keeps the repair exactly where it was designed to help and removes it from
-           * the steady state entirely.
-           *
-           * The deeper leak this cannot reach — rows open so long no later play can bound them —
-           * was never this call's job and is still handled by the boot sweep in services/heartbeat.
-           */
-          if (!strandedSweepDone) {
-            strandedSweepDone = true;
-            try { closeStrandedPlays(db, device_id); } catch (e) { /* never block a live play */ }
-          }
-
-          // Forward to dashboard so it can render a per-device progress bar.
-          // Server-side timestamp avoids clock-skew between player and dashboard.
-          emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:playback-progress', {
-            device_id,
-            content_id: content_id || null,
-            content_name: content_name || null,
-            duration_sec: typeof duration_sec === 'number' && duration_sec > 0 ? duration_sec : null,
-            started_at: Date.now(),
-          });
-        } else if (event === 'play_offline') {
-          /*
-           * #299 BACKFILL. A player that kept playing while the socket was down replays what it
-           * recorded, as COMPLETE rows carrying their real times.
-           *
-           * ⚠️ COMPLETE ROWS, NOT REPLAYED start/end PAIRS. play_end closes "the most recent open
-           * row for this device+content", so a backlog replayed alongside live playback could
-           * close the wrong one — the live row that happens to be open right now. Inserting a
-           * closed row in one shot removes that race instead of trying to sequence around it.
-           *
-           * ⚠️ AND IT DELIBERATELY BYPASSES lastPlayLogAt. That throttle bounds a runaway LIVE
-           * player (one row per device per 2s); applied here it would silently decimate a flush
-           * to roughly one surviving row per 2s of real flush time — the very loss the backfill
-           * exists to prevent. boundBatch caps the payload instead.
-           */
-          const nowSec = Math.floor(Date.now() / 1000);
-          const plays = boundBatch(data.plays);
-          let written = 0;
-          let rejected = 0;
-          for (const raw of plays) {
-            const p = normalizeBackfillPlay(raw, nowSec);
-            if (!p) { rejected++; continue; }
-
-            const wid = p.widget_id && widgetExists.get(p.widget_id) ? p.widget_id : null;
-            const isContent = (!wid && p.content_id) ? !!contentExists.get(p.content_id) : false;
-            const isWidget = (!wid && !isContent && p.content_id) ? !!widgetExists.get(p.content_id) : false;
-
-            /*
-             * INSERT OR IGNORE against the unique client_event_id: a player that flushes, dies
-             * before it sees the ack, and flushes again on its next boot must not double-count.
-             * An event with no id still stores (the column is nullable, the index partial) — an
-             * older player replaying is better than no row at all.
-             */
-            const info = _insertBackfillPlay.run(
-              device_id,
-              isContent ? p.content_id : null,
-              wid || (isWidget ? p.content_id : null),
-              p.zone_id,
-              p.content_name,
-              p.started_at,
-              p.ended_at,
-              p.duration_sec,
-              p.completed,
-              p.client_event_id
-            );
-            written += info.changes;
-          }
-          /*
-           * ⚠️ NOW CLOSE WHAT THE OUTAGE STRANDED. The play that was in flight when the link
-           * dropped had its play_start recorded live and its play_end lost, so it sat open with no
-           * duration — one per outage, and the backfill alone does not touch it. The plays just
-           * inserted are the evidence that closes it: the device advancing proves the previous item
-           * ran until the next one started.
-           */
-          const closed = closeStrandedPlays(db, device_id);
-
-          /*
-           * Acked so the player can drop exactly what landed. It keeps its queue until this
-           * arrives — a flush that vanished into a dead socket would otherwise be the same data
-           * loss by a different route.
-           */
-          socket.emit('device:play-offline-ack', { received: plays.length, written, rejected });
-          if (plays.length) {
-            console.log(`[play] backfill from ${device_id}: ${plays.length} received, ${written} written, ${rejected} rejected, ${closed} stranded closed`);
-          }
-        } else if (event === 'play_end') {
-          // A widget play is closed by its widget id. Binding content_id to BOTH columns meant a
-          // widget row could never match itself, so it was never closed and never gained a
-          // duration — the other half of what made widget reporting useless.
-          // (Any comment must stay OUT of the template literal below; inside it, it becomes SQL.)
-          /*
-           * ⚠️ #307: PREPARED ONCE, at module load. This ran on every play advance for every device
-           * and recompiled the statement each time — paid on the hot path, for nothing. The
-           * statement text is unchanged; see idx_play_logs_open in db/database.js for the index
-           * that made the query itself stop costing 153ms.
-           */
-          /*
-           * ⚠️ #307: the remembered rowid first — a primary-key update, no search, no sort.
-           * The search remains as the fallback, and it is not vestigial: it is what closes a play
-           * this process did not open (a restart mid-play, a play replayed by the #299 offline
-           * backfill, a second server behind the same database).
-           */
-          const known = takeOpenPlay(device_id, content_id || null, widget_id || content_id || null);
-          if (known != null) _closePlayById.run(completed ? 1 : 0, known);
-          else _closePlay.run(completed ? 1 : 0, device_id, content_id || null, widget_id || content_id || null);
-        }
-      } catch (err) {
-        // Include the identifiers. Without them this is undiagnosable in production: it
-        // fired ~360 times in six hours on prod with nothing in the log to point at.
-        console.error('Play log error:', err.message,
-          `(event=${event} device=${device_id} content=${content_id} zone=${zone_id})`);
+      if (kind === 'playback-state') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-state', { ...(data || {}), device_id: deviceId });
+      if (kind === 'content-ack') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:content-ack', { device_id: deviceId, content_id: data && data.content_id, status: data && data.status });
+      if (kind === 'shell-result') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:shell-result', { device_id: deviceId, cmd: String((data && data.cmd) || '').slice(0, 500), output: String((data && data.output) || '').slice(0, 8000), exit: data && data.exit });
+      if (kind === 'log') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-log', { device_id: deviceId, tag: String((data && data.tag) || '').slice(0, 64), level: String((data && data.level) || 'd').slice(0, 8), message: String((data && data.message) || '').slice(0, 2000), ts: Date.now() });
+      if (kind === 'screenshot' && data && data.image_b64) return ingestScreenshot(deviceId, data.image_b64);
+      if (kind === 'play-event' && data && data.event === 'play_start') {
+        return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-progress', {
+          device_id: deviceId, content_id: data.content_id || null, content_name: data.content_name || null,
+          duration_sec: typeof data.duration_sec === 'number' && data.duration_sec > 0 ? data.duration_sec : null, started_at: Date.now(),
+        });
       }
+    }
+    function dispatch(kind, data) {
+      if (!requireDeviceAuth()) return;
+      const claimed = data && data.device_id;
+      // A forged / mismatched id is a no-op, as every handler always treated it.
+      if (claimed && claimed !== currentDeviceId) return;
+      if (viaEdge) return playerTermination.forwardEvent(db, viaEdge, currentDeviceId, kind, data, ctx, localMirrorSideEffects);
+      EVENT_APPLIERS[kind](currentDeviceId, data, ctx);
+    }
+
+    socket.on('device:info', (data) => dispatch('info', data));
+
+    socket.on('device:trigger-status', (data) => dispatch('trigger-status', data));
+
+    socket.on('device:heartbeat', (data) => {
+      const { device_id } = data || {};
+      // v4 PRIMARY + FIX 1 — UNIFORM ACK, BEFORE the auth guard (see EVENT_APPLIERS.heartbeat for the
+      // rest). The server is the time authority for group sync; on a replica that is the replica.
+      if (liveness.ackableHeartbeat(currentDeviceId, device_id, deviceExists) || (viaEdge && currentDeviceId && device_id === currentDeviceId)) {
+        socket.emit('device:heartbeat-ack', { server_ms: Date.now(), client_ms: data?.client_ms ?? null });
+      }
+      dispatch('heartbeat', data);
     });
+
+    socket.on('device:screenshot', (data) => dispatch('screenshot', data));
+
+    socket.on('device:shell-result', (data) => dispatch('shell-result', data));
+
+    socket.on('device:content-ack', (data) => dispatch('content-ack', data));
+
+    socket.on('device:playback-state', (data) => dispatch('playback-state', data));
+
+    socket.on('device:log', (data) => dispatch('log', data));
+
+    socket.on('device:ota-status', (data) => dispatch('ota-status', data));
+
+    socket.on('device:exit', (data) => dispatch('exit', data));
+
+    socket.on('device:event', (data) => dispatch('event', data));
+
+    socket.on('device:connectivity-report', (data) => dispatch('connectivity-report', data));
+
+    socket.on('device:play-event', (data) => dispatch('play-event', data));
+
 
     // Video wall sync relay. Sender must be a member of the wall it claims —
     // otherwise an authenticated device could inject sync packets into a wall
@@ -2190,72 +2555,25 @@ module.exports = function setupDeviceSocket(io) {
       // sequence we want the second to refresh the window, not double up.
       if (pendingOfflines.has(deviceId)) clearTimeout(pendingOfflines.get(deviceId));
 
+      const edgeAtClose = viaEdge;
       pendingOfflines.set(deviceId, setTimeout(() => {
-        pendingOfflines.delete(deviceId);
-        // Re-check at fire time: did a DIFFERENT socket reclaim during the
-        // grace window? If activeConn exists but it's still our (now-closed)
-        // socket's entry, the entry is just stale - heartbeat.removeConnection
-        // hasn't run yet because we defer it inside this same block. Only
-        // abort if a genuinely different socket has registered.
-        const activeNow = heartbeat.getConnection(deviceId);
-        if (activeNow && activeNow.socketId !== closingSocketId) return;
-
-        // Exit-signal contract (UNCHANGED): devices.offline_reason stays the app's self-reported
-        // manner-of-death — 'crashed'/'clean_exit' if it announced one this session, else 'silent'
-        // (a violent/abrupt death is 'silent', never a socket-inferred value — Bold-critical).
-        db.prepare("UPDATE devices SET status = 'offline', updated_at = strftime('%s','now'), offline_reason = COALESCE(offline_reason, 'silent'), offline_reason_at = COALESCE(offline_reason_at, strftime('%s','now')) WHERE id = ?").run(deviceId);
-        heartbeat.removeConnection(deviceId);
-        const _off = db.prepare("SELECT offline_reason, offline_detail, client_type FROM devices WHERE id = ?").get(deviceId) || {};
-        // The offline-CAUSE log (device_status_log + device_events) gets the richer signal, which is
-        // a SEPARATE axis from the exit-signal field: the app's announced reason if it gave one, else
-        // the normalized socket transport reason (transport_close/ping_timeout/...). This never touches
-        // devices.offline_reason, so the exit-signal 'silent' semantics above are preserved.
-        const finalReason = (_off.offline_reason && _off.offline_reason !== 'silent') ? _off.offline_reason : socketOfflineReason;
-        logDeviceStatus(deviceId, 'offline', finalReason, null);
-        // Offline-cause log: also record the transition in the unified incident feed.
-        try { db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, 'offline', ?, NULL)").run(deviceId, finalReason); } catch (_) { /* incident feed is best-effort */ }
-        emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-status', { device_id: deviceId, status: 'offline', liveness: 'offline', offline_reason: _off.offline_reason || 'silent', offline_detail: _off.offline_detail || null, client_type: _off.client_type || null });
-
-        // If this device was leading a wall, reassign leadership to the next
-        // online member so playback stays driven.
-        try {
-          const wall = db.prepare('SELECT id FROM video_walls WHERE leader_device_id = ?').get(deviceId);
-          if (wall) {
-            const candidates = db.prepare(`
-              SELECT vwd.device_id FROM video_wall_devices vwd
-              JOIN devices d ON d.id = vwd.device_id
-              WHERE vwd.wall_id = ? AND d.status = 'online' AND vwd.device_id != ?
-              ORDER BY vwd.grid_row, vwd.grid_col LIMIT 1
-            `).all(wall.id, deviceId);
-            const newLeader = candidates[0]?.device_id || null;
-            db.prepare('UPDATE video_walls SET leader_device_id = ? WHERE id = ?').run(newLeader, wall.id);
-            const members = db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(wall.id);
-            for (const m of members) {
-              if (m.device_id !== deviceId) {
-                commandQueue.queueOrEmitPlaylistUpdate(deviceNs, m.device_id, buildPlaylistPayload);
-              }
-            }
+        if (edgeAtClose) {
+          /*
+           * Scale-out C2: the debounce ran HERE, so the primary gets one 'offline' and applies its
+           * transition; the mirror's volatile columns follow so this node's fleet page agrees.
+           */
+          pendingOfflines.delete(deviceId);
+          const activeNow = heartbeat.getConnection(deviceId);
+          if (activeNow && activeNow.socketId !== closingSocketId) return;
+          heartbeat.removeConnection(deviceId);
+          if (deviceExists(deviceId)) {
+            db.prepare("UPDATE devices SET status = 'offline', updated_at = strftime('%s','now') WHERE id = ?").run(deviceId);
+            emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-status', { device_id: deviceId, status: 'offline', liveness: 'offline' });
           }
-        } catch (e) { console.error('Wall leader reassign failed:', e.message); }
-
-        // Save last screenshot to disk as offline snapshot
-        const lastB64 = lastScreenshots[deviceId];
-        if (lastB64) {
-          try {
-            const filename = `${deviceId}_latest.jpg`;
-            const buffer = Buffer.from(lastB64, 'base64');
-            fs.writeFileSync(path.join(config.screenshotsDir, filename), buffer);
-            const existing = db.prepare('SELECT id FROM screenshots WHERE device_id = ?').get(deviceId);
-            if (existing) {
-              db.prepare('UPDATE screenshots SET filepath = ?, captured_at = strftime(\'%s\',\'now\') WHERE device_id = ?').run(filename, deviceId);
-            } else {
-              db.prepare('INSERT INTO screenshots (device_id, filepath) VALUES (?, ?)').run(deviceId, filename);
-            }
-          } catch (e) {
-            console.error('Failed to save offline screenshot:', e.message);
-          }
-          delete lastScreenshots[deviceId];
+          playerTermination.forwardEvent(db, edgeAtClose, deviceId, 'offline', { device_id: deviceId, reason: socketOfflineReason }, ctx, null);
+          return;
         }
+        EVENT_APPLIERS.offline(deviceId, { reason: socketOfflineReason }, { closingSocketId, source: 'local', reply: () => {} });
       }, OFFLINE_DEBOUNCE_MS));
     });
   });
@@ -2288,3 +2606,16 @@ module.exports.__resetTimers = () => {
 // against a real database without standing up a socket server.
 
 module.exports.__test = { resolveGroupSync, resolveGroupLeader, groupSyncMembers };
+/*
+ * Scale-out C2, PRIMARY side: the mesh write path (lib/mesh/node-write.js) applies a forwarded
+ * player event by calling the SAME applier the local socket handler calls. `ctx.reply` collects
+ * what the applier would have said to the player, so the replica can relay it back.
+ */
+module.exports.applyPlayerEvent = (kind, deviceId, data, ctx) => {
+  const fn = EVENT_APPLIERS[kind];
+  if (typeof fn !== 'function') return { ok: false, reason: `unknown player event kind "${kind}"` };
+  fn(deviceId, data, ctx);
+  return { ok: true };
+};
+module.exports.PLAYER_EVENT_KINDS = Object.freeze(Object.keys(EVENT_APPLIERS));
+module.exports.provisionViaReplica = provisionViaReplica;

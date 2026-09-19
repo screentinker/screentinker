@@ -1,4 +1,5 @@
 const setupDeviceSocket = require('./deviceSocket');
+const playerTermination = require('../lib/mesh/player-termination');   // scale-out C2
 const setupDashboardSocket = require('./dashboardSocket');
 
 module.exports = function setupWebSockets(io) {
@@ -45,7 +46,12 @@ module.exports = function setupWebSockets(io) {
            * well. Recording that we HEARD from it is true regardless of whether we managed to keep
            * what it said, and conflating the two would show a healthy site as offline (I6).
            */
-          onConnect: (edge) => { if (replica) replica.onConnect(edge); },
+          onConnect: (edge) => {
+            if (replica) replica.onConnect(edge);
+            // Scale-out C2: buffered player events for this primary go now, not after the backoff.
+            const ob = playerTermination.getOutbox();
+            if (ob) { try { ob.resume(edge); } catch (e) { /* the 1 s tick covers it */ } }
+          },
           onEnvelope: (edge, env, meta) => {
             store.touchEdge(db, edge.id);
             if (meta && meta.relayOnly) return;   // I5: relayed, not interpreted, not stored
@@ -61,6 +67,19 @@ module.exports = function setupWebSockets(io) {
                 if (meta && Array.isArray(meta.batch)) { for (const item of meta.batch) replica.onEnvelope(edge, item); }
                 else if (replica.onEnvelope(edge, env)) return;
               } catch (e) { /* the copy is best-effort; the mirror below still lands */ }
+            }
+            /*
+             * Scale-out C2: a primary asking this node to deliver something to a screen attached
+             * HERE. Consumed, never stored, never relayed further (the screen is on this node or it
+             * is nowhere). deliverRelay checks the edge terminates players and the device is one of
+             * that primary's before it emits anything.
+             */
+            if (env && env.type === 'command-relay') {
+              try {
+                const r = playerTermination.deliverRelay(db, deviceNs, edge, env.body);
+                if (!r.ok) console.warn(`[mesh] command-relay from ${edge.peer_node_id} not delivered: ${r.reason}`);
+              } catch (e) { console.warn(`[mesh] command-relay: ${e && e.message}`); }
+              return;
             }
 
             /*
@@ -106,10 +125,35 @@ module.exports = function setupWebSockets(io) {
            * obtain a row, and readFrom exists only once the mesh namespace is up.
            */
           try {
-            replica = require('../lib/mesh/replica').createReplica(db, { readFrom: meshNs.readFrom, logger: console });
+            replica = require('../lib/mesh/replica').createReplica(db, {
+              readFrom: meshNs.readFrom, logger: console,
+              // Scale-out C2: re-push the playlist to every screen attached here in a workspace
+              // that just changed. Same payload builder, same dedup on the player's side.
+              onApplied: (wsIds) => {
+                const commandQueue = require('../lib/command-queue');
+                const build = require('./deviceSocket').buildPlaylistPayload;
+                for (const wsId of wsIds) {
+                  for (const d of db.prepare('SELECT id FROM devices WHERE workspace_id = ?').all(wsId)) {
+                    const room = deviceNs.adapter.rooms.get(d.id);
+                    if (room && room.size > 0) commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.id, build);
+                  }
+                }
+              },
+            });
             replica.start();
             global.__meshReplica = replica;
           } catch (e) { console.warn(`[mesh] replica loop not started: ${e && e.message}`); }
+          /*
+           * Scale-out C2: players on a replica. The outbox drains player events to their primary
+           * through writeTo; verification asks through readFrom; a reply the primary collected
+           * while applying (a play-offline ack) lands on the local socket.
+           */
+          try {
+            playerTermination.attach({
+              db, readFrom: meshNs.readFrom, writeTo: meshNs.writeTo, logger: console,
+              onReply: (deviceId, event, payload) => { try { deviceNs.to(deviceId).emit(event, payload); } catch (e) { /* */ } },
+            });
+          } catch (e) { console.warn(`[mesh] player termination not started: ${e && e.message}`); }
           global.__meshReadFrom = meshNs.readFrom;
           // Same publication as the read side: routes reach the live socket layer through this
           // rather than importing it, because the sockets are constructed after routes are mounted.

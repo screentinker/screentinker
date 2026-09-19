@@ -182,6 +182,12 @@ async function applyWriteInner(db, edge, req, deps = {}) {
     return { ok: false, reason: 'This connection may not change anything on this server. Write ' +
                                 "access is granted by this server's operator." };
   }
+
+  // Scale-out C2: a player event or a provisioning request from a replica — its own path, its own
+  // grant, the same idempotency record. See applyPlayerOp for the checks.
+  if (req && PLAYER_OP_TYPES.includes(req.type)) {
+    return applyPlayerOp(db, edge, req, { writeGrant, writeScope, now, deps });
+  }
   if (!writeProxy.isWritable(path, method)) {
     return { ok: false, reason: writeProxy.REFUSED };
   }
@@ -394,4 +400,123 @@ async function applyWriteInner(db, edge, req, deps = {}) {
   return { ok: true, outcome: result || null, workspaceId };
 }
 
-module.exports = { applyWrite, resolveTargetWorkspace };
+/*
+ * ============================================================================================
+ * Scale-out C2 — player ops (docs/scale-out-design.md §6).
+ *
+ * `player-event`: a screen connected to a REPLICA reported something (heartbeat, a play, an
+ * offline), and the replica forwards it here, to the node that owns the screen. Applied by the very
+ * function the local socket handler calls (ws/deviceSocket.js EVENT_APPLIERS), so a screen behind a
+ * replica is indistinguishable in this database from one connected directly.
+ *
+ * `player-provision`: a NEW screen paired to a replica; only this node can mint its token. The row
+ * is created here exactly as the local pairing path creates it, and the outcome carries the token
+ * ONCE for the replica to hand to the screen.
+ *
+ * ⚠️ THE I2 ACCOUNTING. Both are writes arriving at the data owner over the wire, and both are
+ * permitted ONLY because THIS node's operator set `player-events` on this edge — the write grant is
+ * read from this node's own row, the device's workspace is resolved from this node's own rows and
+ * must be inside the grant's scope, and a provisioning request is accepted only for an edge that
+ * holds that grant with a non-empty scope. The op types are a REVIEWED LIST (mesh-invariants
+ * asserts it), like the downward socket verbs are.
+ * ============================================================================================
+ */
+const PLAYER_OP_TYPES = Object.freeze(['player-event', 'player-provision']);
+
+function applyPlayerOp(db, edge, req, { writeGrant, writeScope, now }) {
+  const opId = req && req.opId;
+  if (!opId) return { ok: false, reason: 'A write must carry an operation id, so that retrying it is safe.' };
+  if (!writeGrant.includes('player-events') || !writeScope.length) {
+    return { ok: false, reason: 'This connection may not report screens to this server. The player-events ' +
+                                "grant is set by this server's operator." };
+  }
+  const deviceSocket = require('../../ws/deviceSocket');
+
+  // Idempotency, same record as every other write. Replays answer from the record.
+  const seen = db.prepare('SELECT ok, outcome FROM mesh_write_ops WHERE edge_id = ? AND op_id = ?').get(edge.id, opId);
+  if (seen) {
+    let outcome = null;
+    try { outcome = seen.outcome ? JSON.parse(seen.outcome) : null; } catch (e) { outcome = null; }
+    if (seen.ok === IN_FLIGHT) return { ok: false, reason: 'That change is already being applied. Retry with the same operation id to learn how it finished.', indeterminate: true };
+    return seen.ok ? { ok: true, outcome, replayed: true } : { ok: false, reason: 'That write was already refused.', replayed: true };
+  }
+
+  let targetKey, workspaceId = null, run;
+  if (req.type === 'player-provision') {
+    const p = req.payload || {};
+    const code = typeof p.pairing_code === 'string' ? p.pairing_code.trim().slice(0, 32) : '';
+    if (!code) return { ok: false, reason: 'A pairing code is required.' };
+    targetKey = `provision:${code}`;
+    run = () => deviceSocket.provisionViaReplica({
+      pairing_code: code, device_info: p.device_info && typeof p.device_info === 'object' ? p.device_info : null,
+      fingerprint: typeof p.fingerprint === 'string' ? p.fingerprint : null,
+      hw_fingerprint: typeof p.hw_fingerprint === 'string' ? p.hw_fingerprint : null,
+      ip: typeof p.ip === 'string' ? p.ip.slice(0, 45) : null, nodeId: edge.peer_node_id,
+    });
+  } else {
+    const deviceId = typeof req.deviceId === 'string' ? req.deviceId : null;
+    const kind = typeof req.kind === 'string' ? req.kind : null;
+    if (!deviceId || !kind) return { ok: false, reason: writeProxy.REFUSED };
+    if (!deviceSocket.PLAYER_EVENT_KINDS.includes(kind)) return { ok: false, reason: writeProxy.REFUSED };
+    /*
+     * ⚠️ The device's workspace is THIS node's answer, never the replica's claim. A device that
+     * belongs to a workspace outside the grant's scope is refused with the same string as one
+     * that does not exist. An unclaimed screen (no workspace yet) is accepted only if THIS replica
+     * provisioned it — attached_node_id says so — because its future workspace is one of the
+     * scoped ones by construction (the operator claims it there).
+     */
+    const row = db.prepare('SELECT workspace_id, attached_node_id FROM devices WHERE id = ?').get(deviceId);
+    if (!row) return { ok: false, reason: writeProxy.REFUSED };
+    if (row.workspace_id) {
+      if (!writeScope.includes(row.workspace_id)) return { ok: false, reason: writeProxy.REFUSED };
+      workspaceId = row.workspace_id;
+    } else if (row.attached_node_id !== edge.peer_node_id) {
+      return { ok: false, reason: writeProxy.REFUSED };
+    }
+    targetKey = `player:${deviceId}`;
+    const payload = req.payload && typeof req.payload === 'object' ? { ...req.payload, device_id: deviceId } : { device_id: deviceId };
+    run = () => {
+      const replies = [];
+      const ctx = {
+        reply: (event, p) => { replies.push({ event, payload: p }); },
+        session: { strandedSweepDone: false },
+        ip: typeof payload.ip === 'string' ? payload.ip : null,
+        source: 'replica', nodeId: edge.peer_node_id, closingSocketId: `mesh:${edge.peer_node_id}`,
+      };
+      // Every event from a replica keeps the attachment current; 'online' writes it itself.
+      if (kind !== 'online' && kind !== 'offline') {
+        db.prepare('UPDATE devices SET attached_node_id = ? WHERE id = ? AND (attached_node_id IS NULL OR attached_node_id != ?)').run(edge.peer_node_id, deviceId, edge.peer_node_id);
+      }
+      const r = deviceSocket.applyPlayerEvent(kind, deviceId, payload, ctx);
+      if (!r.ok) throw Object.assign(new Error(r.reason), { status: 400 });
+      return { replies };
+    };
+  }
+
+  try {
+    db.prepare(`INSERT INTO mesh_write_ops (edge_id, op_id, target, intent_seq, ok, outcome, applied_at) VALUES (?,?,?,?,?,NULL,?)`)
+      .run(edge.id, opId, targetKey, null, IN_FLIGHT, Math.floor(now / 1000));
+  } catch (e) {
+    return { ok: false, reason: 'That change is already being applied. Retry with the same operation id to learn how it finished.', indeterminate: true };
+  }
+  const finish = (okFlag, outcome) => {
+    db.prepare('UPDATE mesh_write_ops SET ok = ?, outcome = ?, applied_at = ? WHERE edge_id = ? AND op_id = ?')
+      .run(okFlag, JSON.stringify(outcome ?? null), Math.floor(now / 1000), edge.id, opId);
+  };
+  let result;
+  try {
+    result = run();
+  } catch (e) {
+    const status = e && e.status;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      finish(0, { error: String((e && e.message) || e), status });
+      return { ok: false, reason: 'That change could not be applied.' };
+    }
+    db.prepare('DELETE FROM mesh_write_ops WHERE edge_id = ? AND op_id = ?').run(edge.id, opId);
+    return { ok: false, indeterminate: true, reason: 'This server could not complete that change just now. Retry with the same operation id.' };
+  }
+  finish(1, result || null);
+  return { ok: true, outcome: result || null, workspaceId };
+}
+
+module.exports = { applyWrite, resolveTargetWorkspace, PLAYER_OP_TYPES };

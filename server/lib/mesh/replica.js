@@ -151,7 +151,7 @@ function copiedWorkspaces(db, originNodeId) {
  * @param db        writable handle
  * @param deps.readFrom  (childNodeId, {path, method}) => Promise<answer>   (ws/meshSocket.readFrom)
  */
-function createReplica(db, { readFrom, logger = console, pollMs = POLL_MS } = {}) {
+function createReplica(db, { readFrom, logger = console, pollMs = POLL_MS, onApplied = null } = {}) {
   const breakers = new CircuitBreakers();
   const state = new Map(); // edgeId -> { origin, phase, lastAppliedRev, lastAppliedAt, lastError, snapshot }
   let timer = null;
@@ -227,6 +227,11 @@ function createReplica(db, { readFrom, logger = console, pollMs = POLL_MS } = {}
       since = res.upto != null ? res.upto : since;
       markWorkspaces(db, wsIds, edge.peer_node_id, since);
       s.lastAppliedRev = since; s.lastAppliedAt = nowSec(); s.lastError = null;
+      // Scale-out C2: screens attached HERE are served from this copy, so a change that just landed
+      // must reach them now, not at their next refresh. The hook is told which workspaces moved.
+      if ((res.rows || []).length && typeof onApplied === 'function') {
+        try { onApplied([...new Set((res.rows || []).map((c) => c.workspace_id).filter(Boolean))]); } catch (e) { /* */ }
+      }
       if (!res.more) return;
     }
   }

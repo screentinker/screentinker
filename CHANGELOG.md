@@ -16,6 +16,21 @@ what to enter for the reviewer.
 
 ### Added
 
+**Scale-out, phase C2: screens on a replica.** A replica that took the new `terminates-players`
+role when it was paired (a tick under the copy tick) may accept player connections for the copied
+workspaces — once the *primary's* operator grants `player-events` on the primary, a write grant
+nothing on the wire can set. The replica verifies each screen by asking the primary once per socket
+(the token never leaves the primary; the replica keeps a hash so a known screen can reconnect while
+the primary is away), serves assignments and media from its mirror, forwards every event as a
+`player-event` write applied on the primary by the same code a directly connected screen runs, and
+keeps a durable, ordered outbox while the primary is unreachable — proof-of-play is never thinned
+or dropped, heartbeats coalesce. New screens pair to the replica and are provisioned on the primary.
+Commands travel from the primary up the edge as `command-relay`; the replica's own dashboard sends
+them through the primary, so there is one command path, and the dashboard socket now checks the
+same `ALLOWED_COMMANDS` list the REST route always did. A replica without the role, or a primary
+without the grant, behaves exactly as C1. Nothing ever redirects a screen to another server.
+Two-process test with a real player socket: `server/test/scale-out-c2-e2e.test.js`.
+
 **Scale-out, phase C1: one writer, many readers.** A second server can now hold a live, read-only
 copy of another server's workspaces and serve their dashboards — the same tables, the same 40
 route files, no mirror schema. It is the mesh, not a new cluster product: the replica is the

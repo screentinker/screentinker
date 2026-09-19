@@ -65,6 +65,13 @@ const READABLE = Object.freeze([
    */
   { pattern: '/api/mesh/snapshot',            grant: 'workspace-replication', scope: 'workspace' },
   { pattern: '/api/mesh/changes',             grant: 'workspace-replication', scope: 'workspace' },
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6): "is this device + token hash one of mine?" The
+   * ONE read keyed to a WRITE grant, because it exists solely so a replica may terminate players
+   * whose events it is permitted to write back: `player-events`, set by THIS node's operator. The
+   * answer is yes/no and the device's workspace; the token itself never leaves this node.
+   */
+  { pattern: '/api/mesh/verify-device',       writeGrant: 'player-events',  scope: 'workspace' },
 ]);
 
 /*
@@ -121,6 +128,18 @@ function authorize(edge, path, method, grants) {
     return { ok: false, reason: 'That is not something this connection may read.' };
   }
   const rule = matchPath(path);
+  if (rule.writeGrant) {
+    // Keyed to a WRITE grant: the one this node's operator set, read from this node's own row.
+    let wg = [];
+    try { wg = JSON.parse((edge && edge.write_grant) || '[]'); } catch (e) { wg = []; }
+    if (!Array.isArray(wg) || !wg.includes(rule.writeGrant)) {
+      return {
+        ok: false,
+        reason: `This connection was not granted "${rule.writeGrant}" by this server's operator, so it cannot read that.`,
+      };
+    }
+    return { ok: true, rule };
+  }
   if (!grants.includes(rule.grant)) {
     return {
       ok: false,

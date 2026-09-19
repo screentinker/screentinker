@@ -305,7 +305,7 @@ service timers arm.
 
 ---
 
-## 6. Players on a replica *(Phase C2 — after C1 is on hardware)*
+## 6. Players on a replica *(Phase C2 — shipped; operator guide in scale-out.md)*
 
 Phase C1 ships dashboards only; **players stay connected to the primary**. A replica in C1 refuses
 `device:register` for a replicated workspace with `{ error: 'read_replica', primary_url }` so a

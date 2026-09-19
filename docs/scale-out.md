@@ -5,8 +5,8 @@ another server's workspaces and serves their dashboards. The design and its reas
 [scale-out-design.md](scale-out-design.md); the inventory that led to it is in
 [scale-out-inventory.md](scale-out-inventory.md). This page is what to do and what to expect.*
 
-**Phase C1.** Dashboards scale; players do not yet (they stay on the primary). See
-[What is not scaled yet](#what-is-not-scaled-yet).
+**Phase C1** scales dashboards. **Phase C2** lets screens connect to a replica too — see
+[Players on a replica](#players-on-a-replica-c2). What is still not scaled is listed at the end.
 
 ---
 
@@ -134,6 +134,66 @@ this only works when one load balancer fronts both nodes. Leave it off unless th
 
 ---
 
+## Players on a replica (C2)
+
+By default a replica serves dashboards only: a screen pointed at it is refused with
+`read_replica` and the primary's address, so a mis-pointed panel says so on its setup screen
+instead of pairing into a copy. To let screens connect to the replica, two operators each do one
+thing:
+
+1. **On the replica**, when minting the pairing code, tick *Also let screens connect to this
+   server* under the copy tick (the `terminates-players` role; it needs `serves-dashboard` on the
+   same edge). Over the API: `capabilities: ["serves-dashboard","terminates-players","consumes-telemetry"]`.
+2. **On the primary**, after the link is up: **Servers → This server reports to → What this server
+   may change** — tick **Let screens connect through the other server and report back here**
+   (the `player-events` write grant) and choose the workspaces. Over the API:
+   `PUT /api/mesh/uplink/:id/write-grant {"categories":["player-events"],"workspaces":[…]}`.
+
+The grant is a WRITE grant on the primary, set only by the primary's operator. Nothing in a
+pairing code, an enrolment answer or any message can set it (I2, I10) — a player event is a write
+arriving at the data owner over the wire, and it is accepted only because the owner said so.
+
+**What happens then.** A screen pointed at the replica pairs there: the replica asks the primary
+to create the row (only the primary can mint a token; the token crosses once, to the screen, and
+the replica keeps only its hash). The operator claims the code in either dashboard — the
+replica's proxies to the primary — and the screen is told through the link. From then on:
+
+- **Verification** is one question to the primary per socket: *is this device + token hash
+  yours?* The answer is yes/no and the workspace; the token never leaves the primary
+  (`test_verify_device_does_not_return_the_token`). The replica remembers a *yes* by hash, so
+  the same screen can reconnect while the primary is unreachable. A screen it has never verified
+  waits (`device:throttled`, 15 s) — it is never turned away and never redirected.
+- **Assignments, playlists and media** come from the replica's mirror. A publish on the primary
+  reaches the screen when the change replicates (the ~1 s notice, 30 s at worst). Media is fetched
+  through from the primary per request (no cache yet).
+- **Every event** the screen sends — online/offline, heartbeat, health, what it played, command
+  results — is forwarded to the primary as a `player-event` write and applied there by the same
+  code a directly connected screen runs. The replica keeps a durable, ordered outbox per primary
+  (`mesh_player_events`): proof-of-play rows are never thinned or dropped; heartbeat-shaped events
+  coalesce last-wins. `GET /api/status` → `scale_out.replica_of[].players` shows what is pending.
+- **Commands** are the primary's. A command issued on the primary finds no local socket, sees
+  `devices.attached_node_id`, and sends a `command-relay` up the edge; the replica emits it to the
+  socket it holds. A command issued on the *replica's* dashboard goes REST → proxy → primary → relay
+  — the replica never commands a copied screen itself, so there is one command path.
+
+**When the primary is down**, screens attached to the replica keep playing from the mirror and
+their own cache; their heartbeats are acked by the replica; their events queue; a reboot
+reconnects on the cached verdict. When it returns, the queue drains in order and `play_logs` gain
+the rows (`test_play_event_buffered_while_primary_down_then_applied_in_order`; the two-process
+`scale-out-c2-e2e.test.js` does exactly this with a real player socket).
+
+**When the replica is down**, its screens reconnect to *it*, with backoff, as they would to any
+server. They do not fail over to the primary unless their own server-URL list says so — no
+automatic reroute (I9, `test_no_automatic_player_failover_to_primary`).
+
+**When the edge is revoked**, new screens are refused (`read_replica`); screens already attached
+keep playing from what they have.
+
+A replica **without** the role, or a primary **without** the grant, behaves exactly as C1
+(`test_replica_without_terminates_players_still_refuses_register`).
+
+---
+
 ## I8 — hosted-shaped and self-hosted, both directions
 
 The primary may be `SELF_HOSTED=true` and the replica hosted-shaped, or the reverse. A copied
@@ -167,15 +227,16 @@ knowing what it means, and because a button implies the reverse exists. It does 
 
 Documented gaps, in the order they are likely to matter:
 
-- **Players stay on the primary.** Heartbeats, content downloads, `/api/update/check`, live view and
-  triggers all talk to the primary. A replica does not accept a player for a copied workspace.
+- **`/api/update/check`, live view, screenshots-on-demand and LAN triggers** still talk to the
+  primary; a screen attached to a replica reaches them there only if it can. Playback, pairing,
+  heartbeats, proof-of-play and commands work through the replica (C2).
 - **Uploads are proxied whole, and content bytes are fetched through on every view.**
   `POST /api/content` from a replica streams the upload to the primary; the content row then comes
   back through replication, and the file and thumbnail are fetched from `PRIMARY_URL` each time
   the dashboard asks for them (`/api/content/:id/file`, `/uploads/content/<name>` — the latter only
   for a name that belongs to a copied row, so the public path is not an open proxy). There is no
-  local cache in C1, and a copied workspace's media is unavailable on the replica while the primary
-  is down.
+  local cache, and a copied workspace's media is unavailable on the replica while the primary is
+  down — an attached screen then plays from its own cache.
 - **Playback history is not copied.** `play_logs` stays on the primary. The Reports page on a
   replica says so for a copied workspace ("Playback history lives on the primary server") instead
   of showing an empty report as if nothing ever played. Proof-of-play reports run on the primary.

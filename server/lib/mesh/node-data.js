@@ -582,6 +582,36 @@ function answerRead(db, edge, req) {
     return r.ok ? { ...r, asOf: nowSec() } : r;
   }
 
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6): a replica that terminates players asks, once per
+   * socket, whether a device + token HASH is one of ours. The stored token is hashed here and the
+   * two hashes compared in constant time; the answer is yes/no plus what the replica needs to
+   * serve the screen from its mirror. The token itself is never in the answer — see
+   * test_verify_device_does_not_return_the_token. A device is verifiable through this edge when
+   * its workspace is one the edge shares, or when it is an unclaimed row this same replica
+   * provisioned (workspace_id NULL, attached_node_id = the asking node).
+   */
+  if (path === '/api/mesh/verify-device') {
+    const q = queryOf(req.path);
+    const deviceId = String(q.get('device_id') || '');
+    const tokenHash = String(q.get('token_hash') || '').toLowerCase();
+    const no = { ok: true, verified: false, asOf: nowSec() };
+    if (!deviceId || !/^[0-9a-f]{64}$/.test(tokenHash)) return no;
+    let row = null;
+    try {
+      row = db.prepare('SELECT id, device_token, workspace_id, user_id, name, blocked, attached_node_id FROM devices WHERE id = ?').get(deviceId);
+    } catch (e) { return no; }
+    if (!row || !row.device_token || row.blocked) return no;
+    const ours = row.workspace_id ? inScope(row.workspace_id) : row.attached_node_id === edge.peer_node_id;
+    if (!ours) return no;
+    const expected = require('crypto').createHash('sha256').update(String(row.device_token)).digest('hex');
+    let same = false;
+    try { same = require('crypto').timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(tokenHash, 'hex')); } catch (e) { same = false; }
+    if (!same) return no;
+    return { ok: true, verified: true, device_id: row.id, workspace_id: row.workspace_id || null,
+             paired: !!row.user_id, name: row.name || null, asOf: nowSec() };
+  }
+
   if (path === '/api/playlists') {
     try {
       const rows = db.prepare(

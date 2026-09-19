@@ -5,7 +5,8 @@ const { accessContext, accessibleWorkspaceIds } = require('../lib/tenancy');
 const { workspaceRoom } = require('../lib/socket-rooms');
 const { protectSocket } = require('../lib/safe-socket');
 const playerCapabilities = require('../lib/player-capabilities');
-const { deliverCommand, validateCommand } = require('../lib/device-command');
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const replicaProxy = require('../lib/replica-proxy');   // scale-out: copied devices are commanded on the primary
 const bsSnapshotQueue = require('../lib/brightsign-snapshot-queue');
 // Server-side framebuffer capture, for a BrightSign whose player cannot capture itself.
 const bsCapture = require('../lib/brightsign-capture');
@@ -329,10 +330,38 @@ module.exports = function setupDashboardSocket(io) {
       // controls. A command the panel cannot honour is refused HERE, with the capability named, so
       // it fails loudly instead of being delivered and silently ignored — which is the failure
       // this whole mechanism exists to end.
+      /*
+       * Scale-out C1 inventory: the REST path (routes/devices.js) refused a type outside
+       * ALLOWED_COMMANDS and this path did not — two definitions of "a command an operator may
+       * send". One list, both doors.
+       */
+      if (!ALLOWED_COMMANDS.includes(type)) {
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'invalid', error: 'invalid command type' });
+        return;
+      }
       // #312 follow-up: a malformed set_server_url must never reach a panel. Validate before deliver.
       const v = validateCommand(type, payload);
       if (!v.ok) { if (typeof ack === 'function') ack({ delivered: false, reason: 'invalid', error: v.error }); return; }
       const devRow = db.prepare('SELECT * FROM devices WHERE id = ?').get(device_id);
+      /*
+       * Scale-out (docs/scale-out.md): a COPIED device is the primary's to command. This is the
+       * same REST -> proxy -> primary -> command-relay route a click on the primary takes, initiated
+       * from this socket; the replica never emits to the screen itself, even when the screen is
+       * attached here — one command path, and the primary is the one that decides.
+       */
+      if (devRow && devRow.workspace_id && replicaProxy.isCopiedWorkspace(db.prepare('SELECT origin_node_id FROM workspaces WHERE id = ?').get(devRow.workspace_id))) {
+        const token = socket.handshake && socket.handshake.auth && socket.handshake.auth.token;
+        replicaProxy.forwardJson(appConfig, { token, method: 'POST', path: `/api/devices/${encodeURIComponent(device_id)}/command`, body: { type, payload } })
+          .then((r) => {
+            if (typeof ack !== 'function') return;
+            if (r.status >= 200 && r.status < 300) {
+              const st = r.body && r.body.status;
+              ack({ delivered: st === 'sent' || st === 'relayed', queued: st === 'queued', reason: st === 'sent' || st === 'relayed' ? undefined : 'offline', via: 'primary' });
+            } else if (r.status === 503) ack({ delivered: false, reason: 'primary_unreachable' });
+            else ack({ delivered: false, reason: (r.body && (r.body.code || r.body.error)) || `primary answered ${r.status}` });
+          });
+        return;
+      }
       // ⚠️ One definition of "deliver a command", shared with the group route and the mesh path —
       // see lib/device-command.js for why it was extracted.
       const r = deliverCommand(deviceNs, devRow, type, payload);
@@ -342,9 +371,9 @@ module.exports = function setupDashboardSocket(io) {
         if (typeof ack === 'function') ack({ delivered: false, reason: 'unsupported', capability: r.capability });
         return;
       }
-      if (r.status === 'sent') {
-        console.log(`Command delivered to device ${device_id}: ${type}`);
-        if (typeof ack === 'function') ack({ delivered: true });
+      if (r.status === 'sent' || r.status === 'relayed') {
+        console.log(`Command delivered to device ${device_id}: ${type}${r.via ? ` (via ${r.via})` : ''}`);
+        if (typeof ack === 'function') ack({ delivered: true, via: r.via || null });
         return;
       }
       console.log(`Command for offline device ${device_id}: ${type} (queued=${r.status === 'queued'})`);

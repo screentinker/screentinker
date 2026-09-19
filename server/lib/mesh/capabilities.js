@@ -49,6 +49,21 @@ const CAPABILITIES = Object.freeze({
     summary: 'Serves a read-only dashboard from a copy of the workspaces a server below shares',
     requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
   },
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6). This node accepts PLAYER sockets for the copied
+   * workspaces: it authenticates each one by asking the primary (the token never leaves the
+   * primary), serves assignments and media from its own mirror, forwards every player event to the
+   * primary as a `player-event` write, and delivers the primary's commands to that player when a
+   * `command-relay` comes up the edge. Requires serves-dashboard on the same edge — there is no
+   * mirror to serve from otherwise. It is still a capability: without the `player-events` WRITE
+   * grant set by the PRIMARY's operator, the events have nowhere to go and the replica refuses the
+   * player (I2, I10).
+   */
+  'terminates-players': {
+    summary: 'Accepts player connections for the copied workspaces and relays their events to the server that owns them',
+    requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
+    requires: ['serves-dashboard'],
+  },
   'redistributes-content': {
     summary: 'Keeps media it was sent, so it can pass it on to servers below it',
     /*
@@ -118,6 +133,20 @@ function validateCapabilities(requested, flags = {}) {
       reason: `This node is not configured to accept enrollments. Set MESH_ACCEPT_ENROLLMENT=1 on ` +
               `it first — until then it cannot act as a parent for ${needsAccept.join(', ')}.`,
     };
+  }
+
+  // A capability that only makes sense on top of another says so, and is refused without it.
+  for (const c of requested) {
+    const needs = CAPABILITIES[c].requires || [];
+    const missing = needs.filter((n) => !requested.includes(n));
+    if (missing.length) {
+      return {
+        ok: false,
+        rejected: [c],
+        reason: `${c} needs ${missing.join(', ')} on the same edge — it works from the copy that ` +
+                `${missing.join(', ')} keeps, and has nothing to serve without it.`,
+      };
+    }
   }
 
   return { ok: true, capabilities: [...new Set(requested)] };

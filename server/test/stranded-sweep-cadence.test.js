@@ -27,11 +27,20 @@ const path = require('node:path');
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
 
 test('the live repair is armed per connection and disarmed after it runs', () => {
-  assert.match(SRC, /let strandedSweepDone = false;/,
+  /*
+   * Scale-out C2 moved the handler bodies into EVENT_APPLIERS, callable for a screen behind a
+   * replica too. The flag now lives on `ctx.session`, one object per CONNECTION (created inside
+   * the connection handler; a mesh-applied event gets a fresh one per write) — still never
+   * module-level, which is the property this test exists to hold.
+   */
+  const conn = SRC.slice(SRC.indexOf("deviceNs.on('connection'"));
+  assert.match(conn, /session: \{ strandedSweepDone: false \}/,
     'the flag must be per-socket state — a module-level one would disarm the whole fleet after one device');
+  assert.doesNotMatch(SRC.slice(0, SRC.indexOf('const EVENT_APPLIERS')), /strandedSweepDone/,
+    'no module-level copy of the flag');
 
-  const guard = SRC.slice(SRC.indexOf('if (!strandedSweepDone)'), SRC.indexOf('if (!strandedSweepDone)') + 260);
-  assert.match(guard, /strandedSweepDone = true;/, 'it must disarm');
+  const guard = SRC.slice(SRC.indexOf('if (!ctx.session.strandedSweepDone)'), SRC.indexOf('if (!ctx.session.strandedSweepDone)') + 280);
+  assert.match(guard, /ctx\.session\.strandedSweepDone = true;/, 'it must disarm');
   assert.match(guard, /closeStrandedPlays\(db, device_id\)/, 'and still do the repair');
 
   // Disarm BEFORE the call: a throw inside the sweep must not re-arm it for every later play.
@@ -48,7 +57,7 @@ test('no unguarded call to the repair survives on the live play path', () => {
   const playStart = SRC.slice(SRC.indexOf("if (event === 'play_start')"), SRC.indexOf("dashboard:playback-progress"));
   const calls = (playStart.match(/closeStrandedPlays\(/g) || []).length;
   assert.equal(calls, 1, `expected exactly one repair call on the play path, found ${calls}`);
-  assert.match(playStart, /if \(!strandedSweepDone\)[\s\S]{0,200}closeStrandedPlays\(/,
+  assert.match(playStart, /if \(!ctx\.session\.strandedSweepDone\)[\s\S]{0,200}closeStrandedPlays\(/,
     'the call on the play path must be behind the once-per-connection guard');
 });
 

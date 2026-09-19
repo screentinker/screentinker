@@ -78,7 +78,7 @@ function meshPrincipalId(db) {
 }
 
 function startMeshUplinks(db, { config, connect, logger = console } = {}) {
-  if (!config || !config.meshAllowUplink) return { stop() {}, links: new Map(), refresh() {} };
+  if (!config || !config.meshAllowUplink) return { stop() {}, links: new Map(), refresh() {}, sendTo: () => false };
 
   const io = connect || require('socket.io-client').io;
   const links = new Map();
@@ -87,7 +87,7 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
   const me = store.ensureNodeIdentity(db);
   if (!me) {
     logger.warn('[mesh] MESH_ALLOW_UPLINK is set but this node has no identity — not reporting upward.');
-    return { stop() {}, links, refresh() {} };
+    return { stop() {}, links, refresh() {}, sendTo: () => false };
   }
 
   /*
@@ -517,9 +517,28 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
   // ⚠️ Never hold the process open for an observer relationship.
   if (timer.unref) timer.unref();
 
+  /*
+   * Scale-out C2: send one envelope UP to a named parent — used for `command-relay`, a command for a
+   * screen attached to a replica. Returns false when no live link to that node exists; the link
+   * buffers while reconnecting, so a brief gap does not lose a command.
+   */
+  function sendTo(peerNodeId, type, body) {
+    for (const [edgeId, link] of links) {
+      const edge = db.prepare('SELECT peer_node_id, revoked_at FROM mesh_edges WHERE id = ?').get(edgeId);
+      if (!edge || edge.revoked_at || edge.peer_node_id !== peerNodeId) continue;
+      try {
+        return !!link.send(envelope.createEnvelope({
+          originNodeId: me, type, bodyVersion: 1, ancestry: [me], originTs: Date.now(), body,
+        }));
+      } catch (e) { return false; }
+    }
+    return false;
+  }
+
   return {
     links,
     refresh,
+    sendTo,
     status: () => [...links.entries()].map(([id, l]) => ({ edgeId: id, ...l.status() })),
     readMode: () => reads.mode,
     stop() {

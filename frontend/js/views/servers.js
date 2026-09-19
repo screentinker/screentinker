@@ -941,19 +941,35 @@ function renderMintPanel(host, caps) {
             <strong>${esc(summary)}</strong>
             ${warn ? `<div style="margin-left:22px;color:var(--text-muted);font-size:11px">${esc(warn)}</div>` : ''}
           </label>`).join('')}
+        <!-- Scale-out C2 (docs/scale-out.md). A ROLE this server takes on, not data it receives, so
+             it sits apart from the grant list: only meaningful with the copy above, and only DOES
+             anything once the other server's operator grants player-events on their side. -->
+        <label id="terminatesPlayers" style="display:block;margin:10px 0 0 22px;font-size:13px;opacity:.55">
+          <input type="checkbox" value="terminates-players" disabled>
+          <strong>Also let screens connect to this server</strong>
+          <div style="margin-left:22px;color:var(--text-muted);font-size:11px">Screens in the copied workspaces can be pointed at this server. They are verified by the other server (their tokens stay there), play from the copy here, and report back through this server. Needs the copy above, and the other server's operator must then allow it under "What this server may change" on their side.</div>
+        </label>
       </div>
       <button class="btn btn-primary btn-sm" id="mintBtn">Generate a pairing code</button>
       <div id="mintOut" style="margin-top:12px"></div>
     </div>`;
 
+  // The role tick follows the copy tick: no copy, nothing to terminate players from.
+  const replBox = host.querySelector('#grantList input[value="workspace-replication"]');
+  const termWrap = host.querySelector('#terminatesPlayers');
+  const termBox = termWrap.querySelector('input');
+  const syncTerm = () => { termBox.disabled = !replBox.checked; if (!replBox.checked) termBox.checked = false; termWrap.style.opacity = replBox.checked ? '1' : '.55'; };
+  replBox.addEventListener('change', syncTerm); syncTerm();
+
   host.querySelector('#mintBtn').addEventListener('click', async () => {
-    const grant = [...host.querySelectorAll('#grantList input:checked')].map((c) => c.value);
+    const grant = [...host.querySelectorAll('#grantList input:checked')].map((c) => c.value).filter((v) => v !== 'terminates-players');
     const out = host.querySelector('#mintOut');
     try {
       // A replication grant is what makes THIS server a replica of the other: it takes on the
       // serves-dashboard role for the code, alongside the ordinary telemetry consumer role.
+      // terminates-players (C2) rides on top of that when ticked.
       const capabilities = grant.includes('workspace-replication')
-        ? ['serves-dashboard', 'consumes-telemetry']
+        ? ['serves-dashboard', ...(termBox.checked ? ['terminates-players'] : []), 'consumes-telemetry']
         : ['consumes-telemetry'];
       const r = await api.post('/mesh/pair/code', { grant, capabilities });
       out.innerHTML = `

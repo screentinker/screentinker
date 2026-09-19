@@ -620,7 +620,7 @@ router.post('/:id/command', (req, res) => {
   const results = devices.map((device) => ({
     device_id: device.id, name: device.name, ...deliverCommand(deviceNs, device, type, payload),
   }));
-  const sent = results.filter(r => r.status === 'sent').length;
+  const sent = results.filter(r => r.status === 'sent' || r.status === 'relayed').length;
   const offline = results.filter(r => r.status === 'offline' || r.status === 'queued').length;
   const unsupported = results.filter(r => r.status === 'unsupported').length;
   logActivity(req.user.id, 'workspace_command', `workspace: ${ws.name} (${ws.id}) type=${type} sent=${sent}`, null, getClientIp(req), ws.id);

@@ -51,6 +51,14 @@ const PAYLOAD_TYPES = Object.freeze({
    */
   'change-notice': 1,
   /*
+   * Scale-out C2: "deliver this to a screen attached to you" — a command (or any other
+   * server-to-player message) for a player that is connected to a REPLICA, sent UP the edge by the
+   * primary that owns the screen. Permitted because the replica's operator declared
+   * terminates-players for the edge; the replica only delivers to a socket it holds, and only for a
+   * device whose workspace is copied from the sender (I2 accounting in mesh-invariants.test.js).
+   */
+  'command-relay': 1,
+  /*
    * ⚠️ WHAT THE CHILD HAS DECIDED THIS PARENT MAY DO — A COURTESY, NEVER AN AUTHORITY.
    *
    * The hub cannot otherwise know it has been granted anything: the grant lives on the child, is

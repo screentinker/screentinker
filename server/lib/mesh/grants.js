@@ -159,6 +159,20 @@ const WRITE_CATEGORIES = Object.freeze({
      * reads as a promise the product does not keep.
      */
   },
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6). Set on the PRIMARY, by the primary's operator, for
+   * the edge to a replica that declared `terminates-players`. It is the I2 accounting for a player
+   * event arriving over the wire: a write at the data owner, permitted only because the owner's
+   * operator ticked this. Scope is the workspaces whose screens may report through that replica.
+   */
+  'player-events': {
+    summary: 'Let screens connect through the other server and report back here',
+    consequence: 'Screens that connect to the other server will be verified here and their ' +
+                 'reports — online/offline, health, what played, command results — will be ' +
+                 'written to this server as if they were connected directly. Commands you send ' +
+                 'those screens travel through the other server. A screen\'s token never leaves ' +
+                 'this server.',
+  },
 });
 
 const ALL_READ = Object.freeze(Object.keys(READ_CATEGORIES));

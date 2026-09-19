@@ -94,6 +94,27 @@ test('test_downward_handlers_are_an_allowlist (I2)', () => {
    *                 parent sent. Anything a playlist here still uses is REFUSED and reported,
    *                 because a file pulled out from under a published playlist is a blank slot on a
    *                 wall decided by a server nobody at that site controls.
+   *
+   *   Scale-out C2 adds NO downward verb, but it adds two things a parent can cause on a child, and
+   *   they are accounted for here because this is the review:
+   *
+   *   mesh:write { type: 'player-event' | 'player-provision' } — "a screen attached to me reported
+   *                 X" / "a screen paired to me; mint it a row". Answered by lib/mesh/node-write.js
+   *                 applyPlayerOp: refused unless the CHILD's operator set the `player-events` write
+   *                 grant on that edge (validateGrant refuses it over the wire; only the operator
+   *                 consent route stores it), the device's workspace resolved from the child's own
+   *                 rows and required to be inside the grant's scope, and the same idempotency
+   *                 record as every other write. Applied by the very function the child's own
+   *                 socket handler calls. The op types are a reviewed list: nodeWrite.PLAYER_OP_TYPES
+   *                 (test/scale-out-c2.test.js).
+   *
+   *   command-relay (UPWARD, child -> parent) — the one upward payload a parent ACTS on rather than
+   *                 stores: "deliver this to a screen attached to you". Permitted because the
+   *                 parent's operator declared `terminates-players` for the edge; the parent
+   *                 (lib/mesh/player-termination.js deliverRelay) delivers only to a socket it
+   *                 holds, only for a device whose workspace it copies from THAT child (or one it
+   *                 provisioned through it), and only player-facing events. Never stored, never
+   *                 relayed further.
    */
   const ALLOWED_DOWNWARD = ['mesh:read', 'mesh:write', 'mesh:hello', 'mesh:content-offer',
                             'mesh:content-purge'];
@@ -440,10 +461,18 @@ test('every existing install becomes a node with zero edges (migration is a no-o
        *     workspace-replication grant (lib/mesh/replication.js). Its emptiness here is also what
        *     test_change_log_triggers_absent_without_replication_grant checks from the outside.
        */
+      /*
+       * Scale-out C2 added two, both REPLICA-side and empty on every install that terminates no
+       * players:
+       *   mesh_player_events   — the durable, ordered outbox of player events for a primary
+       *     (lib/mesh/player-termination.js). Proof-of-play is never thinned here.
+       *   mesh_player_verdicts — "the primary said yes to this device + token HASH", so a screen
+       *     with a prior session can reconnect while the primary is unreachable. Never the token.
+       */
       'mesh_change_log', 'mesh_client_access', 'mesh_clients', 'mesh_content_provenance', 'mesh_edges',
       'mesh_mirror_alerts', 'mesh_mirror_devices', 'mesh_mirror_nodes', 'mesh_mirror_play_logs',
       'mesh_mirror_workspaces', 'mesh_node', 'mesh_node_paths', 'mesh_pairing_codes',
-      'mesh_pull_tickets', 'mesh_tombstones', 'mesh_write_ops',
+      'mesh_player_events', 'mesh_player_verdicts', 'mesh_pull_tickets', 'mesh_tombstones', 'mesh_write_ops',
     ]);
 
     /*

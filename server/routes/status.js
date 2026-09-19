@@ -32,6 +32,13 @@ function scaleOutStatus() {
   if (replicaOf.length) role.push('replica');
   let head = null;
   if (replicas.length) { try { head = require('../lib/mesh/replication').headRev(db); } catch (_) { /* absent */ } }
+  // Scale-out C2: what this node still owes each primary for the screens attached here.
+  let players = [];
+  try { const ob = require('../lib/mesh/player-termination').getOutbox(); players = ob ? ob.status() : []; } catch (_) { players = []; }
+  for (const r of replicaOf) {
+    const p = players.find((x) => x.node_id === r.node_id);
+    if (p) r.players = { pending: p.pending, oldest_age_s: p.oldest_age_s, last_error: p.last_error };
+  }
   return { role, head_rev: head, replicas, replica_of: replicaOf };
 }
 

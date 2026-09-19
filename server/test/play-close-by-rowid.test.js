@@ -37,7 +37,9 @@ test('⚠️ the fast path closes by rowid, and the search survives as the fallb
    * `_closePlayById.run(...)` still passed with the whole branch behind `if (false)` — the exact
    * regression this test exists to catch, and it survived a mutation run until this was tightened.
    */
-  assert.match(SRC, /const known = takeOpenPlay\(device_id, content_id \|\| null, widget_id \|\| content_id \|\| null\);\s*\n\s*if \(known != null\) _closePlayById\.run\(completed \? 1 : 0, known\);\s*\n\s*else _closePlay\.run\(/,
+  // Scale-out C2: the end time is a parameter (a play forwarded by a replica ends when it ended
+  // there, not when the outbox drained), so both statements take `endSec` ahead of `completed`.
+  assert.match(SRC, /const known = takeOpenPlay\(device_id, content_id \|\| null, widget_id \|\| content_id \|\| null\);\s*\n\s*const endSec = [^\n]+;\s*\n\s*if \(known != null\) _closePlayById\.run\(endSec, endSec, completed \? 1 : 0, known\);\s*\n\s*else _closePlay\.run\(endSec, endSec, /,
     'the rowid path must be taken whenever the row is known, with the search as the else');
   assert.match(SRC, /WHERE rowid = \? AND ended_at IS NULL/, 'the rowid update must not reopen a closed row');
 });

@@ -455,7 +455,7 @@ router.post('/:id/command', requireScope('full'), requireGroupWrite, (req, res) 
     results.push({ device_id: device.id, name: device.name, ...r });
   }
 
-  const sent = results.filter(r => r.status === 'sent').length;
+  const sent = results.filter(r => r.status === 'sent' || r.status === 'relayed').length;
   const offline = results.filter(r => r.status === 'offline' || r.status === 'queued').length;
   const unsupported = results.filter(r => r.status === 'unsupported').length;
   console.log(`Group command '${type}' sent to group '${req.group.name}': ${sent} sent, ${offline} offline, ${unsupported} unsupported`);

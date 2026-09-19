@@ -512,7 +512,9 @@ test('every readable path names the grant it needs', () => {
   const rules = [...block.matchAll(/\{\s*pattern:\s*'([^']+)'([^}]*)\}/g)];
   assert.ok(rules.length >= 4, 'there must be readable paths');
   for (const [, pat, rest] of rules) {
-    assert.match(rest, /grant:/, `${pat} must declare a grant`);
+    // Scale-out C2: verify-device is keyed to a WRITE grant (player-events) — still a grant, and
+    // still one the answering node's operator chose; authorize() reads it from the edge row.
+    assert.match(rest, /grant:|writeGrant:/, `${pat} must declare a grant`);
   }
 });
 

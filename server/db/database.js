@@ -1835,6 +1835,38 @@ const migrations = [
     ts           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   )`,
   "CREATE INDEX IF NOT EXISTS idx_mesh_change_log_ws ON mesh_change_log(workspace_id, rev)",
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6).
+   *   devices.attached_node_id — the replica this screen is connected THROUGH, written by the
+   *     primary when it applies a player-event from that replica; NULL for a screen connected here.
+   *     deliverCommand reads it to send a command-relay up the edge instead of to a local socket.
+   *   mesh_player_events   — REPLICA side: the durable, ordered outbox of player events for the
+   *     primary. Proof-of-play rows are never thinned; heartbeat-shaped kinds coalesce by key.
+   *   mesh_player_verdicts — REPLICA side: "the primary said yes to this device + token hash".
+   *     Lets a screen with a prior verified session reconnect while the primary is unreachable.
+   *     Holds a HASH of the token, never the token (design: the token never leaves the primary).
+   */
+  'ALTER TABLE devices ADD COLUMN attached_node_id TEXT',
+  `CREATE TABLE IF NOT EXISTS mesh_player_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    edge_id      TEXT NOT NULL,
+    device_id    TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    op_id        TEXT NOT NULL UNIQUE,
+    coalesce_key TEXT,
+    payload      TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_player_events_edge ON mesh_player_events(edge_id, id)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_mesh_player_events_coalesce ON mesh_player_events(coalesce_key) WHERE coalesce_key IS NOT NULL',
+  `CREATE TABLE IF NOT EXISTS mesh_player_verdicts (
+    device_id    TEXT PRIMARY KEY,
+    edge_id      TEXT NOT NULL,
+    token_hash   TEXT NOT NULL,
+    verified_at  INTEGER NOT NULL
+  )`,
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

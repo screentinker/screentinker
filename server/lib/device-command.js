@@ -82,7 +82,7 @@ function isMeshCommand(type) {
  * long enough to be rendering controls the panel no longer declares. A command delivered and
  * silently ignored is the failure the capability mechanism exists to end.
  *
- * @returns {{status:'sent'|'queued'|'offline'|'unsupported', capability?:string}}
+ * @returns {{status:'sent'|'relayed'|'queued'|'offline'|'unsupported', capability?:string, via?:string}}
  */
 function deliverCommand(deviceNs, device, type, payload) {
   const verdict = playerCapabilities.commandAllowed(device, type);
@@ -107,6 +107,20 @@ function deliverCommand(deviceNs, device, type, payload) {
   if (room && room.size > 0) {
     deviceNs.to(device.id).emit('device:command', { type, payload: outPayload });
     return { status: 'sent' };
+  }
+
+  /*
+   * Scale-out C2: no socket here, but the screen is attached to a replica — the command travels UP
+   * that edge as a command-relay and the replica emits it to the socket it holds. 'relayed' is a
+   * delivery, not a queue: the uplink buffers across a brief reconnect and the relay carries the
+   * same TTL discipline the queue does on the far side.
+   */
+  if (device.attached_node_id) {
+    try {
+      if (require('./mesh/command-relay').relayToAttached(db, device.id, 'device:command', { type, payload: outPayload })) {
+        return { status: 'relayed', via: device.attached_node_id };
+      }
+    } catch (e) { /* fall through to the queue */ }
   }
 
   /*

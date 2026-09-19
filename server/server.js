@@ -1901,6 +1901,8 @@ startDataSourcesPoller(io);
 try {
   const { startMeshUplinks } = require('./services/mesh-uplink');
   meshUplinks = startMeshUplinks(require('./db/database').db, { config: require('./config') });
+  // Scale-out C2: deliverCommand reaches a replica-attached screen through this (lib/mesh/command-relay.js).
+  global.__meshUplinks = meshUplinks;
   /*
    * Scale-out: the change-log triggers exist only while an up edge carries workspace-replication,
    * and the uplink service maintains them. With the flag OFF that service never runs, so a set left
@@ -2196,8 +2198,11 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   db.prepare("UPDATE device_fingerprints SET user_id = ?, device_id = ? WHERE device_id = ?")
     .run(req.user.id, device.id, device.id);
 
-  // Notify the device via WebSocket
-  deviceNs.to(device.id).emit('device:paired', { device_id: device.id, name: deviceName, settings_pin: settingsPin });
+  // Notify the device via WebSocket — or, scale-out C2, through the replica it is attached to.
+  const pairedMsg = { device_id: device.id, name: deviceName, settings_pin: settingsPin };
+  const pairedRoom = deviceNs.adapter.rooms.get(device.id);
+  if (pairedRoom && pairedRoom.size > 0) deviceNs.to(device.id).emit('device:paired', pairedMsg);
+  else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
   require('./lib/device-sanitize').stripDeviceSecrets(updated); // never leak device_token to clients

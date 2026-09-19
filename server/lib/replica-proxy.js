@@ -189,7 +189,41 @@ function proxyToPrimary(req, res, config, { timeoutMs = TIMEOUT_MS, transport } 
   });
 }
 
+/**
+ * Scale-out C2: the ONE non-HTTP caller that must reach the primary — the dashboard socket's
+ * device-command for a COPIED device (ws/dashboardSocket.js). It goes the same way a REST write
+ * goes: to PRIMARY_URL, as the operator's own request, with the hop header. Not a second command
+ * path — the primary's /api/devices/:id/command decides and relays, exactly as if the operator had
+ * clicked on the primary. Resolves {status, body}; a transport failure resolves 503.
+ */
+function forwardJson(config, { token, method = 'POST', path, body, timeoutMs = TIMEOUT_MS, transport } = {}) {
+  return new Promise((resolve) => {
+    const base = config && config.primaryUrl;
+    if (!base) return resolve({ status: 409, body: { error: 'read_only_replica', code: 'read_only_replica' } });
+    let target;
+    try { target = new URL(base + path); } catch (e) { return resolve({ status: 409, body: { code: 'read_only_replica' } }); }
+    const data = Buffer.from(JSON.stringify(body == null ? {} : body));
+    const headers = { 'content-type': 'application/json', 'content-length': String(data.length), [HOP_HEADER]: '1' };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const lib = transport || (target.protocol === 'https:' ? https : http);
+    const up = lib.request(target, { method, headers, timeout: timeoutMs }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null'); } catch (e) { parsed = null; }
+        resolve({ status: res.statusCode || 502, body: parsed });
+      });
+      res.on('error', () => resolve({ status: 503, body: { code: 'primary_unreachable' } }));
+    });
+    up.on('timeout', () => up.destroy(new Error('timeout')));
+    up.on('error', (err) => resolve({ status: 503, body: { code: 'primary_unreachable', detail: err && err.message } }));
+    up.end(data);
+  });
+}
+
 module.exports = {
+  forwardJson,
   HOP_HEADER, TIMEOUT_MS, MAX_BODY_BYTES, WRITING_GETS, LOCAL_ROWS_SQL, LOCAL_USERS_SQL,
   isCopiedWorkspace, isCopiedUploadName, isMutating, shouldIntercept, proxyToPrimary,
 };

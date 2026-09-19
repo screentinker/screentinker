@@ -172,6 +172,10 @@ test('the status handler ignores a report for someone else\'s device', () => {
   // A socket may only speak for the device it registered as; otherwise one compromised player could
   // rewrite the diagnostics of every screen in the workspace.
   const src = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
-  const h = src.slice(src.indexOf("socket.on('device:trigger-status'"));
-  assert.match(h.slice(0, 600), /device_id !== currentDeviceId/);
+  // Scale-out C2: the body lives in EVENT_APPLIERS['trigger-status'] and checks the claimed id
+  // against the authenticated one; the socket dispatcher checks it again before calling any applier.
+  const h = src.slice(src.indexOf("'trigger-status'(deviceId, data, ctx)"));
+  assert.match(h.slice(0, 400), /device_id !== deviceId/);
+  const d = src.slice(src.indexOf('function dispatch(kind, data)'));
+  assert.match(d.slice(0, 400), /claimed !== currentDeviceId\) return;/);
 });
