@@ -101,9 +101,9 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   'player-debug.js': 'player-authenticated debug log ingest; players are on the primary in C1',
   'mesh.js': 'hub-side mesh routes (clients, writes TO children) — node-local bookkeeping',
   'mesh-enroll.js': 'pairing/enrollment — node-local edges',
-  'status.js': 'import/backup, owner-only, resolves its own session and workspace (see sessionWorkspaceId)',
+  'status.js': 'import writes into the session workspace; proxyImportIfCopied forwards it to the primary BEFORE multer when that workspace is a copy (asserted below; e2e: test_copied_workspace_rows_are_never_mutated_on_a_replica)',
   'embedded.js': 'embedded-renderer cursor, device-authenticated',
-  'workspaces.js': 'creates/edits workspaces and memberships — a copied workspace is refused by origin tag inside the handler (C1: replica-side edits of copied workspaces are node-local bookkeeping only)',
+  'workspaces.js': 'acts on a URL-param workspace, not the active one; a router.param guard forwards every mutating request naming a copied workspace to the primary, and create-in-a-copied-organization likewise (asserted below; e2e: test_copied_workspace_rows_are_never_mutated_on_a_replica)',
   'admin.js': 'platform-admin, node-local',
   'admin-plugins.js': 'platform-admin plugin management, node-local',
   'diagnostics.js': 'platform-admin diagnostics, node-local',
@@ -160,6 +160,15 @@ test('test_every_mutating_route_passes_resolveTenancy: no second writer can hide
   const tenancy = read('lib/tenancy.js');
   assert.match(tenancy, /replicaProxy\.shouldIntercept\(req, req\.workspace\)/);
   assert.match(tenancy, /replicaProxy\.proxyToPrimary\(req, res, config\)/);
+  // The two listed routers that CAN write to a copied workspace carry the same interception
+  // themselves. Their allowlist reasons above claim it; this is the claim checked.
+  const workspaces = read('routes/workspaces.js');
+  assert.match(workspaces, /router\.param\('id'/, 'workspaces.js: router.param guard');
+  assert.match(workspaces, /replicaProxy\.shouldIntercept\(req, ws\)\) return replicaProxy\.proxyToPrimary\(req, res, appConfig\)/);
+  assert.match(workspaces, /isCopiedOrganization\(organizationId\)\) return replicaProxy\.proxyToPrimary/);
+  const status = read('routes/status.js');
+  assert.match(status, /router\.post\('\/import', proxyImportIfCopied, importUpload/, 'status.js: the import guard runs before multer');
+  assert.match(status, /replicaProxy\.shouldIntercept\(req, ws\)\) return replicaProxy\.proxyToPrimary\(req, res, config\)/);
 });
 
 /* ------------------------------------------------------------------------------------------ */

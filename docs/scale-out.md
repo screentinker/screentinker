@@ -108,7 +108,8 @@ backlog.
 
 - Every dashboard page for a copied workspace, from the copy. GETs are answered locally and never
   carry `x-st-served-by`.
-- Every change — a rename, a publish, an upload, a schedule — is forwarded. The response carries
+- Every change — a rename, a publish, an upload, a schedule, a member or invite change on the
+  workspace itself, an import — is forwarded. The response carries
   `x-st-served-by: primary` and the primary's own status: a `403` from the primary is a `403` here,
   not a `503`. The change then flows back to the replica through the change log; the bound is the
   30 s poll, and in practice the ~1 s change notice.
@@ -135,11 +136,11 @@ this only works when one load balancer fronts both nodes. Leave it off unless th
 
 ## I8 — hosted-shaped and self-hosted, both directions
 
-The primary may be `SELF_HOSTED=true` and the replica hosted-shaped (or the reverse). A copied
+The primary may be `SELF_HOSTED=true` and the replica hosted-shaped, or the reverse. A copied
 workspace is served the way its **primary** serves it: the replica's own billing, trial, email-verify
 and activation plumbing never touches copied rows (the trial and billing columns are on the
 blocklist; the user-driven sweeps carry `LOCAL_USERS_SQL`). `server/test/scale-out-e2e.test.js`
-boots exactly that pair — two real processes — and diffs the answers route by route.
+boots both pairs — two real processes each way — and diffs the answers route by route.
 
 ---
 
@@ -175,8 +176,9 @@ Documented gaps, in the order they are likely to matter:
   for a name that belongs to a copied row, so the public path is not an open proxy). There is no
   local cache in C1, and a copied workspace's media is unavailable on the replica while the primary
   is down.
-- **Playback history is not copied.** `play_logs` stays on the primary, so the Reports page on a
-  replica shows an empty report for a copied workspace. Proof-of-play reports run on the primary.
+- **Playback history is not copied.** `play_logs` stays on the primary. The Reports page on a
+  replica says so for a copied workspace ("Playback history lives on the primary server") instead
+  of showing an empty report as if nothing ever played. Proof-of-play reports run on the primary.
 - **Dashboard live updates on a replica are polled, not pushed.** The replica's dashboard socket
   does not fan out changes that arrive by replication; the page sees them on its next fetch.
 - **Cross-node uniqueness.** A user on the primary with the same email as a local user on the

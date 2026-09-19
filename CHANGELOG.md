@@ -34,8 +34,10 @@ Reads keep working when the primary is down, writes answer `503 primary_unreacha
 node's own rows only. Players stay on the primary in this phase; content bytes are fetched through
 per request; playback history is not copied. `server/test/scale-out-e2e.test.js` boots two real
 processes — a self-hosted primary and a hosted-shaped replica — and diffs their answers route by
-route, which is the I8 test ARCHITECTURE.md had been carrying as a gap. Operator guide:
-`docs/scale-out.md`.
+route, in both directions, which is the I8 test ARCHITECTURE.md had been carrying as a gap.
+Workspace edits (rename, members, invites, create) and imports that name a copied workspace are
+forwarded the same way, and Reports on a copied workspace says that playback history lives on the
+primary. Operator guide: `docs/scale-out.md`.
 
 **Support access — consent-gated, time-boxed, revocable.** The login page's "Support Access" field
 and the Settings token generator have existed since the first open-source release with no server

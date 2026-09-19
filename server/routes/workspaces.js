@@ -8,6 +8,7 @@ const go2rtc = require('../lib/go2rtc');
 const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
 const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
 const appConfig = require('../config');
+const replicaProxy = require('../lib/replica-proxy');
 const { logActivity, getClientIp } = require('../services/activity');
 const { sendEmail } = require('../services/email');
 
@@ -40,6 +41,29 @@ const INVITE_EXPIRY_DAYS = (() => {
   const parsed = parseInt(process.env.INVITE_EXPIRY_DAYS, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
 })();
+
+/*
+ * Scale-out (docs/scale-out.md): this router acts on a URL-param workspace, not the caller's active
+ * one, so it does not run behind resolveTenancy — and so it is the one JWT router that could become
+ * a second writer for a COPIED workspace (origin_node_id set). The same interception the resolver
+ * does happens here, on every mutating route that names a workspace: the request is forwarded to
+ * the primary (or refused with 409 when PRIMARY_URL is unset) and nothing is applied locally.
+ * router.param runs before route-level middleware, so a text/multipart body is still an intact
+ * stream when it is proxied. Membership and invite changes count: a copied workspace's members are
+ * the primary's rows too. test_copied_workspace_rows_are_never_mutated_on_a_replica holds this.
+ */
+router.param('id', (req, res, next, id) => {
+  if (!replicaProxy.isMutating(req)) return next();
+  let ws = null;
+  try { ws = db.prepare('SELECT id, origin_node_id FROM workspaces WHERE id = ?').get(id); } catch (e) { /* fall through to the handler's 404 */ }
+  if (ws && replicaProxy.shouldIntercept(req, ws)) return replicaProxy.proxyToPrimary(req, res, appConfig);
+  next();
+});
+
+/** An organization is a copy when any of its workspaces is — organizations arrive by the same replication. */
+function isCopiedOrganization(organizationId) {
+  return !!db.prepare('SELECT 1 FROM workspaces WHERE organization_id = ? AND origin_node_id IS NOT NULL LIMIT 1').get(organizationId);
+}
 
 /*
  * How many workspaces one organization may create.
@@ -105,6 +129,8 @@ router.post('/', (req, res) => {
   const target = resolveTargetOrg(req);
   if (target.error) return res.status(target.error.status).json({ error: target.error.message });
   const organizationId = target.organizationId;
+  // A new workspace inside a copied organization is the primary's to create (see router.param above).
+  if (isCopiedOrganization(organizationId)) return replicaProxy.proxyToPrimary(req, res, appConfig);
 
   const name = String((req.body && req.body.name) || '').trim();
   if (!name) return res.status(400).json({ error: 'Name is required' });

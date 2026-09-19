@@ -834,7 +834,9 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
       hub: !!(req.app.locals.mesh && req.app.locals.mesh.hub),
     },
     current_workspace_id: req.workspaceId,
-    current_workspace: req.workspace ? { id: req.workspace.id, name: req.workspace.name, organization_id: req.workspace.organization_id } : null,
+    // origin_node_id: set when this workspace is a COPY held on a replica (docs/scale-out.md); the
+    // client uses it only to say where things that are not copied (playback history) live.
+    current_workspace: req.workspace ? { id: req.workspace.id, name: req.workspace.name, organization_id: req.workspace.organization_id, origin_node_id: req.workspace.origin_node_id || null } : null,
     current_organization: currentOrg,
     current_workspace_role: req.workspaceRole,
     current_org_role: req.orgRole,

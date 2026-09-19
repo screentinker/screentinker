@@ -10,10 +10,10 @@
  *   2. a GET on the replica answers the same body as the same GET on the primary;
  *   3. a POST on the replica lands on the primary (x-st-served-by: primary) and shows up on both;
  *   4. the primary is killed: GETs on the replica still answer, POSTs answer 503 primary_unreachable;
- *   5. I8 harness: the primary is SELF_HOSTED and the replica is hosted-shaped (SELF_HOSTED unset).
- *      A copied workspace must be served exactly as the primary serves it — the replica's own
- *      billing/trial/verify plumbing must not leak into the answer. The ONLY tolerated differences
- *      are named in I8_VOLATILE.
+ *   5. I8 harness, BOTH DIRECTIONS: the whole suite runs twice — once with a SELF_HOSTED primary and
+ *      a hosted-shaped replica (SELF_HOSTED unset), once the other way round. A copied workspace
+ *      must be served exactly as the primary serves it — neither node's own billing/trial/verify
+ *      plumbing may leak into the answer. The ONLY tolerated differences are named in I8_VOLATILE.
  *
  * ⚠️ Slow on purpose (two boots, a real WebSocket, a real poll). The user asked for it in C1 anyway:
  * "Hosted-shaped billing routes on a replica of a self-hosted primary is exactly the footgun."
@@ -23,7 +23,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { test, before, after } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { freePort } = require('./helpers/free-port');
@@ -61,26 +61,31 @@ async function waitFor(fn, { tries = 120, every = 500, what = 'condition' } = {}
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/** One primary/replica pair, with each node's SELF_HOSTED shape chosen by the caller (I8). */
+function pairSuite(label, { primarySelfHosted, replicaSelfHosted }) {
+describe(label, () => {
 let primary, replica, primaryAdmin, replicaAdmin, primaryWs;
+const shape = (selfHosted) => (selfHosted ? { SELF_HOSTED: 'true' } : {});
+const P = `${label}-primary`, R = `${label}-replica`;
 
 before(async () => {
   [primary, replica] = await Promise.all([
-    // The primary: a self-hosted install that dials out to its replica (mesh child).
-    boot('primary', { SELF_HOSTED: 'true', MESH_ALLOW_UPLINK: 'true' }),
-    // The replica: HOSTED-SHAPED on purpose (I8), accepts enrollment (mesh parent), knows its primary.
-    boot('replica', { MESH_ACCEPT_ENROLLMENT: 'true', HOSTED_INSTANCE: '' }),
+    // The primary dials out to its replica (mesh child).
+    boot(P, { ...shape(primarySelfHosted), MESH_ALLOW_UPLINK: 'true' }),
+    // The replica accepts enrollment (mesh parent) and knows its primary.
+    boot(R, { ...shape(replicaSelfHosted), MESH_ACCEPT_ENROLLMENT: 'true' }),
   ]);
   primaryAdmin = await register(primary, 'admin@primary.local');
   replicaAdmin = await register(replica, 'admin@replica.local');
   // Restart the replica with PRIMARY_URL now the primary's port is known (an operator would type it).
   replica.proc.kill('SIGKILL');
   await sleep(300);
-  replica = await boot('replica', { MESH_ACCEPT_ENROLLMENT: 'true', PRIMARY_URL: primary.base });
+  replica = await boot(R, { ...shape(replicaSelfHosted), MESH_ACCEPT_ENROLLMENT: 'true', PRIMARY_URL: primary.base });
   const me = await (await fetch(primary.base + '/api/auth/me', auth(primaryAdmin))).json();
   primaryWs = me.current_workspace_id;
   assert.ok(primaryWs, `primary default workspace: ${JSON.stringify(me)}`);
 });
-after(() => { for (const s of Object.values(servers)) { try { s.proc.kill('SIGKILL'); } catch { /* */ } } });
+after(() => { for (const n of [P, R]) { const s = servers[n]; if (s) { try { s.proc.kill('SIGKILL'); } catch { /* */ } } } });
 
 test('before enrollment neither node exposes a scale_out block: roles come from edges, not from a NODE_ROLE', async () => {
   const p = await (await fetch(primary.base + '/api/status')).json();
@@ -112,7 +117,7 @@ test('enroll: the replica mints a serves-dashboard code, the primary redeems it 
 });
 
 let deviceId;
-test('I8: a hosted-shaped replica serves a self-hosted primary\'s workspace identically — same status, same body, on every route that matters', async () => {
+test('I8: the replica serves the primary\'s workspace identically whichever node is hosted-shaped — same status, same body, on every route that matters', async () => {
   // Seed some state on the primary FIRST so the snapshot has something to carry.
   const dev = await (await fetch(primary.base + '/api/devices/web-player', auth(primaryAdmin, 'POST', { name: 'Lobby TV' }, { 'x-workspace-id': primaryWs }))).json();
   deviceId = dev.device && dev.device.id;
@@ -209,6 +214,42 @@ test('content bytes: an upload through the replica lands on the primary, the row
   assert.equal(nope.headers.get('x-st-served-by'), null, 'an unknown name is a local miss, never a probe of the primary');
 });
 
+test('test_copied_workspace_rows_are_never_mutated_on_a_replica: the workspaces router and import forward to the primary', async () => {
+  // routes/workspaces.js acts on a URL-param workspace and is not behind resolveTenancy; its own
+  // router.param guard must do the same interception. Every shape: rename, member role, invite,
+  // create-in-copied-org, and the import that writes into the session's workspace.
+  const ren = await fetch(replica.base + `/api/workspaces/${primaryWs}`, auth(primaryAdmin, 'PATCH', { name: 'Renamed via replica' }));
+  assert.equal(ren.headers.get('x-st-served-by'), 'primary', 'PATCH /workspaces/:id forwarded');
+  assert.equal(ren.status, 200, await ren.text());
+  const onPrimary = await (await fetch(primary.base + `/api/auth/me`, auth(primaryAdmin))).json();
+  assert.equal(onPrimary.current_workspace.name, 'Renamed via replica', 'applied on the primary');
+  await waitFor(async () => {
+    const me = await (await fetch(replica.base + `/api/auth/me`, auth(primaryAdmin))).json();
+    return me.current_workspace && me.current_workspace.name === 'Renamed via replica';
+  }, { what: 'rename to replicate back' });
+
+  const inv = await fetch(replica.base + `/api/workspaces/${primaryWs}/invites`, auth(primaryAdmin, 'POST', { email: 'someone@primary.local', role: 'workspace_viewer' }));
+  assert.equal(inv.headers.get('x-st-served-by'), 'primary', 'POST invites forwarded');
+  const me = await (await fetch(primary.base + '/api/auth/me', auth(primaryAdmin))).json();
+  const role = await fetch(replica.base + `/api/workspaces/${primaryWs}/members/${me.id}`, auth(primaryAdmin, 'PUT', { role: 'workspace_admin' }));
+  assert.equal(role.headers.get('x-st-served-by'), 'primary', 'PUT members forwarded');
+  const create = await fetch(replica.base + '/api/workspaces', auth(primaryAdmin, 'POST', { name: 'Sibling', organization_id: me.current_workspace.organization_id }));
+  assert.equal(create.headers.get('x-st-served-by'), 'primary', 'create inside a copied organization forwarded');
+  assert.equal(create.status, 201, await create.text());
+
+  // Import: multipart, session workspace = the copied one. Forwarded before multer touches it.
+  const form = new FormData();
+  form.append('file', new Blob([JSON.stringify({ version: 1, content: [], playlists: [] })], { type: 'application/json' }), 'export.json');
+  const imp = await fetch(replica.base + '/api/status/import', { method: 'POST', headers: { Authorization: 'Bearer ' + primaryAdmin }, body: form });
+  assert.equal(imp.headers.get('x-st-served-by'), 'primary', 'import forwarded');
+  assert.ok(imp.status < 500, `${imp.status} ${await imp.text()}`);
+
+  // GET on the same router is served locally, as everywhere else.
+  const list = await fetch(replica.base + `/api/workspaces/${primaryWs}/members`, auth(primaryAdmin));
+  assert.equal(list.status, 200);
+  assert.equal(list.headers.get('x-st-served-by'), null);
+});
+
 test('login on the replica as a copied user proxies to the primary; the replica never verifies a password', async () => {
   const r = await fetch(replica.base + '/api/auth/login', jsonPost({ email: 'admin@primary.local', password: PW }));
   assert.equal(r.headers.get('x-st-served-by'), 'primary');
@@ -235,6 +276,33 @@ test('test_replica_serves_last_state_when_primary_down_and_reports_lag_unknown: 
   const wb = await write.json();
   assert.equal(wb.code, 'primary_unreachable');
   assert.equal(wb.retry_after, 30);
+  // The workspaces router and the import, with the primary gone: 503, and the replica's own rows
+  // are exactly as they were — read straight from its database file.
+  const Database = require('better-sqlite3');
+  const rdb = new Database(path.join(replica.dataDir, 'db', 'remote_display.db'), { readonly: true });
+  const before = {
+    ws: rdb.prepare('SELECT name FROM workspaces WHERE id = ?').get(primaryWs),
+    members: rdb.prepare('SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id = ?').get(primaryWs).n,
+    invites: rdb.prepare('SELECT COUNT(*) AS n FROM workspace_invites WHERE workspace_id = ?').get(primaryWs).n,
+    content: rdb.prepare('SELECT COUNT(*) AS n FROM content WHERE workspace_id = ?').get(primaryWs).n,
+  };
+  const me = JSON.parse(Buffer.from(primaryAdmin.split('.')[1], 'base64url').toString());
+  const attempts = [
+    fetch(replica.base + `/api/workspaces/${primaryWs}`, auth(primaryAdmin, 'PATCH', { name: 'must not land' })),
+    fetch(replica.base + `/api/workspaces/${primaryWs}/members/${me.id}`, auth(primaryAdmin, 'DELETE')),
+    fetch(replica.base + `/api/workspaces/${primaryWs}/invites`, auth(primaryAdmin, 'POST', { email: 'x@y.local', role: 'workspace_viewer' })),
+    (() => { const f = new FormData(); f.append('file', new Blob([JSON.stringify({ version: 1, content: [{ id: 'c1', name: 'x', type: 'image' }] })], { type: 'application/json' }), 'export.json');
+             return fetch(replica.base + '/api/status/import', { method: 'POST', headers: { Authorization: 'Bearer ' + primaryAdmin }, body: f }); })(),
+  ];
+  for (const r of await Promise.all(attempts)) assert.equal(r.status, 503, await r.text());
+  const after = {
+    ws: rdb.prepare('SELECT name FROM workspaces WHERE id = ?').get(primaryWs),
+    members: rdb.prepare('SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id = ?').get(primaryWs).n,
+    invites: rdb.prepare('SELECT COUNT(*) AS n FROM workspace_invites WHERE workspace_id = ?').get(primaryWs).n,
+    content: rdb.prepare('SELECT COUNT(*) AS n FROM content WHERE workspace_id = ?').get(primaryWs).n,
+  };
+  rdb.close();
+  assert.deepEqual(after, before, 'nothing about the copied workspace changed on the replica');
   const st = await waitFor(async () => {
     const s = await (await fetch(replica.base + '/api/status')).json();
     const r = s.scale_out.replica_of[0];
@@ -242,3 +310,12 @@ test('test_replica_serves_last_state_when_primary_down_and_reports_lag_unknown: 
   }, { what: 'replica to notice the edge is down', tries: 60 });
   assert.equal(st.lag_s, null, 'silence is not a lag of zero');
 });
+
+
+}); // describe
+}
+
+// ⚠️ Both directions. A hosted-shaped replica of a self-hosted primary is the footgun the design
+// names (billing routes on a copy); the reverse is what "cloud is a peer" means literally.
+pairSuite('self-hosted primary, hosted-shaped replica', { primarySelfHosted: true, replicaSelfHosted: false });
+pairSuite('hosted-shaped primary, self-hosted replica', { primarySelfHosted: false, replicaSelfHosted: true });

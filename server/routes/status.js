@@ -6,6 +6,7 @@ const path = require('path');
 const { copyFileBytes } = require('../lib/fsutil'); // exFAT-safe; see lib/fsutil.js
 const fs = require('fs');
 const config = require('../config');
+const replicaProxy = require('../lib/replica-proxy');
 const { sixDigitCode } = require('../lib/numeric-code');
 const VERSION = require('../version');
 const { PLATFORM_ROLES, resolveSessionUser } = require('../middleware/auth');
@@ -310,7 +311,27 @@ router.get('/export', (req, res) => {
 const multer = require('multer');
 const importUpload = multer({ dest: path.join(os.tmpdir(), 'screentinker-import'), limits: { fileSize: 2 * 1024 * 1024 * 1024 } }); // 2GB max
 
-router.post('/import', importUpload.single('file'), async (req, res) => {
+/*
+ * Scale-out (docs/scale-out.md): an import WRITES into the session's workspace. When that workspace
+ * is a copy (origin_node_id set) the whole upload is forwarded to the primary — before multer, so
+ * the multipart stream is still intact — and nothing lands here. Session errors are left to the
+ * handler below, which reports them exactly as it always has.
+ */
+function proxyImportIfCopied(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return next();
+  let ws = null;
+  try {
+    const session = resolveSessionUser(authHeader.split(' ')[1]);
+    if (session.viaRecovery) return next();
+    const wsId = sessionWorkspaceId(session.user.id, session.user.role, session.decoded.current_workspace_id || null);
+    ws = wsId ? db.prepare('SELECT id, origin_node_id FROM workspaces WHERE id = ?').get(wsId) : null;
+  } catch (e) { return next(); }
+  if (ws && replicaProxy.shouldIntercept(req, ws)) return replicaProxy.proxyToPrimary(req, res, config);
+  next();
+}
+
+router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token required' });
 

@@ -20,6 +20,10 @@ const API = (url, opts = {}) => fetch('/api' + url, { headers: { Authorization: 
 
 export async function render(container) {
   const devices = await api.getDevices();
+  // Scale-out (docs/scale-out.md): playback history is NOT copied to a replica. On a copied
+  // workspace an empty report would read as "nothing ever played"; say where the history is.
+  let copied = false;
+  try { copied = !!(JSON.parse(localStorage.getItem('user') || 'null')?.current_workspace?.origin_node_id); } catch (_) { copied = false; }
   const today = new Date();
   const thirtyDaysAgo = new Date(today);
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -40,6 +44,8 @@ export async function render(container) {
          feature is mesh-shaped in order to find it. It renders only when there are connected
          servers to report on, so an ordinary install sees nothing new. -->
     <div id="uptimeReportSection"></div>
+
+    ${copied ? `<div class="empty-state" style="margin-bottom:16px;padding:12px 16px"><p style="margin:0">${t('report.history_on_primary')}</p></div>` : ''}
 
     <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:flex-end">
       <div class="form-group" style="margin:0"><label>${t('report.device')}</label>

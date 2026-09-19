@@ -28,7 +28,7 @@ types — they are one node declaring different **capabilities**, connected by *
 | **I5** | **Opaque relay.** An intermediate node forwards payloads it cannot parse, unmodified. It may read the envelope only. | `test_unknown_payload_is_relayed_not_dropped` |
 | **I6** | **Failure isolation.** One child — unreachable, flooding, ancient, skewed — never stalls a sweep, blocks a dashboard, or throws into a shared handler. | `THE ISOLATION PROPERTY`, `THE I6 CASE`, `a dead child stops being attempted` |
 | **I7** | **No phone home.** Pairing codes and UUIDs minted locally. No licence check, no activation, no beacon, no registry. Air-gapped is first-class. | `test_no_phone_home` |
-| **I8** | **Cloud is a peer.** screentinker.com is a node with no special privileges. | `I8: a hosted-shaped replica serves a self-hosted primary's workspace identically` (two real processes, `scale-out-e2e.test.js`) |
+| **I8** | **Cloud is a peer.** screentinker.com is a node with no special privileges. | `I8: the replica serves the primary's workspace identically whichever node is hosted-shaped` — run in both directions on two real processes, `scale-out-e2e.test.js` |
 | **I9** | **No built-in relay address, no automatic relay fallback.** Relay is a capability at an operator-supplied address. A failed direct connection never silently reroutes. | `test_no_builtin_relay_address`, `test_no_automatic_relay_fallback` |
 | **I10** | **Enforcement lives with the data owner.** The node that owns data enforces its grant — never the requesting node. Connection direction is irrelevant. | `test_grant_defaults_to_denied` |
 
@@ -61,10 +61,11 @@ and `server/test/mesh-client-tree.test.js`:
 - **No role may imply downward control.** A "full access" role would promise a capability I2 says
   does not exist.
 
-**I8 is guarded as of scale-out C1.** `server/test/scale-out-e2e.test.js` boots a `SELF_HOSTED`
-primary and a hosted-shaped replica as two real processes, pairs them, and asserts the same GET
-answers the same status and body on both for every route the fleet page uses — with the replica's
-own billing, trial and verification plumbing never touching a copied row. It was the last unguarded
+**I8 is guarded as of scale-out C1.** `server/test/scale-out-e2e.test.js` boots a primary and a
+replica as two real processes, pairs them, and asserts the same GET answers the same status and
+body on both for every route the fleet page uses — and it runs the whole suite twice: a
+`SELF_HOSTED` primary with a hosted-shaped replica, then the reverse. Neither node's billing, trial
+or verification plumbing touches a copied row in either direction. It was the last unguarded
 invariant.
 
 ### Scale-out: one writer, many readers (C1)
@@ -79,6 +80,7 @@ The properties it adds, and what holds them:
 | No column whose name looks like a secret leaves the primary by omission; JSON configs are scrubbed of encrypted plugin secrets | `test_replication_blocklist_covers_every_secret_column` |
 | Every mutating route runs behind the one resolver that intercepts writes for copied workspaces; a new `router.post` outside it fails CI | `test_every_mutating_route_passes_resolveTenancy` |
 | The replica never applies a write for a copied workspace: it proxies (or refuses) every non-GET | `test_replica_refuses_or_proxies_every_non_get_for_remote_workspaces` (unit + two-process) |
+| The two routers outside the resolver that can name a workspace — `routes/workspaces.js` (rename, members, invites, create-in-org) and the import — forward to the primary too, and with the primary gone the replica's rows are byte-for-byte unchanged | `test_copied_workspace_rows_are_never_mutated_on_a_replica` |
 | `PRIMARY_URL` has no default and a failed proxy never tries another address (I9 for the write path) | `test_no_builtin_primary_url` |
 | One process owns the sweeps: heartbeat, scheduler, expiry, alerts, data sources, trial and nudge emails skip copied rows and the primary's users | `test_replica_never_runs_primary_sweeps` |
 | Primary down: reads keep answering from the copy, writes answer 503, lag reads `null` not `0` | `test_replica_serves_last_state_when_primary_down_and_reports_lag_unknown` |
