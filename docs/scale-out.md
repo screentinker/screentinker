@@ -163,14 +163,31 @@ replica's proxies to the primary — and the screen is told through the link. Fr
   (`test_verify_device_does_not_return_the_token`). The replica remembers a *yes* by hash, so
   the same screen can reconnect while the primary is unreachable. A screen it has never verified
   waits (`device:throttled`, 15 s) — it is never turned away and never redirected.
+
+  **How long a remembered verdict lives.** Every answer from the primary overwrites it: a token
+  rotated or revoked on the primary answers *no* at the screen's next register and the row is
+  dropped, so while the primary is reachable a verdict is never older than the last register.
+  While the primary is *unreachable* the verdict is the only thing standing between an old token
+  and a socket, and that window is bounded: a verdict older than **7 days** (`VERDICT_TTL_S`) is
+  not honoured and the screen waits. Rotating a token on the primary during an outage therefore
+  cannot take effect on the replica until the primary is back — plan a rotation for a time when
+  it is.
 - **Assignments, playlists and media** come from the replica's mirror. A publish on the primary
   reaches the screen when the change replicates (the ~1 s notice, 30 s at worst). Media is fetched
   through from the primary per request (no cache yet).
 - **Every event** the screen sends — online/offline, heartbeat, health, what it played, command
   results — is forwarded to the primary as a `player-event` write and applied there by the same
   code a directly connected screen runs. The replica keeps a durable, ordered outbox per primary
-  (`mesh_player_events`): proof-of-play rows are never thinned or dropped; heartbeat-shaped events
-  coalesce last-wins. `GET /api/status` → `scale_out.replica_of[].players` shows what is pending.
+  (`mesh_player_events`): proof-of-play rows are never thinned or dropped and carry the time they
+  happened on the replica, so a backlog drained after an outage is dated correctly; heartbeat-shaped
+  events coalesce last-wins; live debug log lines are sent when the link is up and never queued.
+  `GET /api/status` → `scale_out.replica_of[].players` shows what is pending.
+
+  **The outbox is bounded.** Per primary, rows older than **14 days** are expired and past
+  **500,000 rows** new play events are refused (both counted in `players.expired` /
+  `players.refused_at_cap`). Heartbeats take one row per screen and logs take none, so what
+  accumulates is plays: at one play every 8 s the cap holds about a fortnight of a 100-screen
+  site. An outage longer than that loses the oldest evidence, and says so.
 - **Commands** are the primary's. A command issued on the primary finds no local socket, sees
   `devices.attached_node_id`, and sends a `command-relay` up the edge; the replica emits it to the
   socket it holds. A command issued on the *replica's* dashboard goes REST → proxy → primary → relay
@@ -178,7 +195,11 @@ replica's proxies to the primary — and the screen is told through the link. Fr
 
 **When the primary is down**, screens attached to the replica keep playing from the mirror and
 their own cache; their heartbeats are acked by the replica; their events queue; a reboot
-reconnects on the cached verdict. When it returns, the queue drains in order and `play_logs` gain
+reconnects on the cached verdict (a screen the replica has never verified waits instead). Media
+is not cached on the replica — it is fetched through from the primary — so what keeps a screen
+lit through an outage is **the player's own offline cache** of what it had already downloaded. A
+screen that reboots and had never cached its media shows a black slot until the primary returns;
+a playlist changed on the primary during the outage cannot reach the replica until then either. When it returns, the queue drains in order and `play_logs` gain
 the rows (`test_play_event_buffered_while_primary_down_then_applied_in_order`; the two-process
 `scale-out-c2-e2e.test.js` does exactly this with a real player socket).
 
@@ -216,7 +237,14 @@ A replica does not become the primary on its own, ever. If the primary is gone f
    From that point the rows are local, writes apply locally, and sweeps run.
 4. Users of those workspaces have no password on the promoted node. They reset their password
    (`/api/auth/forgot`) — nothing else can be done about a secret that was never copied.
-5. Point the players at the new server (C1: they were on the old primary).
+5. Players. Screens that were attached to this replica (C2) are already here: clear their
+   `attached_node_id` (`UPDATE devices SET attached_node_id = NULL WHERE attached_node_id IS NOT NULL;`)
+   and they become local screens at their next register — but they have no token on this node
+   (tokens were never copied), so each must re-pair once. Screens that were on the old primary are
+   re-pointed by the operator (`set_server_url`) and re-pair the same way. **The old primary must
+   not accept those device tokens again**: keep it stopped, or revoke the tokens on it, until its
+   `origin_node_id` reconciliation is done — a screen that can still reach the old primary with a
+   valid token is a screen reporting to two servers.
 
 There is no `promote` button because every step above is a decision an operator should make
 knowing what it means, and because a button implies the reverse exists. It does not.

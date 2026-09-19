@@ -32,6 +32,24 @@ const store = require('./store');
 const VERIFY_PATH = '/api/mesh/verify-device';
 /** How long a player waits before asking again while the primary is unreachable. */
 const PRIMARY_WAIT_MS = 15_000;
+/*
+ * ⚠️ HOW LONG A CACHED VERDICT IS GOOD FOR WITHOUT THE PRIMARY. A verdict is overwritten by every
+ * verify the primary answers (a rotated or revoked token answers "no" and the row is dropped), so
+ * while the primary is reachable it is never older than the last register. While the primary is
+ * UNREACHABLE it is the only thing standing between a stolen old token and a socket, and that
+ * window is bounded here: a verdict older than this is not honoured, and the screen waits.
+ */
+const VERDICT_TTL_S = 7 * 24 * 3600;
+/*
+ * ⚠️ THE OUTBOX IS BOUNDED, PER EDGE. Ordered, never-thinned proof-of-play is the point — but a
+ * replica that queued for a month would fill its disk before the primary came back, and take the
+ * mirror (and every attached screen) down with it. Rows older than the age cap are expired; past
+ * the row cap new events are refused (counted in status()). Heartbeat-shaped kinds coalesce to one
+ * row per device, and debug logs are never queued, so what accumulates is plays — at one 8 s loop
+ * a second-long outage the caps below hold roughly a fortnight of a 100-screen site.
+ */
+const OUTBOX_MAX_ROWS_PER_EDGE = 500_000;
+const OUTBOX_MAX_AGE_S = 14 * 24 * 3600;
 /** A buffered event is stamped at SEND time; this is how long the primary may take to apply it. */
 const OP_TTL_MS = 10 * 60 * 1000;
 const DRAIN_BATCH = 50;
@@ -91,9 +109,10 @@ function rememberVerdict(db, edge, deviceId, hash) {
     .run(deviceId, edge.id, hash, Math.floor(Date.now() / 1000));
 }
 
-function cachedVerdict(db, deviceId, hash) {
+function cachedVerdict(db, deviceId, hash, now = Math.floor(Date.now() / 1000)) {
   const row = db.prepare('SELECT edge_id, token_hash, verified_at FROM mesh_player_verdicts WHERE device_id = ?').get(deviceId);
   if (!row) return null;
+  if (now - row.verified_at > VERDICT_TTL_S) return null;   // too old to trust without the primary
   try {
     if (!crypto.timingSafeEqual(Buffer.from(row.token_hash, 'hex'), Buffer.from(hash, 'hex'))) return null;
   } catch (e) { return null; }
@@ -134,9 +153,16 @@ const opId = () => crypto.randomUUID();
  * Put one player event on the durable outbox for its primary. Returns the row id, or null when
  * the kind is ephemeral and the caller should send it live or not at all.
  */
+const refusedByEdge = new Map();   // edgeId -> count of events refused at the row cap (this process)
+
 function enqueue(db, edge, deviceId, kind, payload) {
   if (EPHEMERAL_KINDS.has(kind)) return null;
   const key = COALESCE_KINDS.has(kind) ? `${edge.id}|${deviceId}|${kind}` : null;
+  // A coalescing kind replaces its own row, so it never grows the queue; only new rows are capped.
+  if (!key && pendingCount(db, edge.id) >= OUTBOX_MAX_ROWS_PER_EDGE) {
+    refusedByEdge.set(edge.id, (refusedByEdge.get(edge.id) || 0) + 1);
+    throw new Error(`outbox for ${edge.peer_node_id} is at its cap (${OUTBOX_MAX_ROWS_PER_EDGE} rows); ${kind} refused`);
+  }
   const body = JSON.stringify(payload == null ? {} : payload);
   if (key) {
     // Last wins, but the row keeps its place in the order it first took — a coalesced heartbeat
@@ -227,10 +253,23 @@ function createOutbox(db, { writeTo, onReply, logger = console } = {}) {
     writeTo(edge.peer_node_id, { type: 'player-event', opId: opId(), deviceId, kind, payload: payload || {}, sentAt, notAfter: sentAt + OP_TTL_MS })
       .catch(() => { /* dropped */ });
   }
+  /** Drop what is too old to be worth the disk; counted so status() can say so. */
+  const expiredByEdge = new Map();
+  function expire(edge, now = Math.floor(Date.now() / 1000)) {
+    const r = db.prepare('DELETE FROM mesh_player_events WHERE edge_id = ? AND created_at < ?').run(edge.id, now - OUTBOX_MAX_AGE_S);
+    if (r.changes) expiredByEdge.set(edge.id, (expiredByEdge.get(edge.id) || 0) + r.changes);
+    return r.changes;
+  }
   function kick(edge) { drainEdge(edge); }
   /** The primary (re)connected: forget the backoff and drain now. */
   function resume(edge) { backoffUntil.delete(edge.id); return drainEdge(edge); }
-  function tick() { if (stopped) return; for (const e of terminatingEdges(db)) drainEdge(e); }
+  let ticks = 0;
+  function tick() {
+    if (stopped) return;
+    const edges = terminatingEdges(db);
+    if (++ticks % 600 === 0) for (const e of edges) { try { expire(e); } catch (err) { /* */ } }   // every ~10 min
+    for (const e of edges) drainEdge(e);
+  }
   function start() { if (timer) return; timer = setInterval(tick, 1000); if (timer.unref) timer.unref(); }
   function stop() { stopped = true; if (timer) clearInterval(timer); }
   function status() {
@@ -238,10 +277,12 @@ function createOutbox(db, { writeTo, onReply, logger = console } = {}) {
       const oldest = db.prepare('SELECT created_at, last_error, attempts FROM mesh_player_events WHERE edge_id = ? ORDER BY id ASC LIMIT 1').get(e.id);
       return { node_id: e.peer_node_id, pending: pendingCount(db, e.id),
                oldest_age_s: oldest ? Math.max(0, Math.floor(Date.now() / 1000) - oldest.created_at) : 0,
-               last_error: oldest ? oldest.last_error : null, attempts: oldest ? oldest.attempts : 0 };
+               last_error: oldest ? oldest.last_error : null, attempts: oldest ? oldest.attempts : 0,
+               refused_at_cap: refusedByEdge.get(e.id) || 0, expired: expiredByEdge.get(e.id) || 0,
+               cap_rows: OUTBOX_MAX_ROWS_PER_EDGE, cap_age_s: OUTBOX_MAX_AGE_S };
     });
   }
-  return { kick, resume, tick, start, stop, status, drainEdge, sendLive };
+  return { kick, resume, tick, start, stop, status, drainEdge, sendLive, expire };
 }
 
 /* ------------------------------ socket-side glue ------------------------------ */
@@ -299,7 +340,7 @@ function deliverRelay(db, deviceNs, edge, body) {
 }
 
 module.exports = {
-  VERIFY_PATH, PRIMARY_WAIT_MS, COALESCE_KINDS, EPHEMERAL_KINDS,
+  VERIFY_PATH, PRIMARY_WAIT_MS, VERDICT_TTL_S, OUTBOX_MAX_ROWS_PER_EDGE, OUTBOX_MAX_AGE_S, COALESCE_KINDS, EPHEMERAL_KINDS,
   terminatesPlayers, terminatingEdgeFor, terminatingEdges, copiedOriginOf, tokenHash,
   rememberVerdict, cachedVerdict, forgetVerdict, verifyWithPrimary,
   enqueue, pendingCount, createOutbox,

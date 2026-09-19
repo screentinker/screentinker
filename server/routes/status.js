@@ -37,7 +37,7 @@ function scaleOutStatus() {
   try { const ob = require('../lib/mesh/player-termination').getOutbox(); players = ob ? ob.status() : []; } catch (_) { players = []; }
   for (const r of replicaOf) {
     const p = players.find((x) => x.node_id === r.node_id);
-    if (p) r.players = { pending: p.pending, oldest_age_s: p.oldest_age_s, last_error: p.last_error };
+    if (p) r.players = { pending: p.pending, oldest_age_s: p.oldest_age_s, last_error: p.last_error, refused_at_cap: p.refused_at_cap, expired: p.expired };
   }
   return { role, head_rev: head, replicas, replica_of: replicaOf };
 }
