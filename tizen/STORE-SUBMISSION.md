@@ -43,10 +43,10 @@ Put in the *Verification Info* comment and the UI Description "Use Cases":
 1. Launch the app. The Server URL screen is pre-filled with `https://screentinker.com`; press OK on
    **Connect** (or Enter in the field).
 2. The pairing screen shows a 6-digit code. In a PC browser sign in at
-   `https://screentinker.com` with the test account → **Devices → Pair a display** → enter the code.
-   The TV leaves the pairing screen within about five seconds.
-3. Open the new display's page in the dashboard and assign the **"Samsung QA"** playlist (or drag
-   the playlist onto the display on the Devices page). Playback starts on the TV within seconds.
+   `https://screentinker.com` with the test account → **Displays → "+ Add Display"** (right-hand
+   side) → enter the code. The TV leaves the pairing screen within about five seconds.
+3. Open the new display in the dashboard, select the **Playlist** tab, and assign the
+   **"Samsung QA"** playlist. Playback starts on the TV within seconds.
 4. Playback is full-screen and loops indefinitely — this is a digital-signage player; the screen
    saver is disabled by design while content plays.
 5. **Return** during playback opens "Exit ScreenTinker?" (Exit / Change server / Cancel).
