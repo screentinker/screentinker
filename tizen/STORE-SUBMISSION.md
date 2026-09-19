@@ -35,7 +35,7 @@ needs, per model group requested:
   10 s each. There is no "default playlist for new displays" — the tester assigns it once after
   pairing (step 3 below), which is one click on the display's page.
 
-Created 2026-09-18 on the hosted server: `qa@screentinker.com` (Pro, no trial, e-mail verified),
+Created 2026-09-18 on the hosted server: `qa@screentinker.com` (Enterprise = unlimited displays, no trial, e-mail verified),
 playlist `6320764a-7358-4212-b702-3afa6e3cca7e`. The password is held by the owner, not in the repo.
 
 Put in the *Verification Info* comment and the UI Description "Use Cases":
