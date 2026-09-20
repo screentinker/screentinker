@@ -292,11 +292,15 @@ change-log revision this replica **applied** — how far the copy trails the pri
 since that screen's last heartbeat or device summary — how far the screen trails reality. A link
 with a 3 s copy lag can still carry a screen not seen for a day, and a link that is down changes
 nothing about a screen that is heartbeating to a replica. Selecting a node loads its screen table
-once (stale first, 50 rows, "and N more" to the Displays list) and its last five alerts; the 3 s
-poll refreshes links and counters only, never a screen list.
+(stale first, 50 rows, "and N more" to the Displays list) and its last five alerts, and while it
+stays selected that one node's table is re-asked on each poll — one extra bounded query for the
+selected node, never a screen list for every node — so *seen* ages with the graph instead of
+sitting frozen under a pulsing link.
 
 **What it costs.** One `GET /api/mesh/noc` every 3 s *while the page is open and the tab is
-visible*; it stops on navigating away and on a hidden tab. The answer is built from what this node
+visible*; it stops on navigating away and on a hidden tab — so **"as of" freezes when the tab is
+hidden** (a background window, another tab in front, DevTools detached over it). That is the rule
+working, not a stuck page; it resumes when the tab is visible again. The answer is built from what this node
 already holds — its edge rows, its own `scale_out` status, grouped screen counts, a few in-memory
 counters — in O(edges), with no per-screen scan. Opening the NOC starts no snapshot, no cache
 fill and no mesh read (`test_noc_poll_moves_no_data`, twenty polls on two real processes).

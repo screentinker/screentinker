@@ -30,7 +30,7 @@ let active = false;
 let host = null;
 let last = null;          // previous sample, for pulses
 let selected = null;      // node id
-let selectedData = null;  // that node's screens + alerts, fetched ONCE per selection (never on the poll)
+let selectedData = null;  // the selected node's screens + alerts; re-asked on the tick for THAT node only
 const pulses = new Map(); // edgeId -> until (ms)
 
 /* ------------------------------ lifecycle ------------------------------ */
@@ -82,6 +82,10 @@ async function tick() {
   }
   detectMovement(data);
   last = data;
+  // The drawer ages with the graph: while a node is selected, its screen table is re-asked on the
+  // same tick — ONE extra bounded query for the one selected node, never for every node. Otherwise
+  // "seen 3h" would sit frozen under a link that pulses, which is the one lie this page could tell.
+  if (selected) await loadSelected(selected);
   draw(data);
 }
 
@@ -102,7 +106,7 @@ function detectMovement(data) {
   }
 }
 
-/** The selected node's screens and alerts: one request per selection, refreshed only on demand. */
+/** The selected node's screens and alerts: one bounded request, on selection and on each tick while selected. */
 async function loadSelected(nodeId) {
   if (!nodeId) { selectedData = null; return; }
   try {
@@ -276,7 +280,7 @@ function detailHtml(data) {
       </tbody>
     </table>
     ${sd.more ? `<p style="font-size:12px;color:var(--text-muted);margin:6px 0">…and ${sd.more} more — <a href="#/devices">the Displays list</a>.</p>` : ''}
-    <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Stale first. As of ${new Date(sd.asOf * 1000).toLocaleTimeString()} — <a href="#" data-reload-selected>refresh</a>.</p>`
+    <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Stale first. As of ${new Date(sd.asOf * 1000).toLocaleTimeString()}; refreshes with the graph while this server is selected.</p>`
     : (sd ? `<p style="font-size:12px;color:var(--text-muted)">${sd.error ? esc(sd.error) : 'No screens on this node.'}</p>` : '<p style="font-size:12px;color:var(--text-muted)">Loading screens…</p>');
   const alertRows = sd && sd.alerts && sd.alerts.length ? `
     <h4 style="margin:12px 0 4px;font-size:13px">Last alerts</h4>
@@ -291,8 +295,6 @@ function detailHtml(data) {
 }
 
 function wireDetail(body, data) {
-  const reload = body.querySelector('[data-reload-selected]');
-  if (reload) reload.addEventListener('click', async (e) => { e.preventDefault(); selectedData = null; draw(data); await loadSelected(selected); draw(last || data); });
   body.querySelectorAll('[data-disconnect]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const nodeId = btn.dataset.disconnect;

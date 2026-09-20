@@ -64,11 +64,12 @@ test('the NOC module polls only while it is the active, visible view: one setInt
   assert.doesNotMatch(src, /api\.get\('\/mesh\/(snapshot|changes|devices)/, 'no per-device scan and no replication reads from the browser');
   // No hosts, no discovery.
   assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''), /https?:\/\/[a-z0-9-]+\.[a-z]{2,}/i);
-  // The poll never asks for screens: the interval callback is tick(), whose only call is the plain
-  // GET; the per-node summary lives in loadSelected(), which runs once per selection.
+  // The poll is the plain GET plus, while a node is selected, ONE bounded ?node= for that node
+  // only — never a screen list for every node. The per-node call lives in a single place.
   const tickFn = src.slice(src.indexOf('async function tick()'), src.indexOf('function detectMovement'));
   assert.match(tickFn, /api\.get\('\/mesh\/noc'\)/);
-  assert.doesNotMatch(tickFn, /node=/, 'the 3 s poll carries no node');
+  assert.match(tickFn, /if \(selected\) await loadSelected\(selected\);/, 'the drawer ages with the graph, for the selected node only');
+  assert.doesNotMatch(tickFn, /for \(const n of|nodes\.map|nodes\.forEach/, 'not for every node');
   const loadFn = src.slice(src.indexOf('async function loadSelected'), src.indexOf('/* ------------------------------ layout'));
   assert.match(loadFn, /api\.get\(`\/mesh\/noc\?node=/);
   assert.equal((src.match(/noc\?node=/g) || []).length, 1, 'exactly one place asks for a node\'s screens');
@@ -185,6 +186,9 @@ test('test_noc_poll_moves_no_data: twenty polls change no replication position, 
   for (let i = 0; i < 20; i++) {
     const r = await fetch(replica.base + '/api/mesh/noc', auth(replicaAdmin));
     assert.equal(r.status, 200);
+    // ...and the selected-node form the drawer re-asks on every tick while a node is selected.
+    const rs = await fetch(replica.base + `/api/mesh/noc?node=${primaryNodeId}`, auth(replicaAdmin));
+    assert.equal(rs.status, 200);
     const p = await fetch(primary.base + '/api/mesh/noc', auth(primaryAdmin));
     assert.equal(p.status, 200);
     await sleep(100);
