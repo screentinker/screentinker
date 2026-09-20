@@ -274,6 +274,10 @@ test('⚠️ THE HUB API HAS EXACTLY ONE WRITE ROUTE, AND IT ONLY ASKS (I2)', ()
      * cached media; nothing is sent to the child, which learns at its next connection when the door
      * is shut (the same way a child-side revoke is learned from below). The node holding a copy
      * must be able to stop holding it; a 365-day token expiry is not a control.
+     *
+     * ⚠️ /links, NOT /nodes — do not "fix" this back. mesh-servers-view's guard forbids writes to
+     * /mesh/nodes on purpose: a URL that reads "write to a node" is one somebody later extends
+     * into writing to a node. This route modifies this hub's LINK and nothing on the other server.
      */
     'DELETE /links/:nodeId',
     'POST /clients',                  // create a customer record
