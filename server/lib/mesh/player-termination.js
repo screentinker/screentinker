@@ -217,6 +217,7 @@ function createOutbox(db, { writeTo, onReply, logger = console } = {}) {
         if (res && res.ok) {
           db.prepare('DELETE FROM mesh_player_events WHERE id = ?').run(row.id);
           backoffUntil.delete(edge.id);
+          sentByEdge.set(edge.id, (sentByEdge.get(edge.id) || 0) + 1);   // NOC: "data moved" counter
           const replies = res.outcome && Array.isArray(res.outcome.replies) ? res.outcome.replies : [];
           for (const r of replies) { try { onReply && onReply(row.device_id, r.event, r.payload); } catch (e) { /* */ } }
           continue;
@@ -257,6 +258,7 @@ function createOutbox(db, { writeTo, onReply, logger = console } = {}) {
   }
   /** Drop what is too old to be worth the disk; counted so status() can say so. */
   const expiredByEdge = new Map();
+  const sentByEdge = new Map();   // edgeId -> player events applied on the primary (this process)
   function expire(edge, now = Math.floor(Date.now() / 1000)) {
     const r = db.prepare('DELETE FROM mesh_player_events WHERE edge_id = ? AND created_at < ?').run(edge.id, now - OUTBOX_MAX_AGE_S);
     if (r.changes) expiredByEdge.set(edge.id, (expiredByEdge.get(edge.id) || 0) + r.changes);
@@ -281,6 +283,7 @@ function createOutbox(db, { writeTo, onReply, logger = console } = {}) {
                oldest_age_s: oldest ? Math.max(0, Math.floor(Date.now() / 1000) - oldest.created_at) : 0,
                last_error: oldest ? oldest.last_error : null, attempts: oldest ? oldest.attempts : 0,
                refused_at_cap: refusedByEdge.get(e.id) || 0, expired: expiredByEdge.get(e.id) || 0,
+               sent: sentByEdge.get(e.id) || 0,
                cap_rows: OUTBOX_MAX_ROWS_PER_EDGE, cap_age_s: OUTBOX_MAX_AGE_S };
     });
   }
@@ -327,6 +330,8 @@ function forwardEvent(db, edge, deviceId, kind, data, ctx, localSideEffects) {
  * HERE, and must belong to a workspace copied from THAT primary (or be an unclaimed row this
  * replica provisioned through it) — a primary can reach the screens it owns and nothing else.
  */
+const relayDelivered = new Map();   // edgeId -> command-relays delivered to a local socket (NOC counter)
+function relaysDelivered(edgeId) { return relayDelivered.get(edgeId) || 0; }
 function deliverRelay(db, deviceNs, edge, body) {
   if (!body || !body.device_id || typeof body.event !== 'string') return { ok: false, reason: 'malformed' };
   if (!terminatesPlayers(edge)) return { ok: false, reason: 'edge does not terminate players' };
@@ -338,6 +343,7 @@ function deliverRelay(db, deviceNs, edge, body) {
   const room = deviceNs.adapter.rooms.get(body.device_id);
   if (!room || room.size === 0) return { ok: false, reason: 'not attached here' };
   deviceNs.to(body.device_id).emit(body.event, body.payload == null ? {} : body.payload);
+  relayDelivered.set(edge.id, (relayDelivered.get(edge.id) || 0) + 1);
   return { ok: true };
 }
 
@@ -346,6 +352,6 @@ module.exports = {
   terminatesPlayers, terminatingEdgeFor, terminatingEdges, copiedOriginOf, tokenHash,
   rememberVerdict, cachedVerdict, forgetVerdict, verifyWithPrimary,
   enqueue, pendingCount, createOutbox,
-  attach, detach, getOutbox, forwardEvent, deliverRelay,
+  attach, detach, getOutbox, forwardEvent, deliverRelay, relaysDelivered,
   get readFrom() { return readFromRef; },
 };

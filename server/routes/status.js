@@ -47,10 +47,10 @@ function scaleOutStatus() {
   try { caches = require('../lib/mesh/content-cache').status(db, config); } catch (_) { caches = []; }
   for (const r of replicaOf) {
     const p = players.find((x) => x.node_id === r.node_id);
-    if (p) r.players = { pending: p.pending, oldest_age_s: p.oldest_age_s, last_error: p.last_error, refused_at_cap: p.refused_at_cap, expired: p.expired };
+    if (p) r.players = { pending: p.pending, oldest_age_s: p.oldest_age_s, last_error: p.last_error, refused_at_cap: p.refused_at_cap, expired: p.expired, sent: p.sent };
     // Scale-out C3: present only when this node caches media for that primary.
     const c = caches.find((x) => x.node_id === r.node_id);
-    if (c) r.cache = { files: c.files, bytes: c.bytes, pinned_bytes: c.pinned_bytes, cap_bytes: c.cap_bytes, last_error: c.last_error, prefetch_pending: c.prefetch_pending };
+    if (c) r.cache = { files: c.files, bytes: c.bytes, pinned_bytes: c.pinned_bytes, cap_bytes: c.cap_bytes, last_error: c.last_error, prefetch_pending: c.prefetch_pending, stored: c.stored };
   }
   return { role, head_rev: head, replicas, replica_of: replicaOf };
 }
@@ -752,3 +752,5 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
 });
 
 module.exports = router;
+// Scale-out NOC (routes/mesh-enroll.js /noc) reads the same block rather than recomputing it.
+module.exports.scaleOutStatus = scaleOutStatus;

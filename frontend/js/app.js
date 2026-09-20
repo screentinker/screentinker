@@ -14,6 +14,7 @@ import * as reviews from './views/reviews.js';
 import * as videoWall from './views/video-wall.js';
 import * as reports from './views/reports.js';
 import * as servers from './views/servers.js';
+import * as noc from './views/noc.js';
 import * as triggers from './views/triggers.js';
 import * as activity from './views/activity.js';
 import * as kiosk from './views/kiosk.js';
@@ -611,6 +612,11 @@ function route() {
      */
     currentView = servers;
     servers.render(app);
+  } else if (hash === '#/noc') {
+    // The live graph of THIS server's mesh (docs/scale-out.md "NOC on this server"). Same gate as
+    // Servers: only shown where the mesh is on, and the route behind it is instance-owner only.
+    currentView = noc;
+    noc.render(app);
   } else if (hash === '#/reports') {
     currentView = reports;
     reports.render(app);
@@ -726,13 +732,26 @@ function updateSidebarUser() {
     const meshEnroll = meshCapability('enroll');
     if (meshEnroll !== null) {
       serversNav.style.display = meshEnroll ? '' : 'none';
+      syncNocNav();
     } else {
       api.get('/mesh/capabilities')
-        .then(() => { serversNav.style.display = ''; })
+        .then(() => { serversNav.style.display = ''; syncNocNav(); })
         .catch(() => api.get('/mesh/nodes')
-          .then(() => { serversNav.style.display = ''; })
-          .catch(() => { serversNav.style.display = 'none'; }));
+          .then(() => { serversNav.style.display = ''; syncNocNav(); })
+          .catch(() => { serversNav.style.display = 'none'; syncNocNav(); }));
     }
+  }
+
+  /*
+   * The NOC follows the Servers gate exactly (it is that section's live graph) and is additionally
+   * owner-only, because the route behind it refuses everyone else. Derived, never asked separately:
+   * one gate, so the two items can never disagree about whether this node is in a mesh.
+   */
+  function syncNocNav() {
+    const nocNav = document.getElementById('nocNavItem');
+    if (!nocNav || !serversNav) return;
+    const role = (() => { try { return JSON.parse(localStorage.getItem('user') || '{}').role; } catch (_) { return null; } })();
+    nocNav.style.display = serversNav.style.display !== 'none' && role === 'platform_admin' ? '' : 'none';
   }
 
   let userEl = document.getElementById('sidebarUser');

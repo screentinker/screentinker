@@ -16,6 +16,17 @@ what to enter for the reviewer.
 
 ### Added
 
+**NOC: this server's mesh, live.** Servers → Topology → *Open the live NOC* (or `#/noc`, instance
+owner, only where the mesh is on): this server, what it reports to, what reports to it, and the
+servers reached through a child, as an SVG graph with a list fallback. Roles from the pairing,
+screen counts per node, links coloured by state with `lag_s` (never a guessed zero), acked/head
+revision, outbox depth, cache bytes, and a pulse when a link's counters moved. One `GET
+/api/mesh/noc` every 3 s while the page is open and visible — built in O(edges) from what the node
+already holds; opening it starts no snapshot, cache fill or mesh read. Disconnect on a child's card
+is the existing `DELETE /api/mesh/links/:id`. Either side of a link can now end it: the replica's
+Topology and NOC gained *Disconnect* (the parent-side disenroll that had never been mounted), and a
+primary's `/api/status` shows its uplink's live state.
+
 **Scale-out, phase C3: a replica can keep the media files.** A replica paired with the new
 `caches-content` role (a tick under the copy tick) stores the bytes of copied content rows on its
 own disk as they are used — fetched only from `PRIMARY_URL`, checked against the row's size and

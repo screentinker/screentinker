@@ -2128,6 +2128,8 @@ export default {
   'report.end_date': 'End Date',
   'report.load_report': 'Load Report',
   'report.select_range': 'Select a date range and click Load Report',
+  'nav.noc': 'NOC',
+  'noc.graph_label': 'Mesh graph of this server',
   'report.history_on_primary': 'Playback history lives on the primary server. This server holds a copy of the workspace but not its play log, so reports here are empty — open Reports on the primary.',
   'report.error': 'Error',
   'report.total_plays': 'Total Plays',

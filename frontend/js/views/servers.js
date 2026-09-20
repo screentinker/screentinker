@@ -852,6 +852,8 @@ async function renderTopology(panel) {
   }).join('');
 
   panel.innerHTML = `
+    <!-- The live version of this tab: one poll every few seconds while open, this server only. -->
+    <p style="margin:0 0 12px"><a href="#/noc" class="btn btn-secondary btn-sm">Open the live NOC</a></p>
     <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px">
       <div><div style="color:var(--text-muted);font-size:11px">Connected servers</div>
            <div style="font-size:20px">${edges.length}</div></div>

@@ -215,8 +215,10 @@ async function ensure(db, config, content, { fetchImpl, edge: edgeIn } = {}) {
                 bytes = excluded.bytes, fetched_at = excluded.fetched_at, last_read_at = excluded.last_read_at`)
     .run(content.id, edge.id, name, thumb && thumb !== name ? thumb : null, bytes, nowSec(), nowSec());
   clearError(edge.id);
+  storesByEdge.set(edge.id, (storesByEdge.get(edge.id) || 0) + 1);   // NOC: "data moved" counter
   return { ok: true, hit: false };
 }
+const storesByEdge = new Map();
 
 /* ------------------------------ sweeping ------------------------------ */
 
@@ -261,7 +263,7 @@ function status(db, config) {
     let files = 0, bytes = 0;
     try { const r = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM mesh_content_cache WHERE edge_id = ?').get(e.id); files = r.n; bytes = r.b; } catch (err) { /* */ }
     return { node_id: e.peer_node_id, files, bytes, pinned_bytes: pinnedBytes(db, e.id), cap_bytes: config.replicaCacheBytes,
-             last_error: lastError.get(e.id) || null, prefetch_pending: queue.length };
+             last_error: lastError.get(e.id) || null, prefetch_pending: queue.length, stored: storesByEdge.get(e.id) || 0 };
   });
 }
 

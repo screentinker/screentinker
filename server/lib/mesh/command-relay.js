@@ -26,10 +26,14 @@ function attachedNodeOf(db, deviceId) {
  * reconnecting) uplink, false when there is no such link — the caller then treats the screen as
  * offline, exactly as it would with no socket.
  */
+const relayedTo = new Map();   // nodeId -> command-relays handed to the uplink (NOC counter)
 function relayToAttached(db, deviceId, event, payload, uplinks = global.__meshUplinks) {
   const nodeId = attachedNodeOf(db, deviceId);
   if (!nodeId || !uplinks || typeof uplinks.sendTo !== 'function') return false;
-  return uplinks.sendTo(nodeId, 'command-relay', { device_id: deviceId, event, payload: payload == null ? {} : payload });
+  const ok = uplinks.sendTo(nodeId, 'command-relay', { device_id: deviceId, event, payload: payload == null ? {} : payload });
+  if (ok) relayedTo.set(nodeId, (relayedTo.get(nodeId) || 0) + 1);
+  return ok;
 }
+function relayedCount(nodeId) { return relayedTo.get(nodeId) || 0; }
 
-module.exports = { attachedNodeOf, relayToAttached };
+module.exports = { attachedNodeOf, relayToAttached, relayedCount };

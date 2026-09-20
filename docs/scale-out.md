@@ -264,6 +264,36 @@ screen that has not downloaded yet.
 
 ---
 
+## NOC on this server
+
+**Servers → Topology → Open the live NOC**, or `#/noc` — instance owner only, and only where the
+mesh is on (a stock install has no nav item and `GET /api/mesh/noc` is a 404). It is the graph of
+**this server's** mesh and nothing further: this server, each server it reports to, each server
+that reports to it, and the servers whose reports demonstrably travelled through a child. It is
+not a view into anybody who did not enrol (I7, I8), it discovers no address, and it dials nothing.
+
+- **Nodes** carry the name and the role set the pairing declared (`replica`, `primary`, `hub`,
+  `relay`; `dashboard` / `players` / `cache` for what a child is served with here) and screen
+  **counts** — online / total / stale / attached here — never one entry per screen; above 30 the
+  card points at the fleet view.
+- **Links** are coloured connected / lagging / down / revoked and labelled with `lag_s` (`?` when
+  the link is down — a lag is never invented), `acked/head` revision on an up link, and on a down
+  link the outbox depth, cache bytes, and the C2/C3 counters (`players.sent`, `expired`,
+  `refused_at_cap`, `cache.stored`). Click a node for the full card.
+- **Movement** is a pulse on a link when one of its sampled counters changed since the last poll:
+  a change-log revision, a device summary, a drained player event, a relayed command, a stored
+  file. Counters, not envelopes — nothing is streamed to the browser.
+- **Disconnect** on a child's card is the same control as Topology's (`DELETE /api/mesh/links/:id`),
+  with the same consent text. There is no promote button.
+
+**What it costs.** One `GET /api/mesh/noc` every 3 s *while the page is open and the tab is
+visible*; it stops on navigating away and on a hidden tab. The answer is built from what this node
+already holds — its edge rows, its own `scale_out` status, grouped screen counts, a few in-memory
+counters — in O(edges), with no per-screen scan. Opening the NOC starts no snapshot, no cache
+fill and no mesh read (`test_noc_poll_moves_no_data`, twenty polls on two real processes).
+
+---
+
 ## I8 — hosted-shaped and self-hosted, both directions
 
 The primary may be `SELF_HOSTED=true` and the replica hosted-shaped, or the reverse. A copied
