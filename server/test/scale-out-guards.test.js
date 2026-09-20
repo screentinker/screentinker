@@ -180,7 +180,7 @@ test('test_no_builtin_primary_url: PRIMARY_URL has no default and nothing host-s
   assert.match(m[1], /process\.env\.PRIMARY_URL/);
   assert.match(m[1], /\|\|\s*null/, 'unset means null, never a host');
   const HOSTNAME = /(screentinker\.com|relay\.|\.amazonaws\.|\.cloudfront\.|https?:\/\/[a-z0-9-]+\.[a-z]{2,})/i;
-  for (const f of ['lib/replica-proxy.js', 'lib/mesh/replica.js', 'lib/mesh/replication.js']) {
+  for (const f of ['lib/replica-proxy.js', 'lib/mesh/replica.js', 'lib/mesh/replication.js', 'lib/mesh/content-cache.js']) {
     const src = read(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     assert.doesNotMatch(src, HOSTNAME, `${f} names a host; the primary address is operator-typed only`);
   }

@@ -130,6 +130,8 @@ module.exports = function setupWebSockets(io) {
               // Scale-out C2: re-push the playlist to every screen attached here in a workspace
               // that just changed. Same payload builder, same dedup on the player's side.
               onApplied: (wsIds) => {
+                // Scale-out C3: prefetch/sweep cached media for these workspaces (no-op without a caches-content edge).
+                try { require('../lib/mesh/content-cache').onApplied(wsIds); } catch (e) { /* */ }
                 const commandQueue = require('../lib/command-queue');
                 const build = require('./deviceSocket').buildPlaylistPayload;
                 for (const wsId of wsIds) {
@@ -148,6 +150,9 @@ module.exports = function setupWebSockets(io) {
            * through writeTo; verification asks through readFrom; a reply the primary collected
            * while applying (a play-offline ack) lands on the local socket.
            */
+          // Scale-out C3: hands db/config to the content cache. Creates no timer; the worker starts on
+          // the first cacheable row, which a node without a caches-content edge never has.
+          try { require('../lib/mesh/content-cache').attach({ db, config: require('../config') }); } catch (e) { /* */ }
           try {
             playerTermination.attach({
               db, readFrom: meshNs.readFrom, writeTo: meshNs.writeTo, logger: console,

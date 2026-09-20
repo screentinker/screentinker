@@ -342,6 +342,65 @@ with a reason, which is what the allowlist test asks for.
 
 ---
 
+## 6a. Replica content cache *(Phase C3 — bytes only)*
+
+**What exists today (inventory, C1/C2).** On the primary a content row's bytes live at
+`$DATA_DIR/uploads/content/<filepath>` — `<uuid>.<ext>` for a local upload, `<sha256>.<ext>` for
+an asset that arrived by content push — with the thumbnail beside it as `thumb_<filepath>`.
+`content.filepath` / `content.thumbnail_path` hold the basename; `content.file_size` and
+`content.byte_digest` (sha256, nullable on old rows) describe the bytes. Two readers: the public
+static `/uploads/content/<name>` (players; a miss is a JSON 404 so a player never caches HTML
+as a video) and the authenticated `/api/content/:id/file` / `/thumbnail` (dashboard; the inline
+`server.js` variant also admits a player-shaped caller whose playlist references the id). Under
+`workspace-replication` the **rows** copy and the **bytes** do not: C1 added a fetch-through on
+both readers — a name that belongs to a copied row is forwarded to `PRIMARY_URL` per request,
+anything else stays a local miss. `lib/content-files.js` refcounts unlinks by row, and mesh push
+already has a resumable puller (`lib/mesh/pull-download.js`) and a stage-verify-commit path
+(`lib/mesh/content-sync.js`); the push direction is parent→child, the opposite of what a replica
+needs, so C3 reuses the puller and the verification discipline, not the offer/ticket machinery.
+
+**Decision.** The cache is a **capability the replica's operator declares** — `caches-content`,
+alongside `serves-dashboard` on the same edge — and nothing more: the authority to hold the bytes
+is the `workspace-replication` grant the primary's operator already gave (its consent text names
+content; the bytes already transit the replica on every fetch-through). Like
+`redistributes-content`, it is a *resource declaration*: "this server will spend its disk". A
+replica without it behaves exactly as C1/C2 (fetch through, never store).
+
+- **Origin** is `PRIMARY_URL/uploads/content/<name>` — operator-typed, the same address every
+  write goes to. No second URL, no other replica, no compiled host (I9). One attempt chain per
+  file (`pull-download`, resumable, bounded), then give up and serve through.
+- **Derived, never authored.** A cached file exists only for a name a *copied* content row
+  carries (`filepath` or `thumbnail_path`), is stored under that exact basename in the replica's
+  own `uploads/content/` so the unchanged static route and `/api/content/:id/file` serve it as a
+  plain local hit, and is tracked in `mesh_content_cache` (content_id, edge, names, bytes, times).
+  Size is checked against `file_size` and the sha256 against `byte_digest` when the row has one;
+  a mismatch is discarded. The replica never writes a content row — that is C1's rule.
+- **When bytes appear.** On a miss with the primary up (the fetch-through stores what it fetched,
+  then serves the local file), and by a gentle prefetch of content rows that land by replication
+  in a cached workspace (one at a time, quota-aware). A replica that has never fetched a file
+  answers a miss with the primary down exactly as C1: `503 primary_unreachable` (or the primary's
+  404) — never a blank 200 (`test_replica_cache_never_invents_a_file`).
+- **When bytes leave.** The row is deleted on the primary → the incremental deletes the copied row
+  → the orphan sweep unlinks the file (`test_replica_cache_follows_a_primary_delete`). The edge is
+  revoked or loses `caches-content` → every file cached for it is unlinked on the next sweep; the
+  mirror rows stay as §7 says, the bytes do not. Quota → LRU by `last_read_at`.
+- **Quota.** `REPLICA_CACHE_BYTES` per edge, default **10 GiB**. A file larger than the room left
+  evicts LRU until it fits; a file larger than the whole cap is served through and never stored.
+  Disk full (ENOSPC) on a fetch: the partial is discarded, the request is served through, and
+  `/api/status.scale_out.replica_of[].cache.last_error` says so.
+- **Secrets.** Filenames are uuid/sha256 names; nothing else is stored; `data_sources` and every
+  other scrubbed column are untouched (the cache reads `content` only).
+- **Stock install.** The table exists (exact-list schema guard, with the reason) and is empty; the
+  fetch worker is created lazily on the first cacheable row and never on a node without a
+  `caches-content` edge (`test_replica_cache_absent_on_a_stock_install`).
+
+The I1 accounting: a replica-attached player already plays from its *own* cache through an
+outage (C2). C3 is so the *replica* can origin bytes for a player that has not cached them yet,
+or for a dashboard preview, during that outage — for files it has already seen. The two caches
+are different things and the guide says so.
+
+---
+
 ## 7. Failure semantics
 
 | Event | Replica dashboards | Replica-attached players (C2) | Primary-attached players | Writes |

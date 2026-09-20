@@ -16,6 +16,19 @@ what to enter for the reviewer.
 
 ### Added
 
+**Scale-out, phase C3: a replica can keep the media files.** A replica paired with the new
+`caches-content` role (a tick under the copy tick) stores the bytes of copied content rows on its
+own disk as they are used — fetched only from `PRIMARY_URL`, checked against the row's size and
+sha256, stored under the row's own filename so the ordinary readers serve them as local hits, and
+prefetched one at a time as rows land — so a dashboard preview or a screen that has not downloaded
+yet still gets its media while the primary is unreachable. A file the replica has never fetched
+still answers `503 primary_unreachable`: nothing is invented. Bounded by `REPLICA_CACHE_BYTES` per
+primary (10 GiB unless set), least-recently-read files evicted, a file larger than the cap never
+stored; removed when the row is deleted on the primary, or when the link or the role goes. No grant
+changes on the primary: the authority is the copy grant its operator already gave. Stock installs
+gain an empty table and nothing else — no worker exists on a node without the role. Two-process
+test: `server/test/scale-out-c3-e2e.test.js`.
+
 **Scale-out, phase C2: screens on a replica.** A replica that took the new `terminates-players`
 role when it was paired (a tick under the copy tick) may accept player connections for the copied
 workspaces — once the *primary's* operator grants `player-events` on the primary, a write grant

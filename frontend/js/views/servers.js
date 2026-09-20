@@ -949,6 +949,13 @@ function renderMintPanel(host, caps) {
           <strong>Also let screens connect to this server</strong>
           <div style="margin-left:22px;color:var(--text-muted);font-size:11px">Screens in the copied workspaces can be pointed at this server. They are verified by the other server (their tokens stay there), play from the copy here, and report back through this server. Needs the copy above, and the other server's operator must then allow it under "What this server may change" on their side.</div>
         </label>
+        <!-- Scale-out C3 (docs/scale-out.md). Disk this server agrees to spend; the authority for the
+             data is the copy above. -->
+        <label id="cachesContent" style="display:block;margin:6px 0 0 22px;font-size:13px;opacity:.55">
+          <input type="checkbox" value="caches-content" disabled>
+          <strong>Also keep copies of the media files here</strong>
+          <div style="margin-left:22px;color:var(--text-muted);font-size:11px">Media of the copied workspaces is stored on this server's disk as it is used (up to REPLICA_CACHE_BYTES per server, 10 GB unless set), so dashboards and screens here can still get files while the other server is unreachable. Removed when the file, the copy, or this link goes.</div>
+        </label>
       </div>
       <button class="btn btn-primary btn-sm" id="mintBtn">Generate a pairing code</button>
       <div id="mintOut" style="margin-top:12px"></div>
@@ -958,18 +965,24 @@ function renderMintPanel(host, caps) {
   const replBox = host.querySelector('#grantList input[value="workspace-replication"]');
   const termWrap = host.querySelector('#terminatesPlayers');
   const termBox = termWrap.querySelector('input');
-  const syncTerm = () => { termBox.disabled = !replBox.checked; if (!replBox.checked) termBox.checked = false; termWrap.style.opacity = replBox.checked ? '1' : '.55'; };
+  const cacheWrap = host.querySelector('#cachesContent');
+  const cacheBox = cacheWrap.querySelector('input');
+  const syncTerm = () => {
+    for (const [wrap, box] of [[termWrap, termBox], [cacheWrap, cacheBox]]) {
+      box.disabled = !replBox.checked; if (!replBox.checked) box.checked = false; wrap.style.opacity = replBox.checked ? '1' : '.55';
+    }
+  };
   replBox.addEventListener('change', syncTerm); syncTerm();
 
   host.querySelector('#mintBtn').addEventListener('click', async () => {
-    const grant = [...host.querySelectorAll('#grantList input:checked')].map((c) => c.value).filter((v) => v !== 'terminates-players');
+    const grant = [...host.querySelectorAll('#grantList input:checked')].map((c) => c.value).filter((v) => v !== 'terminates-players' && v !== 'caches-content');
     const out = host.querySelector('#mintOut');
     try {
       // A replication grant is what makes THIS server a replica of the other: it takes on the
       // serves-dashboard role for the code, alongside the ordinary telemetry consumer role.
       // terminates-players (C2) rides on top of that when ticked.
       const capabilities = grant.includes('workspace-replication')
-        ? ['serves-dashboard', ...(termBox.checked ? ['terminates-players'] : []), 'consumes-telemetry']
+        ? ['serves-dashboard', ...(termBox.checked ? ['terminates-players'] : []), ...(cacheBox.checked ? ['caches-content'] : []), 'consumes-telemetry']
         : ['consumes-telemetry'];
       const r = await api.post('/mesh/pair/code', { grant, capabilities });
       out.innerHTML = `

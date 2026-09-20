@@ -93,6 +93,10 @@ The properties it adds, and what holds them:
 | Commands reach a replica-attached screen up the edge (`command-relay`), and the replica delivers only its own primary's devices | `test_command_relay_reaches_replica_attached_player` |
 | A replica waits or refuses; it never tells a screen to go elsewhere (I9) | `test_no_automatic_player_failover_to_primary` |
 | The C2 verbs are reviewed lists: `player-event`/`player-provision` inside `mesh:write`, `command-relay` upward | `the C2 additions are reviewed lists…` (scale-out-c2) |
+| **C3.** A stock install grows no media cache: empty table, no worker, no prefetch; a C1 edge fetches through and stores nothing | `test_replica_cache_absent_on_a_stock_install` |
+| A replica never invents a file: a miss with the primary down stores nothing and dials no second address (I9) | `test_replica_cache_never_invents_a_file` |
+| Cached bytes are derived from copied rows: deleted on the primary → gone after the incremental; link/role gone → every file of that edge gone; the rows are untouched | `test_replica_cache_follows_a_primary_delete` |
+| The cache is bounded (`REPLICA_CACHE_BYTES` per edge, LRU) and a stored file is verified against the row's size and sha256 | `quota: LRU eviction…`, `hit serves local; miss … fetches, verifies, stores` (scale-out-c3) |
 
 **I6 became testable once transport landed**, as predicted, and is now guarded three ways: a flooding
 child does not starve a quiet sibling (per-child backpressure), a dead child is skipped rather than

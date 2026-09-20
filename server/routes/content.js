@@ -852,7 +852,15 @@ function fetchThroughIfCopied(req, res, content, localPath) {
   if (!config.primaryUrl || !content.workspace_id || fs.existsSync(localPath)) return false;
   const ws = db.prepare('SELECT origin_node_id FROM workspaces WHERE id = ?').get(content.workspace_id);
   if (!replicaProxy.isCopiedWorkspace(ws)) return false;
-  replicaProxy.proxyToPrimary(req, res, config);
+  // C3: under a caches-content edge, store first and serve the local file; otherwise serve through.
+  const contentCache = require('../lib/mesh/content-cache');
+  if (!contentCache.edgeForContent(db, content)) { replicaProxy.proxyToPrimary(req, res, config); return true; }
+  contentCache.ensure(db, config, content).then((r) => {
+    if (!(r.ok && fs.existsSync(localPath))) return replicaProxy.proxyToPrimary(req, res, config);
+    hardenUploadResponse(res, path.basename(localPath));
+    res.setHeader('x-st-replica-cache', 'stored');
+    res.sendFile(localPath);
+  });
   return true;
 }
 

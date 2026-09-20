@@ -64,6 +64,18 @@ const CAPABILITIES = Object.freeze({
     requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
     requires: ['serves-dashboard'],
   },
+  /*
+   * Scale-out C3 (docs/scale-out-design.md §6a). This node keeps the BYTES of copied content rows
+   * on its own disk, so it can serve media to a dashboard or an attached player while the primary
+   * is unreachable. A resource declaration by THIS node's operator, like redistributes-content: the
+   * authority to hold the data is the workspace-replication grant the primary's operator gave, and
+   * the bytes already transit here on every fetch-through. Quota REPLICA_CACHE_BYTES per edge.
+   */
+  'caches-content': {
+    summary: 'Keeps copies of the media files of the copied workspaces on this server\'s disk',
+    requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
+    requires: ['serves-dashboard'],
+  },
   'redistributes-content': {
     summary: 'Keeps media it was sent, so it can pass it on to servers below it',
     /*

@@ -95,6 +95,8 @@ module.exports = {
    * cross-origin redirect.
    */
   primaryUrl: String(process.env.PRIMARY_URL || '').trim().replace(/\/+$/, '') || null,
+  // Scale-out C3: disk a replica may spend on cached media, PER primary (edge). 10 GiB unless set.
+  replicaCacheBytes: (() => { const n = Number(process.env.REPLICA_CACHE_BYTES); return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10 * 1024 * 1024 * 1024; })(),
   primaryRedirect: ['1', 'true', 'yes'].includes(String(process.env.PRIMARY_REDIRECT || '').toLowerCase()),
 
   /* ==========================================================================================

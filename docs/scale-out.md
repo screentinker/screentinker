@@ -215,6 +215,36 @@ A replica **without** the role, or a primary **without** the grant, behaves exac
 
 ---
 
+## Replica content cache (C3)
+
+By default a replica holds copied **rows** and fetches media **bytes** through from the primary on
+every request (see above). To let it keep the bytes, tick *Also keep copies of the media files
+here* under the copy tick when minting the pairing code (the `caches-content` role; over the API,
+`capabilities: [..., "caches-content"]`). No grant changes on the primary: the authority is the
+copy grant its operator already gave; this tick is the replica's operator agreeing to spend disk.
+
+- **When files appear.** The first time a file is asked for (a dashboard thumbnail, a player
+  download) the replica fetches it from `PRIMARY_URL`, checks its size and — when the row carries
+  one — its sha256, stores it, and serves it. Content that lands by replication into a cached
+  workspace is also fetched in the background, one file at a time, so an outage usually finds
+  the recent files already here.
+- **With the primary down**, a file the replica has already stored is served as a plain local
+  file — a *new* player, or a dashboard preview, gets it. A file the replica has never fetched
+  answers `503 primary_unreachable`, exactly as without the cache; nothing is invented.
+- **Quota.** `REPLICA_CACHE_BYTES` per primary, default 10 GiB. Least-recently-read files are
+  evicted to make room; a file larger than the whole cap is never stored, just served through.
+  If the disk fills mid-fetch the request is served through and
+  `/api/status` → `scale_out.replica_of[].cache.last_error` says so.
+- **When files leave.** Deleted on the primary → gone here after the next incremental. Link
+  revoked, or the role removed → every file cached for that primary is removed on the next sweep
+  (the copied rows stay as long as the mirror does; the bytes do not).
+
+This is a different thing from the **player's own offline cache** (C2): a screen keeps playing
+from what it downloaded whether or not the replica caches anything. The replica cache is for the
+screen that has not downloaded yet.
+
+---
+
 ## I8 — hosted-shaped and self-hosted, both directions
 
 The primary may be `SELF_HOSTED=true` and the replica hosted-shaped, or the reverse. A copied
@@ -263,8 +293,9 @@ Documented gaps, in the order they are likely to matter:
   back through replication, and the file and thumbnail are fetched from `PRIMARY_URL` each time
   the dashboard asks for them (`/api/content/:id/file`, `/uploads/content/<name>` — the latter only
   for a name that belongs to a copied row, so the public path is not an open proxy). There is no
-  local cache, and a copied workspace's media is unavailable on the replica while the primary is
-  down — an attached screen then plays from its own cache.
+  local cache unless the replica declared `caches-content` (see [Replica content cache](#replica-content-cache-c3));
+  without it a copied workspace's media is unavailable on the replica while the primary is down,
+  and an attached screen plays from its own cache.
 - **Playback history is not copied.** `play_logs` stays on the primary. The Reports page on a
   replica says so for a copied workspace ("Playback history lives on the primary server") instead
   of showing an empty report as if nothing ever played. Proof-of-play reports run on the primary.

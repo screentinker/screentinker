@@ -1861,6 +1861,23 @@ const migrations = [
   )`,
   'CREATE INDEX IF NOT EXISTS idx_mesh_player_events_edge ON mesh_player_events(edge_id, id)',
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_mesh_player_events_coalesce ON mesh_player_events(coalesce_key) WHERE coalesce_key IS NOT NULL',
+  /*
+   * Scale-out C3: REPLICA side — which copied content rows have their bytes on this disk. One row
+   * per content id; the file sits under uploads/content/<filename> exactly as the copied row names
+   * it, so the ordinary readers serve it as a local hit. Empty on every node that declared no
+   * caches-content edge. Evicted LRU by last_read_at; swept when the row or the edge goes.
+   */
+  `CREATE TABLE IF NOT EXISTS mesh_content_cache (
+    content_id     TEXT PRIMARY KEY,
+    edge_id        TEXT NOT NULL,
+    filename       TEXT NOT NULL,
+    thumb_filename TEXT,
+    bytes          INTEGER NOT NULL DEFAULT 0,
+    fetched_at     INTEGER NOT NULL,
+    last_read_at   INTEGER NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_content_cache_edge ON mesh_content_cache(edge_id, last_read_at)',
+  'CREATE INDEX IF NOT EXISTS idx_mesh_content_cache_file ON mesh_content_cache(filename)',
   `CREATE TABLE IF NOT EXISTS mesh_player_verdicts (
     device_id    TEXT PRIMARY KEY,
     edge_id      TEXT NOT NULL,

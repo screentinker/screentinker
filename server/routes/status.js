@@ -35,9 +35,14 @@ function scaleOutStatus() {
   // Scale-out C2: what this node still owes each primary for the screens attached here.
   let players = [];
   try { const ob = require('../lib/mesh/player-termination').getOutbox(); players = ob ? ob.status() : []; } catch (_) { players = []; }
+  let caches = [];
+  try { caches = require('../lib/mesh/content-cache').status(db, config); } catch (_) { caches = []; }
   for (const r of replicaOf) {
     const p = players.find((x) => x.node_id === r.node_id);
     if (p) r.players = { pending: p.pending, oldest_age_s: p.oldest_age_s, last_error: p.last_error, refused_at_cap: p.refused_at_cap, expired: p.expired };
+    // Scale-out C3: present only when this node caches media for that primary.
+    const c = caches.find((x) => x.node_id === r.node_id);
+    if (c) r.cache = { files: c.files, bytes: c.bytes, cap_bytes: c.cap_bytes, last_error: c.last_error, prefetch_pending: c.prefetch_pending };
   }
   return { role, head_rev: head, replicas, replica_of: replicaOf };
 }
