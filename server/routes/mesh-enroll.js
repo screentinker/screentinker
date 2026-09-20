@@ -430,10 +430,66 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
                    name: (db.prepare('SELECT node_name FROM mesh_mirror_nodes WHERE origin_node_id = ?').get(r.node_id) || {}).node_name || null,
                    screens: m ? { total: m.total, online: m.online, stale: m.stale, attachedHere: 0 } : null }; });
     } catch (e) { indirect = []; }
+    /*
+     * ?node=<id>: the SELECTED node's screens and last alerts — asked once per selection by the
+     * dashboard, never on the 3 s poll (the poll test holds that the interval call carries no
+     * node). Bounded: 50 rows, stale first, plus how many more; the normal Displays list is where
+     * the rest lives. Sources, in order: this node's own rows (LOCAL_ROWS_SQL); a copied
+     * workspace's rows (a replica of that node); the mirror rows that node reported (a plain hub).
+     */
+    let selected = null;
+    const want = typeof req.query.node === 'string' ? req.query.node : null;
+    if (want) {
+      const LIMIT = 50;
+      const age = (t) => (t ? Math.max(0, now - t) : null);
+      let rows = [], total = 0, alerts = [];
+      try {
+        if (want === me) {
+          const local = require('../lib/replica-proxy').LOCAL_ROWS_SQL('d');
+          total = db.prepare(`SELECT COUNT(*) AS n FROM devices d WHERE ${local}`).get().n;
+          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist
+                               FROM devices d LEFT JOIN device_resolved_playlist r ON r.device_id = d.id LEFT JOIN playlists p ON p.id = r.playlist_id
+                              WHERE ${local} ORDER BY (d.status = 'online') ASC, COALESCE(d.last_heartbeat, 0) ASC LIMIT ?`).all(LIMIT);
+          alerts = db.prepare(`SELECT a.id, a.metric, a.severity, a.opened_at, a.closed_at, d.name AS device
+                                 FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id
+                                WHERE a.workspace_id IN (SELECT id FROM workspaces WHERE origin_node_id IS NULL)
+                                ORDER BY a.opened_at DESC LIMIT 5`).all();
+        } else if (copied.has(want)) {
+          total = copied.get(want).total;
+          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist
+                               FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+                               LEFT JOIN device_resolved_playlist r ON r.device_id = d.id LEFT JOIN playlists p ON p.id = r.playlist_id
+                              WHERE w.origin_node_id = ? ORDER BY (d.status = 'online') ASC, COALESCE(d.last_heartbeat, 0) ASC LIMIT ?`).all(want, LIMIT);
+          alerts = db.prepare(`SELECT a.id, a.metric, a.severity, a.opened_at, a.closed_at, d.name AS device
+                                 FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id
+                                WHERE a.workspace_id IN (SELECT id FROM workspaces WHERE origin_node_id = ?)
+                                ORDER BY a.opened_at DESC LIMIT 5`).all(want);
+        } else {
+          total = (mirror.get(want) || { total: 0 }).total;
+          rows = db.prepare(`SELECT device_id AS id, name, status, last_heartbeat, NULL AS attached_node_id, NULL AS playlist
+                               FROM mesh_mirror_devices WHERE origin_node_id = ? AND deleted_at IS NULL
+                              ORDER BY (status = 'online') ASC, COALESCE(last_heartbeat, 0) ASC LIMIT ?`).all(want, LIMIT);
+          alerts = db.prepare(`SELECT id, alert_type AS metric, severity, opened_at, closed_at, subject_count AS device
+                                 FROM mesh_mirror_alerts WHERE origin_node_id = ? ORDER BY opened_at DESC LIMIT 5`).all(want);
+        }
+      } catch (e) { rows = []; alerts = []; }
+      selected = {
+        id: want, asOf: now,
+        screens: rows.map((d) => ({
+          id: d.id, name: d.name || d.id.slice(0, 8), status: d.status || 'unknown', seen_s: age(d.last_heartbeat),
+          // Where the screen's socket is: here, on the node that owns it, or on another replica.
+          attached: d.attached_node_id ? (d.attached_node_id === me ? 'here' : d.attached_node_id) : (want === me ? 'here' : 'primary'),
+          playlist: d.playlist || null,
+        })),
+        more: Math.max(0, (total || 0) - rows.length),
+        alerts: alerts.map((a) => ({ id: a.id, metric: a.metric, severity: a.severity, opened_at: a.opened_at, closed_at: a.closed_at, device: a.device == null ? null : String(a.device) })),
+      };
+    }
+
     res.json({
       asOf: now,
       self: { id: me, name: store.nodeName(db), roles: [...selfRoles], screens: { total: own.total || 0, online: own.online || 0, attachedElsewhere: own.attached_elsewhere || 0 } },
-      nodes, links, indirect,
+      nodes, links, indirect, selected,
       depthCap: config.meshMaxDepth,
     });
   });

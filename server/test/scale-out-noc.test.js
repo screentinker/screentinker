@@ -64,15 +64,27 @@ test('the NOC module polls only while it is the active, visible view: one setInt
   assert.doesNotMatch(src, /api\.get\('\/mesh\/(snapshot|changes|devices)/, 'no per-device scan and no replication reads from the browser');
   // No hosts, no discovery.
   assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''), /https?:\/\/[a-z0-9-]+\.[a-z]{2,}/i);
-  // Screens above the threshold are counts, never one DOM node each.
-  assert.match(src, /const DEVICE_LIST_MAX = 30;/);
-  assert.match(src, /\(sc\.total \|\| 0\) > DEVICE_LIST_MAX/);
+  // The poll never asks for screens: the interval callback is tick(), whose only call is the plain
+  // GET; the per-node summary lives in loadSelected(), which runs once per selection.
+  const tickFn = src.slice(src.indexOf('async function tick()'), src.indexOf('function detectMovement'));
+  assert.match(tickFn, /api\.get\('\/mesh\/noc'\)/);
+  assert.doesNotMatch(tickFn, /node=/, 'the 3 s poll carries no node');
+  const loadFn = src.slice(src.indexOf('async function loadSelected'), src.indexOf('/* ------------------------------ layout'));
+  assert.match(loadFn, /api\.get\(`\/mesh\/noc\?node=/);
+  assert.equal((src.match(/noc\?node=/g) || []).length, 1, 'exactly one place asks for a node\'s screens');
+  // Pulse: applied rev or outbox depth only.
+  const mv = src.slice(src.indexOf('function detectMovement'), src.indexOf('async function loadSelected'));
+  assert.match(mv, /rev\(l\) !== rev\(p\) \|\| depth\(l\) !== depth\(p\)/);
+  assert.doesNotMatch(mv, /last_sync_at|cache_stored|relays/, 'not on a heartbeat or a byte counter');
+  // Copy lag is captioned as such and never drawn as a number on a dead link.
+  assert.match(src, /copy lag \$\{l\.state === 'down' \|\| l\.lag_s == null \? '\?'/);
 });
 
 test('the endpoint itself moves nothing: no readFrom, no replica sync, no cache ensure, no per-device scan', () => {
   const src = read('routes/mesh-enroll.js');
   const block = src.slice(src.indexOf("router.get('/noc'"), src.indexOf("router.get('/shareable-workspaces'"));
-  assert.doesNotMatch(block, /readFrom|__meshReadFrom|\.sync\(|\.tick\(|ensure\(|snapshotPage|changesSince|writeTo|fetch\(/);
+  assert.doesNotMatch(block, /readFrom|__meshReadFrom|\.sync\(|\.tick\(|ensure\(|snapshotPage|changesSince|writeTo|fetch\(|screenshot|\/api\/content|uploads\/content/);
+  assert.match(block, /LIMIT \?`\)\.all\((want, )?LIMIT\)/, 'the per-node screen list is bounded');
   assert.match(block, /GROUP BY origin_node_id/, 'screens are grouped counts');
   assert.doesNotMatch(block, /SELECT \* FROM devices\b/, 'no per-device scan');
   assert.match(block, /requireInstanceOwner/, 'owner only');
@@ -182,6 +194,34 @@ test('test_noc_poll_moves_no_data: twenty polls change no replication position, 
   // The primary's read worker answered nothing new for these polls (a snapshot/changes read logs on the worker).
   const tail = fs.readFileSync(primary.log, 'utf8').split('\n').slice(before.logLines - 1);
   assert.ok(!tail.some((l) => /mesh:read|snapshot|changes/.test(l)), `a poll caused a mesh read: ${tail.filter((l) => /mesh/.test(l)).join(' | ')}`);
+});
+
+test('?node= returns the selected node\'s screens (stale first, capped at 50 with "more") and last alerts; the plain poll carries none', async () => {
+  // Seed screens: 60 on the primary in the copied workspace (they replicate to the replica).
+  const pdb = new Database(primary.dbPath);
+  const userId = pdb.prepare('SELECT id FROM users LIMIT 1').get().id;
+  const ins = pdb.prepare("INSERT INTO devices (id, user_id, name, workspace_id, status, last_heartbeat, device_token) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const now = Math.floor(Date.now() / 1000);
+  for (let i = 0; i < 60; i++) ins.run(`scr-${String(i).padStart(3, '0')}`, userId, `Screen ${i}`, primaryWs, i % 3 === 0 ? 'online' : 'offline', now - i * 60, `t${i}`);
+  pdb.close();
+  await waitFor(async () => { const r = new Database(replica.dbPath, { readonly: true }); const n = r.prepare("SELECT COUNT(*) AS n FROM devices WHERE id LIKE 'scr-%'").get().n; r.close(); return n === 60; }, { what: 'screens to replicate' });
+  const plain = await (await fetch(replica.base + '/api/mesh/noc', auth(replicaAdmin))).json();
+  assert.equal(plain.selected, null, 'no screens on the plain poll');
+  const sel = await (await fetch(replica.base + `/api/mesh/noc?node=${primaryNodeId}`, auth(replicaAdmin))).json();
+  assert.equal(sel.selected.id, primaryNodeId);
+  assert.equal(sel.selected.screens.length, 50, 'capped');
+  assert.equal(sel.selected.more, 10, 'and N more');
+  assert.equal(sel.selected.screens[0].status, 'offline', 'stale first');
+  assert.ok(sel.selected.screens.every((d) => typeof d.seen_s === 'number' && d.seen_s >= 0), 'seen = seconds since last heartbeat');
+  assert.ok(sel.selected.screens.every((d) => d.attached === 'primary'), 'not attached here: their sockets are on the owner');
+  assert.ok(Array.isArray(sel.selected.alerts) && sel.selected.alerts.length <= 5);
+  // The child count on the node card agrees with the table's universe.
+  const child = sel.nodes.find((n) => n.id === primaryNodeId);
+  assert.equal(child.screens.total, 60);
+  // Selecting THIS node lists its own screens (none here), and an unknown node answers an empty summary, not an error.
+  const me = await (await fetch(replica.base + `/api/mesh/noc?node=${replicaNodeId}`, auth(replicaAdmin))).json();
+  assert.deepEqual(me.selected.screens, []);
+  assert.equal((await fetch(replica.base + '/api/mesh/noc?node=nope', auth(replicaAdmin))).status, 200);
 });
 
 test('lag_s is null on a down link, and the link says down', async () => {
