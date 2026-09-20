@@ -140,15 +140,15 @@ function draw(data) {
   const parents = data.nodes.filter((n) => n.kind === 'parent');
   const children = data.nodes.filter((n) => n.kind === 'child');
   const indirect = data.indirect || [];
-  const W = Math.max(720, Math.max(parents.length, children.length, 1) * 220 + 80);
+  const W = Math.max(720, Math.max(parents.length, children.length, 1) * 230 + 80);
   const rows = 2 + (parents.length ? 1 : 0) + (indirect.length ? 1 : 0);
-  const H = 120 * rows + 40;
+  const H = 140 * rows + 40;
   const pos = new Map();
   let y = 70;
   const place = (list, yy) => list.forEach((n, i) => pos.set(n.id, { x: 40 + (W - 80) * ((i + 0.5) / list.length), y: yy }));
-  if (parents.length) { place(parents, y); y += 120; }
-  pos.set(data.self.id, { x: W / 2, y }); y += 120;
-  place(children, y); y += 120;
+  if (parents.length) { place(parents, y); y += 140; }
+  pos.set(data.self.id, { x: W / 2, y }); y += 140;
+  place(children, y); y += 140;
   place(indirect, y);
 
   const nodeBox = (n, kind) => {
@@ -175,11 +175,14 @@ function draw(data) {
     const label = l.direction === 'down'
       ? `${l.state} · copy lag ${l.state === 'down' || l.lag_s == null ? '?' : `${l.lag_s}s`}${l.players ? ` · outbox ${l.players.pending}` : ''}`
       : `${l.state}${l.ackedRev != null && l.headRev != null ? ` · acked ${l.ackedRev}/${l.headRev}` : ''}`;
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    // The caption sits near the LOWER end of the line (the child's box), where nine fan-in links
+    // are spread apart; at the midpoint they all cross the same few pixels.
+    const lower = a.y > b.y ? a : b, upper = a.y > b.y ? b : a;
+    const tx = upper.x + (lower.x - upper.x) * 0.82, ty = upper.y + 28 + ((lower.y - 28) - (upper.y + 28)) * 0.82;
     return `
       <g class="noc-edge${pulsing ? ' noc-pulse' : ''}" data-edge="${esc(l.edgeId)}">
         <line x1="${a.x}" y1="${a.y + 28}" x2="${b.x}" y2="${b.y - 28}" stroke="${colour}" stroke-width="${pulsing ? 4 : 2}" ${l.state === 'revoked' ? 'stroke-dasharray="6 4"' : ''}/>
-        <text x="${mx + 6}" y="${my}" fill="${colour}" font-size="11">${esc(label)}</text>
+        <text x="${tx}" y="${ty - 4}" fill="${colour}" font-size="10" text-anchor="middle">${esc(label)}</text>
       </g>`;
   };
   const indirectLine = (n) => {
@@ -286,7 +289,7 @@ function detailHtml(data) {
     <h4 style="margin:12px 0 4px;font-size:13px">Last alerts</h4>
     <ul style="font-size:12px;margin:0;padding-left:18px">${sd.alerts.map((a) => `<li>${esc(a.metric)} <span style="color:var(--text-muted)">(${esc(a.severity || '')}${a.device ? `, ${esc(a.device)}` : ''}) ${esc(ageLabel(Math.max(0, Math.floor(Date.now() / 1000) - (a.opened_at || 0))))} ago${a.closed_at ? ', closed' : ''}</span></li>`).join('')}</ul>` : '';
   return `
-    <h3 style="margin-top:0">${esc(n.name || short(n.id))} <span style="color:var(--text-muted);font-size:12px;font-weight:normal">${esc(n.id)} · ${esc(roleOf(n, n === data.self ? 'self' : n.kind, data))}</span></h3>
+    <h3 style="margin-top:0">${esc(n.name || short(n.id))} <span style="color:var(--text-muted);font-size:12px;font-weight:normal">${esc(n.id)} · ${esc(n === data.self && (n.roles || []).length ? n.roles.join(' · ') : roleOf(n, n === data.self ? 'self' : n.kind, data))}</span></h3>
     ${counts}
     ${screenRows}
     ${alertRows}

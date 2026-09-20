@@ -284,6 +284,8 @@ function changesSince(db, workspaceIds, since, limit = 500) {
   if (!workspaceIds || !workspaceIds.length) return { rows: [], upto: since, head: headRev(db) };
   const lim = Math.max(1, Math.min(2000, Number(limit) || 500));
   const marks = workspaceIds.map(() => '?').join(',');
+  // Head BEFORE the select: a rev committed between the two must not be skipped by the jump below.
+  const headBefore = headRev(db);
   const raw = db.prepare(
     `SELECT rev, workspace_id, table_name, row_id, op FROM mesh_change_log
      WHERE rev > ? AND workspace_id IN (${marks}) ORDER BY rev ASC LIMIT ?`
@@ -291,6 +293,11 @@ function changesSince(db, workspaceIds, since, limit = 500) {
   const latest = new Map();
   let upto = Number(since) || 0;
   for (const r of raw) { latest.set(`${r.table_name}\u0000${r.row_id}`, r); upto = r.rev; }
+  // A short page means every rev up to headBefore was examined; the ones not returned belong to
+  // other workspaces. Park the replica there, or its position (and so the primary's acked_rev,
+  // which bounds pruneLog) sticks at the last rev it was granted while the log grows past it —
+  // seen on a mid-tier node whose OWN copies of its children kept its log moving.
+  if (raw.length < lim && headBefore > upto) upto = headBefore;
   const rows = [...latest.values()].sort((a, b) => a.rev - b.rev).map((r) => {
     const spec = TABLE_BY_NAME[r.table_name];
     const row = (r.op === 'upsert' && spec) ? fetchRow(db, spec, r.row_id) : null;

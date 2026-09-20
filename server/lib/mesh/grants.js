@@ -241,7 +241,19 @@ function validateGrant(requested) {
 function grantAllows(grantedCategories, category) {
   if (!Array.isArray(grantedCategories)) return false;
   // No wildcard on purpose: a future category must never be implicitly included in an old grant.
-  return grantedCategories.includes(category);
+  if (grantedCategories.includes(category)) return true;
+  /*
+   * ⚠️ `implies` IS honoured here, and it is not the wildcard the line above forbids: it is a list
+   * AUTHORED on the granting category, with the consent text saying so ("a complete copy of these
+   * workspaces"). Found on a live estate: a workspace-replication-only edge sent device summaries
+   * carrying nothing but an id, so a copied screen's status on the replica only ever changed when a
+   * player attached to the replica set it — a screen heartbeating to its primary went stale on the
+   * replica for good, and a hub's mirror of a relayed grandchild read "0 online" of everything.
+   */
+  return grantedCategories.some((g) => {
+    const meta = READ_CATEGORIES[g];
+    return meta && Array.isArray(meta.implies) && meta.implies.includes(category);
+  });
 }
 
 /**

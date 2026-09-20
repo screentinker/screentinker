@@ -362,9 +362,9 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
     try {
       for (const r of db.prepare(`SELECT w.origin_node_id, COUNT(d.id) AS total,
                                    SUM(CASE WHEN d.status = 'online' THEN 1 ELSE 0 END) AS online,
-                                   SUM(CASE WHEN d.attached_node_id IS NULL AND d.status = 'online' THEN 1 ELSE 0 END) AS attached_here
+                                   SUM(CASE WHEN d.attached_node_id = ? THEN 1 ELSE 0 END) AS attached_here
                                    FROM devices d JOIN workspaces w ON w.id = d.workspace_id
-                                   WHERE w.origin_node_id IS NOT NULL GROUP BY w.origin_node_id`).all()) copied.set(r.origin_node_id, r);
+                                   WHERE w.origin_node_id IS NOT NULL GROUP BY w.origin_node_id`).all(me)) copied.set(r.origin_node_id, r);
     } catch (e) { /* */ }
     let own = { total: 0, online: 0, attached_elsewhere: 0 };
     try {

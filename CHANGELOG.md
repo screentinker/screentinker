@@ -27,6 +27,17 @@ is the existing `DELETE /api/mesh/links/:id`. Either side of a link can now end 
 Topology and NOC gained *Disconnect* (the parent-side disenroll that had never been mounted), and a
 primary's `/api/status` shows its uplink's live state.
 
+**Scale-out: four things a 12-server estate showed.** A hub now marks a primary *down* the moment
+its socket closes rather than at the next failed pull (a killed primary read "connected · copy lag
+25s" for up to 30 s). A `workspace-replication` grant now carries the read categories it was
+authored to imply (`health`, `identity`, …), so a copied screen's status follows its primary's
+heartbeats instead of going stale on the replica. A replica's change-log cursor parks at the
+examined head on a short page, so a second-tier hub's `acked/head` no longer sticks at the last
+revision it was granted while its own copies keep the log moving (and the log can be pruned
+again). The NOC's "N here" counts screens attached to *this* server, its edge captions sit by the
+child instead of piling up at the midpoint of nine fan-in lines, and the drawer names every role
+of a server that is primary, replica and hub at once.
+
 **Scale-out, phase C3: a replica can keep the media files.** A replica paired with the new
 `caches-content` role (a tick under the copy tick) stores the bytes of copied content rows on its
 own disk as they are used — fetched only from `PRIMARY_URL`, checked against the row's size and

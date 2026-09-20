@@ -126,7 +126,7 @@ module.exports = function setupWebSockets(io) {
            */
           try {
             replica = require('../lib/mesh/replica').createReplica(db, {
-              readFrom: meshNs.readFrom, logger: console,
+              readFrom: meshNs.readFrom, isConnected: meshNs.isConnected, logger: console,
               // Scale-out C2: re-push the playlist to every screen attached here in a workspace
               // that just changed. Same payload builder, same dedup on the player's side.
               onApplied: (wsIds) => {

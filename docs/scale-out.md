@@ -305,6 +305,26 @@ already holds — its edge rows, its own `scale_out` status, grouped screen coun
 counters — in O(edges), with no per-screen scan. Opening the NOC starts no snapshot, no cache
 fill and no mesh read (`test_noc_poll_moves_no_data`, twenty polls on two real processes).
 
+**A second tier (a replica that is itself a primary's hub).** A server can carry both flags:
+`MESH_ALLOW_UPLINK` to report to a hub above it and `MESH_ACCEPT_ENROLLMENT` + `PRIMARY_URL` to
+hold copies of primaries below it. Three things decide whether the top hub sees the bottom tier:
+
+- **Depth.** `MESH_MAX_DEPTH` defaults to 2 (a hub and its children). A child of a child is level
+  3 and is refused at pairing with the depth message; raise it on the *middle* server only when
+  you mean to build that shape.
+- **Consent from below.** A grandchild is relayed upward only after its own operator allows it:
+  Servers → the uplink card → *Let this server pass your screens further up* on the grandchild
+  (`PUT /api/mesh/uplink/<edgeId>/share-upward {"allow":true}`). Until then the top hub's NOC does not know it exists — that is the
+  consent rule, not a fault. The middle server needs `relays-for-subtree` from the top hub.
+- **What is relayed is a summary, not a copy.** The top hub learns the grandchild as *reached
+  through a child* (`N hop(s)`) with its screen counts from device summaries; a copied workspace is
+  never re-shared, so the top hub holds no rows of the grandchild's and cannot proxy writes for it.
+
+Seen on a 12-server estate with such a tier: the middle server's own copies of its children kept
+its change log moving, and the top hub's cursor parked at the last revision it was granted — the
+link read `acked 437/626` and the log could never be pruned past 437. Since 2.1.5 the cursor
+parks at the examined head on a short page, so `acked` follows `head` within one poll.
+
 ---
 
 ## I8 — hosted-shaped and self-hosted, both directions

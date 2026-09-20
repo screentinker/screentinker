@@ -150,6 +150,18 @@ test('a heartbeat-shaped device update is not logged; a rename is; volatile stat
   assert.equal(replica.prepare('SELECT status, last_heartbeat FROM devices WHERE id = ?').get(devId).last_heartbeat, 1234567);
 });
 
+test('a workspace-replication grant carries health and identity in device summaries (its authored implies list), so a copied screen\'s status follows its primary', () => {
+  const grants = require('../lib/mesh/grants');
+  const mirror = require('../lib/mesh/mirror');
+  assert.equal(grants.grantAllows(['workspace-replication'], 'health'), true);
+  assert.equal(grants.grantAllows(['workspace-replication'], 'identity'), true);
+  assert.equal(grants.grantAllows(['workspace-replication'], 'display-capture'), false, 'not implied: screenshots need their own tick');
+  assert.equal(grants.grantAllows(['health'], 'identity'), false, 'a plain category implies nothing');
+  const out = mirror.projectDevice({ id: 'd', status: 'online', last_heartbeat: 5, name: 'Lobby', device_token: 'never' }, ['workspace-replication']);
+  assert.equal(out.status, 'online'); assert.equal(out.name, 'Lobby');
+  assert.equal(out.device_token, undefined, 'still no secret');
+});
+
 test('the snapshot only covers the SHARED workspaces; another workspace on the primary never crosses', async () => {
   const otherWs = uid();
   primary.prepare("INSERT INTO workspaces (id, organization_id, name) VALUES (?, ?, 'Private')").run(otherWs, orgId);
@@ -180,6 +192,45 @@ test('test_circuit_breaker_is_constructed_by_the_replica_pull: a dead primary is
   assert.ok(asks < 6, `breaker opened: only ${asks} of 6 attempts reached the wire`);
   assert.ok(r2.breakers.status(Date.now()).some((b) => b.childId === 'dead-primary' && b.state === 'open'));
   replica.prepare('DELETE FROM mesh_edges WHERE id = ?').run(deadEdge.id);
+});
+
+test('a primary whose socket has closed reads "down" at once, not after the next pull fails (found on a flapping estate)', async () => {
+  // Same edge, same synced state; only the live socket check changes. Before this, a SIGKILLed
+  // primary stayed "connected · copy lag Ns" on the hub NOC for up to pollMs (30 s).
+  let live = true;
+  const r3 = createReplica(replica, { readFrom, isConnected: () => live, logger: { warn() {}, log() {} } });
+  await r3.sync(downEdge);
+  let st = r3.status().find((s) => s.node_id === downEdge.peer_node_id);
+  assert.equal(st.edge, 'up');
+  assert.ok(st.lag_s != null);
+  live = false;
+  st = r3.status().find((s) => s.node_id === downEdge.peer_node_id);
+  assert.equal(st.edge, 'down', 'socket closed → down without waiting for a read to fail');
+  assert.equal(st.lag_s, null, 'silence is not a number');
+  live = true;
+  st = r3.status().find((s) => s.node_id === downEdge.peer_node_id);
+  assert.equal(st.edge, 'up', 'socket back → up again');
+});
+
+test('changes in a workspace the edge does not share still move the replica\'s position to the head (found on a second-tier hub)', () => {
+  // Austin (a hub with its own primary above it) kept its change log moving with COPIES of its
+  // leaves' workspaces, which the top hub is not granted. The top hub's cursor stuck at the last
+  // rev it was granted, so Austin showed "acked 437/626" and could never prune past 437.
+  const otherWs = uid();
+  primary.prepare("INSERT INTO workspaces (id, organization_id, name, origin_node_id) VALUES (?, ?, 'A copy held here', 'some-child')").run(otherWs, orgId);
+  const before = replication.headRev(primary);
+  for (let i = 0; i < 5; i++) primary.prepare("UPDATE workspaces SET name = ? WHERE id = ?").run(`copy tick ${i}`, otherWs);
+  const head = replication.headRev(primary);
+  assert.ok(head > before, 'the trigger logged the copied workspace\'s writes');
+  const r = replication.changesSince(primary, [wsId], before, 500);
+  assert.equal(r.rows.length, 0, 'nothing for the shared workspace');
+  assert.equal(r.upto, head, 'the cursor parks at the examined head, not at the last granted rev');
+  // A full page still stops at the last returned rev: the rest has not been examined.
+  for (let i = 0; i < 3; i++) primary.prepare("UPDATE workspaces SET name = ? WHERE id = ?").run(`shared tick ${i}`, wsId);
+  const paged = replication.changesSince(primary, [wsId], head, 2);
+  assert.equal(paged.more, true);
+  assert.ok(paged.upto < replication.headRev(primary), 'a full page never jumps past what it returned');
+  primary.prepare('DELETE FROM workspaces WHERE id = ?').run(otherWs);
 });
 
 test('applyBatch drops a column this build does not have rather than failing the batch', () => {

@@ -150,8 +150,9 @@ function copiedWorkspaces(db, originNodeId) {
 /**
  * @param db        writable handle
  * @param deps.readFrom  (childNodeId, {path, method}) => Promise<answer>   (ws/meshSocket.readFrom)
+ * @param deps.isConnected  (childNodeId) => boolean  live socket check (ws/meshSocket.isConnected); without it the edge is judged by the last read only
  */
-function createReplica(db, { readFrom, logger = console, pollMs = POLL_MS, onApplied = null } = {}) {
+function createReplica(db, { readFrom, isConnected = null, logger = console, pollMs = POLL_MS, onApplied = null } = {}) {
   const breakers = new CircuitBreakers();
   const state = new Map(); // edgeId -> { origin, phase, lastAppliedRev, lastAppliedAt, lastError, snapshot }
   let timer = null;
@@ -284,7 +285,11 @@ function createReplica(db, { readFrom, logger = console, pollMs = POLL_MS, onApp
     for (const edge of replicaEdges(db)) {
       const s = stateFor(edge);
       const up = breakers.status(Date.now()).find((b) => b.childId === edge.peer_node_id);
-      const edgeUp = !s.lastError && (!up || up.state !== 'open');
+      // Live socket first: the hub sees a killed primary's socket close at once, but the next pull
+      // that would set lastError is up to pollMs away. Found on a 12-node estate with a flapping
+      // primary — the NOC drew it green for ~25 s of every outage.
+      const live = typeof isConnected === 'function' ? isConnected(edge.peer_node_id) : true;
+      const edgeUp = live && !s.lastError && (!up || up.state !== 'open');
       out.push({
         node_id: edge.peer_node_id,
         phase: s.phase,
