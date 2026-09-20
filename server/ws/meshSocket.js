@@ -448,7 +448,16 @@ function setupMeshSocket(io, deps) {
     };
   }
 
-  return { meshNs, backpressure, readFrom, writeTo, contentOfferTo, contentPurgeTo };
+  /** Disconnect every live socket of one child: the parent ended the edge, and the door is now shut. */
+  function dropChild(childNodeId) {
+    let n = 0;
+    for (const sock of meshNs.sockets.values()) {
+      if (sock.data && sock.data.childNodeId === childNodeId) { try { sock.disconnect(true); n++; } catch (e) { /* */ } }
+    }
+    return n;
+  }
+
+  return { meshNs, backpressure, readFrom, writeTo, contentOfferTo, contentPurgeTo, dropChild };
 }
 
 module.exports = setupMeshSocket;

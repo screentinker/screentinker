@@ -638,6 +638,47 @@ module.exports = function meshRoutes(db, { requireAuth }) {
     return next();
   }
 
+  /*
+   * ⚠️ THE PARENT CAN END IT TOO. Revocation used to exist only on the child
+   * (DELETE /api/mesh/uplink/:id): the node HOLDING a copy had no way to stop holding it short of
+   * waiting a year for the pairing token to expire — and "the node that holds someone's data can
+   * end that at will" is the consent-from-below rule read from the other side. lib/mesh/edge-status
+   * has had `disenroll(edge, { by: 'parent' })` since Phase 2; nothing mounted it. This does.
+   *
+   * What it does, in this order, on THIS node: marks the edge revoked (the one state both sides
+   * already use; nothing is sent downward — the child learns at its next connection, which the
+   * live socket drop forces now), so the replica loop stops pulling and `terminates-players` /
+   * `caches-content` end with it (both key on an active edge); then removes every media file cached
+   * for that edge. Copied rows are KEPT and simply no longer updated — the same retain-and-mark-
+   * stale default the child-side revoke has, for the same reason (a report must not rewrite itself
+   * because somebody clicked disconnect). Screens already attached keep playing; a new register
+   * answers read_replica.
+   */
+  router.delete('/links/:nodeId', requireAuth, requirePlatformStaff, (req, res) => {
+    const edge = db.prepare("SELECT * FROM mesh_edges WHERE peer_node_id = ? AND direction = 'down'").get(req.params.nodeId);
+    const edgeStatus = require('../lib/mesh/edge-status');
+    const now = Math.floor(Date.now() / 1000);
+    const d = edgeStatus.disenroll(edge, { by: 'parent', now, reason: (req.body && req.body.reason) || null });
+    if (!d.ok) return res.status(edge ? 409 : 404).json({ error: d.reason });
+    db.prepare('UPDATE mesh_edges SET revoked_at = ?, token_hash = NULL WHERE id = ?').run(now, edge.id);
+    // The child's live socket, if any: dropped now, so its next connection is refused at the door.
+    try { if (global.__meshDropChild) global.__meshDropChild(edge.peer_node_id); } catch (e) { /* the next envelope is refused anyway */ }
+    let filesDropped = 0;
+    try { filesDropped = require('../lib/mesh/content-cache').sweep(db, require('../config')); } catch (e) { /* no cache on this node */ }
+    let copied = 0;
+    try { copied = db.prepare('SELECT COUNT(*) AS n FROM workspaces WHERE origin_node_id = ?').get(edge.peer_node_id).n; } catch (e) { /* */ }
+    res.json({
+      ok: true,
+      summary: d.summary,
+      filesDropped,
+      copiedWorkspacesRetained: copied,
+      note: copied
+        ? 'The copied workspaces stay, read-only and no longer updated; screens already attached keep ' +
+          'playing what they have, and no new screen will be accepted for them here.'
+        : undefined,
+    });
+  });
+
   router.get('/clients', requireAuth, (req, res) => {
     const visible = visibleClientIds(req.user);
     const rows = db.prepare(`SELECT id, name, parent_client_id, created_at FROM mesh_clients

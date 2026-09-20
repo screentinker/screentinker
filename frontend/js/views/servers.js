@@ -844,6 +844,10 @@ async function renderTopology(panel) {
             // made once and nobody revisits unless a screen shows it.
             ? '<span class="badge" style="background:#ef4444">TLS unverified</span>' : ''}</td>
         <td style="${TD}">${esc(e.lastSyncAt ? hhmm(e.lastSyncAt) : 'never')}</td>
+        <!-- ⚠️ The parent can end it too. The node HOLDING a copy must be able to stop holding it
+             (consent from below, read from this side); waiting a year for the pairing token is
+             not a control. Same retain-and-mark-stale outcome as the child's own Revoke. -->
+        <td style="${TD}"><button class="btn btn-secondary btn-sm" data-disconnect-node="${esc(e.peerNodeId)}">Disconnect</button></td>
       </tr>`;
   }).join('');
 
@@ -878,7 +882,7 @@ async function renderTopology(panel) {
 
     <div class="settings-section" style="margin-top:16px">
       <h3 style="margin-top:0">Servers paired with this one</h3>
-      ${table(['Server', 'Client', 'Link', 'Version', 'Shares', 'Transport', 'Last sync'],
+      ${table(['Server', 'Client', 'Link', 'Version', 'Shares', 'Transport', 'Last sync', ''],
               rows, 'No servers are connected.')}
     </div>
 
@@ -893,6 +897,22 @@ async function renderTopology(panel) {
       </p>
       ${table(['Server', 'Distance', 'Route', 'Reached through'], hopRows, '')}
     </div>` : ''}`;
+
+  panel.querySelectorAll('[data-disconnect-node]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const nodeId = btn.dataset.disconnectNode;
+      // Says what happens BEFORE it happens: kept rows, dropped media, screens, and no new ones.
+      if (!window.confirm('Disconnect this server?\n\nIt stops reporting here and stops being served ' +
+        'from here. Copied workspaces are kept read-only and no longer updated; media files cached ' +
+        'for it are removed; screens already attached keep playing what they have and no new screen ' +
+        'is accepted for those workspaces. The other server sees the link refused at its next connection.')) return;
+      try {
+        const r = await api.delete(`/mesh/links/${encodeURIComponent(nodeId)}`);
+        showToast(r.summary || 'Disconnected.', 'success');
+        renderTopology(panel);
+      } catch (e) { showToast(e.message, 'error'); }
+    });
+  });
 }
 
 /* ===================== connecting servers ===================== */

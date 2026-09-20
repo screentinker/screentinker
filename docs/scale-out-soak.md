@@ -83,9 +83,10 @@ stored; status reports it` (the pinned half).
 
 ## 5. Revoke `terminates-players` / `player-events`
 
-Revocation lives on the **primary**: `Servers → This server reports to → Revoke`, or
-`DELETE /api/mesh/uplink/:id`. It severs the uplink and drops `write_grant` (so `player-events`)
-with it. The replica is **not told** — silence looks the same as an outage, on purpose (I1/I6).
+Either side can end the link. From the **primary**: `Servers → This server reports to → Revoke`, or
+`DELETE /api/mesh/uplink/:id` — severs the uplink and drops `write_grant` (so `player-events`) with
+it; the replica is **not told** (silence looks the same as an outage, on purpose, I1/I6). From the
+**replica**: §6 below.
 
 | Do | Expect |
 |---|---|
@@ -96,22 +97,25 @@ with it. The replica is **not told** — silence looks the same as an outage, on
 
 Test: soak step 7; `test_player_events_need_the_primary_grant` (the grant half).
 
-## 6. Revoke `caches-content` (end the roles on the replica)
+## 6. The replica ends it (roles and copy, from the side holding the copy)
 
-The replica has no revoke route; its edge row expires with its pairing token (365 d). To end the
-roles at once, on the replica:
-`UPDATE mesh_edges SET revoked_at = strftime('%s','now') WHERE direction = 'down' AND peer_node_id = '<primary node id>';`
+**Servers → Topology → Disconnect** on the replica, or `DELETE /api/mesh/links/<primary node id>`
+(instance owner/operator). The parent-side `disenroll` — same retain-and-mark-stale outcome as the
+primary's own Revoke, initiated here.
 
 | Do | Expect |
 |---|---|
+| the DELETE | `200 {ok, filesDropped, copiedWorkspacesRetained, summary}`; a second call `409` |
+| the primary, within its retry (~seconds) | `scale_out.replicas[].link = {connected:false, last_error:"This connection is no longer authorised…"}` — refused at the door, its live socket was dropped |
 | any register on the replica for that primary's screens | `device:auth-error {reason:"read_replica", primary_url:…}` — C1's answer |
-| the cache sweep (every 10 min on the worker, and on every replication apply) | every file cached for that edge **unlinked**; `mesh_content_cache` empty for it |
-| `SELECT COUNT(*) FROM content WHERE workspace_id = '<copied ws>'` on the replica | **unchanged** — the copied rows stay as long as the mirror does; the bytes do not |
-| `GET /api/status` | no `cache`/`players` block for that primary any more |
+| the screen already attached | keeps playing; heartbeats still acked |
+| media cached for that edge | **unlinked at once**; `mesh_content_cache` empty for it |
+| `SELECT COUNT(*) FROM content WHERE workspace_id = '<copied ws>'` on the replica | **unchanged** — the copied rows stay, read-only and no longer updated (a change on the primary no longer arrives); the bytes do not |
+| `GET /api/status` on the replica | no `scale_out` block for that primary any more |
 
 A role also ends when the edge's token expires: `cachesContent`/`terminatesPlayers` check
-`edgeIsActive`. Tests: `test_replica_cache_follows_a_primary_delete` (revoke half),
-`test_replica_without_terminates_players_still_refuses_register`.
+`edgeIsActive`. Tests: `scale-out-disconnect.test.js`, `test_replica_cache_follows_a_primary_delete`
+(revoke half), `test_replica_without_terminates_players_still_refuses_register`.
 
 ## 7. Same for a deleted slide
 

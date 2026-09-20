@@ -159,6 +159,8 @@ module.exports = function setupWebSockets(io) {
               onReply: (deviceId, event, payload) => { try { deviceNs.to(deviceId).emit(event, payload); } catch (e) { /* */ } },
             });
           } catch (e) { console.warn(`[mesh] player termination not started: ${e && e.message}`); }
+          // The parent-side revoke (routes/mesh.js DELETE /nodes/:id) shuts the child's live socket through this.
+          global.__meshDropChild = meshNs.dropChild;
           global.__meshReadFrom = meshNs.readFrom;
           // Same publication as the read side: routes reach the live socket layer through this
           // rather than importing it, because the sockets are constructed after routes are mounted.

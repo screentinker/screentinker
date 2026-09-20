@@ -280,21 +280,14 @@ test('step 7 — revoke on the primary: the grant is gone, a forwarded event is 
   assert.ok(s.ev === 'throttled' || (s.ev === 'auth-error' && s.d.error === 'Invalid device token'), JSON.stringify(s));
 });
 
-test('step 8 — edge ended on the replica: cached files gone, copied rows remain, a new register is read_replica', async () => {
-  // The replica has no revoke route: the operator ends the roles on its own database.
-  const rdb = new Database(replica.dbPath);
-  rdb.prepare("UPDATE mesh_edges SET revoked_at = strftime('%s','now') WHERE direction = 'down' AND peer_node_id = ?").run(primaryNodeId);
-  rdb.close();
+test('step 8 — the replica ends it: DELETE /api/mesh/links/:id — cached files gone, copied rows remain, a new register is read_replica', async () => {
+  // The replica's own control (scale-out-disconnect.test.js): the parent-side disenroll.
+  const d = await fetch(replica.base + `/api/mesh/links/${primaryNodeId}`, auth(replicaAdmin, 'DELETE'));
+  const body = await d.json();
+  assert.equal(d.status, 200, JSON.stringify(body));
+  const dropped = body.filesDropped;
   const r = await registerOnce(replica.base, { device_id: deviceId, device_token: deviceToken });
   assert.equal(r.ev, 'auth-error'); assert.equal(r.d.reason, 'read_replica', 'test_replica_without_terminates_players_still_refuses_register');
-  // The cache sweep runs every 10 min on the worker; the same sweep the next replication apply
-  // runs. Drive it the way an operator would check: wait for the worker's sweep or trigger a
-  // replication tick. Here: the files must be gone within the worker's cadence, so call the
-  // module's sweep directly on the replica's database (what the timer does).
-  const cache = require('../lib/mesh/content-cache');
-  const rdb2 = new Database(replica.dbPath);
-  const dropped = cache.sweep(rdb2, { contentDir: replica.contentDir, replicaCacheBytes: CAP });
-  rdb2.close();
   assert.ok(dropped >= 2, `test_replica_cache_follows_a_primary_delete (revoke half): ${dropped}`);
   for (const c of slides.slice(0, 2)) assert.ok(!fs.existsSync(path.join(replica.contentDir, path.basename(c.filepath))), 'files gone');
   const rdb3 = new Database(replica.dbPath, { readonly: true });

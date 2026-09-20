@@ -22,8 +22,16 @@ function scaleOutStatus() {
   const parse = (v) => { try { return JSON.parse(v || '[]'); } catch (_) { return []; } };
   let edges = [];
   try { edges = db.prepare("SELECT * FROM mesh_edges WHERE revoked_at IS NULL").all(); } catch (_) { return null; }
+  // The live link per up edge (this node's own uplink), so "the replica ended it" is visible here:
+  // connected false with the refusal the other side gave at the door.
+  let links = [];
+  try { links = global.__meshUplinks && typeof global.__meshUplinks.status === 'function' ? global.__meshUplinks.status() : []; } catch (_) { links = []; }
   const replicas = edges.filter((e) => e.direction === 'up' && parse(e.grant_categories).includes('workspace-replication'))
-    .map((e) => ({ node_id: e.peer_node_id, acked_rev: e.acked_rev ?? null, last_sync_at: e.last_sync_at ?? null }));
+    .map((e) => {
+      const l = links.find((x) => x.edgeId === e.id) || null;
+      return { node_id: e.peer_node_id, acked_rev: e.acked_rev ?? null, last_sync_at: e.last_sync_at ?? null,
+               link: l ? { connected: !!l.connected, last_error: l.lastError || null } : null };
+    });
   const rep = global.__meshReplica;
   const replicaOf = rep ? rep.status() : [];
   if (!replicas.length && !replicaOf.length) return null;

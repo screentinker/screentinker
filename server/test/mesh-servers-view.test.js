@@ -204,7 +204,13 @@ test('⚠️ mesh writes address LOCAL administration only (I2)', () => {
    * up, never down. Nothing above can set it. A hub renaming its customers' servers is precisely
    * the thing this guard exists to keep out, and this is the opposite of it.
    */
-  const LOCAL = ['/mesh/pair/code', '/mesh/uplink', '/mesh/clients', '/mesh/identity'];
+  /*
+   * ⚠️ /mesh/links: THIS hub's own edge to a server below — the parent-side disenroll. Addressed
+   * as the link rather than the node for exactly the reason the filing route was re-addressed: it
+   * ends this node's copy and stops this node pulling; it changes nothing on the other server,
+   * which learns only that a door is shut at its next connection.
+   */
+  const LOCAL = ['/mesh/pair/code', '/mesh/uplink', '/mesh/clients', '/mesh/identity', '/mesh/links'];
 
   /*
    * ⚠️ AND ONE THAT DELIBERATELY IS NOT LOCAL. /mesh/content asks a customer's server to accept

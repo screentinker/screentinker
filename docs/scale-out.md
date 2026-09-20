@@ -211,11 +211,17 @@ automatic reroute (I9, `test_no_automatic_player_failover_to_primary`).
 reporting and drops the `player-events` grant, so forwarded events are refused and a screen it has
 never verified through this replica cannot be verified; screens with a remembered verdict keep
 reconnecting until `VERDICT_TTL_S`, and screens already attached keep playing from what they have.
-The replica's own edge row is not told (silence looks the same as an outage, on purpose); it ends
-its roles when its pairing token expires, or at once if the operator marks it revoked
-(`UPDATE mesh_edges SET revoked_at = strftime('%s','now') WHERE direction = 'down' AND peer_node_id = '<primary>'`)
-— after which new screens are refused with `read_replica` and cached media is removed on the next
-sweep. `docs/scale-out-soak.md` walks through it.
+The replica's own edge row is not told (silence looks the same as an outage, on purpose).
+
+**The replica can end it too** — the node holding a copy must be able to stop holding it:
+**Servers → Topology → Disconnect** next to that primary (`DELETE /api/mesh/links/<node id>`,
+instance owner/operator). At once: the edge is revoked here and the primary's live socket is
+dropped (its next connection is refused at the door, visible on the primary as
+`scale_out.replicas[].link.connected: false`); pulling stops; new screens are refused with
+`read_replica`; every media file cached for that primary is removed. The copied workspaces are
+**kept**, read-only and no longer updated — the same retain-and-mark-stale default the primary's
+Revoke has, so a report does not rewrite itself because somebody clicked disconnect. Screens
+already attached keep playing what they have. `docs/scale-out-soak.md` walks through both sides.
 
 A replica **without** the role, or a primary **without** the grant, behaves exactly as C1
 (`test_replica_without_terminates_players_still_refuses_register`).
@@ -275,12 +281,8 @@ A replica does not become the primary on its own, ever. If the primary is gone f
 1. Stop the old primary if it can still be reached. **An old primary must refuse to accept the
    same workspaces again until `origin_node_id` has been reconciled** — two servers that both think
    they own a workspace are the split-brain this whole design exists to prevent.
-2. Sever the link. Revocation lives on the **primary** (`Servers → This server reports to → Revoke`,
-   `DELETE /api/mesh/uplink/:id`); the replica has no revoke of its own — its edge row simply
-   expires with its pairing token (365 days). To end the roles on the replica at once, mark the
-   edge revoked there directly:
-   `UPDATE mesh_edges SET revoked_at = strftime('%s','now') WHERE direction = 'down' AND peer_node_id = '<old primary node id>';`
-   The copied workspaces stay.
+2. Sever the link from the replica: **Servers → Topology → Disconnect** next to the old primary
+   (`DELETE /api/mesh/links/<old primary node id>`). The copied workspaces stay, read-only.
 3. Clear the tag: `UPDATE workspaces SET origin_node_id = NULL, replica_rev = NULL, replica_as_of = NULL WHERE origin_node_id = '<old primary node id>';`
    From that point the rows are local, writes apply locally, and sweeps run.
 4. Users of those workspaces have no password on the promoted node. They reset their password
