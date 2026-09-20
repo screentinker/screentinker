@@ -88,17 +88,30 @@ function dropEntry(db, contentDir, row) {
   db.prepare('DELETE FROM mesh_content_cache WHERE content_id = ?').run(row.content_id);
 }
 
-/** Evict least-recently-read entries of this edge until `need` bytes fit under the cap. */
+/*
+ * ⚠️ PINNED: a file any copied playlist item or device default still names is never evicted —
+ * last_read_at says nothing about the slide that is ON SCREEN after an outage (players read it
+ * once and cache it; the replica may not have served it for days). Only unreferenced files are
+ * LRU candidates. If the pinned set alone exceeds the cap, new files are served through, and
+ * status() says so.
+ */
+const PINNED_SQL = `content_id IN (SELECT content_id FROM playlist_items WHERE content_id IS NOT NULL)
+                    OR content_id IN (SELECT default_content_id FROM devices WHERE default_content_id IS NOT NULL)`;
+
+/** Evict least-recently-read UNPINNED entries of this edge until `need` bytes fit under the cap. */
 function makeRoom(db, contentDir, edgeId, need, capBytes) {
   if (need > capBytes) return false;
-  let evicted = 0;
   while (usedBytes(db, edgeId) + need > capBytes) {
-    const victim = db.prepare('SELECT * FROM mesh_content_cache WHERE edge_id = ? ORDER BY last_read_at ASC, fetched_at ASC LIMIT 1').get(edgeId);
+    const victim = db.prepare(`SELECT * FROM mesh_content_cache WHERE edge_id = ? AND NOT (${PINNED_SQL})
+                               ORDER BY last_read_at ASC, fetched_at ASC LIMIT 1`).get(edgeId);
     if (!victim) break;
     dropEntry(db, contentDir, victim);
-    evicted++;
   }
   return usedBytes(db, edgeId) + need <= capBytes;
+}
+
+function pinnedBytes(db, edgeId) {
+  try { return db.prepare(`SELECT COALESCE(SUM(bytes), 0) AS b FROM mesh_content_cache WHERE edge_id = ? AND (${PINNED_SQL})`).get(edgeId).b; } catch (e) { return 0; }
 }
 
 /* ------------------------------ fetching ------------------------------ */
@@ -167,6 +180,12 @@ async function ensure(db, config, content, { fetchImpl, edge: edgeIn } = {}) {
     return { ok: true, hit: true };
   }
   const need = Number(content.file_size) || 0;
+  /*
+   * ⚠️ A 0-byte asset is refused on purpose. The primary's ingest never records one (the sniff
+   * has nothing to sniff), so a copied row with file_size 0 is an old or broken row — and a cached
+   * empty file would turn "hit" into "blank slot" while looking healthy. Serve through instead.
+   */
+  if (need <= 0) { setError(edge.id, `${name}: the row records no bytes; not cached`); return { ok: false, reason: 'empty asset' }; }
   const cap = config.replicaCacheBytes;
   if (!makeRoom(db, config.contentDir, edge.id, need, cap)) {
     setError(edge.id, `${name} (${need} bytes) does not fit the ${cap}-byte cache`);
@@ -174,7 +193,10 @@ async function ensure(db, config, content, { fetchImpl, edge: edgeIn } = {}) {
   }
   let bytes = 0;
   if (!fs.existsSync(dest)) {
-    const r = await fetchFile({ config, name, expectedBytes: need || null, digest: content.byte_digest, fetchImpl });
+    // ⚠️ The size is enforced by the puller and the sha256 here — the SAME lib/content-digest
+    // function the primary stored byte_digest with. A partial or altered body never gets the
+    // basename: it stays a .part until the attempt chain ends, then is removed (fetchFile).
+    const r = await fetchFile({ config, name, expectedBytes: need, digest: content.byte_digest, fetchImpl });
     if (!r.ok) { setError(edge.id, `${name}: ${r.reason}`); return { ok: false, reason: r.reason }; }
     bytes = r.bytes;
   } else {
@@ -236,7 +258,8 @@ function status(db, config) {
   return cachingEdges(db).map((e) => {
     let files = 0, bytes = 0;
     try { const r = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM mesh_content_cache WHERE edge_id = ?').get(e.id); files = r.n; bytes = r.b; } catch (err) { /* */ }
-    return { node_id: e.peer_node_id, files, bytes, cap_bytes: config.replicaCacheBytes, last_error: lastError.get(e.id) || null, prefetch_pending: queue.length };
+    return { node_id: e.peer_node_id, files, bytes, pinned_bytes: pinnedBytes(db, e.id), cap_bytes: config.replicaCacheBytes,
+             last_error: lastError.get(e.id) || null, prefetch_pending: queue.length };
   });
 }
 
@@ -301,6 +324,6 @@ function isWorkerRunning() { return !!worker; }
 
 module.exports = {
   TOUCH_EVERY_S, cachesContent, cachingEdges, edgeForContent, contentForName,
-  usedBytes, makeRoom, fetchFile, ensure, sweep, touch, status,
+  usedBytes, pinnedBytes, makeRoom, fetchFile, ensure, sweep, touch, status,
   attach, detach, onApplied, isWorkerRunning, _queue: queue,
 };

@@ -127,9 +127,10 @@ test('hit serves local; miss with the primary up fetches, verifies, stores — a
   const entry = db.prepare('SELECT * FROM mesh_content_cache WHERE content_id = ?').get(row.id);
   assert.equal(entry.edge_id, EDGE); assert.equal(entry.filename, row.filepath);
   assert.ok(entry.bytes >= 13);
-  // A tampered body is discarded: the sha256 on the row is the truth.
+  // A tampered body is discarded: the sha256 on the row is the truth. ONE byte flipped, same length.
   const bad = contentRow(copiedWs, 'genuine-bytes');
-  PRIMARY_FILES.set(bad.filepath, Buffer.from('tampered-byts'));   // same length, different bytes
+  const flipped = Buffer.from('genuine-bytes'); flipped[5] ^= 0x01;
+  PRIMARY_FILES.set(bad.filepath, flipped);
   const r = await cache.ensure(db, config, bad, { fetchImpl });
   assert.equal(r.ok, false); assert.match(r.reason, /digest/);
   assert.ok(!fs.existsSync(local(bad.filepath)), 'nothing on disk for a mismatch');
@@ -153,6 +154,44 @@ test('test_replica_cache_never_invents_a_file: a miss with the primary down stor
   assert.doesNotMatch(src, /(screentinker\.com|https?:\/\/[a-z0-9-]+\.[a-z]{2,})/i, 'no host compiled in');
   assert.doesNotMatch(src, /fallback|alternate|peer_url|otherReplica/i, 'no second address');
   assert.match(src, /config\.primaryUrl/);
+});
+
+test('the digest is the primary\'s own function (sha256 hex from lib/content-digest), and a 0-byte asset is refused on purpose', async () => {
+  const { digestFile } = require('../lib/content-digest');
+  const src = read('lib/mesh/content-cache.js');
+  assert.match(src, /require\('\.\.\/content-digest'\)/, 'same module the primary stores byte_digest with');
+  assert.match(read('lib/content-ingest.js'), /digestFile\(path\.join\(config\.contentDir, filepath\)\)/, 'the primary computes byte_digest with it');
+  const buf = Buffer.from('digest-check');
+  assert.equal(await digestFile(path.join(TMP, (fs.writeFileSync(path.join(TMP, 'd.bin'), buf), 'd.bin'))), crypto.createHash('sha256').update(buf).digest('hex'));
+  setEdge(['serves-dashboard', 'caches-content']);
+  const empty = contentRow(copiedWs, '', { thumb: false, digest: false });
+  assert.equal(empty.file_size, 0);
+  const r = await cache.ensure(db, config, empty, { fetchImpl });
+  assert.equal(r.ok, false); assert.equal(r.reason, 'empty asset');
+  assert.ok(!fs.existsSync(local(empty.filepath)), 'no empty file on disk — a blank "hit" would look healthy');
+});
+
+test('a partial fetch that dies mid-body never gets the basename, is never a hit, and leaves no .part', async () => {
+  setEdge(['serves-dashboard', 'caches-content']);
+  const row = contentRow(copiedWs, 'half-of-this-arrives-then-the-link-drops', { thumb: false });
+  const buf = PRIMARY_FILES.get(row.filepath);
+  let calls = 0;
+  const flaky = async (url, opts = {}) => {
+    calls++;
+    if (calls > 1) throw new Error('ECONNREFUSED');   // the primary is gone after the first half
+    const { Readable } = require('node:stream');
+    const half = buf.subarray(0, Math.floor(buf.length / 2));
+    return { ok: true, status: 200, headers: { get: () => null }, body: Readable.toWeb(Readable.from([half])) };
+  };
+  const r = await cache.ensure(db, config, row, { fetchImpl: flaky });
+  assert.equal(r.ok, false, r.reason);
+  assert.ok(!fs.existsSync(local(row.filepath)), 'a short body is never renamed to the basename');
+  assert.ok(!fs.existsSync(local(row.filepath) + '.part'), 'the partial is removed once the attempt chain ends');
+  assert.equal(db.prepare('SELECT 1 FROM mesh_content_cache WHERE content_id = ?').get(row.id), undefined);
+  const again = await cache.ensure(db, config, row, { fetchImpl: async () => { throw new Error('down'); } });
+  assert.equal(again.ok, false); assert.notEqual(again.hit, true, 'never reported as a hit');
+  // pull-download's own guarantee: ok only when the staged size equals expectedBytes.
+  assert.match(read('lib/mesh/pull-download.js'), /if \(size === expectedBytes\) return \{ ok: true/);
 });
 
 test('a name that is not on a copied row is still not an open proxy, and the cache only knows copied rows', () => {
@@ -200,6 +239,25 @@ test('quota: LRU eviction under REPLICA_CACHE_BYTES; a file larger than the cap 
   assert.ok(fs.existsSync(local(big.filepath)) && fs.existsSync(local(third.filepath)));
   assert.ok(!fs.existsSync(local(mid.filepath)), 'the least recently read file was evicted');
   assert.ok(cache.usedBytes(db, EDGE) <= 3000);
+  // PINNED: a file a playlist still names is never the victim, however old its last read.
+  const pl = uid();
+  db.prepare("INSERT INTO playlists (id, user_id, workspace_id, name) VALUES (?, ?, ?, 'wall')").run(pl, userId, copiedWs);
+  db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order) VALUES (?, ?, 0)').run(pl, big.id);
+  db.prepare('UPDATE mesh_content_cache SET last_read_at = 1 WHERE content_id = ?').run(big.id);   // oldest by far
+  const fourth = contentRow(copiedWs, 'w'.repeat(1200), { thumb: false });
+  await cache.ensure(db, config, fourth, { fetchImpl });
+  assert.ok(fs.existsSync(local(big.filepath)), 'the on-screen slide stays');
+  assert.ok(!fs.existsSync(local(third.filepath)), 'the unreferenced one went instead');
+  assert.equal(cache.status(db, config)[0].pinned_bytes, 1200);
+  // If the pinned set alone fills the cap, new files are served through rather than evicting a slide.
+  const pl2 = uid();
+  db.prepare("INSERT INTO playlists (id, user_id, workspace_id, name) VALUES (?, ?, ?, 'wall2')").run(pl2, userId, copiedWs);
+  db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order) VALUES (?, ?, 0)').run(pl2, fourth.id);
+  const fifth = contentRow(copiedWs, 'v'.repeat(1200), { thumb: false });
+  await cache.ensure(db, config, fifth, { fetchImpl });   // 1200 + 1200 pinned + 1200 = 3600 > 3000
+  assert.ok(!fs.existsSync(local(fifth.filepath)), 'served through, not stored');
+  assert.ok(fs.existsSync(local(big.filepath)) && fs.existsSync(local(fourth.filepath)), 'both pinned slides untouched');
+  db.prepare('DELETE FROM playlist_items WHERE playlist_id IN (?, ?)').run(pl, pl2);
   const huge = contentRow(copiedWs, 'h'.repeat(3001), { thumb: false });
   const r = await cache.ensure(db, config, huge, { fetchImpl });
   assert.equal(r.ok, false); assert.equal(r.reason, 'exceeds cache');

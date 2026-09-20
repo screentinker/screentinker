@@ -231,10 +231,16 @@ copy grant its operator already gave; this tick is the replica's operator agreei
 - **With the primary down**, a file the replica has already stored is served as a plain local
   file — a *new* player, or a dashboard preview, gets it. A file the replica has never fetched
   answers `503 primary_unreachable`, exactly as without the cache; nothing is invented.
-- **Quota.** `REPLICA_CACHE_BYTES` per primary, default 10 GiB. Least-recently-read files are
-  evicted to make room; a file larger than the whole cap is never stored, just served through.
-  If the disk fills mid-fetch the request is served through and
-  `/api/status` → `scale_out.replica_of[].cache.last_error` says so.
+- **Quota.** `REPLICA_CACHE_BYTES` per primary, default 10 GiB — per primary on purpose, so one
+  busy primary cannot starve another's files; a replica of two primaries may spend twice that,
+  and `/api/status` → `scale_out.replica_of[].cache` shows `bytes`, `pinned_bytes` and
+  `cap_bytes` for each so it is obvious which one is fat. Least-recently-read files are evicted
+  to make room, **except files a playlist item or a screen's default content still names — those
+  are pinned** (the slide on screen after an outage is exactly the file the replica may not have
+  served for days). If the pinned set alone fills the cap, new files are served through, not
+  stored. A file larger than the whole cap is never stored. A row that records no bytes
+  (`file_size` 0) is never cached. If the disk fills mid-fetch the request is served through and
+  `cache.last_error` says so.
 - **When files leave.** Deleted on the primary → gone here after the next incremental. Link
   revoked, or the role removed → every file cached for that primary is removed on the next sweep
   (the copied rows stay as long as the mirror does; the bytes do not).

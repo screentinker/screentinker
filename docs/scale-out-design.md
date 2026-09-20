@@ -383,7 +383,10 @@ replica without it behaves exactly as C1/C2 (fetch through, never store).
 - **When bytes leave.** The row is deleted on the primary → the incremental deletes the copied row
   → the orphan sweep unlinks the file (`test_replica_cache_follows_a_primary_delete`). The edge is
   revoked or loses `caches-content` → every file cached for it is unlinked on the next sweep; the
-  mirror rows stay as §7 says, the bytes do not. Quota → LRU by `last_read_at`.
+  mirror rows stay as §7 says, the bytes do not. Quota → LRU by `last_read_at` over the
+  **unpinned** entries only: a file any copied `playlist_items.content_id` or
+  `devices.default_content_id` names is never evicted, because "last read" says nothing about the
+  slide that is on screen after an outage. Pinned set alone over the cap → serve through.
 - **Quota.** `REPLICA_CACHE_BYTES` per edge, default **10 GiB**. A file larger than the room left
   evicts LRU until it fits; a file larger than the whole cap is served through and never stored.
   Disk full (ENOSPC) on a fetch: the partial is discarded, the request is served through, and
