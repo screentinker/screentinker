@@ -38,6 +38,8 @@ const SWEEP_EVERY_MS = 10 * 60 * 1000;
 function cachesContent(edge) {
   const caps = asList(edge.role_capabilities);
   const grant = asList(edge.grant_categories);
+  // An edge whose token has expired is not an edge: the role ends with the pairing, not with the row.
+  if (!require('./pairing').edgeIsActive(edge, Math.floor(Date.now() / 1000))) return false;
   return edge.direction === 'down' && !edge.revoked_at &&
          caps.includes('caches-content') && caps.includes('serves-dashboard') &&
          grant.includes('workspace-replication');
