@@ -333,7 +333,7 @@ function detailHtml(data) {
   // missing row, not a dash.
   const h = n.host || null;
   const hostRows = h ? [
-    h.cpu_pct != null ? kv('CPU (this process, one core = 100%)', fmtPct(h.cpu_pct)) : '',
+    h.cpu_pct != null ? kv('CPU (this process, % of one core; 250% = 2.5 cores)', fmtPct(h.cpu_pct)) : '',
     h.mem_pct != null ? kv('memory used', fmtPct(h.mem_pct)) : '',
     h.rss_bytes != null ? kv('resident memory', fmtBytes(h.rss_bytes)) : '',
     h.disk_free_bytes != null ? kv('disk free (DATA_DIR)', `${fmtBytes(h.disk_free_bytes)}${h.disk_total_bytes ? ` of ${fmtBytes(h.disk_total_bytes)}` : ''}`) : '',

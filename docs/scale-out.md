@@ -292,7 +292,7 @@ it is down, its copy lag cannot be stated, or — for this server only — the f
 `DATA_DIR` is below 10% free. Everything else is one hover or one click away: the short id and
 roles in the chip's hover title, the link caption (state, copy lag, outbox, acked/head) on hover or
 when the link touches the selected server, and the numbers in the drawer. Under the header a strip
-shows this process's CPU (one core = 100%), resident memory and free disk, sampled on each poll;
+shows this process's CPU as a percentage of one core (250% = 2.5 cores — a saturated event loop must read as one, not as "25%" of a 4-core box), resident memory and free disk, sampled on each poll;
 `—` means the probe could not answer, never `0`. A child's host figures are not scraped — its
 reports carry none today, so the drawer shows none. The screen table adds CPU, memory and storage
 columns only when some listed screen has reported them, and a playlist column only when a title

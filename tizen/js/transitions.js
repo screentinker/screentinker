@@ -52,22 +52,20 @@ function resolveParams(params, stored) {
 
 // The renderer wraps each .glsl with this. Keep it identical across web, Tizen, and
 // Android — the shader sources assume exactly these names and nothing else.
-const PREAMBLE = `precision highp float;
-varying vec2 vUv;
-uniform sampler2D uFrom;
-uniform sampler2D uTo;
-uniform float progress;
-uniform float ratio;
-vec4 getFromColor(vec2 uv){ return texture2D(uFrom, uv); }
-vec4 getToColor(vec2 uv){ return texture2D(uTo, uv); }
-`;
+const PREAMBLE = 'precision highp float;\n'
+  + 'varying vec2 vUv;\n'
+  + 'uniform sampler2D uFrom;\n'
+  + 'uniform sampler2D uTo;\n'
+  + 'uniform float progress;\n'
+  + 'uniform float ratio;\n'
+  + 'vec4 getFromColor(vec2 uv){ return texture2D(uFrom, uv); }\n'
+  + 'vec4 getToColor(vec2 uv){ return texture2D(uTo, uv); }\n';
 
-const EPILOGUE = `
-void main(){ gl_FragColor = transition(vUv); }`;
+const EPILOGUE = '\nvoid main(){ gl_FragColor = transition(vUv); }';
 
-const VERTEX = `attribute vec2 aPos;
-varying vec2 vUv;
-void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
+const VERTEX = 'attribute vec2 aPos;\n'
+  + 'varying vec2 vUv;\n'
+  + 'void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }';
 
 // Export to BOTH, never either/or. A BrightSign roHtmlWidget is created with
 // `nodejs_enabled: true`, which puts Node's `module` into the page's classic-script scope — so an
