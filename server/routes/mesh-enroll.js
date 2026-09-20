@@ -442,13 +442,19 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
     if (want) {
       const LIMIT = 50;
       const age = (t) => (t ? Math.max(0, now - t) : null);
+      const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      // The screen's latest telemetry row, ONE per listed screen, on idx_telemetry_device — bounded by
+      // the same LIMIT as the list, never a scan of device_telemetry.
+      const TELEMETRY_COLS = 't.cpu_usage, t.ram_free_mb, t.ram_total_mb, t.storage_free_mb, t.storage_total_mb';
+      const TELEMETRY_JOIN = 'LEFT JOIN device_telemetry t ON t.rowid = (SELECT rowid FROM device_telemetry x WHERE x.device_id = d.id ORDER BY x.reported_at DESC LIMIT 1)';
       let rows = [], total = 0, alerts = [];
       try {
         if (want === me) {
           const local = require('../lib/replica-proxy').LOCAL_ROWS_SQL('d');
           total = db.prepare(`SELECT COUNT(*) AS n FROM devices d WHERE ${local}`).get().n;
-          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist
+          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist, ${TELEMETRY_COLS}
                                FROM devices d LEFT JOIN device_resolved_playlist r ON r.device_id = d.id LEFT JOIN playlists p ON p.id = r.playlist_id
+                               ${TELEMETRY_JOIN}
                               WHERE ${local} ORDER BY (d.status = 'online') ASC, COALESCE(d.last_heartbeat, 0) ASC LIMIT ?`).all(LIMIT);
           alerts = db.prepare(`SELECT a.id, a.metric, a.severity, a.opened_at, a.closed_at, d.name AS device
                                  FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id
@@ -456,9 +462,10 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
                                 ORDER BY a.opened_at DESC LIMIT 5`).all();
         } else if (copied.has(want)) {
           total = copied.get(want).total;
-          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist
+          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist, ${TELEMETRY_COLS}
                                FROM devices d JOIN workspaces w ON w.id = d.workspace_id
                                LEFT JOIN device_resolved_playlist r ON r.device_id = d.id LEFT JOIN playlists p ON p.id = r.playlist_id
+                               ${TELEMETRY_JOIN}
                               WHERE w.origin_node_id = ? ORDER BY (d.status = 'online') ASC, COALESCE(d.last_heartbeat, 0) ASC LIMIT ?`).all(want, LIMIT);
           alerts = db.prepare(`SELECT a.id, a.metric, a.severity, a.opened_at, a.closed_at, d.name AS device
                                  FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id
@@ -466,9 +473,12 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
                                 ORDER BY a.opened_at DESC LIMIT 5`).all(want);
         } else {
           total = (mirror.get(want) || { total: 0 }).total;
-          rows = db.prepare(`SELECT device_id AS id, name, status, last_heartbeat, NULL AS attached_node_id, NULL AS playlist
+          rows = db.prepare(`SELECT device_id AS id, name, status, last_heartbeat, NULL AS attached_node_id, NULL AS playlist, body
                                FROM mesh_mirror_devices WHERE origin_node_id = ? AND deleted_at IS NULL
-                              ORDER BY (status = 'online') ASC, COALESCE(last_heartbeat, 0) ASC LIMIT ?`).all(want, LIMIT);
+                              ORDER BY (status = 'online') ASC, COALESCE(last_heartbeat, 0) ASC LIMIT ?`).all(want, LIMIT)
+            // A mirror row's health fields (when the edge's grant carried `health`) live in its body.
+            .map((d) => { let b = {}; try { b = JSON.parse(d.body || '{}'); } catch (e) { /* */ }
+                          return { ...d, cpu_usage: b.cpu_usage, ram_free_mb: b.ram_free_mb, ram_total_mb: b.ram_total_mb, storage_free_mb: b.storage_free_mb, storage_total_mb: b.storage_total_mb }; });
           alerts = db.prepare(`SELECT id, alert_type AS metric, severity, opened_at, closed_at, subject_count AS device
                                  FROM mesh_mirror_alerts WHERE origin_node_id = ? ORDER BY opened_at DESC LIMIT 5`).all(want);
         }
@@ -480,6 +490,11 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
           // Where the screen's socket is: here, on the node that owns it, or on another replica.
           attached: d.attached_node_id ? (d.attached_node_id === me ? 'here' : d.attached_node_id) : (want === me ? 'here' : 'primary'),
           playlist: d.playlist || null,
+          // Host figures the screen last reported, or null — the drawer shows a column only when
+          // some row has one, so a fleet that never reports them has no column of dashes.
+          cpu_pct: num(d.cpu_usage),
+          mem_pct: num(d.ram_total_mb) > 0 && num(d.ram_free_mb) != null ? Math.max(0, Math.min(100, Math.round((1 - d.ram_free_mb / d.ram_total_mb) * 100))) : null,
+          storage_free_bytes: num(d.storage_free_mb) != null ? Math.round(d.storage_free_mb * 1048576) : null,
         })),
         more: Math.max(0, (total || 0) - rows.length),
         alerts: alerts.map((a) => ({ id: a.id, metric: a.metric, severity: a.severity, opened_at: a.opened_at, closed_at: a.closed_at, device: a.device == null ? null : String(a.device) })),
@@ -488,7 +503,10 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
 
     res.json({
       asOf: now,
-      self: { id: me, name: store.nodeName(db), roles: [...selfRoles], screens: { total: own.total || 0, online: own.online || 0, attachedElsewhere: own.attached_elsewhere || 0 } },
+      self: { id: me, name: store.nodeName(db), roles: [...selfRoles], screens: { total: own.total || 0, online: own.online || 0, attachedElsewhere: own.attached_elsewhere || 0 },
+              // THIS process only, O(1), null where a probe cannot answer (lib/host-probe.js). A child's
+              // host figures are not scraped: node-health carries none today, so the drawer shows none.
+              host: require('../lib/host-probe').sample() },
       nodes, links, indirect, selected,
       depthCap: config.meshMaxDepth,
     });

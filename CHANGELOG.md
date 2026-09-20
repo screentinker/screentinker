@@ -27,6 +27,15 @@ is the existing `DELETE /api/mesh/links/:id`. Either side of a link can now end 
 Topology and NOC gained *Disconnect* (the parent-side disenroll that had never been mounted), and a
 primary's `/api/status` shows its uplink's live state.
 
+**NOC readability + this server's health.** Chips now carry only the name, `n/m online` and an
+alert ring (link down, copy lag unknown, or this server's `DATA_DIR` filesystem under 10% free);
+roles and ids moved to the hover title, link captions appear on hover and on the selected server's
+links, and a strip under the header shows this process's CPU, memory and free disk on every poll
+(`—` when a probe cannot answer, never `0`). The screen table shows CPU / memory / storage columns
+only when a listed screen has reported them, and hides the playlist column when no title exists.
+Nothing new is scraped from other servers, and the poll is still one O(edges) read that moves
+nothing.
+
 **Scale-out: four things a 12-server estate showed.** A hub now marks a primary *down* the moment
 its socket closes rather than at the next failed pull (a killed primary read "connected · copy lag
 25s" for up to 30 s). A `workspace-replication` grant now carries the read categories it was

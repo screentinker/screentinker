@@ -286,6 +286,18 @@ not a view into anybody who did not enrol (I7, I8), it discovers no address, and
 - **Disconnect** on a child's card is the same control as Topology's (`DELETE /api/mesh/links/:id`),
   with the same consent text. There is no promote button.
 
+**The chip is attention, the drawer is the board.** A server's chip carries its name, `n/m online`
+(`no screens` when it holds none) and a red ring when something about it needs a click: a link to
+it is down, its copy lag cannot be stated, or — for this server only — the filesystem under
+`DATA_DIR` is below 10% free. Everything else is one hover or one click away: the short id and
+roles in the chip's hover title, the link caption (state, copy lag, outbox, acked/head) on hover or
+when the link touches the selected server, and the numbers in the drawer. Under the header a strip
+shows this process's CPU (one core = 100%), resident memory and free disk, sampled on each poll;
+`—` means the probe could not answer, never `0`. A child's host figures are not scraped — its
+reports carry none today, so the drawer shows none. The screen table adds CPU, memory and storage
+columns only when some listed screen has reported them, and a playlist column only when a title
+exists.
+
 **Two different ages, deliberately not one number.** *Copy lag* on a link is the age of the last
 change-log revision this replica **applied** — how far the copy trails the primary; it is
 `?` (unknown) when the link is down, never a reassuring `0`. *Seen* on a screen row is the seconds

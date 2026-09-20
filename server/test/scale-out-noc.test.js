@@ -79,6 +79,37 @@ test('the NOC module polls only while it is the active, visible view: one setInt
   assert.doesNotMatch(mv, /last_sync_at|cache_stored|relays/, 'not on a heartbeat or a byte counter');
   // Copy lag is captioned as such and never drawn as a number on a dead link.
   assert.match(src, /copy lag \$\{l\.state === 'down' \|\| l\.lag_s == null \? '\?'/);
+  // The chip is attention, the drawer is the board: no CPU/memory/disk on a chip, the edge caption
+  // is hidden until hover or selection, and this server's host strip renders null as a dash, never 0.
+  const chip = src.slice(src.indexOf('const nodeBox ='), src.indexOf('const edgeLine ='));
+  assert.doesNotMatch(chip, /cpu|rss|mem_pct|disk/i, 'no host figures on the chip');
+  assert.match(chip, /<title>/, 'role and id live in the hover title');
+  assert.match(chip, /'no screens'/);
+  assert.match(src, /\.noc-edge \.noc-cap \{ display: none;/, 'captions hidden by default');
+  assert.match(src, /\.noc-edge:hover \.noc-cap, \.noc-edge\.noc-sel \.noc-cap \{ display: block; \}/, 'shown on hover and on the selected node\'s links');
+  assert.match(src, /const fmtPct = \(v\) => \(v == null \? '—'/, 'null is a dash');
+  assert.match(src, /const fmtBytes = \(b\) => \(b == null \? '—'/, 'null is a dash');
+  assert.match(src, /DISK_ALERT_FRACTION = 0\.10/);
+  // Optional screen columns only when a row can fill them; playlist only when a title exists.
+  assert.match(src, /const has = \(k\) => !!\(sd && sd\.screens\.some\(\(d\) => d\[k\] != null && d\[k\] !== ''\)\)/);
+  assert.match(src, /showPlaylist = has\('playlist'\)/);
+});
+
+test('the host probe is O(1) and answers null, never 0, when it cannot read', () => {
+  const probeSrc = read('lib/host-probe.js').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  assert.doesNotMatch(probeSrc, /readFrom|snapshot|changes|uploads|require\('\.\.\/db|prepare\(|socket|fetch\(|readdir|exec/i, 'no table, no socket, no scan');
+  const probe = require('../lib/host-probe');
+  probe._reset();
+  const first = probe.sample();
+  assert.equal(first.cpu_pct, null, 'a percentage needs two readings');
+  assert.ok(first.rss_bytes > 0);
+  assert.ok(first.disk_free_bytes > 0 && first.disk_total_bytes >= first.disk_free_bytes, 'DATA_DIR filesystem');
+  const second = probe.sample();
+  assert.ok(typeof second.cpu_pct === 'number' && second.cpu_pct >= 0);
+  const nowhere = probe.sample({ dir: path.join(TMP, 'does-not-exist') });
+  assert.equal(nowhere.disk_free_bytes, null, 'a failed probe is null, not 0');
+  assert.equal(nowhere.disk_total_bytes, null);
+  for (const v of Object.values({ ...first, ...second, ...nowhere })) assert.ok(v === null || (typeof v === 'number' && Number.isFinite(v)));
 });
 
 test('the endpoint itself moves nothing: no readFrom, no replica sync, no cache ensure, no per-device scan', () => {
@@ -89,6 +120,9 @@ test('the endpoint itself moves nothing: no readFrom, no replica sync, no cache 
   assert.match(block, /GROUP BY origin_node_id/, 'screens are grouped counts');
   assert.doesNotMatch(block, /SELECT \* FROM devices\b/, 'no per-device scan');
   assert.match(block, /requireInstanceOwner/, 'owner only');
+  assert.match(block, /host: require\('\.\.\/lib\/host-probe'\)\.sample\(\)/, 'this process only');
+  assert.doesNotMatch(block, /os\.cpus|loadavg|du |statfs/, 'no second probe, no per-core scan');
+  assert.match(block, /LEFT JOIN device_telemetry t ON t\.rowid = \(SELECT rowid FROM device_telemetry x WHERE x\.device_id = d\.id ORDER BY x\.reported_at DESC LIMIT 1\)/, 'one bounded telemetry row per listed screen');
 });
 
 /* ------------------------------ flags off ------------------------------ */
@@ -152,6 +186,10 @@ test('the topology matches the edges in the database, on both sides', async () =
   assert.equal(down.state, 'connected'); assert.equal(typeof down.lag_s, 'number');
   assert.ok(down.players && down.cache, 'C2/C3 counters ride the down link');
   assert.equal(r.depthCap, 2);
+  // This server's host figures ride the plain poll, O(1), for this process only; a child has none.
+  assert.ok(r.self.host && ['cpu_pct', 'rss_bytes', 'disk_free_bytes', 'disk_total_bytes'].every((k) => k in r.self.host));
+  assert.ok(r.self.host.disk_free_bytes > 0 && r.self.host.rss_bytes > 0);
+  assert.ok(!('host' in child), 'nothing scraped for a child');
   // Primary side: one up link, its uplink state, acked vs head.
   const p = await (await fetch(primary.base + '/api/mesh/noc', auth(primaryAdmin))).json();
   assert.deepEqual(p.self.roles, ['primary']);
@@ -222,6 +260,18 @@ test('?node= returns the selected node\'s screens (stale first, capped at 50 wit
   // The child count on the node card agrees with the table's universe.
   const child = sel.nodes.find((n) => n.id === primaryNodeId);
   assert.equal(child.screens.total, 60);
+  // A screen's latest telemetry rides its row (cpu %, memory %, storage free), null where it never
+  // reported — on the primary's own list, which is where those rows live.
+  const pdb2 = new Database(primary.dbPath);
+  pdb2.prepare("INSERT INTO device_telemetry (device_id, cpu_usage, ram_free_mb, ram_total_mb, storage_free_mb, storage_total_mb, reported_at) VALUES ('scr-059', 42.5, 1000, 4000, 512, 8000, ?)").run(now - 100);
+  pdb2.prepare("INSERT INTO device_telemetry (device_id, cpu_usage, ram_free_mb, ram_total_mb, storage_free_mb, storage_total_mb, reported_at) VALUES ('scr-059', 7, 3000, 4000, 256, 8000, ?)").run(now);
+  pdb2.close();
+  const own = await (await fetch(primary.base + `/api/mesh/noc?node=${(await (await fetch(primary.base + '/api/mesh/noc', auth(primaryAdmin))).json()).self.id}`, auth(primaryAdmin))).json();
+  const reported = own.selected.screens.find((d) => d.id === 'scr-059');
+  assert.ok(reported, 'scr-059 is in the stale-first page');
+  assert.deepEqual({ cpu: reported.cpu_pct, mem: reported.mem_pct, st: reported.storage_free_bytes }, { cpu: 7, mem: 25, st: 256 * 1048576 }, 'the LATEST telemetry row');
+  const silent = own.selected.screens.find((d) => d.id !== 'scr-059');
+  assert.deepEqual({ cpu: silent.cpu_pct, mem: silent.mem_pct, st: silent.storage_free_bytes }, { cpu: null, mem: null, st: null }, 'never reported → null, never 0');
   // Selecting THIS node lists its own screens (none here), and an unknown node answers an empty summary, not an error.
   const me = await (await fetch(replica.base + `/api/mesh/noc?node=${replicaNodeId}`, auth(replicaAdmin))).json();
   assert.deepEqual(me.selected.screens, []);
