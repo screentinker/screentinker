@@ -4,6 +4,24 @@
 
 ### Fixed
 
+**Signing in no longer fails on a password you typed correctly.** The login form asks for the
+address first and reveals the password box once it knows which account you are signing in to.
+Editing the address after that hid the box again but kept what was in it, so the next press sent
+the *previous* account's password — a rejection nobody could explain from the screen, because the
+box you would check was hidden. A browser password manager made it the common case: it cannot tell
+which account an address-first form is for, so it fills the one password it has saved for the site,
+and typing a different address on top left that password behind. Those rejections also counted
+toward the per-account lockout, whose reply is deliberately identical to a wrong password, so
+enough of them could lock an account that was being typed correctly. Changing the address now
+clears the password with it, and a hidden password box is never submitted.
+
+**A form that arrives already filled now signs in on one press.** Password-manager autofill and
+automated tests fill both boxes before pressing anything, then press once — which only advanced the
+form, sent no request at all, and left nothing on screen to explain why nothing happened. Once the
+address has been identified, a password that is already in the box is submitted on the same press.
+The organization lookup still runs first, so nobody is offered a password box that their identity
+provider is going to refuse.
+
 **Android: the player stopped re-opening its encrypted store twice a minute.** Building a
 `ServerConfig` opens both preference stores to work out which one holds the pairing, and the
 encrypted one is a Keystore round trip. `DeviceInfo.getDeviceInfo()` built two of them on every
