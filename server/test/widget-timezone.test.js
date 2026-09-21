@@ -100,6 +100,14 @@ test('the rendered clock carries the zone that was saved', async () => {
   assert.doesNotMatch(html, /timeZone: 'UTC'/, 'not quietly replaced');
 });
 
+test('the clock editor can ask the server for its own timezone', async () => {
+  const res = await fetch(BASE + '/api/widgets/clock-defaults', { headers: { Authorization: 'Bearer ' + jwt } });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(typeof body.timezone, 'string');
+  assert.doesNotThrow(() => new Intl.DateTimeFormat(undefined, { timeZone: body.timezone }));
+});
+
 // ---------------------------------------------------------------------------
 // #323: seconds are optional, and the clock is not hardcoded to English.
 // ---------------------------------------------------------------------------
@@ -140,6 +148,24 @@ test('#323: a junk locale cannot be injected into the emitted script', async () 
   const html = await renderOf({ timezone: 'UTC', format: '24h', locale: "es'); alert(1);//" });
   assert.doesNotMatch(html, /alert\(1\)/, 'not interpolated');
   assert.match(html, /toLocaleTimeString\(undefined/, 'falls back to the runtime locale');
+});
+
+test('clock dates can be hidden, formatted, and placed around the time', async () => {
+  const hidden = await renderOf({ timezone: 'UTC', show_date: false });
+  assert.doesNotMatch(hidden, /id="date"/, 'a date is not rendered when disabled');
+
+  const left = await renderOf({
+    timezone: 'UTC', date_format: 'short', date_position: 'left', date_font_size: 31, date_color: '#123456',
+  });
+  assert.match(left, /flex-direction:row/, 'left and right date positions use a horizontal layout');
+  assert.ok(left.indexOf('id="date"') < left.indexOf('id="time"'), 'left date is placed before the time');
+  assert.match(left, /year:'2-digit', month:'2-digit', day:'2-digit'/, 'the selected date format reaches Intl');
+  assert.match(left, /font-size:31px/, 'the date size is independent from the time size');
+  assert.match(left, /color:#123456/, 'the date color is independent from the time color');
+  assert.match(left, /color:#123456; opacity:1/, 'an explicit date color is not dimmed');
+
+  const above = await renderOf({ timezone: 'UTC', date_position: 'above' });
+  assert.ok(above.indexOf('id="date"') < above.indexOf('id="time"'), 'above date is placed before the time');
 });
 
 // ---------------------------------------------------------------------------

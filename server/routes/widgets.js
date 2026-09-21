@@ -98,6 +98,24 @@ function safeTimezone(tz) {
   return isRealTimezone(tz) ? tz : 'UTC';
 }
 
+function serverTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+  catch (_) { return 'UTC'; }
+}
+
+function clockDateFormat(format) {
+  switch (format) {
+    case 'long': return "year:'numeric', month:'long', day:'numeric'";
+    case 'medium': return "year:'numeric', month:'short', day:'numeric'";
+    case 'short': return "year:'2-digit', month:'2-digit', day:'2-digit'";
+    default: return "weekday:'long', year:'numeric', month:'long', day:'numeric'";
+  }
+}
+
+function clockDatePosition(position) {
+  return ['above', 'below', 'left', 'right'].includes(position) ? position : 'below';
+}
+
 /*
  * A BCP-47 tag, structurally — same approach and same expression as slide-render.js's LOCALE_RE.
  *
@@ -184,6 +202,10 @@ router.get('/slide-fonts', (req, res) => {
  */
 router.get('/plugin-types', (req, res) => {
   res.json({ types: pluginRegistry.listWidgetTypes() });
+});
+
+router.get('/clock-defaults', (req, res) => {
+  res.json({ timezone: serverTimezone() });
 });
 
 // Phase 2.2d: workspace-aware access. Mirrors the device/content pattern.
@@ -591,20 +613,28 @@ router.get('/preview-session/:id', (req, res) => {
 });
 
 function renderClock(c) {
+  const datePosition = clockDatePosition(c.date_position);
+  const dateFirst = datePosition === 'above' || datePosition === 'left';
+  const row = datePosition === 'left' || datePosition === 'right';
+  const dateMargin = row
+    ? (dateFirst ? 'margin-right:8px;' : 'margin-left:8px;')
+    : (dateFirst ? 'margin-bottom:8px;' : 'margin-top:8px;');
+  const dateHtml = c.show_date !== false ? '<div id="date"></div>' : '';
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:${safeCss(c.background, 'transparent')}; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; overflow:hidden; }
+  body { background:${safeCss(c.background, 'transparent')}; display:flex; flex-direction:${row ? 'row' : 'column'}; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; overflow:hidden; }
   #time { font-size:${safeNumber(c.font_size, 64)}px; font-weight:700; color:${safeCss(c.color, '#FFFFFF')}; }
-  #date { font-size:${Math.max(16, safeNumber(c.font_size, 64) / 3)}px; color:${safeCss(c.color, '#FFFFFF')}; opacity:0.7; margin-top:8px; }
+  #date { font-size:${Math.max(8, safeNumber(c.date_font_size, Math.max(16, safeNumber(c.font_size, 64) / 3)))}px; color:${safeCss(c.date_color, safeCss(c.color, '#FFFFFF'))}; opacity:${c.date_color ? 1 : 0.7}; ${dateMargin} }
 </style></head><body>
+${dateFirst ? dateHtml : ''}
 <div id="time"></div>
-${c.show_date !== false ? '<div id="date"></div>' : ''}
+${dateFirst ? '' : dateHtml}
 <script>
 function update() {
   // show_seconds defaults TRUE so existing widgets keep the clock they already had (#323).
   const opts = { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} };
   document.getElementById('time').textContent = new Date().toLocaleTimeString(${safeLocale(c.locale)}, opts);
-  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', weekday:'long', year:'numeric', month:'long', day:'numeric' });` : ''}
+  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
 }
 setInterval(update, 1000); update();
 </script></body></html>`;
