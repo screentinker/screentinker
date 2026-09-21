@@ -110,6 +110,10 @@ test('player-rendered HTML uses layout CSS supported by Chrome 53', () => {
   ]) {
     const source = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(source, /\binset\s*:/, file);
+    if (file.endsWith('routes/kiosk.js')) {
+      const kioskRender = source.slice(source.indexOf("router.get('/:id/render'"), source.indexOf('// Create kiosk page'));
+      assert.doesNotMatch(kioskRender, /\?\./, `${file}: optional chaining is not supported by Chrome 53`);
+    }
     // ⚠️ One deliberate exception: `.entries` is `display:grid`, which is Chromium 57 — the
     // element is an inert block on a Chrome 53 panel and its gap can never apply there, while
     // removing it cost every modern multi-column directory board its 36px gutter. Everything

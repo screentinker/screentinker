@@ -187,7 +187,8 @@ router.get('/:id/render', (req, res) => {
 
         // Report touch to server
         if (window.parent !== window) {
-          window.parent.postMessage({ type: 'kiosk-tap', label: btn.querySelector('.label')?.textContent }, '*');
+          const label = btn.querySelector('.label');
+          window.parent.postMessage({ type: 'kiosk-tap', label: label ? label.textContent : '' }, '*');
         }
       });
     });

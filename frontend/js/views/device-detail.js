@@ -2502,12 +2502,12 @@ async function setupPlaylistActions(device) {
           } else if (selectedType === 'widget') {
             await api.addAssignment(device.id, { widget_id: selectedId, duration_sec: duration, zone_id: zoneId });
           } else if (selectedType === 'kiosk') {
-            // For kiosk pages, create a webpage widget pointing to the kiosk render URL
-            const serverUrl = window.location.origin;
+            // Keep this same-origin. A dashboard opened through localhost is reachable only from
+            // the dashboard machine, not from the display that will render the widget.
             const wRes = await fetch('/api/widgets', {
               method: 'POST',
               headers: { ...headers, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ widget_type: 'webpage', name: t('device.assign.kiosk_widget_name', { name: kioskPages.find(k => k.id === selectedId)?.name || 'Page' }), config: { url: `${serverUrl}/api/kiosk/${selectedId}/render` } })
+              body: JSON.stringify({ widget_type: 'webpage', name: t('device.assign.kiosk_widget_name', { name: kioskPages.find(k => k.id === selectedId)?.name || 'Page' }), config: { url: `/api/kiosk/${selectedId}/render` } })
             });
             const widget = await wRes.json();
             await api.addAssignment(device.id, { widget_id: widget.id, duration_sec: 0 });
