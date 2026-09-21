@@ -4,6 +4,29 @@
 
 ### Fixed
 
+**Android: the player stopped re-opening its encrypted store twice a minute.** Building a
+`ServerConfig` opens both preference stores to work out which one holds the pairing, and the
+encrypted one is a Keystore round trip. `DeviceInfo.getDeviceInfo()` built two of them on every
+call — and that runs on register, on re-register and on the 60-second heartbeat, all on the thread
+that draws. On boards whose vendor Keystore is unreliable, the crypto library's wait-and-retry on
+each failure turned that into a visible stall roughly twice a minute, for a value that cannot
+change while content is playing. It is now built once per object, as the update checker already
+did; the brightness control, which did the same thing per read and per write, follows the same
+pattern. Diagnosed, traced and reported by @visimpres-glitch in #406.
+
+**A kiosk page assigned from a dashboard on localhost never loaded on the display.** Assigning a
+kiosk page builds a webpage widget pointing at that page's render route, and it took the address
+from the dashboard's own browser bar. Anyone administering from the machine running the server —
+`localhost:3001`, which is what the install instructions hand you — pinned every screen to an
+address that means *itself*, so the panel asked its own hardware for the page and showed nothing.
+New assignments now store the path alone and each player resolves it against the server it already
+contacted; existing assignments carrying a loopback address are repaired as they render, with the
+stored value deliberately left alone. Only that generated kiosk address is touched — a webpage
+widget you deliberately pointed at a loopback service is left exactly as you set it. The kiosk
+page's own tap handler also dropped optional chaining, which older embedded WebViews refuse to
+parse at all, taking the whole page down with it rather than just that line.
+Contributed by @MashaWaleed in #404.
+
 **Tizen: multitasking resumes media, Return offers to exit, and a store-ready package.** Hidden
 behind Smart Hub or another app, the TV pauses every `<video>` and the AVPlay session and nothing
 restarted them, so a single looping video came back as a frozen frame (Samsung CO-MT-01). The player
@@ -15,6 +38,21 @@ Seller Office pre-test refused the SSSP manifest outright — and `tizen/STORE-S
 what to enter for the reviewer.
 
 ### Added
+
+**A clock's date is a setting now, and its timezone is a list.** The date under a clock widget was
+fixed: always shown, always the full weekday-and-month form, always three-quarters of the time's
+size in the time's own colour, always underneath. It is now optional, offered in four formats
+(full, long, medium and short), placeable above, below, left or right of the time, and given its own
+size and colour — a date picked deliberately is no longer dimmed to 70% the way the inherited one
+was. The format picker shows each option rendered in the operator's own locale rather than a
+hardcoded American example, so what you choose is what you will see.
+
+The timezone field became the browser's own IANA list with two shortcuts — *use dashboard timezone*
+and *use server timezone* (the latter asks the server, which is the only one that knows). Where the
+browser has no zone list to offer, older embedded WebViews among them, the field stays free text and
+the server still refuses an invalid IANA name on save, so nothing silently becomes UTC. Existing
+clocks are untouched: a widget with no date settings keeps exactly the date it had.
+Contributed by @MashaWaleed in #403.
 
 **NOC: this server's mesh, live.** Servers → Topology → *Open the live NOC* (or `#/noc`, instance
 owner, only where the mesh is on): this server, what it reports to, what reports to it, and the

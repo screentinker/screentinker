@@ -18,6 +18,13 @@ import kotlin.math.roundToInt
  */
 class SystemControl(private val context: Context) {
 
+    /*
+     * Same reason as DeviceInfo (#406): a ServerConfig costs two preference-store opens, one of
+     * them Keystore-backed. Brightness is adjusted from the dashboard while content is playing, so
+     * build it once rather than per get/set.
+     */
+    private val serverConfig by lazy { com.remotedisplay.player.data.ServerConfig(context) }
+
     private val audio: AudioManager
         get() = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -50,13 +57,13 @@ class SystemControl(private val context: Context) {
         lp.screenBrightness = v
         window.attributes = lp
         // Persist so it survives a relaunch + the dashboard slider reflects it (#160 remember).
-        com.remotedisplay.player.data.ServerConfig(context).windowBrightness = if (fraction < 0) -1f else v
+        serverConfig.windowBrightness = if (fraction < 0) -1f else v
         true
     } catch (e: Throwable) { Log.w(TAG, "setWindowBrightness: ${e.message}"); false }
 
     /** Re-apply the persisted per-window brightness on launch (no-op if never set / follow-system). */
     fun applyPersistedWindowBrightness(window: Window) {
-        val b = com.remotedisplay.player.data.ServerConfig(context).windowBrightness
+        val b = serverConfig.windowBrightness
         if (b in 0f..1f) setWindowBrightness(window, b.toDouble())
     }
 

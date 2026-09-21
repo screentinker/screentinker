@@ -20,6 +20,19 @@ import org.json.JSONObject
 
 class DeviceInfo(private val context: Context) {
 
+    /*
+     * ⚠️ ONE ServerConfig FOR THE LIFE OF THIS OBJECT. #406.
+     *
+     * Constructing it is not cheap: the constructor opens BOTH preference stores to decide which
+     * one holds the pairing (#312), and the encrypted one is an EncryptedSharedPreferences, i.e. a
+     * Keystore/Tink round trip. getDeviceInfo() built two of them per call, and it is called from
+     * deviceInfoPayload() on register, re-register AND the 60 s heartbeat — all posted to the main
+     * looper. On an RK3566/OP-TEE board, whose Keystore is unreliable, Tink's "wait and retry" on
+     * each failure was a visible stall on the thread that draws, roughly twice a minute forever.
+     * Nothing in here changes during playback, so build it once. Same pattern as UpdateChecker.
+     */
+    private val serverConfig by lazy { ServerConfig(context) }
+
     fun getTelemetry(): JSONObject {
         return JSONObject().apply {
             put("battery_level", getBatteryLevel())
@@ -62,7 +75,7 @@ class DeviceInfo(private val context: Context) {
             put("render_height", renH)
             // #139 Phase 2: report OTA backoff state (alongside app_version) so the dashboard can
             // flag screens stuck in manual-update-required. Read from the persisted throttle state.
-            val cfg = ServerConfig(context)
+            val cfg = serverConfig
             val ota = OtaThrottle.State(cfg.otaTargetVersion, cfg.otaAttempts, cfg.otaLastAttemptAt, cfg.otaBackoffReported)
             put("ota_status", OtaThrottle.statusFor(ota, System.currentTimeMillis()))
             put("ota_target_version", cfg.otaTargetVersion)
@@ -88,7 +101,7 @@ class DeviceInfo(private val context: Context) {
                 put("media_volume", getMediaVolumeFraction())
                 put("system_brightness", getSystemBrightnessFraction())
                 put("screen_off_timeout_ms", getScreenOffTimeout())
-                put("window_brightness", ServerConfig(context).windowBrightness)   // -1 = follow system
+                put("window_brightness", serverConfig.windowBrightness)   // -1 = follow system
             } catch (_: Throwable) { /* leave flags absent -> dashboard treats as false */ }
         }
     }
