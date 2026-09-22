@@ -25,7 +25,20 @@ const appUrl = process.env.APP_URL || '';
  * `req.headers.origin` first, so a white-label customer on their own domain comes back to THEIR
  *   domain rather than ours; APP_URL is only the fallback when there is no Origin header.
  */
-const appBase = (req) => `${req.headers.origin || appUrl}/app`;
+const appBase = (req) => {
+  /*
+   * ⚠️ Trailing slashes stripped, and a last resort that is still ABSOLUTE.
+   *
+   * `APP_URL=https://host/` would otherwise build `https://host//app#/...` — path `//app`, which
+   * Express does not match, so the customer lands on a 404 instead of the dashboard: the same
+   * class of failure this function exists to fix. And with no Origin header AND no APP_URL the
+   * string was relative, which Stripe refuses outright (success_url must be absolute), turning a
+   * checkout into a 500 rather than a wrong page. Falling back to the request's own host is the
+   * only thing left that is true, and it can only ever affect the caller's own redirect.
+   */
+  const raw = req.headers.origin || appUrl || `${req.protocol}://${req.get('host') || ''}`;
+  return `${String(raw).replace(/\/+$/, '')}/app`;
+};
 
 let stripe = null;
 if (config.stripeSecretKey) {

@@ -137,3 +137,36 @@ test('the billing portal returns to the same place', async () => {
     testUser = prev;
   }
 });
+
+test('a trailing slash on the base never produces the unroutable //app', async () => {
+  // `APP_URL=https://host/` built `https://host//app#/...`, and Express does not serve `//app` —
+  // the customer would land on a 404 instead of the dashboard, which is the same class of failure
+  // this whole change exists to remove. Sent as an Origin because `appUrl` is bound at module load
+  // and cannot be varied from a test; both values go through the same normalisation.
+  capturedCheckout = null;
+  const res = await fetch(`${base}/api/stripe/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://configured.example.com/' },
+    body: JSON.stringify({ plan_id: 'promo_test', interval: 'monthly' }),
+  });
+  assert.equal(res.status, 200);
+  const u = new URL(capturedCheckout.success_url);
+  assert.equal(u.pathname, '/app', `got ${u.pathname} — a doubled slash is not routed`);
+  assert.equal(u.hash, '#/billing?payment=success');
+});
+
+test('with no Origin and no APP_URL the URL is still ABSOLUTE, because Stripe refuses a relative one', async () => {
+  // APP_URL is unset in this test process, so this exercises the last-resort branch. Before it
+  // existed the value was `/app#/billing?...`, which Stripe rejects outright — a 500 at checkout
+  // rather than a wrong landing page.
+  capturedCheckout = null;
+  const res = await fetch(`${base}/api/stripe/checkout`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: 'promo_test', interval: 'monthly' }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(process.env.APP_URL, undefined, 'the fallback under test is the request-derived one');
+  const u = new URL(capturedCheckout.success_url);   // throws if relative
+  assert.match(u.protocol, /^https?:$/);
+  assert.equal(u.pathname, '/app');
+});
