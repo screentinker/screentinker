@@ -159,6 +159,20 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         break;
       }
 
+      /*
+       * ⚠️ `created` AS WELL AS `updated`, and both read the period end defensively.
+       *
+       * A subscription that is born and then simply runs emits `customer.subscription.created` and
+       * nothing else until it renews or changes — so subscribing only to `updated` meant the first
+       * (and for an annual plan, the only) statement of when the period ends never arrived. Both
+       * live subscribers sat with subscription_ends NULL for that reason.
+       *
+       * And `current_period_end` MOVED from the subscription to the ITEM (Stripe API 2025-03+).
+       * The webhook endpoint is pinned to an older version than the SDK's own default, so a payload
+       * can legitimately arrive in either shape; reading only the subscription level wrote NULL
+       * without erroring, which is the kind of silence that survives a green test suite.
+       */
+      case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const sub = event.data.object;
         const userId = sub.metadata?.user_id;
@@ -173,11 +187,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         }
 
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
-        const ends = sub.current_period_end || null;
+        const ends = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end ?? null;
 
         db.prepare(`UPDATE users SET plan_id = COALESCE(?, plan_id), subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
           .run(planId, status, ends, userId);
-        console.log(`Subscription updated for ${userId}: ${planId} (${status})`);
+        console.log(`Subscription ${event.type.split('.').pop()} for ${userId}: ${planId} (${status}, ends ${ends || 'unknown'})`);
         break;
       }
 

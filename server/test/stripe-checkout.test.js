@@ -16,6 +16,7 @@ process.env.DATA_DIR = path.join(os.tmpdir(), 'st-stripe-' + crypto.randomBytes(
 process.env.SELF_HOSTED = 'true';
 process.env.NODE_ENV = 'test';
 process.env.STRIPE_SECRET_KEY = 'sk_test_dummy'; // makes routes/stripe build the (stubbed) client
+process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_dummy'; // the webhook route refuses to run without one
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,6 +32,8 @@ const fakeStripeFactory = () => ({
   customers: { create: async () => ({ id: 'cus_test' }) },
   checkout: { sessions: { create: async (params) => { capturedCheckout = params; return { url: 'https://stripe.test/checkout' }; } } },
   billingPortal: { sessions: { create: async (params) => { capturedPortal = params; return { url: 'https://stripe.test/portal' }; } } },
+  // Signature verification is Stripe's, not ours — hand the handler the event it would have built.
+  webhooks: { constructEvent: (body) => (Buffer.isBuffer(body) || typeof body === 'string' ? JSON.parse(body) : body) },
 });
 const stripePath = require.resolve('stripe');
 require.cache[stripePath] = { id: stripePath, filename: stripePath, loaded: true, exports: fakeStripeFactory };
@@ -169,4 +172,56 @@ test('with no Origin and no APP_URL the URL is still ABSOLUTE, because Stripe re
   const u = new URL(capturedCheckout.success_url);   // throws if relative
   assert.match(u.protocol, /^https?:$/);
   assert.equal(u.pathname, '/app');
+});
+
+/*
+ * The webhook side. Both live subscribers had subscription_ends NULL, for two reasons that each
+ * fail silently: a subscription that is created and then simply runs emits `created`, never
+ * `updated`; and `current_period_end` moved from the subscription to the ITEM in Stripe's
+ * 2025-03+ API, so reading only the subscription level wrote NULL without erroring.
+ */
+const WEBHOOK_USER = 'u-webhook-test';
+db.prepare(`INSERT OR REPLACE INTO users (id, email, password_hash, role, plan_id)
+            VALUES (?, 'webhook@test.local', 'x', 'user', 'free')`).run(WEBHOOK_USER);
+
+async function postWebhook(event) {
+  return fetch(`${base}/api/stripe/webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'stripe-signature': 'sig_test' },
+    body: JSON.stringify(event),
+  });
+}
+const subEvent = (type, extra) => ({
+  type,
+  data: { object: { id: 'sub_test', status: 'active', metadata: { user_id: WEBHOOK_USER, plan_id: 'promo_test' }, ...extra } },
+});
+
+test('customer.subscription.created is handled, not only .updated', async () => {
+  db.prepare('UPDATE users SET subscription_ends = NULL, plan_id = ? WHERE id = ?').run('free', WEBHOOK_USER);
+  const res = await postWebhook(subEvent('customer.subscription.created', {
+    items: { data: [{ current_period_end: 1792658673, price: { id: 'price_test_m' } }] },
+  }));
+  assert.equal(res.status, 200);
+  const row = db.prepare('SELECT plan_id, subscription_status, subscription_ends FROM users WHERE id = ?').get(WEBHOOK_USER);
+  assert.equal(row.subscription_ends, 1792658673, 'a created subscription must record when the period ends');
+  assert.equal(row.subscription_status, 'active');
+});
+
+test('current_period_end is read from the item when the subscription level does not carry it', async () => {
+  // Stripe 2025-03+ shape: nothing at the subscription level at all.
+  db.prepare('UPDATE users SET subscription_ends = NULL WHERE id = ?').run(WEBHOOK_USER);
+  await postWebhook(subEvent('customer.subscription.updated', {
+    items: { data: [{ current_period_end: 1819216882, price: { id: 'price_test_m' } }] },
+  }));
+  assert.equal(db.prepare('SELECT subscription_ends FROM users WHERE id = ?').get(WEBHOOK_USER).subscription_ends,
+    1819216882, 'item-level period end must be picked up');
+
+  // Older shape, still delivered by an endpoint pinned to an earlier API version.
+  db.prepare('UPDATE users SET subscription_ends = NULL WHERE id = ?').run(WEBHOOK_USER);
+  await postWebhook(subEvent('customer.subscription.updated', {
+    current_period_end: 1700000000,
+    items: { data: [{ price: { id: 'price_test_m' } }] },
+  }));
+  assert.equal(db.prepare('SELECT subscription_ends FROM users WHERE id = ?').get(WEBHOOK_USER).subscription_ends,
+    1700000000, 'subscription-level period end must still work');
 });

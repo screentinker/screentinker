@@ -16,6 +16,15 @@ screen's address exactly, so the `?payment=success` on the end sent the whole th
 list instead. Both corrected, and the checkout, the cancel path and the billing portal now all
 return to the same place.
 
+**A paid subscription never recorded when its period ends.** Both live subscribers had no renewal
+date stored, for two reasons that each fail in silence. A subscription that is created and then
+simply runs emits `customer.subscription.created` and nothing more until it renews or changes, so
+listening only for `updated` meant the first statement of the period end — and on an annual plan,
+for a year, the only one — was never heard. And Stripe moved `current_period_end` from the
+subscription onto its item, so the field that was being read had quietly become undefined and was
+stored as "no date" rather than raising anything. Both shapes are now read, `created` is handled
+alongside `updated`, and the stored date is logged so a missing one is visible.
+
 **The platform plan overview counted organisations that were never updated.** `organizations.plan_id`
 is written once when an organisation is created and never touched again — no payment updates it —
 so the per-plan "organisations" figure reported every account on the plan they started with. An
