@@ -14,6 +14,18 @@
   ],
   "releases": [
     {
+      "version": "2.1.5",
+      "date": "2026-09-22",
+      "notes": [
+        "Signing in is more reliable: a password filled in by your browser, or typed after you correct the email address, is no longer rejected as wrong.",
+        "After paying, you are returned to your billing page instead of the public website — and if a payment ever fails you now get an email, a notice in the dashboard, and seven days before the account moves to the Free plan. Nothing is deleted.",
+        "Clock widgets can show or hide the date, in four formats, above, below or beside the time, with their own size and colour — and the timezone is now a searchable list.",
+        "A kiosk page assigned from a dashboard opened on the same machine as the server now loads on the display instead of showing nothing.",
+        "Player fixes: panels that are portrait by nature (such as the ThinkSmart View) run the right way up, the Android TV setup screen no longer closes the app, and Android players no longer stall for a moment twice a minute.",
+        "Raspberry Pi: on the newer Pi OS desktop the mouse pointer is now hidden on the screen, instead of sitting in the corner of your content."
+      ]
+    },
+    {
       "version": "2.1.4",
       "date": "2026-09-17",
       "notes": [

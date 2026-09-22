@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.1.5 (2026-09-22)
+
 ### Added
 
 **A failed payment is now something the product tells you about, and handles.** Until now a
@@ -27,6 +29,33 @@ subscription on file and corrects the database, so a missed delivery heals withi
 persisting invisibly.
 
 ### Fixed
+
+**Raspberry Pi: the mouse pointer can now be hidden on the newer Pi OS compositor.** A Pi running
+labwc — what Pi OS Trixie uses — kept its pointer on screen because hiding it is the compositor's
+job there and labwc has no setting for it. It does have an action for it, though, so the installer
+now binds that action to a shortcut and the kiosk launcher presses it once at startup. Found and
+contributed by @awatterott (#409); the installer writes the shortcut without touching an existing
+labwc configuration, and does nothing at all if the compositor is something else.
+
+**A panel that is portrait by nature now runs that way.** A Lenovo ThinkSmart View — a tablet whose
+screen is taller than it is wide — came up flipped, with a black bar and a smeared edge, because
+every screen in the app insisted on being landscape and left the panel's own firmware to turn the
+picture round, which that firmware does badly. The app now takes the panel as it finds it and turns
+the content in software instead. Panels that are landscape by nature are unaffected, byte for byte.
+Testing credit: @PowerSprout, for the panel and the patience (#390).
+
+**Android TV: the setup screen no longer does nothing, or quietly dies.** On a TV box, several rows
+of the setup screen opened settings pages that exist on phones and not on televisions. One killed
+the app outright — the boot relauncher then restarted it, so from the sofa it looked like nothing
+had happened at all. Each row now checks whether the screen it wants exists, and says so plainly
+when it does not, instead of failing into silence (#392).
+
+**A web player left running old code after a deploy now fixes itself.** Reloading the player during
+the few seconds a server is restarting could leave the panel on a cached copy of the old player
+while recording the new version as if it had updated — so it sat there, out of date, with nothing
+left to tell it otherwise. One panel reported 2.1.0 for weeks against a 2.1.4 server. The player now
+compares what it is running against what the server serves and reloads once when they disagree
+(#389).
 
 **After paying, Stripe dropped customers on the marketing homepage.** The return address Stripe was
 given was built from the browser's `Origin`, which carries the host and nothing else — so a
