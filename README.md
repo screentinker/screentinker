@@ -1021,7 +1021,20 @@ and `--password-store=basic` stops it asking for a keyring password no kiosk has
 
 Blanking and cursor-hiding belong to the compositor on Wayland. The launcher calls `wlopm` when it
 is present; if your image does not ship it, set the equivalent in your compositor's config
-(`~/.config/wayfire.ini` `[idle]` for wayfire, or the labwc equivalent).
+(`~/.config/wayfire.ini` `[idle]` for wayfire).
+
+**labwc** (the compositor on newer Pi OS) has no hide-cursor setting, only a `HideCursor` *action* —
+so the installer binds it to Super+H in `~/.config/labwc/rc.xml` and the launcher presses that once
+at session start with `wtype`. Two things make this fiddlier than it looks:
+
+- ⚠️ **The root element must be `<labwc_config>`.** Pi OS ships an rc.xml that is a stub rooted at
+  `<openbox_config/>`, and labwc ignores *every* keybinding while that root is there
+  ([labwc#3190](https://github.com/labwc/labwc/discussions/3190)) — with no error to say so. The
+  installer replaces that stub (keeping a `.screentinker-bak`) and merges into a real
+  `<labwc_config>` rather than overwriting it.
+- **Changes need a reboot or `labwc --reconfigure`** — labwc re-reads rc.xml only on SIGHUP, so
+  writing the file while a session is running does nothing until one or the other happens. The
+  installer attempts `--reconfigure` and the reboot it asks for at the end covers the rest.
 
 **A white page on every boot but the first** was Chromium restoring a session it believed crashed —
 a kiosk is killed by shutdown and never exits cleanly, so it came back with a restore surface on

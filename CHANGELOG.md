@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+**Raspberry Pi: the mouse pointer now actually hides on a stock Pi OS image.** The cursor-hiding
+added in 2.1.5 (#409) refused to touch an existing `~/.config/labwc/rc.xml`, on the reasoning that
+it would hold the owner's own keybindings. Pi OS ships one — a stub rooted at `<openbox_config/>`,
+which labwc will not read keybindings from at all ([labwc#3190]) — so on the images this feature
+exists for, the safe-looking branch was the only branch, and it did nothing but print a warning.
+The installer now replaces that stub (keeping a `.screentinker-bak`), merges into a real
+`<labwc_config>` instead of overwriting it the way the wayfire path already did, and runs
+`labwc --reconfigure` so the binding applies without waiting for a reboot. Reported by
+[@awatterott](https://github.com/awatterott) on #409.
+
+[labwc#3190]: https://github.com/labwc/labwc/discussions/3190
+
 ## 2.1.5 (2026-09-22)
 
 ### Added

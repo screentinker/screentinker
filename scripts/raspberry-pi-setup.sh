@@ -606,19 +606,14 @@ elif [ "$HAS_DESKTOP" = true ]; then
         # ⚠️ mkdir FIRST. This script runs under `set -euo pipefail`, so redirecting into a
         # directory that does not exist does not just skip the cursor — it kills the install.
         mkdir -p "$LABWC_DIR"
-        if [ -f "$LABWC_RC" ]; then
-            # ⚠️ NEVER overwrite an existing rc.xml. labwc reads the FIRST one it finds rather than
-            # merging, so replacing it with our four lines would take every other keybinding on the
-            # Pi with it — including the ones Pi OS ships. Same rule as wayfire.ini above.
-            [ -f "${LABWC_RC}.screentinker-bak" ] || cp "$LABWC_RC" "${LABWC_RC}.screentinker-bak"
-            if grep -q 'HideCursor' "$LABWC_RC"; then
-                log "  labwc rc.xml already binds HideCursor — leaving it alone"
-            else
-                warn "labwc rc.xml already exists — not overwriting it. To hide the pointer, add this inside its <keyboard> block:"
-                warn '  <keybind key="W-h"><action name="HideCursor" /><action name="WarpCursor" x="-1" y="-1" /></keybind>'
-            fi
-        else
-            cat > "$LABWC_RC" << LABWCEOF
+
+        LABWC_KEYBIND='  <keybind key="W-h">
+    <action name="HideCursor" />
+    <action name="WarpCursor" x="-1" y="-1" />
+  </keybind>'
+
+        write_labwc_rc() {
+            cat > "$LABWC_RC" << 'LABWCEOF'
 <?xml version="1.0"?>
 <labwc_config>
 <keyboard>
@@ -629,9 +624,46 @@ elif [ "$HAS_DESKTOP" = true ]; then
 </keyboard>
 </labwc_config>
 LABWCEOF
+        }
+
+        if [ ! -f "$LABWC_RC" ]; then
+            write_labwc_rc
             log "  labwc: bound Super+H to HideCursor (the launcher presses it at session start)"
+        else
+            [ -f "${LABWC_RC}.screentinker-bak" ] || cp "$LABWC_RC" "${LABWC_RC}.screentinker-bak"
+            if grep -q 'HideCursor' "$LABWC_RC"; then
+                log "  labwc rc.xml already binds HideCursor — leaving it alone"
+            elif grep -q '<openbox_config' "$LABWC_RC" && ! grep -q '<keybind' "$LABWC_RC"; then
+                # ⚠️ Pi OS SHIPS an rc.xml, and it is a stub rooted at <openbox_config/>. labwc
+                # ignores keybindings entirely while that root is present (labwc/labwc#3190), so
+                # this file cannot be merged into AND has no bindings worth preserving — refusing
+                # to touch it is what makes the cursor never hide on a stock image. Replace it;
+                # the backup taken above is the way back.
+                write_labwc_rc
+                log "  labwc: replaced the stock <openbox_config/> rc.xml — backup at ${LABWC_RC}.screentinker-bak"
+            elif grep -q '<labwc_config' "$LABWC_RC"; then
+                # A real labwc config. Merge rather than replace, exactly like wayfire.ini above:
+                # insert into the existing <keyboard> block, or add one before the closing tag.
+                if grep -q '</keyboard>' "$LABWC_RC"; then
+                    awk -v kb="$LABWC_KEYBIND" '/<\/keyboard>/ && !d { print kb; d=1 } { print }' \
+                        "$LABWC_RC" > "${LABWC_RC}.st-tmp" && mv "${LABWC_RC}.st-tmp" "$LABWC_RC"
+                else
+                    awk -v kb="$LABWC_KEYBIND" '/<\/labwc_config>/ && !d { print "<keyboard>"; print kb; print "</keyboard>"; d=1 } { print }' \
+                        "$LABWC_RC" > "${LABWC_RC}.st-tmp" && mv "${LABWC_RC}.st-tmp" "$LABWC_RC"
+                fi
+                log "  labwc: added the HideCursor keybind to your existing rc.xml"
+            else
+                warn "labwc rc.xml is in a shape this installer does not recognise — not touching it."
+                warn "To hide the pointer, make sure its root element is <labwc_config> (NOT <openbox_config>, which"
+                warn "silently disables every keybinding) and add this inside a <keyboard> block:"
+                warn '  <keybind key="W-h"><action name="HideCursor" /><action name="WarpCursor" x="-1" y="-1" /></keybind>'
+            fi
         fi
         chown -R "$PI_USER":"$PI_USER" "$LABWC_DIR" 2>/dev/null || true
+        # labwc re-reads rc.xml only on SIGHUP. Best-effort so an install onto a running desktop
+        # takes effect now; on a fresh install there is usually no session yet and the reboot the
+        # installer ends by asking for is what applies it.
+        sudo -u "$PI_USER" labwc --reconfigure >/dev/null 2>&1 || true
     fi
 fi
 
