@@ -225,3 +225,30 @@ test('current_period_end is read from the item when the subscription level does 
   assert.equal(db.prepare('SELECT subscription_ends FROM users WHERE id = ?').get(WEBHOOK_USER).subscription_ends,
     1700000000, 'subscription-level period end must still work');
 });
+
+/*
+ * The same defect appeared in three unrelated places — Stripe's return URL, the trial emails'
+ * "Choose a plan" link, and the mesh deep links — because `/#/thing` LOOKS like a dashboard
+ * address. It is not: `/` is the marketing page and the hash never reaches the app. This guard is
+ * cheap and catches the fourth one.
+ */
+test('no server-side link sends anyone to /#/ instead of /app#/', () => {
+  const fs2 = require('node:fs'), path2 = require('node:path');
+  const roots = ['routes', 'services', 'lib'].map((d) => path2.join(__dirname, '..', d));
+  const offenders = [];
+  const walk = (dir) => {
+    for (const e of fs2.readdirSync(dir, { withFileTypes: true })) {
+      const full = path2.join(dir, e.name);
+      if (e.isDirectory()) { walk(full); continue; }
+      if (!e.name.endsWith('.js')) continue;
+      const src = fs2.readFileSync(full, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*$/gm, '');
+      for (const m of src.matchAll(/["'`][^"'`\n]*?(?<!\/app)\/#\/[a-z]/gi)) {
+        offenders.push(`${path2.relative(path2.join(__dirname, '..'), full)}: ${m[0].slice(0, 60)}`);
+      }
+    }
+  };
+  roots.forEach(walk);
+  assert.deepEqual(offenders, [],
+    `these link to the marketing page and drop the hash:\n  ${offenders.join('\n  ')}`);
+});

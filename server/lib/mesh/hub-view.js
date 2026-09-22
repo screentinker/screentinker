@@ -198,8 +198,10 @@ function deviceQuery({ search = null, nodeIds = null, status = null,
 function deepLink(edge, kind, id) {
   if (!edge || !edge.peer_url) return null;
   const base = String(edge.peer_url).replace(/\/+$/, '');
-  const path = kind === 'device' ? `/#/devices/${encodeURIComponent(id)}`
-             : kind === 'alert' ? '/#/activity'
+  // ⚠️ /app, not /: the dashboard lives at /app and `/` is the marketing page, which ignores the
+  // hash. A deep link without it drops the operator on that node's front door.
+  const path = kind === 'device' ? `/app#/devices/${encodeURIComponent(id)}`
+             : kind === 'alert' ? '/app#/activity'
              : '/';
   return `${base}${path}`;
 }

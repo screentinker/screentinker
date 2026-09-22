@@ -16,6 +16,13 @@ screen's address exactly, so the `?payment=success` on the end sent the whole th
 list instead. Both corrected, and the checkout, the cancel path and the billing portal now all
 return to the same place.
 
+**Every "Choose a plan" link we emailed a lapsing trial went to the front page.** The trial
+reminder and trial-ended emails both pointed at the marketing homepage rather than the billing
+screen, so the one thing those messages ask a customer to click threw away the part of the address
+that says where to go. The mesh's deep links into another server's dashboard had the same fault.
+Both corrected — and a guard now fails the build on any server-side link written that way, which is
+how the same mistake reached three unrelated places.
+
 **A paid subscription never recorded when its period ends.** Both live subscribers had no renewal
 date stored, for two reasons that each fail in silence. A subscription that is created and then
 simply runs emits `customer.subscription.created` and nothing more until it renews or changes, so
