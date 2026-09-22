@@ -250,23 +250,79 @@ test('one launcher: the management scripts no longer assume the kiosk unit exist
   }
 });
 
-test('#409: the labwc cursor config cannot abort the install or eat an existing rc.xml', () => {
-  /*
-   * Two ways this goes wrong on a real Pi, both silent in review:
-   *   - the script runs under `set -euo pipefail`, so `cat > ~/.config/labwc/rc.xml` into a
-   *     directory that does not exist does not skip the cursor, it kills the install; and
-   *   - labwc reads the FIRST rc.xml it finds rather than merging, so writing ours over an
-   *     existing one takes every other keybinding on that Pi with it.
-   */
+const labwcBlock = () => {
   const start = SRC.indexOf('elif [ "$HAS_DESKTOP" = true ]; then');
-  const block = SRC.slice(start, SRC.indexOf('# 10. Pi display and boot optimizations'));
+  return SRC.slice(start, SRC.indexOf('# 10. Pi display and boot optimizations'));
+};
+
+test('#409: the labwc cursor config cannot abort the install', () => {
+  // The script runs under `set -euo pipefail`, so `cat > ~/.config/labwc/rc.xml` into a directory
+  // that does not exist does not skip the cursor, it kills the install.
+  const block = labwcBlock();
   assert.ok(block.includes('command -v labwc'), 'the labwc branch moved — retarget this test');
   assert.match(block, /mkdir -p "\$LABWC_DIR"/, 'the directory must exist before the redirect');
   assert.ok(block.indexOf('mkdir -p') < block.indexOf('cat > "$LABWC_RC"'),
     'and it must be created BEFORE the write, not after');
-  assert.match(block, /screentinker-bak/, 'an existing rc.xml must be backed up');
-  assert.match(block, /if \[ -f "\$LABWC_RC" \]/, 'an existing rc.xml must not be overwritten');
+  assert.match(block, /screentinker-bak/, 'an existing rc.xml must be backed up before any change');
   assert.match(block, /chown -R "\$PI_USER"/, 'the pi user must own its own config');
+});
+
+test('#409: the stock <openbox_config/> stub IS replaced — refusing to is what broke this', () => {
+  /*
+   * ⚠️ The first version of this hardening said "never overwrite an existing rc.xml", reasoning
+   * from wayfire.ini that an existing file must hold the owner's keybindings. On Pi OS it does
+   * not: the shipped rc.xml is a STUB rooted at <openbox_config/>, and labwc ignores every
+   * keybinding while that root is present (labwc/labwc#3190) — silently, with no error. So the
+   * "safe" branch was the common branch, and the cursor never hid on a stock image.
+   *
+   * Replacing is only safe because that stub has nothing to lose, hence the `! grep '<keybind'`
+   * half of the condition: a file that DOES carry bindings must never take this path.
+   */
+  const block = labwcBlock();
+  assert.match(block, /grep -q '<openbox_config' "\$LABWC_RC" && ! grep -q '<keybind' "\$LABWC_RC"/,
+    'the stub is replaced only when it demonstrably carries no keybindings');
+  assert.doesNotMatch(block, /not overwriting it/,
+    'the old refuse-everything warning is what made this a no-op on a stock Pi');
+});
+
+test('#409: a real labwc config is MERGED into, never clobbered', () => {
+  const block = labwcBlock();
+  assert.match(block, /grep -q '<labwc_config' "\$LABWC_RC"/, 'a real config must be detected');
+  // Same contract as the wayfire.ini path directly above it: keep what the owner wrote.
+  assert.match(block, /awk -v kb="\$LABWC_KEYBIND"/, 'the merge must be an insert, not a rewrite');
+  assert.match(block, /mv "\$\{LABWC_RC\}\.st-tmp" "\$LABWC_RC"/,
+    'write via a temp file so a failed merge cannot truncate the config');
+});
+
+test('#409: the merge actually puts the keybind inside <keyboard> (runs the real awk)', () => {
+  /*
+   * A regex on the source only proves an awk call exists. This runs the awk program lifted OUT of
+   * the installer against a real config, so the test fails if the program itself is wrong.
+   */
+  const { execFileSync } = require('node:child_process');
+  const block = labwcBlock();
+  const prog = block.match(/awk -v kb="\$LABWC_KEYBIND" '([^']+)'\s*\\?\s*\n?\s*"\$LABWC_RC"/);
+  assert.ok(prog, 'could not lift the merge awk program out of the installer');
+
+  const KEYBIND = '  <keybind key="W-h">\n    <action name="HideCursor" />\n  </keybind>';
+  const existing = [
+    '<?xml version="1.0"?>', '<labwc_config>', '<keyboard>',
+    '  <keybind key="W-Return"><action name="Execute" command="lxterminal" /></keybind>',
+    '</keyboard>', '</labwc_config>', '',
+  ].join('\n');
+
+  const out = execFileSync('awk', ['-v', `kb=${KEYBIND}`, prog[1]], { input: existing }).toString();
+  assert.match(out, /HideCursor/, 'our binding must be added');
+  assert.match(out, /lxterminal/, "and the owner's own binding must survive");
+  assert.ok(out.indexOf('HideCursor') < out.indexOf('</keyboard>'),
+    'the binding has to land INSIDE the keyboard block, or labwc ignores it');
+});
+
+test('#409: rc.xml changes are applied without demanding a reboot', () => {
+  // labwc re-reads rc.xml only on SIGHUP, so writing the file while a session runs does nothing.
+  const block = labwcBlock();
+  assert.match(block, /labwc --reconfigure[^\n]*\|\| true/,
+    'reconfigure must be attempted, and must never fail the install when there is no session');
 });
 
 test('#409: the cursor keypress is guarded like every other optional tool', () => {
