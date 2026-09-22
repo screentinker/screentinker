@@ -249,3 +249,31 @@ test('one launcher: the management scripts no longer assume the kiosk unit exist
     assert.ok(guarded(m.index), `journalctl on the kiosk unit at offset ${m.index} assumes the unit exists`);
   }
 });
+
+test('#409: the labwc cursor config cannot abort the install or eat an existing rc.xml', () => {
+  /*
+   * Two ways this goes wrong on a real Pi, both silent in review:
+   *   - the script runs under `set -euo pipefail`, so `cat > ~/.config/labwc/rc.xml` into a
+   *     directory that does not exist does not skip the cursor, it kills the install; and
+   *   - labwc reads the FIRST rc.xml it finds rather than merging, so writing ours over an
+   *     existing one takes every other keybinding on that Pi with it.
+   */
+  const start = SRC.indexOf('elif [ "$HAS_DESKTOP" = true ]; then');
+  const block = SRC.slice(start, SRC.indexOf('# 10. Pi display and boot optimizations'));
+  assert.ok(block.includes('command -v labwc'), 'the labwc branch moved — retarget this test');
+  assert.match(block, /mkdir -p "\$LABWC_DIR"/, 'the directory must exist before the redirect');
+  assert.ok(block.indexOf('mkdir -p') < block.indexOf('cat > "$LABWC_RC"'),
+    'and it must be created BEFORE the write, not after');
+  assert.match(block, /screentinker-bak/, 'an existing rc.xml must be backed up');
+  assert.match(block, /if \[ -f "\$LABWC_RC" \]/, 'an existing rc.xml must not be overwritten');
+  assert.match(block, /chown -R "\$PI_USER"/, 'the pi user must own its own config');
+});
+
+test('#409: the cursor keypress is guarded like every other optional tool', () => {
+  // wtype is not on every image, and the launcher runs on Lite as well as Desktop. Unguarded, it
+  // logs "command not found" and silently does not hide the cursor — the exact failure this
+  // section of the launcher was written to stop.
+  const code = SRC.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.match(code, /command -v wtype >\/dev\/null 2>&1 && wtype .* \|\| true/,
+    'wtype must be probed before it is called, and must never fail the launcher');
+});

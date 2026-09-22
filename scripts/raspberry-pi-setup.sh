@@ -293,7 +293,7 @@ if [ "$HAS_DESKTOP" = false ]; then
     install_chromium
 else
     # Desktop: X already running, just ensure Chromium + helpers
-    apt-get install -y -qq unclutter xdotool wtype >> "$LOG_FILE" 2>&1
+    apt-get install -y -qq unclutter xdotool wtype >> "$LOG_FILE" 2>&1   # wtype: labwc cursor hiding
     install_chromium
 fi
 
@@ -340,8 +340,10 @@ if [ "\$SESSION_TYPE" = "wayland" ]; then
     # unclutter is X11-only — it exits immediately here, which is why a Wayland Pi kept its cursor
     # on screen while the install looked complete. Hiding it is the COMPOSITOR's job on Wayland;
     # the installer configures wayfire's hide-cursor plugin at install time (section 9b).
-    # If this Pi runs labwc instead, then the hiding is done with a special keyboard shortcut.
-    wtype -M logo -P h -m logo -p h
+    # If this Pi runs labwc instead, the installer bound Super+H to its HideCursor action and this
+    # presses it once. Guarded like wlopm above: wtype is not on every image, and an unguarded
+    # command here is exactly the silent no-op this whole block exists to stop being.
+    command -v wtype >/dev/null 2>&1 && wtype -M logo -P h -m logo -p h 2>/dev/null || true
 else
     # Disable screen blanking and power management
     xset s off
@@ -595,9 +597,28 @@ if [ -f "$PI_HOME/.config/wayfire.ini" ]; then
     fi
     chown "$PI_USER":"$PI_USER" "$WF" 2>/dev/null || true
 elif [ "$HAS_DESKTOP" = true ]; then
-    # labwc (the newer Pi OS compositor) cursor-hiding is done with a special keyboard shortcut via wtype.
+    # labwc (the newer Pi OS compositor) has no hide-cursor setting, but it does have a HideCursor
+    # ACTION — so the cursor is hidden by binding it to a shortcut and pressing that shortcut once
+    # at session start (the launcher does the pressing, with wtype).
     if command -v labwc >/dev/null 2>&1; then
-        cat > "$PI_HOME/.config/labwc/rc.xml" << LABWCEOF
+        LABWC_DIR="$PI_HOME/.config/labwc"
+        LABWC_RC="$LABWC_DIR/rc.xml"
+        # ⚠️ mkdir FIRST. This script runs under `set -euo pipefail`, so redirecting into a
+        # directory that does not exist does not just skip the cursor — it kills the install.
+        mkdir -p "$LABWC_DIR"
+        if [ -f "$LABWC_RC" ]; then
+            # ⚠️ NEVER overwrite an existing rc.xml. labwc reads the FIRST one it finds rather than
+            # merging, so replacing it with our four lines would take every other keybinding on the
+            # Pi with it — including the ones Pi OS ships. Same rule as wayfire.ini above.
+            [ -f "${LABWC_RC}.screentinker-bak" ] || cp "$LABWC_RC" "${LABWC_RC}.screentinker-bak"
+            if grep -q 'HideCursor' "$LABWC_RC"; then
+                log "  labwc rc.xml already binds HideCursor — leaving it alone"
+            else
+                warn "labwc rc.xml already exists — not overwriting it. To hide the pointer, add this inside its <keyboard> block:"
+                warn '  <keybind key="W-h"><action name="HideCursor" /><action name="WarpCursor" x="-1" y="-1" /></keybind>'
+            fi
+        else
+            cat > "$LABWC_RC" << LABWCEOF
 <?xml version="1.0"?>
 <labwc_config>
 <keyboard>
@@ -608,6 +629,9 @@ elif [ "$HAS_DESKTOP" = true ]; then
 </keyboard>
 </labwc_config>
 LABWCEOF
+            log "  labwc: bound Super+H to HideCursor (the launcher presses it at session start)"
+        fi
+        chown -R "$PI_USER":"$PI_USER" "$LABWC_DIR" 2>/dev/null || true
     fi
 fi
 
