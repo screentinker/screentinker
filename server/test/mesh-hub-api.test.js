@@ -165,7 +165,7 @@ test('⚠️ every device row carries its tri-state status and as-of age', async
       // and search for every row at once, and is very hard to undo once customers read it that way.
       assert.equal(d.originNodeId, 'node-acme');
       assert.equal(d.name, 'Acme Lobby', 'the name is unmodified');
-      assert.equal(d.deepLink, 'https://acme.example/#/devices/d1');
+      assert.equal(d.deepLink, 'https://acme.example/app#/devices/d1');  // /app, or it lands on the marketing page
     } finally { await close(); }
   } finally { cleanup(db); }
 });
