@@ -688,6 +688,7 @@ function updateSidebarUser() {
   const user = getCurrentUser();
   if (!user) return;
   updateVerifyBanner(user);
+  updateBillingBanner(user);
   updateWidgetSandboxWarningBanner(user);
 
   // Show admin nav only for platform admins (legacy 'superadmin' or Phase 1 renamed 'platform_admin')
@@ -813,6 +814,39 @@ function updateVerifyBanner(user) {
     try { await api.resendVerification(user.email); showToast(t('auth.verify_resent'), 'success'); }
     catch { showToast(t('auth.verify_resend_failed'), 'error'); }
   });
+  b.appendChild(btn);
+  bannersEl.appendChild(b);
+}
+
+/*
+ * A payment that failed, said out loud. Until this existed the only signal a customer got was
+ * their screens quietly hitting the Free limit a week later — `subscription_status` was written by
+ * the Stripe webhook and read by nothing.
+ *
+ * Two states, deliberately worded differently: `past_due` is "this is fixable and nothing has
+ * happened yet", `unpaid` is "the grace ran out and you are on Free now". An undefined status —
+ * a user object cached before this shipped — stays hidden rather than guessing, the same rule the
+ * verify banner uses.
+ */
+function updateBillingBanner(user) {
+  const existing = document.getElementById('billingBanner');
+  const state = user && user.subscription_status;
+  if (state !== 'past_due' && state !== 'unpaid') { if (existing) existing.remove(); return; }
+  if (existing && existing.dataset.state === state) return;
+  if (existing) existing.remove();
+  const bannersEl = document.getElementById('banners');
+  if (!bannersEl) return;
+  const lapsed = state === 'unpaid';
+  const b = document.createElement('div');
+  b.id = 'billingBanner';
+  b.dataset.state = state;
+  b.style.cssText = `background:${lapsed ? 'var(--danger,#ef4444)' : 'var(--warning,#f59e0b)'};color:${lapsed ? '#fff' : '#1a1200'};padding:9px 16px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap`;
+  b.innerHTML = `<span>${lapsed ? '⚠️' : '💳'} ${esc(t(lapsed ? 'billing.banner.lapsed' : 'billing.banner.past_due'))}</span>`;
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm';
+  btn.style.cssText = `background:${lapsed ? '#7f1d1d' : '#1a1200'};color:#fff;padding:4px 12px`;
+  btn.textContent = t('billing.banner.update_card');
+  btn.addEventListener('click', () => { window.location.hash = '#/billing'; });
   b.appendChild(btn);
   bannersEl.appendChild(b);
 }

@@ -673,6 +673,17 @@ const migrations = [
   "ALTER TABLE users ADD COLUMN trial_expired_at INTEGER",
   "ALTER TABLE users ADD COLUMN trial_ending_email_sent_at INTEGER",
   "ALTER TABLE users ADD COLUMN trial_expired_email_sent_at INTEGER",
+  /*
+   * Dunning: a PAID subscription whose payment failed. `past_due_since` is the grace clock —
+   * stamped when Stripe reports the first failed invoice and cleared the moment a payment
+   * succeeds, so it answers "how long have they been failing" rather than "are they failing",
+   * which is what a 7-day grace needs. The two *_sent_at columns are the once-per-episode
+   * idempotency stamps (cleared alongside the clock, so a customer who lapses, pays, and lapses
+   * again months later is told again rather than silently).
+   */
+  "ALTER TABLE users ADD COLUMN past_due_since INTEGER",
+  "ALTER TABLE users ADD COLUMN payment_failed_email_sent_at INTEGER",
+  "ALTER TABLE users ADD COLUMN subscription_lapsed_email_sent_at INTEGER",
   "ALTER TABLE organizations ADD COLUMN widget_sandbox_isolation_disabled INTEGER NOT NULL DEFAULT 0",
   // AUTH-05: make break-glass recovery revocable, single-use and auditable.
   //

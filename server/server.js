@@ -2001,8 +2001,10 @@ startActivationNudge();
 // Nightly trial-expiry sweep: lapsed trials -> Free, T-3 + expiry emails (gated on !selfHosted;
 // emails additionally on HOSTED_INSTANCE). `io` so a just-blocked screen is told right away.
 const { startTrialExpiry } = require('./services/trialExpiry');
+const { startDunning } = require('./services/dunning');
 startTrialExpiry(io);
 
+startDunning(io);
 // #73: agency-upload digest flush (batched draft/published notifications to admins + owner)
 const { startAgencyDigest } = require('./services/agency-digest');
 startAgencyDigest();

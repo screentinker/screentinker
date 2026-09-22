@@ -53,6 +53,101 @@ function findExpiredTrialUserIds() {
   return _expiredTrialIdsStmt.all().map(r => r.id);
 }
 
+/* ============================ dunning: a PAID subscription that stopped paying ============================
+ *
+ * Distinct from the trial path above and deliberately so. A trial ends on a clock nobody can pay to
+ * stop; a failed payment is a customer who WANTS to pay and whose card did not work. So the first
+ * seven days change nothing except what they are told, and only then do they fall to Free.
+ *
+ * ⚠️ The players are never touched by any of this. Degrading a paying customer's SCREENS over a
+ * card problem turns a billing hiccup into a dark shopfront; falling to Free applies the Free
+ * limits, exactly as an expired trial already does, and nothing else.
+ *
+ * ⚠️ CAST(strftime('%s','now') AS INTEGER) — same trap as the trial predicate above: strftime
+ * returns TEXT and SQLite sorts every INTEGER below every TEXT, so an un-cast comparison is
+ * silently always-true or always-false.
+ */
+const GRACE_DAYS = Math.max(0, Number(process.env.BILLING_GRACE_DAYS) || 7);
+
+// Start the clock, once. `past_due_since IS NULL` makes a repeated failed invoice — Stripe retries
+// several times per episode — leave the ORIGINAL failure time alone, which is what the grace is
+// measured from. Returns true only for the first one.
+let _startGraceStmt;
+function startGrace(userId, atSec = Math.floor(Date.now() / 1000)) {
+  if (!_startGraceStmt) _startGraceStmt = db.prepare(`
+    UPDATE users SET past_due_since = ?, subscription_status = 'past_due'
+     WHERE id = ? AND past_due_since IS NULL`);
+  return _startGraceStmt.run(atSec, userId).changes === 1;
+}
+
+// A payment went through (or the subscription is active again): forget the episode entirely,
+// including the email stamps, so a future lapse months from now is announced rather than silent.
+let _clearGraceStmt;
+function clearGrace(userId) {
+  if (!_clearGraceStmt) _clearGraceStmt = db.prepare(`
+    UPDATE users
+       SET past_due_since = NULL, payment_failed_email_sent_at = NULL,
+           subscription_lapsed_email_sent_at = NULL, subscription_status = 'active'
+     WHERE id = ? AND past_due_since IS NOT NULL`);
+  return _clearGraceStmt.run(userId).changes === 1;
+}
+
+// Ids of subscribers whose grace has run out and who are still on a paid plan. Same predicate as
+// downgradeLapsed; the sweep feeds these back through it one at a time.
+let _lapsedIdsStmt;
+function findLapsedSubscriberIds() {
+  if (!_lapsedIdsStmt) _lapsedIdsStmt = db.prepare(`
+    SELECT id FROM users
+     WHERE past_due_since IS NOT NULL
+       AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+       AND plan_id != 'free'`);
+  return _lapsedIdsStmt.all().map(r => r.id);
+}
+
+/*
+ * Fall to Free. `stripe_subscription_id` is deliberately KEPT: it is how the reconcile finds this
+ * account again if the customer fixes their card, and clearing it would orphan a subscription that
+ * still exists in Stripe. `customer.subscription.deleted` is the event that clears it, because
+ * that is the one that means the subscription is really gone.
+ */
+let _downgradeLapsedStmt;
+function downgradeLapsed(userId) {
+  if (!_downgradeLapsedStmt) _downgradeLapsedStmt = db.prepare(`
+    UPDATE users SET plan_id = 'free', subscription_status = 'unpaid'
+     WHERE id = ?
+       AND past_due_since IS NOT NULL
+       AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+       AND plan_id != 'free'`);
+  return _downgradeLapsedStmt.run(userId).changes === 1;
+}
+
+/*
+ * The other half of the downgrade, and it was missing.
+ *
+ * downgradeLapsed() writes plan_id='free'. Recovery therefore has to put the plan BACK — clearing
+ * the grace clock and writing subscription_status='active' on its own leaves someone who has just
+ * paid sitting on Free limits, which from their side is indistinguishable from not having paid at
+ * all. Called from every path that learns the money arrived: the invoice webhook, the subscription
+ * webhook, and the daily reconcile.
+ *
+ * ⚠️ The plan id is CHECKED against the plans table first. A plan_id with no row grants nothing —
+ * getUserPlan INNER JOINs plans — so writing an unknown one is strictly worse than leaving them on
+ * Free, where at least the limits are real.
+ */
+function restorePlan(userId, planId) {
+  if (!planId) return false;
+  const known = db.prepare('SELECT 1 FROM plans WHERE id = ?').get(planId);
+  if (!known) {
+    console.warn(`[billing] refusing to restore unknown plan '${planId}' for user ${userId}`);
+    return false;
+  }
+  return db.prepare(`
+    UPDATE users
+       SET plan_id = ?, subscription_status = 'active', past_due_since = NULL,
+           payment_failed_email_sent_at = NULL, subscription_lapsed_email_sent_at = NULL
+     WHERE id = ?`).run(planId, userId).changes === 1;
+}
+
 function getUserPlan(userId) {
   const user = db.prepare(`
     SELECT u.*, p.name as plan_name, p.display_name as plan_display_name,
@@ -182,7 +277,14 @@ function checkRemoteUrl(req, res, next) {
   next();
 }
 
-// Check subscription is active (not expired)
+/*
+ * ⚠️ NEVER MOUNTED, and now superseded. This was the only thing in the codebase that looked like
+ * subscription enforcement, which is exactly why it was dangerous: it is exported, commented, and
+ * wired to nothing, so `past_due` had no effect on anything at all. Enforcement is now the
+ * dunning sweep (services/dunning.js) moving a lapsed subscriber to Free, after which the ordinary
+ * plan limits apply — one mechanism, the same one an expired trial already uses. Kept only so a
+ * self-hosted fork that DID mount it is not broken by its disappearance; do not add it to a route.
+ */
 function checkActiveSubscription(req, res, next) {
   const plan = getUserPlan(req.user.id);
   if (!plan) return res.status(403).json({ error: 'No plan found' });
@@ -205,6 +307,12 @@ function checkActiveSubscription(req, res, next) {
 
 module.exports = {
   TRIAL_DAYS,
+  GRACE_DAYS,
+  startGrace,
+  clearGrace,
+  findLapsedSubscriberIds,
+  downgradeLapsed,
+  restorePlan,
   expireTrial,
   findExpiredTrialUserIds,
   getUserPlan,
