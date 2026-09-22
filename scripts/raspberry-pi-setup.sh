@@ -293,7 +293,7 @@ if [ "$HAS_DESKTOP" = false ]; then
     install_chromium
 else
     # Desktop: X already running, just ensure Chromium + helpers
-    apt-get install -y -qq unclutter xdotool >> "$LOG_FILE" 2>&1
+    apt-get install -y -qq unclutter xdotool wtype >> "$LOG_FILE" 2>&1
     install_chromium
 fi
 
@@ -339,9 +339,9 @@ if [ "\$SESSION_TYPE" = "wayland" ]; then
     command -v wlopm >/dev/null 2>&1 && wlopm --on '*' 2>/dev/null || true
     # unclutter is X11-only — it exits immediately here, which is why a Wayland Pi kept its cursor
     # on screen while the install looked complete. Hiding it is the COMPOSITOR's job on Wayland;
-    # the installer configures wayfire's hide-cursor plugin at install time (section 9b). If this
-    # Pi runs labwc instead, there is no equivalent setting and the cursor stays — README says so
-    # rather than this pretending otherwise.
+    # the installer configures wayfire's hide-cursor plugin at install time (section 9b).
+    # If this Pi runs labwc instead, then the hiding is done with a special keyboard shortcut.
+    wtype -M logo -P h -m logo -p h
 else
     # Disable screen blanking and power management
     xset s off
@@ -595,11 +595,19 @@ if [ -f "$PI_HOME/.config/wayfire.ini" ]; then
     fi
     chown "$PI_USER":"$PI_USER" "$WF" 2>/dev/null || true
 elif [ "$HAS_DESKTOP" = true ]; then
-    # labwc (the newer Pi OS compositor) has no cursor-hiding option, and neither do we from the
-    # outside. Say so plainly instead of leaving the operator to wonder whether it failed.
+    # labwc (the newer Pi OS compositor) cursor-hiding is done with a special keyboard shortcut via wtype.
     if command -v labwc >/dev/null 2>&1; then
-        warn "This Pi appears to run labwc, which has no cursor-hide setting — the pointer will stay visible."
-        warn "Switch to wayfire (raspi-config > Advanced > Wayland) or to X11 if a hidden cursor matters."
+        cat > "$PI_HOME/.config/labwc/rc.xml" << LABWCEOF
+<?xml version="1.0"?>
+<labwc_config>
+<keyboard>
+  <keybind key="W-h">
+    <action name="HideCursor" />
+    <action name="WarpCursor" x="-1" y="-1" />
+  </keybind>
+</keyboard>
+</labwc_config>
+LABWCEOF
     fi
 fi
 
