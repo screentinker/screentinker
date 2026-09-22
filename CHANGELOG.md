@@ -4,6 +4,24 @@
 
 ### Fixed
 
+**After paying, Stripe dropped customers on the marketing homepage.** The return address Stripe was
+given was built from the browser's `Origin`, which carries the host and nothing else — so a
+customer who had just paid was sent to `https://<your-host>/#/billing`, and `/` is the public
+marketing page, which ignores the part after the `#`. They saw the front door and no sign the
+purchase had worked. It now returns them to the dashboard's own address, on whichever domain they
+started from, so a white-label customer comes back to their own. Two further faults sat behind that
+one and would each have kept it broken on their own: the address pointed at Settings, while the
+"payment received" confirmation is shown by the Billing screen; and the dashboard matched that
+screen's address exactly, so the `?payment=success` on the end sent the whole thing to the Displays
+list instead. Both corrected, and the checkout, the cancel path and the billing portal now all
+return to the same place.
+
+**The platform plan overview counted organisations that were never updated.** `organizations.plan_id`
+is written once when an organisation is created and never touched again — no payment updates it —
+so the per-plan "organisations" figure reported every account on the plan they started with. An
+operator reading it saw every account on Pro while a customer was paying for Home. It now resolves
+the plan through the account owner, the way the device figure beside it already did.
+
 **Signing in no longer fails on a password you typed correctly.** The login form asks for the
 address first and reveals the password box once it knows which account you are signing in to.
 Editing the address after that hid the box again but kept what was in it, so the next press sent

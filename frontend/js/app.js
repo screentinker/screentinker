@@ -663,7 +663,10 @@ function route() {
   } else if (hash === '#/settings') {
     currentView = settings;
     settings.render(app);
-  } else if (hash === '#/billing') {
+  } else if (hash.startsWith('#/billing')) {
+    // Prefix, not equality: Stripe returns to `#/billing?payment=success`, and `hash === '#/billing'`
+    // sent every one of those to the default view — a customer who had just paid saw the Displays
+    // list and no confirmation. Same reasoning as the admin/player-debug route above.
     // #116: when HIDE_BILLING is set, a direct #/billing navigation is bounced to the
     // dashboard. replaceState (not a hash assignment) so it doesn't add a history entry
     // — the back button skips over it instead of looping back into the guard.

@@ -7,6 +7,26 @@ const config = require('../config');
 
 const appUrl = process.env.APP_URL || '';
 
+/*
+ * ⚠️ WHERE STRIPE SENDS THEM BACK, AND WHY EVERY PART OF THIS STRING MATTERS.
+ *
+ * `/app` — `req.headers.origin` is scheme+host with NO PATH, and APP_URL is set the same way, so
+ *   `${origin}/#/...` resolves to `https://host/#/...`. `/` serves the MARKETING page
+ *   (server.js: landing.html), which ignores the hash entirely. Two customers paid and were
+ *   dropped on the homepage with nothing to say the purchase had worked.
+ *
+ * `#/billing` — not `#/settings`. views/billing.js is what reads `payment=success` and renders the
+ *   confirmation; settings never looks at it.
+ *
+ * The `?payment=...` sits INSIDE the hash, so the SPA router has to match that route by prefix.
+ *   It does (app.js `hash.startsWith('#/billing')`) — exact equality silently routed the whole
+ *   thing to the default view instead, which is how the first fix for this would have failed too.
+ *
+ * `req.headers.origin` first, so a white-label customer on their own domain comes back to THEIR
+ *   domain rather than ours; APP_URL is only the fallback when there is no Origin header.
+ */
+const appBase = (req) => `${req.headers.origin || appUrl}/app`;
+
 let stripe = null;
 if (config.stripeSecretKey) {
   stripe = require('stripe')(config.stripeSecretKey);
@@ -41,7 +61,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
     if (req.user.stripe_subscription_id) {
       const portal = await stripe.billingPortal.sessions.create({
         customer: customerId,
-        return_url: `${req.headers.origin || appUrl}/#/settings`,
+        return_url: `${appBase(req)}#/billing`,
       });
       return res.json({ url: portal.url, type: 'portal' });
     }
@@ -57,8 +77,8 @@ router.post('/checkout', requireAuth, async (req, res) => {
       // redundant with a dashboard setting.
       allow_promotion_codes: true,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${req.headers.origin || appUrl}/#/settings?payment=success`,
-      cancel_url: `${req.headers.origin || appUrl}/#/settings?payment=cancelled`,
+      success_url: `${appBase(req)}#/billing?payment=success`,
+      cancel_url: `${appBase(req)}#/billing?payment=cancelled`,
       metadata: { user_id: req.user.id, plan_id },
       subscription_data: {
         metadata: { user_id: req.user.id, plan_id },
@@ -82,7 +102,7 @@ router.post('/portal', requireAuth, async (req, res) => {
   try {
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: `${req.headers.origin || appUrl}/#/settings`,
+      return_url: `${appBase(req)}#/billing`,
     });
     res.json({ url: session.url });
   } catch (err) {

@@ -24,10 +24,13 @@ const express = require('express');
 
 // --- stub the Stripe SDK: capture checkout.sessions.create params ---
 let capturedCheckout = null;
+let capturedPortal = null;
+let testUser = { id: 'u-test', email: 'u@test.local', name: 'Test',
+                 stripe_customer_id: 'cus_test', stripe_subscription_id: null };
 const fakeStripeFactory = () => ({
   customers: { create: async () => ({ id: 'cus_test' }) },
   checkout: { sessions: { create: async (params) => { capturedCheckout = params; return { url: 'https://stripe.test/checkout' }; } } },
-  billingPortal: { sessions: { create: async () => ({ url: 'https://stripe.test/portal' }) } },
+  billingPortal: { sessions: { create: async (params) => { capturedPortal = params; return { url: 'https://stripe.test/portal' }; } } },
 });
 const stripePath = require.resolve('stripe');
 require.cache[stripePath] = { id: stripePath, filename: stripePath, loaded: true, exports: fakeStripeFactory };
@@ -37,11 +40,9 @@ const authPath = require.resolve('../middleware/auth');
 require.cache[authPath] = {
   id: authPath, filename: authPath, loaded: true,
   exports: {
-    requireAuth: (req, _res, next) => {
-      req.user = { id: 'u-test', email: 'u@test.local', name: 'Test',
-                   stripe_customer_id: 'cus_test', stripe_subscription_id: null };
-      next();
-    },
+    // ⚠️ routes/stripe.js destructures requireAuth at require time, so a test cannot swap this
+    // function later — it closes over `testUser`, which a test mutates instead.
+    requireAuth: (req, _res, next) => { req.user = { ...testUser }; next(); },
   },
 };
 
@@ -80,4 +81,59 @@ test('POST /checkout passes allow_promotion_codes:true to Stripe', async () => {
   // sanity: it is still a subscription checkout for the requested price
   assert.equal(capturedCheckout.mode, 'subscription');
   assert.equal(capturedCheckout.line_items[0].price, 'price_test_m');
+});
+
+/*
+ * Where Stripe sends a paying customer back. Every assertion here is a bug that actually shipped:
+ * the URL had no `/app`, so `/` served the marketing page and the hash was ignored; it pointed at
+ * `#/settings`, which never reads `payment=success`; and the query inside the hash only survives
+ * because the router matches that route by prefix.
+ */
+test('checkout returns the customer to the dashboard billing view, not the marketing homepage', async () => {
+  capturedCheckout = null;
+  const res = await fetch(`${base}/api/stripe/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://signage.example.com' },
+    body: JSON.stringify({ plan_id: 'promo_test', interval: 'monthly' }),
+  });
+  assert.equal(res.status, 200);
+
+  for (const [label, url] of [['success_url', capturedCheckout.success_url], ['cancel_url', capturedCheckout.cancel_url]]) {
+    assert.ok(url.startsWith('https://signage.example.com/app#/billing'),
+      `${label} must land on the dashboard's billing view on the CALLER's origin, got: ${url}`);
+    assert.doesNotMatch(url, /^https:\/\/[^/]+\/#/,
+      `${label} must not drop the customer at / — that is the marketing page, which ignores the hash`);
+  }
+  assert.match(capturedCheckout.success_url, /#\/billing\?payment=success$/);
+  assert.match(capturedCheckout.cancel_url, /#\/billing\?payment=cancelled$/);
+});
+
+test('the SPA routes the returned URL to billing rather than the default view', () => {
+  // The query rides INSIDE the hash, so an exact-equality match would drop it on the floor.
+  const appJs = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'frontend', 'js', 'app.js'), 'utf8');
+  assert.match(appJs, /\} else if \(hash\.startsWith\('#\/billing'\)\) \{/,
+    "#/billing must match by prefix or `#/billing?payment=success` falls through to the dashboard");
+  const billingJs = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'frontend', 'js', 'views', 'billing.js'), 'utf8');
+  assert.match(billingJs, /payment=success/,
+    'the view we redirect to is the one that reads the flag');
+});
+
+test('the billing portal returns to the same place', async () => {
+  capturedPortal = null;
+  const prev = testUser;
+  testUser = { ...prev, stripe_subscription_id: 'sub_existing' };  // an existing subscriber
+  try {
+    const res = await fetch(`${base}/api/stripe/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://signage.example.com' },
+      body: JSON.stringify({ plan_id: 'promo_test', interval: 'monthly' }),
+    });
+    const body = await res.json();
+    assert.equal(body.type, 'portal', 'an existing subscriber is sent to the portal');
+    assert.equal(capturedPortal.return_url, 'https://signage.example.com/app#/billing');
+  } finally {
+    testUser = prev;
+  }
 });
