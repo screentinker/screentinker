@@ -607,7 +607,16 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
   const plans = db.prepare(`
     SELECT p.*,
            (SELECT COUNT(*) FROM users u WHERE u.plan_id = p.id) AS user_count,
-           (SELECT COUNT(*) FROM organizations o WHERE o.plan_id = p.id) AS org_count,
+           /*
+            * ⚠️ Resolved through the OWNER, like device_count below — not from organizations.plan_id.
+            * That column is written once when the org is created and never again: no Stripe webhook
+            * touches it, so every organization reads 'pro' for ever regardless of what its owner
+            * actually pays. Counting it told an operator that all 477 accounts were on Pro while one
+            * of them was paying for Home.
+            */
+           (SELECT COUNT(*) FROM organizations o
+              JOIN users u3 ON u3.id = o.owner_user_id
+             WHERE u3.plan_id = p.id) AS org_count,
            (SELECT COUNT(*) FROM devices d
               JOIN workspaces w ON w.id = d.workspace_id
               JOIN organizations o2 ON o2.id = w.organization_id

@@ -115,7 +115,10 @@ test('T-3 email: sent once to a trial with <=3 days left, never to one with 10 d
   assert.equal(m.length, 1);
   assert.match(m[0].subject, /ends in 2 days/);
   assert.match(m[0].text, /Hi Ada,/);
-  assert.match(m[0].text, /screentinker\.com\/#\/billing/);
+  // ⚠️ /app#/billing, not /#/billing. This assertion used to pin the broken address: `/` is the
+  // marketing page and throws the hash away, so the one call to action in this email — the whole
+  // point of sending it — landed on the front door.
+  assert.match(m[0].text, /screentinker\.com\/app#\/billing/);
   assert.equal(mailsTo(later).length, 0);
   assert.ok(row(soon).trial_ending_email_sent_at, 'stamped');
   assert.equal(row(soon).plan_id, 'pro', 'still on the trial — not downgraded early');

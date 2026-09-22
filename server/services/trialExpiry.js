@@ -48,7 +48,11 @@ const { LOCAL_USERS_SQL } = require('../lib/replica-proxy');
 const SWEEP_HOUR_UTC = 14;     // 14:00 UTC daily: mid-morning US, afternoon EU — the emails land in a workday
 const ENDING_SOON_DAYS = 3;
 const EXPIRED_EMAIL_MAX_AGE_DAYS = Math.max(0, Number(process.env.TRIAL_EXPIRED_EMAIL_MAX_AGE_DAYS) || 30);
-const BILLING_URL = 'https://screentinker.com/#/billing';
+// ⚠️ /app IS PART OF THE PATH. `https://screentinker.com/#/billing` serves the MARKETING page and
+// throws the hash away, so every "Choose a plan" link in these emails — the one thing a lapsing
+// trial is asked to click — landed on the front door. Same defect that sent paying customers there
+// from Stripe (routes/stripe.js).
+const BILLING_URL = 'https://screentinker.com/app#/billing';
 const DISCORD_URL = 'https://discord.gg/utTdsrqq4Z';
 
 function isEnabled() { return !config.selfHosted; }

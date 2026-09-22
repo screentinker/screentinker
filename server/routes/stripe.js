@@ -7,6 +7,39 @@ const config = require('../config');
 
 const appUrl = process.env.APP_URL || '';
 
+/*
+ * ⚠️ WHERE STRIPE SENDS THEM BACK, AND WHY EVERY PART OF THIS STRING MATTERS.
+ *
+ * `/app` — `req.headers.origin` is scheme+host with NO PATH, and APP_URL is set the same way, so
+ *   `${origin}/#/...` resolves to `https://host/#/...`. `/` serves the MARKETING page
+ *   (server.js: landing.html), which ignores the hash entirely. Two customers paid and were
+ *   dropped on the homepage with nothing to say the purchase had worked.
+ *
+ * `#/billing` — not `#/settings`. views/billing.js is what reads `payment=success` and renders the
+ *   confirmation; settings never looks at it.
+ *
+ * The `?payment=...` sits INSIDE the hash, so the SPA router has to match that route by prefix.
+ *   It does (app.js `hash.startsWith('#/billing')`) — exact equality silently routed the whole
+ *   thing to the default view instead, which is how the first fix for this would have failed too.
+ *
+ * `req.headers.origin` first, so a white-label customer on their own domain comes back to THEIR
+ *   domain rather than ours; APP_URL is only the fallback when there is no Origin header.
+ */
+const appBase = (req) => {
+  /*
+   * ⚠️ Trailing slashes stripped, and a last resort that is still ABSOLUTE.
+   *
+   * `APP_URL=https://host/` would otherwise build `https://host//app#/...` — path `//app`, which
+   * Express does not match, so the customer lands on a 404 instead of the dashboard: the same
+   * class of failure this function exists to fix. And with no Origin header AND no APP_URL the
+   * string was relative, which Stripe refuses outright (success_url must be absolute), turning a
+   * checkout into a 500 rather than a wrong page. Falling back to the request's own host is the
+   * only thing left that is true, and it can only ever affect the caller's own redirect.
+   */
+  const raw = req.headers.origin || appUrl || `${req.protocol}://${req.get('host') || ''}`;
+  return `${String(raw).replace(/\/+$/, '')}/app`;
+};
+
 let stripe = null;
 if (config.stripeSecretKey) {
   stripe = require('stripe')(config.stripeSecretKey);
@@ -41,7 +74,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
     if (req.user.stripe_subscription_id) {
       const portal = await stripe.billingPortal.sessions.create({
         customer: customerId,
-        return_url: `${req.headers.origin || appUrl}/#/settings`,
+        return_url: `${appBase(req)}#/billing`,
       });
       return res.json({ url: portal.url, type: 'portal' });
     }
@@ -57,8 +90,8 @@ router.post('/checkout', requireAuth, async (req, res) => {
       // redundant with a dashboard setting.
       allow_promotion_codes: true,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${req.headers.origin || appUrl}/#/settings?payment=success`,
-      cancel_url: `${req.headers.origin || appUrl}/#/settings?payment=cancelled`,
+      success_url: `${appBase(req)}#/billing?payment=success`,
+      cancel_url: `${appBase(req)}#/billing?payment=cancelled`,
       metadata: { user_id: req.user.id, plan_id },
       subscription_data: {
         metadata: { user_id: req.user.id, plan_id },
@@ -82,7 +115,7 @@ router.post('/portal', requireAuth, async (req, res) => {
   try {
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: `${req.headers.origin || appUrl}/#/settings`,
+      return_url: `${appBase(req)}#/billing`,
     });
     res.json({ url: session.url });
   } catch (err) {
@@ -126,6 +159,20 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         break;
       }
 
+      /*
+       * ⚠️ `created` AS WELL AS `updated`, and both read the period end defensively.
+       *
+       * A subscription that is born and then simply runs emits `customer.subscription.created` and
+       * nothing else until it renews or changes — so subscribing only to `updated` meant the first
+       * (and for an annual plan, the only) statement of when the period ends never arrived. Both
+       * live subscribers sat with subscription_ends NULL for that reason.
+       *
+       * And `current_period_end` MOVED from the subscription to the ITEM (Stripe API 2025-03+).
+       * The webhook endpoint is pinned to an older version than the SDK's own default, so a payload
+       * can legitimately arrive in either shape; reading only the subscription level wrote NULL
+       * without erroring, which is the kind of silence that survives a green test suite.
+       */
+      case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const sub = event.data.object;
         const userId = sub.metadata?.user_id;
@@ -140,11 +187,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         }
 
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
-        const ends = sub.current_period_end || null;
+        const ends = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end ?? null;
 
         db.prepare(`UPDATE users SET plan_id = COALESCE(?, plan_id), subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
           .run(planId, status, ends, userId);
-        console.log(`Subscription updated for ${userId}: ${planId} (${status})`);
+        console.log(`Subscription ${event.type.split('.').pop()} for ${userId}: ${planId} (${status}, ends ${ends || 'unknown'})`);
         break;
       }
 
