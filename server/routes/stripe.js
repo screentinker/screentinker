@@ -3,7 +3,9 @@ const router = express.Router();
 const { db } = require('../db/database');
 const { sendPaymentReceipt } = require('../services/billingEmails');
 const { requireAuth } = require('../middleware/auth');
+const subscriptions = require('../middleware/subscription');
 const config = require('../config');
+const { periodEndOf, subscriptionIdOf } = require('../lib/stripe-fields');
 
 const appUrl = process.env.APP_URL || '';
 
@@ -144,6 +146,9 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
   // Set by the payment_succeeded case; sent after the response. See that case for why.
   let pendingReceipt = null;
+  // Set by payment_failed on the FIRST failure of an episode — the dunning note goes out the same
+  // way, after the 200, for the same reason.
+  let pendingDunning = null;
 
   try {
     switch (event.type) {
@@ -187,10 +192,13 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         }
 
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
-        const ends = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end ?? null;
+        const ends = periodEndOf(sub);   // moved to the item in Stripe 2025-03+; see lib/stripe-fields.js
 
         db.prepare(`UPDATE users SET plan_id = COALESCE(?, plan_id), subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
           .run(planId, status, ends, userId);
+        // Back in good standing: end the dunning episode, including its email stamps, so a lapse
+        // next year is announced rather than silently suppressed by a stale one.
+        if (status === 'active') subscriptions.clearGrace(userId);
         console.log(`Subscription ${event.type.split('.').pop()} for ${userId}: ${planId} (${status}, ends ${ends || 'unknown'})`);
         break;
       }
@@ -225,18 +233,37 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
          * arrives while the first is still sending is refused by the invoice claim, not by luck.
          */
         pendingReceipt = event.data.object;
+        {
+          // A payment landing is the end of the episode, whichever invoice it was.
+          const subId = subscriptionIdOf(pendingReceipt);
+          const custId = pendingReceipt.customer || null;
+          const u = (subId && db.prepare('SELECT id FROM users WHERE stripe_subscription_id = ?').get(subId))
+            || (custId && db.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').get(custId));
+          if (u && subscriptions.clearGrace(u.id)) console.log(`Payment recovered for user ${u.id} — grace cleared`);
+        }
         break;
       }
 
       case 'invoice.payment_failed': {
+        /*
+         * ⚠️ `invoice.subscription` is GONE (Stripe 2025-03+), so this used to resolve to
+         * undefined and the whole case did nothing — a failed payment changed no state at all.
+         * The customer id is the fallback for an invoice raised outside a subscription.
+         */
         const invoice = event.data.object;
-        const subId = invoice.subscription;
-        if (subId) {
-          const user = db.prepare('SELECT id FROM users WHERE stripe_subscription_id = ?').get(subId);
-          if (user) {
-            db.prepare("UPDATE users SET subscription_status = 'past_due', updated_at = strftime('%s','now') WHERE id = ?").run(user.id);
-            console.log(`Payment failed for user ${user.id}`);
-          }
+        const subId = subscriptionIdOf(invoice);
+        const custId = invoice.customer || null;
+        const user = (subId && db.prepare('SELECT id FROM users WHERE stripe_subscription_id = ?').get(subId))
+          || (custId && db.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').get(custId))
+          || null;
+        if (user) {
+          // Starts the grace clock on the FIRST failure of an episode and leaves it alone on
+          // Stripe's retries, so the 7 days are measured from when the trouble began.
+          const first = subscriptions.startGrace(user.id);
+          console.log(`Payment failed for user ${user.id}${first ? ' — grace started' : ' (retry, grace already running)'}`);
+          if (first) pendingDunning = { userId: user.id, invoice };
+        } else {
+          console.warn(`Payment failed but no account matched (sub=${subId || 'none'}, cust=${custId || 'none'})`);
         }
         break;
       }
@@ -261,6 +288,14 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         }
       })
       .catch((e) => console.error('[billing] receipt dispatch failed:', e && e.message));
+  }
+
+  // Same treatment for the dunning note: after the acknowledgement, never in front of it, because
+  // the send is a network round trip with no timeout and Stripe retries anything we hold open.
+  if (pendingDunning) {
+    require('../services/dunning').sendPaymentFailedEmail(pendingDunning.userId)
+      .then((r) => console.log(`[billing] payment-failed note for ${pendingDunning.userId}: ${JSON.stringify(r)}`))
+      .catch((e) => console.error('[billing] payment-failed note failed:', e && e.message));
   }
 });
 

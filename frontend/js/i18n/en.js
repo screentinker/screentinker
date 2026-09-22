@@ -2306,6 +2306,9 @@ export default {
   'billing.failed_to_load': 'Failed to load',
   'billing.toast.checkout_failed': 'Failed to start checkout: {error}',
   'billing.toast.portal_failed': 'Failed to open billing portal: {error}',
+  'billing.banner.past_due': 'A payment did not go through. Your screens are unaffected for now — update your card to keep your plan.',
+  'billing.banner.lapsed': 'Your plan has moved to Free because a payment did not go through. Nothing has been deleted.',
+  'billing.banner.update_card': 'Update card',
   'billing.toast.payment_success': 'Payment successful! Your plan has been upgraded.',
 
   // Teams

@@ -126,7 +126,7 @@ async function sendPaymentReceipt(invoice, deps = {}) {
 
     // Who paid. The subscription is the reliable link; the customer id is the fallback for an
     // invoice raised outside a subscription.
-    const subId = invoice.subscription || null;
+    const subId = require('../lib/stripe-fields').subscriptionIdOf(invoice);  // moved in Stripe 2025-03+
     const custId = invoice.customer || null;
     const user = (subId && db.prepare('SELECT id, email, name, plan_id FROM users WHERE stripe_subscription_id = ?').get(subId))
       || (custId && db.prepare('SELECT id, email, name, plan_id FROM users WHERE stripe_customer_id = ?').get(custId))

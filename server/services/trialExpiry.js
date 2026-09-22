@@ -324,6 +324,9 @@ function startTrialExpiry(io) {
 module.exports = {
   startTrialExpiry,
   runTrialExpirySweep,
+  // Shared with services/dunning.js: a downgrade is a downgrade, whether the cause was a lapsed
+  // trial or a failed card, and the screens must be re-pushed the same way in both cases.
+  pushDowngradedUserScreens, stampAfter, displayName, planFacts,
   // exposed for tests
   SWEEP_HOUR_UTC, ENDING_SOON_DAYS, EXPIRED_EMAIL_MAX_AGE_DAYS,
 };

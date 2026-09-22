@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+**A failed payment is now something the product tells you about, and handles.** Until now a
+declined card wrote a status nobody read: no email, no notice in the dashboard, no change in
+access. The only thing that ever actually happened was the account dropping to Free whenever
+Stripe eventually gave up, with no explanation. Now the first failure sends one email — a card
+usually fails because it expired, and being told is the whole remedy — and puts a banner in the
+dashboard. Nothing changes for seven days, because Stripe is still retrying and taking something
+away from a customer who is not at fault would only have to be undone. After that the account
+moves to the Free plan and a second email says so plainly: nothing has been deleted, the content
+and playlists are untouched, and a working card restores everything at once. Paying again at any
+point clears the whole episode, including the record of which emails were sent, so a lapse next
+year is announced rather than silently swallowed.
+
+⚠️ **No screen is ever blanked by any of this.** Screens beyond the Free limit stop, exactly as
+they already do when a trial ends — a shopfront going dark over a card problem would be a far
+worse outcome than a month of unpaid Pro, and it is the customer's own audience who would see it.
+
+**The billing state is now reconciled against Stripe daily.** Webhook delivery is not a guarantee —
+this instance lost every subscription event for months because the endpoint was never subscribed
+to them, and nothing could notice. The sweep now asks Stripe directly what it believes about every
+subscription on file and corrects the database, so a missed delivery heals within a day instead of
+persisting invisibly.
+
 ### Fixed
 
 **After paying, Stripe dropped customers on the marketing homepage.** The return address Stripe was
