@@ -121,6 +121,33 @@ function downgradeLapsed(userId) {
   return _downgradeLapsedStmt.run(userId).changes === 1;
 }
 
+/*
+ * The other half of the downgrade, and it was missing.
+ *
+ * downgradeLapsed() writes plan_id='free'. Recovery therefore has to put the plan BACK — clearing
+ * the grace clock and writing subscription_status='active' on its own leaves someone who has just
+ * paid sitting on Free limits, which from their side is indistinguishable from not having paid at
+ * all. Called from every path that learns the money arrived: the invoice webhook, the subscription
+ * webhook, and the daily reconcile.
+ *
+ * ⚠️ The plan id is CHECKED against the plans table first. A plan_id with no row grants nothing —
+ * getUserPlan INNER JOINs plans — so writing an unknown one is strictly worse than leaving them on
+ * Free, where at least the limits are real.
+ */
+function restorePlan(userId, planId) {
+  if (!planId) return false;
+  const known = db.prepare('SELECT 1 FROM plans WHERE id = ?').get(planId);
+  if (!known) {
+    console.warn(`[billing] refusing to restore unknown plan '${planId}' for user ${userId}`);
+    return false;
+  }
+  return db.prepare(`
+    UPDATE users
+       SET plan_id = ?, subscription_status = 'active', past_due_since = NULL,
+           payment_failed_email_sent_at = NULL, subscription_lapsed_email_sent_at = NULL
+     WHERE id = ?`).run(planId, userId).changes === 1;
+}
+
 function getUserPlan(userId) {
   const user = db.prepare(`
     SELECT u.*, p.name as plan_name, p.display_name as plan_display_name,
@@ -285,6 +312,7 @@ module.exports = {
   clearGrace,
   findLapsedSubscriberIds,
   downgradeLapsed,
+  restorePlan,
   expireTrial,
   findExpiredTrialUserIds,
   getUserPlan,

@@ -42,4 +42,18 @@ function subscriptionIdOf(invoice) {
   return v && typeof v === 'object' ? (v.id ?? null) : v;
 }
 
-module.exports = { periodEndOf, subscriptionIdOf };
+/**
+ * The price an invoice line is billing, or null.
+ *
+ * ⚠️ The FOURTH field of this kind. `line.price` is undefined on this account today; the value is
+ * at `line.pricing.price_details.price`. Verified live. Old shape first, same as the others,
+ * because the webhook endpoint may be pinned to an earlier API version than the SDK.
+ */
+function invoicePriceIdOf(invoice) {
+  const line = invoice?.lines?.data?.[0];
+  if (!line) return null;
+  const v = line.price?.id ?? line.price ?? line.pricing?.price_details?.price ?? null;
+  return v && typeof v === 'object' ? (v.id ?? null) : v;
+}
+
+module.exports = { periodEndOf, subscriptionIdOf, invoicePriceIdOf };

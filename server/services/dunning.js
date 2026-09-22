@@ -54,6 +54,22 @@ const subscriptions = require('../middleware/subscription');
 const { pushDowngradedUserScreens, stampAfter, displayName } = require('./trialExpiry');
 const { periodEndOf } = require('../lib/stripe-fields');
 
+/*
+ * Which of our plans a Stripe subscription represents: the id we stamped into its metadata at
+ * checkout, else the price it is actually billing. The price lookup is the one that still works
+ * for a subscription created before we stamped metadata, or edited in the Stripe dashboard.
+ */
+function planIdFromSubscription(sub) {
+  const fromMeta = sub && sub.metadata && sub.metadata.plan_id;
+  if (fromMeta) return fromMeta;
+  const priceId = sub && sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].price
+    && sub.items.data[0].price.id;
+  if (!priceId) return null;
+  const row = db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?')
+    .get(priceId, priceId);
+  return row ? row.id : null;
+}
+
 const SWEEP_HOUR_UTC = 15;          // an hour after the trial sweep, so the two never interleave
 const BILLING_URL = 'https://screentinker.com/app#/billing';
 
@@ -179,9 +195,15 @@ async function reconcileFromStripe() {
     } catch (e) {
       // A subscription Stripe no longer has is not an error to retry — it is an answer.
       if (e && e.statusCode === 404) {
-        db.prepare("UPDATE users SET subscription_status = 'cancelled', stripe_subscription_id = NULL WHERE id = ?").run(u.id);
+        /*
+         * ⚠️ plan_id = 'free' as well. Clearing the subscription id while leaving a paid plan_id
+         * left the account on Pro for ever with nothing left to bill it — the mirror image of the
+         * customer.subscription.deleted handler, which has always dropped the plan.
+         */
+        db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled',
+                                     stripe_subscription_id = NULL WHERE id = ?`).run(u.id);
         out.corrected++;
-        console.log(`[DUNNING] reconcile: ${u.id} — subscription gone from Stripe, cleared`);
+        console.log(`[DUNNING] reconcile: ${u.id} — subscription gone from Stripe, moved to Free`);
       } else {
         out.errors++;
         console.error(`[DUNNING] reconcile: ${u.id}: ${e && e.message}`);
@@ -196,8 +218,19 @@ async function reconcileFromStripe() {
     if (!changes.length) continue;
     db.prepare(`UPDATE users SET subscription_status = ?, subscription_ends = COALESCE(?, subscription_ends) WHERE id = ?`)
       .run(status, ends, u.id);
-    // Stripe says this is paid and running: whatever we thought, the episode is over.
-    if (status === 'active') subscriptions.clearGrace(u.id);
+    /*
+     * Stripe says this is paid and running: whatever we thought, the episode is over — and if a
+     * previous sweep had already dropped them to Free, the plan comes back here. This is the path
+     * that makes recovery work without depending on a webhook arriving.
+     */
+    if (status === 'active') {
+      const planId = planIdFromSubscription(sub);
+      if (u.plan_id === 'free' && planId) {
+        if (subscriptions.restorePlan(u.id, planId)) console.log(`[DUNNING] reconcile: ${u.id} — paid again, restored to ${planId}`);
+      } else {
+        subscriptions.clearGrace(u.id);
+      }
+    }
     out.corrected++;
     console.log(`[DUNNING] reconcile: ${u.id} — ${changes.join(', ')}`);
   }

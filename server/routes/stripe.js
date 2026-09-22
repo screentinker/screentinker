@@ -5,7 +5,7 @@ const { sendPaymentReceipt } = require('../services/billingEmails');
 const { requireAuth } = require('../middleware/auth');
 const subscriptions = require('../middleware/subscription');
 const config = require('../config');
-const { periodEndOf, subscriptionIdOf } = require('../lib/stripe-fields');
+const { periodEndOf, subscriptionIdOf, invoicePriceIdOf } = require('../lib/stripe-fields');
 
 const appUrl = process.env.APP_URL || '';
 
@@ -239,7 +239,21 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           const custId = pendingReceipt.customer || null;
           const u = (subId && db.prepare('SELECT id FROM users WHERE stripe_subscription_id = ?').get(subId))
             || (custId && db.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').get(custId));
-          if (u && subscriptions.clearGrace(u.id)) console.log(`Payment recovered for user ${u.id} — grace cleared`);
+          if (u) {
+            /*
+             * ⚠️ Restore the PLAN, not just the status. A previous sweep may have dropped them to
+             * Free; clearing the grace alone would leave someone who has just paid on Free limits.
+             * The plan comes from the price this invoice actually billed, so it needs no API call.
+             */
+            const row = db.prepare('SELECT plan_id FROM users WHERE id = ?').get(u.id);
+            const priceId = invoicePriceIdOf(pendingReceipt);
+            const plan = priceId && db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?').get(priceId, priceId);
+            if (row && row.plan_id === 'free' && plan) {
+              if (subscriptions.restorePlan(u.id, plan.id)) console.log(`Payment recovered for user ${u.id} — restored to ${plan.id}`);
+            } else if (subscriptions.clearGrace(u.id)) {
+              console.log(`Payment recovered for user ${u.id} — grace cleared`);
+            }
+          }
         }
         break;
       }

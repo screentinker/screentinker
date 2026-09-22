@@ -162,3 +162,43 @@ test('a self-hosted instance runs none of this', async () => {
     delete require.cache[require.resolve('../services/dunning')];
   }
 });
+
+/* ------------------------------ recovery: the half that was missing ------------------------------ */
+
+test('a customer who fixes their card gets their PLAN back, not just an active status', () => {
+  /*
+   * The downgrade sets plan_id='free'. Recovery therefore has to put the plan BACK — clearing the
+   * grace and writing subscription_status='active' leaves a paying customer sitting on Free
+   * limits, which is the same outcome as not having paid.
+   */
+  const id = makeSubscriber({ pastDueSince: nowSec() - 9 * DAY, status: 'past_due' });
+  assert.equal(subs.downgradeLapsed(id), true);
+  assert.equal(read(id).plan_id, 'free');
+
+  // The card is fixed. Whatever tells us — a webhook or the reconcile — the plan must return.
+  const { restorePlan } = require('../middleware/subscription');
+  assert.equal(restorePlan(id, 'pro'), true);
+  const u = read(id);
+  assert.equal(u.plan_id, 'pro', 'back on the plan they pay for');
+  assert.equal(u.subscription_status, 'active');
+  assert.equal(u.past_due_since, null, 'and the episode is closed');
+});
+
+test('restorePlan refuses a plan that does not exist rather than writing a dead id', () => {
+  const id = makeSubscriber({ pastDueSince: nowSec() - 9 * DAY, status: 'past_due' });
+  subs.downgradeLapsed(id);
+  const { restorePlan } = require('../middleware/subscription');
+  assert.equal(restorePlan(id, 'no_such_plan'), false);
+  assert.equal(read(id).plan_id, 'free', 'unchanged — a dead plan_id has no entitlements at all');
+});
+
+test('the invoice line price is read in both shapes (the fourth field Stripe moved)', () => {
+  const { invoicePriceIdOf } = require('../lib/stripe-fields');
+  // What this account actually delivers today.
+  assert.equal(invoicePriceIdOf({ lines: { data: [{ pricing: { price_details: { price: 'price_new' } } }] } }), 'price_new');
+  // Older shapes, expanded and not.
+  assert.equal(invoicePriceIdOf({ lines: { data: [{ price: { id: 'price_obj' } }] } }), 'price_obj');
+  assert.equal(invoicePriceIdOf({ lines: { data: [{ price: 'price_str' }] } }), 'price_str');
+  assert.equal(invoicePriceIdOf({ lines: { data: [] } }), null);
+  assert.equal(invoicePriceIdOf(null), null);
+});
