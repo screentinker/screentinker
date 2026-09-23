@@ -6,6 +6,7 @@ export default {
   'content.upload_resume_prompt': '¿Reanudar la subida de {name}? Ya se envió el {done}% la vez anterior.',
   // Playlist content picker: folder filter + the honest notices that replaced a silent
   // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folders_empty_hidden': '{n} carpetas vacías ocultas',
   'playlist.folder_label': 'Filtrar por carpeta',
   'playlist.folder_all': 'Todas las carpetas',
   'playlist.folder_root': 'Sin carpeta',

@@ -7,6 +7,7 @@ export default {
   'content.upload_resume_prompt': 'Upload von {name} fortsetzen? {done} % wurden beim letzten Mal bereits übertragen.',
   // Playlist content picker: folder filter + the honest notices that replaced a silent
   // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folders_empty_hidden': '{n} leere Ordner ausgeblendet',
   'playlist.folder_label': 'Nach Ordner filtern',
   'playlist.folder_all': 'Alle Ordner',
   'playlist.folder_root': 'Kein Ordner',

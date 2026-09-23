@@ -21,6 +21,7 @@ export default {
   'content.upload_resume_prompt': '{name} का अपलोड फिर से शुरू करें? पिछली बार {done}% पहले ही भेजा जा चुका है।',
   // Playlist content picker: folder filter + the honest notices that replaced a silent
   // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folders_empty_hidden': '{n} खाली फ़ोल्डर छिपाए गए',
   'playlist.folder_label': 'फ़ोल्डर से छानें',
   'playlist.folder_all': 'सभी फ़ोल्डर',
   'playlist.folder_root': 'कोई फ़ोल्डर नहीं',

@@ -8,6 +8,7 @@ export default {
   'content.upload_resume_prompt': '是否继续上传 {name}？上次已上传 {done}%。',
   // Playlist content picker: folder filter + the honest notices that replaced a silent
   // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folders_empty_hidden': '已隐藏 {n} 个空文件夹',
   'playlist.folder_label': '按文件夹筛选',
   'playlist.folder_all': '所有文件夹',
   'playlist.folder_root': '无文件夹',

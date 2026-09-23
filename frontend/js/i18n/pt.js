@@ -7,6 +7,7 @@ export default {
   'content.upload_resume_prompt': 'Retomar o envio de {name}? {done}% já foram enviados da última vez.',
   // Playlist content picker: folder filter + the honest notices that replaced a silent
   // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folders_empty_hidden': '{n} pastas vazias ocultas',
   'playlist.folder_label': 'Filtrar por pasta',
   'playlist.folder_all': 'Todas as pastas',
   'playlist.folder_root': 'Sem pasta',
