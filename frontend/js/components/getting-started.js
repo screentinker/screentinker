@@ -249,6 +249,14 @@ export async function mount(host, opts = {}) {
   try {
     const [d, c, p] = await Promise.all([
       devices || api.getDevices().catch(() => []),
+      /*
+       * ⚠️ A BARE getContent() ON PURPOSE, and the only one left in the app. Everywhere else this
+       * shape was a bug (#417): the endpoint caps at 100, so a caller that wanted the whole library
+       * silently got its newest slice. Here the ONLY question is "does this workspace have any
+       * content yet", which computeSteps answers from length > 0 — so one page is not merely
+       * enough, it is the cheaper right answer. Paging a 5,000-item library to decide whether it is
+       * non-empty would be ten requests to learn something the first one already told us.
+       */
       content || api.getContent().catch(() => []),
       playlists || api.getPlaylists().catch(() => []),
     ]);

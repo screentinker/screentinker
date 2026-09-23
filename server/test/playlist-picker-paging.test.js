@@ -158,3 +158,39 @@ test('api.getAllContent reports truncation instead of pretending', () => {
   const view = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'playlists.js'), 'utf8');
   assert.match(view, /library_truncated/, 'and the picker must render that admission');
 });
+
+test('no view fetches "the whole library" through the 100-item endpoint', () => {
+  /*
+   * ⚠️ THE GUARD FOR THE WHOLE CLASS, not just the playlist picker.
+   *
+   * `api.getContent()` with no folder means "give me everything", and the endpoint answers with
+   * the newest 100. Four views did that: the playlist picker (#417), the schedule editor, the
+   * device default-content dropdown and the zone assignment modal. Each one showed an operator a
+   * partial library with nothing saying so, and each would have been reported as its own unrelated
+   * bug — the picker already was.
+   *
+   * The one deliberate exception is getting-started.js, which asks only "is there any content at
+   * all"; one page answers that, and paging to find out would be strictly worse. It is named here
+   * so the exemption is a decision rather than an oversight.
+   */
+  const root = path.join(__dirname, '..', '..', 'frontend', 'js');
+  const EXEMPT = ['components/getting-started.js'];
+
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith('.js')) continue;
+      const rel = path.relative(root, full).split(path.sep).join('/');
+      if (EXEMPT.includes(rel)) continue;
+      const src = fs.readFileSync(full, 'utf8');
+      // A bare call: no folder id, no arguments at all.
+      if (/api\.getContent\(\s*\)/.test(src)) offenders.push(rel);
+    }
+  };
+  walk(root);
+
+  assert.deepEqual(offenders, [],
+    'these fetch the whole library through an endpoint that returns 100 items — use api.getAllContent()');
+});
