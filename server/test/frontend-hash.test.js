@@ -148,3 +148,21 @@ test('the hardcoded list is gone', () => {
   assert.doesNotMatch(region, /js\/views\/dashboard\.js/,
     'a literal list of views in the hash means the next view added is invisible again');
 });
+
+test('⚠️ /api/version must never answer with an empty hash', () => {
+  /*
+   * THE REGRESSION THE ASYNC REWRITE INTRODUCED, caught in review rather than in production.
+   *
+   * The first pass is asynchronous, so between boot and its completion the endpoint could reply
+   * `hash: ''`. The dashboard takes whatever it FIRST sees as its baseline —
+   * `if (knownHash === null) knownHash = data.hash` — and compares later polls against it. One
+   * request landing in that window therefore makes the NEXT poll look like a new version and pops
+   * "Dashboard updated. Reload now" at someone who has just loaded the page.
+   *
+   * The old synchronous version could not do this: the hash existed before anything could ask.
+   */
+  const route = SERVER_JS.slice(SERVER_JS.indexOf("app.get('/api/version'"), SERVER_JS.indexOf("app.get('/api/version'") + 1400);
+  assert.match(route, /if \(!frontendHash\)/, 'the endpoint must not serve an unset hash');
+  assert.match(route, /await updateFrontendHash\(\)/, 'and must compute one first');
+  assert.match(route, /async \(req, res\)/, 'which means the handler is async');
+});

@@ -1563,7 +1563,9 @@ async function updateFrontendHash() {
     parts.sort();                // readdir order is not guaranteed stable across platforms
     frontendHash = crypto.createHash('md5').update(parts.join('|')).digest('hex').slice(0, 8);
   } catch {
-    // Never leave it empty: an empty hash reads as "no version" to the client.
+    // Never leave it empty: an empty hash reads as "no version" to the client, and the client
+    // treats the FIRST value it sees as the baseline — so '' followed by a real hash is
+    // indistinguishable from a deploy.
     if (!frontendHash) frontendHash = Date.now().toString(36);
   } finally {
     _hashing = false;
@@ -1572,7 +1574,18 @@ async function updateFrontendHash() {
 updateFrontendHash();
 // Recheck every 30 seconds
 setInterval(() => { updateFrontendHash().catch(() => {}); }, 30000);
-app.get('/api/version', (req, res) => {
+app.get('/api/version', async (req, res) => {
+  /*
+   * ⚠️ NEVER ANSWER WITH AN EMPTY HASH. The first pass is asynchronous, so between boot and its
+   * completion this endpoint could reply `hash: ''`. The dashboard stores whatever it first sees
+   * (`if (knownHash === null) knownHash = data.hash`) and compares later polls against it — so one
+   * request landing in that window makes the NEXT poll look like a new version and pops "Dashboard
+   * updated. Reload now" at someone who has just loaded the page.
+   *
+   * The old synchronous version could not do this: the hash was set before anything could ask.
+   * Awaiting here restores that guarantee at the cost of ~5ms on one request, once per boot.
+   */
+  if (!frontendHash) { try { await updateFrontendHash(); } catch { /* fall through to the seed */ } }
   const latest = ghcrCheck.getLatestVersion();
   const updateAvailable = latest ? ghcrCheck.compareVersions(latest, VERSION) > 0 : false;
   res.json({ hash: frontendHash, version: VERSION, latest_version: latest, update_available: updateAvailable });
