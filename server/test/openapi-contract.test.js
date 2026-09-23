@@ -42,9 +42,18 @@ test('openapi: every operation x-required-scope matches the method-based enforce
        * capability rather than ordinary content editing. Documenting it as 'write' would send an
        * integrator to a guaranteed 403 while telling them their token was sufficient.
        */
+      /*
+       * ⚠️ /display-power-schedules is here for the SAME reason as /triggers directly above: it
+       * enforces full. routes/display-power-schedules.js guards every mutation with
+       * requireScope('full') + requireFleetWrite, because deciding when a screen is LIT is a
+       * fleet-affecting capability rather than ordinary content editing — it is the one setting
+       * that can make an estate go dark, and an integrator whose token was merely 'write' would be
+       * sent to a guaranteed 403 while the docs told them they were fine.
+       */
       const isFullScope = p.includes('command') || p === '/pip' || p.startsWith('/pip/')
         || p === '/triggers' || p.startsWith('/triggers/')
-        || p.endsWith('/trigger-config') || p.endsWith('/trigger-secret');
+        || p.endsWith('/trigger-config') || p.endsWith('/trigger-secret')
+        || p === '/display-power-schedules' || p.startsWith('/display-power-schedules/');
       const expected = (m === 'get' || m === 'head') ? 'read' : (isFullScope ? 'full' : 'write');
       if (op['x-required-scope'] !== expected) {
         mismatches.push(`${m.toUpperCase()} ${p}: spec='${op['x-required-scope']}' enforcement='${expected}'`);

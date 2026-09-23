@@ -137,7 +137,8 @@ const WRITE_CATEGORIES = Object.freeze({
      * the same commit.
      */
     consequence: 'This hub will be able to restart your screens, turn them on and off, relaunch ' +
-                 'the player, and change volume, brightness, screen timeout, clock and status bar. ' +
+                 'the player, set a weekly schedule for when their displays switch off, and change ' +
+                 'volume, brightness, screen timeout, clock and status bar. ' +
                  'It will NOT be able to run commands on them, install software, or change what ' +
                  'the person standing at the screen can do.',
     /*

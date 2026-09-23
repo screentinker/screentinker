@@ -124,6 +124,24 @@ object PlayerCapabilities {
             // possible version of this feature.
             if (isOwner || policy.isAdminActive() || accessibility) caps += "display.power"
 
+            /*
+             * An UNATTENDED weekly backlight schedule. Declared under the SAME condition as
+             * display.power and never on its own, because the asymmetry above becomes much more
+             * expensive once nobody is pressing the button.
+             *
+             * The comment on display.power weighs "offering a control that sleeps a panel it cannot
+             * wake" and settles it by requiring the OFF path. A schedule raises the stakes on the
+             * other half: a panel that sleeps itself at 22:00 and cannot wake is not a dead button,
+             * it is a site visit — and the screen looks like failed hardware until someone makes
+             * one. Both halves are present here (wake is a wake lock, which needs only WAKE_LOCK,
+             * held already), so the condition is the same; it is stated separately so that if the
+             * two ever diverge, THIS one keeps the stricter test.
+             *
+             * The server gates set_power_schedule on this name rather than on display.power
+             * precisely so a build that has one and not the other is never sent a schedule.
+             */
+            if (isOwner || policy.isAdminActive() || accessibility) caps += "display.power_schedule"
+
             // Owner-only reboot. Off-owner it degrades to an accessibility power DIALOG, which needs
             // someone standing at the screen — not a remote capability.
             if (isOwner) caps += "system.reboot"

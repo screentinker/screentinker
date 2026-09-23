@@ -57,6 +57,16 @@ const PUBLIC_ROUTERS = [
   // on the device, because a trigger that needs this server is a trigger that fails with the WAN
   // down, which is the whole feature. See docs/triggers-design.md.
   { path: '/api/triggers',    mod: './routes/triggers' },
+  /*
+   * Display power schedules — the weekly BACKLIGHT clock. Public (token-reachable) for the same
+   * reason as triggers: an integrator provisioning a site sets these from their own tooling, and
+   * "the screens are dark 22:00-06:00" is exactly the kind of thing that belongs in a site
+   * handover script rather than in twenty dashboard visits.
+   *
+   * ⚠️ Like triggers, the DECISION is not here. The panel evaluates its own windows offline; this
+   * router only defines them. Nothing in it can turn a device off — see routes/display-power-schedules.js.
+   */
+  { path: '/api/display-power-schedules', mod: './routes/display-power-schedules' },
 ];
 
 const JWT_ONLY_ROUTERS = [

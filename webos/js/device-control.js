@@ -112,6 +112,21 @@
       case 'screen_on': return screen(true);
       case 'update': return update(payload && payload.url);
       case 'restart': return restartApp();
+      /*
+       * The weekly backlight schedule. ANDROID-FIRST: stored, not yet evaluated locally, and it
+       * reports supported:false rather than pretending. The panel can already blank itself
+       * (screen_off above), so the missing piece is the local clock, not the hardware — see the
+       * longer note in tizen/js/device-control.js. The server does not send this to a player that
+       * has not declared display.power_schedule, so in practice this branch is a safety net.
+       */
+      case 'set_power_schedule':
+        try {
+          var s = payload && payload.schedule ? JSON.stringify(payload.schedule) : '';
+          if (s) { localStorage.setItem('st_power_schedule', s); }
+          else { localStorage.removeItem('st_power_schedule'); }
+        } catch (e) { /* storage unavailable — the schedule simply is not retained */ }
+        return Promise.resolve({ ok: true, supported: false, action: 'set_power_schedule',
+          note: 'stored; this player does not evaluate power windows locally yet (Android-first)' });
       default: return Promise.reject(new Error('unknown action: ' + action));
     }
   }

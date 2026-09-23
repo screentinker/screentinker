@@ -176,6 +176,22 @@ class WebSocketService : Service() {
         wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "RemoteDisplay:WebSocket")
         wakeLock?.acquire()
 
+        /*
+         * The backlight schedule, restored and ticking BEFORE any socket exists. A panel that
+         * reboots at 02:00 with no WAN must come back dark and stay dark until its window ends; if
+         * this waited for a connection it would sit lit in an empty shop all night, which is the
+         * cost the feature exists to avoid. START_STICKY brings the service back after a kill, and
+         * this runs again on that path too.
+         */
+        powerSchedule = com.remotedisplay.player.power.PowerScheduleManager(
+            applicationContext,
+            onApply = { off -> applyScheduledPower(off) },
+            onStateChanged = { state -> setDisplayPowerState(state) }
+        ).also {
+            it.restore()     // applies the current window immediately — no waiting for an edge
+            it.start()
+        }
+
         startReconnectWatchdog()
 
         // feat/offline-cause-log: best-effort diagnostics plumbing (both guarded, both cleaned up in
@@ -349,6 +365,15 @@ class WebSocketService : Service() {
                     consecutiveFailures = 0
                     armConnectivityReport()   // feat/offline-cause-log: capture the gap, flush post-auth
                     register()
+                    /*
+                     * Re-assert the backlight state on every reconnect, forced. While we were away
+                     * the panel's ACTUAL state may have drifted from ours — someone walked up and
+                     * touched it, the OS slept it, an OTA restarted the Activity — and a tick that
+                     * only acts on CHANGE would leave that drift in place until the next edge,
+                     * which for an overnight window is hours away.
+                     */
+                    try { powerSchedule?.applyNow(force = true) }
+                    catch (e: Throwable) { Log.w("WebSocketService", "power re-apply on connect: ${e.message}") }
                 }
 
                 safeOn(Socket.EVENT_DISCONNECT) { args ->
@@ -506,6 +531,18 @@ class WebSocketService : Service() {
                         return@safeOn
                     }
                     Log.i("WebSocketService", "Playlist update received, assignments=${data.optJSONArray("assignments")?.length() ?: "null"}")
+                    /*
+                     * ⚠️ The power schedule is adopted HERE, in the service, and not in the
+                     * Activity's onPlaylistUpdate. The Activity may be stopped or destroyed — it
+                     * certainly is during a scheduled-off window, since blanking the panel is
+                     * lockNow() — and a schedule edit that only landed when a UI happened to be
+                     * alive would be lost exactly when it matters. `optJSONObject` returns null
+                     * when the field is absent, and null CLEARS.
+                     */
+                    handler.post {
+                        try { powerSchedule?.update(data.optJSONObject("power_schedule")) }
+                        catch (e: Throwable) { Log.w("WebSocketService", "power schedule adopt: ${e.message}") }
+                    }
                     handler.post { try { onPlaylistUpdate?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onPlaylistUpdate cb: ${e.message}") } }
                 }
 
@@ -715,12 +752,18 @@ class WebSocketService : Service() {
                         // #161: real lock on owner/admin (FORCE_LOCK), else accessibility lock. The
                         // `input keyevent 26` exec (denied for an unprivileged UID) is retired.
                         "screen_off" -> handler.post {
-                            try {
-                                if (!com.remotedisplay.player.admin.STPolicy(this@WebSocketService).lockNow()) {
-                                    PowerAccessibilityService.instance?.lockScreen()
-                                        ?: Log.w("WebSocketService", "screen_off: no owner/admin/accessibility — unsupported")
-                                }
-                            } catch (e: Throwable) { Log.e("WebSocketService", "screen_off: ${e.message}") }
+                            // An operator screen_off is just a screen_off — it creates no schedule
+                            // and clears any exemption they had from the running one.
+                            powerSchedule?.noteManualScreenOff()
+                            blankPanel()
+                        }
+                        /*
+                         * The weekly backlight schedule: a DEFINITION, not "go dark now". Handled in
+                         * the SERVICE so it survives the Activity being stopped or destroyed — which
+                         * is the normal state during a scheduled-off window. null CLEARS.
+                         */
+                        "set_power_schedule" -> handler.post {
+                            powerSchedule?.update(payload?.optJSONObject("schedule"))
                         }
                         // Was a no-op because `input keyevent 224` is denied to an app UID — but a
                         // wake LOCK is a different mechanism needing only WAKE_LOCK, which we hold.
@@ -728,11 +771,11 @@ class WebSocketService : Service() {
                         // foregrounded can still be woken; the service is the only thing guaranteed
                         // to be alive, and "screen won't come back on" means a site visit.
                         "screen_on" -> {
-                            val woke = com.remotedisplay.player.system.SystemControl(applicationContext).wakeScreen()
-                            Log.i("WebSocketService", "screen_on: wake=$woke")
-                            // Bring the player back in front of the keyguard too. Same fail-loud
-                            // reasoning as Relauncher: waking to a lock screen is only half a fix.
-                            handler.post { try { onCommand?.invoke("screen_on", payload) } catch (_: Throwable) {} }
+                            // An operator waking a screen inside a scheduled-off window is exempt
+                            // from that window until it ENDS. Noted before the wake so the tick
+                            // cannot race in and re-blank the panel they just asked for.
+                            powerSchedule?.noteManualScreenOn()
+                            wakePanel(bringToFront = true, payload = payload)
                         }
                         "set_debug" -> {
                             val on = payload?.optBoolean("enabled", false) ?: false
@@ -1102,12 +1145,98 @@ class WebSocketService : Service() {
         try { getSharedPreferences("remote_display", MODE_PRIVATE).edit().putLong("clock_offset_ms", clockOffsetMs).apply() } catch (e: Throwable) {}
     }
 
+    /*
+     * What the backlight schedule currently says — "on" or "scheduled_off". Set by
+     * PowerScheduleManager through MainActivity whenever the state changes, and reported on every
+     * heartbeat so the dashboard can tell a screen that is DELIBERATELY dark from one that is
+     * broken. Without it the two are indistinguishable from the operator's side, which is the
+     * failure mode this whole feature has to avoid creating.
+     */
+    @Volatile private var displayPowerState: String = "on"
+
+    fun setDisplayPowerState(state: String) { displayPowerState = state }
+
+    /* ------------------------------------------------------------------ display power schedule */
+
+    /**
+     * The weekly backlight schedule, owned by the SERVICE.
+     *
+     * ⚠️ NOT by MainActivity, and the reason is circular in a way that is easy to miss: a scheduled
+     * off is `lockNow()`, which stops the Activity and may let it be destroyed. An Activity-scoped
+     * tick therefore switches the panel off and then dies with it, and the 06:00 wake never runs —
+     * the schedule would reliably work exactly once. The service is the only thing guaranteed to be
+     * alive (foreground, START_STICKY, PARTIAL_WAKE_LOCK), which is the same reasoning the
+     * screen_on branch above already carries in writing.
+     */
+    private var powerSchedule: com.remotedisplay.player.power.PowerScheduleManager? = null
+
+    /**
+     * Set by MainActivity while it exists. Its ONLY job is the window flag, which only a window can
+     * hold; everything else about going dark and coming back happens in this service so it works
+     * with no Activity at all. Null means "no UI attached", which is a normal state mid-window.
+     */
+    var onPowerWindow: ((off: Boolean) -> Unit)? = null
+
+    /**
+     * Make the panel dark — the ONE implementation, shared by the remote screen_off command and the
+     * schedule. A second "make it dark" would drift from the one the operator's button uses, and
+     * the divergence would only ever show up on hardware nobody has in front of them.
+     */
+    private fun blankPanel() {
+        try {
+            if (!com.remotedisplay.player.admin.STPolicy(this@WebSocketService).lockNow()) {
+                PowerAccessibilityService.instance?.lockScreen()
+                    ?: Log.w("WebSocketService", "screen_off: no owner/admin/accessibility — unsupported")
+            }
+        } catch (e: Throwable) { Log.e("WebSocketService", "screen_off: ${e.message}") }
+    }
+
+    /**
+     * Wake the panel. The wake LOCK needs only WAKE_LOCK, which this service holds, so this works
+     * whether or not an Activity exists.
+     *
+     * @param bringToFront start MainActivity when no UI is attached. Waking to a keyguard with no
+     *   player behind it is half a fix, and "the screen came back blank" is still a site visit.
+     */
+    private fun wakePanel(bringToFront: Boolean, payload: JSONObject? = null) {
+        val woke = try {
+            com.remotedisplay.player.system.SystemControl(applicationContext).wakeScreen()
+        } catch (e: Throwable) { Log.w("WebSocketService", "wakeScreen: ${e.message}"); false }
+        Log.i("WebSocketService", "wake: $woke")
+        handler.post {
+            // The Activity's half: dismiss the keyguard and show itself over it.
+            val attached = onCommand != null
+            try { onCommand?.invoke("screen_on", payload) } catch (_: Throwable) { }
+            if (bringToFront && !attached) {
+                try {
+                    startActivity(Intent(this@WebSocketService, MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    })
+                    Log.i("WebSocketService", "wake: no Activity attached — relaunched MainActivity")
+                } catch (e: Throwable) { Log.e("WebSocketService", "wake relaunch: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * Apply a scheduled edge. Called by PowerScheduleManager's tick, which runs on this service.
+     *
+     * The window flag is asked of the Activity first (only a window can hold it) and is simply
+     * skipped when there is none — a destroyed Activity is not holding FLAG_KEEP_SCREEN_ON anyway,
+     * and it re-applies the correct state in onCreate.
+     */
+    private fun applyScheduledPower(off: Boolean) {
+        handler.post { try { onPowerWindow?.invoke(off) } catch (e: Throwable) { Log.w("WebSocketService", "power window flag: ${e.message}") } }
+        if (off) blankPanel() else wakePanel(bringToFront = true)
+    }
+
     private fun sendHeartbeat() {
         if (socket?.connected() != true) return
         try {
             val data = JSONObject().apply {
                 put("device_id", config.deviceId)
                 put("client_ms", System.currentTimeMillis())   // #group-sync: t1 for NTP-style clock discipline
+                put("display_power", displayPowerState)
                 try { put("telemetry", deviceInfo.getTelemetry()) } catch (e: Throwable) { Log.w("WebSocketService", "telemetry: ${e.message}") }
             }
             socket?.emit("device:heartbeat", data)
@@ -1784,6 +1913,8 @@ class WebSocketService : Service() {
         } catch (e: Throwable) { /* never let the last gasp block teardown */ }
         val ctx = applicationContext
         Thread { ExitSignal.send(ctx, "clean_exit", "onDestroy") }.apply { start(); try { join(1500) } catch (e: InterruptedException) { /* proceed with teardown */ } }
+        try { powerSchedule?.stop() } catch (e: Throwable) { /* teardown is best-effort */ }
+        powerSchedule = null
         reconnectWatchdog?.let { handler.removeCallbacks(it) }; reconnectWatchdog = null
         // feat/offline-cause-log: tear down the diagnostics plumbing (guarded — a never-registered
         // receiver/callback would otherwise throw IllegalArgumentException here).

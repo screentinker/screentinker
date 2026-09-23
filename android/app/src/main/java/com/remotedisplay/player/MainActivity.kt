@@ -768,6 +768,14 @@ class MainActivity : AppCompatActivity() {
         // to be VISIBLE. Only ProvisioningActivity ever assigned onUnpaired, and it is gone by the
         // time playback is running — so a rejection left the screen sitting on "Connecting to
         // server", and the player then blamed the URL. The server always says why; show that.
+        /*
+         * The service owns the backlight schedule and tells us when a window opens or closes. We
+         * hold only the window flag (see applyPowerWindowFlag). Registered here, cleared in
+         * onDestroy — a null callback simply means "no UI attached", which is the normal state
+         * DURING a window, since blanking the panel is lockNow().
+         */
+        wsService?.onPowerWindow = { off -> applyPowerWindowFlag(off) }
+
         wsService?.onUnpaired = {
             runOnUiThread {
                 val why = wsService?.lastRejectionReason ?: ""
@@ -1723,6 +1731,37 @@ class MainActivity : AppCompatActivity() {
      * comes back in the state the operator asked for; a lock that then fails is retried on the
      * next start rather than being forgotten.
      */
+    /**
+     * The Activity's ONLY part in a scheduled power window: the window flag.
+     *
+     * ⚠️ FLAG_KEEP_SCREEN_ON IS THE WHOLE REASON THIS CALLBACK EXISTS. MainActivity adds it
+     * unconditionally in onCreate so a kiosk never sleeps mid-playback. Leave it set during a
+     * scheduled-off window and the first person to walk past and touch the panel at 23:00 relights
+     * it FOR THE REST OF THE NIGHT — the OS will not sleep a window that is asking to stay awake,
+     * and the schedule has no edge left to fire until 06:00. The screen an operator scheduled off
+     * burns until morning while the dashboard reports it as scheduled_off the whole time.
+     *
+     * Only a window can hold that flag, which is why this one piece lives in the Activity. The
+     * blanking and the waking are the SERVICE's (WebSocketService.blankPanel / wakePanel), because
+     * a scheduled off is lockNow() and therefore stops this Activity: anything owned here would
+     * switch the panel off and then die with it, and the morning wake would never run.
+     */
+    private fun applyPowerWindowFlag(off: Boolean) {
+        runOnUiThread {
+            try {
+                if (off) {
+                    // Let the OS sleep the panel again after any incidental wake.
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    // Playback is live again, so the kiosk must stop sleeping.
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            } catch (e: Throwable) {
+                Log.w("MainActivity", "applyPowerWindowFlag($off): ${e.message}")
+            }
+        }
+    }
+
     private fun setKioskMode(enabled: Boolean) {
         try {
             getSharedPreferences("screentinker", Context.MODE_PRIVATE)
@@ -1963,6 +2002,9 @@ class MainActivity : AppCompatActivity() {
         try { triggerSweep?.let { handler.removeCallbacks(it) } } catch (e: Throwable) { }
         try { triggerManager?.stop() } catch (e: Throwable) { }
         triggerManager = null
+        // Drop the window-flag callback so the service stops calling into a dead Activity. The
+        // SCHEDULE keeps running — it is the service's, deliberately.
+        try { wsService?.onPowerWindow = null } catch (e: Throwable) { }
         remoteStreaming = false
         // #talk video: drop the bus listener (it holds `this`) and release the renderer.
         try { com.remotedisplay.player.remote.TalkVideoBus.listener = null } catch (e: Throwable) { }

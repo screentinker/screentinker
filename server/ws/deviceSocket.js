@@ -694,7 +694,17 @@ function buildPlaylistPayloadUnchecked(deviceId) {
 
   // #104: shared shape + zone-reset tail so the device payload and the dashboard
   // preview payload (GET /api/playlists/:id/preview-payload) can never drift.
-  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content });
+  // The weekly backlight schedule this screen obeys, resolved by the one rule that decides it
+  // (device beats group). Never fatal: a screen that cannot be told its power schedule should keep
+  // playing, and a missing schedule means "stay lit" everywhere in this feature.
+  let power_schedule = null;
+  try {
+    power_schedule = require('../lib/device-power-schedule').powerScheduleForDevice(db, deviceId);
+  } catch (e) {
+    console.warn(`[power-schedule] resolve failed for ${deviceId}: ${e.message}`);
+  }
+
+  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule });
 }
 
 // #104: the canonical player payload shape, shared by the device path
@@ -764,7 +774,7 @@ function attachDataSourceBag(items, workspaceId) {
   }
 }
 
-function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content }) {
+function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule }) {
   let a = Array.isArray(assignments) ? assignments : [];
   // Transition widgets are normalized OUT here (the single device+preview chokepoint): each is dropped
   // from the visible list and its config attached as an opaque `transition` on the item it plays into.
@@ -794,6 +804,17 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
     // signature, exactly as it does for `layout`.
     triggers: Array.isArray(triggers) ? triggers : [],
     trigger_config: trigger_config || null,
+    /*
+     * The weekly backlight schedule, for the panel to evaluate itself. Top-level and outside the
+     * item list for the SAME reason as triggers: it must never enter the player's structural
+     * fingerprint, or editing "off at 22:00" would restart playback (#234).
+     *
+     * ⚠️ Sent on every payload, not only on the set_power_schedule command. The command is the
+     * prompt edit; this is what makes a panel correct after a reboot, a re-pair, or a week offline
+     * — it arrives with the playlist and needs no command to have survived. null = no schedule,
+     * which the player must treat as "clear any schedule I am holding", not as "no news".
+     */
+    power_schedule: power_schedule || null,
     // #320: the GLSL for any uploaded shader this playlist actually references, sent with the
     // playlist rather than fetched separately. Every player already resolves a shader as an id
     // to a source string, so merging these into that lookup is all any of them needs — no new
