@@ -209,6 +209,28 @@ function getUserStorageMB(userId) {
   return Math.ceil(result.total / (1024 * 1024));
 }
 
+/**
+ * Bytes this user may still store, or null when the plan is unlimited.
+ *
+ * ⚠️ EXISTS BECAUSE checkStorageLimit CANNOT DO THIS. That middleware runs before any bytes are
+ * seen and can only ask "are you already at the limit", so a workspace at 19.9GB of 20GB passes it
+ * and then uploads a 500MB file, landing at 20.4GB. Nothing was lying; the size simply was not
+ * knowable yet.
+ *
+ * A resumable upload DECLARES its size before sending anything, which is the one thing a session
+ * knows that a stream does not — so the allowance can be enforced up front, before a gigabyte
+ * crosses the Pacific to be refused at the end.
+ *
+ * Returns a possibly NEGATIVE number when someone is already over (a plan downgrade will do it),
+ * so callers see the true shortfall rather than a floor of zero.
+ */
+function storageRoomBytes(userId) {
+  const plan = getUserPlan(userId);
+  if (!plan || plan.max_storage_mb === -1) return null;
+  const used = db.prepare('SELECT COALESCE(SUM(file_size), 0) AS total FROM content WHERE user_id = ?').get(userId);
+  return (plan.max_storage_mb * 1024 * 1024) - Number(used.total || 0);
+}
+
 // Check if user can add more devices
 function checkDeviceLimit(req, res, next) {
   const plan = getUserPlan(req.user.id);
@@ -306,6 +328,7 @@ function checkActiveSubscription(req, res, next) {
 }
 
 module.exports = {
+  storageRoomBytes,
   TRIAL_DAYS,
   GRACE_DAYS,
   startGrace,

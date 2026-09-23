@@ -1,6 +1,10 @@
 // Italian translations. This file is the source of truth for keys —
 // every other locale should mirror its keys (or fall back to en).
 export default {
+  // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
+  // See frontend/js/lib/chunked-upload.js.
+  'content.upload_resume_prompt': 'Riprendere il caricamento di {name}? Il {done}% era già stato inviato la volta scorsa.',
+
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.

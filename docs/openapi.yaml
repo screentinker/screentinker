@@ -2404,6 +2404,130 @@ paths:
   # remote control continue throughout. The windows are evaluated ON the player against its own
   # timezone, so a screen sleeps and wakes on time with the network down.
   # ---------------------------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------------------------
+  # RESUMABLE UPLOADS.
+  #
+  # Why they exist: a single-request upload must finish inside the shortest timeout between the
+  # client and the server. Behind a CDN that is typically 100-125s, and it does not scale with file
+  # size, so a large file or a slow/distant link fails at a fixed wall no matter how patient anyone
+  # is. Each chunk here gets its own budget, and a dropped connection costs one chunk.
+  #
+  # The single-shot POST /content still exists and is the right choice for a small file.
+  # ---------------------------------------------------------------------------------------------
+  /content/uploads:
+    post:
+      tags: [content]
+      summary: Open a resumable upload session
+      description: >-
+        Requires scope: write. Declares the filename and byte length up front, which is what lets the
+        storage allowance be enforced BEFORE any bytes are sent rather than after. Answers with the
+        chunk size the server wants, so it can be tuned server-side without a new client.
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, size]
+              properties:
+                filename: { type: string }
+                size:
+                  type: integer
+                  description: 'Exact byte length. Enforced as a ceiling on every chunk.'
+                folder_id: { type: [string, 'null'] }
+      responses:
+        '201':
+          description: '{ id, offset, chunk_size, declared_size }'
+        '400':
+          description: 'Missing filename or size, or a folder outside this workspace.'
+        '403':
+          description: 'Read-only access, or the upload would exceed the storage allowance (code STORAGE_LIMIT).'
+        '413':
+          description: Larger than the server file-size limit.
+  /content/uploads/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    head:
+      tags: [content]
+      summary: How many bytes has this upload received?
+      description: >-
+        Requires scope: read. Answers in the Upload-Offset and Upload-Length headers. This is the
+        endpoint that makes resume real: a client that reloaded, crashed or lost its connection needs
+        to remember only the session id, and the offset is read from the bytes on disk rather than
+        from anything the client reported.
+      x-required-scope: read
+      responses:
+        '204':
+          description: 'Upload-Offset and Upload-Length headers.'
+        '404':
+          description: No such session in this workspace.
+    get:
+      tags: [content]
+      summary: Describe a resumable upload session
+      description: 'Requires scope: read. The same offset as HEAD, plus the filename, for a resume prompt.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: '{ id, filename, offset, declared_size, chunk_size, folder_id }'
+        '404':
+          description: No such session in this workspace.
+    patch:
+      tags: [content]
+      summary: Append one chunk
+      description: >-
+        Requires scope: write. The body is raw bytes; Upload-Offset states where the client believes
+        it is. Chunks are applied strictly in order, and an offset that does not match returns 409
+        WITH the current offset, so a client that lost a response corrects itself in one round trip
+        instead of starting again.
+      x-required-scope: write
+      parameters:
+        - { name: Upload-Offset, in: header, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: '{ offset, complete }'
+        '400':
+          description: Missing or malformed Upload-Offset.
+        '404':
+          description: No such session in this workspace.
+        '409':
+          description: 'Offset mismatch. The body carries the current offset.'
+        '413':
+          description: This chunk would exceed the declared size.
+    delete:
+      tags: [content]
+      summary: Abandon an upload
+      description: 'Requires scope: write. Idempotent, so a client that already forgot gets the same answer.'
+      x-required-scope: write
+      responses:
+        '200':
+          description: '{ ok: true }'
+  /content/uploads/{id}/finalize:
+    post:
+      tags: [content]
+      summary: Assemble the upload into library content
+      description: >-
+        Requires scope: write. Runs the SAME ingest a single-shot upload runs (content sniffing,
+        bundle validation, duration and thumbnail derivation, byte digest) so the resulting row is
+        indistinguishable from a form upload. The bytes are judged here rather than at session
+        create, so an unsupported file is refused at the end and the session is discarded.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '201':
+          description: The created content object.
+        '400':
+          description: The assembled bytes are not a supported media type.
+        '404':
+          description: No such session in this workspace.
+        '409':
+          description: 'Incomplete. The body carries offset and declared_size.'
   /display-power-schedules:
     get:
       tags: [display-power-schedules]
