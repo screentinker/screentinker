@@ -260,3 +260,132 @@ test('the schedule rides the device payload, outside the item list', async () =>
   assert.ok(typeof powerScheduleForDevice === 'function');
   await del(s.body.schedule.id);
 });
+
+/* -------------------------------------------------- the fan-out after a delete / retarget */
+
+/*
+ * ⚠️ THE FAILURE THESE EXIST FOR. devicesAffectedBySchedule returns CANDIDATES — the screens that
+ * were following the row. After the row is gone, what each of them should now obey is a different
+ * question, and the answer may be a group's schedule or nothing at all. Pushing the DELETED row's
+ * windows, or pushing nothing, both leave a panel evaluating a schedule that no longer exists
+ * anywhere in the product — and the only symptom is a screen going dark on a schedule nobody can
+ * find in the dashboard.
+ *
+ * These connect a real device socket and assert on what the server actually EMITS, not on what the
+ * resolver would return if asked. The resolver being right is necessary and not sufficient: the
+ * route has to consult it per-device at push time.
+ */
+
+const ioClient = require('socket.io-client');
+
+/** Connect as a device and collect what the server pushes, for `ms`. */
+function listen(deviceId, token, ms = 1200) {
+  return new Promise((resolve) => {
+    const sock = ioClient(`${BASE}/device`, { transports: ['websocket'], reconnection: false, forceNew: true });
+    const got = { commands: [], payloads: [], registered: false };
+    const finish = () => { try { sock.close(); } catch { /* */ } resolve(got); };
+    sock.on('connect', () => sock.emit('device:register', { device_id: deviceId, device_token: token, device_info: { app_version: 'test' } }));
+    sock.on('device:registered', () => { got.registered = true; });
+    sock.on('device:command', (c) => got.commands.push(c));
+    sock.on('device:playlist-update', (p) => got.payloads.push(p));
+    sock.on('device:auth-error', () => finish());
+    setTimeout(finish, ms);
+  });
+}
+
+/** A paired device that declares the capability, so deliverCommand will actually send to it. */
+async function pairedDevice() {
+  const Database = require('better-sqlite3');
+  const raw = new Database(dbFile);
+  const id = crypto.randomUUID();
+  const token = crypto.randomBytes(16).toString('hex');
+  raw.prepare(`INSERT INTO devices (id, name, workspace_id, status, device_token, capabilities, platform)
+               VALUES (?, ?, ?, 'offline', ?, ?, 'android')`)
+    .run(id, 'Sched ' + id.slice(0, 4), workspaceId, token, JSON.stringify(['display.power', 'display.power_schedule']));
+  raw.prepare('INSERT INTO device_group_members (group_id, device_id) VALUES (?, ?)').run(groupId, id);
+  raw.close();
+  return { id, token };
+}
+
+const powerCmds = (got) => got.commands.filter((c) => c.type === 'set_power_schedule');
+
+test('delete a device schedule -> the member is pushed its GROUP schedule, not the deleted one', async () => {
+  const dev = await pairedDevice();
+  const grp = await createFor({ group_id: groupId }, { name: 'Group nights', timezone: 'America/Chicago' });
+  assert.equal(grp.status, 201);
+
+  // Give this one screen its own, different schedule.
+  const own = await fetch(api('/'), J(jwt, {
+    device_id: dev.id, name: 'Just this screen', timezone: 'America/Chicago',
+    windows: [{ days: [0], start: '01:00', end: '02:00' }],
+  }));
+  assert.equal(own.status, 201);
+  const ownId = (await own.json()).schedule.id;
+
+  // Now delete it while the device is listening.
+  const watching = listen(dev.id, dev.token, 1500);
+  await sleep(300);
+  assert.equal(await del(ownId), 200);
+  const got = await watching;
+
+  assert.ok(got.registered, 'the fixture device registered');
+  const cmds = powerCmds(got);
+  assert.ok(cmds.length >= 1, `expected a set_power_schedule push, got ${JSON.stringify(got.commands)}`);
+  const pushed = cmds[cmds.length - 1].payload.schedule;
+  assert.ok(pushed, 'a schedule must be pushed — the screen falls back to its group, not to nothing');
+  assert.equal(pushed.source, 'group', 'it must be the GROUP schedule it now inherits');
+  assert.equal(pushed.id, grp.body.schedule.id);
+  assert.deepEqual(pushed.windows, NIGHTS, 'and the group windows, NOT the deleted row\'s 01:00-02:00');
+
+  await del(grp.body.schedule.id);
+});
+
+test('delete the LAST schedule -> the device is pushed null, which is what clears it', async () => {
+  const dev = await pairedDevice();
+  const own = await fetch(api('/'), J(jwt, { device_id: dev.id, windows: NIGHTS, timezone: 'America/Chicago' }));
+  assert.equal(own.status, 201);
+  const ownId = (await own.json()).schedule.id;
+
+  const watching = listen(dev.id, dev.token, 1500);
+  await sleep(300);
+  assert.equal(await del(ownId), 200);
+  const got = await watching;
+
+  const cmds = powerCmds(got);
+  assert.ok(cmds.length >= 1, 'the screen must be told, or it keeps evaluating a deleted schedule for ever');
+  assert.equal(cmds[cmds.length - 1].payload.schedule, null,
+    'null is the clear — anything else leaves windows running that exist nowhere in the product');
+
+  // And the payload it would get on any later reconnect agrees.
+  const { powerScheduleForDevice } = require('../lib/device-power-schedule');
+  const Database = require('better-sqlite3');
+  const raw = new Database(dbFile, { readonly: true });
+  assert.equal(powerScheduleForDevice(raw, dev.id), null);
+  raw.close();
+});
+
+test('retarget a schedule from a device to a group -> the device is pushed the NEW resolution', async () => {
+  const dev = await pairedDevice();
+  const own = await fetch(api('/'), J(jwt, {
+    device_id: dev.id, timezone: 'America/Chicago',
+    windows: [{ days: [0], start: '01:00', end: '02:00' }],
+  }));
+  assert.equal(own.status, 201);
+  const ownId = (await own.json()).schedule.id;
+
+  // Move it to the group the device belongs to, changing the windows at the same time.
+  const watching = listen(dev.id, dev.token, 1500);
+  await sleep(300);
+  const put = await fetch(api('/' + ownId), J(jwt, { device_id: null, group_id: groupId, windows: NIGHTS }, 'PUT'));
+  assert.equal(put.status, 200, JSON.stringify(await put.clone().json()));
+  const got = await watching;
+
+  const cmds = powerCmds(got);
+  assert.ok(cmds.length >= 1, 'a retarget must reach the screens on BOTH sides of the move');
+  const pushed = cmds[cmds.length - 1].payload.schedule;
+  assert.ok(pushed, 'the device is still in that group, so it still has a schedule');
+  assert.equal(pushed.source, 'group');
+  assert.deepEqual(pushed.windows, NIGHTS);
+
+  await del(ownId);
+});
