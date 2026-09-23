@@ -127,7 +127,11 @@ sed -i -E "0,/^  version:/s/^(  version:[[:space:]]*).*/\1${NUMERIC}/" docs/open
 #    documentation while saying nothing, and the entry has to come from whoever knows what
 #    shipped. This only refuses to let a release be cut silently without one, which is how the
 #    file fell 23 versions behind.
-if ! grep -q "^## ${NEW}$" CHANGELOG.md 2>/dev/null; then
+# ⚠️ NOT anchored at end-of-line. Every heading in this changelog carries its date
+#    ("## 2.1.5 (2026-09-22)"), so `^## ${NEW}$` matched NOTHING and this warned on every
+#    correctly-written release — which made it noise, which made it ignored, which is the exact
+#    opposite of a guard. Match the version followed by end-of-line OR a space.
+if ! grep -qE "^## ${NEW}( |$)" CHANGELOG.md 2>/dev/null; then
   echo
   echo "  WARNING: CHANGELOG.md has no '## $NEW' entry."
   echo "  Add one before pushing the tag — the release notes are read from it."
