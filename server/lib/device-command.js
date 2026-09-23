@@ -2,6 +2,7 @@
 
 const playerCapabilities = require('./player-capabilities');
 const { db } = require('../db/database');
+const { v4: uuidv4 } = require('uuid');
 const enrolKey = require('./enrol-key');   // #312/#313: URL-carried identity for a web-player move
 
 /*
@@ -132,6 +133,25 @@ function deliverCommand(deviceNs, device, type, payload) {
   // web player an enrol key to redirect with. The native Android app (client_type 'apk') carries
   // its own token, so it needs none. Reuse an existing key rather than rolling one on every send.
   let outPayload = payload || {};
+
+  /*
+   * ⚠️ MINT A REQUEST ID FOR http_request, and hand it back to the caller.
+   *
+   * Without this the panel generates its own UUID when the payload carries none, so the result
+   * arrives tagged with an id the caller has never seen. With two requests in flight to one screen
+   * — an endpoint poll and an operator pressing "test" — the two answers are indistinguishable,
+   * which defeats the point of returning a result at all.
+   *
+   * Minted HERE rather than in each route so every send path gets it: the REST route, the dashboard
+   * socket, and the group and workspace fan-outs, where each device correctly gets its OWN id.
+   * A caller that supplies its own id keeps it.
+   */
+  let requestId = null;
+  if (type === 'http_request') {
+    requestId = (outPayload.id && String(outPayload.id)) || uuidv4();
+    outPayload = Object.assign({}, outPayload, { id: requestId });
+  }
+
   if (type === 'set_server_url' && device.client_type === 'player') {
     let key = null;
     try {
@@ -144,7 +164,7 @@ function deliverCommand(deviceNs, device, type, payload) {
   const room = deviceNs.adapter.rooms.get(device.id);
   if (room && room.size > 0) {
     deviceNs.to(device.id).emit('device:command', { type, payload: outPayload });
-    return { status: 'sent' };
+    return requestId ? { status: 'sent', id: requestId } : { status: 'sent' };
   }
 
   /*
@@ -156,7 +176,8 @@ function deliverCommand(deviceNs, device, type, payload) {
   if (device.attached_node_id) {
     try {
       if (require('./mesh/command-relay').relayToAttached(db, device.id, 'device:command', { type, payload: outPayload })) {
-        return { status: 'relayed', via: device.attached_node_id };
+        return requestId ? { status: 'relayed', via: device.attached_node_id, id: requestId }
+                         : { status: 'relayed', via: device.attached_node_id };
       }
     } catch (e) { /* fall through to the queue */ }
   }
@@ -170,7 +191,9 @@ function deliverCommand(deviceNs, device, type, payload) {
   try {
     queued = require('./command-queue').queueCommand(device.id, type, outPayload);
   } catch (e) { /* queue module absent — the command is simply lost, and says so */ }
-  return { status: queued ? 'queued' : 'offline' };
+  const out = { status: queued ? 'queued' : 'offline' };
+  if (requestId) out.id = requestId;
+  return out;
 }
 
 /**

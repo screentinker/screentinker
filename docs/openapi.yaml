@@ -1498,6 +1498,9 @@ paths:
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
                          set_server_url, set_power_schedule, http_request]
+                  # ⚠️ http_request answers with an `id` alongside status. The result arrives
+                  # separately, tagged with that id — it is how a caller matches an answer to its
+                  # own request when more than one is in flight to the same screen.
                 payload: { type: object }
       responses:
         '200': { description: '{ success, sent, offline, total, results }.' }
@@ -1539,6 +1542,9 @@ paths:
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
                          set_server_url, set_power_schedule, http_request]
+                  # ⚠️ http_request answers with an `id` alongside status. The result arrives
+                  # separately, tagged with that id — it is how a caller matches an answer to its
+                  # own request when more than one is in flight to the same screen.
                 payload: { type: object }
       responses:
         '200':

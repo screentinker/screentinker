@@ -69,3 +69,30 @@ test('the server and the player share ONE definition of a legal target', () => {
     assert.equal(validateCommand('http_request', { url: v.u }).ok, guard.check(v.u).allow, v.u);
   }
 });
+
+test('⚠️ every http_request gets a correlatable id, minted if the caller sent none', () => {
+  /*
+   * REVIEW CATCH. Without this the panel generates its own UUID when the payload carries none, so
+   * the result arrives tagged with an id the caller has never seen. With two requests in flight to
+   * one screen — a scheduled endpoint poll and an operator pressing "test" — the two answers are
+   * indistinguishable, which defeats the point of returning a result at all.
+   */
+  const { deliverCommand } = require('../lib/device-command');
+  const device = { id: 'dev-1', platform: 'android', capabilities: JSON.stringify(['net.http_request']) };
+  // No socket room and no attached node: the offline/queue path, which still has to answer.
+  const ns = { adapter: { rooms: new Map() } };
+
+  const a = deliverCommand(ns, device, 'http_request', { url: 'https://x.test/a' });
+  assert.ok(a.id, 'an id must come back even when the device is offline');
+  assert.match(a.id, /^[0-9a-f-]{36}$/);
+
+  const b = deliverCommand(ns, device, 'http_request', { url: 'https://x.test/b' });
+  assert.notEqual(b.id, a.id, 'two requests to the same screen must be distinguishable');
+
+  const mine = deliverCommand(ns, device, 'http_request', { url: 'https://x.test/c', id: 'caller-chose-this' });
+  assert.equal(mine.id, 'caller-chose-this', 'a caller that supplies an id keeps it');
+
+  // Other commands are unaffected — no id where one would mean nothing.
+  const off = deliverCommand(ns, device, 'screen_off', {});
+  assert.equal(off.id, undefined);
+});
