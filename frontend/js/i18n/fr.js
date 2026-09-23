@@ -1,6 +1,41 @@
 // French translations. Use the formal vous register for this B2B interface.
 // This file mirrors every key in en.js; keep placeholders, markup, and control tokens unchanged.
 export default {
+  // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
+  // the device is powered off — it is not, and an operator who believes it is will use this wrong.
+  // See frontend/js/components/power-schedule-editor.js.
+  'power.section_title': 'Programmation d’extinction de l’écran',
+  'power.enable': 'Appliquer cette programmation',
+  'power.explainer': 'Éteint l’écran selon un horaire hebdomadaire pour préserver le rétroéclairage. Le lecteur continue de fonctionner : le contenu, les mises à jour et le contrôle à distance restent actifs — cela n’éteint PAS l’appareil.',
+  'power.off_from': 'Écran éteint à',
+  'power.on_at': 'Rallumé à',
+  'power.add_window': 'Ajouter une plage',
+  'power.remove_window': 'Supprimer cette plage',
+  'power.remove_schedule': 'Supprimer la programmation',
+  'power.save': 'Enregistrer',
+  'power.no_windows': 'Aucune plage définie — l’écran reste allumé.',
+  'power.no_days': 'aucun jour',
+  'power.overnight': '(nuit)',
+  'power.crosses_midnight': 'Cette plage se poursuit après minuit jusqu’au lendemain matin.',
+  'power.unsupported': 'Certains écrans ne peuvent pas s’éteindre eux-mêmes et ignoreront cette programmation. Vous pouvez quand même l’enregistrer.',
+  'power.inherited_from_group': 'Cet écran suit la programmation de son groupe. Enregistrer ici la remplace pour cet écran uniquement.',
+  'power.state.on': 'Écran allumé',
+  'power.state.scheduled_off': 'Éteint (programmé)',
+  'power.next_off': 'S’éteint à {time}',
+  'power.next_on': 'Se rallume à {time}',
+  'power.preset.weeknights': 'En semaine 22:00–06:00',
+  'power.preset.everynight': 'Toutes les nuits 22:00–06:00',
+  'power.preset.weekends': 'Tout le week-end',
+  'power.saved': 'Programmation enregistrée',
+  'power.save_failed': 'Impossible d’enregistrer la programmation',
+  'power.day.sun': 'Dim',
+  'power.day.mon': 'Lun',
+  'power.day.tue': 'Mar',
+  'power.day.wed': 'Mer',
+  'power.day.thu': 'Jeu',
+  'power.day.fri': 'Ven',
+  'power.day.sat': 'Sam',
+
   'nav.members': "Membres",
   'common.close': "Fermer",
   'slides.ai.placeholder': "Decrivez une diapositive : « soldes d'automne, -40% »",

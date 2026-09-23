@@ -146,3 +146,72 @@ the pairing port only exists while the pairing dialog is open.
 | Cleartext allowed | `AndroidManifest.xml` → `usesCleartextTraffic="true"` |
 | Build a signed APK | `KEYSTORE_PASSWORD=… KEY_PASSWORD=… ./gradlew assembleRelease` |
 | APK output | `android/app/build/outputs/apk/release/app-release.apk` |
+
+---
+
+## Scheduled screen off vs device off
+
+These are different things and the difference is the whole design. A **display power schedule** blanks
+the **panel** on a weekly clock. It does **not** power the device down, and ScreenTinker deliberately
+offers no way to schedule that — see "Why there is no scheduled device power-off" below.
+
+During a scheduled-off window the player is still running:
+
+| Still happening | Not happening |
+|---|---|
+| Socket.IO connection, heartbeats, telemetry | The backlight |
+| Playlist sync and content downloads | |
+| OTA update checks and installs | |
+| `screen_on` from the dashboard (wakes instantly) | |
+
+So a screen that is dark on schedule is **still a healthy screen** in the dashboard, which is the point:
+it reports `display_power: scheduled_off` on every heartbeat, so a deliberately dark panel is
+distinguishable from a dead one. Without that they look identical from the office, and the operator
+drives out to check.
+
+### What the player actually does at the edges
+
+- **Going off** — releases `FLAG_KEEP_SCREEN_ON`, then locks via device owner / device admin
+  (`FORCE_LOCK`) or the accessibility service, exactly as a remote `screen_off` does.
+  ⚠️ Releasing the flag is the part that is easy to miss: `MainActivity` holds it unconditionally so a
+  kiosk never sleeps mid-playback, and if it is still held, the first person who touches the panel at
+  23:00 relights it **for the rest of the night** — the OS will not sleep a window asking to stay awake.
+- **Coming on** — re-adds the flag, takes a wake lock and asks for the keyguard to be dismissed, exactly
+  as a remote `screen_on` does.
+- **A manual `screen_on` inside a window** wins until the window **ends**, then the schedule resumes on
+  its own. Not permanent (the operator would silently lose the schedule) and not ignored (the panel
+  would fight them, going dark again within 60 seconds).
+- **Evaluation is local**, once a minute, against the device's own timezone. The schedule survives
+  reboots in `SharedPreferences` and is re-applied before any socket exists, so a panel that restarts at
+  02:00 with no network comes back dark and stays dark until its window ends.
+
+### Requirements
+
+The panel needs a way to blank itself, which is the same requirement `screen_off` has:
+
+- **device owner** (see the provisioning notes above), **or**
+- **device admin** with `FORCE_LOCK`, **or**
+- the ScreenTinker **accessibility service** enabled.
+
+With none of those the player declares neither `display.power` nor `display.power_schedule`, the server
+refuses `set_power_schedule` for that device, and the dashboard says so instead of saving a schedule
+that would never run. `WRITE_SETTINGS` is **not** required — that one is for system brightness and the
+screen-off timeout, which are separate controls.
+
+### Why there is no scheduled device power-off
+
+Turning an Android device fully off on a timer is OEM-specific and unreliable, and — more to the point —
+a device that is off cannot be told to come back on. A schedule that can only run in one direction is a
+schedule that strands screens, and recovering one means someone walking to it. Blanking the panel gets
+essentially the same backlight saving and is reversible from the dashboard at any moment.
+
+### If a screen does not sleep when it should
+
+1. Check the dashboard shows `Scheduled off` for it. If it shows `Screen on`, the player has not been
+   given the schedule — confirm the device reports `display.power_schedule` (device page → capabilities).
+2. Confirm the **timezone**. Windows are local wall-clock in the device's zone, not the server's.
+   A screen in another country sleeps on its own clock, which is nearly always what you want and
+   occasionally a surprise.
+3. Check nobody pressed **screen on** during the window — that is an intentional exemption and it lasts
+   until the window ends.
+4. `adb logcat -s PowerSchedule:I` shows the restore, every state change, and whether an override is active.

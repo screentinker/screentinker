@@ -290,6 +290,20 @@ export const api = {
     { method: 'POST', body: JSON.stringify(body ?? {}) }),
   setTriggerSecret: (deviceId, body) => request(`/devices/${deviceId}/trigger-secret`,
     { method: 'POST', body: JSON.stringify(body ?? {}) }),
+
+  /*
+   * Display power schedules — the weekly BACKLIGHT clock. `effective` is the one worth knowing
+   * about: it answers "what will THIS screen actually do", after the device-beats-group rule, so
+   * the group editor can warn that a member is overriding it rather than implying an edit here
+   * reaches every screen in the group.
+   */
+  listPowerSchedules: () => request('/display-power-schedules'),
+  effectivePowerSchedule: (deviceId) => request(`/display-power-schedules/effective/${deviceId}`),
+  createPowerSchedule: (body) => request('/display-power-schedules',
+    { method: 'POST', body: JSON.stringify(body ?? {}) }),
+  updatePowerSchedule: (id, body) => request(`/display-power-schedules/${id}`,
+    { method: 'PUT', body: JSON.stringify(body ?? {}) }),
+  deletePowerSchedule: (id) => request(`/display-power-schedules/${id}`, { method: 'DELETE' }),
   put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
   patch: (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
   delete: (path) => request(path, { method: 'DELETE' }),

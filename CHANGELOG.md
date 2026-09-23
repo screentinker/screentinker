@@ -15,6 +15,41 @@ The installer now replaces that stub (keeping a `.screentinker-bak`), merges int
 [@awatterott](https://github.com/awatterott) on #409.
 
 [labwc#3190]: https://github.com/labwc/labwc/discussions/3190
+### Added
+
+**Display power schedules — blank the screen on a weekly clock.** Signage runs in shops that close,
+and a backlight has a finite number of hours in it. You can now set "off 22:00–06:00, Mon–Fri" on a
+screen or a whole group, with a screen's own schedule overriding its group's exactly as playlists
+and content schedules already do.
+
+⚠️ **This blanks the panel; it does not switch the device off**, and that is a deliberate limit
+rather than a missing feature. A device that is off cannot be told to come back on, so a schedule
+that could power one down would be a schedule that strands screens — recovering one means someone
+walking to it. Throughout a scheduled-off window the player keeps running: playlists sync, downloads
+continue, OTA still happens, and `screen on` from the dashboard wakes it instantly.
+
+The windows are evaluated **on the player**, against its own timezone, from a copy it holds on disk.
+A screen therefore sleeps and wakes on time with the network down, and a panel that reboots at 02:00
+comes back dark and stays dark until its window ends. The evaluator is pinned across languages by
+`shared/power-window-vectors.json`, the same discipline the per-item scheduler uses — including the
+DST cases, where an hour is skipped in spring and lived twice in autumn.
+
+⚠️ It **fails to ON**, the opposite of the content scheduler beside it. An unknown timezone, a
+malformed time or a corrupt row leaves the screen lit, because a screen that is dark for a reason
+nobody can find is indistinguishable from dead hardware — the one failure an operator cannot
+diagnose without driving to it. Every heartbeat reports `display_power: on | scheduled_off`, so a
+deliberately dark screen is visibly different from a broken one.
+
+Waking a screen by hand during a window is honoured until that window **ends**, then the schedule
+resumes on its own — neither a permanent override (where the operator silently loses the schedule)
+nor no override at all (where the panel goes dark again while they are standing in front of it).
+
+Android today. Other players accept and store the schedule and report it as unsupported rather than
+swallowing it; they do not declare the new `display.power_schedule` capability, and the server will
+not send a schedule to a panel that has not. That gate is deliberately separate from `display.power`:
+a panel that can be told to sleep is not necessarily one that can be trusted to sleep unattended and
+wake itself again — which is why no fielded player receives one, since the capability is in no
+baseline.
 
 ## 2.1.5 (2026-09-22)
 

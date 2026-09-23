@@ -1,6 +1,41 @@
 // English translations. This file is the source of truth for keys —
 // every other locale should mirror its keys (or fall back to en).
 export default {
+  // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
+  // the device is powered off — it is not, and an operator who believes it is will use this wrong.
+  // See frontend/js/components/power-schedule-editor.js.
+  'power.section_title': 'Display power schedule',
+  'power.enable': 'Run this schedule',
+  'power.explainer': 'Blanks the screen on a weekly clock to save the backlight. The player keeps running, so content, updates and remote control all keep working — this does NOT switch the device off.',
+  'power.off_from': 'Screen off at',
+  'power.on_at': 'Back on at',
+  'power.add_window': 'Add a time',
+  'power.remove_window': 'Remove this time',
+  'power.remove_schedule': 'Remove schedule',
+  'power.save': 'Save schedule',
+  'power.no_windows': 'No times set yet — the screen stays on.',
+  'power.no_days': 'no days',
+  'power.overnight': '(overnight)',
+  'power.crosses_midnight': 'This runs past midnight into the next morning.',
+  'power.unsupported': 'Some screens here cannot blank their own display, and will ignore this schedule. You can still save it.',
+  'power.inherited_from_group': 'This screen is following its group’s schedule. Saving here overrides it for this screen only.',
+  'power.state.on': 'Screen on',
+  'power.state.scheduled_off': 'Scheduled off',
+  'power.next_off': 'Next blanks at {time}',
+  'power.next_on': 'Comes back on at {time}',
+  'power.preset.weeknights': 'Weeknights 22:00–06:00',
+  'power.preset.everynight': 'Every night 22:00–06:00',
+  'power.preset.weekends': 'All weekend',
+  'power.saved': 'Schedule saved',
+  'power.save_failed': 'Could not save the schedule',
+  'power.day.sun': 'Sun',
+  'power.day.mon': 'Mon',
+  'power.day.tue': 'Tue',
+  'power.day.wed': 'Wed',
+  'power.day.thu': 'Thu',
+  'power.day.fri': 'Fri',
+  'power.day.sat': 'Sat',
+
   'nav.members': 'Members',
   'common.close': 'Close',
   'slides.ai.placeholder': 'Describe a slide — "autumn sale, 40% off, bold"',

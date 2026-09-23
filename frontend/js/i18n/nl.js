@@ -1,6 +1,41 @@
 // Dutch translations.
 
 export default {
+  // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
+  // the device is powered off — it is not, and an operator who believes it is will use this wrong.
+  // See frontend/js/components/power-schedule-editor.js.
+  'power.section_title': 'Schema voor schermuitschakeling',
+  'power.enable': 'Dit schema toepassen',
+  'power.explainer': 'Zet het scherm op een weekschema uit om de achtergrondverlichting te sparen. De speler blijft draaien, dus content, updates en bediening op afstand blijven werken — dit schakelt het apparaat NIET uit.',
+  'power.off_from': 'Scherm uit om',
+  'power.on_at': 'Weer aan om',
+  'power.add_window': 'Tijd toevoegen',
+  'power.remove_window': 'Deze tijd verwijderen',
+  'power.remove_schedule': 'Schema verwijderen',
+  'power.save': 'Schema opslaan',
+  'power.no_windows': 'Nog geen tijden ingesteld — het scherm blijft aan.',
+  'power.no_days': 'geen dagen',
+  'power.overnight': '(’s nachts)',
+  'power.crosses_midnight': 'Deze periode loopt door na middernacht tot de volgende ochtend.',
+  'power.unsupported': 'Sommige schermen kunnen zichzelf niet uitschakelen en negeren dit schema. Je kunt het toch opslaan.',
+  'power.inherited_from_group': 'Dit scherm volgt het schema van zijn groep. Hier opslaan overschrijft dat alleen voor dit scherm.',
+  'power.state.on': 'Scherm aan',
+  'power.state.scheduled_off': 'Uit volgens schema',
+  'power.next_off': 'Gaat uit om {time}',
+  'power.next_on': 'Gaat weer aan om {time}',
+  'power.preset.weeknights': 'Doordeweeks 22:00–06:00',
+  'power.preset.everynight': 'Elke nacht 22:00–06:00',
+  'power.preset.weekends': 'Het hele weekend',
+  'power.saved': 'Schema opgeslagen',
+  'power.save_failed': 'Kon het schema niet opslaan',
+  'power.day.sun': 'zo',
+  'power.day.mon': 'ma',
+  'power.day.tue': 'di',
+  'power.day.wed': 'wo',
+  'power.day.thu': 'do',
+  'power.day.fri': 'vr',
+  'power.day.sat': 'za',
+
     'nav.members': 'Gebruikers',
     'common.close': 'Sluiten',
     'slides.ai.placeholder': 'Beschrijf een dia — "herfstsale, 40% korting, opvallend"',

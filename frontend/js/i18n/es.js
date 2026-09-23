@@ -1,6 +1,41 @@
 // Spanish translations. Reviewed for UI register (informal tú).
 // Native review still recommended before publicizing as fully supported.
 export default {
+  // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
+  // the device is powered off — it is not, and an operator who believes it is will use this wrong.
+  // See frontend/js/components/power-schedule-editor.js.
+  'power.section_title': 'Horario de apagado de pantalla',
+  'power.enable': 'Aplicar este horario',
+  'power.explainer': 'Apaga la pantalla según un horario semanal para alargar la vida de la retroiluminación. El reproductor sigue funcionando, así que el contenido, las actualizaciones y el control remoto siguen activos: esto NO apaga el dispositivo.',
+  'power.off_from': 'Pantalla apagada a las',
+  'power.on_at': 'Encender de nuevo a las',
+  'power.add_window': 'Añadir un horario',
+  'power.remove_window': 'Quitar este horario',
+  'power.remove_schedule': 'Eliminar horario',
+  'power.save': 'Guardar horario',
+  'power.no_windows': 'Aún no hay horarios: la pantalla permanece encendida.',
+  'power.no_days': 'ningún día',
+  'power.overnight': '(durante la noche)',
+  'power.crosses_midnight': 'Este horario pasa de la medianoche a la mañana siguiente.',
+  'power.unsupported': 'Algunas pantallas no pueden apagarse solas e ignorarán este horario. Aun así puedes guardarlo.',
+  'power.inherited_from_group': 'Esta pantalla sigue el horario de su grupo. Al guardar aquí lo sustituyes solo para esta pantalla.',
+  'power.state.on': 'Pantalla encendida',
+  'power.state.scheduled_off': 'Apagada por horario',
+  'power.next_off': 'Se apaga a las {time}',
+  'power.next_on': 'Se enciende a las {time}',
+  'power.preset.weeknights': 'Entre semana 22:00–06:00',
+  'power.preset.everynight': 'Todas las noches 22:00–06:00',
+  'power.preset.weekends': 'Todo el fin de semana',
+  'power.saved': 'Horario guardado',
+  'power.save_failed': 'No se pudo guardar el horario',
+  'power.day.sun': 'Dom',
+  'power.day.mon': 'Lun',
+  'power.day.tue': 'Mar',
+  'power.day.wed': 'Mié',
+  'power.day.thu': 'Jue',
+  'power.day.fri': 'Vie',
+  'power.day.sat': 'Sáb',
+
   'nav.members': 'Miembros',
   'common.close': 'Cerrar',
   'slides.ai.placeholder': 'Describe una diapositiva: "rebajas de otono, 40% de descuento"',
