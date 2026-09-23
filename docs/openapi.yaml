@@ -2465,7 +2465,14 @@ paths:
       parameters:
         - { name: deviceId, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: '{ schedule, state, next_edge }. schedule is null when the screen has none.' }
+        '200':
+          description: >-
+            { schedule, supported, group_schedules, state, next_edge }. `schedule` is null when the
+            screen has none. `supported` is false when the panel does not declare
+            display.power_schedule, in which case the server will refuse set_power_schedule for it
+            and a saved schedule would never be acted on. `group_schedules` lists every group
+            schedule that could apply, in resolver order — more than one means the screen is in
+            several groups that each schedule its power, and the FIRST is the one in force.
         '404': { description: No such device in this workspace. }
   /display-power-schedules/{id}:
     get:
