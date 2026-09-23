@@ -97,6 +97,16 @@ const CAPABILITIES = [
   // because these four are only ever available together, gated by the same device-owner check.
   // Runtime state, not a platform fact: a panel that loses device owner loses all of them.
   'system.device_owner',
+  /*
+   * The player can perform an HTTP request on its OWN network and return a bounded snippet of the
+   * response — the device-side REST client. Its own group because it is neither playback nor
+   * device management: it is the panel acting as a client on the LAN it sits on, which is a
+   * capability no other part of this vocabulary describes.
+   *
+   * In NO baseline — brand new, and a fielded player simply ignores the unknown command.
+   */
+  'net.http_request',
+
   // synchronisation
   'sync.clock', 'sync.native',
   // resilience
@@ -437,6 +447,12 @@ const COMMAND_CAPABILITY = {
   set_timezone: 'system.time',
   shell: 'system.shell',
   install_apk: 'system.install_apk',
+
+  /*
+   * Device-side REST. Gated so a player that cannot honour it is refused at the door rather than
+   * swallowing the command — and so the dashboard can say which screens will actually answer.
+   */
+  http_request: 'net.http_request',
 
   // #312 follow-up: rewrite the stored server URL. Gated so only a player that verifies-then-commits
   // (and rolls back an unreachable address) is ever sent it — a web player, whose "server" is its
