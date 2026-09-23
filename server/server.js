@@ -1495,30 +1495,97 @@ try {
   console.warn('[plugins] secret-at-rest migration skipped:', e.message);
 }
 
-// Frontend version hash (changes when files are modified, triggers soft reload)
+/*
+ * Frontend version hash — changes when any served asset changes, which is what makes an open
+ * dashboard offer a soft reload.
+ *
+ * ⚠️ THIS USED TO BE A HARDCODED LIST OF TWENTY FILES, and the list is why it failed silently.
+ * `js/views/playlists.js` was never in it, nor anything under `js/lib/` or `js/i18n/`. So a
+ * frontend fix shipped to those paths reached ZERO open dashboards: nothing prompted a reload, and
+ * an operator sitting on the page saw no change and reasonably concluded it had not been fixed.
+ * That happened for real with the folder-tree picker (#419). Every new view since the list was
+ * written has had the same hole, and nothing about adding one tells you to update an array in
+ * server.js.
+ *
+ * So there is no list any more: it walks what is actually served.
+ *
+ * ⚠️ AND IT HASHES METADATA, NOT CONTENT, DELIBERATELY. The old version read ~20 files
+ * SYNCHRONOUSLY every 30 seconds on the same event loop that answers every device heartbeat, and
+ * this server has an open loop-spike problem already. Covering the whole frontend that way would
+ * mean reading 4.1 MB across 112 files ON the loop, twice a minute, forever.
+ *
+ * Measured, so the trade is on the record rather than assumed: the walk takes ~4.8ms of WALL time
+ * against the old ~1.0ms — it is SLOWER end to end, for 6x the coverage. What changes is that the
+ * 4.8ms is asynchronous and yields between every stat, so the loop is blocked for microseconds at
+ * a time instead of 1ms in one lump. On a server whose p99 spikes are the open complaint, trading
+ * wall time for the absence of a block is the right direction; claiming it is simply "cheaper"
+ * would not have been true.
+ *
+ * The trade-off, stated rather than hidden: a change that preserves BOTH size and mtime is
+ * invisible. No real write path does that — an editor, `git checkout`, rsync and scp all stamp
+ * mtime — and the failure mode is the one we already had, not a new one. The reverse (mtime moving
+ * without content changing, e.g. re-checking-out identical bytes) costs one spurious soft reload,
+ * which is cheap and self-correcting.
+ */
 const crypto = require('crypto');
 let frontendHash = '';
-function updateFrontendHash() {
+
+const HASHED_EXT = new Set(['.js', '.css', '.html', '.json', '.svg']);
+
+async function walkAssets(dir, out, depth = 0) {
+  // Bounded: a symlink loop under a served directory must not spin the server.
+  if (depth > 8) return;
+  let entries;
+  try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      await walkAssets(full, out, depth + 1);
+    } else if (HASHED_EXT.has(path.extname(e.name).toLowerCase())) {
+      try {
+        const st = await fs.promises.stat(full);
+        out.push(`${full}:${st.size}:${Math.floor(st.mtimeMs)}`);
+      } catch { /* vanished mid-walk; the next pass will see it */ }
+    }
+  }
+}
+
+let _hashing = false;
+async function updateFrontendHash() {
+  if (_hashing) return;          // a slow disk must not stack passes
+  _hashing = true;
   try {
-    const files = ['index.html', 'js/app.js', 'js/api.js', 'js/socket.js', 'css/main.css',
-      'js/views/dashboard.js', 'js/views/device-detail.js', 'js/views/content-library.js',
-      'js/views/settings.js', 'js/views/login.js', 'js/views/billing.js',
-      'js/views/layout-editor.js', 'js/views/schedule.js', 'js/views/widgets.js',
-      'js/views/video-wall.js', 'js/views/reports.js', 'js/views/designer.js',
-      'js/views/activity.js', 'js/views/kiosk.js', 'js/views/data-sources.js'].map(f => {
-      try { return fs.readFileSync(path.join(config.frontendDir, f)); } catch { return ''; }
-    });
-    // Include player files in hash so web players detect code updates
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'index.html'))); } catch {}
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'sw.js'))); } catch {}
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'debug-overlay.js'))); } catch {}
-    frontendHash = crypto.createHash('md5').update(Buffer.concat(files.map(f => Buffer.from(f)))).digest('hex').slice(0, 8);
-  } catch { frontendHash = Date.now().toString(36); }
+    const parts = [];
+    await walkAssets(config.frontendDir, parts);
+    // Player assets too, so a web player notices its own code changing.
+    await walkAssets(path.join(__dirname, 'player'), parts);
+    parts.sort();                // readdir order is not guaranteed stable across platforms
+    frontendHash = crypto.createHash('md5').update(parts.join('|')).digest('hex').slice(0, 8);
+  } catch {
+    // Never leave it empty: an empty hash reads as "no version" to the client, and the client
+    // treats the FIRST value it sees as the baseline — so '' followed by a real hash is
+    // indistinguishable from a deploy.
+    if (!frontendHash) frontendHash = Date.now().toString(36);
+  } finally {
+    _hashing = false;
+  }
 }
 updateFrontendHash();
 // Recheck every 30 seconds
-setInterval(updateFrontendHash, 30000);
-app.get('/api/version', (req, res) => {
+setInterval(() => { updateFrontendHash().catch(() => {}); }, 30000);
+app.get('/api/version', async (req, res) => {
+  /*
+   * ⚠️ NEVER ANSWER WITH AN EMPTY HASH. The first pass is asynchronous, so between boot and its
+   * completion this endpoint could reply `hash: ''`. The dashboard stores whatever it first sees
+   * (`if (knownHash === null) knownHash = data.hash`) and compares later polls against it — so one
+   * request landing in that window makes the NEXT poll look like a new version and pops "Dashboard
+   * updated. Reload now" at someone who has just loaded the page.
+   *
+   * The old synchronous version could not do this: the hash was set before anything could ask.
+   * Awaiting here restores that guarantee at the cost of ~5ms on one request, once per boot.
+   */
+  if (!frontendHash) { try { await updateFrontendHash(); } catch { /* fall through to the seed */ } }
   const latest = ghcrCheck.getLatestVersion();
   const updateAvailable = latest ? ghcrCheck.compareVersions(latest, VERSION) > 0 : false;
   res.json({ hash: frontendHash, version: VERSION, latest_version: latest, update_available: updateAvailable });
