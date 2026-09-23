@@ -44,9 +44,15 @@ import org.json.JSONObject
  * re-asserted rather than edge-triggered, a missed tick self-heals on the next one instead of
  * leaving a panel in the wrong state until tomorrow.
  *
- * The manager DECIDES. [onApply] does the applying, supplied by MainActivity so the transition runs
- * through exactly the same code as a remote screen_off / screen_on command rather than a second
- * implementation of "make the panel dark".
+ * The manager DECIDES. [onApply] does the applying, and it is supplied by **WebSocketService** —
+ * NOT by MainActivity, for the reason above. It routes to that service's blankPanel() / wakePanel(),
+ * which are the very same methods the remote screen_off / screen_on commands use, so there is never
+ * a second implementation of "make the panel dark" to drift from the one an operator's button hits.
+ *
+ * The Activity's only contribution is FLAG_KEEP_SCREEN_ON, which only a window can hold, and it
+ * arrives through the service's nullable `onPowerWindow` callback. If you find yourself wanting to
+ * construct this class from an Activity so that callback can be direct: that is the bug described
+ * above, and PowerScheduleServiceOwnershipTest will stop you.
  */
 class PowerScheduleManager(
     private val context: Context,
