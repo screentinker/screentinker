@@ -383,6 +383,37 @@ export const api = {
     const qs = p.toString();
     return request(`/content${qs ? '?' + qs : ''}`);
   },
+  /**
+   * EVERY content item in the workspace, by paging until the server stops giving more.
+   *
+   * ⚠️ EXISTS BECAUSE `getContent()` SILENTLY RETURNS ONLY THE FIRST 100. The endpoint defaults to
+   * `LIMIT 100`, so any caller that wanted "all of it" and did not page was quietly working from a
+   * truncated list. The playlist picker was exactly that caller: a customer with 211 files could
+   * see a file in the library and not find it in the picker, which reads as "it won't let me pick
+   * from that folder" — and that is how it was reported.
+   *
+   * Bounded on purpose. `maxItems` stops a pathological library turning a modal into twenty
+   * requests and a frozen tab; the caller is told when the ceiling was hit so it can say so rather
+   * than pretend the list is complete — which is the whole bug being fixed here.
+   */
+  getAllContent: async (opts = {}) => {
+    const pageSize = 500;             // the server's own maximum
+    const maxItems = opts.maxItems || 5000;
+    const out = [];
+    let offset = 0;
+    for (let page = 0; page < Math.ceil(maxItems / pageSize); page++) {
+      const p = new URLSearchParams();
+      p.set('limit', String(pageSize));
+      p.set('offset', String(offset));
+      if (opts.type && opts.type !== 'all') p.set('type', opts.type);
+      const batch = await request(`/content?${p.toString()}`);
+      if (!Array.isArray(batch) || batch.length === 0) return { items: out, truncated: false };
+      out.push(...batch);
+      if (batch.length < pageSize) return { items: out, truncated: false };
+      offset += batch.length;
+    }
+    return { items: out, truncated: true };
+  },
   getContentItem: (id) => request(`/content/${id}`),
   deleteContent: (id) => request(`/content/${id}`, { method: 'DELETE' }),
   updateContent: (id, data) => request(`/content/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

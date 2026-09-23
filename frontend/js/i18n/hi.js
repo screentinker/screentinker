@@ -19,6 +19,13 @@ export default {
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': '{name} का अपलोड फिर से शुरू करें? पिछली बार {done}% पहले ही भेजा जा चुका है।',
+  // Playlist content picker: folder filter + the honest notices that replaced a silent
+  // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folder_label': 'फ़ोल्डर से छानें',
+  'playlist.folder_all': 'सभी फ़ोल्डर',
+  'playlist.folder_root': 'कोई फ़ोल्डर नहीं',
+  'playlist.more_matches': '{n} और परिणाम — खोज सीमित करें या फ़ोल्डर चुनें',
+  'playlist.library_truncated': 'यह लाइब्रेरी बहुत बड़ी है, इसलिए यहाँ पूरी सूची नहीं है। खोज या फ़ोल्डर का उपयोग करें।',
 
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.

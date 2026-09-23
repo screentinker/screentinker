@@ -5,6 +5,13 @@ export default {
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': 'Retomar o envio de {name}? {done}% já foram enviados da última vez.',
+  // Playlist content picker: folder filter + the honest notices that replaced a silent
+  // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folder_label': 'Filtrar por pasta',
+  'playlist.folder_all': 'Todas as pastas',
+  'playlist.folder_root': 'Sem pasta',
+  'playlist.more_matches': 'Mais {n} resultados — refine a busca ou escolha uma pasta',
+  'playlist.library_truncated': 'Esta biblioteca é muito grande e não está listada por completo aqui. Use a busca ou uma pasta para encontrar um item.',
 
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.

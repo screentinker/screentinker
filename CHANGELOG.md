@@ -78,6 +78,23 @@ baseline.
 
 ### Fixed
 
+**The playlist content picker only ever showed 100 items.** Adding content to a playlist listed the
+first 100 files in the workspace and nothing else — newest first, so the ones missing were the
+oldest, which in a library built up over time are exactly the ones already sorted into folders. A
+customer with 211 files could see a video in his library, open the picker, and not find it. He
+reported it as *"it won't give me the option to choose uploaded content from a different folder"*,
+which is the only conclusion the behaviour supports. It was never about folders: `GET /api/content`
+defaults to `LIMIT 100` and the picker asked for everything without paging.
+
+The picker now pages until the server stops giving more, and **has a folder filter** — with 12
+folders and 211 files a flat list is hard to use even when it is complete, and folders are how that
+operator had organised the library in the first place. The rendered list is capped separately and
+says how many more matched, because the fix for a silently truncated list is not a differently
+silent one.
+
+⚠️ This affected **every workspace over 100 items**, on every playlist, for as long as the limit has
+existed. It surfaced now because one customer uploaded 211 files in six hours.
+
 **Raspberry Pi: the mouse pointer now actually hides on a stock Pi OS image.** The cursor-hiding
 added in 2.1.5 (#409) refused to touch an existing `~/.config/labwc/rc.xml`, on the reasoning that
 it would hold the owner's own keybindings. Pi OS ships one — a stub rooted at `<openbox_config/>`,

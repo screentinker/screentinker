@@ -6,6 +6,13 @@ export default {
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': '是否继续上传 {name}？上次已上传 {done}%。',
+  // Playlist content picker: folder filter + the honest notices that replaced a silent
+  // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folder_label': '按文件夹筛选',
+  'playlist.folder_all': '所有文件夹',
+  'playlist.folder_root': '无文件夹',
+  'playlist.more_matches': '还有 {n} 项匹配——请缩小搜索范围或选择文件夹',
+  'playlist.library_truncated': '该媒体库非常大，此处未全部列出。请使用搜索或文件夹查找项目。',
 
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
