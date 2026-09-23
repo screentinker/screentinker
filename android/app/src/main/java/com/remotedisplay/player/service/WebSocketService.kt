@@ -765,6 +765,28 @@ class WebSocketService : Service() {
                         "set_power_schedule" -> handler.post {
                             powerSchedule?.update(payload?.optJSONObject("schedule"))
                         }
+                        /*
+                         * Device-side REST. Runs on a worker thread, NOT the handler: a request to
+                         * an unreachable PLC blocks for the full timeout, and doing that on the main
+                         * looper would freeze playback, the heartbeat and the power tick with it.
+                         *
+                         * The answer always comes back — a refusal, a timeout and a 500 are all
+                         * results. Silence would be indistinguishable from a command that never
+                         * arrived, which is the failure this whole surface exists to avoid.
+                         */
+                        "http_request" -> Thread {
+                            try {
+                                val result = com.remotedisplay.player.net.DeviceHttp.perform(payload)
+                                val out = result.toJson().apply { put("device_id", config.deviceId) }
+                                handler.post {
+                                    try { socket?.emit("device:http-result", out) }
+                                    catch (e: Throwable) { Log.w("WebSocketService", "http-result emit: ${e.message}") }
+                                }
+                                Log.i("WebSocketService", "http_request ${result.status} ok=${result.ok} in ${result.durationMs}ms")
+                            } catch (e: Throwable) {
+                                Log.e("WebSocketService", "http_request: ${e.message}")
+                            }
+                        }.apply { isDaemon = true }.start()
                         // Was a no-op because `input keyevent 224` is denied to an app UID — but a
                         // wake LOCK is a different mechanism needing only WAKE_LOCK, which we hold.
                         // Handled here as well as in MainActivity so a panel whose Activity is not

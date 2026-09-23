@@ -2,6 +2,7 @@
 
 const playerCapabilities = require('./player-capabilities');
 const { db } = require('../db/database');
+const { v4: uuidv4 } = require('uuid');
 const enrolKey = require('./enrol-key');   // #312/#313: URL-carried identity for a web-player move
 
 /*
@@ -43,6 +44,15 @@ const ALLOWED_COMMANDS = Object.freeze([
    * server-side. Gated on display.power_schedule, NOT display.power — see COMMAND_CAPABILITY.
    */
   'set_power_schedule',
+  /*
+   * Goal B: make the PANEL perform an HTTP request from its own network, so a LAN address — the
+   * PLC, the sensor, the local Home Assistant — is reachable at all. Routing it through this
+   * server instead would defeat the entire feature: the server is frequently in another country
+   * and has no path to the shop's 192.168.x.x.
+   *
+   * ⚠️ DELIBERATELY NOT A MESH COMMAND. See MESH_COMMANDS below.
+   */
+  'http_request',
 ]);
 
 /*
@@ -83,6 +93,19 @@ const MESH_COMMANDS = Object.freeze([
    * per the ⚠️ above.
    */
   'set_power_schedule',
+  /*
+   * ⚠️ http_request IS ABSENT FROM THIS LIST, AND MUST STAY ABSENT.
+   *
+   * The consent sentence is "Reboot, reload, change settings on screens." Making someone else's
+   * panel issue arbitrary HTTP requests from inside their LAN is not a setting — it is using their
+   * screen as a foothold on a network the hub cannot otherwise reach, which is the textbook shape
+   * of a confused deputy. The panel is by design the one thing standing on the private side of the
+   * customer's firewall, and that is precisely why a third-party server must not get to aim it.
+   *
+   * No wording fixes this. A consent line honest enough to cover it — "this hub may make your
+   * screens fetch any address on your network and send it the result" — is one nobody would tick,
+   * which is the right answer rather than a copywriting problem.
+   */
 ]);
 
 function isMeshCommand(type) {
@@ -110,6 +133,25 @@ function deliverCommand(deviceNs, device, type, payload) {
   // web player an enrol key to redirect with. The native Android app (client_type 'apk') carries
   // its own token, so it needs none. Reuse an existing key rather than rolling one on every send.
   let outPayload = payload || {};
+
+  /*
+   * ⚠️ MINT A REQUEST ID FOR http_request, and hand it back to the caller.
+   *
+   * Without this the panel generates its own UUID when the payload carries none, so the result
+   * arrives tagged with an id the caller has never seen. With two requests in flight to one screen
+   * — an endpoint poll and an operator pressing "test" — the two answers are indistinguishable,
+   * which defeats the point of returning a result at all.
+   *
+   * Minted HERE rather than in each route so every send path gets it: the REST route, the dashboard
+   * socket, and the group and workspace fan-outs, where each device correctly gets its OWN id.
+   * A caller that supplies its own id keeps it.
+   */
+  let requestId = null;
+  if (type === 'http_request') {
+    requestId = (outPayload.id && String(outPayload.id)) || uuidv4();
+    outPayload = Object.assign({}, outPayload, { id: requestId });
+  }
+
   if (type === 'set_server_url' && device.client_type === 'player') {
     let key = null;
     try {
@@ -122,7 +164,7 @@ function deliverCommand(deviceNs, device, type, payload) {
   const room = deviceNs.adapter.rooms.get(device.id);
   if (room && room.size > 0) {
     deviceNs.to(device.id).emit('device:command', { type, payload: outPayload });
-    return { status: 'sent' };
+    return requestId ? { status: 'sent', id: requestId } : { status: 'sent' };
   }
 
   /*
@@ -134,7 +176,8 @@ function deliverCommand(deviceNs, device, type, payload) {
   if (device.attached_node_id) {
     try {
       if (require('./mesh/command-relay').relayToAttached(db, device.id, 'device:command', { type, payload: outPayload })) {
-        return { status: 'relayed', via: device.attached_node_id };
+        return requestId ? { status: 'relayed', via: device.attached_node_id, id: requestId }
+                         : { status: 'relayed', via: device.attached_node_id };
       }
     } catch (e) { /* fall through to the queue */ }
   }
@@ -148,7 +191,9 @@ function deliverCommand(deviceNs, device, type, payload) {
   try {
     queued = require('./command-queue').queueCommand(device.id, type, outPayload);
   } catch (e) { /* queue module absent — the command is simply lost, and says so */ }
-  return { status: queued ? 'queued' : 'offline' };
+  const out = { status: queued ? 'queued' : 'offline' };
+  if (requestId) out.id = requestId;
+  return out;
 }
 
 /**
@@ -158,7 +203,48 @@ function deliverCommand(deviceNs, device, type, payload) {
  *
  * @returns {{ok: true} | {ok: false, error: string}}
  */
+/**
+ * Methods a screen may be asked to issue.
+ *
+ * ⚠️ An allowlist, not a denylist. TRACE reflects request headers (including any Authorization the
+ * endpoint carries) back into a response body we then store and show, and CONNECT asks the panel
+ * to open a tunnel. Neither has a signage use, and "everything except the two we thought of" is
+ * the shape that ages badly.
+ */
+const HTTP_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
+
 function validateCommand(type, payload) {
+  if (type === 'http_request') {
+    const p = payload || {};
+    /*
+     * The SAME guard the panel enforces (shared/http-target-vectors.json), consulted rather than
+     * reimplemented. Strict here, forgiving there: an operator who types file:/// deserves a 400
+     * naming the problem, not a silent no-op on a screen they cannot see. The panel still checks
+     * for itself, because a stored endpoint can be edited in the database.
+     */
+    const verdict = require('./http-target-guard').check(p.url);
+    if (!verdict.allow) {
+      return { ok: false, error: `http_request: ${require('./http-target-guard').explain(verdict.reason)}` };
+    }
+    if (p.method !== undefined && p.method !== null) {
+      const m = String(p.method).toUpperCase();
+      if (!HTTP_METHODS.includes(m)) {
+        return { ok: false, error: `http_request: method must be one of ${HTTP_METHODS.join(', ')}` };
+      }
+    }
+    if (p.headers !== undefined && p.headers !== null
+        && (typeof p.headers !== 'object' || Array.isArray(p.headers))) {
+      return { ok: false, error: 'http_request: headers must be an object' };
+    }
+    if (p.timeout_ms !== undefined && p.timeout_ms !== null) {
+      const t = Number(p.timeout_ms);
+      if (!Number.isFinite(t) || t <= 0 || t > 120000) {
+        return { ok: false, error: 'http_request: timeout_ms must be between 1 and 120000' };
+      }
+    }
+    return { ok: true };
+  }
+
   if (type === 'set_server_url') {
     const url = payload && typeof payload.url === 'string' ? payload.url.trim() : '';
     if (!url) return { ok: false, error: 'set_server_url requires payload.url' };
@@ -172,4 +258,4 @@ function validateCommand(type, payload) {
   return { ok: true };
 }
 
-module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, isMeshCommand, deliverCommand, validateCommand };
+module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, HTTP_METHODS, isMeshCommand, deliverCommand, validateCommand };

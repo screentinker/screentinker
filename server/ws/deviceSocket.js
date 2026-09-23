@@ -1120,6 +1120,31 @@ const EVENT_APPLIERS = Object.freeze({
     ingestScreenshot(device_id, image_b64);
   },
 
+  /*
+   * The answer to an http_request. Relayed to the dashboards of THIS device's workspace and
+   * nowhere else — the snippet is a response body from inside the customer's private network, and
+   * it is not ours to broadcast more widely than the screen that fetched it.
+   *
+   * ⚠️ Re-truncated here rather than trusting the panel's cap. The player limits its read to
+   * 64 KiB, but that is the player being well-behaved; this server must not relay whatever arrives
+   * on the strength of it, because the device socket is reachable by anything holding a device
+   * token. Two caps, and the one that matters is the one on the receiving side.
+   */
+  'http-result'(deviceId, data, ctx) {
+    const { device_id, id, ok, status, snippet, truncated, duration_ms, error } = data || {};
+    if (!device_id || device_id !== deviceId) return;
+    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:http-result', {
+      device_id,
+      id: String(id || '').slice(0, 64),
+      ok: !!ok,
+      status: Number.isFinite(Number(status)) ? Number(status) : 0,
+      snippet: String(snippet == null ? '' : snippet).slice(0, 64 * 1024),
+      truncated: !!truncated,
+      duration_ms: Number.isFinite(Number(duration_ms)) ? Number(duration_ms) : null,
+      error: error == null ? null : String(error).slice(0, 500),
+    });
+  },
+
   'shell-result'(deviceId, data, ctx) {
     const { device_id, cmd, output, exit } = data || {};
     if (!device_id || device_id !== deviceId) return;
@@ -2436,6 +2461,8 @@ module.exports = function setupDeviceSocket(io) {
     });
 
     socket.on('device:screenshot', (data) => dispatch('screenshot', data));
+
+    socket.on('device:http-result', (data) => dispatch('http-result', data));
 
     socket.on('device:shell-result', (data) => dispatch('shell-result', data));
 

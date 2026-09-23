@@ -457,7 +457,8 @@ router.post('/:id/command', requireScope('full'), (req, res) => {
     // Named rather than generic: "this panel cannot do that" is actionable, "failed" is not.
     return res.status(400).json({ error: 'That screen cannot do that', capability: r.capability });
   }
-  res.json({ success: true, status: r.status, device_id: device.id });
+  // `id` is present for http_request: it is how the caller matches the result that follows.
+  res.json({ success: true, status: r.status, device_id: device.id, ...(r.id ? { id: r.id } : {}) });
 });
 
 router.post('/:id/trigger-config', requireScope('full'), (req, res) => {
