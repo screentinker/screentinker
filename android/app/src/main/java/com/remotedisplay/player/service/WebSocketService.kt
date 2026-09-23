@@ -1102,12 +1102,24 @@ class WebSocketService : Service() {
         try { getSharedPreferences("remote_display", MODE_PRIVATE).edit().putLong("clock_offset_ms", clockOffsetMs).apply() } catch (e: Throwable) {}
     }
 
+    /*
+     * What the backlight schedule currently says — "on" or "scheduled_off". Set by
+     * PowerScheduleManager through MainActivity whenever the state changes, and reported on every
+     * heartbeat so the dashboard can tell a screen that is DELIBERATELY dark from one that is
+     * broken. Without it the two are indistinguishable from the operator's side, which is the
+     * failure mode this whole feature has to avoid creating.
+     */
+    @Volatile private var displayPowerState: String = "on"
+
+    fun setDisplayPowerState(state: String) { displayPowerState = state }
+
     private fun sendHeartbeat() {
         if (socket?.connected() != true) return
         try {
             val data = JSONObject().apply {
                 put("device_id", config.deviceId)
                 put("client_ms", System.currentTimeMillis())   // #group-sync: t1 for NTP-style clock discipline
+                put("display_power", displayPowerState)
                 try { put("telemetry", deviceInfo.getTelemetry()) } catch (e: Throwable) { Log.w("WebSocketService", "telemetry: ${e.message}") }
             }
             socket?.emit("device:heartbeat", data)
