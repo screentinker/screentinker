@@ -78,6 +78,12 @@ baseline.
 
 ### Fixed
 
+**Three more places showed only the first 100 files.** The same cap behind the playlist-picker bug
+was also truncating the **schedule editor's** content picker, a device's **standby content**
+dropdown and the **zone assignment** modal — each one quietly offering an operator the newest
+hundred files and nothing else. All three now page the whole library, and a guard keeps any future
+view from fetching "everything" through an endpoint that returns a hundred.
+
 **The playlist content picker only ever showed 100 items.** Adding content to a playlist listed the
 first 100 files in the workspace and nothing else — newest first, so the ones missing were the
 oldest, which in a library built up over time are exactly the ones already sorted into folders. A

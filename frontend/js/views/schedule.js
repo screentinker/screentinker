@@ -190,9 +190,16 @@ const readStored = (k, fallback) => { try { return localStorage.getItem(k) ?? fa
 const writeStored = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* private mode */ } };
 
 export async function render(container) {
-  const [devices, content, groups, playlists, layoutsRaw] = await Promise.all([
-    api.getDevices(), api.getContent(), api.getGroups(), api.getPlaylists(), API('/layouts'),
+  /*
+   * ⚠️ getAllContent, NOT getContent — same bug as #417. GET /api/content defaults to LIMIT 100,
+   * so this picker showed the newest 100 files of a workspace and silently hid the rest. Sorted
+   * date_desc, the hidden ones are the OLDEST, which in a library built up over time are the ones
+   * already filed into folders — so a customer sees content in the library and cannot schedule it.
+   */
+  const [devices, contentPage, groups, playlists, layoutsRaw] = await Promise.all([
+    api.getDevices(), api.getAllContent(), api.getGroups(), api.getPlaylists(), API('/layouts'),
   ]);
+  const content = contentPage.items;
   const layouts = (Array.isArray(layoutsRaw) ? layoutsRaw : []).filter((l) => !l.is_template);
 
   const DAYS = [

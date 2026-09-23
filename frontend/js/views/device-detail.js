@@ -1836,7 +1836,9 @@ function setupActions(device) {
   // playlist picker below). setupActions is a SYNCHRONOUS function; awaiting here made the whole
   // file fail to parse ("Unexpected reserved word") AND would have deferred every listener below
   // (save, #150 re-adopt, delete) until this fetch resolved. .then() keeps them registering immediately.
-  api.getContent().then(content => {
+  // ⚠️ getAllContent — see #417. A bare getContent() caps this dropdown at the newest 100 files,
+  // so on a real library the standby content you want is simply not in the list.
+  api.getAllContent().then(({ items: content }) => {
     const defaultSelect = document.getElementById('deviceDefaultContent');
     if (defaultSelect) {
       content.forEach(c => {
@@ -2446,11 +2448,14 @@ async function setupPlaylistActions(device) {
     const headers = { Authorization: `Bearer ${token}` };
 
     try {
-      const [content, widgets, kioskPages] = await Promise.all([
-        api.getContent(),
+      // ⚠️ getAllContent — see #417. Same cap, same symptom: a zone you cannot fill with a file
+      // that is plainly in the library.
+      const [contentPage, widgets, kioskPages] = await Promise.all([
+        api.getAllContent(),
         fetch('/api/widgets', { headers }).then(r => r.json()),
         fetch('/api/kiosk', { headers }).then(r => r.json()),
       ]);
+      const content = contentPage.items;
 
       // Get layout zones if device has a layout assigned. We track
       // zonesFetchFailed separately so the modal can distinguish "fetch
