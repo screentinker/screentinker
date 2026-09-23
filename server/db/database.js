@@ -1439,6 +1439,49 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_triggers_ws     ON triggers (workspace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_trigger_assign  ON trigger_assignments (target_type, target_id)`,
 
+  /* ==============================================================================================
+   * DISPLAY POWER SCHEDULES — the BACKLIGHT on a weekly clock. Nothing here powers a device off.
+   *
+   * ⚠️ NOT the `schedules` table, and the separation is the point. That one answers "what plays
+   * when", is per-zone, carries content/widget/layout/playlist ids, priorities and colours, and a
+   * row in it is a programming decision. This answers "is the panel lit", has no content at all,
+   * and a row in it is an electricity decision. Overloading `schedules` would mean every content
+   * query grew an "and is this actually a power row" filter, which is the shape that eventually
+   * gets forgotten in exactly one query.
+   *
+   * ⚠️ The windows are evaluated ON THE PANEL, from its local copy, by lib/power-window.js and its
+   * Kotlin port against shared/power-window-vectors.json. The server never decides "off now" and
+   * pushes it — a screen whose WAN is down must still sleep and wake on time, and a schedule that
+   * depended on a live socket would strand a dark panel the moment the network blinked.
+   * ============================================================================================ */
+  `CREATE TABLE IF NOT EXISTS display_power_schedules (
+     id           TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     name         TEXT NOT NULL DEFAULT '',
+     /* Device XOR group, same shape and the same CHECK the content schedules table uses, so the
+      * precedence rule (device beats group) reads identically in both. See device-power-schedule.js,
+      * which is the ONE definition of which schedule a given screen obeys. */
+     device_id    TEXT REFERENCES devices(id) ON DELETE CASCADE,
+     group_id     TEXT REFERENCES device_groups(id) ON DELETE CASCADE,
+     /* IANA zone the windows are WRITTEN in. Resolved at push time through lib/device-timezone so
+      * creation and evaluation agree — a schedule authored in one zone and evaluated in another is
+      * the bug that makes a screen sleep an hour early twice a year. NULL = the device's own. */
+     timezone     TEXT,
+     enabled      INTEGER NOT NULL DEFAULT 1,
+     /* JSON array of { days:[0-6], start:"HH:MM", end:"HH:MM" }. Stored as a document rather than
+      * a child table because it is only ever read and written WHOLE — the player gets the entire
+      * list or none of it, and no query ever asks "which schedules contain a Tuesday". */
+     windows      TEXT NOT NULL DEFAULT '[]',
+     created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
+   )`,
+  /* One schedule per target. A screen with two contradictory power schedules has no defined
+   * behaviour, and the resolver would have to invent a tiebreak; the database refuses instead. */
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_device ON display_power_schedules (device_id) WHERE device_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_group  ON display_power_schedules (group_id)  WHERE group_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_dps_ws ON display_power_schedules (workspace_id)`,
+
   /*
    * ─── Playlist inheritance ────────────────────────────────────────────────────────────────
    *

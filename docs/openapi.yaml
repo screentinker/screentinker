@@ -1497,7 +1497,7 @@ paths:
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
-                         set_server_url]
+                         set_server_url, set_power_schedule]
                 payload: { type: object }
       responses:
         '200': { description: '{ success, sent, offline, total, results }.' }
@@ -1538,7 +1538,7 @@ paths:
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
-                         set_server_url]
+                         set_server_url, set_power_schedule]
                 payload: { type: object }
       responses:
         '200':
@@ -2396,6 +2396,119 @@ paths:
               schema: { type: string }
 
   # ----------------------------------------------------------------- activity
+  # ---------------------------------------------------------------------------------------------
+  # Display power schedules — the weekly BACKLIGHT clock.
+  #
+  # ⚠️ Nothing here powers a device off, and that is deliberate: a device that is off cannot be told
+  # to come back on. These windows blank the PANEL; the player keeps running, so content, updates and
+  # remote control continue throughout. The windows are evaluated ON the player against its own
+  # timezone, so a screen sleeps and wakes on time with the network down.
+  # ---------------------------------------------------------------------------------------------
+  /display-power-schedules:
+    get:
+      tags: [display-power-schedules]
+      summary: List display power schedules in this workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: '{ schedules: [...] }' }
+    post:
+      tags: [display-power-schedules]
+      summary: Create a display power schedule
+      description: >-
+        Requires scope: full. Targets exactly one of device_id or group_id. One schedule per target —
+        a second create for the same target returns 409 with the id of the existing one.
+        Windows are local wall-clock and may cross midnight (start > end), in which case the day
+        selection applies to the day the window STARTED.
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                device_id: { type: string, description: 'Mutually exclusive with group_id.' }
+                group_id: { type: string, description: 'Mutually exclusive with device_id.' }
+                timezone: { type: string, nullable: true, description: 'IANA zone the windows are written in. Null inherits the device timezone.' }
+                enabled: { type: boolean, default: true }
+                windows:
+                  type: array
+                  maxItems: 28
+                  items:
+                    type: object
+                    required: [days, start, end]
+                    properties:
+                      days:
+                        type: array
+                        items: { type: integer, minimum: 0, maximum: 6 }
+                        description: '0=Sunday .. 6=Saturday.'
+                      start: { type: string, example: '22:00', description: 'HH:MM, inclusive.' }
+                      end: { type: string, example: '06:00', description: 'HH:MM or 24:00, exclusive.' }
+      responses:
+        '201': { description: '{ schedule: {...} }' }
+        '400': { description: Malformed window, unknown timezone, or target not in this workspace. }
+        '409': { description: 'This target already has a schedule; the body carries its id.' }
+  /display-power-schedules/effective/{deviceId}:
+    get:
+      tags: [display-power-schedules]
+      summary: The schedule a given screen actually obeys
+      description: >-
+        Requires scope: read. Resolves the device-beats-group rule and returns the schedule in force
+        for this screen, its current state (on | scheduled_off) and an ADVISORY next edge. A device's
+        own schedule wins even when it is disabled, so unticking it exempts that screen from its
+        group rather than falling back to the group's windows.
+      x-required-scope: read
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ schedule, state, next_edge }. schedule is null when the screen has none.' }
+        '404': { description: No such device in this workspace. }
+  /display-power-schedules/{id}:
+    get:
+      tags: [display-power-schedules]
+      summary: Get one display power schedule
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: '{ schedule: {...} }' }
+        '404': { description: Not found in this workspace. }
+    put:
+      tags: [display-power-schedules]
+      summary: Update a display power schedule
+      description: 'Requires scope: full. Partial — omitted fields are left as they are.'
+      x-required-scope: full
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                device_id: { type: string }
+                group_id: { type: string }
+                timezone: { type: string, nullable: true }
+                enabled: { type: boolean }
+                windows: { type: array, items: { type: object } }
+      responses:
+        '200': { description: '{ schedule: {...} }' }
+        '400': { description: Malformed window or unknown timezone. }
+        '404': { description: Not found in this workspace. }
+    delete:
+      tags: [display-power-schedules]
+      summary: Delete a display power schedule
+      description: >-
+        Requires scope: full. Screens that were following it are told immediately — they fall back to
+        their group's schedule, or to none, rather than continuing to evaluate windows that no longer
+        exist.
+      x-required-scope: full
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: '{ ok: true }' }
+        '404': { description: Not found in this workspace. }
   /activity:
     get:
       tags: [activity]

@@ -55,6 +55,21 @@ const CAPABILITIES = [
   'playback.slide_audio',
   // display
   'display.rotation', 'display.power', 'display.resolution', 'display.brightness',
+  /*
+   * The panel holds a WEEKLY BACKLIGHT SCHEDULE locally and evaluates it itself, offline, against
+   * shared/power-window-vectors.json.
+   *
+   * ⚠️ SEPARATE FROM display.power ON PURPOSE, and this is the one place that distinction has
+   * teeth. The note in the android baseline below records that display.power is kept as a PAIR for
+   * un-updated panels even though their screen_on half is dead — a working sleep and a dead wake —
+   * on the grounds that an operator can always wake a screen some other way. A SCHEDULE removes
+   * that escape: a panel that sleeps at 22:00 on its own and cannot wake itself is a panel someone
+   * drives to. So a player declares this only when it implements the local evaluator AND has a
+   * wake path it has verified, exactly as PlayerCapabilities.kt already gates its display.power
+   * claim on both halves. In NO baseline — brand new, and a fielded player simply ignores the
+   * unknown command, which is the correct outcome rather than a dark screen.
+   */
+  'display.power_schedule',
   // remote view / control
   'remote.screenshot', 'remote.stream', 'remote.input',
   /* Voice: play the operator's audio (+ optional webcam) — one-way Talk / PA. Over the same go2rtc
@@ -377,6 +392,9 @@ const COMMAND_CAPABILITY = {
   // display
   screen_on: 'display.power',
   screen_off: 'display.power',
+  // ⚠️ NOT display.power — see the capability's own note. A panel that can be told to sleep is not
+  // necessarily a panel that can be trusted to sleep UNATTENDED and wake itself again.
+  set_power_schedule: 'display.power_schedule',
 
   // audio
   set_volume: 'audio.volume',

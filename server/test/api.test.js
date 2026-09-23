@@ -207,6 +207,33 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
      *     promise siblings on this door already make.
      */
     '/api/data-sources',
+    /*
+     * Display power schedules — the weekly BACKLIGHT clock — added deliberately. Same reasoning as
+     * triggers: an AV integrator provisioning a site configures "the screens are dark 22:00-06:00"
+     * from their own tooling, and that belongs in a handover script rather than twenty dashboard
+     * visits. Writes carry the same requireScope('full') + role pairing as /api/pip and /api/triggers,
+     * and reads are workspace-scoped like every sibling.
+     *
+     * ⚠️ What review should weigh, since this one is unusually easy to misread: a `full` token here
+     * can make an estate go DARK on a timer, which looks exactly like mass hardware failure to
+     * whoever is standing in front of it. Three things bound that, and they are the reason this is
+     * on the door rather than off it:
+     *
+     *  1. It is the PANEL, not the device. The player keeps running throughout — content syncs,
+     *     OTA proceeds, heartbeats continue — and `screen_on` wakes it instantly. Nothing here can
+     *     power a device off; there is no such command, deliberately, because a device that is off
+     *     cannot be told to come back on.
+     *  2. A screen reports `display_power: scheduled_off` on every heartbeat, so a deliberately
+     *     dark screen is DISTINGUISHABLE from a dead one in the dashboard. That is what stops this
+     *     becoming an undiagnosable outage.
+     *  3. The reach is not new: a `write` token can already assign an empty playlist and leave the
+     *     same screens showing nothing, with no telemetry saying it was on purpose.
+     *
+     * ⚠️ The DECISION is not here. The panel evaluates its own windows offline against
+     * shared/power-window-vectors.json — same principle as the trigger fire path — so nothing on
+     * this door is consulted at the moment a screen actually sleeps.
+     */
+    '/api/display-power-schedules',
     '/api/approvals',
     '/api/revisions',
   ].sort();
