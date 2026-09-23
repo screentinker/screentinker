@@ -14,6 +14,18 @@
   ],
   "releases": [
     {
+      "version": "2.1.6",
+      "date": "2026-09-23",
+      "notes": [
+        "Big uploads no longer fail part way. Files now upload in small pieces, one file at a time, so a slow or distant connection does not hit a hidden time limit — and if the upload is interrupted, or you close the tab, it picks up where it left off instead of starting again.",
+        "Adding content to a playlist now shows your WHOLE library, not just the hundred most recent files, and you can filter the list by folder. The same hundred-file limit was also quietly affecting the schedule editor, a screen's standby content and the zone assignment window.",
+        "You are now told BEFORE a large upload if it would take you past your storage allowance, rather than after it finishes.",
+        "New: a weekly schedule for switching a screen's display off — \"off 22:00-06:00, Mon-Fri\" — per screen or per group, to save backlight hours. The player keeps running, so content and remote control continue and waking a screen is instant.",
+        "Raspberry Pi: on a newer Pi OS desktop the mouse pointer is hidden properly now, including on images that already had a desktop configuration of their own.",
+        "The display-off schedule needs a matching player update, so it will show as unsupported on your screens until one is installed."
+      ]
+    },
+    {
       "version": "2.1.5",
       "date": "2026-09-22",
       "notes": [

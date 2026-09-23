@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.1.6 (2026-09-23)
+
+Contributed by [@awatterott](https://github.com/awatterott), who reported the Raspberry Pi
+cursor-hiding regression on #409 and supplied the labwc configuration that fixes it (#412).
+
+⚠️ **No new player binary ships with this release.** The display power schedules below need one, so
+they will report as unsupported on every screen until an APK matching this version is staged. The
+server refuses to send a schedule to a player that has not declared it can honour one, so nothing
+goes dark unexpectedly in the meantime.
+
 ### Added
 
 **Uploads are now resumable, and no longer all-or-nothing.** A large file, or a slow or distant
