@@ -1,0 +1,211 @@
+{
+  "_about": "Conformance vectors for DISPLAY POWER window evaluation (backlight off schedules). The contract: every implementation (JS server, Kotlin player, Tizen/webOS JS) must agree with every vector. If an implementation disagrees, the implementation is wrong.",
+  "_conventions": {
+    "days": "active days as a set of integers 0-6, where 0=Sunday .. 6=Saturday (matches JS Date.getDay()). Identical to shared/schedule-vectors.json so the two evaluators cannot drift on day numbering.",
+    "time": "start/end are local wall-clock HH:MM (24h). A window is [start, end): start inclusive, end exclusive, so adjacent windows 22:00-24:00 and 00:00-06:00 do not double-cover midnight. end may be \"24:00\" meaning end-of-day.",
+    "overnight": "if start > end the window crosses midnight: off [start,24:00) on the start day and [00:00,end) on the NEXT day. The day-of-week test applies to the day the window STARTED — a Fri 22:00-06:00 window is off on Sat 01:00 even though Saturday is not in days.",
+    "windows": "windows OR together; >=1 match = the screen should be off. ZERO windows = never off.",
+    "expect": "expect.off is true when the BACKLIGHT SHOULD BE OFF at utc_now.",
+    "_FAIL_SAFE": "⚠️ THIS EVALUATOR FAILS TO **ON**, WHICH IS THE OPPOSITE OF shared/schedule-vectors.json. schedule-eval fails OPEN (the item PLAYS) because a blank screen is worse than an over-running promo. Here the same instinct inverts: a bad timezone, a malformed time or a junk window must leave the screen LIT, never dark. A dark screen that nobody scheduled is indistinguishable from dead hardware, and it is the one failure an operator cannot diagnose from the dashboard because the panel looks off. Every malformed input below therefore expects off=false."
+  },
+  "vectors": [
+    {
+      "name": "no windows at all = never off",
+      "utc_now": "2026-09-22T03:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [],
+      "expect": { "off": false }
+    },
+    {
+      "name": "disabled schedule is inert even inside a window",
+      "utc_now": "2026-09-22T03:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": false,
+      "windows": [{ "days": [1, 2, 3, 4, 5], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "start is INCLUSIVE (local Mon 22:00 exactly)",
+      "utc_now": "2026-09-22T03:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [1, 2, 3, 4, 5], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "one minute before start is still on (local Mon 21:59)",
+      "utc_now": "2026-09-22T02:59:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [1, 2, 3, 4, 5], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "end is EXCLUSIVE (local Tue 06:00 exactly = back on)",
+      "utc_now": "2026-09-22T11:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [1, 2, 3, 4, 5], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "overnight wrap: still off at local Tue 05:59, anchored to Monday",
+      "utc_now": "2026-09-22T10:59:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [1, 2, 3, 4, 5], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "overnight wrap anchors to the START day: Sat 01:00 is off because FRIDAY is scheduled",
+      "utc_now": "2026-09-26T06:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [1, 2, 3, 4, 5], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "and Sun 01:00 is ON, because Saturday is not scheduled to start a window",
+      "utc_now": "2026-09-27T06:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [1, 2, 3, 4, 5], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "DST spring forward: local 01:30 CST before the jump is inside 01:00-03:00",
+      "utc_now": "2026-03-08T07:30:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "01:00", "end": "03:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "DST spring forward: an hour is SKIPPED, so one UTC hour later the clock already reads 03:30 = past the end = on",
+      "utc_now": "2026-03-08T08:30:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "01:00", "end": "03:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "DST fall back: the FIRST 01:30 (CDT) is inside 01:00-02:00",
+      "utc_now": "2026-11-01T06:30:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "01:00", "end": "02:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "DST fall back: the REPEATED 01:30 (CST) is also inside — an hour lived twice is off twice",
+      "utc_now": "2026-11-01T07:30:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "01:00", "end": "02:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "DST fall back: 02:30 CST is past the end",
+      "utc_now": "2026-11-01T08:30:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "01:00", "end": "02:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "timezone matters: the same instant is 23:00 in Berlin (off)",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "Europe/Berlin",
+      "enabled": true,
+      "windows": [{ "days": [2], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "timezone matters: the same instant is 16:00 in Chicago (on)",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [2], "start": "22:00", "end": "06:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "00:00-24:00 on every day is always off",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "00:00", "end": "24:00" }],
+      "expect": { "off": true }
+    },
+    {
+      "name": "24:00 end does NOT wrap into the next day (Tue 16:00, window is Mon 22:00-24:00)",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [1], "start": "22:00", "end": "24:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "windows OR together: the second one matches",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [
+        { "days": [2], "start": "09:00", "end": "10:00" },
+        { "days": [2], "start": "16:00", "end": "17:00" }
+      ],
+      "expect": { "off": true }
+    },
+    {
+      "name": "empty day set never matches",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [], "start": "00:00", "end": "24:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "FAIL SAFE: an unknown timezone leaves the screen ON, it does not throw and it does not blank",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "Not/AZone",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "00:00", "end": "24:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "FAIL SAFE: a malformed start time leaves the screen ON",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [{ "days": [0, 1, 2, 3, 4, 5, 6], "start": "2500", "end": "24:00" }],
+      "expect": { "off": false }
+    },
+    {
+      "name": "FAIL SAFE: a null window list leaves the screen ON",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": null,
+      "expect": { "off": false }
+    },
+    {
+      "name": "FAIL SAFE: one malformed window does not disable the GOOD one beside it",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": "America/Chicago",
+      "enabled": true,
+      "windows": [
+        { "days": [2], "start": "nonsense", "end": "17:00" },
+        { "days": [2], "start": "16:00", "end": "17:00" }
+      ],
+      "expect": { "off": true }
+    },
+    {
+      "name": "a null timezone falls back to the runtime's own clock and must not throw",
+      "utc_now": "2026-09-22T21:00:00Z",
+      "timezone": null,
+      "enabled": true,
+      "windows": [],
+      "expect": { "off": false }
+    }
+  ]
+}
