@@ -2431,7 +2431,9 @@ paths:
                 name: { type: string }
                 device_id: { type: string, description: 'Mutually exclusive with group_id.' }
                 group_id: { type: string, description: 'Mutually exclusive with device_id.' }
-                timezone: { type: string, nullable: true, description: 'IANA zone the windows are written in. Null inherits the device timezone.' }
+                timezone:
+                  type: [string, 'null']
+                  description: 'IANA zone the windows are written in. Null inherits the device timezone.'
                 enabled: { type: boolean, default: true }
                 windows:
                   type: array
@@ -2448,7 +2450,7 @@ paths:
                       end: { type: string, example: '06:00', description: 'HH:MM or 24:00, exclusive.' }
       responses:
         '201': { description: '{ schedule: {...} }' }
-        '400': { description: Malformed window, unknown timezone, or target not in this workspace. }
+        '400': { description: 'Malformed window, unknown timezone, or target not in this workspace.' }
         '409': { description: 'This target already has a schedule; the body carries its id.' }
   /display-power-schedules/effective/{deviceId}:
     get:
@@ -2490,7 +2492,7 @@ paths:
                 name: { type: string }
                 device_id: { type: string }
                 group_id: { type: string }
-                timezone: { type: string, nullable: true }
+                timezone: { type: [string, 'null'] }
                 enabled: { type: boolean }
                 windows: { type: array, items: { type: object } }
       responses:
