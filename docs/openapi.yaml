@@ -1497,7 +1497,7 @@ paths:
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
-                         set_server_url, set_power_schedule]
+                         set_server_url, set_power_schedule, http_request]
                 payload: { type: object }
       responses:
         '200': { description: '{ success, sent, offline, total, results }.' }
@@ -1538,7 +1538,7 @@ paths:
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
-                         set_server_url, set_power_schedule]
+                         set_server_url, set_power_schedule, http_request]
                 payload: { type: object }
       responses:
         '200':

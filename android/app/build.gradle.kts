@@ -193,6 +193,11 @@ tasks.withType<Test> {
     // in the opposite direction from ScheduleEval above (to ON, never to off) — a difference that
     // only the shared vectors can keep honest across two languages. PowerWindowTest holds it.
     systemProperty("powerWindowVectors", File(rootProject.projectDir.parentFile, "shared/power-window-vectors.json").absolutePath)
+    // Device-side REST targets. ⚠️ This one decides whether an operator command can be turned into
+    // a LOCAL FILE READ on the panel (file:// / content://), so the allowlist must mean the same
+    // thing in both languages — the server refuses a bad URL when it is saved, this player refuses
+    // it again when the request is made. HttpTargetGuardTest holds it.
+    systemProperty("httpTargetVectors", File(rootProject.projectDir.parentFile, "shared/http-target-vectors.json").absolutePath)
 }
 
 // #81: AGP ignores enableV1Signing at minSdk>=24, so `assembleRelease` produces a

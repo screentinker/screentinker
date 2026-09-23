@@ -57,6 +57,37 @@ never be swept out from under the person making it.
 
 The single-request endpoint remains for API tokens, the agency portal and small files.
 
+**Device-side REST — a screen can now make an HTTP request on its own network.** Signage sits on the
+customer's LAN next to the things worth asking: a PLC, a door sensor, a local Home Assistant. The
+ScreenTinker server is frequently in another country and has no route to that `192.168.x.x`, so the
+request runs on the **panel** and nothing is proxied. Up to 64 KiB of the answer comes back, with a
+`truncated` flag, for the dashboard to show.
+
+⚠️ **The scheme allowlist is the whole security boundary, and it is not the one people expect.** The
+operator sending this already holds a `full` token and can already run `shell` on a device-owner
+panel, so reaching a LAN host is not an escalation — it is the request. What is refused is a change
+of *kind*: `file://` and `content://` would turn "fetch a URL and return 64 KiB" into "read a file
+off this device and return 64 KiB", and on Android `content://` reads through content providers,
+which is precisely how one app's private data is exposed to another. Cloud metadata addresses go
+too — link-local only exists when DHCP has failed, so nothing there is a real signage target — and a
+hostname that *resolves* to one is caught by re-checking every resolved address and then **pinning**
+it into the connection, so the address approved is the address connected to. Redirects are not
+followed, because a 302 is a second target the guard never saw.
+
+⚠️ **It is deliberately not a mesh command.** A hub cannot send it to a peer's screens. The mesh
+consent sentence is "Reboot, reload, change settings on screens", and making someone else's panel
+issue arbitrary requests from inside their LAN is not a setting — it is using their screen as a
+foothold on a network the hub cannot otherwise reach. No wording fixes that; a consent line honest
+enough to cover it is one nobody would tick.
+
+The 64 KiB limit is a **read** limit, not a Content-Length check: a broken or hostile endpoint can
+declare 10 bytes and send gigabytes, and a panel must spend 64 KiB on that rather than an OOM in the
+middle of playback. The request runs on a worker thread, so an unreachable target blocks nothing.
+Every request answers — a refusal, a timeout and a 500 are all results, and silence would be
+indistinguishable from a command that never arrived.
+
+Android only for now; `net.http_request` is in no baseline, so a fielded player is refused the
+command rather than sent something it would drop.
 
 **Display power schedules — blank the screen on a weekly clock.** Signage runs in shops that close,
 and a backlight has a finite number of hours in it. You can now set "off 22:00–06:00, Mon–Fri" on a

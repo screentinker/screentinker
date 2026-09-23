@@ -142,6 +142,18 @@ object PlayerCapabilities {
              */
             if (isOwner || policy.isAdminActive() || accessibility) caps += "display.power_schedule"
 
+            /*
+             * Device-side REST. UNCONDITIONAL: performing an HTTP request needs only INTERNET,
+             * which this app already holds and cannot lose at runtime — unlike every other
+             * capability in this block, which depends on a grant that can be taken away.
+             *
+             * It is declared here rather than in the static list above only to keep the whole
+             * net.* surface in one place; there is no runtime condition to test. The SERVER still
+             * gates the command on it, which is what stops a fielded player (declaring nothing,
+             * falling back to a baseline that omits it) being sent something it would drop.
+             */
+            caps += "net.http_request"
+
             // Owner-only reboot. Off-owner it degrades to an accessibility power DIALOG, which needs
             // someone standing at the screen — not a remote capability.
             if (isOwner) caps += "system.reboot"

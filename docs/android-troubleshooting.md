@@ -236,3 +236,72 @@ essentially the same backlight saving and is reversible from the dashboard at an
 3. Check nobody pressed **screen on** during the window — that is an intentional exemption and it lasts
    until the window ends.
 4. `adb logcat -s PowerSchedule:I` shows the restore, every state change, and whether an override is active.
+
+---
+
+## Device-side REST (`http_request`)
+
+The **panel** performs the HTTP request, from its own network. That is the whole point: the
+ScreenTinker server is frequently in another country and has no route to the shop's `192.168.x.x`,
+so a LAN target — a PLC, a sensor, a local Home Assistant — is only reachable from the screen
+standing next to it. Nothing is proxied through the server.
+
+### What is allowed, and what is not
+
+⚠️ **Only `http://` and `https://`.** This is the whole security boundary and it is not a
+formality. The operator sending the command already holds a `full` token and, on a device-owner
+panel, can already run `shell` — so reaching a LAN host is not an escalation for them, it is what
+they asked for. What the guard stops is a change of *kind*: turning "fetch a URL and return 64 KiB
+of the answer" into "read a file off this device and return 64 KiB of it". On Android that means
+`file://` and, worse, `content://`, which reads through content providers — the mechanism by which
+one app's private data is exposed to another.
+
+| Target | Allowed | Why |
+|---|---|---|
+| `http://192.168.1.50/api` | ✅ | RFC1918 is the **feature**, not a risk to be blocked |
+| `https://api.example.com` | ✅ | ordinary public API |
+| `http://127.0.0.1:1880` | ✅ | a service running on the panel itself |
+| `file://…`, `content://…` | ❌ | would turn a fetch into a local file read |
+| `http://169.254.169.254` | ❌ | cloud metadata; link-local only exists when DHCP has failed |
+| `ws://`, `ftp://`, `data:` | ❌ | not in the scheme allowlist |
+
+A **hostname** that resolves to a refused address is caught too: the player resolves, re-checks
+every address, and then **pins** the vetted address into the connection, so the address it approved
+is the address it connects to. Without that pin a hostile resolver could answer differently between
+the check and the socket, and the vetting would be decorative.
+
+**Redirects are not followed.** A 302 is a second target the guard never saw. The operator gets the
+302 and its `Location` header in the snippet and can decide for themselves.
+
+### Limits
+
+- **64 KiB** of the response comes back, as `snippet`, with a `truncated` flag. It is a **read
+  limit, not a Content-Length check** — a broken or hostile endpoint can declare 10 bytes and send
+  gigabytes. A panel must spend 64 KiB on that, not an OOM in the middle of playback.
+- The request runs on a **worker thread**. A request to an unreachable PLC blocks for the full
+  timeout, and doing that on the main looper would freeze playback, the heartbeat and the display
+  power tick with it.
+- Default timeout **15 s**, maximum 120 s.
+- Methods are allowlisted: `GET POST PUT PATCH DELETE HEAD`. `TRACE` would reflect request headers
+  (including any `Authorization`) into a body we store and display; `CONNECT` asks the panel to open
+  a tunnel. Neither has a signage use.
+
+### ⚠️ It is not a mesh command
+
+A hub in a Node Mesh **cannot** send `http_request` to a peer's screens, and that is deliberate.
+The mesh consent sentence is "Reboot, reload, change settings on screens." Making someone else's
+panel issue arbitrary requests from inside their LAN is not a setting — it is using their screen as
+a foothold on a network the hub cannot otherwise reach. The panel is by design the one thing on the
+private side of the customer's firewall, which is exactly why a third party must not get to aim it.
+
+### Reading the result
+
+Every request answers, including the failures — silence would be indistinguishable from a command
+that never arrived.
+
+- `ok` is the **HTTP verdict**, not "did the call happen". A 500 is a completed request that failed,
+  and that is different from a timeout: a timeout reports `status: 0` with an `error`.
+- `error` carries the exception *message* ("connect timed out"), not the class name — the former
+  tells an installer to check the cable.
+
+`adb logcat -s DeviceHttp:I` shows each request, its status and its duration.
