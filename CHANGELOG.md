@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+
+**The dashboard now notices its own updates.** The "a new version is available, reload?" prompt was
+driven by a hash of a hardcoded list of twenty files — and the playlist view, everything under
+`js/lib/`, and all ten translation files were not on it. A fix shipped to any of those reached no
+open dashboard at all: nothing prompted a reload, so an operator sitting on the page saw no change
+and reasonably concluded it had not been fixed. Every view added since that list was written
+inherited the same hole, silently, because nothing about adding a view tells you to edit an array
+in the server.
+
+There is no list any more — it walks what is actually served, so a new file is covered the day it
+is added. It reads file metadata rather than contents, which keeps the work off the event loop that
+answers every screen's heartbeat.
+
+
 ### Added
 
 **The playlist content picker now navigates folders as a tree.** A bar above the list shows where
