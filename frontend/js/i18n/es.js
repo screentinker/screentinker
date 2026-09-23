@@ -4,6 +4,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'Esta pantalla está en {n} grupos que definen un horario de apagado. Solo se usa el primero: quítala de uno o dale su propio horario.',
+  'power.group_conflict_winner': 'en uso',
+  'power.group_button': 'Apagar pantalla',
+  'power.group_unsupported_members': '{n} de {total} pantallas de este grupo no pueden apagarse solas e ignorarán este horario.',
+  'power.group_overridden_members': '{n} pantallas tienen su propio horario, que tiene prioridad sobre este.',
   'power.section_title': 'Horario de apagado de pantalla',
   'power.enable': 'Aplicar este horario',
   'power.explainer': 'Apaga la pantalla según un horario semanal para alargar la vida de la retroiluminación. El reproductor sigue funcionando, así que el contenido, las actualizaciones y el control remoto siguen activos: esto NO apaga el dispositivo.',

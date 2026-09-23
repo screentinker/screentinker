@@ -8,6 +8,7 @@ import * as gettingStarted from '../components/getting-started.js';
 import * as whatsNew from '../components/whats-new.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 import { openMoveServerModal } from '../components/move-server-modal.js';
+import { openGroupPowerScheduleModal } from '../components/group-power-schedule-modal.js';
 import { frameDeviceOutput } from '../lib/device-frame.js';
 import { selectedRemoteOrg } from '../components/workspace-switcher.js';
 
@@ -292,6 +293,12 @@ function renderGroupSection(group, devices, playlists) {
           </select>
           ` : ''}
           ${devices.length > 0 ? `
+          <!-- The weekly backlight schedule for every member that does not have its own. Opens the
+               SAME editor the device page uses; see components/group-power-schedule-modal.js. -->
+          <button class="btn btn-secondary btn-sm group-power-btn" data-group-id="${group.id}" data-group-name="${esc(group.name)}"
+                  style="padding:4px 8px;font-size:12px;white-space:nowrap" title="${esc(t('power.section_title'))}">
+            ${t('power.group_button')}
+          </button>
           <label class="group-sync-label" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);cursor:pointer;white-space:nowrap" title="${esc(t('dashboard.group_sync.hint'))}">
             <input type="checkbox" class="group-sync-cb" data-group-id="${group.id}" ${group.sync_enabled ? 'checked' : ''}> ${t('dashboard.group_sync.label')}
           </label>
@@ -1153,6 +1160,24 @@ function attachGroupHandlers(groupsWithDevices) {
   // wrapper are drop targets. Drop on a group adds membership (mirrors the
   // Manage modal). Drop on Ungrouped removes the device from every group it's
   // currently a member of.
+  // The weekly backlight schedule for the group. The member list is passed through so the modal
+  // can say how many panels cannot honour one, and how many override it with their own — neither
+  // of which is visible from a group row.
+  document.querySelectorAll('.group-power-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-group-id');
+      const g = groupsWithDevices.find((x) => x.id === id);
+      /*
+       * ⚠️ memberIds, NOT g.devices. The render pass above filters g.devices so each screen is
+       * drawn exactly once ("the first group it belongs to wins"), so a device in two groups is
+       * missing from the second group's list — and it is precisely the multi-group screens whose
+       * power schedule is ambiguous. memberIds is preserved unfiltered for this kind of question.
+       */
+      if (g) openGroupPowerScheduleModal({ id: g.id, name: g.name }, [...(g.memberIds || [])].map((mid) => ({ id: mid })));
+    });
+  });
+
   const groupsByDeviceId = new Map();
   for (const g of groupsWithDevices) {
     g.memberIds.forEach(id => {

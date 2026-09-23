@@ -31,6 +31,17 @@ Waking a screen by hand during a window is honoured until that window **ends**, 
 resumes on its own — neither a permanent override (where the operator silently loses the schedule)
 nor no override at all (where the panel goes dark again while they are standing in front of it).
 
+Set it on a screen from its Controls tab, or on a whole group from the **Screen off** button on the
+group row. The group editor says how many members cannot honour a schedule and how many override it
+with their own — neither is visible from a group row otherwise. A screen that sits in two groups
+that both schedule its power gets a warning naming which one is actually in force, because the
+resolver's tie-break (lowest group id) is stable and documented but invisible, and the only symptom
+would be a screen going dark at the wrong time with both group pages looking correct.
+
+⚠️ On a **device** page an unsupported panel cannot be given a schedule at all, rather than being
+allowed to save one the server will refuse to send. A group still can, because a group is a mixed
+bag by nature and refusing the write because of its weakest member would be worse than naming them.
+
 Android today. Other players accept and store the schedule and report it as unsupported rather than
 swallowing it; they do not declare the new `display.power_schedule` capability, and the server will
 not send a schedule to a panel that has not. That gate is deliberately separate from `display.power`:

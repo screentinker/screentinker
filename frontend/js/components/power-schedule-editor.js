@@ -73,17 +73,31 @@ export function renderPowerScheduleEditor(schedule, ctx = {}) {
   const enabled = schedule ? schedule.enabled !== false : true;
 
   /*
-   * ⚠️ The capability warning is shown but the editor is NOT disabled. An operator routinely sets
-   * a schedule on a screen that is offline, or on a group of mixed hardware where only some panels
-   * can honour it — refusing to let them write it would be worse than telling them which screens
-   * will ignore it. The server refuses the COMMAND per panel (deliverCommand), which is the
-   * enforcement; this is the explanation.
+   * ⚠️ On a DEVICE page an unsupported panel disables the editor, and that is a deliberate reversal
+   * of my first version. The original argument — "an operator may reasonably schedule a screen that
+   * is offline, or a mixed-hardware group" — holds for a GROUP, where some members can honour it.
+   * It does not hold here: this page is one panel, deliverCommand will refuse set_power_schedule
+   * for it, and the payload field will be ignored. Letting someone save is letting them save a row
+   * that nothing will ever act on, then walk away believing the shop lights go off at ten.
    */
-  const warn = ctx.supported === false
+  const unsupported = ctx.supported === false;
+  const warn = unsupported
     ? `<div class="power-warning">${esc(t('power.unsupported'))}</div>` : '';
 
   const inherited = ctx.inherited
     ? `<div class="power-hint">${esc(t('power.inherited_from_group'))}</div>` : '';
+
+  /*
+   * ⚠️ Two or more group schedules on one screen. The resolver picks a stable winner (lowest group
+   * id) and that stays — but an operator cannot discover WHICH from two group pages that each look
+   * correct on their own. The only symptom otherwise is a screen going dark at the wrong time.
+   */
+  const conflicts = Array.isArray(ctx.groupSchedules) && ctx.groupSchedules.length > 1
+    ? `<div class="power-warning">${esc(
+        t('power.group_conflict').replace('{n}', String(ctx.groupSchedules.length))
+      )}<ul>${ctx.groupSchedules.map((g, i) => `<li>${esc(g.group_name || g.group_id)}${
+        i === 0 ? ` — ${esc(t('power.group_conflict_winner'))}` : ''}</li>`).join('')}</ul></div>`
+    : '';
 
   const status = ctx.state
     ? `<span class="power-state power-state-${esc(ctx.state)}">${esc(
@@ -101,19 +115,19 @@ export function renderPowerScheduleEditor(schedule, ctx = {}) {
     <div class="power-schedule-editor" id="powerScheduleEditor">
       <div class="power-head">
         <label class="power-enable">
-          <input type="checkbox" id="powerEnabled" ${enabled ? 'checked' : ''}>
+          <input type="checkbox" id="powerEnabled" ${enabled ? 'checked' : ''}${unsupported ? ' disabled' : ''}>
           <span>${esc(t('power.enable'))}</span>
         </label>
         ${status}
       </div>
       <!-- Load-bearing: someone who thinks this powers the device off will use it wrong. -->
       <p class="power-explainer">${esc(t('power.explainer'))}</p>
-      ${warn}${inherited}${next}
+      ${warn}${conflicts}${inherited}${next}
       <div id="powerWindows">${windows.map(windowRow).join('') || `<div class="power-empty">${esc(t('power.no_windows'))}</div>`}</div>
       <div class="power-actions">
-        <button type="button" class="btn btn-secondary btn-sm" id="powerAddWindow">+ ${esc(t('power.add_window'))}</button>
-        ${PRESETS.map((p) => `<button type="button" class="btn btn-secondary btn-sm power-preset" data-preset="${p.key}">${esc(t(`power.preset.${p.key}`))}</button>`).join('')}
-        <button type="button" class="btn btn-primary btn-sm" id="powerSave">${esc(t('power.save'))}</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="powerAddWindow"${unsupported ? ' disabled' : ''}>+ ${esc(t('power.add_window'))}</button>
+        ${PRESETS.map((p) => `<button type="button" class="btn btn-secondary btn-sm power-preset" data-preset="${p.key}"${unsupported ? ' disabled' : ''}>${esc(t(`power.preset.${p.key}`))}</button>`).join('')}
+        <button type="button" class="btn btn-primary btn-sm" id="powerSave"${unsupported ? ' disabled title="' + esc(t('power.unsupported')) + '"' : ''}>${esc(t('power.save'))}</button>
         ${schedule?.id ? `<button type="button" class="btn btn-secondary btn-sm" id="powerDelete">${esc(t('power.remove_schedule'))}</button>` : ''}
       </div>
     </div>`;

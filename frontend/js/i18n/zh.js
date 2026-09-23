@@ -6,6 +6,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': '此屏幕属于 {n} 个分组，它们各自设置了关闭计划。仅使用第一个——请将其从其中一个分组中移除，或为此屏幕单独设置计划。',
+  'power.group_conflict_winner': '使用中',
+  'power.group_button': '关闭屏幕',
+  'power.group_unsupported_members': '此分组中 {total} 个屏幕有 {n} 个无法自行关闭显示，将忽略此计划。',
+  'power.group_overridden_members': '{n} 个屏幕有自己的计划，优先于此计划。',
   'power.section_title': '屏幕关闭计划',
   'power.enable': '应用此计划',
   'power.explainer': '按每周计划关闭屏幕，以延长背光寿命。播放器仍在运行，因此内容、更新和远程控制均可正常使用——这不会关闭设备电源。',

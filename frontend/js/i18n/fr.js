@@ -4,6 +4,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'Cet écran appartient à {n} groupes qui définissent chacun une programmation. Seule la première est appliquée — retirez-le d’un groupe, ou donnez-lui sa propre programmation.',
+  'power.group_conflict_winner': 'appliquée',
+  'power.group_button': 'Extinction écran',
+  'power.group_unsupported_members': '{n} écrans sur {total} dans ce groupe ne peuvent pas s’éteindre eux-mêmes et ignoreront cette programmation.',
+  'power.group_overridden_members': '{n} écrans ont leur propre programmation, qui est prioritaire sur celle-ci.',
   'power.section_title': 'Programmation d’extinction de l’écran',
   'power.enable': 'Appliquer cette programmation',
   'power.explainer': 'Éteint l’écran selon un horaire hebdomadaire pour préserver le rétroéclairage. Le lecteur continue de fonctionner : le contenu, les mises à jour et le contrôle à distance restent actifs — cela n’éteint PAS l’appareil.',

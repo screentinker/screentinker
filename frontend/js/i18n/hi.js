@@ -19,6 +19,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'यह स्क्रीन {n} ग्रुपों में है जो अलग-अलग शेड्यूल तय करते हैं। केवल पहला लागू होता है — इसे किसी एक से हटाएँ, या इसे अपना शेड्यूल दें।',
+  'power.group_conflict_winner': 'लागू',
+  'power.group_button': 'स्क्रीन बंद',
+  'power.group_unsupported_members': 'इस ग्रुप की {total} में से {n} स्क्रीन अपने आप बंद नहीं हो सकतीं और इस शेड्यूल को अनदेखा करेंगी।',
+  'power.group_overridden_members': '{n} स्क्रीनों का अपना शेड्यूल है, जो इससे पहले लागू होता है।',
   'power.section_title': 'स्क्रीन बंद करने का शेड्यूल',
   'power.enable': 'यह शेड्यूल लागू करें',
   'power.explainer': 'बैकलाइट बचाने के लिए साप्ताहिक शेड्यूल पर स्क्रीन बंद करता है। प्लेयर चलता रहता है, इसलिए कंटेंट, अपडेट और रिमोट कंट्रोल काम करते रहते हैं — इससे डिवाइस बंद नहीं होता।',

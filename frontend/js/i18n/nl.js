@@ -4,6 +4,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'Dit scherm zit in {n} groepen die elk een schema instellen. Alleen de eerste wordt gebruikt — haal het uit één groep, of geef het een eigen schema.',
+  'power.group_conflict_winner': 'in gebruik',
+  'power.group_button': 'Scherm uit',
+  'power.group_unsupported_members': '{n} van de {total} schermen in deze groep kunnen zichzelf niet uitschakelen en negeren dit schema.',
+  'power.group_overridden_members': '{n} schermen hebben een eigen schema, dat voorrang heeft op dit schema.',
   'power.section_title': 'Schema voor schermuitschakeling',
   'power.enable': 'Dit schema toepassen',
   'power.explainer': 'Zet het scherm op een weekschema uit om de achtergrondverlichting te sparen. De speler blijft draaien, dus content, updates en bediening op afstand blijven werken — dit schakelt het apparaat NIET uit.',

@@ -4,6 +4,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'この画面はスケジュールを設定した {n} つのグループに属しています。最初の1つだけが適用されます—どちらかのグループから外すか、この画面専用のスケジュールを設定してください。',
+  'power.group_conflict_winner': '適用中',
+  'power.group_button': '画面オフ',
+  'power.group_unsupported_members': 'このグループの {total} 台中 {n} 台は自分で画面を消灯できないため、このスケジュールを無視します。',
+  'power.group_overridden_members': '{n} 台は独自のスケジュールを持っており、そちらが優先されます。',
   'power.section_title': '画面オフのスケジュール',
   'power.enable': 'このスケジュールを適用する',
   'power.explainer': '週ごとのスケジュールで画面を消灯し、バックライトを長持ちさせます。プレーヤーは動作し続けるため、コンテンツ・更新・リモート操作はそのまま使えます。端末の電源は切れません。',

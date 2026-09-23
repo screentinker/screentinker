@@ -18,7 +18,8 @@ const { db } = require('../db/database');
 const { requireScope } = require('../middleware/apiToken');
 const { accessContext } = require('../lib/tenancy');
 const PowerWindow = require('../lib/power-window');
-const { powerScheduleForDevice, devicesAffectedBySchedule } = require('../lib/device-power-schedule');
+const playerCapabilities = require('../lib/player-capabilities');
+const { powerScheduleForDevice, groupSchedulesForDevice, devicesAffectedBySchedule } = require('../lib/device-power-schedule');
 
 /*
  * Changing when a screen is lit is a fleet-affecting write, so it carries the same pairing
@@ -169,13 +170,33 @@ router.get('/', requireScope('read'), (req, res) => {
  * and on a device to say when it next sleeps.
  */
 router.get('/effective/:deviceId', requireScope('read'), (req, res) => {
-  const device = db.prepare('SELECT id FROM devices WHERE id = ? AND workspace_id = ?')
+  const device = db.prepare('SELECT id, capabilities, platform FROM devices WHERE id = ? AND workspace_id = ?')
     .get(req.params.deviceId, req.workspaceId);
   if (!device) return res.status(404).json({ error: 'device not found' });
 
   const schedule = powerScheduleForDevice(db, req.params.deviceId);
+
+  /*
+   * ⚠️ Two or more group schedules on one screen is a MISCONFIGURATION the dashboard must show.
+   * The resolver's ORDER BY group_id ASC picks a stable, documented winner — correct for a
+   * resolver — but leaving it silent means an operator who set 22:00 on one group and 18:00 on
+   * another can never discover which one a shared screen obeys. Both pages look right on their
+   * own; only the screen is wrong, and only at night.
+   */
+  const groupSchedules = groupSchedulesForDevice(db, req.params.deviceId);
+
+  /*
+   * Whether this panel can honour a schedule at all. The dashboard uses this to stop offering one
+   * the server would refuse to send — deliverCommand gates set_power_schedule on
+   * display.power_schedule, so without it a saved schedule is a row nothing ever acts on.
+   */
+  const supported = playerCapabilities.supports(device, 'display.power_schedule');
+
   res.json({
     schedule,
+    supported,
+    // Only ever a warning: >1 means the screen is in several groups that each schedule its power.
+    group_schedules: groupSchedules,
     state: schedule ? PowerWindow.stateOf(schedule, new Date()) : 'on',
     next_edge: schedule ? PowerWindow.nextEdge(schedule, new Date()) : null,
   });

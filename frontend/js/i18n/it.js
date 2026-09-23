@@ -4,6 +4,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'Questo schermo è in {n} gruppi che impostano ciascuno una programmazione. Viene usata solo la prima — rimuovilo da un gruppo o assegnagli una programmazione propria.',
+  'power.group_conflict_winner': 'in uso',
+  'power.group_button': 'Spegnimento schermo',
+  'power.group_unsupported_members': '{n} schermi su {total} in questo gruppo non possono spegnersi da soli e ignoreranno questa programmazione.',
+  'power.group_overridden_members': '{n} schermi hanno una programmazione propria, che ha la priorità su questa.',
   'power.section_title': 'Programmazione spegnimento schermo',
   'power.enable': 'Applica questa programmazione',
   'power.explainer': 'Spegne lo schermo secondo un orario settimanale per preservare la retroilluminazione. Il player continua a funzionare: contenuti, aggiornamenti e controllo remoto restano attivi — questo NON spegne il dispositivo.',

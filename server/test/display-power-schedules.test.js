@@ -389,3 +389,59 @@ test('retarget a schedule from a device to a group -> the device is pushed the N
 
   await del(ownId);
 });
+
+/* ------------------------------------- what the dashboard needs to not mislead the operator */
+
+test('effective reports supported=false for a panel that cannot honour a schedule', async () => {
+  /*
+   * ⚠️ The dashboard uses this to DISABLE the editor. deliverCommand refuses set_power_schedule
+   * without display.power_schedule, so on such a panel a saved schedule is a row nothing ever acts
+   * on — and the operator walks away believing the shop lights go off at ten.
+   */
+  const Database = require('better-sqlite3');
+  const raw = new Database(dbFile);
+  const dumb = crypto.randomUUID();
+  raw.prepare(`INSERT INTO devices (id, name, workspace_id, status, capabilities, platform)
+               VALUES (?, 'Old panel', ?, 'offline', ?, 'android')`)
+    .run(dumb, workspaceId, JSON.stringify(['display.power']));   // the OLD capability only
+  raw.close();
+
+  const H = { headers: { Authorization: `Bearer ${jwt}` } };
+  const eff = await (await fetch(api('/effective/' + dumb), H)).json();
+  assert.equal(eff.supported, false, 'display.power alone must not imply an unattended schedule');
+
+  const able = await (await fetch(api('/effective/' + deviceId), H)).json();
+  assert.equal(typeof able.supported, 'boolean', 'the field is always present so the UI never guesses');
+});
+
+test('effective surfaces a multi-group conflict instead of silently picking one', async () => {
+  /*
+   * The resolver's ORDER BY group_id ASC stays — a stable documented winner is right for a
+   * resolver. What is wrong is leaving it invisible: two group pages each look correct on their
+   * own, and the only symptom is a screen going dark at the wrong time.
+   */
+  const g2 = await (await fetch(BASE + '/api/groups', J(jwt, { name: 'Also lobby' }))).json();
+  const Database = require('better-sqlite3');
+  const raw = new Database(dbFile);
+  raw.prepare('INSERT INTO device_group_members (group_id, device_id) VALUES (?, ?)').run(g2.id, deviceId);
+  raw.close();
+
+  const a = await createFor({ group_id: groupId }, { name: 'Ten o clock' });
+  const b = await fetch(api('/'), J(jwt, {
+    group_id: g2.id, name: 'Six o clock', windows: [{ days: [1], start: '18:00', end: '06:00' }],
+  }));
+  assert.equal(b.status, 201);
+  const bId = (await b.json()).schedule.id;
+
+  const eff = await (await fetch(api('/effective/' + deviceId), { headers: { Authorization: `Bearer ${jwt}` } })).json();
+  assert.equal(eff.group_schedules.length, 2, 'both must be reported so the dashboard can warn');
+  assert.equal(eff.schedule.source, 'group');
+  assert.equal(eff.group_schedules[0].id, eff.schedule.id,
+    'the FIRST entry must be the one actually in force, so the UI can label it');
+  assert.ok(eff.group_schedules.every((g) => g.group_name), 'named, so the operator knows where to look');
+
+  await del(a.body.schedule.id);
+  await del(bId);
+  const after = await (await fetch(api('/effective/' + deviceId), { headers: { Authorization: `Bearer ${jwt}` } })).json();
+  assert.equal(after.group_schedules.length, 0, 'and the warning clears when the conflict does');
+});

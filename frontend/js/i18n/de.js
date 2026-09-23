@@ -5,6 +5,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'Dieser Bildschirm ist in {n} Gruppen, die jeweils einen Zeitplan festlegen. Nur der erste wird verwendet — entfernen Sie ihn aus einer Gruppe oder geben Sie ihm einen eigenen Zeitplan.',
+  'power.group_conflict_winner': 'aktiv',
+  'power.group_button': 'Bildschirm aus',
+  'power.group_unsupported_members': '{n} von {total} Bildschirmen in dieser Gruppe können sich nicht selbst abschalten und ignorieren diesen Zeitplan.',
+  'power.group_overridden_members': '{n} Bildschirme haben einen eigenen Zeitplan, der Vorrang vor diesem hat.',
   'power.section_title': 'Zeitplan für Bildschirmabschaltung',
   'power.enable': 'Diesen Zeitplan anwenden',
   'power.explainer': 'Schaltet den Bildschirm nach einem Wochenplan dunkel, um die Hintergrundbeleuchtung zu schonen. Der Player läuft weiter – Inhalte, Updates und Fernsteuerung funktionieren weiterhin. Das Gerät wird NICHT ausgeschaltet.',

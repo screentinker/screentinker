@@ -4,6 +4,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'This screen is in {n} groups that each set a power schedule. Only the first is used — remove it from one, or give this screen its own schedule.',
+  'power.group_conflict_winner': 'in use',
+  'power.group_button': 'Screen off',
+  'power.group_unsupported_members': '{n} of {total} screens in this group cannot switch their own display off and will ignore this schedule.',
+  'power.group_overridden_members': '{n} screens have their own schedule, which takes priority over this one.',
   'power.section_title': 'Display power schedule',
   'power.enable': 'Run this schedule',
   'power.explainer': 'Blanks the screen on a weekly clock to save the backlight. The player keeps running, so content, updates and remote control all keep working — this does NOT switch the device off.',

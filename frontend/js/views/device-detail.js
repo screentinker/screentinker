@@ -27,11 +27,14 @@ async function wirePowerSchedule(device) {
   const host = document.getElementById('powerScheduleHost');
   if (!host) return;
 
-  const caps = (() => {
-    try { return JSON.parse(device.capabilities || '[]'); } catch { return []; }
-  })();
-  const supported = Array.isArray(caps) && caps.includes('display.power_schedule');
-
+  /*
+   * ⚠️ `supported` comes from the SERVER, not from parsing device.capabilities here. The server
+   * answers with playerCapabilities.supports(), which knows the per-platform baselines a fielded
+   * player falls back to when it declares nothing — a rule this view has no business reimplementing
+   * and would get subtly wrong for exactly the old devices that matter.
+   */
+  let supported = true;
+  let groupSchedules = [];
   let current = null;     // the schedule this SCREEN owns (null when it inherits or has none)
   let inherited = null;   // a group schedule it is following
 
@@ -39,12 +42,15 @@ async function wirePowerSchedule(device) {
     try {
       const res = await api.effectivePowerSchedule(device.id);
       const eff = res.schedule;
+      supported = res.supported !== false;
+      groupSchedules = res.group_schedules || [];
       // Only a schedule targeting this device is editable here; a group's is shown as inherited.
       current = eff && eff.source === 'device' ? eff : null;
       inherited = eff && eff.source === 'group' ? eff : null;
       host.innerHTML = renderPowerScheduleEditor(current || { windows: [], enabled: true }, {
         supported,
         inherited,
+        groupSchedules,
         state: res.state,
         nextEdge: res.next_edge,
       });
@@ -55,7 +61,7 @@ async function wirePowerSchedule(device) {
   }
 
   function redraw(windows, enabled) {
-    host.innerHTML = renderPowerScheduleEditor({ ...(current || {}), windows, enabled }, { supported, inherited });
+    host.innerHTML = renderPowerScheduleEditor({ ...(current || {}), windows, enabled }, { supported, inherited, groupSchedules });
     bind();
   }
 

@@ -97,6 +97,32 @@ function powerScheduleForDevice(db, deviceId) {
 }
 
 /**
+ * Every GROUP schedule that could apply to this device, in the order the resolver ranks them.
+ *
+ * ⚠️ Exists to SURFACE a conflict, not to resolve one. A device in two groups that both carry a
+ * power schedule is a misconfiguration: `ORDER BY group_id ASC` picks a winner that is arbitrary
+ * but stable and documented, which is the right behaviour for a resolver and the wrong thing to
+ * leave silent in a dashboard. An operator who has set "off at 22:00" on one group and "off at
+ * 18:00" on another has no way to discover which one a shared screen obeys unless we tell them —
+ * and the symptom otherwise is a screen that goes dark at the wrong time with both schedules
+ * looking correct on their own pages.
+ *
+ * Returns [] or one entry in the normal case; two or more means "show the warning".
+ */
+function groupSchedulesForDevice(db, deviceId) {
+  const device = db.prepare('SELECT id, workspace_id FROM devices WHERE id = ?').get(deviceId);
+  if (!device) return [];
+  return db.prepare(
+    `SELECT s.id, s.name, s.group_id, g.name AS group_name
+       FROM display_power_schedules s
+       JOIN device_group_members m ON m.group_id = s.group_id
+       LEFT JOIN device_groups g ON g.id = s.group_id
+      WHERE m.device_id = ? AND s.workspace_id = ?
+      ORDER BY s.group_id ASC`
+  ).all(deviceId, device.workspace_id);
+}
+
+/**
  * Every device a schedule currently applies to — the fan-out for "push this change now".
  *
  * ⚠️ Goes back through powerScheduleForDevice for each candidate rather than trusting the join,
@@ -140,4 +166,7 @@ function devicesAffectedBySchedule(db, scheduleId) {
         .all(s.group_id).map((r) => r.device_id);
 }
 
-module.exports = { powerScheduleForDevice, devicesForSchedule, devicesAffectedBySchedule, parseWindows };
+module.exports = {
+  powerScheduleForDevice, groupSchedulesForDevice, devicesForSchedule,
+  devicesAffectedBySchedule, parseWindows,
+};

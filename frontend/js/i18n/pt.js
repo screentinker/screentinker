@@ -5,6 +5,11 @@ export default {
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.
+  'power.group_conflict': 'Esta tela está em {n} grupos que definem um agendamento. Apenas o primeiro é usado — remova-a de um deles ou dê a ela o próprio agendamento.',
+  'power.group_conflict_winner': 'em uso',
+  'power.group_button': 'Desligar tela',
+  'power.group_unsupported_members': '{n} de {total} telas deste grupo não conseguem se apagar sozinhas e vão ignorar este agendamento.',
+  'power.group_overridden_members': '{n} telas têm agendamento próprio, que tem prioridade sobre este.',
   'power.section_title': 'Agendamento de desligamento da tela',
   'power.enable': 'Aplicar este agendamento',
   'power.explainer': 'Apaga a tela em um horário semanal para preservar a retroiluminação. O player continua funcionando, então conteúdo, atualizações e controle remoto seguem ativos — isto NÃO desliga o aparelho.',

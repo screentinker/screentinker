@@ -169,6 +169,27 @@ it reports `display_power: scheduled_off` on every heartbeat, so a deliberately 
 distinguishable from a dead one. Without that they look identical from the office, and the operator
 drives out to check.
 
+### What "off" actually is, precisely
+
+⚠️ **It is the existing `screen_off` path — a device LOCK — not a backlight or HDMI control, and
+not a shutdown.** The player asks device owner / device admin (`FORCE_LOCK`) or its accessibility
+service to lock the device, and on a panel that is its own display the screen goes dark as a
+consequence of locking. That is the same mechanism the dashboard's "screen off" button uses, which
+is deliberate: a second way to make a panel dark would drift from the one operators already press.
+
+What it needs is therefore what `screen_off` needs: **device owner, device admin with `FORCE_LOCK`,
+or the ScreenTinker accessibility service**. It does **not** use `WRITE_SETTINGS` — that one is for
+system brightness and the screen-off timeout, which are separate controls — and it never calls
+shutdown or reboot.
+
+⚠️ **Verify the result on your actual hardware before relying on it.** On an integrated panel
+(tablet, commercial display running Android) locking blanks the screen, which is what you want. On
+a **consumer HDMI stick or set-top box** the lock may simply show a keyguard rather than cut the
+video signal, so the attached TV keeps its backlight on and displays a lock screen instead of your
+content. That is a property of the box, not of the schedule — ScreenTinker has no way to cut HDMI
+from an app. If a stick behaves that way, drive the TV itself instead (its own on/off timer, or
+CEC), and leave this schedule off for those screens.
+
 ### What the player actually does at the edges
 
 - **Going off** — releases `FLAG_KEEP_SCREEN_ON`, then locks via device owner / device admin
@@ -187,7 +208,7 @@ drives out to check.
 
 ### Requirements
 
-The panel needs a way to blank itself, which is the same requirement `screen_off` has:
+As above, the panel needs a way to lock itself — the same requirement `screen_off` has:
 
 - **device owner** (see the provisioning notes above), **or**
 - **device admin** with `FORCE_LOCK`, **or**
