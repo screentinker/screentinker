@@ -16,6 +16,10 @@
 // To add a key: copy from en.js and translate the value. Order doesn't matter;
 // the loader merges over English fallback.
 export default {
+  // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
+  // See frontend/js/lib/chunked-upload.js.
+  'content.upload_resume_prompt': '{name} का अपलोड फिर से शुरू करें? पिछली बार {done}% पहले ही भेजा जा चुका है।',
+
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.

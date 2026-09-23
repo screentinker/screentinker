@@ -1578,6 +1578,12 @@ const otaBreaker = require('./lib/ota-breaker');
 otaBreaker.startSweep();   // #144: periodically evict idle breaker buckets so keyed state stays bounded
 require('./lib/reconnect-throttle').startSweep();   // #146: same, for the reconnect throttle's per-device buckets
 require('./lib/flap-limiter').startSweep();          // #146 Item B: evict idle flap-limiter buckets
+/*
+ * Abandoned resumable uploads. A browser tab closed mid-upload leaves a part file, and without this
+ * they accumulate for ever — on a disk whose free space has already been an incident twice.
+ * ⚠️ Collects by ROW, never by glob: see lib/upload-session.sweep.
+ */
+require('./lib/upload-session').startSweep();
 require('./lib/session-settle').startSweep();        // #148 patch2: evict idle session-settle entries
 require('./lib/content-ack-limiter').startSweep();   // #146 Item E: evict idle content-ack buckets
 const apkCache = require('./lib/apk-cache');

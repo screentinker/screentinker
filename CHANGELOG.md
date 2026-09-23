@@ -4,6 +4,33 @@
 
 ### Added
 
+**Uploads are now resumable, and no longer all-or-nothing.** A large file, or a slow or distant
+connection, could fail at a fixed wall that had nothing to do with the file: a single-request upload
+has to finish inside the shortest timeout between the browser and the server, which behind a CDN is
+about two minutes and does **not** scale with size. Measured on production: one customer failed
+seven times at 125.008–125.012 seconds while his 65 successful uploads in the same session peaked at
+114.2s — he was living inside a ten-second margin and had no way to know.
+
+Selecting several files made failure certain rather than likely, because the dashboard sent them as
+one request: the bytes scaled with the selection and the two minutes did not. The symptom he
+reported was *"it stays on 1%"*, which is exactly what an aggregate progress bar does while it
+measures half a gigabyte that will never arrive.
+
+Files now upload one at a time, in 5 MiB chunks, each with its own budget — so a dropped connection
+costs one chunk instead of a gigabyte, and file size stops being a gamble. **Progress survives a
+reload:** close the tab at 340 MB of 500 MB, come back, and you are offered the rest. The offset is
+always read from the bytes on the server, never from a counter the browser keeps, because the moment
+that matters is after a crash — exactly when a local counter would be wrong.
+
+Two things fall out of it. A workspace near its storage limit is now told **before** uploading
+rather than after, because a session declares its size up front — previously someone at 19.9 GB of a
+20 GB plan could upload 500 MB and simply end up over. And abandoned uploads are collected on a
+daily sweep that works from session rows, never from a file glob, so an upload still in progress can
+never be swept out from under the person making it.
+
+The single-request endpoint remains for API tokens, the agency portal and small files.
+
+
 **Display power schedules — blank the screen on a weekly clock.** Signage runs in shops that close,
 and a backlight has a finite number of hours in it. You can now set "off 22:00–06:00, Mon–Fri" on a
 screen or a whole group, with a screen's own schedule overriding its group's exactly as playlists

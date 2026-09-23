@@ -2,6 +2,10 @@
 // Reviewed for UI register (informal você). Native review recommended before
 // publicizing as fully supported.
 export default {
+  // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
+  // See frontend/js/lib/chunked-upload.js.
+  'content.upload_resume_prompt': 'Retomar o envio de {name}? {done}% já foram enviados da última vez.',
+
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
   // See frontend/js/components/power-schedule-editor.js.

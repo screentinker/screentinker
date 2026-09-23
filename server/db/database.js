@@ -1482,6 +1482,46 @@ const migrations = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_group  ON display_power_schedules (group_id)  WHERE group_id IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS idx_dps_ws ON display_power_schedules (workspace_id)`,
 
+  /* ==============================================================================================
+   * RESUMABLE UPLOADS — one row per in-flight file.
+   *
+   * ⚠️ WHY THIS EXISTS. A single-request upload must finish inside whatever the shortest timeout
+   * between the browser and this process happens to be. On prod that is Cloudflare's, measured at
+   * exactly 125s across seven consecutive failures from one customer in Perth uploading to a
+   * Hetzner box — his successful uploads peaked at 114.2s, i.e. he was living inside a 10-second
+   * margin. Anyone far from the origin, or on ordinary domestic broadband, has the same ceiling;
+   * they just have not hit it yet.
+   *
+   * The fix is not a bigger timeout, it is smaller requests: each chunk gets its OWN budget, so the
+   * ceiling stops scaling with file size.
+   *
+   * ⚠️ THE OFFSET IS NOT STORED HERE. It is the size of the part file on disk, read at request
+   * time. A counter in this table would be a second source of truth that can disagree with the
+   * bytes — and it would disagree exactly when it matters, after a crash mid-append, which is the
+   * case the whole feature exists to survive.
+   * ============================================================================================ */
+  `CREATE TABLE IF NOT EXISTS upload_sessions (
+     id            TEXT PRIMARY KEY,
+     workspace_id  TEXT NOT NULL,
+     user_id       TEXT NOT NULL,
+     filename      TEXT NOT NULL,
+     /* What the CLIENT says it will send. Never trusted as fact — the append path enforces it as a
+      * ceiling and finalize refuses a part file that does not match — but needed up front so the
+      * storage allowance can be checked BEFORE a gigabyte is accepted rather than after. */
+     declared_size INTEGER NOT NULL,
+     folder_id     TEXT,
+     /* Relative to config.uploadsDir + '/incoming'. ⚠️ NOT contentDir: /uploads/content is served
+      * statically, so a partial file there would be web-reachable from the dashboard's own origin
+      * BEFORE upload-sniff has looked at its bytes. */
+     part_name     TEXT NOT NULL,
+     created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     /* Touched on every append. The sweeper measures idleness from here, so a slow upload that is
+      * still making progress is never collected out from under the person making it. */
+     updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_upload_sessions_ws  ON upload_sessions (workspace_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_upload_sessions_age ON upload_sessions (updated_at)`,
+
   /*
    * ─── Playlist inheritance ────────────────────────────────────────────────────────────────
    *

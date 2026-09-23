@@ -16,6 +16,8 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 const { accessContext, denyReadOnly } = require('../lib/tenancy');
 // #73: the upload ingest (processing + insert) is now shared with the agency router.
 const { ingestUploadedFile, deriveMediaMetadata } = require('../lib/content-ingest');
+const uploadSession = require('../lib/upload-session');
+const subscriptionLimits = require('../middleware/subscription');
 const htmlBundle = require('../lib/html-bundle');
 const { finalizeUpload, INLINE_SAFE_EXTS } = require('../lib/upload-sniff');
 const { digestFile } = require('../lib/content-digest');
@@ -233,6 +235,201 @@ router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) 
     console.error('Upload error:', err);
     res.status(500).json({ error: 'Upload failed' });
   }
+});
+
+/* ================================================================================================
+ * RESUMABLE UPLOADS — lib/upload-session.js holds the state and the bytes.
+ *
+ * ⚠️ WHY, in one measurement: a single-request upload must finish inside the shortest timeout
+ * between the browser and this process. On prod that is Cloudflare's, and it is exactly 125s —
+ * seven consecutive failures from one customer at 125.008-125.012s, while his 65 successes in the
+ * same session peaked at 114.2s. He was inside a ten-second margin. The ceiling is not ours to
+ * raise and it scales with file size; smaller requests are the fix, because each chunk gets its own
+ * budget and a dropped connection costs one chunk instead of a gigabyte.
+ *
+ * The single-shot POST / above STAYS. API tokens, the agency portal and older dashboards use it,
+ * and for a small file one request is simply better than five.
+ * ============================================================================================= */
+
+/** Everything below is a write to this workspace's library; one gate, applied the same way. */
+function uploadSessionGate(req, res) {
+  if (!req.workspaceId) {
+    res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
+    return false;
+  }
+  if (denyReadOnly(req, res)) return false;
+  return true;
+}
+
+// Open a session. Answers with the chunk size the SERVER wants, so the limit can be tuned here
+// without shipping a new dashboard.
+router.post('/uploads', checkStorageLimit, (req, res) => {
+  if (!uploadSessionGate(req, res)) return;
+  const { filename, size, folder_id: folderId } = req.body || {};
+
+  const declared = Number(size);
+  if (!filename || !Number.isFinite(declared) || declared <= 0) {
+    return res.status(400).json({ error: 'filename and a positive size are required' });
+  }
+  if (declared > config.maxFileSize) {
+    return res.status(413).json({
+      error: `file is larger than the ${Math.round(config.maxFileSize / 1048576)}MB limit`,
+    });
+  }
+
+  /*
+   * ⚠️ The storage allowance is checked against the DECLARED SIZE here, not merely against current
+   * usage. checkStorageLimit alone refuses only once you are ALREADY at the limit, so a workspace
+   * at 19.9GB of 20GB could start a 500MB upload and land at 20.4GB. Knowing the size up front is
+   * the one advantage a session has over a stream, and this is what it buys.
+   */
+  const room = subscriptionLimits.storageRoomBytes(req.user.id);
+  if (room !== null && declared > room) {
+    return res.status(403).json({
+      error: 'This upload would exceed your storage allowance.',
+      code: 'STORAGE_LIMIT',
+      needed_bytes: declared,
+      available_bytes: Math.max(0, room),
+    });
+  }
+
+  if (folderId) {
+    const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(folderId);
+    if (!target || target.workspace_id !== req.workspaceId) {
+      return res.status(400).json({ error: 'Invalid folder_id for this workspace' });
+    }
+  }
+
+  const session = uploadSession.create({
+    workspaceId: req.workspaceId, userId: req.user.id,
+    filename, declaredSize: declared, folderId: folderId || null,
+  });
+  res.status(201).json({
+    id: session.id,
+    offset: 0,
+    chunk_size: uploadSession.CHUNK_SIZE,
+    declared_size: session.declared_size,
+  });
+});
+
+/*
+ * Where is this upload up to?
+ *
+ * ⚠️ THE ENDPOINT THAT MAKES RESUME REAL. A client that reloaded, crashed, or closed its laptop
+ * asks this and learns exactly where to continue — it needs to remember only the session id, and
+ * the answer comes from the bytes on disk rather than from anything the client told us. Without
+ * it, "resumable" would mean "retryable within one page session".
+ */
+router.head('/uploads/:id', (req, res) => {
+  if (!req.workspaceId) return res.status(403).end();
+  const session = uploadSession.get(req.params.id, req.workspaceId);
+  if (!session) return res.status(404).end();
+  res.set('Upload-Offset', String(uploadSession.offsetOf(session)));
+  res.set('Upload-Length', String(session.declared_size));
+  res.set('Cache-Control', 'no-store');
+  res.status(204).end();
+});
+
+// A GET twin, because XHR/fetch in a browser cannot read headers from a 204 as conveniently as a
+// body, and a resume prompt needs the filename to say what it is offering to resume.
+router.get('/uploads/:id', (req, res) => {
+  if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context' });
+  const session = uploadSession.get(req.params.id, req.workspaceId);
+  if (!session) return res.status(404).json({ error: 'no such upload' });
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    id: session.id,
+    filename: session.filename,
+    offset: uploadSession.offsetOf(session),
+    declared_size: session.declared_size,
+    chunk_size: uploadSession.CHUNK_SIZE,
+    folder_id: session.folder_id,
+  });
+});
+
+/*
+ * Append one chunk. Raw bytes, `Upload-Offset` says where the client believes it is.
+ *
+ * express.raw rather than multer: this is a byte range, not a form. It also means no temp file and
+ * no multipart parse per chunk.
+ */
+router.patch('/uploads/:id',
+  express.raw({ type: () => true, limit: uploadSession.CHUNK_SIZE * 2 }),
+  (req, res) => {
+    if (!uploadSessionGate(req, res)) return;
+    const session = uploadSession.get(req.params.id, req.workspaceId);
+    if (!session) return res.status(404).json({ error: 'no such upload' });
+
+    const declaredOffset = Number(req.get('Upload-Offset'));
+    if (!Number.isFinite(declaredOffset) || declaredOffset < 0) {
+      return res.status(400).json({ error: 'Upload-Offset header is required' });
+    }
+
+    const result = uploadSession.append(session, declaredOffset, req.body);
+    if (!result.ok) {
+      // The refusal NAMES the offset, so a client that lost a response corrects itself in one
+      // round trip instead of starting again.
+      return res.status(result.status).json({ error: result.error, offset: result.offset });
+    }
+    res.set('Upload-Offset', String(result.offset));
+    res.json({ offset: result.offset, complete: result.offset === session.declared_size });
+  });
+
+/*
+ * Every byte has arrived: run the SAME ingest a single-shot upload runs.
+ *
+ * lib/content-ingest.ingestUploadedFile does the sniffing, bundle validation, ffprobe, thumbnails,
+ * digest, row and plugin hook. Handing it a multer-shaped object is the entire integration — the
+ * alternative, a parallel ingest for chunked uploads, is how two paths drift until only one of them
+ * gets the next fix.
+ */
+router.post('/uploads/:id/finalize', async (req, res) => {
+  if (!uploadSessionGate(req, res)) return;
+  const session = uploadSession.get(req.params.id, req.workspaceId);
+  if (!session) return res.status(404).json({ error: 'no such upload' });
+
+  const offset = uploadSession.offsetOf(session);
+  if (!uploadSession.isComplete(session)) {
+    // Not an error state the client cannot act on: tell it what is missing and let it send the rest.
+    return res.status(409).json({
+      error: `upload is incomplete: ${offset} of ${session.declared_size} bytes`,
+      offset, declared_size: session.declared_size,
+    });
+  }
+
+  try {
+    const content = await ingestUploadedFile({
+      file: uploadSession.stageForIngest(session),
+      userId: session.user_id,
+      workspaceId: session.workspace_id,
+      folderId: session.folder_id,
+    });
+    // The bytes now live under contentDir with a sniffed extension; the session row is spent.
+    uploadSession.forget(session.id);
+    try {
+      require('../lib/revisions').recordCurrent(db, 'content', content.id,
+        { actor: require('../lib/releases').actorOf(req), summary: 'Uploaded' });
+    } catch (_) { /* revision history must not fail an upload */ }
+    res.status(201).json(content);
+  } catch (err) {
+    /*
+     * ⚠️ The part file goes on an unsupported type, and only then. finalizeUpload already unlinked
+     * whatever it rejected, so leaving the row would strand a session pointing at nothing — and
+     * keeping it would invite a client to retry a finalize that can never succeed.
+     */
+    uploadSession.discard(session);
+    if (err && err.name === 'UnsupportedUploadError') return res.status(400).json({ error: err.message });
+    console.error('Resumable finalize error:', err);
+    res.status(500).json({ error: 'Upload failed' });
+  }
+});
+
+// Give up on an upload. Idempotent: a client that already forgot gets the same answer.
+router.delete('/uploads/:id', (req, res) => {
+  if (!uploadSessionGate(req, res)) return;
+  const session = uploadSession.get(req.params.id, req.workspaceId);
+  if (session) uploadSession.discard(session);
+  res.json({ ok: true });
 });
 
 // Add remote URL content

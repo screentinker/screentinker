@@ -1,4 +1,5 @@
 import { api, assertLocalCallAllowed } from '../api.js';
+import { uploadFilesResumable } from '../lib/chunked-upload.js';
 import * as gettingStarted from '../components/getting-started.js';
 import { showToast } from '../components/toast.js';
 import { esc, hydrateAuthImages } from '../utils.js';
@@ -337,10 +338,35 @@ async function handleFiles(files) {
     if (list.length) {
       const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
       progressText.textContent = label;
-      await api.uploadContent(list, (pct) => {
-        progressFill.style.width = pct + '%';
-        progressText.textContent = `${label} — ${pct}%`;
-      }, state.currentFolderId);
+      /*
+       * ⚠️ RESUMABLE, ONE FILE AT A TIME — this replaces #212's single all-or-nothing request.
+       *
+       * That request had to finish inside the shortest timeout between the browser and the server,
+       * which on prod is Cloudflare's 125 seconds. Measured: seven consecutive failures from one
+       * customer at 125.008-125.012s while his successful uploads peaked at 114.2s. Selecting
+       * several files made it certain, because the bytes scaled and the 125 seconds did not — and
+       * the aggregate bar sat near 1% the whole time, which is exactly how he reported it.
+       *
+       * The bar still aggregates across the whole selection; it is now fed by bytes rather than by
+       * one XHR's progress, so it means the same thing without betting everything on one request.
+       */
+      await uploadFilesResumable(list, {
+        folderId: state.currentFolderId,
+        onProgress: (sent, total, file) => {
+          const pct = total ? Math.round((sent / total) * 100) : 0;
+          progressFill.style.width = pct + '%';
+          progressText.textContent = list.length === 1
+            ? `${label} — ${pct}%`
+            : `${label} — ${pct}% (${file ? file.name : ''})`;
+        },
+        // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
+        onResumeOffer: ({ offset, total }) => window.confirm(
+          t('content.upload_resume_prompt', {
+            name: list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length }),
+            done: Math.round((offset / total) * 100),
+          })
+        ),
+      });
       showToast(
         list.length === 1
           ? t('content.toast.uploaded_named', { name: list[0].name })
