@@ -79,7 +79,6 @@ class MainActivity : AppCompatActivity() {
      * constructed the feature is visibly absent rather than quietly inert.
      */
     private var triggerManager: com.remotedisplay.player.trigger.TriggerManager? = null
-    private var powerSchedule: com.remotedisplay.player.power.PowerScheduleManager? = null
     private var triggerSweep: Runnable? = null
 
     private lateinit var playerView: PlayerView
@@ -274,23 +273,6 @@ class MainActivity : AppCompatActivity() {
                 handler.postDelayed(this, 5000)
             }
         }.also { handler.postDelayed(it, 5000) }
-
-        /*
-         * The weekly backlight schedule. Restored from disk BEFORE any socket exists, so a panel
-         * that reboots at 02:00 with no WAN comes back dark and stays dark until its window ends —
-         * the whole reason this is a schedule the panel holds rather than a command it is sent.
-         *
-         * The manager decides; applyScheduledPower does the applying, through the SAME code the
-         * screen_off / screen_on commands use. Two ways to make a panel dark would drift.
-         */
-        powerSchedule = com.remotedisplay.player.power.PowerScheduleManager(
-            this,
-            onApply = { off -> applyScheduledPower(off) },
-            onStateChanged = { state -> wsService?.setDisplayPowerState(state) }
-        ).also {
-            it.restore()
-            it.start()
-        }
 
         // Setup zone manager for multi-zone layouts
         zoneManager = ZoneManager(this, rootView as FrameLayout) {
@@ -786,6 +768,14 @@ class MainActivity : AppCompatActivity() {
         // to be VISIBLE. Only ProvisioningActivity ever assigned onUnpaired, and it is gone by the
         // time playback is running — so a rejection left the screen sitting on "Connecting to
         // server", and the player then blamed the URL. The server always says why; show that.
+        /*
+         * The service owns the backlight schedule and tells us when a window opens or closes. We
+         * hold only the window flag (see applyPowerWindowFlag). Registered here, cleared in
+         * onDestroy — a null callback simply means "no UI attached", which is the normal state
+         * DURING a window, since blanking the panel is lockNow().
+         */
+        wsService?.onPowerWindow = { off -> applyPowerWindowFlag(off) }
+
         wsService?.onUnpaired = {
             runOnUiThread {
                 val why = wsService?.lastRejectionReason ?: ""
@@ -832,16 +822,6 @@ class MainActivity : AppCompatActivity() {
             // the entire offline guarantee.
             try { triggerManager?.onPayload(data) } catch (e: Throwable) {
                 Log.w("MainActivity", "trigger adopt failed: ${e.message}")
-            }
-            /*
-             * ⚠️ The power schedule rides EVERY payload, and is adopted here beside the triggers
-             * for the same reason: this is the message that survives a reboot, a re-pair and a week
-             * offline, so a panel is correct afterwards without any command having got through.
-             * `optJSONObject` returns null when the field is absent, and null CLEARS — a deleted
-             * schedule must stop running on the panel, not linger because nobody mentioned it.
-             */
-            try { powerSchedule?.update(data.optJSONObject("power_schedule")) } catch (e: Throwable) {
-                Log.w("MainActivity", "power schedule adopt failed: ${e.message}")
             }
             /*
              * ⚠️ AND PIN WHAT THEY NEED — the comment above describes the WEB player's mechanism,
@@ -1195,21 +1175,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 // Screen off = real lock on owner/admin (FORCE_LOCK), else accessibility lock. Exec retired.
                 "screen_off", "lock_now" -> {
-                    powerSchedule?.noteManualScreenOff()
                     if (!stPolicy().lockNow()) {
                         com.remotedisplay.player.service.PowerAccessibilityService.instance?.lockScreen()
                             ?: Log.w("MainActivity", "screen_off/lock_now: no owner/admin/accessibility — unsupported")
                     }
-                }
-                /*
-                 * The weekly backlight schedule (a DEFINITION, not "go dark now"). Stored, then
-                 * evaluated locally for ever — including with the WAN down, which is the point.
-                 * A null/absent schedule CLEARS any we hold: the server sends this field on every
-                 * playlist payload, so absent means "you have none", not "no news".
-                 */
-                "set_power_schedule" -> {
-                    val sched = payload?.optJSONObject("schedule")
-                    powerSchedule?.update(sched)
                 }
                 // Was a logged no-op: the retired `input keyevent 224` is denied to an app UID, and
                 // that one failure was read as "no wake path exists". A wake LOCK is a different
@@ -1217,10 +1186,6 @@ class MainActivity : AppCompatActivity() {
                 // and screen_on did not, and an operator who slept a panel overnight had to drive
                 // out to wake it. Losing the screen is the expensive direction to fail in.
                 "screen_on" -> {
-                    // An operator waking a screen mid-window is exempt from it until the window
-                    // ends — see PowerScheduleManager.noteManualScreenOn. Without this the panel
-                    // fights them: dark again within the minute while they stand in front of it.
-                    powerSchedule?.noteManualScreenOn()
                     val woke = systemControl.wakeScreen()
                     // The wake lock lights the panel; on a locked device the keyguard is still in
                     // front of the player, so ask for it to be dismissed too. Both are best-effort
@@ -1767,61 +1732,32 @@ class MainActivity : AppCompatActivity() {
      * next start rather than being forgotten.
      */
     /**
-     * Put the panel into, or out of, a SCHEDULED off state.
+     * The Activity's ONLY part in a scheduled power window: the window flag.
      *
-     * ⚠️ THIS IS NOT JUST "send screen_off". The one-shot command locks the device and that is
-     * enough for a button, because a human is standing there. A multi-hour window is different in
-     * a way that bites:
+     * ⚠️ FLAG_KEEP_SCREEN_ON IS THE WHOLE REASON THIS CALLBACK EXISTS. MainActivity adds it
+     * unconditionally in onCreate so a kiosk never sleeps mid-playback. Leave it set during a
+     * scheduled-off window and the first person to walk past and touch the panel at 23:00 relights
+     * it FOR THE REST OF THE NIGHT — the OS will not sleep a window that is asking to stay awake,
+     * and the schedule has no edge left to fire until 06:00. The screen an operator scheduled off
+     * burns until morning while the dashboard reports it as scheduled_off the whole time.
      *
-     *   MainActivity holds FLAG_KEEP_SCREEN_ON unconditionally from onCreate (see the addFlags near
-     *   the top) so a kiosk never sleeps mid-playback. Leave that flag set and the first person to
-     *   walk past and touch the panel at 23:00 relights it FOR THE REST OF THE NIGHT — the OS will
-     *   not sleep a window that is asking to stay awake, and the schedule has no edge left to fire
-     *   until 06:00. The screen an operator scheduled off burns until morning, and the dashboard
-     *   reports it as scheduled_off the whole time.
-     *
-     * So the flag is RELEASED for the duration of the window and re-added on the way out. The
-     * panel then sleeps on the system timeout by itself after any incidental wake, which is the
-     * behaviour the feature promises, and playback is protected again the moment it is over.
-     *
-     * The actual blank/wake reuses the screen_off / screen_on paths verbatim. A second
-     * implementation of "make this panel dark" would drift from the one the operator's button uses,
-     * and the divergence would only show up on hardware nobody has in front of them.
+     * Only a window can hold that flag, which is why this one piece lives in the Activity. The
+     * blanking and the waking are the SERVICE's (WebSocketService.blankPanel / wakePanel), because
+     * a scheduled off is lockNow() and therefore stops this Activity: anything owned here would
+     * switch the panel off and then die with it, and the morning wake would never run.
      */
-    private fun applyScheduledPower(off: Boolean) {
+    private fun applyPowerWindowFlag(off: Boolean) {
         runOnUiThread {
             try {
                 if (off) {
-                    // Let the OS sleep the panel. Without this the lock below is undone by the
-                    // first touch and never re-applied until the window ends.
+                    // Let the OS sleep the panel again after any incidental wake.
                     window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    if (!stPolicy().lockNow()) {
-                        com.remotedisplay.player.service.PowerAccessibilityService.instance?.lockScreen()
-                            ?: Log.w("MainActivity", "scheduled off: no owner/admin/accessibility — panel will only dim on its own timeout")
-                    }
                 } else {
                     // Playback is live again, so the kiosk must stop sleeping.
                     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    val woke = systemControl.wakeScreen()
-                    try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                            setShowWhenLocked(true)
-                            setTurnScreenOn(true)
-                            (getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager)
-                                ?.requestDismissKeyguard(this, null)
-                        } else {
-                            @Suppress("DEPRECATION")
-                            window.addFlags(
-                                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                            )
-                        }
-                    } catch (e: Throwable) { Log.w("MainActivity", "scheduled wake keyguard: ${e.message}") }
-                    Log.i("MainActivity", "scheduled on: wake=$woke")
                 }
             } catch (e: Throwable) {
-                Log.w("MainActivity", "applyScheduledPower($off): ${e.message}")
+                Log.w("MainActivity", "applyPowerWindowFlag($off): ${e.message}")
             }
         }
     }
@@ -2066,8 +2002,9 @@ class MainActivity : AppCompatActivity() {
         try { triggerSweep?.let { handler.removeCallbacks(it) } } catch (e: Throwable) { }
         try { triggerManager?.stop() } catch (e: Throwable) { }
         triggerManager = null
-        try { powerSchedule?.stop() } catch (e: Throwable) { }
-        powerSchedule = null
+        // Drop the window-flag callback so the service stops calling into a dead Activity. The
+        // SCHEDULE keeps running — it is the service's, deliberately.
+        try { wsService?.onPowerWindow = null } catch (e: Throwable) { }
         remoteStreaming = false
         // #talk video: drop the bus listener (it holds `this`) and release the renderer.
         try { com.remotedisplay.player.remote.TalkVideoBus.listener = null } catch (e: Throwable) { }

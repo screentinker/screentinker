@@ -9,6 +9,22 @@ import org.json.JSONObject
 /**
  * Holds this panel's weekly backlight schedule and applies it — locally, offline, for ever.
  *
+ * ⚠️ THIS MUST NOT BE ACTIVITY-SCOPED, AND THE REASON IS CIRCULAR.
+ *
+ * Going dark is `lockNow()`. That stops MainActivity and lets the system destroy it under memory
+ * pressure. So an Activity-owned instance switches the panel off and then dies with the thing it
+ * just switched off — the tick stops, the 06:00 edge never fires, and the schedule works exactly
+ * once before the screen stays dark until somebody drives to it. The first version of this file had
+ * that bug: constructed in MainActivity.onCreate and stopped in onDestroy.
+ *
+ * It is therefore owned by WebSocketService, which is foreground, START_STICKY, and holds a
+ * PARTIAL_WAKE_LOCK — the same "only thing guaranteed to be alive" reasoning the service's own
+ * screen_on branch already carries in writing. The Activity contributes one thing it alone can do,
+ * FLAG_KEEP_SCREEN_ON, through a nullable callback; null is a normal state mid-window.
+ *
+ * Nothing here touches a Context beyond SharedPreferences, and [start] needs no Activity, no window
+ * and no socket — see PowerScheduleServiceOwnershipTest.
+ *
  * ⚠️ WHY A HANDLER TICK AND NOT AlarmManager.
  *
  * The obvious design is "compute the next edge, set an exact alarm". It is worse here for three
