@@ -1398,6 +1398,11 @@ async function showAddItemModal(playlistId, opts = {}) {
       </div>
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <input type="text" id="addItemSearch" class="input" placeholder="${t('playlist.search_placeholder')}" style="flex:1">
+        <!-- Folder filter. Hidden on the widget/playlist tabs, which have no folders. Populated
+             after the folder list loads; until then it is just "All folders". -->
+        <select id="addItemFolder" class="input" style="width:auto;max-width:180px;background:var(--bg-input)" title="${t('playlist.folder_label')}">
+          <option value="">${t('playlist.folder_all')}</option>
+        </select>
         <select id="addItemSort" class="input" style="width:auto;background:var(--bg-input)" title="${t('playlist.sort_label')}">
           <option value="name_asc">${t('playlist.sort.name_asc')}</option>
           <option value="name_desc">${t('playlist.sort.name_desc')}</option>
@@ -1428,17 +1433,36 @@ async function showAddItemModal(playlistId, opts = {}) {
   let allContent = [];
   let allWidgets = [];
   let allPlaylists = [];
+  let allFolders = [];
+  // True when the library is larger than we are willing to hold in a modal. Surfaced rather than
+  // hidden — silently showing a partial list is the bug this whole change exists to fix.
+  let contentTruncated = false;
   // Whether THIS playlist may take a child at all. The server refuses if it is already used as one
   // (that would build two levels from the far end), so the tab explains rather than letting the
   // user pick something and collect a 400.
   let nestingBlockedBy = null;
 
   try {
-    [allContent, allWidgets, allPlaylists] = await Promise.all([
-      api.getContent(),
+    /*
+     * ⚠️ getAllContent, NOT getContent. The endpoint defaults to LIMIT 100, so this picker used to
+     * show the first 100 items of a workspace and nothing else — newest first, which meant the
+     * MISSING ones were the oldest, i.e. exactly the ones an operator had already filed into
+     * folders. A customer with 211 files could see a video in the library and not find it here,
+     * and reported it as "it won't let me choose content from a different folder". It was not a
+     * folder bug; it was an invisible cap.
+     */
+    const [content, widgets, playlists, folders] = await Promise.all([
+      api.getAllContent(),
       api.getWidgets ? api.getWidgets() : Promise.resolve([]),
-      api.getPlaylists().catch(() => [])
+      api.getPlaylists().catch(() => []),
+      api.getFolders ? api.getFolders().catch(() => []) : Promise.resolve([]),
     ]);
+    allContent = content.items;
+    contentTruncated = content.truncated;
+    allWidgets = widgets;
+    allPlaylists = playlists;
+    allFolders = Array.isArray(folders) ? folders : [];
+    populateFolderFilter();
     const self = allPlaylists.find(p => p.id === playlistId);
     if (self && self.used_by_count > 0) nestingBlockedBy = self.used_by_count;
   } catch (err) {
@@ -1535,18 +1559,60 @@ async function showAddItemModal(playlistId, opts = {}) {
     }
   }
 
+  /*
+   * The folder filter. Counts come from the content we actually hold, so a folder whose items are
+   * all filtered out by the search still shows its true size rather than a confusing zero.
+   */
+  function populateFolderFilter() {
+    const sel = document.getElementById('addItemFolder');
+    if (!sel) return;
+    const counts = new Map();
+    for (const c of allContent) {
+      const k = c.folder_id || '';
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const rootCount = counts.get('') || 0;
+    const opts = [`<option value="">${esc(t('playlist.folder_all'))} (${allContent.length})</option>`];
+    if (rootCount) opts.push(`<option value="__root__">${esc(t('playlist.folder_root'))} (${rootCount})</option>`);
+    for (const f of allFolders) {
+      const n = counts.get(f.id) || 0;
+      if (!n) continue;   // a folder with nothing in it is noise in a picker
+      opts.push(`<option value="${esc(f.id)}">${esc(f.name)} (${n})</option>`);
+    }
+    sel.innerHTML = opts.join('');
+  }
+
+  /*
+   * ⚠️ The RENDER is capped, the FETCH is not — and they are different problems.
+   *
+   * The bug being fixed was a truncated fetch that nobody could see. Rendering every match of a
+   * five-thousand-item library into a modal is a different failure (a frozen tab), so the list
+   * shows a bounded number of rows and SAYS how many more matched. Telling the operator to narrow
+   * the search is honest; quietly showing them the first hundred is what caused this.
+   */
+  const MAX_ROWS = 200;
+
   function renderTab() {
     const list = document.getElementById('addItemList');
     const search = (document.getElementById('addItemSearch')?.value || '').toLowerCase();
+    const folderSel = document.getElementById('addItemFolder');
+    // Folders only apply to library content; widgets and playlists have none.
+    if (folderSel) folderSel.style.display = activeTab === 'content' ? '' : 'none';
 
     if (activeTab === 'playlists') return renderPlaylistsTab(list, search);
 
     const items = activeTab === 'content' ? allContent : allWidgets;
     const sortMode = document.getElementById('addItemSort')?.value || 'name_asc';
-    const filtered = sortItems(items.filter(item => {
+    const folderFilter = activeTab === 'content' ? (folderSel?.value || '') : '';
+    const matched = sortItems(items.filter(item => {
       const name = (item.filename || item.name || '').toLowerCase();
-      return name.includes(search);
+      if (!name.includes(search)) return false;
+      if (!folderFilter) return true;
+      // '__root__' is "filed nowhere", which is a real place an operator looks for something.
+      return folderFilter === '__root__' ? !item.folder_id : item.folder_id === folderFilter;
     }), sortMode);
+    const filtered = matched.slice(0, MAX_ROWS);
+    const hidden = matched.length - filtered.length;
     // #318: bulk add is content-only (the server route is), and meaningless when replacing one item.
     const selectable = activeTab === 'content' && !replaceItemId;
 
@@ -1555,7 +1621,17 @@ async function showAddItemModal(playlistId, opts = {}) {
       return;
     }
 
-    list.innerHTML = filtered.map(item => {
+    const notices = [];
+    if (hidden > 0) {
+      notices.push(`<div style="padding:8px 10px;font-size:12px;color:var(--text-muted);text-align:center">
+        ${esc(t('playlist.more_matches', { n: hidden }))}</div>`);
+    }
+    if (contentTruncated && activeTab === 'content') {
+      notices.push(`<div style="padding:8px 10px;font-size:12px;color:var(--warning,#d97706);text-align:center">
+        ${esc(t('playlist.library_truncated'))}</div>`);
+    }
+
+    list.innerHTML = notices.join('') + filtered.map(item => {
       const isWidget = activeTab === 'widgets';
       const name = item.filename || item.name || t('common.unknown');
       // #237: the server gives a video item the clip's own length instead of the 10s default.
@@ -1640,10 +1716,13 @@ async function showAddItemModal(playlistId, opts = {}) {
 
   document.getElementById('addItemSearch').addEventListener('input', renderTab);
   document.getElementById('addItemSort')?.addEventListener('change', renderTab);
+  document.getElementById('addItemFolder')?.addEventListener('change', renderTab);
 
   document.getElementById('addSelectAll')?.addEventListener('change', (e) => {
-    // "Select all" means all rows CURRENTLY SHOWN — i.e. what the search and sort have narrowed to,
-    // not the whole library. Anything else would be a surprise on a filtered list.
+    // "Select all" means all rows CURRENTLY SHOWN — what the search, the FOLDER filter and the
+    // sort have narrowed to, capped at MAX_ROWS. Not the whole library: ticking a box on a
+    // filtered list and silently selecting things you cannot see is its own small betrayal, and
+    // the count next to the button always matches what is on screen.
     document.querySelectorAll('.add-item-check').forEach((cb) => {
       cb.checked = e.target.checked;
       if (cb.checked) selected.add(cb.dataset.id); else selected.delete(cb.dataset.id);

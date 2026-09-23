@@ -4,6 +4,13 @@ export default {
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': '{name} のアップロードを再開しますか？前回すでに {done}% 送信済みです。',
+  // Playlist content picker: folder filter + the honest notices that replaced a silent
+  // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folder_label': 'フォルダーで絞り込む',
+  'playlist.folder_all': 'すべてのフォルダー',
+  'playlist.folder_root': 'フォルダーなし',
+  'playlist.more_matches': '他に {n} 件一致します。検索を絞るかフォルダーを選んでください。',
+  'playlist.library_truncated': 'このライブラリは非常に大きいため、すべては表示されていません。検索かフォルダーを使ってください。',
 
   // Display power schedules (the weekly BACKLIGHT clock). ⚠️ The copy deliberately avoids saying
   // the device is powered off — it is not, and an operator who believes it is will use this wrong.
