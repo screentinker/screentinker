@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+**The playlist content picker now navigates folders as a tree.** A bar above the list shows where
+you are and what is inside it — `All › WESTERN AUSTRALIA › HOSTS` — and slides sideways rather than
+growing the window. Picking a folder shows everything beneath it, not only the files sitting
+directly in it.
+
+⚠️ The first version of this filter was a flat list, and on a real library that is worse than it
+sounds. One customer has 39 folders, 30 of them nested five levels deep: the flat version offered
+all 39 at once, showed a parent and its own child side by side as if they were unrelated, and
+reported "100" for a folder that actually holds 204 files once its children are counted. The same
+library now opens on four choices instead of thirty-nine.
+
+The dropdown stays for jumping straight to a folder you can already name, now indented to show the
+same structure. Both controls read and write one piece of state, so they cannot disagree on screen.
+
+
 ## 2.1.6 (2026-09-23)
 
 Contributed by [@awatterott](https://github.com/awatterott), who reported the Raspberry Pi

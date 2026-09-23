@@ -6,6 +6,7 @@ export default {
   'content.upload_resume_prompt': 'Uploaden van {name} hervatten? Vorige keer was al {done}% verzonden.',
   // Playlist content picker: folder filter + the honest notices that replaced a silent
   // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folders_empty_hidden': '{n} lege mappen verborgen',
   'playlist.folder_label': 'Filteren op map',
   'playlist.folder_all': 'Alle mappen',
   'playlist.folder_root': 'Geen map',

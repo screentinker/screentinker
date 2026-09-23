@@ -6,6 +6,7 @@ export default {
   'content.upload_resume_prompt': '{name} のアップロードを再開しますか？前回すでに {done}% 送信済みです。',
   // Playlist content picker: folder filter + the honest notices that replaced a silent
   // LIMIT 100. See frontend/js/views/playlists.js.
+  'playlist.folders_empty_hidden': '空のフォルダー {n} 件を非表示',
   'playlist.folder_label': 'フォルダーで絞り込む',
   'playlist.folder_all': 'すべてのフォルダー',
   'playlist.folder_root': 'フォルダーなし',
