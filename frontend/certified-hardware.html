@@ -317,11 +317,11 @@
         <h3><a class="anchor" href="#fire-tv-stick-4k-select" aria-label="Link to Amazon Fire TV Stick 4K Select">#</a>Amazon Fire TV Stick 4K Select</h3>
         <dl class="device-spec">
           <dt>Manufacturer</dt><dd>Amazon</dd>
-          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd>AFTCA002</dd>
           <dt>Category</dt><dd>Streaming player</dd>
           <dt>Operating system</dt><dd>Vega OS</dd>
-          <dt>ScreenTinker player</dt><dd><span class="unknown">Not recorded</span></dd>
-          <dt>Maximum resolution</dt><dd>1280x720</dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg), not validated on device</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated by</dt><dd>ScreenTinker</dd>
           <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
@@ -329,21 +329,23 @@
           <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
         </dl>
         <ul class="device-notes">
-          <li>Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.</li>
-          <li>Memory on the device is not sufficient for reliable signage playback.</li>
-          <li>Do not buy this for ScreenTinker. It is sold alongside the Fire TV sticks that do work and is easy to pick up by mistake.</li>
-          <li>May be revisited.</li>
+          <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
+          <li>Not validated on a stick. Do not treat this as supported, and do not buy it for a sign until this entry changes.</li>
+          <li>1 GB of RAM. The Vega player hard-cuts transitions and does not warm a second video decoder. The earlier browser attempt was not reliable.</li>
+          <li>The previous 720p limit was measured in the browser, not in this app, and has not been re-measured. The stick can output 4K. Signage playback resolution is unknown.</li>
+          <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
         </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
       </article>
       <article class="device" id="fire-tv-stick-hd-2026">
         <h3><a class="anchor" href="#fire-tv-stick-hd-2026" aria-label="Link to Amazon Fire TV Stick HD (2026)">#</a>Amazon Fire TV Stick HD (2026)</h3>
         <dl class="device-spec">
           <dt>Manufacturer</dt><dd>Amazon</dd>
-          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd>AFTCL001</dd>
           <dt>Category</dt><dd>Streaming player</dd>
           <dt>Operating system</dt><dd>Vega OS</dd>
-          <dt>ScreenTinker player</dt><dd><span class="unknown">Not recorded</span></dd>
-          <dt>Maximum resolution</dt><dd>1280x720</dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg), not validated on device</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated by</dt><dd>ScreenTinker</dd>
           <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
@@ -351,11 +353,13 @@
           <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
         </dl>
         <ul class="device-notes">
-          <li>Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.</li>
-          <li>Memory on the device is not sufficient for reliable signage playback.</li>
-          <li>Do not buy this for ScreenTinker. It is sold alongside the Fire TV sticks that do work and is easy to pick up by mistake.</li>
-          <li>May be revisited.</li>
+          <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
+          <li>Not validated on a stick. Do not treat this as supported, and do not buy it for a sign until this entry changes.</li>
+          <li>1 GB of RAM, 1080p output. The Vega player hard-cuts transitions and does not warm a second video decoder. The earlier browser attempt was not reliable.</li>
+          <li>The previous 720p limit was measured in the browser, not in this app, and has not been re-measured.</li>
+          <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
         </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
       </article>
     </section>
 

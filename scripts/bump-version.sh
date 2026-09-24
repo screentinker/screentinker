@@ -114,6 +114,15 @@ sed -i -E "/^<\?xml/! s/([[:space:]]version=\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" 
 #     build-ipk.sh stamps js/app.js from it, so this is the one place it is written.
 sed -i -E "s/(\"version\": *\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" webos/appinfo.json
 
+# 4c) Vega app version. package.json "version" is the first such key; manifest.toml's
+#     `version = "..."` is the package version (schema-version is unquoted and untouched).
+#     vega/src/deviceInfo.ts carries the same string as a fallback for when the turbo module
+#     cannot answer getVersion(). All three have to move together or a stick reports a version
+#     the dashboard cannot match to a release.
+sed -i -E "0,/\"version\":/s/(\"version\": *\")[0-9][^\"]*/\1${NUMERIC}/" vega/package.json
+sed -i -E "s/^(version = \")[0-9][^\"]*/\1${NUMERIC}/" vega/manifest.toml
+sed -i -E "s/(export const APP_VERSION = ')[0-9][^']*/\1${NUMERIC}/" vega/src/deviceInfo.ts
+
 # 5) public API spec version. This is the number Redoc prints at the top of the published
 #    API reference (frontend/api-docs.html renders docs/openapi.yaml directly), so leaving it
 #    behind means customers read a version that has not existed for months — it had drifted to
@@ -146,7 +155,7 @@ fi
 #    working tree looks correct and only CI sees the truth.
 #    js/app.js is stamped from appinfo.json by webos/build-ipk.sh, which the test suite runs, so it
 #    is listed too and the tree stays clean after a test run.
-git add VERSION server/package.json server/package-lock.json android/app/build.gradle.kts tizen/config.xml docs/openapi.yaml webos/appinfo.json webos/js/app.js
+git add VERSION server/package.json server/package-lock.json android/app/build.gradle.kts tizen/config.xml docs/openapi.yaml webos/appinfo.json webos/js/app.js vega/package.json vega/manifest.toml vega/src/deviceInfo.ts
 git commit -q -m "chore(release): v$NEW"
 git tag -a "v$NEW" -m "ScreenTinker v$NEW"
 

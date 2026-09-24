@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+**Vega OS player for Fire TV Stick 4K Select and Fire TV Stick HD (2026).** Those sticks are not
+Android. The APK does not install. `vega/` is an installed WebView shell that loads the same
+`/player` page as a browser, so playlists, zones, widgets, YouTube, HLS, schedules and the
+dashboard's volume controls are the web player's, not a second implementation. The shell reports
+platform `vega` and the Amazon model code (`AFTCA002`, `AFTCL001`). A WebView data clear does not
+mint a new display: the shell keeps the pairing in `/data` and the page adopts it, and an unpair
+or `?reset=` clears that copy.
+
+It does not claim Android's powers, because the OS does not have them: no device-owner kiosk, no
+reboot, no RTSP, no package install, no self-update of the `.vpkg`. On these 1 GB sticks the page
+hard-cuts transitions and does not warm a second video decoder. The certified-hardware entries
+stay **not supported** until a stick is actually run. See [`docs/vega-player.md`](docs/vega-player.md).
+
 ### Fixed
 
 **Esc on the web player was a public unpair button.** It asked `confirm('Reset player and return to

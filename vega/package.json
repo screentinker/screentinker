@@ -1,0 +1,36 @@
+{
+  "name": "screentinker-vega",
+  "version": "2.1.6",
+  "private": true,
+  "license": "MIT",
+  "description": "ScreenTinker player for Amazon Vega OS (Fire TV Stick 4K Select and Fire TV Stick HD 2026)",
+  "scripts": {
+    "start": "react-native start",
+    "build:debug": "react-native build-kepler --build-type Debug",
+    "build:release": "react-native build-kepler --build-type Release",
+    "install:debug": "vega device install-app --directory . --buildType Debug",
+    "install:release": "vega device install-app --directory . --buildType Release",
+    "launch": "vega device launch-app --directory .",
+    "build": "react-native build-kepler --build-type Release"
+  },
+  "dependencies": {
+    "@amazon-devices/kepler-file-system": "~2.0.0",
+    "@amazon-devices/react-native-device-info": "~2.1.0",
+    "@amazon-devices/react-native-kepler": "~2.0.0",
+    "@amazon-devices/webview": "~3.3.0",
+    "react": "18.2.0",
+    "react-native": "0.72.0"
+  },
+  "devDependencies": {
+    "@react-native-community/cli": "11.3.2",
+    "@react-native/metro-config": "0.72.6",
+    "@tsconfig/react-native": "^3.0.2",
+    "metro-react-native-babel-preset": "0.76.5",
+    "typescript": "4.8.4"
+  },
+  "kepler": {
+    "projectType": "application",
+    "appName": "ScreenTinker",
+    "targets": ["tv"]
+  }
+}

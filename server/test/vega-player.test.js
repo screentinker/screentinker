@@ -1,0 +1,128 @@
+'use strict';
+
+/*
+ * The Vega OS shell (vega/) and the two lines in the web player that exist only for it.
+ *
+ * Nothing here runs on a stick. These check what a repo can check: the manifest names the
+ * component the runtime will launch, the versions bump-version.sh stamps stay in lockstep,
+ * the page only treats itself as Vega when the WebView bridge is actually there, and the
+ * capability floor does not grant an Android power to a stick that has no such API.
+ */
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const ROOT = path.join(__dirname, '..', '..');
+const VEGA = path.join(ROOT, 'vega');
+const pkg = JSON.parse(fs.readFileSync(path.join(VEGA, 'package.json'), 'utf8'));
+const app = JSON.parse(fs.readFileSync(path.join(VEGA, 'app.json'), 'utf8'));
+const manifest = fs.readFileSync(path.join(VEGA, 'manifest.toml'), 'utf8');
+const player = fs.readFileSync(path.join(ROOT, 'server/player/index.html'), 'utf8');
+const caps = require('../lib/player-capabilities');
+
+function bodyOf(src, name) {
+  const start = src.indexOf(`function ${name}(`);
+  if (start < 0) throw new Error(`${name}() missing`);
+  let depth = 0;
+  for (let j = src.indexOf('{', start); j < src.length; j++) {
+    if (src[j] === '{') depth++;
+    else if (src[j] === '}' && --depth === 0) return src.slice(start, j + 1);
+  }
+  throw new Error(`${name}() unbalanced`);
+}
+
+test('vega: manifest, app.json and package.json name the same component', () => {
+  assert.equal(pkg.version, '2.1.6');
+  assert.match(manifest, /^id = "com\.screentinker\.vega"$/m);
+  assert.match(manifest, /^version = "2\.1\.6"$/m);
+  assert.match(manifest, /id = "com\.screentinker\.vega\.main"/);
+  assert.equal(app.name, 'com.screentinker.vega.main', 'AppRegistry name must be the interactive component id');
+  assert.match(manifest, /com\.amazon\.webview\.renderer_service/);
+  assert.match(manifest, /com\.amazon\.media\.server/);
+  assert.match(manifest, /com\.amazon\.audio\.control/);
+  // A required privilege we do not have would make the package uninstallable. DRM is wants.
+  assert.doesNotMatch(manifest, /^\[needs\]\n[\s\S]*privilege/m);
+  assert.ok(fs.existsSync(path.join(VEGA, 'assets/image/app_icon.png')));
+  assert.match(fs.readFileSync(path.join(VEGA, 'src/deviceInfo.ts'), 'utf8'), /APP_VERSION = '2\.1\.6'/);
+});
+
+test('vega: bump-version.sh stamps every copy of the version, and stages them', () => {
+  const bump = fs.readFileSync(path.join(ROOT, 'scripts/bump-version.sh'), 'utf8');
+  for (const f of ['vega/package.json', 'vega/manifest.toml', 'vega/src/deviceInfo.ts']) {
+    assert.match(bump, new RegExp(f.replace(/\//g, '\\/')), `bump-version.sh must stamp ${f}`);
+    const staged = bump.slice(bump.indexOf('git add '));
+    assert.match(staged, new RegExp(f.replace(/\//g, '\\/')));
+  }
+});
+
+test('vega: the page is Vega only when the WebView bridge exists', () => {
+  assert.match(player, /function onVega\(\)/);
+  assert.match(player, /ReactNativeWebView/);
+  assert.match(player, /onVega\(\) \? 'vega'/);
+  // The 1 GB concessions are gated on the shell, not on the query string alone.
+  assert.match(player, /if \(onVega\(\)\) \{ groupPreloadIdx = idx;/);
+  assert.match(player, /const wantsWipe = !\(typeof onVega === 'function' && onVega\(\)\)/);
+});
+
+test('vega: pairing in /data survives a WebView clear, and a reset forgets it', () => {
+  const storage = fs.readFileSync(path.join(VEGA, 'src/storage.ts'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(VEGA, 'src/App.tsx'), 'utf8');
+  // The URL write merges. Replacing the file would drop a pairing that had already survived one clear.
+  assert.match(storage, /saved\.serverUrl = serverUrl/);
+  assert.match(storage, /saved\.deviceId = deviceId/);
+  assert.match(storage, /delete saved\.deviceId/);
+  assert.match(storage, /delete saved\.deviceToken/);
+  assert.match(appSrc, /action === 'set-identity'/);
+  assert.match(appSrc, /action === 'clear-identity'/);
+  assert.match(appSrc, /deviceId: pairing\.deviceId, deviceToken: pairing\.deviceToken/);
+  // The page adopts only when the shell has actually spoken, and it mirrors both halves or neither.
+  assert.match(player, /function vegaShellIdentity\(\)/);
+  assert.match(player, /HOST\.command\('set-identity'/);
+  assert.match(player, /HOST\.command\('clear-identity'\)/);
+  assert.match(player, /clearVegaIdentity\(\)/);
+  // An id without its token is not adopted. That is the duplicate-row bug.
+  const fn = bodyOf(player, 'vegaShellIdentity');
+  const run = (scope) => new Function(...Object.keys(scope), `${fn} return vegaShellIdentity();`)(...Object.values(scope));
+  const both = { deviceId: 'dev-1', deviceToken: 'tok-1' };
+  assert.deepEqual(run({ vegaIdentityCleared: false, onVega: () => true, HOST: { ready: true, info: both } }), both);
+  assert.equal(run({ vegaIdentityCleared: true, onVega: () => true, HOST: { ready: true, info: both } }), null, 'a reset this session wins');
+  assert.equal(run({ vegaIdentityCleared: false, onVega: () => false, HOST: { ready: true, info: both } }), null, 'a browser is not a stick');
+  assert.equal(run({ vegaIdentityCleared: false, onVega: () => true, HOST: { ready: true, info: { deviceId: 'dev-1' } } }), null, 'id without token');
+  assert.equal(run({ vegaIdentityCleared: false, onVega: () => true, HOST: { ready: false, info: both } }), null, 'not before the shell speaks');
+  // The protocol comment used to say the bridge carries no secrets. It now carries deviceToken.
+  // That sentence is what a later change would trust before logging a message whole.
+  assert.doesNotMatch(player, /Messages carry no secrets/);
+  assert.match(player, /The bridge does carry one secret: the pairing/);
+  assert.match(player, /buildDeviceInfo copies/);
+});
+
+test('vega: the capability floor is the web player minus what these sticks must not claim', () => {
+  assert.equal(caps.platformFamily({ platform: 'vega', android_version: 'Web/Chrome' }), 'vega');
+  const floor = caps.BASELINE.vega;
+  for (const c of ['playback.video', 'playback.zones', 'playback.youtube', 'audio.volume', 'audio.mute', 'system.restart_player']) {
+    assert.ok(floor.includes(c), `vega floor should include ${c}`);
+  }
+  for (const c of ['system.reboot', 'system.kiosk', 'display.power', 'system.self_update', 'playback.rtsp', 'playback.transitions', 'offline.cache']) {
+    assert.equal(floor.includes(c), false, `vega floor must not include ${c}`);
+  }
+  // A declared stick still wins over the floor. The page withholds transitions itself.
+  const declared = caps.capabilitiesFor({ platform: 'vega', capabilities: JSON.stringify(['playback.video']) });
+  assert.deepEqual(declared, ['playback.video']);
+});
+
+test('vega: the shell speaks the host protocol and does not announce a power it lacks', () => {
+  const appSrc = fs.readFileSync(path.join(VEGA, 'src/App.tsx'), 'utf8');
+  assert.match(appSrc, /screentinker-player/);
+  assert.match(appSrc, /screentinker-host/);
+  assert.match(appSrc, /host:hello/);
+  assert.match(appSrc, /host:ready/);
+  assert.match(appSrc, /action === 'restart'/);
+  assert.match(appSrc, /mediaPlaybackRequiresUserAction=\{false\}/);
+  assert.match(appSrc, /domStorageEnabled=\{true\}/);
+  assert.doesNotMatch(appSrc, /system\.reboot/);
+  assert.doesNotMatch(appSrc, /system\.kiosk/);
+  // The URL the shell opens is the modern player, with the host tag the page checks.
+  assert.match(appSrc, /\/player\?host=vega/);
+});

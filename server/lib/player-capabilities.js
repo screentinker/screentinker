@@ -275,6 +275,36 @@ const BASELINE = {
     // BrightSign row essentially always HAS one and never reaches this baseline. (audio.volume moved
     // INTO the list above in 1.9.31 — the payload it was waiting on now lands.)
   ],
+  /*
+   * Vega OS — Fire TV Stick 4K Select (AFTCA002) and Fire TV Stick HD 2026 (AFTCL001).
+   *
+   * The installed app (vega/) loads THIS page in a WebView. A stick that has registered is
+   * running the same player a browser is, and it declares for itself; this list is only the
+   * floor for a row whose capabilities column is still NULL.
+   *
+   * Same floor as web, with two deliberate omissions, both because the sticks have 1 GB of RAM
+   * and neither has been confirmed on hardware:
+   *   - playback.transitions. The page hard-cuts on Vega (a wipe snapshots a full frame while
+   *     the next clip decodes). Claiming it here would tell the dashboard a wipe will play.
+   *   - offline.cache. The page claims it only when a service worker is actually in control.
+   *     Vega's WebView has not been shown to allow one, so the floor must not.
+   *
+   * NOT system.reboot, display.power, system.kiosk, system.self_update, playback.rtsp. The
+   * shell announces an empty capability list on purpose. Those are Android powers, and a
+   * baseline that grants them is a button that cannot work.
+   */
+  vega: [
+    'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
+    'playback.zones', 'playback.pip',
+    'playback.bundle',
+    'playback.slide_audio',
+    'audio.mute',
+    'display.rotation',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.restart_player',
+    'audio.volume',
+    'sync.clock',
+  ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
   web: [
@@ -315,6 +345,10 @@ function platformFamily(device) {
   const clientType = (device && device.client_type) || '';
   if (platform.includes('brightsign')) return 'brightsign';
   if (platform.includes('tizen')) return 'tizen';
+  // Before the Web/ Android test. A Vega stick's android_version is "Web/...", because the
+  // page that registers is the web player. Without this it would be classified as a browser
+  // and offered shader transitions the shell has turned off.
+  if (platform.includes('vega')) return 'vega';
   // Second, independent signal for a Tizen TV: the .wgt player sends client_type 'wgt' (see
   // tizen/js/app.js). `platform` is the primary key, but it lives in a column that a register from
   // a client not sending it used to overwrite — and misreading a Tizen panel as a browser tab
