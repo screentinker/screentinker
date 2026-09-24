@@ -11,7 +11,7 @@ const { accessContext } = require('../lib/tenancy');
 // requireScope gates by API-token scope; the workspace WRITE gate is checkDeviceOwnership, which
 // already rejects workspace_viewer — the same check requireFleetWrite performs in routes/triggers.js.
 const { requireScope } = require('../middleware/apiToken');
-const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const { ALLOWED_COMMANDS, LOCAL_API_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
 const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens } = require('../lib/device-sanitize');
 const { layoutZones, orphanCountsByDevice } = require('../lib/zone-validate');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings preservation
@@ -613,6 +613,117 @@ router.post('/:id/trigger-secret', requireScope('full'), (req, res) => {
    * API token never gets it, because a read-scoped integration could otherwise turn "may list your
    * screens" into "may put content on any of them".
    */
+  if (req.viaToken) {
+    return res.json({ success: true, delivered, secret_set: true,
+      note: 'the secret is not returned to API tokens — read it from the dashboard' });
+  }
+  res.json({ success: true, delivered, secret });
+});
+
+/*
+ * ⚠️ THE ENABLEMENT HALF OF THE INBOUND LOCAL API (Goal B part 3), and it exists because the
+ * trigger feature already taught this lesson the expensive way: the definitions half of triggers
+ * shipped complete and INERT, because nothing wrote the secret or the accept flags. A QA pass found
+ * a system that could not be switched on. So this route ships in the same commit as the panel code.
+ *
+ * ⚠️ SEPARATE FROM /trigger-config, even though the panel serves both on one socket and one port.
+ * `accept_http` means a LAN host may put an overlay on this screen; this means a LAN host may change
+ * what this screen is DOING. A single flag would have handed remote control to every site that only
+ * ever wanted an emergency overlay, and the two get enabled months apart by different people.
+ */
+router.post('/:id/local-api', requireScope('full'), (req, res) => {
+  const device = checkDeviceOwnership(req, res);
+  if (!device) return;
+  const b = req.body || {};
+  if (b.enabled === undefined) return res.status(400).json({ error: 'enabled is required' });
+  const enabled = !!b.enabled;
+
+  /*
+   * ⚠️ ENABLING WITHOUT A SECRET IS REFUSED HERE, not silently allowed for the panel to sort out.
+   * The panel does refuse everything in that state (LocalApi returns 503 no_secret_configured), but
+   * an operator who ticks the box and walks away believes the feature is on. Telling them at the
+   * door is the difference between a working configuration and one that is quietly dead.
+   */
+  if (enabled && !device.local_api_secret) {
+    return res.status(400).json({
+      error: 'set a local API secret first — POST /api/devices/:id/local-api-secret',
+    });
+  }
+
+  db.prepare("UPDATE devices SET local_api_enabled = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(enabled ? 1 : 0, req.params.id);
+
+  let delivered = false;
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const commandQueue = require('../lib/command-queue');
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), req.params.id, buildPlaylistPayload);
+      const room = io.of('/device').adapter.rooms.get(req.params.id);
+      delivered = !!(room && room.size > 0);
+    }
+  } catch (e) { console.warn(`[local-api] push failed: ${e.message}`); }
+
+  console.log(`[local-api] ${enabled ? 'enabled' : 'disabled'} for ${req.params.id} by user ${req.user && req.user.id}`);
+  /*
+   * ⚠️ `delivered` is reported rather than implied, and the panel binds the socket when it next
+   * (re)starts its listeners — which this push triggers. An operator who is told "on" and finds a
+   * closed port an hour later blames the feature; one who is told the panel is offline waits.
+   */
+  res.json({
+    success: true, delivered,
+    local_api: {
+      enabled,
+      port: device.trigger_http_port || 8079,
+      commands: LOCAL_API_COMMANDS,
+      secret_set: !!device.local_api_secret,
+    },
+  });
+});
+
+/*
+ * Generate or set the local API secret.
+ *
+ * ⚠️ NOT trigger_secret, and not shared with it. The trigger secret is designed to be pasted into an
+ * AMX program and it travels in a query string in cleartext; what it buys is an overlay on a screen
+ * that is already showing this workspace's content. This one buys "reload that screen, blank it,
+ * change its volume". Sharing the value would mean every installer ever given the trigger secret
+ * could take the fleet dark, and rotating one would silently rotate the other.
+ */
+router.post('/:id/local-api-secret', requireScope('full'), (req, res) => {
+  const device = checkDeviceOwnership(req, res);
+  if (!device) return;
+  const b = req.body || {};
+  let secret;
+  if (b.rotate || b.secret === undefined) {
+    secret = require('crypto').randomBytes(24).toString('hex');
+  } else {
+    secret = String(b.secret);
+    // 16 is the floor for the same reason as the trigger secret: this is guessable offline by
+    // anything on the LAN, as fast as the panel's rate limiter allows, forever, with no lockout and
+    // no audit trail. 24 bytes rather than 16 on rotation because this one buys more.
+    if (!/^[\x21-\x7E]{16,128}$/.test(secret)) {
+      return res.status(400).json({ error: 'secret must be 16-128 printable ASCII characters with no spaces' });
+    }
+  }
+  db.prepare("UPDATE devices SET local_api_secret = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(secret, req.params.id);
+
+  let delivered = false;
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const commandQueue = require('../lib/command-queue');
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), req.params.id, buildPlaylistPayload);
+      const room = io.of('/device').adapter.rooms.get(req.params.id);
+      delivered = !!(room && room.size > 0);
+    }
+  } catch (e) { console.warn(`[local-api-secret] push failed: ${e.message}`); }
+
+  console.log(`[local-api-secret] rotated for ${req.params.id} by user ${req.user && req.user.id}`);
+  // Same rule as the trigger secret: returned to a human, never to an API token.
   if (req.viaToken) {
     return res.json({ success: true, delivered, secret_set: true,
       note: 'the secret is not returned to API tokens — read it from the dashboard' });

@@ -504,6 +504,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       r.layout_id AS layout_id, d.orientation, d.background_color, d.wall_id, d.timezone, d.reported_timezone,
       d.triggers_accept_http, d.triggers_accept_udp, d.trigger_secret, d.trigger_http_port,
       d.trigger_udp_port, d.trigger_multicast_group, d.trigger_clear_all_token,
+      d.local_api_enabled, d.local_api_secret,
       d.default_content_id, d.workspace_id,
       d.capabilities, d.platform, d.android_version, d.client_type
       FROM devices d JOIN device_resolved_playlist r ON r.device_id = d.id
@@ -593,6 +594,22 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     udp_port: device?.trigger_udp_port || null,
     multicast_group: device?.trigger_multicast_group || null,
     clear_all_token: device?.trigger_clear_all_token || null,
+  };
+
+  /*
+   * The inbound control door. ⚠️ A SIBLING OF trigger_config, NOT A FIELD IN IT, even though they
+   * share a socket and a port on the panel. A trigger listener flag says a LAN host may put an
+   * overlay on this screen; this says a LAN host may change what this screen is doing. Nesting it
+   * would invite exactly the code that treats one as implying the other.
+   *
+   * ⚠️ The secret is PLAINTEXT here for the same reason the trigger secret is: the panel has to
+   * compare it against what a caller presents, and it cannot do that with a hash it was never given
+   * the input to. It travels the device socket, which is authenticated and TLS in any real
+   * deployment.
+   */
+  const local_api = {
+    enabled: !!device?.local_api_enabled,
+    secret: device?.local_api_secret || null,
   };
 
   let layout = null;
@@ -712,7 +729,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     console.warn(`[endpoints] resolve failed for ${deviceId}: ${e.message}`);
   }
 
-  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
+  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
 }
 
 // #104: the canonical player payload shape, shared by the device path
@@ -782,7 +799,7 @@ function attachDataSourceBag(items, workspaceId) {
   }
 }
 
-function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule, endpoints }) {
+function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints }) {
   let a = Array.isArray(assignments) ? assignments : [];
   // Transition widgets are normalized OUT here (the single device+preview chokepoint): each is dropped
   // from the visible list and its config attached as an opaque `transition` on the item it plays into.
@@ -812,6 +829,16 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
     // signature, exactly as it does for `layout`.
     triggers: Array.isArray(triggers) ? triggers : [],
     trigger_config: trigger_config || null,
+    /*
+     * The inbound local REST door. Top-level and outside the item list, like everything else here,
+     * so switching it on never restarts playback (#234).
+     *
+     * ⚠️ Rides EVERY payload, not just the moment it is toggled. That is what makes a panel correct
+     * after a reboot or a week offline — and it is also what lets DISABLING it take effect: a panel
+     * that only ever learned "on" would keep the door open for the rest of its life. null and an
+     * absent field both mean off, which is the pre-feature behaviour.
+     */
+    local_api: local_api || null,
     /*
      * The weekly backlight schedule, for the panel to evaluate itself. Top-level and outside the
      * item list for the SAME reason as triggers: it must never enter the player's structural

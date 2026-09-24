@@ -730,166 +730,7 @@ class WebSocketService : Service() {
                     val payload = data.optJSONObject("payload")
                     Log.i("WebSocketService", "Command received: $type")
 
-                    when (type) {
-                        "launch" -> {
-                            handler.post {
-                                try {
-                                    val intent = Intent(this@WebSocketService, MainActivity::class.java).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                    }
-                                    startActivity(intent)
-                                    Log.i("WebSocketService", "Launched MainActivity from service")
-                                } catch (e: Throwable) { Log.e("WebSocketService", "launch cmd: ${e.message}") }
-                            }
-                        }
-                        "settings" -> {
-                            handler.post {
-                                // Resolve first: a stripped TV/AOSP build may have no ACTION_SETTINGS
-                                // handler, and the app's own App Info page is the next best door. Either
-                                // way say what happened in the log — a silent no-op on a box with no
-                                // touch input is indistinguishable from "the command never arrived".
-                                val candidates = listOf(
-                                    Intent(android.provider.Settings.ACTION_SETTINGS),
-                                    Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        setData(android.net.Uri.parse("package:$packageName"))
-                                    },
-                                )
-                                val opened = candidates.firstOrNull { intent ->
-                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    val ok = try { packageManager.resolveActivity(intent, 0) != null } catch (_: Throwable) { false }
-                                    ok && try { startActivity(intent); true } catch (e: Throwable) { Log.w("WebSocketService", "settings cmd: ${intent.action}: ${e.message}"); false }
-                                }
-                                if (opened == null) Log.e("WebSocketService", "settings cmd: no Settings activity on this build")
-                                else Log.i("WebSocketService", "settings cmd: opened ${opened.action}")
-                            }
-                        }
-                        "enable_system_capture" -> {
-                            handler.post {
-                                try {
-                                    com.remotedisplay.player.ScreenCapturePermissionActivity.requestPermission(this@WebSocketService)
-                                } catch (e: Throwable) { Log.e("WebSocketService", "enable_system_capture: ${e.message}") }
-                            }
-                        }
-                        // #161: real lock on owner/admin (FORCE_LOCK), else accessibility lock. The
-                        // `input keyevent 26` exec (denied for an unprivileged UID) is retired.
-                        "screen_off" -> handler.post {
-                            // An operator screen_off is just a screen_off — it creates no schedule
-                            // and clears any exemption they had from the running one.
-                            powerSchedule?.noteManualScreenOff()
-                            blankPanel()
-                        }
-                        /*
-                         * The weekly backlight schedule: a DEFINITION, not "go dark now". Handled in
-                         * the SERVICE so it survives the Activity being stopped or destroyed — which
-                         * is the normal state during a scheduled-off window. null CLEARS.
-                         */
-                        "set_power_schedule" -> handler.post {
-                            powerSchedule?.update(payload?.optJSONObject("schedule"))
-                        }
-                        /*
-                         * Device-side REST. Runs on a worker thread, NOT the handler: a request to
-                         * an unreachable PLC blocks for the full timeout, and doing that on the main
-                         * looper would freeze playback, the heartbeat and the power tick with it.
-                         *
-                         * The answer always comes back — a refusal, a timeout and a 500 are all
-                         * results. Silence would be indistinguishable from a command that never
-                         * arrived, which is the failure this whole surface exists to avoid.
-                         */
-                        "http_request" -> Thread {
-                            try {
-                                val result = com.remotedisplay.player.net.DeviceHttp.perform(payload)
-                                val out = result.toJson().apply { put("device_id", config.deviceId) }
-                                handler.post {
-                                    try { socket?.emit("device:http-result", out) }
-                                    catch (e: Throwable) { Log.w("WebSocketService", "http-result emit: ${e.message}") }
-                                }
-                                Log.i("WebSocketService", "http_request ${result.status} ok=${result.ok} in ${result.durationMs}ms")
-                            } catch (e: Throwable) {
-                                Log.e("WebSocketService", "http_request: ${e.message}")
-                            }
-                        }.apply { isDaemon = true }.start()
-                        // Was a no-op because `input keyevent 224` is denied to an app UID — but a
-                        // wake LOCK is a different mechanism needing only WAKE_LOCK, which we hold.
-                        // Handled here as well as in MainActivity so a panel whose Activity is not
-                        // foregrounded can still be woken; the service is the only thing guaranteed
-                        // to be alive, and "screen won't come back on" means a site visit.
-                        "screen_on" -> {
-                            // An operator waking a screen inside a scheduled-off window is exempt
-                            // from that window until it ENDS. Noted before the wake so the tick
-                            // cannot race in and re-blank the panel they just asked for.
-                            powerSchedule?.noteManualScreenOn()
-                            wakePanel(bringToFront = true, payload = payload)
-                        }
-                        "set_debug" -> {
-                            val on = payload?.optBoolean("enabled", false) ?: false
-                            // Point the sink at this socket, then flip the flag. When on,
-                            // DebugLog.* mirrors player/zone lines to the dashboard.
-                            com.remotedisplay.player.util.DebugLog.sink = { tag, level, msg ->
-                                try {
-                                    socket?.emit("device:log", JSONObject().apply {
-                                        put("tag", tag); put("level", level); put("message", msg)
-                                    })
-                                } catch (_: Throwable) {}
-                            }
-                            com.remotedisplay.player.util.DebugLog.enabled = on
-                            Log.i("WebSocketService", "Remote debug logging ${if (on) "ENABLED" else "disabled"}")
-                            com.remotedisplay.player.util.DebugLog.i("Debug", "Remote debug logging ${if (on) "ON" else "OFF"}")
-                        }
-                        // #161 device-owner tooling: a remote shell. NOTE it runs as the APP's UID (not
-                        // root/shell) — device owner does not grant a privileged shell — so it's for
-                        // diagnostics (getprop, ls, dumpsys reads, am/pm where allowed). Output streamed
-                        // back to the dashboard. Gated server-side (admin/full scope in ALLOWED_COMMANDS).
-                        "shell" -> {
-                            val cmd = payload?.optString("cmd", "") ?: ""
-                            if (cmd.isNotBlank()) Thread {
-                                var out = ""; var exit = -1
-                                try {
-                                    val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                                    val so = p.inputStream.bufferedReader().readText()
-                                    val se = p.errorStream.bufferedReader().readText()
-                                    exit = p.waitFor()
-                                    out = (so + (if (se.isNotEmpty()) "\n[stderr]\n$se" else "")).take(8000)
-                                    if (out.isBlank()) out = "(no output, exit=$exit)"
-                                } catch (e: Throwable) { out = "error: ${e.message}" }
-                                try {
-                                    socket?.emit("device:shell-result", JSONObject().apply {
-                                        put("device_id", config.deviceId); put("cmd", cmd); put("output", out); put("exit", exit)
-                                    })
-                                } catch (_: Throwable) {}
-                            }.start()
-                        }
-                        // #312 follow-up: rewrite the stored server URL, e.g. after a server move,
-                        // pushed from the dashboard to one device / a group / a whole workspace.
-                        // VERIFY-THEN-COMMIT: keep the old URL, confirm the new one is a reachable
-                        // ScreenTinker server, and only then persist it (mirrored to both stores by
-                        // ServerConfig, #312) and reconnect. A bad address rolls back, so a
-                        // fat-fingered URL cannot strand the panel — the failure this whole issue is
-                        // about. Runs off the socket thread because it does blocking network I/O.
-                        "set_server_url" -> {
-                            val newUrl = (payload?.optString("url", "") ?: "").trim().trimEnd('/')
-                            val old = config.serverUrl
-                            when {
-                                newUrl.isEmpty() ->
-                                    emitCommandLog("set_server_url refused: no url in payload")
-                                !(newUrl.startsWith("http://") || newUrl.startsWith("https://")) ->
-                                    emitCommandLog("set_server_url refused: not http(s): $newUrl")
-                                newUrl == old ->
-                                    emitCommandLog("set_server_url: already $newUrl, no change")
-                                else -> Thread {
-                                    if (probeServerReachable(newUrl)) {
-                                        // Confirm success on the CURRENT socket before we tear it down,
-                                        // so the operator who issued the change sees it land.
-                                        emitCommandLog("set_server_url: verified $newUrl, switching (was $old)")
-                                        config.serverUrl = newUrl
-                                        handler.post { try { connect(newUrl) } catch (e: Throwable) { Log.e("WebSocketService", "set_server_url reconnect: ${e.message}") } }
-                                    } else {
-                                        emitCommandLog("set_server_url: $newUrl unreachable, kept $old")
-                                    }
-                                }.start()
-                            }
-                        }
-                        else -> handler.post { try { onCommand?.invoke(type, payload) } catch (e: Throwable) { Log.e("WebSocketService", "onCommand cb: ${e.message}") } }
-                    }
+                    dispatchCommand(type, payload)
                 }
 
                 connect()
@@ -1994,4 +1835,223 @@ class WebSocketService : Service() {
             .setOngoing(true)
             .build()
     }
+
+    /**
+     * ⚠️ THE ONE COMMAND DISPATCH. Extracted from the `device:command` handler when the local REST
+     * door landed, because that door needed to run a command and the alternative was a second
+     * `when (type)` somewhere else. Two of those drift — silently, and in the direction that
+     * matters: one door accepting something the other refuses, or handling it differently. The
+     * trigger stack already carries this warning for its two transports (TriggerListeners: "BOTH
+     * CONVERGE ON ONE HANDLER"); this is the same rule for commands.
+     *
+     * Every caller reaches a command through here: the socket, and LocalApi. The gating differs
+     * (LocalApi has its own, much smaller allowlist — the LAN is not the dashboard), but what a
+     * command DOES is decided in exactly one place.
+     */
+    /**
+     * The LOCAL REST door's way in (Goal B part 3).
+     *
+     * ⚠️ It is a one-line pass-through to [dispatchCommand] ON PURPOSE. The entitlement question —
+     * may a LAN caller ask for this at all — is answered in LocalApi.COMMANDS, before this is
+     * reached. What the command DOES is answered here, in the same place a dashboard command is
+     * answered. Anything else and a screen would behave differently depending on which door the
+     * command came through, which is exactly the kind of difference nobody tests for.
+     */
+    fun runLocalApiCommand(type: String, payload: org.json.JSONObject?) {
+        Log.i("WebSocketService", "[local-api] $type")
+        dispatchCommand(type, payload)
+    }
+
+    /**
+     * The /api/status body: what a room control system asks about a screen.
+     *
+     * ⚠️ NOTHING SECRET GOES IN HERE, and the list of what that excludes is longer than it looks:
+     * the device token, the trigger secret, the local API secret itself, the settings PIN, and the
+     * server URL — the last one because it names the tenant's server, and a screen in a lobby should
+     * not tell the lobby's network who runs it. What is left is the answer to "is the sign alive,
+     * is it lit, and is it in touch with its server", which is the whole question being asked.
+     */
+    fun localApiStatus(): org.json.JSONObject = org.json.JSONObject().apply {
+        try {
+            put("ok", true)
+            put("device_id", config.deviceId)
+            put("name", config.deviceName)
+            // The same source the heartbeat reports from (DeviceInfo.getAppVersion), not BuildConfig:
+            // an OTA-updated panel and its BuildConfig can disagree, and a control system comparing
+            // this against the dashboard must not be shown two different versions of one screen.
+            put("app_version", packageManager.getPackageInfo(packageName, 0).versionName ?: "")
+            put("connected", isConnected())
+            // ⚠️ The SCHEDULED state, not a guess from the last command: a panel woken manually
+            // inside an off-window is on, and a control system asking "is the screen lit" needs the
+            // answer to be about the screen and not about the schedule on paper.
+            put("screen", powerSchedule?.state ?: "on")
+            put("uptime_ms", android.os.SystemClock.elapsedRealtime())
+        } catch (e: Throwable) {
+            Log.w("WebSocketService", "localApiStatus: ${e.message}")
+        }
+    }
+
+    private fun dispatchCommand(type: String, payload: org.json.JSONObject?) {
+        when (type) {
+            "launch" -> {
+                handler.post {
+                    try {
+                        val intent = Intent(this@WebSocketService, MainActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        }
+                        startActivity(intent)
+                        Log.i("WebSocketService", "Launched MainActivity from service")
+                    } catch (e: Throwable) { Log.e("WebSocketService", "launch cmd: ${e.message}") }
+                }
+            }
+            "settings" -> {
+                handler.post {
+                    // Resolve first: a stripped TV/AOSP build may have no ACTION_SETTINGS
+                    // handler, and the app's own App Info page is the next best door. Either
+                    // way say what happened in the log — a silent no-op on a box with no
+                    // touch input is indistinguishable from "the command never arrived".
+                    val candidates = listOf(
+                        Intent(android.provider.Settings.ACTION_SETTINGS),
+                        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            setData(android.net.Uri.parse("package:$packageName"))
+                        },
+                    )
+                    val opened = candidates.firstOrNull { intent ->
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        val ok = try { packageManager.resolveActivity(intent, 0) != null } catch (_: Throwable) { false }
+                        ok && try { startActivity(intent); true } catch (e: Throwable) { Log.w("WebSocketService", "settings cmd: ${intent.action}: ${e.message}"); false }
+                    }
+                    if (opened == null) Log.e("WebSocketService", "settings cmd: no Settings activity on this build")
+                    else Log.i("WebSocketService", "settings cmd: opened ${opened.action}")
+                }
+            }
+            "enable_system_capture" -> {
+                handler.post {
+                    try {
+                        com.remotedisplay.player.ScreenCapturePermissionActivity.requestPermission(this@WebSocketService)
+                    } catch (e: Throwable) { Log.e("WebSocketService", "enable_system_capture: ${e.message}") }
+                }
+            }
+            // #161: real lock on owner/admin (FORCE_LOCK), else accessibility lock. The
+            // `input keyevent 26` exec (denied for an unprivileged UID) is retired.
+            "screen_off" -> handler.post {
+                // An operator screen_off is just a screen_off — it creates no schedule
+                // and clears any exemption they had from the running one.
+                powerSchedule?.noteManualScreenOff()
+                blankPanel()
+            }
+            /*
+             * The weekly backlight schedule: a DEFINITION, not "go dark now". Handled in
+             * the SERVICE so it survives the Activity being stopped or destroyed — which
+             * is the normal state during a scheduled-off window. null CLEARS.
+             */
+            "set_power_schedule" -> handler.post {
+                powerSchedule?.update(payload?.optJSONObject("schedule"))
+            }
+            /*
+             * Device-side REST. Runs on a worker thread, NOT the handler: a request to
+             * an unreachable PLC blocks for the full timeout, and doing that on the main
+             * looper would freeze playback, the heartbeat and the power tick with it.
+             *
+             * The answer always comes back — a refusal, a timeout and a 500 are all
+             * results. Silence would be indistinguishable from a command that never
+             * arrived, which is the failure this whole surface exists to avoid.
+             */
+            "http_request" -> Thread {
+                try {
+                    val result = com.remotedisplay.player.net.DeviceHttp.perform(payload)
+                    val out = result.toJson().apply { put("device_id", config.deviceId) }
+                    handler.post {
+                        try { socket?.emit("device:http-result", out) }
+                        catch (e: Throwable) { Log.w("WebSocketService", "http-result emit: ${e.message}") }
+                    }
+                    Log.i("WebSocketService", "http_request ${result.status} ok=${result.ok} in ${result.durationMs}ms")
+                } catch (e: Throwable) {
+                    Log.e("WebSocketService", "http_request: ${e.message}")
+                }
+            }.apply { isDaemon = true }.start()
+            // Was a no-op because `input keyevent 224` is denied to an app UID — but a
+            // wake LOCK is a different mechanism needing only WAKE_LOCK, which we hold.
+            // Handled here as well as in MainActivity so a panel whose Activity is not
+            // foregrounded can still be woken; the service is the only thing guaranteed
+            // to be alive, and "screen won't come back on" means a site visit.
+            "screen_on" -> {
+                // An operator waking a screen inside a scheduled-off window is exempt
+                // from that window until it ENDS. Noted before the wake so the tick
+                // cannot race in and re-blank the panel they just asked for.
+                powerSchedule?.noteManualScreenOn()
+                wakePanel(bringToFront = true, payload = payload)
+            }
+            "set_debug" -> {
+                val on = payload?.optBoolean("enabled", false) ?: false
+                // Point the sink at this socket, then flip the flag. When on,
+                // DebugLog.* mirrors player/zone lines to the dashboard.
+                com.remotedisplay.player.util.DebugLog.sink = { tag, level, msg ->
+                    try {
+                        socket?.emit("device:log", JSONObject().apply {
+                            put("tag", tag); put("level", level); put("message", msg)
+                        })
+                    } catch (_: Throwable) {}
+                }
+                com.remotedisplay.player.util.DebugLog.enabled = on
+                Log.i("WebSocketService", "Remote debug logging ${if (on) "ENABLED" else "disabled"}")
+                com.remotedisplay.player.util.DebugLog.i("Debug", "Remote debug logging ${if (on) "ON" else "OFF"}")
+            }
+            // #161 device-owner tooling: a remote shell. NOTE it runs as the APP's UID (not
+            // root/shell) — device owner does not grant a privileged shell — so it's for
+            // diagnostics (getprop, ls, dumpsys reads, am/pm where allowed). Output streamed
+            // back to the dashboard. Gated server-side (admin/full scope in ALLOWED_COMMANDS).
+            "shell" -> {
+                val cmd = payload?.optString("cmd", "") ?: ""
+                if (cmd.isNotBlank()) Thread {
+                    var out = ""; var exit = -1
+                    try {
+                        val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+                        val so = p.inputStream.bufferedReader().readText()
+                        val se = p.errorStream.bufferedReader().readText()
+                        exit = p.waitFor()
+                        out = (so + (if (se.isNotEmpty()) "\n[stderr]\n$se" else "")).take(8000)
+                        if (out.isBlank()) out = "(no output, exit=$exit)"
+                    } catch (e: Throwable) { out = "error: ${e.message}" }
+                    try {
+                        socket?.emit("device:shell-result", JSONObject().apply {
+                            put("device_id", config.deviceId); put("cmd", cmd); put("output", out); put("exit", exit)
+                        })
+                    } catch (_: Throwable) {}
+                }.start()
+            }
+            // #312 follow-up: rewrite the stored server URL, e.g. after a server move,
+            // pushed from the dashboard to one device / a group / a whole workspace.
+            // VERIFY-THEN-COMMIT: keep the old URL, confirm the new one is a reachable
+            // ScreenTinker server, and only then persist it (mirrored to both stores by
+            // ServerConfig, #312) and reconnect. A bad address rolls back, so a
+            // fat-fingered URL cannot strand the panel — the failure this whole issue is
+            // about. Runs off the socket thread because it does blocking network I/O.
+            "set_server_url" -> {
+                val newUrl = (payload?.optString("url", "") ?: "").trim().trimEnd('/')
+                val old = config.serverUrl
+                when {
+                    newUrl.isEmpty() ->
+                        emitCommandLog("set_server_url refused: no url in payload")
+                    !(newUrl.startsWith("http://") || newUrl.startsWith("https://")) ->
+                        emitCommandLog("set_server_url refused: not http(s): $newUrl")
+                    newUrl == old ->
+                        emitCommandLog("set_server_url: already $newUrl, no change")
+                    else -> Thread {
+                        if (probeServerReachable(newUrl)) {
+                            // Confirm success on the CURRENT socket before we tear it down,
+                            // so the operator who issued the change sees it land.
+                            emitCommandLog("set_server_url: verified $newUrl, switching (was $old)")
+                            config.serverUrl = newUrl
+                            handler.post { try { connect(newUrl) } catch (e: Throwable) { Log.e("WebSocketService", "set_server_url reconnect: ${e.message}") } }
+                        } else {
+                            emitCommandLog("set_server_url: $newUrl unreachable, kept $old")
+                        }
+                    }.start()
+                }
+            }
+            else -> handler.post { try { onCommand?.invoke(type, payload) } catch (e: Throwable) { Log.e("WebSocketService", "onCommand cb: ${e.message}") } }
+        }
+    }
+
 }

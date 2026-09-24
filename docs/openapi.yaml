@@ -1493,6 +1493,7 @@ paths:
                   # asserts the two lists match: this one had already drifted, documenting six of
                   # the commands a 'full' token can actually send.
                   enum: [screen_on, screen_off, launch, update, reboot, shutdown,
+                         refresh,
                          power_menu, lock_now, kiosk_lock, kiosk_unlock,
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
@@ -1537,6 +1538,7 @@ paths:
                   type: string
                   # Same list as the group route above; see the note there.
                   enum: [screen_on, screen_off, launch, update, reboot, shutdown,
+                         refresh,
                          power_menu, lock_now, kiosk_lock, kiosk_unlock,
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
@@ -1829,6 +1831,92 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: 'The secret, and whether the device was reached.' }
+        '404': { description: No such device in this workspace. }
+
+  # ------------------------------------------------------- inbound local REST API
+  /devices/{id}/local-api:
+    post:
+      tags: [devices]
+      summary: Open or close the screen's own inbound REST door
+      description: |
+        Goal B part 3. Lets a control system ON THE SAME LAN as the screen call the screen directly:
+        `GET /api/status` and `POST /api/command` on the panel itself, on the trigger HTTP port
+        (default 8079).
+
+        The point is reach. A Crestron processor or a PLC in the same rack cannot call this server —
+        it is usually in another country, behind an outbound-only firewall, and holds credentials an
+        installer is not allowed to have. It can call the screen next to it.
+
+        ⚠️ **OFF BY DEFAULT, AND SEPARATE FROM `accept_http`.** The two share a socket and a port but
+        not a permission: `accept_http` lets a LAN host put an overlay on the screen, this lets a LAN
+        host change what the screen is doing. Enabling triggers does not enable this, and enabling
+        this does not enable triggers.
+
+        ⚠️ **It opens a listening port on the customer's LAN.** Anything that can route to the panel
+        can reach it, so the secret is the only boundary — treat the port as reachable by every device
+        on that segment and firewall it if the segment is not trusted.
+
+        ⚠️ Enabling is refused until a secret is set, rather than accepted and left to fail on the
+        panel. The panel would answer `503 no_secret_configured` to every request, but an operator who
+        ticked a box and walked away believes the door is open.
+
+        The command set a LAN caller may ask for is much smaller than what a `full` token can send
+        (`refresh`, `screen_on`, `screen_off`, `set_volume`, `set_brightness`,
+        `set_system_brightness`) and is returned in the response. Notably absent: `shell`,
+        `install_apk`, `update`, `set_server_url`, `http_request`, `launch`, `kiosk_unlock`, `reboot`.
+        The panel enforces that list, not this server — nothing here is in the request path.
+
+        Android only for now.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: '{ success, delivered, local_api: { enabled, port, commands, secret_set } }.' }
+        '400': { description: 'enabled missing, or enabling with no secret set.' }
+        '404': { description: No such device in this workspace. }
+
+  /devices/{id}/local-api-secret:
+    post:
+      tags: [devices]
+      summary: Rotate or set the local REST API secret
+      description: |
+        The credential a LAN caller presents, as `Authorization: Bearer <secret>` or — for gear that
+        cannot set a header at all — `?secret=`.
+
+        ⚠️ **NOT the trigger secret, and deliberately not shared with it.** The trigger secret buys an
+        overlay on a screen already showing this workspace's content; this one buys "reload that
+        screen, blank it, change its volume". Sharing the value would mean every installer ever given
+        the trigger secret could take the fleet dark, and rotating one would silently rotate the other.
+
+        Rotation generates 24 random bytes as hex. A supplied secret must be 16-128 printable ASCII
+        characters with no spaces; the floor is there because this is guessable offline by anything on
+        the LAN, as fast as the panel's rate limiter allows, with no lockout and no audit trail.
+
+        ⚠️ The value is returned to a dashboard session — a human has to type it into a control system
+        — and NEVER to an API token, which gets `{ secret_set: true }` and a note instead.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rotate: { type: boolean, description: Generate a new secret. Default when no secret is supplied. }
+                secret: { type: string, description: '16-128 printable ASCII, no spaces.' }
+      responses:
+        '200': { description: 'The secret (dashboard session only), and whether the device was reached.' }
+        '400': { description: The supplied secret does not meet the length or charset rule. }
         '404': { description: No such device in this workspace. }
 
   # ---------------------------------------------------------------------- pip

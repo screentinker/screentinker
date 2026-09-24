@@ -44,6 +44,22 @@ const BLOCKLIST = Object.freeze({
   devices: [
     'device_token', 'enrol_key', 'settings_pin', 'claim_secret', 'trigger_secret',
     'trigger_clear_all_token', 'pairing_code',
+    /*
+     * ⚠️ Goal B part 3. Turns an HTTP request from the panel's own LAN into "reload that screen,
+     * blank it, change its volume" — so it belongs here for the same reason trigger_secret does,
+     * and more firmly: the trigger secret can only show what the workspace already assigned to
+     * that screen, while this one can stop the screen showing anything at all.
+     *
+     * The FLAG replicates and the SECRET does not, deliberately. A replica showing "the control
+     * door is open on this screen" is the truth an operator needs; a replica holding the key to it
+     * multiplies the number of places one compromise is enough. A replica cannot serve the panel
+     * anyway — the panel is told its secret by the node it is attached to.
+     *
+     * Caught by test_replication_blocklist_covers_every_secret_column, which is what that guard is
+     * for: the column was added, the feature was green everywhere, and the secret would have
+     * shipped to every replica by omission.
+     */
+    'local_api_secret',
   ],
   triggers: ['match_token', 'clear_token'],
 });
