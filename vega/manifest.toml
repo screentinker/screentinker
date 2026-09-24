@@ -9,6 +9,12 @@ version = "2.1.6"
 id = "com.screentinker.vega"
 icon = "@image/app_icon.png"
 
+# SDK 0.24 refuses to build without this. 1.2 is the only minted OS version, and
+# it is the OS on these sticks. min and target stay equal until a later OS exists.
+[os.version]
+min = "1.2"
+target = "1.2"
+
 [components]
 
 [[components.interactive]]
@@ -85,3 +91,7 @@ id = "com.amazon.privilege.security.file-sharing"
 
 [[offers.service]]
 id = "com.amazon.gipc.uuid.*"
+
+[needs]
+[[needs.module]]
+id = "/com.amazon.vega.os@IVega_1_2"

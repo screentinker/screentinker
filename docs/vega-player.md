@@ -31,9 +31,15 @@ source ~/vega/env
 cd vega
 npm install
 npm run build:release
-npm run install:release    # a Vega Virtual Device, or a stick in developer mode
+npm run install:release    # a stick in developer mode. Discover it with adb connect <ip>:5555 first
 npm run launch
 ```
+
+`build:release` targets **armv7**. Fire TV Stick 4K Select and HD (2026) report `armv7l`. `aarch64` is the simulator. The script calls `react-native build-vega`, which is registered by `@amazon-devices/kepler-cli-platform`. `vega build` by itself does not bundle JavaScript: it exits 0 and archives a package that launches and does nothing.
+
+Stay on React Native 0.72 and Kepler 2 (`@amazon-devices/react-native-kepler` `~2.0.0`). The manifest runtime is `IKeplerScript_2_0`. Kepler 4 / React Native 0.83 is a different runtime; an OS 1.2 stick does not have its system bundles. `@amazon-devices/kepler-file-system` is `~0.0.7` — the `~2.0.0` range matches nothing on npm.
+
+`metro.config.js` does not use Metro's stock Babel transformer. Metro 0.76 transforms an already-parsed AST with `cloneInputAst: false`, and Babel then throws `Helpers are not supported by the default hub` on the shell's `async` and array destructuring. `vega/metro-babel-transformer.js` forces the clone. Do not point the config back at the stock transformer.
 
 `@amazon-devices/*` resolves from the SDK's npm registry, not from the public one. If a version in `package.json` does not resolve, generate a hello-world with `vega project generate` and copy the versions that template pinned. The source does not depend on a patch level.
 

@@ -33,6 +33,26 @@ function bodyOf(src, name) {
   throw new Error(`${name}() unbalanced`);
 }
 
+test('vega: the build targets the stick, not the simulator, and can actually bundle', () => {
+  // OS 1.2 sticks are armv7 / KeplerScript 2. react-native-kepler does not register a build
+  // command; kepler-cli-platform does, and on current SDKs that command is build-vega.
+  // `vega build` alone archives a package with no JavaScript.
+  assert.equal(pkg.dependencies['react-native'], '0.72.0');
+  assert.equal(pkg.dependencies['@amazon-devices/react-native-kepler'], '~2.0.0');
+  assert.equal(pkg.dependencies['@amazon-devices/kepler-file-system'], '~0.0.7');
+  assert.equal(pkg.devDependencies['@amazon-devices/kepler-cli-platform'], '~0.22.14');
+  assert.match(pkg.scripts['build:release'], /react-native build-vega --build-type Release --target armv7/);
+  assert.doesNotMatch(JSON.stringify(pkg.scripts), /build-kepler/);
+  assert.doesNotMatch(JSON.stringify(pkg.scripts), /vega build/);
+  // Stock Metro 0.76 throws "Helpers are not supported by the default hub" on App.tsx.
+  const metro = fs.readFileSync(path.join(VEGA, 'metro.config.js'), 'utf8');
+  const seam = fs.readFileSync(path.join(VEGA, 'metro-babel-transformer.js'), 'utf8');
+  assert.match(metro, /metro-babel-transformer\.js/);
+  assert.match(seam, /cloneInputAst: true/);
+  assert.equal(pkg.devDependencies['metro-react-native-babel-transformer'], '0.76.5');
+  assert.equal(pkg.devDependencies['@babel/runtime'], '^7.20.0');
+});
+
 test('vega: manifest, app.json and package.json name the same component', () => {
   assert.equal(pkg.version, '2.1.6');
   assert.match(manifest, /^id = "com\.screentinker\.vega"$/m);
@@ -40,6 +60,9 @@ test('vega: manifest, app.json and package.json name the same component', () => 
   assert.match(manifest, /id = "com\.screentinker\.vega\.main"/);
   assert.equal(app.name, 'com.screentinker.vega.main', 'AppRegistry name must be the interactive component id');
   assert.match(manifest, /com\.amazon\.webview\.renderer_service/);
+  assert.match(manifest, /min = "1\.2"/);
+  assert.match(manifest, /target = "1\.2"/);
+  assert.match(manifest, /\/com\.amazon\.vega\.os@IVega_1_2/);
   assert.match(manifest, /com\.amazon\.media\.server/);
   assert.match(manifest, /com\.amazon\.audio\.control/);
   // A required privilege we do not have would make the package uninstallable. DRM is wants.
