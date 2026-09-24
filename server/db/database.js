@@ -1522,6 +1522,49 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_upload_sessions_ws  ON upload_sessions (workspace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_upload_sessions_age ON upload_sessions (updated_at)`,
 
+  /* ==============================================================================================
+   * DEVICE ENDPOINTS — saved REST calls a PANEL makes on its own network, on its own clock.
+   *
+   * ⚠️ The polling happens ON THE DEVICE, not here. The whole point of the http_request surface is
+   * that the panel stands on the private side of the customer's firewall, next to the PLC and the
+   * sensor; a server-side poller could not reach any of it. So these rows are a DEFINITION, synced
+   * to the device, and the device runs them — including with the WAN down. Same shape as triggers.
+   *
+   * ⚠️ device_id XOR group_id, but the RESOLUTION IS A UNION, not an override. A power schedule has
+   * one answer ("is this screen lit"), so device beats group. A list of endpoints is not one
+   * answer: a screen should run its group's endpoints AND its own. The only override is by NAME,
+   * so one panel can point "PLC state" somewhere else without leaving the group.
+   * ============================================================================================ */
+  `CREATE TABLE IF NOT EXISTS device_endpoints (
+     id           TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     name         TEXT NOT NULL,
+     device_id    TEXT REFERENCES devices(id) ON DELETE CASCADE,
+     group_id     TEXT REFERENCES device_groups(id) ON DELETE CASCADE,
+     method       TEXT NOT NULL DEFAULT 'GET',
+     url          TEXT NOT NULL,
+     /* JSON object. ⚠️ Header VALUES are encrypted at rest with lib/plugins/secrets, because an
+      * endpoint header is where an API key lives and a workspace member who can read a row should
+      * not thereby read the credential. They are decrypted on the way to the panel, which needs
+      * the plaintext to make the call at all. */
+     headers      TEXT NOT NULL DEFAULT '{}',
+     body         TEXT,
+     timeout_ms   INTEGER,
+     /* How it fires. Exactly one of the two is meaningful:
+      *   interval_sec — every N seconds, on the device's own clock
+      *   run_on       — 'screen_on' | 'screen_off' | 'heartbeat'
+      * Neither set = the endpoint only runs when an operator asks. */
+     interval_sec INTEGER,
+     run_on       TEXT,
+     enabled      INTEGER NOT NULL DEFAULT 1,
+     created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_device_endpoints_ws     ON device_endpoints (workspace_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_device_endpoints_device ON device_endpoints (device_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_device_endpoints_group  ON device_endpoints (group_id)`,
+
   /*
    * ─── Playlist inheritance ────────────────────────────────────────────────────────────────
    *

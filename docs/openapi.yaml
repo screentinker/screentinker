@@ -2534,6 +2534,132 @@ paths:
           description: No such session in this workspace.
         '409':
           description: 'Incomplete. The body carries offset and declared_size.'
+  # ---------------------------------------------------------------------------------------------
+  # DEVICE ENDPOINTS — saved REST calls a PANEL makes on its OWN network, on its own clock.
+  #
+  # Nothing here performs a request. The panel stands on the private side of the customer's
+  # firewall, next to the PLC and the sensor, and this server has no route to any of it — so these
+  # rows are a definition, synced to the device, and the device runs them including with the WAN
+  # down. Header values are encrypted at rest and are NEVER returned by any read below.
+  # ---------------------------------------------------------------------------------------------
+  /device-endpoints:
+    get:
+      tags: [device-endpoints]
+      summary: List saved endpoints in this workspace
+      description: 'Requires scope: read. Header values are returned blank; names are visible.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: '{ endpoints: [...] }'
+    post:
+      tags: [device-endpoints]
+      summary: Save an endpoint for a device or a group
+      description: >-
+        Requires scope: full. Targets exactly one of device_id or group_id. The url is checked
+        against the same allowlist the panel enforces, so file:// and content:// are refused here
+        rather than silently ignored on the screen. An endpoint runs on an interval OR on a player
+        event, never both.
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                name: { type: string, maxLength: 80 }
+                device_id: { type: [string, 'null'] }
+                group_id: { type: [string, 'null'] }
+                method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD] }
+                url: { type: string, example: 'http://192.168.1.50/api/state' }
+                headers:
+                  type: object
+                  description: 'Values are encrypted at rest and never read back. Send a blank value to keep the stored one.'
+                body: { type: [string, 'null'] }
+                timeout_ms: { type: integer, minimum: 1, maximum: 120000 }
+                interval_sec:
+                  type: integer
+                  minimum: 30
+                  maximum: 86400
+                  description: 'Minimum 30s. This runs on a panel that is also playing video, against what is often a small controller.'
+                run_on: { type: string, enum: [screen_on, screen_off, heartbeat] }
+                enabled: { type: boolean, default: true }
+      responses:
+        '201':
+          description: '{ endpoint: {...} }'
+        '400':
+          description: 'Refused url, bad method, both interval and event, or a target outside this workspace.'
+  /device-endpoints/effective/{deviceId}:
+    get:
+      tags: [device-endpoints]
+      summary: What a given screen will actually run
+      description: >-
+        Requires scope: read. The union of the group's endpoints and the device's own, with a
+        device endpoint of the same NAME replacing the group's. Header values are blank here too.
+      x-required-scope: read
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: '{ endpoints: [...] }'
+        '404':
+          description: No such device in this workspace.
+  /device-endpoints/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [device-endpoints]
+      summary: Get one saved endpoint
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: '{ endpoint: {...} }'
+        '404':
+          description: Not found in this workspace.
+    put:
+      tags: [device-endpoints]
+      summary: Update a saved endpoint
+      description: >-
+        Requires scope: full. Partial. A header sent with a BLANK value keeps the stored one, so a
+        form that never saw the credential cannot erase it by round-tripping.
+      x-required-scope: full
+      responses:
+        '200':
+          description: '{ endpoint: {...} }'
+        '400':
+          description: Validation failed.
+        '404':
+          description: Not found in this workspace.
+    delete:
+      tags: [device-endpoints]
+      summary: Delete a saved endpoint
+      description: 'Requires scope: full. Screens following it are re-synced immediately.'
+      x-required-scope: full
+      responses:
+        '200':
+          description: '{ ok: true }'
+        '404':
+          description: Not found in this workspace.
+  /device-endpoints/{id}/run:
+    post:
+      tags: [device-endpoints]
+      summary: Run this endpoint now, on one screen
+      description: >-
+        Requires scope: full. Goes through the same http_request path a scheduled run takes, so a
+        test exercises the code that will run on the timer. Answers with the request id the result
+        will carry. For a group endpoint, device_id says which screen to run it on.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: '{ success, status, device_id, id }'
+        '400':
+          description: 'That screen cannot make requests, or no device_id for a group endpoint.'
+        '404':
+          description: Not found in this workspace.
   /display-power-schedules:
     get:
       tags: [display-power-schedules]

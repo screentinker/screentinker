@@ -51,6 +51,29 @@ indistinguishable from a command that never arrived.
 Android only for now; `net.http_request` is in no baseline, so a fielded player is refused the
 command rather than sent something it would drop.
 
+**Saved endpoints — the same request, on the panel's own clock.** A one-shot `http_request` needs
+someone holding the dashboard open. A saved endpoint does not: it is a named definition attached to
+one screen or to a group, synced down with the playlist payload, and **run by the panel** — on an
+interval, or when the screen wakes, sleeps or sends a heartbeat. The panel keeps the definitions
+across a reboot, so a screen that restarts at 03:00 with the WAN still down goes on polling its PLC.
+
+⚠️ **A device's endpoints are the UNION of its own and its group's, not an override** — and that is
+the opposite of how display-power schedules resolve, deliberately. A power window answers one
+question ("is this screen lit"), so exactly one row can win. A list of endpoints is not one answer:
+picking a winner would silently stop work an operator configured. The one thing that does override
+is a **name** — a device-level "PLC state" replaces the group's "PLC state", so a single panel can
+be pointed at a different address without being taken out of its group.
+
+⚠️ **Header values are encrypted at rest and never returned.** `GET` shows header *names* so an
+operator can see what is configured, and a blank value on save **keeps** the stored one — otherwise
+a form that cannot display the API key would erase it every time anyone edited the URL.
+
+The minimum interval is 30 seconds. This runs on a panel whose day job is playing video, against a
+target that is often a small embedded controller, and a one-second poll is how a screen stutters and
+a PLC gets hammered — with neither symptom pointing back here. "Run it now" from the dashboard goes
+through the same `http_request` path as everything else, so testing an endpoint exercises the code
+that will run it on a timer.
+
 **The playlist content picker now navigates folders as a tree.** A bar above the list shows where
 you are and what is inside it — `All › WESTERN AUSTRALIA › HOSTS` — and slides sideways rather than
 growing the window. Picking a folder shows everything beneath it, not only the files sitting
