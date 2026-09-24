@@ -14,7 +14,7 @@
     "build": "react-native build-kepler --build-type Release"
   },
   "dependencies": {
-    "@amazon-devices/kepler-file-system": "~2.0.0",
+    "@amazon-devices/kepler-file-system": "~0.0.7",
     "@amazon-devices/react-native-device-info": "~2.1.0",
     "@amazon-devices/react-native-kepler": "~2.0.0",
     "@amazon-devices/webview": "~3.3.0",
