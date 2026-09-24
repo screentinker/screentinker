@@ -704,7 +704,15 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     console.warn(`[power-schedule] resolve failed for ${deviceId}: ${e.message}`);
   }
 
-  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule });
+  // Saved endpoints: the group's plus this device's own, resolved by the one rule that decides it.
+  let deviceEndpoints = [];
+  try {
+    deviceEndpoints = require('../lib/device-endpoints').endpointsForDevice(deviceId);
+  } catch (e) {
+    console.warn(`[endpoints] resolve failed for ${deviceId}: ${e.message}`);
+  }
+
+  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
 }
 
 // #104: the canonical player payload shape, shared by the device path
@@ -774,7 +782,7 @@ function attachDataSourceBag(items, workspaceId) {
   }
 }
 
-function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule }) {
+function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, playback_order, default_content, power_schedule, endpoints }) {
   let a = Array.isArray(assignments) ? assignments : [];
   // Transition widgets are normalized OUT here (the single device+preview chokepoint): each is dropped
   // from the visible list and its config attached as an opaque `transition` on the item it plays into.
@@ -815,6 +823,16 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
      * which the player must treat as "clear any schedule I am holding", not as "no news".
      */
     power_schedule: power_schedule || null,
+    /*
+     * Saved REST endpoints this panel runs on its own clock. Top-level and outside the item list,
+     * like triggers and the power schedule, so editing one never restarts playback (#234).
+     *
+     * ⚠️ Header values are PLAINTEXT here. The panel cannot make an authenticated call without
+     * them, and the socket is TLS to a device this server has already authenticated. They are
+     * encrypted at rest and never returned by the REST read surface — this is the one place they
+     * legitimately travel.
+     */
+    endpoints: Array.isArray(endpoints) ? endpoints : [],
     // #320: the GLSL for any uploaded shader this playlist actually references, sent with the
     // playlist rather than fetched separately. Every player already resolves a shader as an id
     // to a source string, so merging these into that lookup is all any of them needs — no new
@@ -1132,6 +1150,7 @@ const EVENT_APPLIERS = Object.freeze({
    */
   'http-result'(deviceId, data, ctx) {
     const { device_id, id, ok, status, snippet, truncated, duration_ms, error } = data || {};
+    data = data || {};
     if (!device_id || device_id !== deviceId) return;
     emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:http-result', {
       device_id,
@@ -1142,6 +1161,14 @@ const EVENT_APPLIERS = Object.freeze({
       truncated: !!truncated,
       duration_ms: Number.isFinite(Number(duration_ms)) ? Number(duration_ms) : null,
       error: error == null ? null : String(error).slice(0, 500),
+      /*
+       * Present when the result came from a SAVED endpoint rather than a one-off request, so the
+       * dashboard can show "PLC state — last read 30s ago" against the right row. Bounded like
+       * everything else here: the device socket is reachable by anything holding a device token.
+       */
+      endpoint_id: data.endpoint_id ? String(data.endpoint_id).slice(0, 64) : null,
+      endpoint_name: data.endpoint_name ? String(data.endpoint_name).slice(0, 80) : null,
+      reason: data.reason ? String(data.reason).slice(0, 32) : null,
     });
   },
 

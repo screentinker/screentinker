@@ -183,6 +183,20 @@ class WebSocketService : Service() {
          * cost the feature exists to avoid. START_STICKY brings the service back after a kill, and
          * this runs again on that path too.
          */
+        /*
+         * Saved endpoints, restored and ticking before any socket exists — a panel that reboots at
+         * 03:00 with no WAN must still poll its PLC. Owned HERE and not by the Activity for the
+         * same reason as the power schedule: an Activity-scoped poller stops whenever the screen
+         * sleeps, which on a panel running a display-power schedule is most of the time, and the
+         * two features would silently disable each other.
+         */
+        endpointPoller = com.remotedisplay.player.net.EndpointPoller(applicationContext) { result ->
+            handler.post {
+                try { socket?.emit("device:http-result", result.put("device_id", config.deviceId)) }
+                catch (e: Throwable) { Log.w("WebSocketService", "endpoint result emit: ${e.message}") }
+            }
+        }.also { it.restore(); it.start() }
+
         powerSchedule = com.remotedisplay.player.power.PowerScheduleManager(
             applicationContext,
             onApply = { off -> applyScheduledPower(off) },
@@ -542,6 +556,13 @@ class WebSocketService : Service() {
                     handler.post {
                         try { powerSchedule?.update(data.optJSONObject("power_schedule")) }
                         catch (e: Throwable) { Log.w("WebSocketService", "power schedule adopt: ${e.message}") }
+                    }
+                    // Saved endpoints ride every payload too. Absent CLEARS, same contract.
+                    handler.post {
+                        try {
+                            endpointPoller?.update(data.optJSONArray("endpoints"))
+                            endpointPoller?.persist()
+                        } catch (e: Throwable) { Log.w("WebSocketService", "endpoint adopt: ${e.message}") }
                     }
                     handler.post { try { onPlaylistUpdate?.invoke(data) } catch (e: Throwable) { Log.e("WebSocketService", "onPlaylistUpdate cb: ${e.message}") } }
                 }
@@ -1192,6 +1213,9 @@ class WebSocketService : Service() {
      */
     private var powerSchedule: com.remotedisplay.player.power.PowerScheduleManager? = null
 
+    /** Saved REST endpoints this panel runs on its own clock. See EndpointPoller for why it lives here. */
+    private var endpointPoller: com.remotedisplay.player.net.EndpointPoller? = null
+
     /**
      * Set by MainActivity while it exists. Its ONLY job is the window flag, which only a window can
      * hold; everything else about going dark and coming back happens in this service so it works
@@ -1250,6 +1274,10 @@ class WebSocketService : Service() {
     private fun applyScheduledPower(off: Boolean) {
         handler.post { try { onPowerWindow?.invoke(off) } catch (e: Throwable) { Log.w("WebSocketService", "power window flag: ${e.message}") } }
         if (off) blankPanel() else wakePanel(bringToFront = true)
+        // An endpoint bound to screen_on/screen_off is how a building system learns the sign went
+        // dark. Fired from the SCHEDULE too, not only from an operator's button — the scheduled
+        // edge is the one that happens every night with nobody watching.
+        try { endpointPoller?.onEvent(if (off) "screen_off" else "screen_on") } catch (e: Throwable) { }
     }
 
     private fun sendHeartbeat() {
@@ -1937,6 +1965,8 @@ class WebSocketService : Service() {
         Thread { ExitSignal.send(ctx, "clean_exit", "onDestroy") }.apply { start(); try { join(1500) } catch (e: InterruptedException) { /* proceed with teardown */ } }
         try { powerSchedule?.stop() } catch (e: Throwable) { /* teardown is best-effort */ }
         powerSchedule = null
+        try { endpointPoller?.stop() } catch (e: Throwable) { /* teardown is best-effort */ }
+        endpointPoller = null
         reconnectWatchdog?.let { handler.removeCallbacks(it) }; reconnectWatchdog = null
         // feat/offline-cause-log: tear down the diagnostics plumbing (guarded — a never-registered
         // receiver/callback would otherwise throw IllegalArgumentException here).

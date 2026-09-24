@@ -67,6 +67,15 @@ const PUBLIC_ROUTERS = [
    * router only defines them. Nothing in it can turn a device off — see routes/display-power-schedules.js.
    */
   { path: '/api/display-power-schedules', mod: './routes/display-power-schedules' },
+  /*
+   * Saved device endpoints — REST calls a PANEL makes on its own network. Public (token-reachable)
+   * for the same reason as triggers: an integrator provisioning a site configures "poll the PLC
+   * every minute" from their own tooling.
+   *
+   * ⚠️ The REQUESTS are not made here. The panel runs them on its own clock, offline, which is the
+   * whole point — this server has no route to the customer's 192.168.x.x. See routes/device-endpoints.js.
+   */
+  { path: '/api/device-endpoints', mod: './routes/device-endpoints' },
 ];
 
 const JWT_ONLY_ROUTERS = [

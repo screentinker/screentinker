@@ -234,6 +234,29 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
      * this door is consulted at the moment a screen actually sleeps.
      */
     '/api/display-power-schedules',
+    /*
+     * Saved device endpoints — REST calls a PANEL makes on its own network — added deliberately.
+     * Same reasoning as triggers and power schedules: an integrator provisioning a site configures
+     * "poll the PLC every minute" from their own tooling, and that belongs in a handover script.
+     * Writes carry the same requireScope('full') + role pairing as its siblings.
+     *
+     * ⚠️ What review should weigh, because this one is genuinely new reach: a `full` token here can
+     * make a screen issue HTTP requests INSIDE the customer's private network, on a timer, for ever.
+     * Four things bound it:
+     *
+     *  1. The scheme allowlist (shared/http-target-vectors.json) applies at save time and again on
+     *     the panel. file:// and content:// are refused, so this cannot become "read a file off the
+     *     device" — which is the only escalation of KIND available here.
+     *  2. The caller already holds `full`, which on a device-owner panel can run `shell`. Reaching
+     *     a LAN host is not an escalation for them; it is what they asked for.
+     *  3. Responses are capped at 64 KiB and relayed only to THIS device's workspace dashboards.
+     *  4. Header values are encrypted at rest and never returned by any read surface, so a
+     *     workspace member who can list endpoints still cannot read the credentials in them.
+     *
+     * ⚠️ And the reach stops at the tenant: http_request is NOT a mesh command, so no other server
+     * can aim a panel this way. See the note in lib/device-command.js.
+     */
+    '/api/device-endpoints',
     '/api/approvals',
     '/api/revisions',
   ].sort();
