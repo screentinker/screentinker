@@ -4,6 +4,53 @@
 
 ### Fixed
 
+**Esc on the web player was a public unpair button.** It asked `confirm('Reset player and return to
+setup?')` and, on OK, wiped the display's identity and reloaded — so anyone who could reach a
+keyboard on a kiosk could unpair the screen. The operator's first sign of it was a sign showing a
+pairing code. A `confirm()` dialog is not a permission check: it establishes only that somebody meant
+to press the button, which is precisely what was wrong.
+
+Esc now asks for the **settings PIN the dashboard already provisions for that screen** — the same
+number the Android player's hidden menu uses, reused rather than reinvented so an operator has one
+PIN per screen and rotating it in one place rotates it everywhere. A correct PIN unpairs; a wrong,
+empty or cancelled one does nothing at all and leaves the screen playing.
+
+⚠️ **A screen with no PIN cannot be unpaired at the panel, and Esc does nothing visible** — not even
+an explanation, because the status overlay is full-screen and telling the room "unpair from the
+dashboard" would blank a running sign for anyone who leaned on the key. Unpair that screen from the
+dashboard. Any weaker fallback would restore the old behaviour for exactly the screens least likely
+to have anyone watching them.
+
+⚠️ **The PIN prompt closes itself after 30 seconds.** Without that, someone who presses Esc and walks
+away leaves a PIN box covering a running sign until the next reload — which turns "Esc is harmless"
+into "Esc blanks the screen", the same class of problem as the reset it replaces. Playback is never
+paused while it is up.
+
+On a correct PIN the player tells the server it is unpaired **while it still holds the token that
+proves it may**, then clears its identity, the playlist and layout caches, the trigger config and
+cache, `st_install_id`, the BrightSign registry, and `?k=` from the URL. Server-side the screen goes
+back to unpaired and its fingerprint rows are dropped, so the next registration is a genuinely new
+display instead of being reclaimed onto the row that was just released — **the row itself survives**,
+because assignments, play history and telemetry hang off it and a screen that vanished because
+somebody pressed a key would be worse than one left needing attention.
+
+⚠️ `st_install_id` is the load-bearing part of that list: it salts the fingerprint the server matches
+on, and leaving it means the next register is reclaimed onto the old row and the whole unpair was
+theatre. That is why the decision and the key list now live in `lib/unpair-gate.js` with tests, rather
+than inline in a keydown handler reachable only through a real browser and a real PIN.
+
+⚠️ **A replica cannot relay this event.** Every other player event reports something and a primary may
+believe a peer relaying it; this one changes a screen's pairing state, and a replica holding a scoped
+write grant should not gain "unpair any screen in these workspaces" as a side effect of gaining
+"relay what these screens report". On a replica-attached screen the local wipe still happens and the
+player says on its console that the server was never told.
+
+The web player also now stores the settings PIN it is sent and listens for `device:settings-pin`, so a
+rotation from the dashboard reaches the screen the gate depends on. ⚠️ It is only adopted when the
+field is actually present — some register paths omit it, and there is no "remove the PIN" feature, so
+absent means "this sender did not include it" and an unconditional assignment would erase a
+known-good PIN on the next reconnect.
+
 **The dashboard now notices its own updates.** The "a new version is available, reload?" prompt was
 driven by a hash of a hardcoded list of twenty files — and the playlist view, everything under
 `js/lib/`, and all ten translation files were not on it. A fix shipped to any of those reached no

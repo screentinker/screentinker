@@ -54,6 +54,10 @@ test('legacy player dependencies need no Chrome 53 syntax lowering', () => {
     ['wall geometry', path.join(__dirname, '..', 'lib', 'wall-geometry.js')],
     ['media health', path.join(__dirname, '..', 'lib', 'player-media-health.js')],
     ['cache policy', path.join(__dirname, '..', 'lib', 'player-cache-policy.js')],
+    // The Esc-unpair gate is loaded by BOTH players and served untranspiled, so a `const` or an
+    // arrow in it would be a parse error on a webOS 4 TV — which fails as a player that cannot boot,
+    // not as a feature that cannot unpair.
+    ['unpair gate', path.join(__dirname, '..', 'lib', 'unpair-gate.js')],
     ['Socket.IO client', path.join(__dirname, '..', 'node_modules', 'socket.io', 'client-dist', 'socket.io.js')],
   ];
 
