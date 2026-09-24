@@ -24,6 +24,18 @@ const enrolKey = require('./enrol-key');   // #312/#313: URL-carried identity fo
  */
 const ALLOWED_COMMANDS = Object.freeze([
   'screen_on', 'screen_off', 'launch', 'update', 'reboot', 'shutdown',
+  /*
+   * ⚠️ `refresh` was IMPLEMENTED ON THE PANEL AND UNSENDABLE — MainActivity has handled it for a
+   * long time (it reconnects the socket, so the panel re-fetches its playlist) and nothing anywhere
+   * on the server could ask for it. Found by the local-API allowlist drift test, which asserts every
+   * command that door offers is a command the panel already has: the door wanted `refresh`, and the
+   * subset check failed because it was not in this list rather than because the panel lacked it.
+   *
+   * Ungated deliberately. A new capability sits in no baseline, so gating it would make it refused
+   * on every fielded player — i.e. the fix would ship as a no-op. A web player simply ignores it,
+   * the same as the other panel-specific commands here.
+   */
+  'refresh',
   // #161 Tier-2 (owner-gated on the panel; STPolicy no-ops off-tier so a stray send is inert):
   'power_menu', 'lock_now', 'kiosk_lock', 'kiosk_unlock',
   'set_time', 'set_timezone', 'status_bar', 'block_uninstall', 'unblock_uninstall',
@@ -53,6 +65,33 @@ const ALLOWED_COMMANDS = Object.freeze([
    * ⚠️ DELIBERATELY NOT A MESH COMMAND. See MESH_COMMANDS below.
    */
   'http_request',
+]);
+
+/*
+ * ⚠️ WHAT A LAN CALLER MAY ASK FOR — A MUCH SMALLER SUBSET, AND WHO THE CALLER IS IS WHY.
+ *
+ * Goal B part 3 lets a room control system on the customer's LAN POST to the PANEL directly. This
+ * list is not enforced here — the panel enforces it, because the panel is what receives the request
+ * and this server is not in the path at all. It exists here so the dashboard and the docs can name
+ * the set, and `server/test/local-api-allowlist.test.js` HOLDS IT TO THE KOTLIN, which is the
+ * authoritative copy. Two lists that can drift is the trap; a test that fails when they do is the
+ * answer, and it is the same device the shared vector files use for the resolvers.
+ *
+ * Why so much smaller than MESH_COMMANDS, let alone the full set: a dashboard command carries a
+ * session or a `full` token held by someone who can already see the whole fleet. This one carries a
+ * secret that gets typed into a Crestron program, committed to a site's integration repo, mailed to
+ * a subcontractor, and left in place for the life of the building. It is a room-control credential,
+ * so it gets the room-control command set — and notably NOT `shell`, `install_apk`, `update`,
+ * `set_server_url` (a complete takeover of the screen from inside the LAN), `launch`, `settings`,
+ * `kiosk_unlock`, or `http_request` (which would make every panel a request relay whose audit trail
+ * names the screen instead of the caller). `reboot` is out of v1 for a different reason: everything
+ * on this list is undone by sending its opposite, and a reboot is not — a reboot loop from a stuck
+ * automation is a fleet on the floor. Adding it later is one line; taking it back is a site visit.
+ *
+ * See android/.../net/LocalApi.kt for the per-command reasoning.
+ */
+const LOCAL_API_COMMANDS = Object.freeze([
+  'refresh', 'screen_on', 'screen_off', 'set_volume', 'set_brightness', 'set_system_brightness',
 ]);
 
 /*
@@ -258,4 +297,4 @@ function validateCommand(type, payload) {
   return { ok: true };
 }
 
-module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, HTTP_METHODS, isMeshCommand, deliverCommand, validateCommand };
+module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, LOCAL_API_COMMANDS, HTTP_METHODS, isMeshCommand, deliverCommand, validateCommand };

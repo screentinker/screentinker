@@ -16,6 +16,20 @@ There is no list any more — it walks what is actually served, so a new file is
 is added. It reads file metadata rather than contents, which keeps the work off the event loop that
 answers every screen's heartbeat.
 
+**`refresh` was implemented on the panel and impossible to send.** `MainActivity` has handled it for a
+long time — it reconnects the socket, so the screen re-fetches its playlist — and nothing anywhere on
+the server could ask for it. It is now in `ALLOWED_COMMANDS`, so "the sign is stale, kick it" works
+from the dashboard, the API and the new LAN door. Found by the test that holds the LAN door's command
+list to the panel's: the door wanted `refresh`, and the subset check failed because the *server* was
+missing it.
+
+**A new device column reached no player.** The device SELECT that feeds every playlist payload is an
+explicit column list, and the two new columns were not in it — so the feature was written, tested at
+the route, and dead on the wire. This is the third time that exact list has done it (#325's
+background colour, then `workspace_id`), and the reason it was caught this time is that the test
+asserts on what a real registered device receives over its socket rather than on what the JavaScript
+says it sends.
+
 
 ### Added
 
@@ -73,6 +87,37 @@ target that is often a small embedded controller, and a one-second poll is how a
 a PLC gets hammered — with neither symptom pointing back here. "Run it now" from the dashboard goes
 through the same `http_request` path as everything else, so testing an endpoint exercises the code
 that will run it on a timer.
+
+**A screen can now answer the LAN as well as call it.** The panel serves `GET /api/status` and
+`POST /api/command` on its own network, so a Crestron or AMX processor in the same rack can turn the
+sign on with the projector, blank it when the room empties, or hand it the room's volume. Until now
+an integrator's only option was to drive the dashboard, which means a browser, a login and a WAN path
+— three things a room control system does not have and will not be given.
+
+⚠️ **Off by default, and its own switch.** It shares the trigger HTTP port because it is the same
+door on the same socket, but it is not the same permission: `accept_http` lets a LAN host put an
+overlay on a screen, this lets a LAN host change what a screen is doing. Enabling one does not enable
+the other, they hold separate secrets, and each path on the socket is refused unless its own flag is
+set. One flag for both would have handed remote control to every site that only wanted an emergency
+overlay, and the two get switched on months apart by different people.
+
+⚠️ **Enabling it opens a listening TCP port on the customer's network**, with no TLS (the gear calling
+it frequently has none — AMX NetLinx has no TLS anywhere in the language) and a secret that crosses
+the segment in cleartext. Turn it on for one screen, on a network you control, on its own VLAN. It is
+not a fleet-wide setting, and `docs/device-rest-design.md` says so at more length.
+
+⚠️ **What a LAN caller may ask for is a much smaller set than what a `full` token can send**:
+`refresh`, `screen_on`, `screen_off`, `set_volume`, `set_brightness`, `set_system_brightness`. Not
+`shell`, `install_apk`, `update`, `set_server_url`, `launch`, `kiosk_unlock` — and not `http_request`,
+which would make every panel a request relay whose audit trail names the screen instead of the caller.
+`reboot` is out for a different reason: everything on the list is undone by sending its opposite and a
+reboot is not, so a stuck automation would be a fleet on the floor. The reasoning is about who holds
+the credential, not what the panel can do — this one gets typed into a Crestron program and left in a
+building for a decade.
+
+The reply is written and the socket closed **before** the command runs, because `screen_off` blanks
+the panel and `refresh` tears down the WebView: answering a control system with a dropped connection
+on a command that worked makes it retry, and one operator action becomes four.
 
 **The playlist content picker now navigates folders as a tree.** A bar above the list shows where
 you are and what is inside it — `All › WESTERN AUSTRALIA › HOSTS` — and slides sideways rather than

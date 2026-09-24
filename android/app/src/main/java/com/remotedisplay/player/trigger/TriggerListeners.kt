@@ -30,7 +30,21 @@ class TriggerListeners(
      * null is allowed (the UDP path has nobody to answer) and is treated as "no opinion".
      */
     private val onPayload: (text: String, source: String, sourceIp: String) -> TriggerResolve.Verdict?,
-    private val onState: (Stats) -> Unit = {}
+    private val onState: (Stats) -> Unit = {},
+    /**
+     * The inbound control door (Goal B part 3), on the SAME socket and the same reasoning as above:
+     * this transport reads bytes and decides nothing. Returning null means "not mine" and the bytes
+     * fall through to the trigger path — which is also what happens when the control API is off, so
+     * a disabled door cannot change how a trigger request is treated.
+     */
+    private val onLocalApi: ((method: String, path: String, query: Map<String, String>,
+                              headers: Map<String, String>, body: String,
+                              sourceIp: String) -> com.remotedisplay.player.net.LocalApi.Result?)? = null,
+    /**
+     * Runs an accepted control command. Separate from [onLocalApi] so the reply can be written and
+     * the socket closed before anything happens — see the call site.
+     */
+    private val onLocalCommand: ((type: String, payload: org.json.JSONObject?) -> Unit)? = null
 ) {
 
     data class Stats(
@@ -85,13 +99,35 @@ class TriggerListeners(
         }
     }
 
-    fun start(acceptHttp: Boolean, acceptUdp: Boolean, httpPort: Int?, udpPort: Int?, group: String?) {
+    /**
+     * @param acceptHttp     serve the TRIGGER path over HTTP.
+     * @param acceptLocalApi serve /api/status and /api/command over the same HTTP socket.
+     *
+     * ⚠️ TWO FLAGS, ONE SOCKET, AND NEITHER IMPLIES THE OTHER. The socket binds if either is set,
+     * and each path is then gated on its own flag inside the handler. Sharing the port without
+     * separating the permissions is the trap: "triggers are on, so the control API is reachable"
+     * would hand remote control to every site that only wanted an emergency overlay, and the two
+     * were configured months apart by different people.
+     */
+    fun start(
+        acceptHttp: Boolean,
+        acceptUdp: Boolean,
+        httpPort: Int?,
+        udpPort: Int?,
+        group: String?,
+        acceptLocalApi: Boolean = false
+    ) {
         if (!running.compareAndSet(false, true)) return   // idempotent, like the web player's guard
         // An absent group is honoured as absent: unicast + broadcast only. Substituting a default
         // multicast address here would silently opt every device into multicast it never asked for.
         if (acceptUdp) startUdp(udpPort ?: DEFAULT_UDP_PORT, group ?: "")
-        if (acceptHttp) startHttp(httpPort ?: DEFAULT_HTTP_PORT)
+        this.triggerHttp = acceptHttp
+        this.localApi = acceptLocalApi
+        if (acceptHttp || acceptLocalApi) startHttp(httpPort ?: DEFAULT_HTTP_PORT)
     }
+
+    @Volatile private var triggerHttp = false
+    @Volatile private var localApi = false
 
     fun stop() {
         running.set(false)
@@ -304,6 +340,39 @@ class TriggerListeners(
     }
 
     /** Minimal query parser — mirrors parseQuery() in the web player. */
+    /**
+     * ⚠️ ONE RESPONSE WRITER for both doors on this socket.
+     *
+     * ⚠️ AND THE BODY IS NEWLINE-TERMINATED, which is not cosmetic: Extron integrators confirm
+     * delivery with SendAndWait(deliTag=...), i.e. they read until a known suffix. An unterminated
+     * body blocks them until their timeout on a request that worked perfectly.
+     */
+    private fun writeResponse(client: java.net.Socket, status: Int, body: String) {
+        try {
+            val reason = when (status) {
+                200 -> "200 OK"
+                400 -> "400 Bad Request"
+                401 -> "401 Unauthorized"
+                403 -> "403 Forbidden"
+                404 -> "404 Not Found"
+                405 -> "405 Method Not Allowed"
+                429 -> "429 Too Many Requests"
+                503 -> "503 Service Unavailable"
+                else -> "$status Error"
+            }
+            val allow = if (status == 405) "Allow: GET, POST\r\n" else ""
+            val bytes = (body + "\n").toByteArray(Charsets.UTF_8)
+            val out = client.getOutputStream()
+            out.write(("HTTP/1.1 $reason\r\nContent-Type: application/json\r\n" + allow +
+                       "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n")
+                .toByteArray(Charsets.UTF_8))
+            out.write(bytes)
+            out.flush()
+        } catch (e: Throwable) {
+            Log.w(TAG, "[trigger] response: ${e.message}")
+        }
+    }
+
     private fun parseQuery(url: String): Map<String, String> {
         val out = HashMap<String, String>()
         val i = url.indexOf('?')
@@ -344,11 +413,20 @@ class TriggerListeners(
                             val reader = client.getInputStream().bufferedReader()
                             val requestLine = reader.readLine() ?: return@Thread
                             var contentLength = 0
+                            // Headers are KEPT now, lowercased, because the control door reads
+                            // Authorization. Bounded at 32: an endless header list on an
+                            // unauthenticated socket is memory pressure on a player, and no real
+                            // sender is anywhere near it.
+                            val headers = HashMap<String, String>()
                             while (true) {
                                 val h = reader.readLine() ?: break
                                 if (h.isEmpty()) break
                                 if (h.startsWith("Content-Length:", true)) {
                                     contentLength = h.substringAfter(':').trim().toIntOrNull() ?: 0
+                                }
+                                val c = h.indexOf(':')
+                                if (c > 0 && headers.size < 32) {
+                                    headers[h.substring(0, c).trim().lowercase()] = h.substring(c + 1).trim()
                                 }
                             }
                             // Bound the read: an endless body must not become memory pressure on a
@@ -361,6 +439,51 @@ class TriggerListeners(
 
                             val method = requestLine.substringBefore(' ').uppercase()
                             val target = requestLine.split(' ').getOrNull(1) ?: "/"
+                            val path = target.substringBefore('?')
+
+                            /*
+                             * ⚠️ THE CONTROL DOOR IS CHECKED FIRST, AND ONLY BY PATH. /api/status and
+                             * /api/command are not trigger payloads and must never be treated as
+                             * ones: a control request with a wrong secret has to answer 401, and
+                             * falling through to the trigger resolver would answer `bad_secret` or,
+                             * worse, fire a trigger whose token happened to match the body.
+                             *
+                             * It is consulted only when the control API is ON, so with the flag off
+                             * the socket behaves exactly as it did before this landed — including for
+                             * anyone who was already POSTing triggers to a path called /api/command.
+                             */
+                            if (localApi && onLocalApi != null && com.remotedisplay.player.net.LocalApi.isLocalApiPath(path)) {
+                                val r = onLocalApi.invoke(
+                                    method, path, parseQuery(target), headers, body,
+                                    client.inetAddress?.hostAddress ?: "unknown"
+                                )
+                                if (r != null) {
+                                    writeResponse(client, r.status, r.body)
+                                    /*
+                                     * ⚠️ THE COMMAND RUNS AFTER THE REPLY IS FLUSHED AND THE SOCKET
+                                     * IS CLOSED. screen_off blanks the panel and refresh tears down
+                                     * the WebView; running either while still holding the response
+                                     * would hand a control system a dropped connection on a command
+                                     * that WORKED, and a control system reads that as a failure and
+                                     * retries — so the one command an operator sent becomes four.
+                                     */
+                                    try { client.close() } catch (e: Throwable) { }
+                                    r.command?.let { c ->
+                                        try { onLocalCommand?.invoke(c, r.payload) }
+                                        catch (e: Throwable) { Log.w(TAG, "[local-api] $c: ${e.message}") }
+                                    }
+                                    return@Thread
+                                }
+                            }
+
+                            // Everything else on this socket is a trigger — but only if the TRIGGER
+                            // door is the one that is open. With accept_http off and the control API
+                            // on, a trigger POST is a 404, not a fire.
+                            if (!triggerHttp) {
+                                writeResponse(client, 404, "{\"ok\":false,\"error\":\"not_found\"}")
+                                return@Thread
+                            }
+
                             var text: String? = null
                             var err: String? = null
 
@@ -445,26 +568,15 @@ class TriggerListeners(
                                 }
                             }
                             val ok = err == null
-                            // ⚠️ Newline-terminated on purpose: Extron integrators confirm delivery
-                            // with SendAndWait(deliTag=...), i.e. they read until a known suffix. An
-                            // unterminated body blocks them until timeout on a request that worked.
                             val resBody = if (ok) {
                                 if (action != null) "{\"ok\":true,\"action\":\"$action\"}" else "{\"ok\":true}"
                             } else "{\"ok\":false,\"error\":\"$err\"}"
-                            val res = resBody + "\n"
-                            val status = when {
-                                ok -> "200 OK"
-                                err == "GET or POST only" -> "405 Method Not Allowed"
-                                else -> "400 Bad Request"
+                            val statusCode = when {
+                                ok -> 200
+                                err == "GET or POST only" -> 405
+                                else -> 400
                             }
-                            val allow = if (status.startsWith("405")) "Allow: GET, POST\r\n" else ""
-                            val bytes = res.toByteArray(Charsets.UTF_8)
-                            client.getOutputStream().write(
-                                ("HTTP/1.1 $status\r\nContent-Type: application/json\r\n" + allow +
-                                 "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n")
-                                    .toByteArray(Charsets.UTF_8))
-                            client.getOutputStream().write(bytes)
-                            client.getOutputStream().flush()
+                            writeResponse(client, statusCode, resBody)
                         } catch (e: Throwable) {
                             Log.w(TAG, "[trigger] http client: ${e.message}")
                         } finally {
