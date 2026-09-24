@@ -447,6 +447,12 @@ app.get('/player/play-order.js', (req, res) => {
   res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'lib', 'play-order.js'));
 });
+// The Esc-unpair gate, from the same single source the Node tests require — so who may unpair a
+// screen at the panel cannot drift between what is tested and what is served.
+app.get('/player/unpair-gate.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'unpair-gate.js'));
+});
 
 // #299: the offline proof-of-play queue, served to the web player from the same single source the
 // Tizen .wgt copies and the Node tests require — so the wire shape cannot drift between them.

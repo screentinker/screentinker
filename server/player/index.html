@@ -251,6 +251,27 @@
     }
     #statusOverlay h2 { color: #3b82f6; font-size: 2.8rem; margin-bottom: 0.8rem; }
     #statusOverlay p { font-size: 1.6rem; }
+
+    /* Unpair PIN prompt. Above everything, including the setup screen, because Esc has to be
+       answerable whatever the player is currently showing. */
+    #pinOverlay {
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(2, 6, 23, 0.92);
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      /* Above the cold-boot "Tap anywhere to start" overlay, which is 2000: Esc has to be
+         answerable whatever the player happens to be showing. */
+      color: #f1f5f9; z-index: 3000;
+    }
+    #pinOverlay h2 { font-size: 2.4rem; margin-bottom: 0.8rem; }
+    #pinOverlay .pin-hint { color: #94a3b8; font-size: 1.4rem; margin-bottom: 2.4rem; }
+    /* -webkit-text-security keeps the digits hidden from the room. A shop floor is not a desk. */
+    #pinOverlay input {
+      width: 24rem; max-width: 80vw; padding: 1.2rem; text-align: center; letter-spacing: 0.8rem;
+      background: #0f172a; border: 0.1rem solid #334155; border-radius: 0.8rem; color: #f1f5f9;
+      font-size: 2.4rem; font-family: monospace; outline: none; -webkit-text-security: disc;
+    }
+    #pinOverlay input:focus { border-color: #3b82f6; }
+    #pinOverlay .pin-error { color: #f87171; font-size: 1.4rem; margin-top: 1.6rem; min-height: 2rem; }
+    #pinOverlay .pin-keys { color: #64748b; font-size: 1.2rem; margin-top: 2.4rem; }
   </style>
 </head>
 <body>
@@ -278,6 +299,15 @@
   <!-- #109: PiP overlay layer (above the player; never touched by playlist render) -->
   <div id="pipContainer"></div>
 
+  <!-- Unpair PIN prompt. Esc opens it; nothing happens until the PIN is right. -->
+  <div id="pinOverlay">
+    <h2>Unpair this display</h2>
+    <p class="pin-hint">Enter the settings PIN for this screen</p>
+    <input type="text" id="pinInput" inputmode="numeric" autocomplete="off" maxlength="12" aria-label="Settings PIN">
+    <div class="pin-error" id="pinError"></div>
+    <div class="pin-keys">Enter to confirm &middot; Esc to cancel</div>
+  </div>
+
   <!-- Status Overlay -->
   <div id="statusOverlay" style="display:none">
     <div class="spinner"></div>
@@ -288,6 +318,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
   <script src="/player/play-order.js"></script>
+  <script src="/player/unpair-gate.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
   <script src="/player/live-publish.js"></script>
@@ -2427,6 +2458,17 @@
       socket.on('device:paired', (data) => {
         config.paired = true;
         config.deviceName = data.name;
+        /*
+         * The settings PIN, which is what gates Esc (see the keydown handler).
+         *
+         * ⚠️ ONLY WHEN THE FIELD IS PRESENT. The server omits settings_pin on some register paths
+         * (the replica branch sends device:paired without it), and there is no "remove the PIN"
+         * feature — so an absent field means "this sender did not include it", never "this screen
+         * has no PIN". Assigning it unconditionally would erase a known-good PIN on the next
+         * reconnect and silently turn Esc into a permanent no-op, which looks exactly like the
+         * feature being broken.
+         */
+        if (data && data.settings_pin) config.settingsPin = String(data.settings_pin);
         saveConfig(config);
         console.log('Paired as:', data.name);
         document.getElementById('setupScreen').style.display = 'none';
@@ -2467,6 +2509,16 @@
         // code and the device:registered handler reveals pairingSection.
         startAutoContinue(10);
       }
+
+      // The dashboard rotated the PIN. Same event the Android player already receives; the web
+      // player ignored it, so a rotated PIN never reached the screen that Esc is gated on.
+      socket.on('device:settings-pin', (data) => {
+        if (data && data.settings_pin) {
+          config.settingsPin = String(data.settings_pin);
+          saveConfig(config);
+          console.log('[settings] PIN updated from the dashboard');
+        }
+      });
 
       socket.on('device:unpaired', () => {
         console.warn('Device not found on server — clearing credentials');
@@ -7208,20 +7260,163 @@
       });
     }
 
+    /* ==================== Unpairing at the panel ====================
+     *
+     * ⚠️ ESC USED TO BE A PUBLIC RESET BUTTON. It called confirm('Reset player and return to
+     * setup?') and, on OK, wiped the identity and reloaded — so anyone who could reach a keyboard
+     * on a kiosk could unpair the display, and the operator's first sign of it was a screen asking
+     * for a pairing code. A confirm() dialog is not a permission check; it only establishes that
+     * somebody meant to press the button, which is precisely what was wrong.
+     *
+     * The gate is now the settings PIN the dashboard already provisions for this screen — the same
+     * value the Android player uses for its hidden settings menu. Reusing it rather than inventing a
+     * second credential matters: an operator has one number per screen, rotating it in one place
+     * rotates it everywhere, and a second PIN is a second thing to be out of date.
+     *
+     * ⚠️ NO PIN MEANS NO UNPAIRING. Not "no PIN means ask for confirmation" — a screen whose PIN
+     * this player has never been told stays paired, and the message says so. Any other fail-safe
+     * direction puts the old behaviour back for exactly the fleet least likely to notice.
+     *
+     * ⚠️ AND THE PIN IS IN localStorage, which anyone with developer tools can read. That is
+     * acceptable here, and only here, because the same developer tools can clear the identity
+     * outright without ever pressing Esc — so hiding the PIN from them would protect nothing. The
+     * threat this gate exists for is the person with a keyboard and no console.
+     */
+    let pinPromptOpen = false;
+
+    let pinIdleTimer = null;
+
+    function closePinPrompt() {
+      pinPromptOpen = false;
+      if (pinIdleTimer) { clearTimeout(pinIdleTimer); pinIdleTimer = null; }
+      document.getElementById('pinOverlay').style.display = 'none';
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinError').textContent = '';
+    }
+
+    /*
+     * ⚠️ THE PROMPT CLOSES ITSELF. Without this, somebody who presses Esc and walks away leaves a
+     * PIN box covering a running sign until the next reload — which turns "Esc is harmless" into
+     * "Esc blanks the screen", the same class of problem as the reset it replaces. Playback is never
+     * paused while it is open, so closing it simply reveals what was always still playing.
+     */
+    function armPinIdleClose() {
+      if (pinIdleTimer) clearTimeout(pinIdleTimer);
+      pinIdleTimer = setTimeout(() => {
+        if (pinPromptOpen) { console.log('[unpair] PIN prompt timed out'); closePinPrompt(); }
+      }, 30000);
+    }
+
+    function openPinPrompt() {
+      const known = config.settingsPin ? String(config.settingsPin) : '';
+      if (!known) {
+        /*
+         * ⚠️ NOTHING VISIBLE HAPPENS. Not even an explanation — showStatus() paints a full-screen
+         * overlay, so telling the room "unpair from the dashboard" would blank a playing sign for
+         * anyone who leaned on Esc. A no-op has to be invisible to be a no-op. The console line is
+         * for whoever is actually debugging it.
+         */
+        console.warn('[unpair] Esc ignored — this player has no settings PIN for this screen');
+        return;
+      }
+      pinPromptOpen = true;
+      document.getElementById('pinError').textContent = '';
+      const overlay = document.getElementById('pinOverlay');
+      overlay.style.display = 'flex';
+      const input = document.getElementById('pinInput');
+      input.value = '';
+      try { input.focus(); } catch (e) { /* a kiosk without focus still accepts keydown */ }
+      armPinIdleClose();
+    }
+
+    function submitPin() {
+      const given = document.getElementById('pinInput').value;
+      const known = config.settingsPin ? String(config.settingsPin) : '';
+      // ⚠️ The decision lives in /player/unpair-gate.js, which the Node tests exercise directly. A
+      // guard that can only be reached through a real browser and a real PIN is a guard nobody
+      // checks. If the module failed to load, refuse — never fall back to an inline compare, which
+      // is how two versions of a permission check start disagreeing.
+      const verdict = (window.UnpairGate && window.UnpairGate.decide)
+        ? window.UnpairGate.decide(given, known)
+        : { allow: false, reason: 'no_gate' };
+      if (!verdict.allow) {
+        // ⚠️ One inline error and we stay exactly where we are. No lockout counter, no repair mode,
+        // no reload: a wrong PIN must leave a playing screen playing, because the overwhelmingly
+        // likely wrong-PIN case is the operator misremembering, not an attack.
+        // 'no_gate' says something true and different: the check could not run, so nothing was
+        // judged. Calling that "Incorrect PIN" would send an operator to look up a PIN that was
+        // never the problem.
+        document.getElementById('pinError').textContent =
+          verdict.reason === 'empty' ? 'Enter the PIN'
+            : verdict.reason === 'no_gate' ? 'Unavailable — reload the player' : 'Incorrect PIN';
+        const input = document.getElementById('pinInput');
+        input.value = '';
+        try { input.focus(); } catch (e) {}
+        armPinIdleClose();
+        return;
+      }
+      closePinPrompt();
+      unpairThisPlayer();
+    }
+
+    /* Clear this browser's identity. Called ONLY after a correct PIN. */
+    function unpairThisPlayer() {
+      /*
+       * ⚠️ TELL THE SERVER FIRST, while the token is still in memory — afterwards we have thrown
+       * away the only credential that could prove we are allowed to. The wipe does NOT wait for the
+       * answer, because the operator asked for this screen to be unpaired and a screen that is
+       * offline is exactly when they are most likely to be standing in front of it. What the ack
+       * changes is what we TELL them: "unpaired" and "unpaired here, but the server never heard"
+       * are different situations, and only one of them needs a trip to the dashboard.
+       */
+      let acked = false;
+      try {
+        if (socket && socket.connected && config.deviceId && config.deviceToken) {
+          socket.once('device:self-unpair-ok', () => { acked = true; });
+          socket.emit('device:self-unpair', { device_id: config.deviceId });
+        }
+      } catch (e) { /* the local wipe is the part the operator asked for */ }
+
+      // Give the round trip a moment, then wipe regardless.
+      setTimeout(() => {
+        try {
+          // The list is in the module (UnpairGate.storageKeys) with the reasoning for each entry —
+          // above all for st_install_id, without which the next register is reclaimed onto the row
+          // we just unpaired and the whole wipe is theatre.
+          UnpairGate.storageKeys(SCREEN_SUFFIX).forEach((k) => {
+            try { localStorage.removeItem(k); } catch (e) { /* keep going: one failure is not all */ }
+          });
+        } catch (e) { /* storage gone: nothing to clear, nothing to break */ }
+
+        // The BrightSign registry outlives localStorage, and getConfig() re-adopts whatever it
+        // finds there — so without this the panel comes straight back as the same display.
+        if (BS) { try { BS.clearIdentity(); } catch (e) { /* best effort */ } }
+
+        // ?k= is an identity too, re-read from the URL on every load. Leaving it means the reload
+        // pairs straight back as the same display and never shows a code (#313).
+        config.enrolKey = null;
+        const next = UnpairGate.urlWithoutEnrolKey(location.href);
+
+        console.warn('[unpair] identity cleared at the panel' + (acked ? '' : ' — the server did not acknowledge; the old screen may still need removing from the dashboard'));
+        if (next) { try { location.replace(next); return; } catch (e) { /* fall through to a plain restart */ } }
+        restartPlayer('operator unpaired at the panel');
+      }, 1200);
+    }
+
     // ==================== Keyboard shortcuts ====================
     document.addEventListener('keydown', (e) => {
+      if (pinPromptOpen) {
+        // While the prompt is up it owns the keyboard: Esc cancels it rather than reopening it, and
+        // 'f' must not throw the panel into fullscreen mid-PIN.
+        if (e.key === 'Escape') { e.preventDefault(); closePinPrompt(); }
+        else if (e.key === 'Enter') { e.preventDefault(); submitPin(); }
+        else armPinIdleClose();        // someone is typing: do not close under them
+        return;
+      }
       if (e.key === 'Escape') {
-        // Reset config and go back to setup
-        if (confirm('Reset player and return to setup?')) {
-          localStorage.removeItem(STORAGE_KEY);
-          localStorage.removeItem(PLAYLIST_CACHE_KEY);
-          localStorage.removeItem(LAYOUT_CACHE_KEY);
-          // The registry outlives localStorage, and getConfig() re-adopts the identity it finds
-          // there. Without this the reset would appear to work and the panel would come straight
-          // back paired as the same display — a reset that resets nothing.
-          if (BS) { try { BS.clearIdentity(); } catch (e) { /* best effort */ } }
-          restartPlayer('operator reset');
-        }
+        e.preventDefault();
+        openPinPrompt();
+        return;
       }
       if (e.key === 'f' || e.key === 'F11') {
         e.preventDefault();

@@ -1258,6 +1258,64 @@ const EVENT_APPLIERS = Object.freeze({
       .run(ota_status ?? 'none', ota_target_version ?? null, ota_attempts ?? 0, device_id);
   },
 
+  /*
+   * The screen unpaired ITSELF — an operator pressed Esc at the panel and entered the settings PIN.
+   *
+   * ⚠️ The PIN is checked ON THE PLAYER, not here, and that is a deliberate limit rather than an
+   * oversight: the player has to work with the WAN down, which is when someone is most likely to be
+   * standing in front of a broken screen. So this event is authenticated by the DEVICE TOKEN (it
+   * arrives through dispatch(), which requires it and refuses a mismatched device_id) and nothing
+   * more. What that buys an attacker who already holds a device token is the ability to unpair the
+   * screen they already control — not another one, and not anything they could not do by simply
+   * refusing to play. It is not a privilege escalation; it is the screen resigning.
+   *
+   * ⚠️ THE ROW SURVIVES. Assignments, play history and telemetry hang off it, and a screen that
+   * vanished because somebody pressed a key would be a far worse outcome than one left needing
+   * attention. It goes back to unpaired and keeps its workspace, so it stays visible on the fleet
+   * page for the operator to re-pair or delete instead of disappearing from it.
+   */
+  'self-unpair'(deviceId, data, ctx) {
+    const { device_id } = data || {};
+    if (device_id && device_id !== deviceId) return;                 // forged/mismatched -> no-op
+    if (!deviceExists(deviceId)) return;
+    try {
+      /*
+       * ⚠️ device_token is CLEARED, not kept. The only holder just threw its copy away on purpose,
+       * so anything still presenting it is a stale copy — a backup, a cloned profile, a browser
+       * history entry. validateDeviceToken() already returns false for a NULL stored token, so such
+       * a caller falls through and is provisioned a new display, which is the right answer.
+       *
+       * workspace_id is deliberately NOT cleared: see the header. user_id is what "paired" means.
+       */
+      db.prepare(`UPDATE devices
+                     SET user_id = NULL, device_token = NULL, pairing_code = NULL,
+                         status = 'offline', last_heartbeat = NULL,
+                         offline_reason = 'unpaired', offline_reason_at = strftime('%s','now'),
+                         offline_detail = 'unpaired at the screen',
+                         updated_at = strftime('%s','now')
+                   WHERE id = ?`).run(deviceId);
+      /*
+       * ⚠️ AND THE FINGERPRINT ROWS GO. Without this the mapping still points here, so #150's
+       * settings restore would hand this row's configuration to whatever registers next from the
+       * same browser — a screen the operator believes is new, silently wearing the old one's
+       * settings. (The per-install fingerprint itself changes anyway, because the player deletes
+       * st_install_id; this closes the hardware-hint half and the stale mapping.)
+       */
+      db.prepare('DELETE FROM device_fingerprints WHERE device_id = ?').run(deviceId);
+      console.warn(`[unpair] ${deviceId} unpaired itself at the screen (PIN entered on the player)`);
+      emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:device-status', {
+        device_id: deviceId, status: 'offline', offline_reason: 'unpaired',
+      });
+    } catch (e) {
+      console.warn(`[unpair] ${deviceId}: ${e && e.message}`);
+      return;                                                        // no ack: the player says so on screen
+    }
+    // ⚠️ Acked so the player can tell an operator what actually happened. It wipes either way — the
+    // local wipe is what they asked for — but "unpaired" and "unpaired locally, the server never
+    // heard" are different situations and only one of them needs a visit to the dashboard.
+    try { ctx.reply('device:self-unpair-ok', { device_id: deviceId }); } catch (e) { /* best effort */ }
+  },
+
   'exit'(deviceId, data, ctx) {
     const { device_id, reason, detail } = data || {};
     if (device_id && device_id !== deviceId) return;                 // forged/mismatched -> no-op
@@ -2502,6 +2560,30 @@ module.exports = function setupDeviceSocket(io) {
 
     socket.on('device:info', (data) => dispatch('info', data));
 
+    /*
+     * Esc + settings PIN at the panel. Authenticated exactly like every other player event — through
+     * dispatch(), which requires the device token and no-ops a mismatched device_id.
+     *
+     * ⚠️ NOT FORWARDED FROM A REPLICA, and it is the one player event that is not. Every other kind
+     * here reports something (a heartbeat, a crash, a play) and the primary is free to believe a
+     * peer relaying it. This one CHANGES the pairing state of a screen, and a replica holding a
+     * scoped write grant should not gain "unpair any screen in these workspaces" as a side effect of
+     * gaining "relay what these screens report". It is also excluded from PLAYER_EVENT_KINDS so the
+     * mesh door refuses it outright rather than depending on this guard alone.
+     *
+     * The cost is stated rather than hidden: on a replica-attached screen the local wipe still
+     * happens — that is what the operator asked for and it is what prevents the fingerprint reclaim
+     * — but the primary is never told, no ack comes back, and the player says so on the console. The
+     * old row is then left paired-looking until someone removes it from the dashboard.
+     */
+    socket.on('device:self-unpair', (data) => {
+      if (viaEdge) {
+        console.warn('[unpair] refusing to relay a self-unpair through a replica — unpair from the dashboard');
+        return;
+      }
+      dispatch('self-unpair', data);
+    });
+
     socket.on('device:trigger-status', (data) => dispatch('trigger-status', data));
 
     socket.on('device:heartbeat', (data) => {
@@ -2719,5 +2801,15 @@ module.exports.applyPlayerEvent = (kind, deviceId, data, ctx) => {
   fn(deviceId, data, ctx);
   return { ok: true };
 };
-module.exports.PLAYER_EVENT_KINDS = Object.freeze(Object.keys(EVENT_APPLIERS));
+/*
+ * ⚠️ WHAT A REPLICA MAY RELAY — every applier EXCEPT the ones that change a screen's pairing.
+ *
+ * lib/mesh/node-write.js gates an incoming player-event on this list. A replica's write grant says
+ * it may relay what its screens report; it does not say it may unpair them. Keeping the exclusion
+ * here as well as at the socket means neither door alone is load-bearing.
+ */
+const NOT_RELAYABLE = Object.freeze(['self-unpair']);
+module.exports.PLAYER_EVENT_KINDS = Object.freeze(
+  Object.keys(EVENT_APPLIERS).filter((k) => !NOT_RELAYABLE.includes(k))
+);
 module.exports.provisionViaReplica = provisionViaReplica;

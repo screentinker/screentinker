@@ -251,6 +251,27 @@
     }
     #statusOverlay h2 { color: #3b82f6; font-size: 2.8rem; margin-bottom: 0.8rem; }
     #statusOverlay p { font-size: 1.6rem; }
+
+    /* Unpair PIN prompt. Above everything, including the setup screen, because Esc has to be
+       answerable whatever the player is currently showing. */
+    #pinOverlay {
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(2, 6, 23, 0.92);
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      /* Above the cold-boot "Tap anywhere to start" overlay, which is 2000: Esc has to be
+         answerable whatever the player happens to be showing. */
+      color: #f1f5f9; z-index: 3000;
+    }
+    #pinOverlay h2 { font-size: 2.4rem; margin-bottom: 0.8rem; }
+    #pinOverlay .pin-hint { color: #94a3b8; font-size: 1.4rem; margin-bottom: 2.4rem; }
+    /* -webkit-text-security keeps the digits hidden from the room. A shop floor is not a desk. */
+    #pinOverlay input {
+      width: 24rem; max-width: 80vw; padding: 1.2rem; text-align: center; letter-spacing: 0.8rem;
+      background: #0f172a; border: 0.1rem solid #334155; border-radius: 0.8rem; color: #f1f5f9;
+      font-size: 2.4rem; font-family: monospace; outline: none; -webkit-text-security: disc;
+    }
+    #pinOverlay input:focus { border-color: #3b82f6; }
+    #pinOverlay .pin-error { color: #f87171; font-size: 1.4rem; margin-top: 1.6rem; min-height: 2rem; }
+    #pinOverlay .pin-keys { color: #64748b; font-size: 1.2rem; margin-top: 2.4rem; }
   </style>
 </head>
 <body>
@@ -278,6 +299,15 @@
   <!-- #109: PiP overlay layer (above the player; never touched by playlist render) -->
   <div id="pipContainer"></div>
 
+  <!-- Unpair PIN prompt. Esc opens it; nothing happens until the PIN is right. -->
+  <div id="pinOverlay">
+    <h2>Unpair this display</h2>
+    <p class="pin-hint">Enter the settings PIN for this screen</p>
+    <input type="text" id="pinInput" inputmode="numeric" autocomplete="off" maxlength="12" aria-label="Settings PIN">
+    <div class="pin-error" id="pinError"></div>
+    <div class="pin-keys">Enter to confirm &middot; Esc to cancel</div>
+  </div>
+
   <!-- Status Overlay -->
   <div id="statusOverlay" style="display:none">
     <div class="spinner"></div>
@@ -288,6 +318,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
   <script src="/player/play-order.js"></script>
+  <script src="/player/unpair-gate.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
   <script src="/player/live-publish-legacy.js"></script>
@@ -1973,6 +2004,7 @@ function connect(serverUrl) {
   socket.on("device:paired", (data) => {
     config.paired = true;
     config.deviceName = data.name;
+    if (data && data.settings_pin) config.settingsPin = String(data.settings_pin);
     saveConfig(config);
     console.log("Paired as:", data.name);
     document.getElementById("setupScreen").style.display = "none";
@@ -1991,6 +2023,13 @@ function connect(serverUrl) {
     document.getElementById("setupStatus").textContent = message;
     startAutoContinue(10);
   }
+  socket.on("device:settings-pin", (data) => {
+    if (data && data.settings_pin) {
+      config.settingsPin = String(data.settings_pin);
+      saveConfig(config);
+      console.log("[settings] PIN updated from the dashboard");
+    }
+  });
   socket.on("device:unpaired", () => {
     console.warn("Device not found on server \u2014 clearing credentials");
     savePlaylistCache([]);
@@ -5693,20 +5732,118 @@ if ("serviceWorker" in navigator) {
     }
   });
 }
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    if (confirm("Reset player and return to setup?")) {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(PLAYLIST_CACHE_KEY);
-      localStorage.removeItem(LAYOUT_CACHE_KEY);
-      if (BS) {
-        try {
-          BS.clearIdentity();
-        } catch (e2) {
-        }
-      }
-      restartPlayer("operator reset");
+let pinPromptOpen = false;
+let pinIdleTimer = null;
+function closePinPrompt() {
+  pinPromptOpen = false;
+  if (pinIdleTimer) {
+    clearTimeout(pinIdleTimer);
+    pinIdleTimer = null;
+  }
+  document.getElementById("pinOverlay").style.display = "none";
+  document.getElementById("pinInput").value = "";
+  document.getElementById("pinError").textContent = "";
+}
+function armPinIdleClose() {
+  if (pinIdleTimer) clearTimeout(pinIdleTimer);
+  pinIdleTimer = setTimeout(() => {
+    if (pinPromptOpen) {
+      console.log("[unpair] PIN prompt timed out");
+      closePinPrompt();
     }
+  }, 3e4);
+}
+function openPinPrompt() {
+  const known = config.settingsPin ? String(config.settingsPin) : "";
+  if (!known) {
+    console.warn("[unpair] Esc ignored \u2014 this player has no settings PIN for this screen");
+    return;
+  }
+  pinPromptOpen = true;
+  document.getElementById("pinError").textContent = "";
+  const overlay = document.getElementById("pinOverlay");
+  overlay.style.display = "flex";
+  const input = document.getElementById("pinInput");
+  input.value = "";
+  try {
+    input.focus();
+  } catch (e) {
+  }
+  armPinIdleClose();
+}
+function submitPin() {
+  const given = document.getElementById("pinInput").value;
+  const known = config.settingsPin ? String(config.settingsPin) : "";
+  const verdict = window.UnpairGate && window.UnpairGate.decide ? window.UnpairGate.decide(given, known) : { allow: false, reason: "no_gate" };
+  if (!verdict.allow) {
+    document.getElementById("pinError").textContent = verdict.reason === "empty" ? "Enter the PIN" : verdict.reason === "no_gate" ? "Unavailable \u2014 reload the player" : "Incorrect PIN";
+    const input = document.getElementById("pinInput");
+    input.value = "";
+    try {
+      input.focus();
+    } catch (e) {
+    }
+    armPinIdleClose();
+    return;
+  }
+  closePinPrompt();
+  unpairThisPlayer();
+}
+function unpairThisPlayer() {
+  let acked = false;
+  try {
+    if (socket && socket.connected && config.deviceId && config.deviceToken) {
+      socket.once("device:self-unpair-ok", () => {
+        acked = true;
+      });
+      socket.emit("device:self-unpair", { device_id: config.deviceId });
+    }
+  } catch (e) {
+  }
+  setTimeout(() => {
+    try {
+      UnpairGate.storageKeys(SCREEN_SUFFIX).forEach((k) => {
+        try {
+          localStorage.removeItem(k);
+        } catch (e) {
+        }
+      });
+    } catch (e) {
+    }
+    if (BS) {
+      try {
+        BS.clearIdentity();
+      } catch (e) {
+      }
+    }
+    config.enrolKey = null;
+    const next = UnpairGate.urlWithoutEnrolKey(location.href);
+    console.warn("[unpair] identity cleared at the panel" + (acked ? "" : " \u2014 the server did not acknowledge; the old screen may still need removing from the dashboard"));
+    if (next) {
+      try {
+        location.replace(next);
+        return;
+      } catch (e) {
+      }
+    }
+    restartPlayer("operator unpaired at the panel");
+  }, 1200);
+}
+document.addEventListener("keydown", (e) => {
+  if (pinPromptOpen) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closePinPrompt();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      submitPin();
+    } else armPinIdleClose();
+    return;
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    openPinPrompt();
+    return;
   }
   if (e.key === "f" || e.key === "F11") {
     e.preventDefault();
