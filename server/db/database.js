@@ -1435,6 +1435,24 @@ const migrations = [
   'ALTER TABLE devices ADD COLUMN trigger_status TEXT',
   'ALTER TABLE devices ADD COLUMN trigger_status_at INTEGER',
 
+  /*
+   * The INBOUND local REST door (Goal B part 3): a room control system on the customer's LAN asks
+   * the panel to do something, or asks what it is doing.
+   *
+   * ⚠️ ITS OWN FLAG, even though it shares the trigger HTTP socket and port. `triggers_accept_http`
+   * means "a LAN host may put an overlay on this screen"; this means "a LAN host may change what
+   * this screen is doing". One flag for both would have handed remote control to every site that
+   * only ever wanted an emergency overlay, and the two are enabled months apart by different people.
+   *
+   * ⚠️ AND ITS OWN SECRET, not trigger_secret. The trigger secret is designed to be pasted into an
+   * AMX program and travels in a query string in cleartext; it authorises an overlay. This one
+   * authorises reload / screen on-off / volume / brightness. Sharing them would mean every installer
+   * who was ever given the trigger secret could turn the fleet off, and revoking one would revoke
+   * the other.
+   */
+  'ALTER TABLE devices ADD COLUMN local_api_enabled INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE devices ADD COLUMN local_api_secret TEXT',
+
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_triggers_token ON triggers (workspace_id, match_token)`,
   `CREATE INDEX IF NOT EXISTS idx_triggers_ws     ON triggers (workspace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_trigger_assign  ON trigger_assignments (target_type, target_id)`,

@@ -29,6 +29,9 @@ function stripDeviceSecretsForList(d) {
     // page, and handing it out for every device in the workspace on every list load is the same
     // data with a far wider blast radius for nothing.
     delete row.trigger_secret;
+    // And the local API secret, for the same reason a fourth time — this one authorises reload,
+    // screen on/off, volume and brightness from the LAN, so it outranks the trigger secret.
+    delete row.local_api_secret;
     /*
      * #313: same reasoning a third time. The enrolment key names a display and proves you may be
      * it — anything holding it can become that screen. Its only consumer is the device detail
@@ -42,14 +45,18 @@ function stripDeviceSecretsForList(d) {
 }
 
 /*
- * ⚠️ NEITHER THE TRIGGER SECRET NOR THE ENROLMENT KEY IS EVER GIVEN TO AN API TOKEN, even a
- * full-scope one, and this is a stronger rule than the one applied to settings_pin.
+ * ⚠️ NONE OF THESE REMOTE CREDENTIALS IS EVER GIVEN TO AN API TOKEN, even a full-scope one, and
+ * this is a stronger rule than the one applied to settings_pin.
  *
- * The PIN unlocks a menu for someone already standing at the panel. These two are remote
- * credentials, and each converts a read into a write that no scope on that token ever granted:
+ * The PIN unlocks a menu for someone already standing at the panel. These are remote credentials,
+ * and each converts a read into a write that no scope on that token ever granted:
  *
  *   trigger_secret — makes an unauthenticated LAN datagram change what a screen displays, so a
  *     READ-scoped integration token would become "may put content on any of them".
+ *   local_api_secret — Goal B part 3. Turns a LAN HTTP request into "reload this screen, blank it,
+ *     change its volume". Withheld on the same reasoning as trigger_secret and more firmly: the
+ *     trigger secret can only show what the workspace already assigned to that screen, while this
+ *     one can stop the screen showing anything at all.
  *   enrol_key      — is strictly MORE than that. It does not push content to a screen; it lets the
  *     holder BE the screen: register as that display, receive its playlist and its commands, and
  *     report as it. It was withheld from the device LIST for blast radius (the reasoning that
@@ -57,14 +64,15 @@ function stripDeviceSecretsForList(d) {
  *     no scope gate, so a read-scoped token could read it. Same class of escalation as the trigger
  *     secret, on a credential that outranks it.
  *
- * A dashboard session keeps both, because a human configuring a Crestron panel has to type the
- * secret somewhere, and the operator pasting a player URL into vMix has to be able to read it —
+ * A dashboard session keeps all of them, because a human configuring a Crestron panel has to type
+ * the secret somewhere, and the operator pasting a player URL into vMix has to be able to read it —
  * those screens are the only place either exists. The key is opt-in and only ever set on a display
  * somebody asked to make a web player, so this narrows an exposure rather than removing a feature.
  */
 function stripSecretsForTokens(d, viaToken) {
   if (viaToken && d && typeof d === 'object') {
     delete d.trigger_secret;
+    delete d.local_api_secret;
     delete d.enrol_key;
   }
   return d;

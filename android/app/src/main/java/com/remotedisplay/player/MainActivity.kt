@@ -262,9 +262,25 @@ class MainActivity : AppCompatActivity() {
                 try { slideAudioPlayer?.setMuted(on) } catch (e: Throwable) { }
             }
         ) { level, message -> wsService?.sendLog("trigger", level, message) }
-        triggerManager = com.remotedisplay.player.trigger.TriggerManager(trigOverlay) { level, message ->
-            wsService?.sendLog("trigger", level, message)
-        }
+        /*
+         * ⚠️ The trigger stack is ASSEMBLED HERE, in the Activity, because the trigger overlay is a
+         * View and cannot live anywhere else. The inbound control door (Goal B part 3) shares its
+         * socket, so it inherits that lifetime — and that is a real limitation, stated rather than
+         * hidden: if this Activity is destroyed, the door closes with it until the Activity comes
+         * back. A signage panel keeps its Activity for weeks, and process death restarts it, so in
+         * practice the door is up; a screen sitting in a scheduled-off window is the case to watch,
+         * and it is the case where `screen_on` matters most. Moving the socket to the service is the
+         * fix and it is a bigger change than this one — noted so the next person finds it stated.
+         *
+         * The command itself is dispatched by the SERVICE (runLocalApiCommand), which is what makes
+         * a LAN command and a dashboard command the same command.
+         */
+        triggerManager = com.remotedisplay.player.trigger.TriggerManager(
+            trigOverlay,
+            log = { level, message -> wsService?.sendLog("trigger", level, message) },
+            onLocalCommand = { type, payload -> wsService?.runLocalApiCommand(type, payload) },
+            localStatus = { wsService?.localApiStatus() ?: org.json.JSONObject() }
+        )
         // The lease sweep. ⚠️ This is what stops a lost clear stranding a screen: an until_cleared
         // trigger whose sender stops re-asserting expires instead of holding the panel forever.
         triggerSweep = object : Runnable {

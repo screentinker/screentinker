@@ -107,7 +107,9 @@ test('#336: the device query that feeds the payload actually selects background_
       id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
       reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
-      trigger_multicast_group TEXT, trigger_clear_all_token TEXT, default_content_id TEXT, workspace_id TEXT,
+      trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
+      local_api_enabled INTEGER, local_api_secret TEXT,
+      default_content_id TEXT, workspace_id TEXT,
       capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT,
       playlist_id TEXT, layout_id TEXT
     );
@@ -140,7 +142,9 @@ test('the device query selects workspace_id (data-source play_when + custom shad
       id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
       reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
-      trigger_multicast_group TEXT, trigger_clear_all_token TEXT, default_content_id TEXT, workspace_id TEXT,
+      trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
+      local_api_enabled INTEGER, local_api_secret TEXT,
+      default_content_id TEXT, workspace_id TEXT,
       capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT, playlist_id TEXT, layout_id TEXT
     );
     CREATE VIEW device_resolved_playlist AS SELECT id AS device_id, playlist_id, 'device' AS source, layout_id FROM devices;
