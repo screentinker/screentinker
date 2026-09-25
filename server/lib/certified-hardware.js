@@ -106,6 +106,27 @@ function deviceCard(d) {
   const guide = d.provisioning_url
     ? `\n        <p class="setup-link"><a href="${esc(d.provisioning_url)}">Setup guide for this device</a></p>`
     : '';
+  /*
+   * A real installation photograph, credited.
+   *
+   * ⚠️ A PHOTO ON THIS PAGE IS A CLAIM, like every other field here. It shows THIS hardware running
+   * ScreenTinker, published with the owner's permission and credited to them — never a stock product
+   * shot, which would quietly turn a compatibility record into an advert on a page that reseller
+   * agreements point at.
+   *
+   * Lazy and async-decoded: the list is long and a photo must never delay the text somebody came for.
+   */
+  const photo = d.photo && d.photo.src
+    ? `\n        <figure class="device-photo">`
+      + `<img src="${esc(d.photo.src)}" alt="${esc(d.photo.alt || '')}" loading="lazy" decoding="async">`
+      + (d.photo.credit
+        ? `<figcaption>Photo: ${d.photo.credit_url
+            ? `<a href="${esc(d.photo.credit_url)}" rel="noopener">${esc(d.photo.credit)}</a>`
+            : esc(d.photo.credit)}</figcaption>`
+        : '')
+      + `</figure>`
+    : '';
+
   // Affiliate/where-to-buy link. rel="sponsored nofollow" is the honest tag for a paid link and the
   // one search engines ask for; it opens in a new tab so it does not navigate away from the list.
   const buy = d.buy_url
@@ -118,7 +139,7 @@ ${rows.map(([k, v]) => `          <dt>${esc(k)}</dt><dd>${v}</dd>`).join('\n')}
         </dl>${notes ? `
         <ul class="device-notes">
 ${notes}
-        </ul>` : ''}${guide}${buy}
+        </ul>` : ''}${photo}${guide}${buy}
       </article>`;
 }
 
@@ -191,6 +212,10 @@ function render(data) {
     .device-spec dd { margin: 2px 0 0; color: var(--text); }
     .device-notes { margin: 16px 0 0; padding-left: 20px; color: var(--text); font-size: 14px; }
     .device-notes li { margin: 6px 0; }
+    .device-photo { margin: 18px 0 0; }
+    .device-photo img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); }
+    .device-photo figcaption { margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .device-photo figcaption a { color: var(--accent); }
     .setup-link { margin: 14px 0 0; font-size: 14px; }
     .buy-link { margin: 8px 0 0; font-size: 14px; }
     .buy-link .affiliate-tag { color: var(--dim); font-size: 12px; }
