@@ -1,13 +1,38 @@
+# ScreenTinker — https://screentinker.com
+#
+# Content Signals declare what automated systems may do with what they fetch here. The syntax is
+# Cloudflare's proposal, expressed as a comment-safe directive so a crawler that does not understand
+# it simply ignores the line.
+#
+#   search    = appear in a search index and be linked
+#   ai-input  = be used as context when an assistant answers a question (with attribution)
+#   ai-train  = be used to train a model
+#
+# All three are YES on purpose. This is a marketing and documentation site for an open-source
+# project: being quoted, indexed and learned from is the point. Nothing here is a customer's content
+# — that lives behind /api and /app, which are disallowed below.
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+
 User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 Allow: /legal/
 Allow: /compare/
 Allow: /guides/
+Allow: /integrations/
+Allow: /download
 
+# Application surfaces, not documents. /api is the REST API (described at /openapi.yaml, which is
+# allowed), /app is the dashboard shell, /player is what a screen runs. A crawler gains nothing from
+# any of them and /uploads is customers' own media.
 Disallow: /api/
 Disallow: /app
 Disallow: /player
 Disallow: /uploads/
 Disallow: /scripts/
+Disallow: /unsubscribe
 
+# Machine-readable descriptions of this site, for agents that would rather not parse HTML.
+# Every published page is also available as Markdown: append .md to its path, or send
+# `Accept: text/markdown`.
 Sitemap: https://screentinker.com/sitemap.xml

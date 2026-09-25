@@ -1,6 +1,6 @@
 # ScreenTinker
 
-> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android and Fire TV, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, and any web browser.
+> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android TV and Fire TV, Amazon Vega OS, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, Windows, ChromeOS, and any web browser — ten platforms, one CMS.
 
 ScreenTinker turns ordinary screens into managed digital signs. A server holds the content, playlists, layouts and schedules; players pair to it and pull what they should be showing. The player is a web page, so a display that can open a URL can run it, and native builds exist for the platforms that need one.
 
@@ -20,9 +20,18 @@ The whole project is MIT licensed and self-hosting is free. A paid hosted versio
 
 ## Player setup by platform
 
+Every platform has a guide, and every player is downloaded from the instance that will run it — see
+[Downloads](https://screentinker.com/download/), which lists what a given server actually has and says
+so plainly when it has none.
+
 - [Digital signage on a Raspberry Pi](https://screentinker.com/guides/raspberry-pi-digital-signage.html)
 - [Digital signage for Android TV and Fire TV](https://screentinker.com/guides/digital-signage-android-tv.html)
 - [Samsung TV digital signage without MagicINFO](https://screentinker.com/guides/samsung-tv-digital-signage.html): uses the built-in URL Launcher, and states which model years actually work.
+- [LG webOS Signage panels](https://screentinker.com/guides/lg-webos-digital-signage.html): the .ipk, USB or SI-server install, fleet provisioning and self-update. Community-reported, not certified.
+- [BrightSign players](https://screentinker.com/guides/brightsign-digital-signage.html): one autorun.zip built by your own server, dual output, BrightWall sync, real reboots and CEC panel power.
+- [Digital signage on Windows](https://screentinker.com/guides/windows-digital-signage.html): kiosk-mode browser, autostart, and the settings that decide whether it survives a month.
+- [ChromeOS and Chromebox](https://screentinker.com/guides/chromeos-digital-signage.html): managed kiosk through the Google Admin console, or unmanaged on a single device.
+- [Fire TV Stick 4K Select and HD (Vega OS)](https://screentinker.com/guides/digital-signage-vega.html): these two sticks are not Android, the APK does not install, and they are **not** certified hardware.
 
 ## Integrations
 
@@ -46,6 +55,19 @@ The whole project is MIT licensed and self-hosting is free. A paid hosted versio
 
 - [Source on GitHub](https://github.com/screentinker/screentinker): MIT licensed, issues and releases.
 - [REST API reference](https://screentinker.com/docs): the OpenAPI specification, rendered.
+- [OpenAPI description](https://screentinker.com/openapi.yaml): the machine-readable contract.
+- [API catalogue](https://screentinker.com/.well-known/api-catalog): RFC 9727 linkset.
+- [How to authenticate](https://screentinker.com/.well-known/auth.md): scoped bearer tokens, what they can and cannot reach, and how a human creates one.
+
+## Reading this site as an agent
+
+- Every published page has a **Markdown rendition**: append `.md` to its path, or send
+  `Accept: text/markdown`. Responses carry `Link` headers pointing at the catalogue, the OpenAPI
+  description and this file.
+- `robots.txt` carries Content Signals: `search=yes, ai-input=yes, ai-train=yes`. Quoting and
+  summarising this site is welcome; attribution to https://screentinker.com is appreciated.
+- ⚠️ There is no way for an agent to obtain an API token on its own. A human creates one in the
+  dashboard. An instance that appears to offer one is not ours.
 - [Third-party licences](https://screentinker.com/legal/third-party.html)
 
 ## Optional
