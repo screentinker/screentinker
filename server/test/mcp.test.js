@@ -116,6 +116,91 @@ test('tool names and paths agree with the OpenAPI spec', () => {
   }
 });
 
+test('⚠️ every query parameter a tool sends EXISTS on that endpoint', () => {
+  /*
+   * THE BUG THIS WAS WRITTEN FOR. play_report sent `from`/`to`; /reports/summary takes `start`/`end`.
+   * Unknown query parameters are not an error — they are ignored — so the endpoint returned its
+   * DEFAULT 30-day window and the tool presented it as the answer to "what played in the first week
+   * of September". A confidently wrong answer with no error anywhere, found only by running it
+   * against real data and noticing the dates in the reply were not the dates asked for.
+   *
+   * The previous test checked that the PATH exists. A path can exist while every parameter sent to it
+   * is silently discarded.
+   */
+  const spec = fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'openapi.yaml'), 'utf8');
+
+  // Parameter names declared per path in the spec, across all its methods.
+  const paramsByPath = {};
+  let current = null;
+  for (const line of spec.split('\n')) {
+    const p = line.match(/^  (\/[^\s:]+):/);
+    if (p) { current = p[1]; paramsByPath[current] = paramsByPath[current] || new Set(); continue; }
+    if (!current) continue;
+    const q = line.match(/name:\s*([A-Za-z_][A-Za-z0-9_]*),\s*in:\s*query/);
+    if (q) paramsByPath[current].add(q[1]);
+  }
+
+  const specPathOf = (toolPath) => toolPath.replace(/^\/api/, '').replace(/\{(\w+)\}/g, (_m, k) => {
+    if (/^(display_id|playlist_id|group_id|content_id)$/.test(k)) return '{id}';
+    if (k === 'item_id') return '{itemId}';
+    return `{${k}}`;
+  });
+
+  for (const t of tools.TOOLS) {
+    for (const q of t.call.query || []) {
+      const sp = specPathOf(t.call.path);
+      const known = paramsByPath[sp];
+      assert.ok(known && known.has(q),
+        `${t.name} sends ?${q} to ${sp}, which declares no such query parameter `
+        + `(it declares: ${known ? [...known].join(', ') || 'none' : 'unknown path'}). `
+        + 'An unknown parameter is IGNORED, not rejected.');
+    }
+  }
+});
+
+test('report tools translate the words a model uses into the endpoint\'s parameters', () => {
+  // The arguments stay `from`/`to`/`days` because that is how the question is asked; the mapping is
+  // what has to be right.
+  const summary = tools.toRequest(tools.byName('play_report'), { from: '2026-09-01', to: '2026-09-07', display_id: 'd1' });
+  assert.deepEqual(summary.query, { start: '2026-09-01', end: '2026-09-07', device_id: 'd1' });
+
+  // `days` is converted to a window, because /reports/uptime has no `days` parameter at all.
+  const week = tools.toRequest(tools.byName('uptime_report'), { days: 7 });
+  assert.deepEqual(Object.keys(week.query).sort(), ['end', 'start']);
+  const span = (new Date(week.query.end) - new Date(week.query.start)) / 86400000;
+  assert.ok(Math.abs(span - 7) < 0.01, `expected a 7-day window, got ${span}`);
+  // An explicit window wins over days.
+  assert.equal(tools.toRequest(tools.byName('uptime_report'), { days: 30, from: '2026-09-01' }).query.start, '2026-09-01');
+  // And a nonsense value falls back rather than producing an invalid range.
+  assert.ok(tools.toRequest(tools.byName('uptime_report'), { days: 'lots' }).query.start);
+});
+
+test('get_display returns an answer, not a database row', () => {
+  // The raw row is ~80 columns and its assignments carry filepaths and thumbnail paths. A model
+  // reading that spends its context on storage detail instead of the question it was asked.
+  const shaped = tools.byName('get_display').shape({
+    id: 'd1', name: 'Lobby', status: 'online', screen_width: 1920, screen_height: 1080,
+    app_version: '2.1.6', last_heartbeat: 1790000000, device_token: 'SECRET', settings_pin: '1234',
+    assignments: [
+      { id: 'a1', filename: 'promo.mp4', duration_sec: 15, filepath: '/uploads/x', thumbnail_path: '/t/x' },
+      { id: 'a2', widget_id: 'w1', widget_name: 'Weather', content_duration: 10, orphan: 1 },
+    ],
+  });
+  assert.equal(shaped.resolution, '1920x1080');
+  assert.match(shaped.last_heartbeat, /^\d{4}-\d{2}-\d{2}T/, 'a timestamp a model can reason about');
+  assert.equal(shaped.now_playing.length, 2);
+  assert.equal(shaped.now_playing[0].name, 'promo.mp4');
+  assert.equal(shaped.now_playing[1].kind, 'widget');
+  assert.equal(shaped.now_playing[1].orphan, true, 'an assignment whose content is gone should be visible');
+  // ⚠️ Nothing sensitive, and no storage paths, survive the shaping.
+  const json = JSON.stringify(shaped);
+  for (const leak of ['SECRET', 'settings_pin', '1234', 'filepath', 'thumbnail_path', '/uploads/']) {
+    assert.ok(!json.includes(leak), `get_display leaked ${leak}`);
+  }
+  // An online screen has no offline reason to report.
+  assert.equal(shaped.offline_reason, null);
+});
+
 // ───────────────────────────── the protocol ─────────────────────────────
 
 const ctx = () => ({
