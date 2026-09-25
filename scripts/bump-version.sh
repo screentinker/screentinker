@@ -123,6 +123,75 @@ sed -i -E "0,/\"version\":/s/(\"version\": *\")[0-9][^\"]*/\1${NUMERIC}/" vega/p
 sed -i -E "s/^(version = \")[0-9][^\"]*/\1${NUMERIC}/" vega/manifest.toml
 sed -i -E "s/(export const APP_VERSION = ')[0-9][^']*/\1${NUMERIC}/" vega/src/deviceInfo.ts
 
+# 4d) Vega BUILD NUMBER, stamped into the build scripts themselves.
+#
+# ⚠️ THE APPSTORE REFUSES build_number 0. The valid range is 1..2^63-1, and `react-native
+# build-vega` defaults to 0 when the flag is absent — which every build before this one was, so
+# every .vpkg ever produced here was unsubmittable. Worse, the Appstore requires BOTH the version
+# AND the build number to be greater than the previous submission, so an unset build number also
+# means there is no way to upload a second version later.
+#
+# ⚠️ STAMPED AS A LITERAL, not computed in the npm script. `--build-number $(...)` would be shell
+# interpolation inside package.json, which breaks on Windows (there is a windows-setup.bat in this
+# repo) and makes the built artifact depend on the shell that launched it. A literal is
+# reproducible and greppable, and it matches how every other version in this script is written.
+#
+# Derived from the version so it cannot go backwards while the version goes forwards:
+# major*10000 + minor*100 + patch, i.e. 2.1.6 -> 20106. Two digits each for minor and patch is
+# plenty for this project and keeps the number readable at a glance.
+#
+# ⚠️ A RE-SUBMISSION OF THE SAME VERSION NEEDS A HIGHER NUMBER BY HAND. If Amazon rejects a build
+# and you fix it without bumping the version, pass a larger --build-number on the command line for
+# that upload. This derivation deliberately does not track re-submissions: guessing at them would
+# make the number unpredictable, and an unpredictable build number is how you lose track of which
+# binary is live.
+VEGA_BUILD_NUMBER="$(printf '%d' "$(( $(echo "$NUMERIC" | cut -d. -f1) * 10000 \
+                                   + $(echo "$NUMERIC" | cut -d. -f2) * 100 \
+                                   + $(echo "$NUMERIC" | cut -d. -f3) ))")"
+# Replace an existing --build-number, or append one if the scripts predate this step.
+if grep -q -- "--build-number" vega/package.json; then
+  sed -i -E "s/(--build-number )[0-9]+/\1${VEGA_BUILD_NUMBER}/g" vega/package.json
+else
+  sed -i -E "s/(react-native build-vega[^\"]*)\"/\1 --build-number ${VEGA_BUILD_NUMBER}\"/g" vega/package.json
+fi
+echo "  vega build number: ${VEGA_BUILD_NUMBER}"
+
+# 4e) ⚠️ BUILD THE VEGA PACKAGE BEFORE TAGGING, so a release cannot be cut from a stamped tree
+#     that does not compile. This is not belt-and-braces: the Vega app has broken at the BUILD
+#     step twice in one day — once on a dependency pinned to a version that does not exist
+#     (kepler-file-system ~2.0.0), once on a Babel transformer that silently produced a 4.5 KB
+#     .vpkg with no JavaScript in it and exited 0. Neither was visible from the source, and the
+#     server test suite cannot see either.
+#
+#     SKIPPED, LOUDLY, when the Vega SDK is absent — most machines that cut a release do not have
+#     it, and refusing to release without it would be worse than the risk. `vega` reaches the PATH
+#     via `source ~/vega/env`.
+if [ -f "$HOME/vega/env" ]; then
+  # shellcheck disable=SC1091
+  ( set +u; . "$HOME/vega/env" >/dev/null 2>&1
+    cd vega
+    echo "  building the Vega package (SDK found)..."
+    if [ ! -d node_modules ]; then npm install --no-audit --no-fund >/dev/null 2>&1; fi
+    npm run build:release >/tmp/vega-build-$$.log 2>&1 || {
+      echo "ERROR: the Vega package failed to build at v$NEW - refusing to tag." >&2
+      echo "       see /tmp/vega-build-$$.log" >&2
+      exit 1
+    }
+    VPKG=build/armv7-release/screentinker-vega_armv7.vpkg
+    # ⚠️ A .vpkg with no JS bundle still "builds" and still exits 0. Check for the bundle, not the
+    # exit code — that empty 4.5 KB package is what installs and then does nothing on a stick.
+    if ! zstd -d -c "$VPKG" 2>/dev/null | tar tf - 2>/dev/null | grep -q "bundle/index.bundle"; then
+      echo "ERROR: $VPKG has no JS bundle - refusing to tag." >&2
+      exit 1
+    fi
+    echo "  vega .vpkg OK: $(du -h "$VPKG" | cut -f1), build_number ${VEGA_BUILD_NUMBER}"
+  ) || exit 1
+else
+  echo "  NOTE: Vega SDK not found at ~/vega/env - the .vpkg was NOT built or verified."
+  echo "        Before submitting to the Appstore, run on a machine with the SDK:"
+  echo "            source ~/vega/env && cd vega && npm run build:release"
+fi
+
 # 5) public API spec version. This is the number Redoc prints at the top of the published
 #    API reference (frontend/api-docs.html renders docs/openapi.yaml directly), so leaving it
 #    behind means customers read a version that has not existed for months — it had drifted to
