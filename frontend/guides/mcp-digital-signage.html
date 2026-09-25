@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manage Digital Signage From Claude &mdash; MCP Server | ScreenTinker</title>
+  <meta name="description" content="ScreenTinker speaks the Model Context Protocol. Point Claude or any MCP client at your server and manage screens, playlists and schedules in plain English.">
+  <meta name="keywords" content="mcp digital signage, model context protocol signage, claude digital signage, ai digital signage management, mcp server cms, ai agent signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/mcp-digital-signage.html">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/mcp-digital-signage.html">
+  <meta property="og:title" content="Manage Digital Signage From an AI Assistant">
+  <meta property="og:description" content="ScreenTinker speaks the Model Context Protocol. Point Claude or any MCP client at your server and manage screens, playlists and schedules in plain English.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Manage Digital Signage From an AI Assistant">
+  <meta name="twitter:description" content="ScreenTinker speaks the Model Context Protocol. Point Claude or any MCP client at your server and manage screens, playlists and schedules in plain English.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#resources">Guides</a>
+      <span>/</span>
+      <span>AI assistant (MCP)</span>
+    </nav>
+
+    <h1>Manage your screens from an AI assistant</h1>
+    <p class="lead">ScreenTinker runs a Model Context Protocol server. Point Claude &mdash; or any MCP client &mdash; at your instance and ask for what you want in plain English, instead of clicking through a dashboard.</p>
+
+    <h2>What this actually is</h2>
+    <p>The <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a> is how an AI
+    client discovers and uses tools on a server. ScreenTinker publishes one at <code>/mcp</code> on every
+    instance &mdash; hosted or self-hosted, no add-on and no separate service. An assistant connected to it
+    can see your screens and act on them, and you talk to it the way you would talk to a colleague:</p>
+    <ul>
+      <li>&ldquo;Which screens are offline?&rdquo;</li>
+      <li>&ldquo;Put this YouTube video on the lobby TV.&rdquo;</li>
+      <li>&ldquo;Did the autumn campaign actually play last week, and on how many screens?&rdquo;</li>
+      <li>&ldquo;Turn the caf&eacute; screens off &mdash; we&rsquo;re closed Monday.&rdquo;</li>
+    </ul>
+    <p>No other digital signage CMS does this today. It is the same argument as the rest of the product: the
+    API is public and documented, so anything we can build on it, you can too.</p>
+
+    <h2 id="token">Step 1 &mdash; create a token</h2>
+    <p>In the dashboard: <strong>Settings &rarr; API tokens</strong>. The value is shown once.</p>
+    <p><strong>Start with a <code>read</code> token.</strong> The tool list an assistant sees is filtered by
+    the token&rsquo;s scope, so a read token means the assistant is not merely refused when it tries to change
+    something &mdash; it never sees that the tool exists. Move to <code>write</code> when you want it making
+    changes, and <code>full</code> only if you want it able to delete.</p>
+
+    <h2 id="connect">Step 2 &mdash; connect your client</h2>
+    <p>The endpoint is <code>https://your-server/mcp</code>, and it authenticates with the same header as the
+    REST API:</p>
+    <pre><code>Authorization: Bearer st_...</code></pre>
+    <p>In Claude Desktop, add it as a remote MCP server with that URL and header. Other clients differ in
+    where you paste the two values, but those are the only two.</p>
+    <p class="note">⚠️ The token is a credential in a config file on your machine. Keep it to
+    <code>read</code> unless you need more, and revoke it in the dashboard the moment a laptop goes missing
+    &mdash; a leaked token reaches one workspace and no administrative surface at all, by design, but that is
+    still your content.</p>
+
+    <h2 id="ask">Step 3 &mdash; ask it something</h2>
+    <p>&ldquo;Which of my screens are offline?&rdquo; calls one tool and gets back the count plus the names
+    and how long each has been dark &mdash; because &ldquo;three offline&rdquo; is not actionable and
+    &ldquo;three offline: Lobby, Caf&eacute;, Window since 09:12&rdquo; is.</p>
+
+    <h2>What it can do</h2>
+    <p>Twenty-one tools, chosen rather than generated. The API has 133 operations and wrapping all of them
+    would make the list unusable &mdash; an assistant gets measurably worse at picking the right tool as the
+    list grows &mdash; so these are shaped around what people ask for.</p>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>Scope</th><th>What the assistant can do</th></tr></thead>
+      <tbody>
+        <tr><td><code>read</code></td><td>List and inspect screens, playlists, content, groups and schedules. Fleet health. Proof-of-play and uptime reports.</td></tr>
+        <tr><td><code>write</code></td><td>Everything above, plus: add YouTube videos and web pages, build and publish playlists, assign them to a screen or a group, send refresh / screen on / screen off / volume commands, rename a screen.</td></tr>
+        <tr><td><code>full</code></td><td>Everything above, plus removing items from a playlist.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>⚠️ Playlist edits are a <strong>draft</strong>. Screens keep playing the last published version until
+    the assistant publishes, and the tool descriptions say so &mdash; an agent that adds items and stops has
+    changed nothing anyone can see.</p>
+
+    <h2>How it is kept safe</h2>
+    <p>The MCP server is <strong>a client of our own public API</strong>, not a second way into the database.
+    Every tool call is an HTTP request back into the same API you could call with <code>curl</code>, carrying
+    your token &mdash; so workspace isolation, the scope gate and the rate limits apply to an assistant exactly
+    as they apply to you. There is no second copy of the permission model to drift out of step with the first.</p>
+    <p>What a token cannot do does not change either: it is bound to one workspace and can never reach platform
+    administration, billing, account management or provisioning. An assistant holding your token has exactly
+    your API access and not one endpoint more.</p>
+
+    <h2>Self-hosted instances</h2>
+    <p>It ships with the server, so a self-hosted instance has it at <code>https://your-server/mcp</code> with
+    nothing to install and no traffic through us. Your content, your model access, your box.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/docs">REST API reference</a></li>
+        <li><a href="/download/">Download a player</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosting guide</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+  </main>
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Guides",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "AI assistant (MCP)",
+        "item": "https://screentinker.com/guides/mcp-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "Connect an AI assistant to ScreenTinker",
+    "description": "ScreenTinker speaks the Model Context Protocol. Point Claude or any MCP client at your server and manage screens, playlists and schedules in plain English.",
+    "totalTime": "PT5M",
+    "tool": [
+      {
+        "@type": "HowToTool",
+        "name": "A ScreenTinker account"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "An MCP-capable AI client"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "An API token"
+      }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Create an API token",
+        "text": "In the dashboard open Settings, then API tokens, and create one. Choose read scope to start: the assistant will be able to look but not change anything.",
+        "url": "https://screentinker.com/guides/mcp-digital-signage.html#token"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Add the server to your client",
+        "text": "Point the client at https://your-server/mcp and set the Authorization header to Bearer followed by your token.",
+        "url": "https://screentinker.com/guides/mcp-digital-signage.html#connect"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Ask it something",
+        "text": "Try \"which of my screens are offline?\" — the assistant calls the fleet_status tool and answers.",
+        "url": "https://screentinker.com/guides/mcp-digital-signage.html#ask"
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

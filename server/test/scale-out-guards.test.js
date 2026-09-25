@@ -118,6 +118,12 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   // Writing the copy would leave the primary still sending while the page said "done" — asserted in
   // test/unsubscribe.test.js.
   'unsubscribe.js': 'email-link unsubscribe; one users column, and proxies to the primary for a copied user',
+  // ⚠️ NOT an exemption on trust: routes/mcp.js WRITES NOTHING. Its only query is a SELECT of the
+  // token's scope, to decide which tools to list. Every tool call re-enters this server's own public
+  // API over loopback carrying the caller's token, so resolveTenancy, tokenScopeGate AND the replica
+  // interceptor all apply to that request exactly as they would to curl. test/mcp.test.js asserts
+  // both halves: one SQL statement in the file, and it is the scope lookup.
+  'mcp.js': 'MCP transport; performs no writes — tool calls re-enter the public API over loopback with the caller token',
 });
 
 const INLINE_NOT_WORKSPACE_SCOPED = Object.freeze({

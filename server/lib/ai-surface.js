@@ -37,6 +37,10 @@ function apiCatalog(base) {
         title: 'ScreenTinker Public API reference' }],
       'service-meta': [{ href: `${base}/.well-known/auth.md`, type: 'text/markdown',
         title: 'How to authenticate against the ScreenTinker API' }],
+      // The MCP endpoint is part of this API's surface, so it belongs in the catalogue an agent reads
+      // first rather than only in prose.
+      related: [{ href: `${base}/mcp`, type: 'application/json',
+        title: 'ScreenTinker MCP server — manage signage from an AI client' }],
       author: [{ href: 'https://github.com/screentinker/screentinker' }],
     }],
   };
@@ -95,6 +99,13 @@ reach this endpoint at all" than "your token is wrong". Retrying will not fix it
 
 Sign in to the dashboard, open **Settings → API tokens**, create one, and copy it — the value is shown
 once and stored only as a hash.
+
+## Managing signage from an AI client
+
+This instance runs a **Model Context Protocol server** at \`${base}/mcp\`. Point an MCP-capable client
+at that URL with the same \`Authorization: Bearer st_...\` header and it gets a curated set of tools
+rather than 133 raw endpoints. ⚠️ The tool list is filtered by the token's scope: a \`read\` token is
+never shown a tool that writes.
 
 ## Self-hosted instances
 

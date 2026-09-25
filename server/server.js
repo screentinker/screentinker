@@ -1173,6 +1173,19 @@ app.use('/unsubscribe',
   express.urlencoded({ extended: false, limit: '4kb' }),
   require('./routes/unsubscribe'));
 
+/*
+ * Model Context Protocol. Mounted at the root because the URL is pasted into an AI client's config by
+ * a human, and https://host/mcp is what every one of them expects.
+ *
+ * ⚠️ NOT in config/api-surface.js, deliberately: it is not another API router. It authenticates
+ * nothing itself and reaches the database only to read a token's scope so it can decide which tools
+ * to LIST. Every tool call goes back through this server's own public API over loopback with the
+ * caller's token, so the real gate stays exactly where it already is.
+ *
+ * Rate-limited per IP: a model in a loop is the normal failure mode here, not an attacker.
+ */
+app.use('/mcp', rateLimit(60000, 120), require('./routes/mcp'));
+
 app.use('/api/auth', require('./routes/auth'));
 // Per-organization SSO configuration. Mounted under /api/organizations so the org id is the
 // route's own subject, which is what the org_owner/org_admin check keys on.
