@@ -84,9 +84,21 @@ test('vega: the page is Vega only when the WebView bridge exists', () => {
   assert.match(player, /function onVega\(\)/);
   assert.match(player, /ReactNativeWebView/);
   assert.match(player, /onVega\(\) \? 'vega'/);
-  // The 1 GB concessions are gated on the shell, not on the query string alone.
+  // The second decoder is the concession, and it is gated on the shell, not the query string.
   assert.match(player, /if \(onVega\(\)\) \{ groupPreloadIdx = idx;/);
-  assert.match(player, /const wantsWipe = !\(typeof onVega === 'function' && onVega\(\)\)/);
+  assert.match(bodyOf(player, 'groupPreloadNext'), /CMA/);
+  // Transitions are not withheld. The image path that ran on the stick is not gated, and the
+  // video path uses the same wantsWipe a browser does. The CMA bound is the capture size.
+  assert.match(player, /const wantsWipe = !!\(t && Array\.isArray\(t\.effects\) && t\.effects\.length && transitionRuntimeReady\(\)\)/);
+  assert.doesNotMatch(player, /const wantsWipe = !\(typeof onVega/);
+  assert.doesNotMatch(bodyOf(player, 'renderImageBuffered'), /onVega/);
+  assert.match(player, /function vegaWipeSize\(/);
+  assert.match(bodyOf(player, 'fitToCanvas'), /vegaWipeSize\(/);
+  assert.match(bodyOf(player, 'runGlWipe'), /releaseWipeBitmap\(/);
+  assert.match(bodyOf(player, 'vegaWipeSize'), /longEdge = 960/);
+  assert.match(bodyOf(player, 'vegaWipeSize'), /typeof onVega === 'function' && onVega\(\)/);
+  // Video wipes run, but the outgoing decoder does not stay up next to the incoming warm-play.
+  assert.match(player, /if \(!wantsWipe \|\| \(typeof onVega === 'function' && onVega\(\)\)\) outgoing\.pause\(\)/);
 });
 
 test('vega: pairing in /data survives a WebView clear, and a reset forgets it', () => {
@@ -121,16 +133,19 @@ test('vega: pairing in /data survives a WebView clear, and a reset forgets it', 
   assert.match(player, /buildDeviceInfo copies/);
 });
 
-test('vega: the capability floor is the web player minus what these sticks must not claim', () => {
+test('vega: the capability floor is the web player minus Android powers these sticks do not have', () => {
   assert.equal(caps.platformFamily({ platform: 'vega', android_version: 'Web/Chrome' }), 'vega');
   const floor = caps.BASELINE.vega;
-  for (const c of ['playback.video', 'playback.zones', 'playback.youtube', 'audio.volume', 'audio.mute', 'system.restart_player']) {
+  for (const c of ['playback.video', 'playback.zones', 'playback.youtube', 'playback.transitions', 'offline.cache', 'audio.volume', 'audio.mute', 'system.restart_player']) {
     assert.ok(floor.includes(c), `vega floor should include ${c}`);
   }
-  for (const c of ['system.reboot', 'system.kiosk', 'display.power', 'system.self_update', 'playback.rtsp', 'playback.transitions', 'offline.cache']) {
+  for (const c of ['system.reboot', 'system.kiosk', 'display.power', 'system.self_update', 'playback.rtsp']) {
     assert.equal(floor.includes(c), false, `vega floor must not include ${c}`);
   }
-  // A declared stick still wins over the floor. The page withholds transitions itself.
+  // Transitions and the worker cache were measured on an AFTCA002. They are not the omission.
+  assert.ok(floor.includes('playback.transitions'));
+  assert.ok(floor.includes('offline.cache'));
+  // A declared stick still wins over the floor.
   const declared = caps.capabilitiesFor({ platform: 'vega', capabilities: JSON.stringify(['playback.video']) });
   assert.deepEqual(declared, ['playback.video']);
 });
@@ -143,9 +158,15 @@ test('vega: the shell speaks the host protocol and does not announce a power it 
   assert.match(appSrc, /host:ready/);
   assert.match(appSrc, /action === 'restart'/);
   assert.match(appSrc, /mediaPlaybackRequiresUserAction=\{false\}/);
+  assert.match(appSrc, /useSetLifespanCallback\(\)/);
+  assert.match(appSrc, /LIFESPAN_POLICY\.PERMANENT/);
+  assert.match(appSrc, /useSetTimeoutCallback\(\)/);
+  assert.doesNotMatch(appSrc, /display\.power/);
   assert.match(appSrc, /domStorageEnabled=\{true\}/);
   assert.doesNotMatch(appSrc, /system\.reboot/);
   assert.doesNotMatch(appSrc, /system\.kiosk/);
   // The URL the shell opens is the modern player, with the host tag the page checks.
   assert.match(appSrc, /\/player\?host=vega/);
+  const gi = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
+  assert.match(gi, /^vega\/buildinfo\.json$/m);
 });

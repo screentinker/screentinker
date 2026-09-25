@@ -4088,11 +4088,13 @@
       // An earlier draft here tested window.STTransitions, which does not exist: the capability
       // would simply never have been declared, hiding the transitions UI for every display, and
       // nothing would have failed loudly enough to notice.
+      //
+      // Vega is included. An AFTCA002 ran these wipes. The capture is capped in vegaWipeSize
+      // because CMA ran out, not because the feature is absent. Withholding the name hid a
+      // control the stick has. This function is extracted by the capability tests, which have
+      // no shell; it must not call onVega (a missing predicate would throw out of register).
       try {
-        // typeof onVega: this function is extracted and run on its own by the capability tests,
-        // which have no shell. A missing predicate means "not Vega", never "throw out of register".
-        const vega = typeof onVega === 'function' && onVega();
-        if (!vega && typeof transitionRuntimeReady === 'function' && transitionRuntimeReady()) {
+        if (typeof transitionRuntimeReady === 'function' && transitionRuntimeReady()) {
           caps.push('playback.transitions');
         }
       } catch (e) { /* bundle absent: hard cuts, and we do not claim the capability */ }
@@ -4285,9 +4287,8 @@
       // resolver (server/lib/sync-backend.js) decides native-vs-ours from exactly this field —
       // and a wall that reports itself as a browser can never be offered BrightWall.
       // Vega must not register as "Chrome 120". platformFamily() keys off this string, and a
-      // stick that says Chrome inherits the browser baseline — including shader transitions and
-      // a service-worker cache this WebView has never been shown to have. onVega() is false
-      // until ReactNativeWebView exists, so the query string alone does not flip it.
+      // stick that says Chrome is a browser row: no model, and no CMA capture cap. onVega()
+      // is false until ReactNativeWebView exists, so the query string alone does not flip it.
       data.platform = ON_BRIGHTSIGN ? 'brightsign' : (onVega() ? 'vega' : browserPlatform());
       if (ON_BRIGHTSIGN) {
         try {
@@ -4644,10 +4645,11 @@
     function groupPreloadNext(idx) {
       const item = playlist[idx];
       if (!item) return;
-      // 1 GB sticks (Fire TV Stick 4K Select, Fire TV Stick HD 2026). A second decoder holding
-      // the next clip is what made group sync stall on chipsets with one decoder, and these
-      // have neither the RAM nor a second decoder to spare. The boundary hard-cuts. Same page,
-      // so this is gated on the shell actually being there — a browser is unchanged.
+      // Vega sticks (Fire TV Stick 4K Select, Fire TV Stick HD 2026). A second <video> is a
+      // second decoder, and a decoder allocates from CMA — the contiguous DMA pool, about
+      // 236 MB on an AFTCA002 — not from the MemFree that still looked healthy after the
+      // process died. Group sync still plays; the boundary does not warm the next clip.
+      // Same page, so this is gated on the shell actually being there — a browser is unchanged.
       if (onVega()) { groupPreloadIdx = idx; groupPreloadEl = null; return; }
       const isVid = item.mime_type && item.mime_type.indexOf('video/') === 0 && item.mime_type !== 'video/youtube';
       if (!isVid) { groupPreloadIdx = idx; groupPreloadEl = null; return; }   // mark handled, nothing to warm
@@ -5952,13 +5954,35 @@
     // draw a source (img | video | canvas) onto a container-sized canvas with object-fit:contain framing,
     // so the transition matches the static letterboxing exactly (stays CORS-clean iff the source is). A
     // <video> exposes its intrinsic size as videoWidth/Height, not naturalWidth/width — check both.
+    //
+    // On Vega the long edge is capped (vegaWipeSize). texImage2D of a 1920×1080 frame is ~8 MB,
+    // and the GL framebuffer is another, both out of the same ~236 MB CMA pool the decoder uses.
+    // An AFTCA002 ran out of that pool (CmaFree ~1 MB, MemFree still large) while full-frame wipes
+    // were on. The CSS box of the wipe canvas stays the stage; only this backing store shrinks.
+    // The cap has not been re-measured on a stick. The page cannot read CmaFree, so it does not
+    // try to skip only when the pool is low.
+    function vegaWipeSize(w, h) {
+      if (!(typeof onVega === 'function' && onVega())) return { w: w, h: h };
+      const longEdge = 960;
+      const long = Math.max(w, h);
+      if (!(long > longEdge) || !w || !h) return { w: w, h: h };
+      const s = longEdge / long;
+      return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
+    }
+    // texImage2D copies the pixels. A canvas allocated for that upload can drop its bitmap at
+    // once. A live <img> or <video> is the sign, not a scratch buffer — leave it alone.
+    function releaseWipeBitmap(src) {
+      if (!src || src.nodeName !== 'CANVAS') return;
+      try { src.width = 1; src.height = 1; } catch (e) {}
+    }
     function fitToCanvas(src, w, h) {
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const cap = vegaWipeSize(w, h);
+      const c = document.createElement('canvas'); c.width = cap.w; c.height = cap.h;
       const cx = c.getContext('2d');
       const iw = src.naturalWidth || src.videoWidth || src.width;
       const ih = src.naturalHeight || src.videoHeight || src.height;
-      const s = Math.min(w / iw, h / ih);
-      cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
+      const s = Math.min(cap.w / iw, cap.h / ih);
+      cx.drawImage(src, (cap.w - iw * s) / 2, (cap.h - ih * s) / 2, iw * s, ih * s);
       return c;
     }
     // ONE persistent WebGL renderer, reused for EVERY transition. The canvas is attached to <body> ONCE
@@ -6001,6 +6025,7 @@
       const geo = stageGeometry();
       if (!geo) { hardCut(); return; }                  // no stage box to draw in -> hard cut
       const w = geo.w, h = geo.h;
+      const cap = vegaWipeSize(w, h);
       let raf = 0, startTs = 0, done = false, deadline = 0;
       const finish = () => { // end the wipe; mount the incoming element, KEEP the renderer/context alive
         if (done) return; done = true;
@@ -6009,18 +6034,38 @@
         if (glTxAbort === finish) glTxAbort = null;
         mount();                                        // insert incoming + own its teardown/dwell/play
         canvas.style.display = 'none';                  // HIDE after the incoming frame is mounted (no flash); NEVER detach
+        // The textures and the framebuffer outlive the wipe. On Vega that is CMA the decoder
+        // needs back. A 1×1 upload replaces the storage; the next wipe resizes and re-uploads.
+        // typeof onVega: a missing predicate means "not Vega".
+        if (typeof onVega === 'function' && onVega()) {
+          try {
+            const blank = document.createElement('canvas');
+            blank.width = 1; blank.height = 1;
+            renderer.setFrom(blank);
+            renderer.setTo(blank);
+            canvas.width = 1; canvas.height = 1;
+          } catch (e) {}
+        }
       };
+      let fromTex = null, toCanvas = null;
       try {
         canvas.style.left = geo.left; canvas.style.top = geo.top;
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
         canvas.style.transform = geo.transform;         // turned exactly as the stage is (portrait), 'none' otherwise
         canvas.style.transformOrigin = geo.transformOrigin;
-        renderer.resize(w, h);                          // size the persistent canvas to the stage's OWN box
-        renderer.setFrom(fitToCanvas(fromFrame, w, h));
-        renderer.setTo(fitToCanvas(toTex, w, h));
+        renderer.resize(cap.w, cap.h);                  // backing store only. CSS stays the stage box (portrait transform)
+        fromTex = fitToCanvas(fromFrame, geo.w, geo.h);
+        toCanvas = fitToCanvas(toTex, geo.w, geo.h);
+        renderer.setFrom(fromTex);
+        renderer.setTo(toCanvas);
         renderer.setShader(src);                        // throws on a bad shader
         renderer.render(0, effect.params);
       } catch (e) { canvas.style.display = 'none'; hardCut(); return; }
+      finally {
+        releaseWipeBitmap(fromTex);
+        releaseWipeBitmap(toCanvas);
+        releaseWipeBitmap(fromFrame);                   // outgoing snapshot, when it was a canvas we allocated
+      }
       glTxAbort = finish;                               // context lost / tab hidden mid-wipe -> finish (hard cut)
       canvas.style.display = 'block';                   // SHOW over the current frame (fixed overlay)
       container.style.display = 'block';
@@ -6290,12 +6335,14 @@
       // full-stage canvas readbacks (~8MB at 1080p, ~33MB at 4K) on the main thread at the exact
       // moment the new clip decodes, then discard them — with `from` pinned in the closure for the
       // clip's whole duration.
-      // onVega(): a wipe snapshots the outgoing frame (~8MB at 1080p, ~33MB at 4K) while the
-      // incoming clip is decoding. On a 1 GB stick that is the difference between a transition
-      // and the process being killed. Hard-cut instead. The capability is withheld to match.
-      // typeof onVega: renderVideoBuffered is extracted and run on its own by the transition
-      // tests, which have no shell. A missing predicate means "not Vega", never a ReferenceError.
-      const wantsWipe = !(typeof onVega === 'function' && onVega()) && !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
+      // Vega is not a hard cut. The image path already ran the wipe on an AFTCA002, and withholding
+      // this one left the capability and the behaviour disagreeing. The capture is capped in
+      // fitToCanvas (long edge 960) and the bitmap is dropped after upload. The outgoing decoder
+      // is paused once that snapshot exists: the incoming warm-play is already one decoder, and a
+      // second one is the CMA claim groupPreloadNext also refuses. A browser keeps the outgoing
+      // clip playing behind the overlay. typeof onVega: this function is extracted by the
+      // transition tests, which have no shell. A missing predicate means "not Vega".
+      const wantsWipe = !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
       const from = wantsWipe ? currentTexturableFrame() : null;  // capture the outgoing frame NOW, before any teardown
       const mySeq = renderSeq;
       pendingVideoSeq = mySeq;                        // a warm-up is pending (see the media-health check)
@@ -6305,11 +6352,13 @@
       // warm-up window would nextItem() PAST the incoming clip (the legacy branch nulled these
       // synchronously at teardown). When no wipe needs its frame, pause it too — a single-decoder
       // box must not decode both at once. Mounted-but-paused keeps showing its last frame.
+      // On Vega, pause even when the wipe wants the frame. The snapshot is already a canvas, and
+      // leaving the outgoing decoder up next to the incoming warm-play is a second CMA claim.
       const outgoing = currentVideoEl;
       if (outgoing) {
         try {
           outgoing.onended = null; outgoing.onerror = null; outgoing.onloadeddata = null;
-          if (!wantsWipe) outgoing.pause();
+          if (!wantsWipe || (typeof onVega === 'function' && onVega())) outgoing.pause();
         } catch (e) {}
       }
       const video = document.createElement('video');

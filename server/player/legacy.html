@@ -3282,8 +3282,7 @@ function declaredCapabilities() {
     caps.push("trigger.udp");
   }
   try {
-    const vega = typeof onVega === "function" && onVega();
-    if (!vega && typeof transitionRuntimeReady === "function" && transitionRuntimeReady()) {
+    if (typeof transitionRuntimeReady === "function" && transitionRuntimeReady()) {
       caps.push("playback.transitions");
     }
   } catch (e) {
@@ -4682,15 +4681,32 @@ function stageGeometry() {
     transformOrigin: cs.transformOrigin
   };
 }
+function vegaWipeSize(w, h) {
+  if (!(typeof onVega === "function" && onVega())) return { w, h };
+  const longEdge = 960;
+  const long = Math.max(w, h);
+  if (!(long > longEdge) || !w || !h) return { w, h };
+  const s = longEdge / long;
+  return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
+}
+function releaseWipeBitmap(src) {
+  if (!src || src.nodeName !== "CANVAS") return;
+  try {
+    src.width = 1;
+    src.height = 1;
+  } catch (e) {
+  }
+}
 function fitToCanvas(src, w, h) {
+  const cap = vegaWipeSize(w, h);
   const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
+  c.width = cap.w;
+  c.height = cap.h;
   const cx = c.getContext("2d");
   const iw = src.naturalWidth || src.videoWidth || src.width;
   const ih = src.naturalHeight || src.videoHeight || src.height;
-  const s = Math.min(w / iw, h / ih);
-  cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
+  const s = Math.min(cap.w / iw, cap.h / ih);
+  cx.drawImage(src, (cap.w - iw * s) / 2, (cap.h - ih * s) / 2, iw * s, ih * s);
   return c;
 }
 let glTx = null, glTxAbort = null;
@@ -4740,6 +4756,7 @@ function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
     return;
   }
   const w = geo.w, h = geo.h;
+  const cap = vegaWipeSize(w, h);
   let raf = 0, startTs = 0, done = false, deadline = 0;
   const finish = () => {
     if (done) return;
@@ -4749,7 +4766,20 @@ function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
     if (glTxAbort === finish) glTxAbort = null;
     mount();
     canvas.style.display = "none";
+    if (typeof onVega === "function" && onVega()) {
+      try {
+        const blank = document.createElement("canvas");
+        blank.width = 1;
+        blank.height = 1;
+        renderer.setFrom(blank);
+        renderer.setTo(blank);
+        canvas.width = 1;
+        canvas.height = 1;
+      } catch (e) {
+      }
+    }
   };
+  let fromTex = null, toCanvas = null;
   try {
     canvas.style.left = geo.left;
     canvas.style.top = geo.top;
@@ -4757,15 +4787,21 @@ function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
     canvas.style.height = h + "px";
     canvas.style.transform = geo.transform;
     canvas.style.transformOrigin = geo.transformOrigin;
-    renderer.resize(w, h);
-    renderer.setFrom(fitToCanvas(fromFrame, w, h));
-    renderer.setTo(fitToCanvas(toTex, w, h));
+    renderer.resize(cap.w, cap.h);
+    fromTex = fitToCanvas(fromFrame, geo.w, geo.h);
+    toCanvas = fitToCanvas(toTex, geo.w, geo.h);
+    renderer.setFrom(fromTex);
+    renderer.setTo(toCanvas);
     renderer.setShader(src);
     renderer.render(0, effect.params);
   } catch (e) {
     canvas.style.display = "none";
     hardCut();
     return;
+  } finally {
+    releaseWipeBitmap(fromTex);
+    releaseWipeBitmap(toCanvas);
+    releaseWipeBitmap(fromFrame);
   }
   glTxAbort = finish;
   canvas.style.display = "block";
@@ -5031,7 +5067,7 @@ function attachSubtitleTrack(video, item) {
 function renderVideoBuffered(item) {
   const src = mediaUrl(item);
   const t = item.transition;
-  const wantsWipe = !(typeof onVega === "function" && onVega()) && !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
+  const wantsWipe = !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
   const from = wantsWipe ? currentTexturableFrame() : null;
   const mySeq = renderSeq;
   pendingVideoSeq = mySeq;
@@ -5050,7 +5086,7 @@ function renderVideoBuffered(item) {
       outgoing.onended = null;
       outgoing.onerror = null;
       outgoing.onloadeddata = null;
-      if (!wantsWipe) outgoing.pause();
+      if (!wantsWipe || typeof onVega === "function" && onVega()) outgoing.pause();
     } catch (e) {
     }
   }

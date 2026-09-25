@@ -7,9 +7,9 @@ Installed player for the two Fire TV sticks that are not Android:
 | Fire TV Stick 4K Select (2025) | `AFTCA002` | up to 4K |
 | Fire TV Stick HD (2026) | `AFTCL001` | 1080p |
 
-Both have 1 GB of RAM and run Vega OS. The Android APK does not install.
+Both have 1 GB of RAM and run Vega OS. The limit that mattered on an AFTCA002 was CMA (about 236 MB), not that RAM figure. The Android APK does not install.
 
-The app loads `/player?host=vega` from your server. Content features are the web player's. See [docs/vega-player.md](../docs/vega-player.md) for the parity table, the build steps, and what is deliberately not claimed (reboot, kiosk, RTSP, a second video decoder, shader transitions).
+The app loads `/player?host=vega` from your server. Content features are the web player's. See [docs/vega-player.md](../docs/vega-player.md) for the parity table, the build steps, and what is deliberately not claimed (reboot, kiosk, RTSP, a panel wake lock, a second video decoder). The shell does ask Vega to suppress the screensaver; that is not the same as keeping the panel powered.
 
 ```bash
 source ~/vega/env

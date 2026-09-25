@@ -73,6 +73,7 @@ sbom/
 # artifact until a stick has actually run it.
 vega/build/
 vega/dist/
+vega/buildinfo.json
 vega/assets/config.json
 *.vpkg
 

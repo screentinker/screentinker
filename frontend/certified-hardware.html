@@ -92,7 +92,7 @@
     <h1>Certified Hardware</h1>
     <p class="lead">The device models ScreenTinker has tested with ScreenTinker, what each one actually
       does, and which ones to avoid.</p>
-    <p class="updated">Last updated 2026-09-14. 5 devices currently certified.</p>
+    <p class="updated">Last updated 2026-09-24. 5 devices currently certified.</p>
 
     <p style="margin:20px 0 4px">
       <a href="/certified-hardware/submit" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Report hardware that works</a>
@@ -320,19 +320,21 @@
           <dt>Model numbers</dt><dd>AFTCA002</dd>
           <dt>Category</dt><dd>Streaming player</dd>
           <dt>Operating system</dt><dd>Vega OS</dd>
-          <dt>ScreenTinker player</dt><dd>Vega player (vpkg), not validated on device</dd>
-          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
-          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg). Played on one AFTCA002, then the process died</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-09-24</dd>
           <dt>Validated by</dt><dd>ScreenTinker</dd>
-          <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Tested against</dt><dd>2.1.6</dd>
           <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
         </dl>
         <ul class="device-notes">
           <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
-          <li>Not validated on a stick. Do not treat this as supported, and do not buy it for a sign until this entry changes.</li>
-          <li>1 GB of RAM. The Vega player hard-cuts transitions and does not warm a second video decoder. The earlier browser attempt was not reliable.</li>
-          <li>The previous 720p limit was measured in the browser, not in this app, and has not been re-measured. The stick can output 4K. Signage playback resolution is unknown.</li>
+          <li>Played on one AFTCA002 (ScreenTinker 2.1.6, Kepler 1.2): paired, reported 1920x1080, transitions ran, then the process died in-process. Not certified. Do not buy it for a sign until this entry changes.</li>
+          <li>The binding limit is CMA, the decoder&#39;s contiguous DMA pool (about 236 MB on that stick), not the 1 GB of RAM. MemFree stayed large while CmaFree fell to about 1 MB. Transitions stay. The captured frame is downscaled. That bound has not been re-measured on a stick.</li>
+          <li>Group sync does not warm a second video decoder. A second decoder is another CMA claim.</li>
+          <li>1920x1080 is what that AFTCA002 reported. The stick can output 4K, so this may be the panel or the HDMI link, not a device ceiling.</li>
+          <li>Offline cache worked on that run: a service worker was in control, images cached, and video decoded offline.</li>
           <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
         </ul>
         <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
@@ -344,7 +346,7 @@
           <dt>Model numbers</dt><dd>AFTCL001</dd>
           <dt>Category</dt><dd>Streaming player</dd>
           <dt>Operating system</dt><dd>Vega OS</dd>
-          <dt>ScreenTinker player</dt><dd>Vega player (vpkg), not validated on device</dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg), not run on this model</dd>
           <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated by</dt><dd>ScreenTinker</dd>
@@ -354,9 +356,9 @@
         </dl>
         <ul class="device-notes">
           <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
-          <li>Not validated on a stick. Do not treat this as supported, and do not buy it for a sign until this entry changes.</li>
-          <li>1 GB of RAM, 1080p output. The Vega player hard-cuts transitions and does not warm a second video decoder. The earlier browser attempt was not reliable.</li>
-          <li>The previous 720p limit was measured in the browser, not in this app, and has not been re-measured.</li>
+          <li>Not run on an AFTCL001. The 4K Select run is the only evidence, and that stick is not certified either. Do not buy it for a sign until this entry changes.</li>
+          <li>Same player as the 4K Select. Transitions are declared. Group sync does not warm a second decoder, because that is a second CMA claim. The earlier browser attempt was not reliable.</li>
+          <li>1080p is the product&#39;s output, not a measurement of this app.</li>
           <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
         </ul>
         <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>

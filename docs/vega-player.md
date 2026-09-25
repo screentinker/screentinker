@@ -12,14 +12,14 @@ Fire TV Stick 4K Select (2025, model `AFTCA002`) and Fire TV Stick HD (2026, mod
 | Schedules, triggers, proof-of-play, pairing | yes | yes | yes |
 | Dashboard volume and mute | yes | yes | yes |
 | Screenshot and 1 fps remote view | canvas | canvas (same limit: a hardware video plane may not be readable) | view capture, full screen only with accessibility or projection |
-| Offline cache | service worker, when it actually controls the page | same, and only claimed when it does. Not yet seen on a stick | ContentCache on disk |
-| Transitions | shader wipes | **hard cut.** These sticks have 1 GB of RAM; a 4K frame grab plus a second decode is how the browser attempt fell over | native compositor |
-| Group-sync double buffer | warms the next clip | **does not.** One decoder at a time | warms the next clip |
+| Offline cache | service worker, when it actually controls the page | same. A worker was in control on an AFTCA002; offline playback worked | ContentCache on disk |
+| Transitions | shader wipes | shader wipes. On Vega the captured frame's long edge is capped at 960 and the bitmap is dropped after upload, because a full-frame wipe shares CMA with the decoder. An AFTCA002 ran the uncapped wipe and then the process died. The cap has not been re-measured | native compositor |
+| Group-sync double buffer | warms the next clip | **does not.** A second decoder is a second CMA claim. That pool is about 236 MB on an AFTCA002 | warms the next clip |
 | Boot into the app, stay there | no | installed app. Back does not quit. Vega does not offer Android lock-task, so it is not a kiosk | device-owner kiosk |
 | Reboot, screen power, shell, install a package, RTSP | no | **no.** There is no API, and the app does not pretend | yes, with the privileges each one needs |
 | Self-update | the server ships the page | the page updates when the server does. The `.vpkg` is installed by you | APK OTA |
 
-Android feature parity is not available on this OS. Content parity with the web player is, minus the two memory concessions above. Both concessions are in the page, gated on the Vega shell actually being present, so a browser that happens to open `?host=vega` is unchanged.
+Android feature parity is not available on this OS. Content parity with the web player is, minus the second decoder. That concession is in the page, gated on the Vega shell actually being present, so a browser that happens to open `?host=vega` is unchanged. The capture cap is gated the same way.
 
 ## Install
 
@@ -43,7 +43,7 @@ Stay on React Native 0.72 and Kepler 2 (`@amazon-devices/react-native-kepler` `~
 
 `@amazon-devices/*` resolves from the SDK's npm registry, not from the public one. If a version in `package.json` does not resolve, generate a hello-world with `vega project generate` and copy the versions that template pinned. The source does not depend on a patch level.
 
-Developer mode on the stick is under Settings, My Fire TV, Developer Options. The Vega VS Code extension lists the stick once `adb`-equivalent Vega device tools can see it. Test on a stick before trusting a virtual device: the virtual device has more RAM than an AFTCA002.
+Developer mode on the stick is under Settings, My Fire TV, Developer Options. The Vega VS Code extension lists the stick once `adb`-equivalent Vega device tools can see it. Test on a stick before trusting a virtual device: the virtual device has more CMA than an AFTCA002, and CMA is what ran out.
 
 ### Bake the server address in
 
@@ -60,8 +60,12 @@ The same file holds the pairing. `deviceId` and `deviceToken` are written there 
 
 There is no device-owner mode and no way for this app to set itself as the home launcher. After a reboot someone still has to launch it, unless Amazon later ships a signage launch category. Do not sell these sticks as unattended kiosks.
 
-## Not verified on hardware
+The shell asks LCM to treat the component as permanent (`LIFESPAN_POLICY.PERMANENT`, and `timeout-secs` in the manifest). On Vega that is the policy the idle handler logs as "Screensaver disabled by policy". It does not stop `power-service-core` from forcing the display off, and there is no privilege that does. W3C Screen Wake Lock is ignored here. A silent video loop would hold a display-keeping session and also a decoder; that is the CMA claim that crashed an AFTCA002, so the shell does not start one. While a playlist video is actually playing, the WebView already holds a `video-playback` session, which the resource manager does treat as display-keeping. Stills are the gap. Settings → Display & Sounds → Ambient Experience is the only control for those, and it has no Never.
 
-No 4K Select or HD (2026) was on the bench when this landed. The WebView props (`domStorageEnabled`, `mediaPlaybackRequiresUserAction=false`, the media services in `manifest.toml`) are the ones Amazon's WebView guide requires for video to play at all. The old "Vega is limited to 720p" note was a browser observation, not a measurement of this app, and it has not been re-measured. The 4K Select can output 4K; the HD (2026) outputs 1080p. Treat playback resolution as unknown until a stick confirms it.
+## What one stick did
 
-The certified-hardware page stays **not supported** until that run happens. Shipping the app and calling the sticks certified would be the failure that page exists to prevent.
+An AFTCA002 (Kepler 1.2, ScreenTinker 2.1.6) paired, reported 1920×1080, and played. Transitions ran and looked right. The process then died in-process (SIGTRAP, not an LCM kill). During playback CmaFree fell from about 236 MB to about 1 MB while MemFree stayed large: the decoder and the GPU surfaces share CMA, and a full-frame wipe uploads into that pool. The capture is now capped (long edge 960) and the bitmap is released after upload. A video wipe still warm-plays the incoming clip, but on Vega the outgoing decoder is paused once its frame is snapshotted, so that window is one decoder rather than two. Group sync still does not preload the next clip ahead of the boundary. The cap has not been run on a stick.
+
+1920×1080 may be the panel or the HDMI link. The 4K Select can output 4K. The HD (2026) has not been run; its product output is 1080p.
+
+The certified-hardware page stays **not supported**. One run that ended in a crash is not a certification, and this entry does not mean a unit is held as a supported sample.

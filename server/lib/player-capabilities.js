@@ -282,12 +282,18 @@ const BASELINE = {
    * running the same player a browser is, and it declares for itself; this list is only the
    * floor for a row whose capabilities column is still NULL.
    *
-   * Same floor as web, with two deliberate omissions, both because the sticks have 1 GB of RAM
-   * and neither has been confirmed on hardware:
-   *   - playback.transitions. The page hard-cuts on Vega (a wipe snapshots a full frame while
-   *     the next clip decodes). Claiming it here would tell the dashboard a wipe will play.
-   *   - offline.cache. The page claims it only when a service worker is actually in control.
-   *     Vega's WebView has not been shown to allow one, so the floor must not.
+   * Same floor as web. playback.transitions belongs here: an AFTCA002 (ScreenTinker 2.1.6,
+   * Kepler 1.2) ran the image wipe and it looked right. Withholding it hid a working control.
+   * The page still caps the captured frame on Vega. The binding constraint on that stick was
+   * CMA — about 236 MB of contiguous DMA, which fell to about 1 MB while MemFree stayed
+   * large — not "1 GB of RAM", and not a missing feature.
+   *
+   * offline.cache belongs here too. The page claims it only when a service worker is actually
+   * in control, and on that run one was. Offline playback worked. The earlier "WebView has
+   * not been shown to allow a worker" note was wrong.
+   *
+   * Group sync still does not warm a second decoder. That is a second CMA claim, and there
+   * is no capability name for it; the suppression lives in the page.
    *
    * NOT system.reboot, display.power, system.kiosk, system.self_update, playback.rtsp. The
    * shell announces an empty capability list on purpose. Those are Android powers, and a
@@ -295,7 +301,7 @@ const BASELINE = {
    */
   vega: [
     'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
-    'playback.zones', 'playback.pip',
+    'playback.zones', 'playback.transitions', 'playback.pip',
     'playback.bundle',
     'playback.slide_audio',
     'audio.mute',
@@ -303,7 +309,7 @@ const BASELINE = {
     'remote.screenshot', 'remote.stream', 'remote.input',
     'system.restart_player',
     'audio.volume',
-    'sync.clock',
+    'sync.clock', 'offline.cache',
   ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
@@ -347,7 +353,7 @@ function platformFamily(device) {
   if (platform.includes('tizen')) return 'tizen';
   // Before the Web/ Android test. A Vega stick's android_version is "Web/...", because the
   // page that registers is the web player. Without this it would be classified as a browser
-  // and offered shader transitions the shell has turned off.
+  // and would miss the CMA capture cap the shell turns on.
   if (platform.includes('vega')) return 'vega';
   // Second, independent signal for a Tizen TV: the .wgt player sends client_type 'wgt' (see
   // tizen/js/app.js). `platform` is the primary key, but it lives in a column that a register from

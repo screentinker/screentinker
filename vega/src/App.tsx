@@ -31,6 +31,7 @@ import {
   View,
 } from 'react-native';
 import { WebView } from '@amazon-devices/webview';
+import { LIFESPAN_POLICY, useSetLifespanCallback, useSetTimeoutCallback } from '@amazon-devices/react-native-kepler';
 import { APP_VERSION, modelLabel, readIdentity, VegaIdentity } from './deviceInfo';
 import { readPairing, readServerUrl, writePairing, writeServerUrl, clearPairing, VegaPairing } from './storage';
 
@@ -58,6 +59,23 @@ export const App = () => {
   // The pairing the page should adopt if its own localStorage was cleared. Read before the
   // WebView mounts (booting stays up until then), so the first host:ready already carries it.
   const pairingRef = useRef<VegaPairing | null>(null);
+
+  // LCM suppresses the screensaver for a PERMANENT component. The idle handler logs
+  // "Screensaver disabled by policy". This is not a wake lock: power-service-core can
+  // still force the panel off, and Amazon ships no API for that. A silent looping video
+  // would also hold the panel, and it would take a decoder — the CMA claim that killed
+  // the last run — so we do not. A video that is actually playing already holds a
+  // video-playback session, which the resource manager treats as display-keeping.
+  const setLifespan = useSetLifespanCallback();
+  const setInactivityTimeout = useSetTimeoutCallback();
+  useEffect(() => {
+    try {
+      setLifespan(LIFESPAN_POLICY.PERMANENT);
+      // Seconds. A year, so inactivity does not background the sign. The stick's Ambient
+      // timeout is a separate setting and this call does not raise it.
+      setInactivityTimeout(60 * 60 * 24 * 365);
+    } catch (e) { /* manifest timeout-secs is the same request if the runtime refuses */ }
+  }, [setLifespan, setInactivityTimeout]);
 
   useEffect(() => {
     let cancelled = false;

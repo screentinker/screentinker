@@ -63,7 +63,7 @@
 
     <h2>What the Vega player is</h2>
     <p>An installed app, built from <code>vega/</code> in the ScreenTinker source, that opens your server's <code>/player</code> page inside Vega's WebView. Playlists, zones, widgets, YouTube, schedules and the volume controls are the web player's. They are not a port of the Android app.</p>
-    <p>It does not reboot the stick, it cannot lock itself as the home screen, and it does not play RTSP. Transitions are a hard cut, and a synced group does not pre-buffer the next clip. Both of those are the 1 GB of RAM, not a missing feature of the page. Build and install steps are in <code>docs/vega-player.md</code> in the repository. There is no downloadable package on this site yet, because no stick has been run.</p>
+    <p>It does not reboot the stick, it cannot lock itself as the home screen, and it does not play RTSP. Transitions run. On Vega the captured frame is downscaled, because the binding limit is CMA (the decoder's DMA pool, about 236 MB on a 4K Select), not the 1 GB of RAM. A synced group does not pre-buffer the next clip: a second decoder is another CMA claim. Build and install steps are in <code>docs/vega-player.md</code> in the repository. One 4K Select has been run: it played, transitions looked right, then the process died. It is not certified, and the capture cap has not been re-measured on a stick.</p>
 
     <h2>Do not buy these for a sign</h2>
     <p>They are listed under <a href="/certified-hardware.html#fire-tv-stick-4k-select">not supported</a> on purpose. A player existing in the source tree is not a test on the hardware. Use a Fire OS stick, an Android TV box, or a <a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi</a> until that page changes.</p>

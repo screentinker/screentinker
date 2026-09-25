@@ -13,9 +13,14 @@ mint a new display: the shell keeps the pairing in `/data` and the page adopts i
 or `?reset=` clears that copy.
 
 It does not claim Android's powers, because the OS does not have them: no device-owner kiosk, no
-reboot, no RTSP, no package install, no self-update of the `.vpkg`. On these 1 GB sticks the page
-hard-cuts transitions and does not warm a second video decoder. The certified-hardware entries
-stay **not supported** until a stick is actually run. See [`docs/vega-player.md`](docs/vega-player.md).
+reboot, no display-power API, no RTSP, no package install, no self-update of the `.vpkg`. The shell
+does ask LCM for a permanent lifespan, which is the policy Vega logs as the screensaver being
+disabled. That is not a wake lock: the panel can still be forced off. Group sync does not warm a
+second video decoder: on an AFTCA002 that is a CMA claim (about 236 MB of decoder DMA), not a
+RAM claim. Transitions do run. The captured frame is downscaled on Vega, because a full-frame
+wipe on that stick drove CmaFree to about 1 MB and the process then died. That cap has not been
+re-measured on hardware. The certified-hardware entries stay **not supported**. See
+[`docs/vega-player.md`](docs/vega-player.md).
 
 ### Fixed
 

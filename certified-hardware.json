@@ -56,7 +56,7 @@
     "Order within a status group is the order of this array. Groups are ordered by the list above."
   ],
 
-  "last_updated": "2026-09-14",
+  "last_updated": "2026-09-24",
 
   "devices": [
     {
@@ -259,20 +259,22 @@
       "model_numbers": ["AFTCA002"],
       "category": "streaming-player",
       "os": "Vega OS",
-      "player": "Vega player (vpkg), not validated on device",
+      "player": "Vega player (vpkg). Played on one AFTCA002, then the process died",
       "status": "not-supported",
-      "max_resolution": null,
-      "validated_on": null,
+      "max_resolution": "1920x1080",
+      "validated_on": "2026-09-24",
       "validated_by": "ScreenTinker",
-      "player_version": null,
+      "player_version": "2.1.6",
       "min_version": null,
       "provisioning_url": "/guides/digital-signage-vega.html",
       "buy_url": null,
       "notes": [
         "Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.",
-        "Not validated on a stick. Do not treat this as supported, and do not buy it for a sign until this entry changes.",
-        "1 GB of RAM. The Vega player hard-cuts transitions and does not warm a second video decoder. The earlier browser attempt was not reliable.",
-        "The previous 720p limit was measured in the browser, not in this app, and has not been re-measured. The stick can output 4K. Signage playback resolution is unknown.",
+        "Played on one AFTCA002 (ScreenTinker 2.1.6, Kepler 1.2): paired, reported 1920x1080, transitions ran, then the process died in-process. Not certified. Do not buy it for a sign until this entry changes.",
+        "The binding limit is CMA, the decoder's contiguous DMA pool (about 236 MB on that stick), not the 1 GB of RAM. MemFree stayed large while CmaFree fell to about 1 MB. Transitions stay. The captured frame is downscaled. That bound has not been re-measured on a stick.",
+        "Group sync does not warm a second video decoder. A second decoder is another CMA claim.",
+        "1920x1080 is what that AFTCA002 reported. The stick can output 4K, so this may be the panel or the HDMI link, not a device ceiling.",
+        "Offline cache worked on that run: a service worker was in control, images cached, and video decoded offline.",
         "No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control."
       ],
       "eol": null
@@ -284,7 +286,7 @@
       "model_numbers": ["AFTCL001"],
       "category": "streaming-player",
       "os": "Vega OS",
-      "player": "Vega player (vpkg), not validated on device",
+      "player": "Vega player (vpkg), not run on this model",
       "status": "not-supported",
       "max_resolution": null,
       "validated_on": null,
@@ -295,9 +297,9 @@
       "buy_url": null,
       "notes": [
         "Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.",
-        "Not validated on a stick. Do not treat this as supported, and do not buy it for a sign until this entry changes.",
-        "1 GB of RAM, 1080p output. The Vega player hard-cuts transitions and does not warm a second video decoder. The earlier browser attempt was not reliable.",
-        "The previous 720p limit was measured in the browser, not in this app, and has not been re-measured.",
+        "Not run on an AFTCL001. The 4K Select run is the only evidence, and that stick is not certified either. Do not buy it for a sign until this entry changes.",
+        "Same player as the 4K Select. Transitions are declared. Group sync does not warm a second decoder, because that is a second CMA claim. The earlier browser attempt was not reliable.",
+        "1080p is the product's output, not a measurement of this app.",
         "No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control."
       ],
       "eol": null

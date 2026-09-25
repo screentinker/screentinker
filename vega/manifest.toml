@@ -22,6 +22,12 @@ id = "com.screentinker.vega.main"
 runtime-module = "/com.amazon.kepler.keplerscript.runtime.loader_2@IKeplerScript_2_0"
 launch-type = "singleton"
 categories = ["com.amazon.category.main"]
+# permanent is what LCM's idle handler treats as "screensaver disabled by policy".
+# timeout-secs is how long a foreground component with no input stays up before LCM
+# backgrounds it. Neither is a panel wake lock: power-service-core can still force
+# the display off, and there is no privilege that stops that.
+lifespan = "permanent"
+timeout-secs = 86400
 
 [processes]
 

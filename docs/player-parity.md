@@ -9,11 +9,15 @@ registration; a player that declares nothing falls back to the per-platform base
 
 **Vega OS** (Fire TV Stick 4K Select, Fire TV Stick HD 2026) is not a fifth column in the tables
 below. The installed app loads this same web player, so the Web column is what it can render,
-with two exceptions enforced in the page when the shell is actually present: shader transitions
-hard-cut, and group sync does not warm a second decoder. It has none of the Android-only rows.
+with one exception enforced in the page when the shell is actually present: group sync does not
+warm a second decoder. That is a second CMA claim (about 236 MB on an AFTCA002), not a RAM
+claim. Shader transitions run. On Vega the captured frame is downscaled (long edge 960) and the
+bitmap is released after upload; the full-frame wipe is what ran on the stick, and the process
+died afterwards. That cap has not been re-measured. It has none of the Android-only rows.
 The shell's own capability list is empty — it does not reboot, blank the panel, or install its
 own package. Detail and the build steps are in [`vega-player.md`](vega-player.md). The sticks
-stay not-supported on the certified-hardware page until one of them has been run.
+stay not-supported on the certified-hardware page: one run that ended in a crash is not a
+certification.
 
 **Legend** — ✅ verified in source · ⚠️ partial/conditional (reason given) · ❌ not supported (reason
 given) · 💀 **dead**: the capability is declared or baselined but the control cannot work · ❓
