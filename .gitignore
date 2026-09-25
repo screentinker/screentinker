@@ -69,6 +69,14 @@ audit/
 sbom/
 *.cdx.json
 
+# Vega OS player. Built only on a machine with the Vega SDK; the .vpkg is not a release
+# artifact until a stick has actually run it.
+vega/build/
+vega/dist/
+vega/buildinfo.json
+vega/assets/config.json
+*.vpkg
+
 # Build artefacts: the player packages are built by scripts/, never committed.
 brightsign/*.zip
 # The payload manifest is generated from the zip it describes — tracking it would let the two drift,

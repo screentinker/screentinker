@@ -1,0 +1,103 @@
+# ScreenTinker player for Amazon Vega OS.
+# Fire TV Stick 4K Select (AFTCA002) and Fire TV Stick HD (2026, AFTCL001).
+# schema-version is the manifest format, not the app version. Do not bump it in release scripts.
+schema-version = 1
+
+[package]
+title = "ScreenTinker"
+version = "2.1.6"
+id = "com.screentinker.vega"
+icon = "@image/app_icon.png"
+
+# SDK 0.24 refuses to build without this. 1.2 is the only minted OS version, and
+# it is the OS on these sticks. min and target stay equal until a later OS exists.
+[os.version]
+min = "1.2"
+target = "1.2"
+
+[components]
+
+[[components.interactive]]
+id = "com.screentinker.vega.main"
+runtime-module = "/com.amazon.kepler.keplerscript.runtime.loader_2@IKeplerScript_2_0"
+launch-type = "singleton"
+categories = ["com.amazon.category.main"]
+# permanent is what LCM's idle handler treats as "screensaver disabled by policy".
+# timeout-secs is how long a foreground component with no input stays up before LCM
+# backgrounds it. Neither is a panel wake lock: power-service-core can still force
+# the display off, and there is no privilege that stops that.
+lifespan = "permanent"
+timeout-secs = 86400
+
+[processes]
+
+[[processes.group]]
+component-ids = ["com.screentinker.vega.main"]
+
+# wants, not needs: a stick missing one of these must still install. Video, audio and the
+# on-screen keyboard are required for a useful player and are present on every Fire TV Stick
+# that runs Vega; declaring them here is what actually turns them on inside the WebView.
+[wants]
+
+[[wants.service]]
+id = "com.amazon.inputmethod.service"
+
+[[wants.service]]
+id = "com.amazon.inputd.service"
+
+[[wants.service]]
+id = "com.amazon.webview.renderer_service"
+
+[[wants.service]]
+id = "com.amazon.media.server"
+
+[[wants.service]]
+id = "com.amazon.mediametrics.service"
+
+[[wants.service]]
+id = "com.amazon.mediabuffer.service"
+
+[[wants.service]]
+id = "com.amazon.mediatransform.service"
+
+[[wants.service]]
+id = "com.amazon.media.playersession.service"
+
+[[wants.service]]
+id = "com.amazon.audio.stream"
+
+[[wants.service]]
+id = "com.amazon.audio.control"
+
+[[wants.service]]
+id = "com.amazon.audio.system"
+
+[[wants.service]]
+id = "com.amazon.network.service"
+
+[[wants.service]]
+id = "com.amazon.kepler.ucc.publisher"
+
+# Group-IPC, required by the media services above. Both sides, per the WebView setup guide.
+[[wants.service]]
+id = "com.amazon.gipc.uuid.*"
+
+# Optional. YouTube and some HLS variants use EME. Absence must not block install, so these
+# stay wants. Widevine on Vega is provided by the system, not by this package.
+[[wants.service]]
+id = "com.amazon.drm.key"
+
+[[wants.service]]
+id = "com.amazon.drm.crypto"
+
+[[wants.privilege]]
+id = "com.amazon.privilege.security.file-sharing"
+
+[offers]
+
+[[offers.service]]
+id = "com.amazon.gipc.uuid.*"
+
+[needs]
+[[needs.module]]
+id = "/com.amazon.vega.os@IVega_1_2"

@@ -275,6 +275,42 @@ const BASELINE = {
     // BrightSign row essentially always HAS one and never reaches this baseline. (audio.volume moved
     // INTO the list above in 1.9.31 — the payload it was waiting on now lands.)
   ],
+  /*
+   * Vega OS — Fire TV Stick 4K Select (AFTCA002) and Fire TV Stick HD 2026 (AFTCL001).
+   *
+   * The installed app (vega/) loads THIS page in a WebView. A stick that has registered is
+   * running the same player a browser is, and it declares for itself; this list is only the
+   * floor for a row whose capabilities column is still NULL.
+   *
+   * Same floor as web. playback.transitions belongs here: an AFTCA002 (ScreenTinker 2.1.6,
+   * Kepler 1.2) ran the image wipe and it looked right. Withholding it hid a working control.
+   * The page still caps the captured frame on Vega. The binding constraint on that stick was
+   * CMA — about 236 MB of contiguous DMA, which fell to about 1 MB while MemFree stayed
+   * large — not "1 GB of RAM", and not a missing feature.
+   *
+   * offline.cache belongs here too. The page claims it only when a service worker is actually
+   * in control, and on that run one was. Offline playback worked. The earlier "WebView has
+   * not been shown to allow a worker" note was wrong.
+   *
+   * Group sync still does not warm a second decoder. That is a second CMA claim, and there
+   * is no capability name for it; the suppression lives in the page.
+   *
+   * NOT system.reboot, display.power, system.kiosk, system.self_update, playback.rtsp. The
+   * shell announces an empty capability list on purpose. Those are Android powers, and a
+   * baseline that grants them is a button that cannot work.
+   */
+  vega: [
+    'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
+    'playback.zones', 'playback.transitions', 'playback.pip',
+    'playback.bundle',
+    'playback.slide_audio',
+    'audio.mute',
+    'display.rotation',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.restart_player',
+    'audio.volume',
+    'sync.clock', 'offline.cache',
+  ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
   web: [
@@ -315,6 +351,10 @@ function platformFamily(device) {
   const clientType = (device && device.client_type) || '';
   if (platform.includes('brightsign')) return 'brightsign';
   if (platform.includes('tizen')) return 'tizen';
+  // Before the Web/ Android test. A Vega stick's android_version is "Web/...", because the
+  // page that registers is the web player. Without this it would be classified as a browser
+  // and would miss the CMA capture cap the shell turns on.
+  if (platform.includes('vega')) return 'vega';
   // Second, independent signal for a Tizen TV: the .wgt player sends client_type 'wgt' (see
   // tizen/js/app.js). `platform` is the primary key, but it lives in a column that a register from
   // a client not sending it used to overwrite — and misreading a Tizen panel as a browser tab

@@ -159,7 +159,10 @@ OTA self-update, remote power and touch injection, and a content cache that surv
 **Tizen `.wgt`** gives you an installed app that launches itself on the TV. Tizen does not
 self-update — new versions are installed the same way the first one was. The **webOS `.ipk`**
 is the same idea for LG signage panels, installed from USB or an SI server with no vendor
-signature, and it does self-update; see [docs/webos-player.md](docs/webos-player.md).
+signature, and it does self-update; see [docs/webos-player.md](docs/webos-player.md). The
+**Vega `.vpkg`** is the player for Fire TV Stick 4K Select and Fire TV Stick HD (2026), which are
+not Android — the APK will not install. It runs the web player inside Vega's WebView. It is not
+a kiosk and it has not been certified on hardware; see [docs/vega-player.md](docs/vega-player.md).
 
 > **BrightSign** runs the unmodified browser player (verified on Series 5 / Chromium 120) and needs
 > no separate build. One caveat worth knowing before you rely on it: BrightSign's HTML widget does
@@ -1130,6 +1133,7 @@ frontend/         Static SPA dashboard
   css/            Stylesheets
   legal/          Terms, privacy, licenses
 android/          Android TV/tablet player app (Kotlin, ExoPlayer)
+vega/             Vega OS player for Fire TV Stick 4K Select and HD (2026)
 scripts/          Device setup scripts + admin recovery
 ```
 

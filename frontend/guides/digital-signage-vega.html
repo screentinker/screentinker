@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScreenTinker on Vega OS Fire TV Sticks | ScreenTinker</title>
+  <meta name="description" content="Fire TV Stick 4K Select and Fire TV Stick HD (2026) run Vega OS, not Android. The ScreenTinker APK does not install. Here is the Vega player, and why these sticks are not certified.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-vega.html">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-vega.html">
+  <meta property="og:title" content="ScreenTinker on Vega OS Fire TV Sticks">
+  <meta property="og:description" content="Fire TV Stick 4K Select and Fire TV Stick HD (2026) are not Android. The APK does not install.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ScreenTinker on Vega OS Fire TV Sticks">
+  <meta name="twitter:description" content="Fire TV Stick 4K Select and Fire TV Stick HD (2026) are not Android. The APK does not install.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#features">Guides</a>
+      <span>/</span>
+      <span>Vega OS</span>
+    </nav>
+
+    <h1>Fire TV Stick 4K Select and Fire TV Stick HD (2026)</h1>
+    <p class="lead">These two sticks run Amazon Vega OS. They are not Fire OS, the ScreenTinker APK does not install, and they are not certified hardware.</p>
+
+    <h2>Which sticks</h2>
+    <ul>
+      <li><strong>Fire TV Stick 4K Select (2025)</strong> — model <code>AFTCA002</code>. Can output 4K. 1 GB of RAM.</li>
+      <li><strong>Fire TV Stick HD (2026)</strong> — model <code>AFTCL001</code>. 1080p output. 1 GB of RAM.</li>
+    </ul>
+    <p>Every other Fire TV Stick still in the shops (4K, 4K Max, Cube, the 2024 HD stick) runs Fire OS and uses the <a href="/guides/digital-signage-android-tv.html">Android APK</a>. If Downloader says the package is invalid, you have one of the two above.</p>
+
+    <h2>What the Vega player is</h2>
+    <p>An installed app, built from <code>vega/</code> in the ScreenTinker source, that opens your server's <code>/player</code> page inside Vega's WebView. Playlists, zones, widgets, YouTube, schedules and the volume controls are the web player's. They are not a port of the Android app.</p>
+    <p>It does not reboot the stick, it cannot lock itself as the home screen, and it does not play RTSP. Transitions run. On Vega the captured frame is downscaled, because the binding limit is CMA (the decoder's DMA pool, about 236 MB on a 4K Select), not the 1 GB of RAM. A synced group does not pre-buffer the next clip: a second decoder is another CMA claim. Build and install steps are in <code>docs/vega-player.md</code> in the repository. One 4K Select has been run: it played, transitions looked right, then the process died. It is not certified, and the capture cap has not been re-measured on a stick.</p>
+
+    <h2>Do not buy these for a sign</h2>
+    <p>They are listed under <a href="/certified-hardware.html#fire-tv-stick-4k-select">not supported</a> on purpose. A player existing in the source tree is not a test on the hardware. Use a Fire OS stick, an Android TV box, or a <a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi</a> until that page changes.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-android-tv.html">Android TV and Fire OS sticks</a></li>
+        <li><a href="/certified-hardware.html">Certified hardware</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+</body>
+</html>

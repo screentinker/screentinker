@@ -7,6 +7,18 @@ it puts a control on the dashboard that cannot work.
 Capability names come from `server/lib/player-capabilities.js`. Players declare their own set at
 registration; a player that declares nothing falls back to the per-platform baseline in that file.
 
+**Vega OS** (Fire TV Stick 4K Select, Fire TV Stick HD 2026) is not a fifth column in the tables
+below. The installed app loads this same web player, so the Web column is what it can render,
+with one exception enforced in the page when the shell is actually present: group sync does not
+warm a second decoder. That is a second CMA claim (about 236 MB on an AFTCA002), not a RAM
+claim. Image→image shader transitions run, with the captured frame downscaled (long edge 960).
+A transition that has to draw a `<video>` hard-cuts: that `drawImage` SIGTRAPs in the Vega
+compositor, and it has done so with CMA still free. It has none of the Android-only rows.
+The shell's own capability list is empty — it does not reboot, blank the panel, or install its
+own package. Detail and the build steps are in [`vega-player.md`](vega-player.md). The sticks
+stay not-supported on the certified-hardware page: three crashes on one stick, and a hard-cut that
+has not been re-run there, is not a certification.
+
 **Legend** — ✅ verified in source · ⚠️ partial/conditional (reason given) · ❌ not supported (reason
 given) · 💀 **dead**: the capability is declared or baselined but the control cannot work · ❓
 **unverifiable from source** — needs hardware, and is marked as such rather than asserted.

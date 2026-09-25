@@ -56,7 +56,7 @@
     "Order within a status group is the order of this array. Groups are ordered by the list above."
   ],
 
-  "last_updated": "2026-09-14",
+  "last_updated": "2026-09-24",
 
   "devices": [
     {
@@ -256,23 +256,26 @@
       "id": "fire-tv-stick-4k-select",
       "name": "Amazon Fire TV Stick 4K Select",
       "manufacturer": "Amazon",
-      "model_numbers": null,
+      "model_numbers": ["AFTCA002"],
       "category": "streaming-player",
       "os": "Vega OS",
-      "player": null,
+      "player": "Vega player (vpkg). Played on one AFTCA002, then the process died",
       "status": "not-supported",
-      "max_resolution": "1280x720",
-      "validated_on": null,
+      "max_resolution": "1920x1080",
+      "validated_on": "2026-09-24",
       "validated_by": "ScreenTinker",
-      "player_version": null,
+      "player_version": "2.1.6",
       "min_version": null,
-      "provisioning_url": null,
+      "provisioning_url": "/guides/digital-signage-vega.html",
       "buy_url": null,
       "notes": [
-        "Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.",
-        "Memory on the device is not sufficient for reliable signage playback.",
-        "Do not buy this for ScreenTinker. It is sold alongside the Fire TV sticks that do work and is easy to pick up by mistake.",
-        "May be revisited."
+        "Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.",
+        "Played on one AFTCA002 (ScreenTinker 2.1.6, Kepler 1.2): paired, reported 1920x1080, transitions ran, then the process died in-process. Not certified. Do not buy it for a sign until this entry changes.",
+        "Crashes on this stick were a compositor abort, not memory: three died on the same libkepler_slatium stack at a video/image boundary, one with 72 MB of CMA free and no memory stall. Drawing a <video> frame for a transition is what trips it, so video boundaries hard-cut and image transitions stay. CMA pressure is real but survivable — measured falling below 5 MB in 21 of 60 samples, bottoming at 668 kB, with no crash. A 13-minute run across a 44-second image/video cycle was clean.",
+        "Group sync does not warm a second video decoder. A second decoder is another CMA claim.",
+        "1920x1080 is what that AFTCA002 reported. The stick can output 4K, so this may be the panel or the HDMI link, not a device ceiling.",
+        "Offline cache worked on that run: a service worker was in control, images cached, and video decoded offline.",
+        "No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control."
       ],
       "eol": null
     },
@@ -280,23 +283,24 @@
       "id": "fire-tv-stick-hd-2026",
       "name": "Amazon Fire TV Stick HD (2026)",
       "manufacturer": "Amazon",
-      "model_numbers": null,
+      "model_numbers": ["AFTCL001"],
       "category": "streaming-player",
       "os": "Vega OS",
-      "player": null,
+      "player": "Vega player (vpkg), not run on this model",
       "status": "not-supported",
-      "max_resolution": "1280x720",
+      "max_resolution": null,
       "validated_on": null,
       "validated_by": "ScreenTinker",
       "player_version": null,
       "min_version": null,
-      "provisioning_url": null,
+      "provisioning_url": "/guides/digital-signage-vega.html",
       "buy_url": null,
       "notes": [
-        "Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.",
-        "Memory on the device is not sufficient for reliable signage playback.",
-        "Do not buy this for ScreenTinker. It is sold alongside the Fire TV sticks that do work and is easy to pick up by mistake.",
-        "May be revisited."
+        "Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.",
+        "Not run on an AFTCL001. The 4K Select run is the only evidence, and that stick is not certified either. Do not buy it for a sign until this entry changes.",
+        "Same player as the 4K Select. Transitions are declared. Group sync does not warm a second decoder, because that is a second CMA claim. The earlier browser attempt was not reliable.",
+        "1080p is the product's output, not a measurement of this app.",
+        "No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control."
       ],
       "eol": null
     }

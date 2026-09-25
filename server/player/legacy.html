@@ -547,17 +547,41 @@ document.addEventListener("DOMContentLoaded", () => {
 const BS = typeof window !== "undefined" && window.ScreenTinkerBS || null;
 const ON_BRIGHTSIGN = !!(BS && BS.isBrightSign());
 const IS_LEGACY_PLAYER = /^\/player\/legacy(?:\/|$)/.test(window.location.pathname);
+function onVega() {
+  try {
+    if (new URLSearchParams(window.location.search).get("host") !== "vega") return false;
+    const b = window.ReactNativeWebView;
+    return !!(b && typeof b.postMessage === "function");
+  } catch (e) {
+    return false;
+  }
+}
 const HOST = (() => {
   let platform = null;
   try {
     platform = new URLSearchParams(window.location.search).get("host");
   } catch (e) {
   }
-  if (!platform || window.parent === window) return null;
-  const h = { platform, ready: false, caps: [], info: {} };
-  h.send = (msg) => {
+  const vegaBridge = () => {
     try {
-      window.parent.postMessage(Object.assign({ source: "screentinker-player" }, msg), "*");
+      const b = window.ReactNativeWebView;
+      return b && typeof b.postMessage === "function" ? b : null;
+    } catch (e) {
+      return null;
+    }
+  };
+  const topLevelVega = platform === "vega" && window.parent === window;
+  if (!platform || window.parent === window && !topLevelVega) return null;
+  const h = { platform, ready: false, caps: [], info: {}, topLevel: topLevelVega };
+  h.send = (msg) => {
+    const body = Object.assign({ source: "screentinker-player" }, msg);
+    try {
+      if (h.topLevel) {
+        const b = vegaBridge();
+        if (b) b.postMessage(JSON.stringify(body));
+        return;
+      }
+      window.parent.postMessage(body, "*");
     } catch (e) {
     }
   };
@@ -567,20 +591,58 @@ const HOST = (() => {
     h.send({ type: "host:command", action, payload: payload || null });
     return true;
   };
-  window.addEventListener("message", (ev) => {
-    if (ev.source !== window.parent) return;
-    const d = ev.data;
+  const onHostMessage = (d) => {
     if (!d || d.source !== "screentinker-host") return;
     if (d.type === "host:ready") {
+      const wasReady = h.ready;
       h.ready = true;
       h.caps = Array.isArray(d.capabilities) ? d.capabilities.filter((c) => typeof c === "string") : [];
       h.info = d.info && typeof d.info === "object" ? d.info : {};
       console.log("[host] ".concat(h.platform, " ready: ").concat(h.caps.join(", ") || "no capabilities"));
+      if (!wasReady) setTimeout(() => {
+        let resumed = false;
+        try {
+          resumed = typeof resumeAfterVegaHost === "function" && resumeAfterVegaHost();
+        } catch (e) {
+        }
+        try {
+          if (!resumed && socket && socket.connected) register();
+        } catch (e) {
+        }
+      }, 0);
     } else if (d.type === "host:result") {
       console.log("[host] ".concat(d.action, ": ").concat(d.ok ? "ok" : "failed: " + (d.error || "unknown")));
     }
+  };
+  window.addEventListener("message", (ev) => {
+    if (h.topLevel) {
+      if (ev.source && ev.source !== window) return;
+      let d = ev.data;
+      if (typeof d === "string") {
+        try {
+          d = JSON.parse(d);
+        } catch (e) {
+          return;
+        }
+      }
+      onHostMessage(d);
+      return;
+    }
+    if (ev.source !== window.parent) return;
+    onHostMessage(ev.data);
   });
-  h.send({ type: "host:hello" });
+  const hello = () => {
+    if (h.topLevel && !vegaBridge()) return false;
+    h.send({ type: "host:hello" });
+    return true;
+  };
+  if (!hello()) {
+    let n = 0;
+    const t = setInterval(() => {
+      n += 1;
+      if (hello() || n > 50) clearInterval(t);
+    }, 100);
+  }
   return h;
 })();
 const SCREEN_SUFFIX = (() => {
@@ -603,6 +665,13 @@ function restartPlayer(reason) {
     }
   } catch (e) {
   }
+  try {
+    if (onVega() && HOST && HOST.command("restart")) {
+      console.log("[vega] restart delegated to shell:", reason);
+      return;
+    }
+  } catch (e) {
+  }
   location.reload();
 }
 function urlEnrolKey() {
@@ -611,6 +680,78 @@ function urlEnrolKey() {
   } catch (e) {
     return null;
   }
+}
+let vegaIdentityCleared = false;
+let vegaConnectDeferred = false;
+let vegaConnectWait = null;
+let vegaConnectGaveUp = false;
+function vegaShellIdentity() {
+  try {
+    if (vegaIdentityCleared) return null;
+    if (typeof onVega !== "function" || !onVega()) return null;
+    if (typeof HOST === "undefined" || !HOST || !HOST.ready || !HOST.info) return null;
+    const deviceId = HOST.info.deviceId ? String(HOST.info.deviceId) : "";
+    const deviceToken = HOST.info.deviceToken ? String(HOST.info.deviceToken) : "";
+    if (!deviceId || !deviceToken) return null;
+    return { deviceId, deviceToken };
+  } catch (e) {
+    return null;
+  }
+}
+function adoptVegaIdentity() {
+  try {
+    if (typeof config === "undefined" || !config || config.deviceId) return false;
+    const known = vegaShellIdentity();
+    if (!known) return false;
+    config.deviceId = known.deviceId;
+    config.deviceToken = known.deviceToken;
+    config.paired = true;
+    console.log("[vega] adopted identity from shell");
+    try {
+      saveConfig(config);
+    } catch (e) {
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function clearVegaIdentity() {
+  vegaIdentityCleared = true;
+  try {
+    if (typeof onVega !== "function" || !onVega()) return;
+    if (typeof HOST === "undefined" || !HOST || typeof HOST.command !== "function") return;
+    HOST.command("clear-identity");
+  } catch (e) {
+  }
+}
+function resumeAfterVegaHost() {
+  if (vegaConnectWait) {
+    clearTimeout(vegaConnectWait);
+    vegaConnectWait = null;
+  }
+  const deferred = vegaConnectDeferred;
+  vegaConnectDeferred = false;
+  if (vegaIdentityCleared) {
+    try {
+      clearVegaIdentity();
+    } catch (e) {
+    }
+  } else if (adoptVegaIdentity()) {
+    try {
+      cancelAutoContinue();
+    } catch (e) {
+    }
+    if (config && config.serverUrl && !(socket && socket.connected)) {
+      connect(config.serverUrl);
+      return true;
+    }
+  }
+  if (deferred && config && config.serverUrl && !(socket && socket.connected)) {
+    connect(config.serverUrl);
+    return true;
+  }
+  return false;
 }
 function getConfig() {
   let cfg = {};
@@ -632,6 +773,14 @@ function getConfig() {
     }
   }
   if (!cfg.deviceId) {
+    const known = vegaShellIdentity();
+    if (known) {
+      cfg.deviceId = known.deviceId;
+      cfg.deviceToken = known.deviceToken;
+      cfg.paired = true;
+    }
+  }
+  if (!cfg.deviceId) {
     const k = urlEnrolKey();
     if (k) {
       cfg.enrolKey = k;
@@ -647,6 +796,12 @@ function saveConfig(cfg) {
       BS.setIdentity(cfg.deviceId, cfg.serverUrl || null, cfg.deviceToken || null);
     } catch (e) {
     }
+  }
+  try {
+    if (cfg && cfg.deviceId && cfg.deviceToken && typeof onVega === "function" && onVega() && typeof HOST !== "undefined" && HOST && typeof HOST.command === "function") {
+      HOST.command("set-identity", { deviceId: String(cfg.deviceId), deviceToken: String(cfg.deviceToken) });
+    }
+  } catch (e) {
   }
 }
 const PLAYLIST_CACHE_KEY = "rd_playlist_cache" + SCREEN_SUFFIX;
@@ -785,6 +940,10 @@ function loadLayoutCache() {
     localStorage.removeItem("st_group_sync");
     localStorage.setItem("st_reset_applied", token);
     console.warn("[reset] identity cleared by ?reset=" + token + " \u2014 this panel will pair as a new device");
+    try {
+      if (typeof clearVegaIdentity === "function") clearVegaIdentity();
+    } catch (e) {
+    }
   } catch (e) {
   }
 })();
@@ -1839,6 +1998,30 @@ function connect(serverUrl) {
     });
     return;
   }
+  try {
+    if (!vegaConnectGaveUp && !vegaIdentityCleared && typeof onVega === "function" && onVega() && typeof HOST !== "undefined" && HOST && !HOST.ready) {
+      vegaConnectDeferred = true;
+      if (!vegaConnectWait) {
+        vegaConnectWait = setTimeout(() => {
+          vegaConnectWait = null;
+          vegaConnectGaveUp = true;
+          vegaConnectDeferred = false;
+          connect(serverUrl);
+        }, 4e3);
+      }
+      return;
+    }
+  } catch (e) {
+  }
+  if (vegaConnectWait) {
+    clearTimeout(vegaConnectWait);
+    vegaConnectWait = null;
+  }
+  vegaConnectDeferred = false;
+  try {
+    adoptVegaIdentity();
+  } catch (e) {
+  }
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -2016,6 +2199,10 @@ function connect(serverUrl) {
     delete config.deviceId;
     delete config.deviceToken;
     config.paired = false;
+    try {
+      if (typeof clearVegaIdentity === "function") clearVegaIdentity();
+    } catch (e) {
+    }
     saveConfig(config);
     document.getElementById("setupScreen").style.display = "flex";
     document.getElementById("urlForm").style.display = "block";
@@ -3146,17 +3333,27 @@ function hostPackageVersion() {
   }
 }
 function buildDeviceInfo() {
-  return {
+  const info = {
     android_version: "Web/" + navigator.userAgent.split(" ").pop(),
     // On a BrightSign, app_version is the ON-DEVICE host package — the artifact OTA replaces
     // and the only one here that can be stale. PLAYER_VERSION describes this page, which the
     // server serves fresh every load, and it already travels as client_version. Reporting the
     // page version in both columns is what made an XT245 read as 1.1.0-web forever, with no
     // way to tell a freshly-provisioned host from a year-old one.
+    // Vega is the same shape: HOST.info.version is the installed .vpkg, not this page.
     app_version: hostPackageVersion() || PLAYER_VERSION,
     screen_width: screen.width,
     screen_height: screen.height
   };
+  try {
+    if (typeof HOST !== "undefined" && HOST && HOST.info) {
+      if (HOST.info.version) info.app_version = String(HOST.info.version);
+      if (HOST.info.model) info.hardware_model = String(HOST.info.model);
+      if (HOST.info.os) info.hardware_os_version = String(HOST.info.os);
+    }
+  } catch (e) {
+  }
+  return info;
 }
 let reportedAppVersion = null;
 let reportedEdid = false;
@@ -3215,7 +3412,7 @@ function register() {
   reportedAppVersion = hostPackageVersion();
   data.client_type = "player";
   data.client_version = PLAYER_VERSION;
-  data.platform = ON_BRIGHTSIGN ? "brightsign" : browserPlatform();
+  data.platform = ON_BRIGHTSIGN ? "brightsign" : onVega() ? "vega" : browserPlatform();
   if (ON_BRIGHTSIGN) {
     try {
       data.bs_model = BS.model() || null;
@@ -3506,6 +3703,11 @@ function groupScheduleTick() {
 function groupPreloadNext(idx) {
   const item = playlist[idx];
   if (!item) return;
+  if (onVega()) {
+    groupPreloadIdx = idx;
+    groupPreloadEl = null;
+    return;
+  }
   const isVid = item.mime_type && item.mime_type.indexOf("video/") === 0 && item.mime_type !== "video/youtube";
   if (!isVid) {
     groupPreloadIdx = idx;
@@ -4442,6 +4644,11 @@ function shaderSource(id) {
 }
 function videoCompositingAvailable(v) {
   if (_videoCompositingOk !== null) return _videoCompositingOk;
+  if (typeof onVega === "function" && onVega()) {
+    _videoCompositingOk = false;
+    console.log("[transition] video frames are not composited on Vega (the compositor traps) \u2014 transitions involving video will hard-cut; image-to-image still wipes");
+    return false;
+  }
   if (!v || v.readyState < 2 || !v.videoWidth) return true;
   _videoCompositingOk = videoFrameIsCapturable(v);
   if (!_videoCompositingOk) {
@@ -4479,15 +4686,32 @@ function stageGeometry() {
     transformOrigin: cs.transformOrigin
   };
 }
+function vegaWipeSize(w, h) {
+  if (!(typeof onVega === "function" && onVega())) return { w, h };
+  const longEdge = 960;
+  const long = Math.max(w, h);
+  if (!(long > longEdge) || !w || !h) return { w, h };
+  const s = longEdge / long;
+  return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
+}
+function releaseWipeBitmap(src) {
+  if (!src || src.nodeName !== "CANVAS") return;
+  try {
+    src.width = 1;
+    src.height = 1;
+  } catch (e) {
+  }
+}
 function fitToCanvas(src, w, h) {
+  const cap = vegaWipeSize(w, h);
   const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
+  c.width = cap.w;
+  c.height = cap.h;
   const cx = c.getContext("2d");
   const iw = src.naturalWidth || src.videoWidth || src.width;
   const ih = src.naturalHeight || src.videoHeight || src.height;
-  const s = Math.min(w / iw, h / ih);
-  cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
+  const s = Math.min(cap.w / iw, cap.h / ih);
+  cx.drawImage(src, (cap.w - iw * s) / 2, (cap.h - ih * s) / 2, iw * s, ih * s);
   return c;
 }
 let glTx = null, glTxAbort = null;
@@ -4537,6 +4761,7 @@ function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
     return;
   }
   const w = geo.w, h = geo.h;
+  const cap = vegaWipeSize(w, h);
   let raf = 0, startTs = 0, done = false, deadline = 0;
   const finish = () => {
     if (done) return;
@@ -4546,7 +4771,20 @@ function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
     if (glTxAbort === finish) glTxAbort = null;
     mount();
     canvas.style.display = "none";
+    if (typeof onVega === "function" && onVega()) {
+      try {
+        const blank = document.createElement("canvas");
+        blank.width = 1;
+        blank.height = 1;
+        renderer.setFrom(blank);
+        renderer.setTo(blank);
+        canvas.width = 1;
+        canvas.height = 1;
+      } catch (e) {
+      }
+    }
   };
+  let fromTex = null, toCanvas = null;
   try {
     canvas.style.left = geo.left;
     canvas.style.top = geo.top;
@@ -4554,15 +4792,21 @@ function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
     canvas.style.height = h + "px";
     canvas.style.transform = geo.transform;
     canvas.style.transformOrigin = geo.transformOrigin;
-    renderer.resize(w, h);
-    renderer.setFrom(fitToCanvas(fromFrame, w, h));
-    renderer.setTo(fitToCanvas(toTex, w, h));
+    renderer.resize(cap.w, cap.h);
+    fromTex = fitToCanvas(fromFrame, geo.w, geo.h);
+    toCanvas = fitToCanvas(toTex, geo.w, geo.h);
+    renderer.setFrom(fromTex);
+    renderer.setTo(toCanvas);
     renderer.setShader(src);
     renderer.render(0, effect.params);
   } catch (e) {
     canvas.style.display = "none";
     hardCut();
     return;
+  } finally {
+    releaseWipeBitmap(fromTex);
+    releaseWipeBitmap(toCanvas);
+    releaseWipeBitmap(fromFrame);
   }
   glTxAbort = finish;
   canvas.style.display = "block";
@@ -4847,7 +5091,7 @@ function renderVideoBuffered(item) {
       outgoing.onended = null;
       outgoing.onerror = null;
       outgoing.onloadeddata = null;
-      if (!wantsWipe) outgoing.pause();
+      if (!wantsWipe || typeof onVega === "function" && onVega()) outgoing.pause();
     } catch (e) {
     }
   }
@@ -5282,6 +5526,7 @@ function isMediaReadable(el) {
 }
 function videoFrameIsCapturable(video) {
   if (!video) return false;
+  if (typeof onVega === "function" && onVega()) return false;
   let pctx;
   try {
     const probe = document.createElement("canvas");
@@ -5815,6 +6060,10 @@ function unpairThisPlayer() {
         BS.clearIdentity();
       } catch (e) {
       }
+    }
+    try {
+      if (typeof clearVegaIdentity === "function") clearVegaIdentity();
+    } catch (e) {
     }
     config.enrolKey = null;
     const next = UnpairGate.urlWithoutEnrolKey(location.href);

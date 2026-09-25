@@ -417,35 +417,97 @@
 
     /*
      * ==================== Host bridge ====================
-     * A platform shell that embeds this page in an iframe and does, on its behalf, what a
-     * browser tab cannot: reboot the panel, cut the display, install its own update. The LG
-     * webOS Signage app (webos/) is the first; it opens /player?host=webos. The protocol is
-     * postMessage both ways. The shell announces what it can genuinely do, and ONLY those
-     * capabilities are declared to the server, so the dashboard never shows a button the panel
-     * cannot honour. Messages carry no secrets: a command is one the server already sent us.
+     * A platform shell that does, on this page's behalf, what a browser tab cannot. The LG
+     * webOS app (webos/) embeds the page in an iframe and opens /player?host=webos. The Vega
+     * app (vega/) is the top window — Vega's WebView has no parent to postMessage — and opens
+     * /player?host=vega, talking through window.ReactNativeWebView. The protocol is the same
+     * either way. The shell announces what it can genuinely do, and ONLY those capabilities
+     * are declared to the server, so the dashboard never shows a button the panel cannot
+     * honour. The bridge does carry one secret: the pairing. host:ready includes deviceId and
+     * deviceToken, and set-identity sends them back so /data can outlive a WebView data clear.
+     * Nothing else on this channel is a credential. That is why buildDeviceInfo copies
+     * HOST.info.version, model and os by name instead of spreading HOST.info — a spread would
+     * put deviceToken on device:register, and into the debug log that streams to the dashboard.
+     * Do not log a bridge message whole.
+     *
+     * `?host=vega` with no ReactNativeWebView is a desktop tab that copied the stick's URL.
+     * It must stay a browser. onVega() is the check; the query string alone is not.
      */
+    function onVega() {
+      try {
+        if (new URLSearchParams(window.location.search).get('host') !== 'vega') return false;
+        const b = window.ReactNativeWebView;
+        return !!(b && typeof b.postMessage === 'function');
+      } catch (e) { return false; }
+    }
     const HOST = (() => {
       let platform = null;
       try { platform = new URLSearchParams(window.location.search).get('host'); } catch (e) {}
-      if (!platform || window.parent === window) return null;
-      const h = { platform, ready: false, caps: [], info: {} };
-      h.send = (msg) => { try { window.parent.postMessage(Object.assign({ source: 'screentinker-player' }, msg), '*'); } catch (e) {} };
+      const vegaBridge = () => {
+        try {
+          const b = window.ReactNativeWebView;
+          return b && typeof b.postMessage === 'function' ? b : null;
+        } catch (e) { return null; }
+      };
+      const topLevelVega = platform === 'vega' && window.parent === window;
+      if (!platform || (window.parent === window && !topLevelVega)) return null;
+      const h = { platform, ready: false, caps: [], info: {}, topLevel: topLevelVega };
+      h.send = (msg) => {
+        const body = Object.assign({ source: 'screentinker-player' }, msg);
+        try {
+          if (h.topLevel) {
+            const b = vegaBridge();
+            if (b) b.postMessage(JSON.stringify(body));
+            return;
+          }
+          window.parent.postMessage(body, '*');
+        } catch (e) {}
+      };
       h.can = (cap) => h.ready && h.caps.includes(cap);
       h.command = (action, payload) => { if (!h.ready) return false; h.send({ type: 'host:command', action, payload: payload || null }); return true; };
-      window.addEventListener('message', (ev) => {
-        if (ev.source !== window.parent) return;             // only the shell that embeds us
-        const d = ev.data;
+      const onHostMessage = (d) => {
         if (!d || d.source !== 'screentinker-host') return;
         if (d.type === 'host:ready') {
+          const wasReady = h.ready;
           h.ready = true;
           h.caps = Array.isArray(d.capabilities) ? d.capabilities.filter((c) => typeof c === 'string') : [];
           h.info = (d.info && typeof d.info === 'object') ? d.info : {};
           console.log(`[host] ${h.platform} ready: ${h.caps.join(', ') || 'no capabilities'}`);
+          // connect() often registers before the shell replies. Say it again so the model and
+          // the shell version land. setTimeout, not a direct call: this listener can run from
+          // the bridge before `let socket` initialises, and typeof is not safe on a lexical
+          // binding still in the temporal dead zone.
+          // resumeAfterVegaHost adopts a pairing kept in /data before that re-register, and
+          // returns true when it opened the socket itself — registering again here would race it.
+          if (!wasReady) setTimeout(() => {
+            let resumed = false;
+            try { resumed = typeof resumeAfterVegaHost === 'function' && resumeAfterVegaHost(); } catch (e) {}
+            try { if (!resumed && socket && socket.connected) register(); } catch (e) {}
+          }, 0);
         } else if (d.type === 'host:result') {
           console.log(`[host] ${d.action}: ${d.ok ? 'ok' : 'failed: ' + (d.error || 'unknown')}`);
         }
+      };
+      window.addEventListener('message', (ev) => {
+        if (h.topLevel) {
+          if (ev.source && ev.source !== window) return;
+          let d = ev.data;
+          if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return; } }
+          onHostMessage(d);
+          return;
+        }
+        if (ev.source !== window.parent) return;
+        onHostMessage(ev.data);
       });
-      h.send({ type: 'host:hello' });
+      const hello = () => {
+        if (h.topLevel && !vegaBridge()) return false;
+        h.send({ type: 'host:hello' });
+        return true;
+      };
+      if (!hello()) {
+        let n = 0;
+        const t = setInterval(() => { n += 1; if (hello() || n > 50) clearInterval(t); }, 100);
+      }
       return h;
     })();
 
@@ -485,6 +547,16 @@
           return;
         }
       } catch (e) { /* a broken bridge must not strand the player */ }
+      // Vega: the shell reloads the WebView. command() is false until host:ready, so a stick
+      // whose shell has not spoken yet still falls through to location.reload() — a WebView,
+      // unlike BrightSign's widget, does come back from one. Once the shell has answered we do
+      // not also reload here; its reload tears this document down.
+      try {
+        if (onVega() && HOST && HOST.command('restart')) {
+          console.log('[vega] restart delegated to shell:', reason);
+          return;
+        }
+      } catch (e) { /* a missing shell must not strand the refresh */ }
       location.reload();
     }
 
@@ -502,6 +574,73 @@
      */
     function urlEnrolKey() {
       try { return new URLSearchParams(location.search).get('k') || null; } catch (e) { return null; }
+    }
+
+    // Vega pairing kept by the shell in /data. localStorage is the page's copy; this is the one
+    // that survives a WebView data clear. vegaIdentityCleared is this document only: a ?reset=,
+    // an unpair, or repair mode must not be undone by the shell's next host:ready.
+    let vegaIdentityCleared = false;
+    let vegaConnectDeferred = false;
+    let vegaConnectWait = null;
+    let vegaConnectGaveUp = false;
+
+    function vegaShellIdentity() {
+      try {
+        if (vegaIdentityCleared) return null;
+        // typeof onVega: a missing predicate means "not Vega", never a throw. The query string
+        // alone is not enough — onVega() also requires the WebView bridge.
+        if (typeof onVega !== 'function' || !onVega()) return null;
+        if (typeof HOST === 'undefined' || !HOST || !HOST.ready || !HOST.info) return null;
+        const deviceId = HOST.info.deviceId ? String(HOST.info.deviceId) : '';
+        const deviceToken = HOST.info.deviceToken ? String(HOST.info.deviceToken) : '';
+        if (!deviceId || !deviceToken) return null;
+        return { deviceId, deviceToken };
+      } catch (e) { return null; }
+    }
+
+    function adoptVegaIdentity() {
+      try {
+        if (typeof config === 'undefined' || !config || config.deviceId) return false;
+        const known = vegaShellIdentity();
+        if (!known) return false;
+        config.deviceId = known.deviceId;
+        config.deviceToken = known.deviceToken;
+        config.paired = true;
+        console.log('[vega] adopted identity from shell');
+        try { saveConfig(config); } catch (e) { /* local save must not strand the adopt */ }
+        return true;
+      } catch (e) { return false; }
+    }
+
+    function clearVegaIdentity() {
+      vegaIdentityCleared = true;
+      try {
+        if (typeof onVega !== 'function' || !onVega()) return;
+        if (typeof HOST === 'undefined' || !HOST || typeof HOST.command !== 'function') return;
+        HOST.command('clear-identity');
+      } catch (e) { /* best effort: the local wipe still happened */ }
+    }
+
+    // Called from host:ready, after the script has finished initialising. Returns true when it
+    // opened the socket, so the caller does not also register() on a socket that does not exist yet.
+    function resumeAfterVegaHost() {
+      if (vegaConnectWait) { clearTimeout(vegaConnectWait); vegaConnectWait = null; }
+      const deferred = vegaConnectDeferred;
+      vegaConnectDeferred = false;
+      if (vegaIdentityCleared) {
+        try { clearVegaIdentity(); } catch (e) {}
+      } else if (adoptVegaIdentity()) {
+        try { cancelAutoContinue(); } catch (e) {}
+        if (config && config.serverUrl && !(socket && socket.connected)) {
+          connect(config.serverUrl);
+          return true;
+        }
+      }
+      if (deferred && config && config.serverUrl && !(socket && socket.connected)) {
+        connect(config.serverUrl);
+        return true;
+      }
+      return false;
     }
 
     function getConfig() {
@@ -524,6 +663,17 @@
           }
         } catch (e) { /* registry unavailable — carry on unpaired */ }
       }
+      // Vega is the same shape, one layer up: the shell keeps the pair in /data and reports it
+      // on host:ready. The query string alone is not an identity. A reset or an unpair this
+      // session sets vegaIdentityCleared so we do not adopt back the row we just dropped.
+      if (!cfg.deviceId) {
+        const known = vegaShellIdentity();
+        if (known) {
+          cfg.deviceId = known.deviceId;
+          cfg.deviceToken = known.deviceToken;
+          cfg.paired = true;
+        }
+      }
       /*
        * ⚠️ STORED CREDENTIALS ALWAYS WIN. The key is only carried when this player has no deviceId
        * of its own, so a screen whose storage IS working is completely unaffected by a key sitting
@@ -543,6 +693,15 @@
       if (BS && cfg && cfg.deviceId) {
         try { BS.setIdentity(cfg.deviceId, cfg.serverUrl || null, cfg.deviceToken || null); } catch (e) { /* ignore */ }
       }
+      // Vega: same mirror, into /data via the shell. Both halves, or we would persist an id the
+      // server cannot authenticate. Clearing is explicit (unpair, repair, ?reset=) — a save that
+      // simply has no identity yet must not wipe a pairing the shell is about to hand us.
+      try {
+        if (cfg && cfg.deviceId && cfg.deviceToken && typeof onVega === 'function' && onVega()
+            && typeof HOST !== 'undefined' && HOST && typeof HOST.command === 'function') {
+          HOST.command('set-identity', { deviceId: String(cfg.deviceId), deviceToken: String(cfg.deviceToken) });
+        }
+      } catch (e) { /* a missing shell must not fail the local save */ }
     }
     const PLAYLIST_CACHE_KEY = 'rd_playlist_cache' + SCREEN_SUFFIX;
     function savePlaylistCache(items) {
@@ -744,6 +903,9 @@
         localStorage.removeItem('st_group_sync');
         localStorage.setItem('st_reset_applied', token);
         console.warn('[reset] identity cleared by ?reset=' + token + ' — this panel will pair as a new device');
+        // The shell's copy outlives localStorage. Without this, the next host:ready adopts the
+        // identity this reset just dropped. typeof: this IIFE is extracted and run on its own.
+        try { if (typeof clearVegaIdentity === 'function') clearVegaIdentity(); } catch (e) {}
       } catch (e) { /* storage unavailable: nothing to clear, and nothing to break */ }
     })();
 
@@ -2240,6 +2402,29 @@
         return;
       }
 
+      // Vega's /data identity arrives on host:ready, which is after this script. Opening the
+      // socket first would register with a fresh pairing code and leave a second dashboard row.
+      // The cap is the same idea as BrightSign's onReady: a shell that never speaks must still
+      // be able to pair. vegaConnectGaveUp stops the cap from deferring itself forever.
+      try {
+        if (!vegaConnectGaveUp && !vegaIdentityCleared && typeof onVega === 'function' && onVega()
+            && typeof HOST !== 'undefined' && HOST && !HOST.ready) {
+          vegaConnectDeferred = true;
+          if (!vegaConnectWait) {
+            vegaConnectWait = setTimeout(() => {
+              vegaConnectWait = null;
+              vegaConnectGaveUp = true;
+              vegaConnectDeferred = false;
+              connect(serverUrl);
+            }, 4000);
+          }
+          return;
+        }
+      } catch (e) { /* a missing predicate means "not Vega" — connect as a browser */ }
+      if (vegaConnectWait) { clearTimeout(vegaConnectWait); vegaConnectWait = null; }
+      vegaConnectDeferred = false;
+      try { adoptVegaIdentity(); } catch (e) {}
+
       if (socket) { socket.disconnect(); socket = null; }
 
       socket = io(serverUrl + '/device', {
@@ -2500,6 +2685,9 @@
         delete config.deviceId;
         delete config.deviceToken;
         config.paired = false;
+        // Before saveConfig. The shell would otherwise hand this identity back on the next load
+        // and repair mode would repair nothing.
+        try { if (typeof clearVegaIdentity === 'function') clearVegaIdentity(); } catch (e) {}
         saveConfig(config);
         document.getElementById('setupScreen').style.display = 'flex';
         document.getElementById('urlForm').style.display = 'block';   // still editable
@@ -3900,6 +4088,12 @@
       // An earlier draft here tested window.STTransitions, which does not exist: the capability
       // would simply never have been declared, hiding the transitions UI for every display, and
       // nothing would have failed loudly enough to notice.
+      //
+      // Vega is included. Image→image wipes run; video boundaries hard-cut in
+      // videoCompositingAvailable, because drawing a <video> traps slatium. The
+      // name stays: withholding it hid a control the stick has for stills. This
+      // function is extracted by the capability tests, which have no shell; it
+      // must not call onVega (a missing predicate would throw out of register).
       try {
         if (typeof transitionRuntimeReady === 'function' && transitionRuntimeReady()) {
           caps.push('playback.transitions');
@@ -3984,17 +4178,32 @@
     // android_version and the screen dimensions and resets ota_status/tier/the flag columns.
     // device:register and device:info both land there, so both must send the full thing.
     function buildDeviceInfo() {
-      return {
+      const info = {
         android_version: 'Web/' + navigator.userAgent.split(' ').pop(),
         // On a BrightSign, app_version is the ON-DEVICE host package — the artifact OTA replaces
         // and the only one here that can be stale. PLAYER_VERSION describes this page, which the
         // server serves fresh every load, and it already travels as client_version. Reporting the
         // page version in both columns is what made an XT245 read as 1.1.0-web forever, with no
         // way to tell a freshly-provisioned host from a year-old one.
+        // Vega is the same shape: HOST.info.version is the installed .vpkg, not this page.
         app_version: hostPackageVersion() || PLAYER_VERSION,
         screen_width: screen.width,
         screen_height: screen.height,
       };
+      // Additive. applyDeviceInfo ignores unknown keys; applyHardwareIdentity reads these and
+      // leaves a column alone when the key is absent, so a browser register does not wipe a
+      // model that a previous Vega register stored... it can't, a browser has a different row.
+      // Sending them only when the shell has actually spoken is what keeps a half-booted page
+      // from writing empty strings over a good model (COALESCE treats a value, even "", as news
+      // only when the trimmed string is non-empty — empty is skipped — but we still omit).
+      try {
+        if (typeof HOST !== 'undefined' && HOST && HOST.info) {
+          if (HOST.info.version) info.app_version = String(HOST.info.version);
+          if (HOST.info.model) info.hardware_model = String(HOST.info.model);
+          if (HOST.info.os) info.hardware_os_version = String(HOST.info.os);
+        }
+      } catch (e) {}
+      return info;
     }
 
     // What we last told the server, so a change is detectable. register() re-seeds this with
@@ -4078,7 +4287,10 @@
       // A BrightSign must say so rather than registering as "Chrome 120", because the sync
       // resolver (server/lib/sync-backend.js) decides native-vs-ours from exactly this field —
       // and a wall that reports itself as a browser can never be offered BrightWall.
-      data.platform = ON_BRIGHTSIGN ? 'brightsign' : browserPlatform();
+      // Vega must not register as "Chrome 120". platformFamily() keys off this string, and a
+      // stick that says Chrome is a browser row: no model, and no CMA capture cap. onVega()
+      // is false until ReactNativeWebView exists, so the query string alone does not flip it.
+      data.platform = ON_BRIGHTSIGN ? 'brightsign' : (onVega() ? 'vega' : browserPlatform());
       if (ON_BRIGHTSIGN) {
         try {
           data.bs_model = BS.model() || null;
@@ -4434,6 +4646,12 @@
     function groupPreloadNext(idx) {
       const item = playlist[idx];
       if (!item) return;
+      // Vega sticks (Fire TV Stick 4K Select, Fire TV Stick HD 2026). A second <video> is a
+      // second decoder, and a decoder allocates from CMA — about 236 MB on an AFTCA002.
+      // One run drained that pool to ~1 MB. That is a separate problem from the slatium
+      // trap, which has also fired with the pool mostly free. Group sync still plays;
+      // the boundary does not warm the next clip. A browser is unchanged.
+      if (onVega()) { groupPreloadIdx = idx; groupPreloadEl = null; return; }
       const isVid = item.mime_type && item.mime_type.indexOf('video/') === 0 && item.mime_type !== 'video/youtube';
       if (!isVid) { groupPreloadIdx = idx; groupPreloadEl = null; return; }   // mark handled, nothing to warm
       const url = mediaUrl(item);
@@ -5688,6 +5906,22 @@
     // `let` read before its declaration executes is a TemporalDeadZone throw, not a `null`.)
     function videoCompositingAvailable(v) {
       if (_videoCompositingOk !== null) return _videoCompositingOk;
+      // Vega's 16×16 probe PASSES. Pixels come back. The full-size drawImage of
+      // that <video> then SIGTRAPs in libkepler_slatium.so, called from
+      // libkepler_webview.so. Three crashes, byte-identical stack, both
+      // directions of a video↔image boundary. One died with 72 MB of CMA free
+      // and no memory stall, so this is not the capture cap. A probe cannot see
+      // "the compositor will trap". Do not call it. Image→image never draws a
+      // video, so those wipes stay. Both capture sites (the outgoing frame and
+      // the incoming warm-play snapshot) go through here. typeof onVega: the
+      // transition tests extract this function and have no shell. A missing
+      // predicate is "not Vega", and must not be "simplified" back to the probe.
+      if (typeof onVega === 'function' && onVega()) {
+        _videoCompositingOk = false;
+        console.log('[transition] video frames are not composited on Vega (the compositor traps) — ' +
+                    'transitions involving video will hard-cut; image-to-image still wipes');
+        return false;
+      }
       if (!v || v.readyState < 2 || !v.videoWidth) return true;   // undecided — don't cache a guess
       _videoCompositingOk = videoFrameIsCapturable(v);
       if (!_videoCompositingOk) {
@@ -5737,13 +5971,37 @@
     // draw a source (img | video | canvas) onto a container-sized canvas with object-fit:contain framing,
     // so the transition matches the static letterboxing exactly (stays CORS-clean iff the source is). A
     // <video> exposes its intrinsic size as videoWidth/Height, not naturalWidth/width — check both.
+    //
+    // CMA mitigation for image wipes, not the crash fix. texImage2D of a 1920×1080
+    // frame is ~8 MB, and the GL framebuffer is another, both out of the same
+    // ~236 MB CMA pool the decoder uses. One AFTCA002 run drove CmaFree to ~1 MB
+    // (MemFree stayed large). Two later crashes died on the same slatium stack
+    // with 72–124 MB of that pool free, so the cap does not explain the trap.
+    // It stays, because image→image wipes still upload into that pool. The CSS
+    // box of the wipe canvas stays the stage; only this backing store shrinks.
+    // The page cannot read CmaFree, so it does not try to skip only when low.
+    function vegaWipeSize(w, h) {
+      if (!(typeof onVega === 'function' && onVega())) return { w: w, h: h };
+      const longEdge = 960;
+      const long = Math.max(w, h);
+      if (!(long > longEdge) || !w || !h) return { w: w, h: h };
+      const s = longEdge / long;
+      return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
+    }
+    // texImage2D copies the pixels. A canvas allocated for that upload can drop its bitmap at
+    // once. A live <img> or <video> is the sign, not a scratch buffer — leave it alone.
+    function releaseWipeBitmap(src) {
+      if (!src || src.nodeName !== 'CANVAS') return;
+      try { src.width = 1; src.height = 1; } catch (e) {}
+    }
     function fitToCanvas(src, w, h) {
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const cap = vegaWipeSize(w, h);
+      const c = document.createElement('canvas'); c.width = cap.w; c.height = cap.h;
       const cx = c.getContext('2d');
       const iw = src.naturalWidth || src.videoWidth || src.width;
       const ih = src.naturalHeight || src.videoHeight || src.height;
-      const s = Math.min(w / iw, h / ih);
-      cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
+      const s = Math.min(cap.w / iw, cap.h / ih);
+      cx.drawImage(src, (cap.w - iw * s) / 2, (cap.h - ih * s) / 2, iw * s, ih * s);
       return c;
     }
     // ONE persistent WebGL renderer, reused for EVERY transition. The canvas is attached to <body> ONCE
@@ -5786,6 +6044,7 @@
       const geo = stageGeometry();
       if (!geo) { hardCut(); return; }                  // no stage box to draw in -> hard cut
       const w = geo.w, h = geo.h;
+      const cap = vegaWipeSize(w, h);
       let raf = 0, startTs = 0, done = false, deadline = 0;
       const finish = () => { // end the wipe; mount the incoming element, KEEP the renderer/context alive
         if (done) return; done = true;
@@ -5794,18 +6053,38 @@
         if (glTxAbort === finish) glTxAbort = null;
         mount();                                        // insert incoming + own its teardown/dwell/play
         canvas.style.display = 'none';                  // HIDE after the incoming frame is mounted (no flash); NEVER detach
+        // The textures and the framebuffer outlive the wipe. On Vega that is CMA the decoder
+        // needs back. A 1×1 upload replaces the storage; the next wipe resizes and re-uploads.
+        // typeof onVega: a missing predicate means "not Vega".
+        if (typeof onVega === 'function' && onVega()) {
+          try {
+            const blank = document.createElement('canvas');
+            blank.width = 1; blank.height = 1;
+            renderer.setFrom(blank);
+            renderer.setTo(blank);
+            canvas.width = 1; canvas.height = 1;
+          } catch (e) {}
+        }
       };
+      let fromTex = null, toCanvas = null;
       try {
         canvas.style.left = geo.left; canvas.style.top = geo.top;
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
         canvas.style.transform = geo.transform;         // turned exactly as the stage is (portrait), 'none' otherwise
         canvas.style.transformOrigin = geo.transformOrigin;
-        renderer.resize(w, h);                          // size the persistent canvas to the stage's OWN box
-        renderer.setFrom(fitToCanvas(fromFrame, w, h));
-        renderer.setTo(fitToCanvas(toTex, w, h));
+        renderer.resize(cap.w, cap.h);                  // backing store only. CSS stays the stage box (portrait transform)
+        fromTex = fitToCanvas(fromFrame, geo.w, geo.h);
+        toCanvas = fitToCanvas(toTex, geo.w, geo.h);
+        renderer.setFrom(fromTex);
+        renderer.setTo(toCanvas);
         renderer.setShader(src);                        // throws on a bad shader
         renderer.render(0, effect.params);
       } catch (e) { canvas.style.display = 'none'; hardCut(); return; }
+      finally {
+        releaseWipeBitmap(fromTex);
+        releaseWipeBitmap(toCanvas);
+        releaseWipeBitmap(fromFrame);                   // outgoing snapshot, when it was a canvas we allocated
+      }
       glTxAbort = finish;                               // context lost / tab hidden mid-wipe -> finish (hard cut)
       canvas.style.display = 'block';                   // SHOW over the current frame (fixed overlay)
       container.style.display = 'block';
@@ -6075,6 +6354,14 @@
       // full-stage canvas readbacks (~8MB at 1080p, ~33MB at 4K) on the main thread at the exact
       // moment the new clip decodes, then discard them — with `from` pinned in the closure for the
       // clip's whole duration.
+      // Video boundaries hard-cut on Vega. videoCompositingAvailable() is false
+      // before any drawImage of a <video>, so `from`/`to` come back null and the
+      // hold below mounts without a wipe. Image→image does not come through here.
+      // The outgoing decoder is still paused when a wipe was wanted: the incoming
+      // warm-play is already one decoder, and a second one is the CMA claim
+      // groupPreloadNext also refuses. A browser keeps the outgoing clip playing
+      // behind the overlay. typeof onVega: this function is extracted by the
+      // transition tests, which have no shell. A missing predicate means "not Vega".
       const wantsWipe = !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
       const from = wantsWipe ? currentTexturableFrame() : null;  // capture the outgoing frame NOW, before any teardown
       const mySeq = renderSeq;
@@ -6085,11 +6372,13 @@
       // warm-up window would nextItem() PAST the incoming clip (the legacy branch nulled these
       // synchronously at teardown). When no wipe needs its frame, pause it too — a single-decoder
       // box must not decode both at once. Mounted-but-paused keeps showing its last frame.
+      // On Vega, pause even when the wipe wants the frame. The snapshot is already a canvas, and
+      // leaving the outgoing decoder up next to the incoming warm-play is a second CMA claim.
       const outgoing = currentVideoEl;
       if (outgoing) {
         try {
           outgoing.onended = null; outgoing.onerror = null; outgoing.onloadeddata = null;
-          if (!wantsWipe) outgoing.pause();
+          if (!wantsWipe || (typeof onVega === 'function' && onVega())) outgoing.pause();
         } catch (e) {}
       }
       const video = document.createElement('video');
@@ -6657,6 +6946,10 @@
     // fade-to-black still reads as captured, while "nothing arrived" reads as not captured.
     function videoFrameIsCapturable(video) {
       if (!video) return false;
+      // Screenshot and zone capture call this, then draw the whole frame if it
+      // passes. On Vega the probe passes and that full draw is the same slatium
+      // trap videoCompositingAvailable refuses. Stop before either canvas write.
+      if (typeof onVega === 'function' && onVega()) return false;
       let pctx;
       try {
         const probe = document.createElement('canvas');
@@ -7391,6 +7684,9 @@
         // The BrightSign registry outlives localStorage, and getConfig() re-adopts whatever it
         // finds there — so without this the panel comes straight back as the same display.
         if (BS) { try { BS.clearIdentity(); } catch (e) { /* best effort */ } }
+        // Vega's /data copy is the same trap. The shell forgets before the reload, or host:ready
+        // on the next document adopts the identity this unpair just cleared.
+        try { if (typeof clearVegaIdentity === 'function') clearVegaIdentity(); } catch (e) {}
 
         // ?k= is an identity too, re-read from the URL on every load. Leaving it means the reload
         // pairs straight back as the same display and never shows a code (#313).

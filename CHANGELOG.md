@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+**Vega OS player for Fire TV Stick 4K Select and Fire TV Stick HD (2026).** Those sticks are not
+Android. The APK does not install. `vega/` is an installed WebView shell that loads the same
+`/player` page as a browser, so playlists, zones, widgets, YouTube, HLS, schedules and the
+dashboard's volume controls are the web player's, not a second implementation. The shell reports
+platform `vega` and the Amazon model code (`AFTCA002`, `AFTCL001`). A WebView data clear does not
+mint a new display: the shell keeps the pairing in `/data` and the page adopts it, and an unpair
+or `?reset=` clears that copy.
+
+It does not claim Android's powers, because the OS does not have them: no device-owner kiosk, no
+reboot, no display-power API, no RTSP, no package install, no self-update of the `.vpkg`. The shell
+does ask LCM for a permanent lifespan, which is the policy Vega logs as the screensaver being
+disabled. That is not a wake lock: the panel can still be forced off. Group sync does not warm a
+second video decoder: on an AFTCA002 that is a CMA claim (about 236 MB of decoder DMA), not a
+RAM claim. Image→image transitions run. A video boundary hard-cuts: drawing a `<video>` into a
+canvas SIGTRAPs in Vega's compositor, on a stack that has also fired with tens of megabytes of
+CMA still free. The 960px capture cap stays as mitigation for the run that did drain that pool.
+The certified-hardware entries stay **not supported**. See
+[`docs/vega-player.md`](docs/vega-player.md).
+
 ### Fixed
 
 **Esc on the web player was a public unpair button.** It asked `confirm('Reset player and return to

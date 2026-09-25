@@ -110,7 +110,8 @@ test('webos: the player only forms a host bridge when a shell asks for one', () 
   const bridge = player.slice(player.indexOf('const HOST = (() => {'), player.indexOf('h.send({ type: \'host:hello\' });'));
   assert.ok(bridge.length > 0, 'the HOST bridge exists');
   assert.match(bridge, /get\('host'\)/, 'it is opt-in via ?host=');
-  assert.match(bridge, /window\.parent === window\) return null/, 'and only inside a frame');
+  assert.match(bridge, /window\.parent === window && !topLevelVega\)\) return null/, 'and only inside a frame, unless this is the Vega top window');
+  assert.match(bridge, /platform === 'vega' && window\.parent === window/, 'the top-window exception is Vega-only');
   assert.match(bridge, /ev\.source !== window\.parent\) return/, 'it listens to the embedding window and nobody else');
   assert.match(bridge, /d\.source !== 'screentinker-host'\) return/);
 });

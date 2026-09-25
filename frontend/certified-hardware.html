@@ -92,7 +92,7 @@
     <h1>Certified Hardware</h1>
     <p class="lead">The device models ScreenTinker has tested with ScreenTinker, what each one actually
       does, and which ones to avoid.</p>
-    <p class="updated">Last updated 2026-09-14. 5 devices currently certified.</p>
+    <p class="updated">Last updated 2026-09-24. 5 devices currently certified.</p>
 
     <p style="margin:20px 0 4px">
       <a href="/certified-hardware/submit" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Report hardware that works</a>
@@ -317,33 +317,37 @@
         <h3><a class="anchor" href="#fire-tv-stick-4k-select" aria-label="Link to Amazon Fire TV Stick 4K Select">#</a>Amazon Fire TV Stick 4K Select</h3>
         <dl class="device-spec">
           <dt>Manufacturer</dt><dd>Amazon</dd>
-          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd>AFTCA002</dd>
           <dt>Category</dt><dd>Streaming player</dd>
           <dt>Operating system</dt><dd>Vega OS</dd>
-          <dt>ScreenTinker player</dt><dd><span class="unknown">Not recorded</span></dd>
-          <dt>Maximum resolution</dt><dd>1280x720</dd>
-          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg). Played on one AFTCA002, then the process died</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-09-24</dd>
           <dt>Validated by</dt><dd>ScreenTinker</dd>
-          <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Tested against</dt><dd>2.1.6</dd>
           <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
         </dl>
         <ul class="device-notes">
-          <li>Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.</li>
-          <li>Memory on the device is not sufficient for reliable signage playback.</li>
-          <li>Do not buy this for ScreenTinker. It is sold alongside the Fire TV sticks that do work and is easy to pick up by mistake.</li>
-          <li>May be revisited.</li>
+          <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
+          <li>Played on one AFTCA002 (ScreenTinker 2.1.6, Kepler 1.2): paired, reported 1920x1080, transitions ran, then the process died in-process. Not certified. Do not buy it for a sign until this entry changes.</li>
+          <li>Crashes on this stick were a compositor abort, not memory: three died on the same libkepler_slatium stack at a video/image boundary, one with 72 MB of CMA free and no memory stall. Drawing a &lt;video&gt; frame for a transition is what trips it, so video boundaries hard-cut and image transitions stay. CMA pressure is real but survivable — measured falling below 5 MB in 21 of 60 samples, bottoming at 668 kB, with no crash. A 13-minute run across a 44-second image/video cycle was clean.</li>
+          <li>Group sync does not warm a second video decoder. A second decoder is another CMA claim.</li>
+          <li>1920x1080 is what that AFTCA002 reported. The stick can output 4K, so this may be the panel or the HDMI link, not a device ceiling.</li>
+          <li>Offline cache worked on that run: a service worker was in control, images cached, and video decoded offline.</li>
+          <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
         </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
       </article>
       <article class="device" id="fire-tv-stick-hd-2026">
         <h3><a class="anchor" href="#fire-tv-stick-hd-2026" aria-label="Link to Amazon Fire TV Stick HD (2026)">#</a>Amazon Fire TV Stick HD (2026)</h3>
         <dl class="device-spec">
           <dt>Manufacturer</dt><dd>Amazon</dd>
-          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd>AFTCL001</dd>
           <dt>Category</dt><dd>Streaming player</dd>
           <dt>Operating system</dt><dd>Vega OS</dd>
-          <dt>ScreenTinker player</dt><dd><span class="unknown">Not recorded</span></dd>
-          <dt>Maximum resolution</dt><dd>1280x720</dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg), not run on this model</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
           <dt>Validated by</dt><dd>ScreenTinker</dd>
           <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
@@ -351,11 +355,13 @@
           <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
         </dl>
         <ul class="device-notes">
-          <li>Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.</li>
-          <li>Memory on the device is not sufficient for reliable signage playback.</li>
-          <li>Do not buy this for ScreenTinker. It is sold alongside the Fire TV sticks that do work and is easy to pick up by mistake.</li>
-          <li>May be revisited.</li>
+          <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
+          <li>Not run on an AFTCL001. The 4K Select run is the only evidence, and that stick is not certified either. Do not buy it for a sign until this entry changes.</li>
+          <li>Same player as the 4K Select. Transitions are declared. Group sync does not warm a second decoder, because that is a second CMA claim. The earlier browser attempt was not reliable.</li>
+          <li>1080p is the product&#39;s output, not a measurement of this app.</li>
+          <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
         </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
       </article>
     </section>
 
