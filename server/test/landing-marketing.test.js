@@ -83,8 +83,12 @@ test('"Most Popular" is on a named plan, not a positional index', () => {
   assert.match(LANDING, /const FEATURED_PLAN = '[a-z]+';/);
   assert.ok(!/price-card \$\{i === \d/.test(LANDING), 'the featured card must not be chosen by index');
 
-  const featured = cardsOf(render(PLANS)).filter((c) => c.startsWith(' featured'));
+  const cards = cardsOf(render(PLANS));
+  const featured = cards.filter((c) => c.startsWith(' featured'));
   assert.equal(featured.length, 1, 'exactly one card carries the badge');
+  // And it is on the plan that was chosen, not wherever the list happens to put it. Pinned because
+  // the last time this moved, it moved by itself.
+  assert.match(featured[0], /<h3>Pro<\/h3>/, 'the badge belongs on Pro');
 });
 
 test('the hero ribbon and the comparison table quote the same 15-screen prices', () => {

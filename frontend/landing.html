@@ -798,17 +798,17 @@
       const publicPlans = plans.filter(p => p.active && !isQuoteSlot(p));
       const quotePlan = plans.find(p => p.active && isQuoteSlot(p));
       /*
-       * ⚠️ WHICH CARD IS "MOST POPULAR" IS NOW NAMED, NOT COUNTED.
+       * ⚠️ WHICH CARD IS "MOST POPULAR" IS NAMED, NOT COUNTED.
        *
-       * This was `i === 2`, chosen when there were four plans and index 2 was Pro. Two plans have
-       * been added since (Home, Business), so index 2 became STARTER and the badge moved off Pro
-       * silently — nothing about adding a plan tells you a marketing badge is positional.
+       * This was `i === 2`, chosen when there were four plans and index 2 was Pro. Two plans were
+       * added since (Home, Business), index 2 became STARTER, and the badge moved off Pro silently —
+       * nothing about adding a plan tells you a marketing badge is positional. So for some months the
+       * page has been recommending Starter, which was nobody's decision.
        *
-       * It is set to 'starter' because that is what the page has actually been rendering, and the
-       * badge's placement affects which plan people pick: changing it is a pricing decision, not a
-       * refactor. Change the id here to move it deliberately.
+       * Pro is the intended one. A plan id, so adding or reordering plans cannot move it again.
+       * A deployment with no plan of this id simply shows no badge, which is harmless.
        */
-      const FEATURED_PLAN = 'starter';
+      const FEATURED_PLAN = 'pro';
 
       /*
        * Per-screen cost, computed from the row rather than written down. A flat plan's whole argument
