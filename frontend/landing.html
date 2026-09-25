@@ -65,6 +65,8 @@
        the ribbon's four prices go to one per row, because four prices side by side at 390px is
        unreadable and the ribbon is the argument the page is making. */
     .trust-strip { max-width:1000px; margin:34px auto 0; padding:18px 8px; border-top:1px solid var(--border); border-bottom:1px solid var(--border); display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+    .trust-strip.cols-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .trust-strip [hidden] { display:none; }
     .trust-strip div { text-align:center; }
     .trust-strip div + div { border-left:1px solid var(--border); }
     .trust-strip .n { font-size:26px; font-weight:800; color:var(--text); font-variant-numeric:tabular-nums; }
@@ -109,8 +111,11 @@
     .platforms .subtitle { color:var(--muted); margin-bottom:40px; font-size:18px; }
     .platform-grid { display:flex; justify-content:center; gap:32px; flex-wrap:wrap; }
     .platform-item { text-align:center; width:100px; }
+
     .platform-item .icon { font-size:40px; margin-bottom:8px; }
-    .platform-item .name { font-size:13px; color:var(--muted); }
+    .platform-item { width:112px; }
+    .platform-item .name { font-size:13px; color:var(--text); font-weight:600; }
+    .platform-item .sub { font-size:11px; color:var(--muted); margin-top:3px; line-height:1.35; }
 
     /* Modal (mirrors frontend/css/main.css conventions so screenshots look
        consistent across landing and dashboard; copied inline since
@@ -148,6 +153,22 @@
 
     .price-card .per-screen { background:var(--bg); border-radius:7px; padding:8px 10px; margin-bottom:14px; font-size:12px; color:var(--muted); line-height:1.5; }
     .price-card .per-screen strong { color:var(--text); font-variant-numeric:tabular-nums; }
+
+    .billing-toggle { display:flex; justify-content:center; gap:4px; background:var(--card); border:1px solid var(--border); border-radius:999px; padding:4px; width:max-content; margin:0 auto 12px; }
+    .billing-toggle button { background:transparent; color:var(--muted); border:none; border-radius:999px; padding:9px 20px; font-size:14px; font-weight:600; cursor:pointer; min-height:40px; }
+    .billing-toggle button[aria-pressed="true"] { background:var(--accent); color:#fff; font-weight:700; }
+    .cycle-note { text-align:center; font-size:12px; color:var(--muted); margin:0 0 28px; }
+
+    .pricing-tail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; margin-top:20px; align-items:stretch; }
+    .selfhost-card { background:#14202e; border:1px solid var(--border); border-radius:12px; padding:28px; display:flex; flex-direction:column; }
+    .selfhost-card h3 { font-size:20px; margin:0 0 8px; }
+    .selfhost-card p { color:var(--muted); font-size:14px; margin:0; }
+    .selfhost-card .acts { margin-top:auto; padding-top:18px; display:flex; gap:10px; flex-wrap:wrap; }
+    @media (max-width:760px) {
+      .pricing-tail { grid-template-columns:1fr; }
+      .billing-toggle { width:100%; }
+      .billing-toggle button { flex:1; padding:9px 8px; }
+    }
 
     /* Compare */
     .compare { max-width:1000px; margin:0 auto; padding:80px 24px; }
@@ -253,20 +274,23 @@
     <p style="margin-top:18px;font-size:14px;color:var(--muted)">Not sure what to run it on?
       <a href="/certified-hardware" style="color:var(--accent)">See certified hardware &rarr;</a></p>
 
-    <!-- Live deployment count. Hidden until the number arrives, so a self-hosted instance (where
-         the endpoint does not exist) and a brand-new one (where the count is 0) show nothing at
-         all rather than an empty frame or a zero. -->
-    <p id="deployed-stat" hidden style="margin-top:28px;color:var(--muted);font-size:15px">
-      <strong id="deployed-count" style="color:var(--text,inherit);font-variant-numeric:tabular-nums"></strong>
-      screens deployed with ScreenTinker <span style="font-size:13px;opacity:0.85">(self-reported, opt-in only)</span>
-    </p>
-
     <!-- Trust strip. Four facts, none of them a claim a competitor can also make. -->
-    <div class="trust-strip">
+    <!--
+      Trust strip. Four facts, none of them a claim a competitor can also make.
+      ⚠️ The fourth cell is the LIVE deployed count and starts hidden: only the deployment that
+      collects install statistics answers /api/public/stats, so on a self-hosted instance the endpoint
+      404s and on a brand-new one the count is 0. The strip then renders as three columns rather than
+      leaving a hole — a marketing page must not show an empty frame or a zero, and there is nothing a
+      visitor could do about either.
+    -->
+    <div class="trust-strip cols-3" id="trustStrip">
       <div><div class="n">10</div><div class="l">platforms, one CMS</div></div>
       <div><div class="n">$0</div><div class="l">per extra screen</div></div>
       <div><div class="n">Self-host</div><div class="l">or managed cloud</div></div>
-      <div><div class="n">Open</div><div class="l">source on GitHub</div></div>
+      <div id="deployed-stat" hidden>
+        <div class="n" id="deployed-count"></div>
+        <div class="l">screens deployed <span style="opacity:0.8">(opt-in)</span></div>
+      </div>
     </div>
 
     <!--
@@ -380,24 +404,40 @@
     <h2>Runs on Everything</h2>
     <p class="subtitle">No hardware lock-in. Use any screen you already have &mdash; every platform has its own setup guide, and every player is <a href="/download/">downloaded from your own server</a>.</p>
     <div class="platform-grid">
-      <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#129302;</div><div class="name">Android TV</div></a>
-      <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#128293;</div><div class="name">Fire TV</div></a>
-      <a class="platform-item" href="/guides/digital-signage-vega.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">Vega OS</div></a>
-      <a class="platform-item" href="/guides/raspberry-pi-digital-signage.html" style="color:inherit"><div class="icon">&#129359;</div><div class="name">Raspberry Pi</div></a>
-      <a class="platform-item" href="/guides/windows-digital-signage.html" style="color:inherit"><div class="icon">&#128187;</div><div class="name">Windows</div></a>
-      <a class="platform-item" href="/guides/chromeos-digital-signage.html" style="color:inherit"><div class="icon">&#127760;</div><div class="name">ChromeOS</div></a>
-      <a class="platform-item" href="/guides/lg-webos-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">LG webOS</div></a>
-      <a class="platform-item" href="/guides/samsung-tv-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">Samsung Tizen</div></a>
-      <a class="platform-item" href="/guides/brightsign-digital-signage.html" style="color:inherit"><div class="icon">&#128225;</div><div class="name">BrightSign</div></a>
-      <a class="platform-item" href="/player" style="color:inherit"><div class="icon">&#127758;</div><div class="name">Any Browser</div></a>
+      <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#129302;</div><div class="name">Android TV</div><div class="sub">Native APK</div></a>
+      <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#128293;</div><div class="name">Fire TV</div><div class="sub">Native APK</div></a>
+      <a class="platform-item" href="/guides/digital-signage-vega.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">Vega OS</div><div class="sub">Fire TV Stick 4K Select</div></a>
+      <a class="platform-item" href="/guides/raspberry-pi-digital-signage.html" style="color:inherit"><div class="icon">&#129359;</div><div class="name">Raspberry Pi</div><div class="sub">Pi 4 / Pi 5</div></a>
+      <a class="platform-item" href="/guides/windows-digital-signage.html" style="color:inherit"><div class="icon">&#128187;</div><div class="name">Windows</div><div class="sub">Kiosk browser</div></a>
+      <a class="platform-item" href="/guides/chromeos-digital-signage.html" style="color:inherit"><div class="icon">&#127760;</div><div class="name">ChromeOS</div><div class="sub">Managed kiosk</div></a>
+      <a class="platform-item" href="/guides/lg-webos-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">LG webOS</div><div class="sub">webOS 4 &rarr; 6+</div></a>
+      <a class="platform-item" href="/guides/samsung-tv-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">Samsung Tizen</div><div class="sub">.wgt package</div></a>
+      <a class="platform-item" href="/guides/brightsign-digital-signage.html" style="color:inherit"><div class="icon">&#128225;</div><div class="name">BrightSign</div><div class="sub">Series 5 / 6</div></a>
+      <a class="platform-item" href="/player" style="color:inherit"><div class="icon">&#127758;</div><div class="name">Any Browser</div><div class="sub">No install</div></a>
     </div>
+    <!-- The page already links /certified-hardware from the nav and the hero, but this is where
+         somebody who has just decided WHICH platform actually needs it: prices and models. -->
+    <a href="/certified-hardware" class="btn btn-outline" style="margin-top:32px;padding:13px 24px;font-size:15px">Browse certified hardware, with prices &rarr;</a>
   </section>
 
   <!-- Pricing -->
   <section class="pricing" id="pricing">
     <h2>Simple, Honest Pricing</h2>
     <p class="subtitle">All plans include remote control, monitoring, and unlimited content</p>
+    <!--
+      Annual / monthly toggle. ⚠️ MONTHLY IS THE DEFAULT, on purpose: it is the number this page has
+      always led with, and swapping the first figure a visitor reads from "$99" to "$989" is a pricing
+      experiment rather than a layout change. The toggle makes the cheaper annual price one click away
+      and labels the saving; flip DEFAULT_CYCLE below to change which is selected.
+    -->
+    <div class="billing-toggle" role="group" aria-label="Billing period">
+      <button type="button" id="cycleMonthly" aria-pressed="true">Monthly</button>
+      <button type="button" id="cycleAnnual" aria-pressed="false">Annual &mdash; 2 months free</button>
+    </div>
     <div class="pricing-grid" id="pricingGrid"></div>
+    <!-- Quote-only plan and the self-host answer, side by side. Filled by the same renderer, so the
+         card keeps its title from the plans row. -->
+    <div class="pricing-tail" id="pricingTail"></div>
   </section>
 
   <!-- Compare -->
@@ -440,6 +480,14 @@
       * Live screen view + remote key presses is Android only and requires granting the on-device accessibility permission.<br>
       Prices read off each vendor's own pricing page on 24 September 2026. Ranges are their cheapest to mid tier at that screen count, on annual billing where they offer it; ours is the annual price of the plan that covers those screens. Spot an error? <a href="https://github.com/screentinker/screentinker/issues" target="_blank" rel="noopener" style="color:var(--accent)">Open an issue on GitHub</a> and we'll fix it &mdash; and say who found it.
     </p>
+
+    <!-- The table is the argument; this is the row that acts on it. The two comparison pages are the
+         ones with the detail a reader who got this far is looking for. -->
+    <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:28px">
+      <a href="/app#/login" class="btn btn-primary" style="padding:15px 30px;font-size:16px">Start your free trial</a>
+      <a href="/compare/yodeck-alternative.html" class="btn btn-outline" style="padding:15px 26px;font-size:16px">Yodeck alternative &rarr;</a>
+      <a href="/compare/optisigns-alternative.html" class="btn btn-outline" style="padding:15px 26px;font-size:16px">OptiSigns alternative &rarr;</a>
+    </div>
   </section>
 
   <!-- Resources / internal linking for SEO -->
@@ -773,11 +821,16 @@
         if (!s || !(s.screens > 0)) return;
         document.getElementById('deployed-count').textContent = s.screens.toLocaleString();
         document.getElementById('deployed-stat').hidden = false;
+        // Widen the strip to four columns now that the fourth cell has something in it.
+        const strip = document.getElementById('trustStrip');
+        if (strip) strip.classList.remove('cols-3');
       })
       .catch(() => {});
 
     fetch('/api/subscription/plans').then(r => r.json()).then(plans => {
       const grid = document.getElementById('pricingGrid');
+      const tail = document.getElementById('pricingTail');
+
       /*
        * The quote-only plan gets its OWN card, and is kept out of the grid.
        *
@@ -797,13 +850,14 @@
         || (p.max_devices === -1 && !(p.price_monthly > 0));
       const publicPlans = plans.filter(p => p.active && !isQuoteSlot(p));
       const quotePlan = plans.find(p => p.active && isQuoteSlot(p));
+
       /*
        * ⚠️ WHICH CARD IS "MOST POPULAR" IS NAMED, NOT COUNTED.
        *
        * This was `i === 2`, chosen when there were four plans and index 2 was Pro. Two plans were
        * added since (Home, Business), index 2 became STARTER, and the badge moved off Pro silently —
        * nothing about adding a plan tells you a marketing badge is positional. So for some months the
-       * page has been recommending Starter, which was nobody's decision.
+       * page recommended Starter, which was nobody's decision.
        *
        * Pro is the intended one. A plan id, so adding or reordering plans cannot move it again.
        * A deployment with no plan of this id simply shows no badge, which is harmless.
@@ -811,30 +865,44 @@
       const FEATURED_PLAN = 'pro';
 
       /*
+       * ⚠️ MONTHLY IS THE DEFAULT CYCLE. Leading with the annual figure is tempting — it is the
+       * cheaper effective price and the one the comparison table quotes — but it swaps "$99" for
+       * "$989" as the first number a visitor reads. This page converts at about seven signups a day;
+       * that is not a number to experiment with as a side effect of a layout change. The toggle puts
+       * annual one click away, and the per-screen figure below does the reframing.
+       */
+      const DEFAULT_CYCLE = 'monthly';
+      let cycle = DEFAULT_CYCLE;
+
+      /*
        * Per-screen cost, computed from the row rather than written down. A flat plan's whole argument
        * is what one screen ends up costing, and that is the number a reader is comparing against the
        * per-screen price they are quoted everywhere else — so do the division for them.
+       * Always from the ANNUAL price: it is the plan's real cost over a year either way, so the figure
+       * does not jump around when somebody flips the toggle.
        * Only shown where it means something: more than one device, and a yearly price to divide.
        */
       const perScreen = (p) => (p.max_devices > 1 && p.price_yearly > 0)
         ? (p.price_yearly / p.max_devices / 12).toFixed(2)
         : null;
 
-      const planCardsHtml = publicPlans.map((p) => {
+      const money = (n) => '$' + Number(n).toLocaleString('en-US');
+
+      function planCard(p) {
         const ps = perScreen(p);
-        /*
-         * ⚠️ THE HEADLINE PRICE IS UNCHANGED: monthly, exactly as this page has always shown it.
-         *
-         * Leading with the annual figure is tempting — it is the cheaper effective price and the one
-         * the comparison table quotes — but it swaps "$99" for "$989" as the first number a visitor
-         * reads. This page converts at about seven signups a day; that is not a number to experiment
-         * with as a side effect of a copy refresh. The annual saving keeps its second line, and the
-         * new per-screen figure below does the reframing instead.
-         */
-        const headline = p.price_monthly > 0 ? `$${p.price_monthly}<span>/mo</span>` : 'Free<span></span>';
-        const second = p.price_yearly > 0
-          ? `or $${p.price_yearly.toLocaleString('en-US')}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)`
-          : '&nbsp;';
+        const annual = p.price_yearly > 0;
+        const save = annual ? Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100) : 0;
+        let headline, second;
+        if (p.price_monthly > 0 && cycle === 'annual' && annual) {
+          headline = `${money(p.price_yearly)}<span>/year</span>`;
+          second = `${money(p.price_monthly)}/month billed monthly`;
+        } else if (p.price_monthly > 0) {
+          headline = `${money(p.price_monthly)}<span>/mo</span>`;
+          second = annual ? `or ${money(p.price_yearly)}/year (save ${save}%)` : '&nbsp;';
+        } else {
+          headline = 'Free<span></span>';
+          second = '&nbsp;';
+        }
         return `
         <div class="price-card ${p.name === FEATURED_PLAN ? 'featured' : ''}">
           <h3>${p.display_name}</h3>
@@ -851,20 +919,18 @@
           <a href="/app#/login" class="btn ${p.price_monthly > 0 ? 'btn-primary' : 'btn-outline'}" style="width:100%;justify-content:center">${p.price_monthly > 0 ? 'Start Trial' : 'Get Started'}</a>
         </div>
       `;
-      }).join('');
+      }
 
-      // The quote-only card. Its HEADING comes from the plans row, so renaming the plan in admin
-      // shows up here — that rename is the whole reason the page said "Enterprise / Custom" while
-      // the database said "Custom". The bullets and the button stay written here: they are sales
-      // copy and a contact route, not columns on the row.
+      // The quote-only card. Its HEADING comes from the plans row, so renaming the plan in admin shows
+      // up here — that rename is the whole reason the page said "Enterprise / Custom" while the
+      // database said "Custom". The bullets and the button stay written here: they are sales copy and
+      // a contact route, not columns on the row.
       //
       // ⚠️ Rendered even when no such row exists. A self-hosted instance that deleted the plan still
-      // needs the way to reach us; dropping the card would remove the only enterprise contact path
-      // on the page, which is a worse failure than a card with a generic title.
-      // Uses .price for vertical alignment with the other cards (same baseline for the feature
-      // list); the empty .yearly spacer matches the Free card's structure.
+      // needs the way to reach us; dropping the card would remove the only enterprise contact path on
+      // the page, which is a worse failure than a card with a generic title.
       const quoteTitle = (quotePlan && quotePlan.display_name) || 'Enterprise / Custom';
-      const enterpriseCardHtml = `
+      const tailHtml = `
         <div class="price-card">
           <h3>${quoteTitle}</h3>
           <div class="price">Let's talk</div>
@@ -878,8 +944,37 @@
           </ul>
           <button type="button" class="btn btn-primary" style="width:100%;justify-content:center" onclick="openContactModal()">Contact Us</button>
         </div>
+        <div class="selfhost-card">
+          <h3>Or run it yourself and pay nothing</h3>
+          <p>The same server, the same features, no device cap, no licence key, no phone-home. This is
+          the row none of the three competitors can put a tick in.</p>
+          <div class="acts">
+            <a href="/guides/self-hosted-digital-signage.html" class="btn btn-outline">Self-hosting guide &rarr;</a>
+            <a href="/download/" class="btn btn-primary">Downloads</a>
+          </div>
+        </div>
       `;
-      grid.innerHTML = planCardsHtml + enterpriseCardHtml;
+
+      function render() {
+        grid.innerHTML = publicPlans.map(planCard).join('');
+        // The tail does not depend on the cycle, so it is written once.
+        if (tail && !tail.innerHTML) tail.innerHTML = tailHtml;
+      }
+
+      // Wire the toggle. Buttons, not links: this changes what is displayed, not where you are.
+      const btns = { monthly: document.getElementById('cycleMonthly'), annual: document.getElementById('cycleAnnual') };
+      Object.entries(btns).forEach(([which, btn]) => {
+        if (!btn) return;
+        btn.setAttribute('aria-pressed', String(which === cycle));
+        btn.addEventListener('click', () => {
+          if (cycle === which) return;
+          cycle = which;
+          Object.entries(btns).forEach(([k, b]) => b && b.setAttribute('aria-pressed', String(k === cycle)));
+          render();
+        });
+      });
+
+      render();
     });
 
     // Smooth scroll for anchor links
