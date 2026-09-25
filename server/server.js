@@ -872,7 +872,20 @@ app.use('/player', express.static(path.join(__dirname, 'player'), { etag: true, 
 // naturally lands. The next person to drop `restore-from-prod.sh` with a connection string in it
 // next to these would publish it without ever touching a route, which is the failure worth closing.
 // Only the three that are linked as URLs are served; adding a fourth is a deliberate edit here.
-const PUBLIC_SCRIPTS = new Set(['raspberry-pi-setup.sh', 'windows-setup.bat', 'debian-13-setup.sh']);
+//
+// ⚠️ THE BRIGHTSIGN ARCHIVES LIVE HERE TOO, and they are not in the repository. A deployment
+// bind-mounts them into this same directory (`./brightsign/autorun.zip` -> `/app/scripts/autorun.zip`
+// and friends), and `brightsign/server/bs-server-boot.js` fetches
+// `<server>/scripts/server-payload.zip` by URL. Leaving them off this list does not fail anywhere
+// visible: the SPA fallback answers 200 with HTML, a provisioning player writes that to its storage
+// root as its autorun, and it fails with nothing anywhere saying why. Public for the same reason
+// /download/apk is: a player fetches them before it has any identity.
+const PUBLIC_SCRIPTS = new Set([
+  // Setup scripts, tracked in the repository and linked as URLs.
+  'raspberry-pi-setup.sh', 'windows-setup.bat', 'debian-13-setup.sh',
+  // BrightSign provisioning payloads, supplied by the deployment rather than the repository.
+  'autorun.zip', 'autorun-server.zip', 'server-payload.zip', 'server-payload.json',
+]);
 app.get('/scripts/:name', (req, res) => {
   // Membership in the set is the whole check: an exact match against a fixed list of basenames
   // cannot be traversed out of, so there is no path to sanitise.
