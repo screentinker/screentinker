@@ -31,32 +31,58 @@ const PLANS = [
 ];
 
 /* Run the page's OWN renderer. Reading the source for strings would pass while the page rendered
- * something else, and the whole point is the numbers a visitor sees. */
+ * something else, and the whole point is the numbers a visitor sees.
+ *
+ * Returns the two containers plus a `click` handle on the billing toggle, so a test can flip the
+ * cycle the way a visitor does rather than re-implementing what the button is supposed to do. */
 function render(plans) {
   const body = LANDING.match(
     /fetch\('\/api\/subscription\/plans'\)\.then\(r => r\.json\(\)\)\.then\(plans => \{([\s\S]*?)\n    \}\)/
   );
   assert.ok(body, 'could not find the pricing-grid renderer in landing.html');
-  const grid = { innerHTML: '' };
+
+  const listeners = {};
+  const button = (id) => ({
+    id, attrs: {},
+    setAttribute(k, v) { this.attrs[k] = v; },
+    getAttribute(k) { return this.attrs[k]; },
+    addEventListener(_e, fn) { listeners[id] = fn; },
+    classList: { remove() {}, add() {} },
+  });
+  const els = {
+    pricingGrid: { innerHTML: '' },
+    pricingTail: { innerHTML: '' },
+    cycleMonthly: button('cycleMonthly'),
+    cycleAnnual: button('cycleAnnual'),
+  };
   // eslint-disable-next-line no-new-func
-  new Function('plans', 'document', body[1])(plans, { getElementById: () => grid });
-  return grid.innerHTML;
+  new Function('plans', 'document', body[1])(plans, { getElementById: (id) => els[id] || null });
+  return {
+    grid: els.pricingGrid.innerHTML,
+    tail: els.pricingTail.innerHTML,
+    pressed: () => ({
+      monthly: els.cycleMonthly.getAttribute('aria-pressed'),
+      annual: els.cycleAnnual.getAttribute('aria-pressed'),
+    }),
+    click: (which) => { listeners['cycle' + which](); return els.pricingGrid.innerHTML; },
+  };
 }
 
 const cardsOf = (html) => html.split('<div class="price-card').slice(1);
+const priceOf = (card) => textOf((card.match(/class="price">(.*?)<\/div>/) || [])[1] || '');
 const textOf = (s) => s.replace(/<[^>]+>/g, '');
 
 test('the headline price on every card is still the MONTHLY figure', () => {
   // Leading with the annual price would swap "$99" for "$989" as the first number a visitor reads.
   // That is a pricing experiment, not a copy change, and this page is not the place to run one
   // by accident.
-  const cards = cardsOf(render(PLANS));
-  const prices = cards.map((c) => textOf((c.match(/class="price">(.*?)<\/div>/) || [])[1] || ''));
-  assert.deepEqual(prices, ['Free', '$9.99/mo', '$39/mo', '$99/mo', '$199/mo', "Let's talk"]);
+  const prices = cardsOf(render(PLANS).grid).map(priceOf);
+  // The quote card is no longer in the grid — it sits in the tail band beside the self-host panel.
+  assert.deepEqual(prices, ['Free', '$9.99/mo', '$39/mo', '$99/mo', '$199/mo']);
 });
 
 test('the per-screen figure is computed, and matches the comparison table', () => {
-  const cards = cardsOf(render(PLANS));
+  const cards = cardsOf(render(PLANS).grid);
   const business = cards.find((c) => /<h3>Business<\/h3>/.test(c));
   const cardFigure = textOf((business.match(/class="per-screen">(.*?)<\/div>/) || [])[1] || '')
     .match(/\$([0-9.]+)/)[1];
@@ -70,11 +96,12 @@ test('the per-screen figure is computed, and matches the comparison table', () =
 });
 
 test('no per-screen figure where dividing would mislead', () => {
-  const cards = cardsOf(render(PLANS));
-  for (const name of ['Free', 'Custom']) {
-    const card = cards.find((c) => new RegExp(`<h3>${name}</h3>`).test(c));
-    assert.ok(!/per-screen/.test(card), `${name} must not claim a per-screen price`);
-  }
+  const out = render(PLANS);
+  const free = cardsOf(out.grid).find((c) => /<h3>Free<\/h3>/.test(c));
+  assert.ok(!/per-screen/.test(free), 'Free must not claim a per-screen price');
+  const quote = cardsOf(out.tail).find((c) => /<h3>Custom<\/h3>/.test(c));
+  assert.ok(quote, 'the quote card renders in the tail band');
+  assert.ok(!/per-screen/.test(quote), 'a quote-only plan has no per-screen price to claim');
 });
 
 test('"Most Popular" is on a named plan, not a positional index', () => {
@@ -83,7 +110,7 @@ test('"Most Popular" is on a named plan, not a positional index', () => {
   assert.match(LANDING, /const FEATURED_PLAN = '[a-z]+';/);
   assert.ok(!/price-card \$\{i === \d/.test(LANDING), 'the featured card must not be chosen by index');
 
-  const cards = cardsOf(render(PLANS));
+  const cards = cardsOf(render(PLANS).grid);
   const featured = cards.filter((c) => c.startsWith(' featured'));
   assert.equal(featured.length, 1, 'exactly one card carries the badge');
   // And it is on the plan that was chosen, not wherever the list happens to put it. Pinned because
@@ -157,4 +184,92 @@ test('the hero keeps its keyword phrases', () => {
   assert.match(h1, /Digital Signage/i);
   assert.match(h1, /Open-Source/i);
   assert.match(LANDING, /<strong>digital signage CMS<\/strong>/);
+});
+
+/* ─────────────── the pieces the mockup showed that the first pass left out ─────────────── */
+
+test('the billing toggle switches the headline and leaves monthly selected by default', () => {
+  const out = render(PLANS);
+  // ⚠️ Default is monthly: that is the number this page has always led with, and swapping the first
+  // figure a visitor reads from "$99" to "$989" is a pricing experiment, not a layout change.
+  assert.deepEqual(out.pressed(), { monthly: 'true', annual: 'false' });
+
+  const annual = cardsOf(out.click('Annual'));
+  const pro = annual.find((c) => /<h3>Pro<\/h3>/.test(c));
+  assert.equal(priceOf(pro), '$989/year', 'the annual view leads with the yearly price');
+  assert.match(pro, /\$99\/month billed monthly/, 'and names the monthly alternative');
+  assert.deepEqual(out.pressed(), { monthly: 'false', annual: 'true' });
+
+  // And back, because a toggle that only goes one way is a trap.
+  const monthly = cardsOf(out.click('Monthly'));
+  assert.equal(priceOf(monthly.find((c) => /<h3>Pro<\/h3>/.test(c))), '$99/mo');
+  assert.deepEqual(out.pressed(), { monthly: 'true', annual: 'false' });
+});
+
+test('the per-screen figure does not move when the cycle does', () => {
+  // It is derived from the ANNUAL price in both views: the plan costs that over a year either way, and
+  // a number that jumped on a toggle click would read as one of the two being wrong.
+  const out = render(PLANS);
+  const ps = (html) => textOf((cardsOf(html).find((c) => /<h3>Pro<\/h3>/.test(c))
+    .match(/class="per-screen">(.*?)<\/div>/) || [])[1] || '');
+  const before = ps(out.grid);
+  assert.match(before, /\$5\.49 per screen/);
+  assert.equal(ps(out.click('Annual')), before);
+});
+
+test('prices in the cards carry thousands separators', () => {
+  // "$1989/year" beside a table that says "$1,989" is the page disagreeing with itself in a way a
+  // reader notices before they notice anything else.
+  // Compare the RENDERED TEXT: the unit sits in a <span>, so "$1,989/year" never appears as a literal
+  // in the markup. Measuring the markup instead is how a passing test can describe a page nobody sees.
+  const annual = render(PLANS).click('Annual');
+  const prices = cardsOf(annual).map(priceOf);
+  assert.ok(prices.includes('$1,989/year'), `expected a separated price, got ${prices.join(', ')}`);
+  assert.ok(!prices.some((p) => /\$\d{4,}/.test(p)), 'no unseparated four-digit price');
+});
+
+test('the tail band holds the quote card and the self-host answer, with both routes out', () => {
+  const tail = render(PLANS).tail;
+  assert.match(tail, /<h3>Custom<\/h3>/, 'the quote card title comes from the plans row');
+  assert.match(tail, /openContactModal\(\)/, 'the enterprise contact route');
+  assert.match(tail, /run it yourself and pay nothing/);
+  assert.match(tail, /href="\/guides\/self-hosted-digital-signage\.html"/);
+  assert.match(tail, /href="\/download\/"/, 'the downloads page, which is where self-hosting starts');
+});
+
+test('every platform tile carries a sub-caption, and BrightSign says Series 5 / 6', () => {
+  const grid = LANDING.slice(LANDING.indexOf('<div class="platform-grid">'));
+  const tiles = grid.slice(0, grid.indexOf('</div>\n    <!--')).match(/<a class="platform-item"[\s\S]*?<\/a>/g) || [];
+  assert.equal(tiles.length, 10);
+  for (const t of tiles) {
+    assert.match(t, /<div class="sub">[^<]+<\/div>/, `a tile has no sub-caption: ${textOf(t).trim()}`);
+  }
+  // Corrected from "Series 4 / 5" during review — 5 and 6 are the generations this runs on.
+  assert.ok(tiles.some((t) => /BrightSign/.test(t) && /Series 5 \/ 6/.test(t)));
+  assert.ok(!LANDING.includes('Series 4 / 5'));
+});
+
+test('the platforms and comparison sections each end in a call to action', () => {
+  assert.match(LANDING, /Browse certified hardware, with prices/);
+  assert.match(LANDING, />Start your free trial</);
+  assert.match(LANDING, /href="\/compare\/yodeck-alternative\.html"[^>]*>Yodeck alternative/);
+  assert.match(LANDING, /href="\/compare\/optisigns-alternative\.html"[^>]*>OptiSigns alternative/);
+});
+
+test('the live deployed count sits in the trust strip and degrades to three columns', () => {
+  /*
+   * ⚠️ Only the deployment that collects install statistics answers /api/public/stats. Everywhere
+   * else it 404s, and on a new instance the count is 0 — so the cell starts hidden and the strip is
+   * three columns until a number arrives. A marketing page must not show an empty frame or a zero.
+   */
+  const strip = LANDING.slice(LANDING.indexOf('<div class="trust-strip'), LANDING.indexOf('class="price-math"'));
+  assert.match(strip, /class="trust-strip cols-3" id="trustStrip"/);
+  assert.match(strip, /<div id="deployed-stat" hidden>/);
+  assert.match(strip, /id="deployed-count"/);
+  assert.match(LANDING, /\.trust-strip\.cols-3 \{ grid-template-columns:repeat\(3/);
+  // And the existing stats fetch is what widens it — the cell and the switch must move together.
+  const fetchBlock = LANDING.slice(LANDING.indexOf("fetch('/api/public/stats')"));
+  assert.match(fetchBlock.slice(0, 900), /classList\.remove\('cols-3'\)/);
+  // The old standalone paragraph is gone, so the count is not rendered twice.
+  assert.ok(!LANDING.includes('screens deployed with ScreenTinker'));
 });
