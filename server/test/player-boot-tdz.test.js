@@ -89,3 +89,68 @@ test('the boot path really does render a cached item before the probe is consume
   assert.match(decl, /mime_type\.startsWith\('video\/'\)/,
     'the short-circuit on video mime is what kept image-first playlists alive');
 });
+
+/*
+ * ═══ THE SAME BRICK, A SECOND TIME — 2026-09-25 ═══
+ *
+ * Reported from a real player against alpha:
+ *
+ *     Uncaught ReferenceError: can't access lexical declaration 'playOrderState'
+ *                              before initialization
+ *       peekNextIndex → renderContent → playCurrentItem → startPlaybackAt → boot
+ *
+ * Identical mechanism, different binding. `playbackOrder`, `playOrderState` and `zoneOrderState`
+ * were declared beside nextActiveIndex(), three thousand lines below the cold-start branch that
+ * restores a cached playlist and renders item 0 during the initial script pass.
+ *
+ * ⚠️ WHY THE GUARD ABOVE DID NOT CATCH IT. That one names _videoCompositingOk. This is a different
+ * binding on a different path: only the WIDGET branch of renderContent() calls peekNextIndex(), so
+ * it fires only when the first cached item is a widget. An image or a video first item never
+ * reaches it. A guard that names one binding protects one binding — hence the list below.
+ *
+ * ⚠️ AND IT COST THE CONNECTION, which is what makes this a brick and not a log line.
+ * startPlaybackAt(0) was unguarded, so the throw escaped into the boot script and connect() — a
+ * few lines further down, in the same block — never ran. The player sat on a stale cache, 404ing
+ * for content the server no longer had, unreachable until someone cleared its storage. Rebooting,
+ * the one remedy an operator has, changed nothing.
+ */
+test('every binding the boot render can reach is declared before the Boot section', () => {
+  const boot = PLAYER.indexOf('==================== Boot ====================');
+  assert.ok(boot > 0, 'Boot section marker not found');
+  /*
+   * Boot restores a cached playlist and renders item 0 synchronously. That call graph —
+   * startPlaybackAt -> playCurrentItem -> renderContent -> (renderWidgetBuffered | peekNextIndex |
+   * the wipe path) — may touch any of these. Each one is a brick if it moves below Boot.
+   */
+  for (const decl of [
+    'let _videoCompositingOk = null;',
+    "let playbackOrder = 'sequential';",
+    'let playOrderState = {};',
+    'const zoneOrderState = {};',
+  ]) {
+    const at = PLAYER.indexOf(decl);
+    assert.ok(at > 0, `declaration not found: ${decl}`);
+    assert.ok(at < boot,
+      `${decl} is declared at line ${lineOf(decl)}, AFTER the Boot section at line ` +
+      `${lineOf('==================== Boot ====================')}. Boot renders the cached ` +
+      'playlist during the initial script pass, so reading this is a TDZ throw, and the throw ' +
+      'takes connect() with it.');
+  }
+});
+
+test('⚠️ the cold-start render is guarded, so a bad cache cannot cost the connection', () => {
+  /*
+   * Placement is the fix; this is the seatbelt. Rendering from cache is an optimisation — whatever
+   * goes wrong inside it, the player must still reach connect(), because a player that connects can
+   * be sent a correct playlist and a player that does not is a site visit.
+   */
+  const i = PLAYER.indexOf('startPlaybackAt(0);');
+  assert.ok(i > 0, 'the cold-start render call moved');
+  const window = PLAYER.slice(Math.max(0, i - 700), i + 400);
+  assert.match(window, /try \{\s*\n\s*startPlaybackAt\(0\);/,
+    'startPlaybackAt(0) must be inside a try — an uncaught throw here skips connect()');
+  assert.match(window, /catch \(e\)/, 'and the catch must exist');
+  // And the connection really is downstream of it, which is why the guard matters.
+  const connectAt = PLAYER.indexOf('connect(config.serverUrl);', i);
+  assert.ok(connectAt > i, 'connect() should follow the cold-start render in the boot block');
+});
