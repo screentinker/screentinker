@@ -696,7 +696,25 @@
 
     fetch('/api/subscription/plans').then(r => r.json()).then(plans => {
       const grid = document.getElementById('pricingGrid');
-      const publicPlans = plans.filter(p => p.active && p.name !== 'enterprise');
+      /*
+       * The quote-only plan gets its OWN card, and is kept out of the grid.
+       *
+       * It is a real row in the plans table, and the grid cannot render it: on this deployment it is
+       * `name: 'enterprise'`, `display_name: 'Custom'`, `max_devices: -1`, `price_monthly: 0`, and a
+       * price of 0 makes the card say "Free" beside the actual Free plan.
+       *
+       * ⚠️ TWO CONDITIONS, DELIBERATELY. `name === 'enterprise'` is the reserved slot — the schema
+       * seeds that row on every new instance, priced ($49.99), so testing the shape alone would put a
+       * priced Enterprise card in the grid AND leave the quote card below it: two enterprise cards on
+       * every fresh self-hosted install. The shape test is the second condition, because `name` is
+       * the one field on the row nothing displays, and renaming it in admin — the natural thing to do
+       * when the card already reads "Custom" — would otherwise drop a $0 "Free" card into the grid.
+       * Each condition covers the case the other misses; the union is what holds.
+       */
+      const isQuoteSlot = (p) => p.name === 'enterprise'
+        || (p.max_devices === -1 && !(p.price_monthly > 0));
+      const publicPlans = plans.filter(p => p.active && !isQuoteSlot(p));
+      const quotePlan = plans.find(p => p.active && isQuoteSlot(p));
       const planCardsHtml = publicPlans.map((p, i) => `
         <div class="price-card ${i === 2 ? 'featured' : ''}">
           <h3>${p.display_name}</h3>
@@ -712,12 +730,20 @@
           <a href="/app#/login" class="btn ${i === 0 ? 'btn-outline' : 'btn-primary'}" style="width:100%;justify-content:center">${p.price_monthly > 0 ? 'Start Trial' : 'Get Started'}</a>
         </div>
       `).join('');
-      // Hardcoded Enterprise / Custom card. Uses .price class for vertical
-      // alignment with the other cards (same baseline for the feature list);
-      // empty .yearly spacer matches the Free card's structure.
+      // The quote-only card. Its HEADING comes from the plans row, so renaming the plan in admin
+      // shows up here — that rename is the whole reason the page said "Enterprise / Custom" while
+      // the database said "Custom". The bullets and the button stay written here: they are sales
+      // copy and a contact route, not columns on the row.
+      //
+      // ⚠️ Rendered even when no such row exists. A self-hosted instance that deleted the plan still
+      // needs the way to reach us; dropping the card would remove the only enterprise contact path
+      // on the page, which is a worse failure than a card with a generic title.
+      // Uses .price for vertical alignment with the other cards (same baseline for the feature
+      // list); the empty .yearly spacer matches the Free card's structure.
+      const quoteTitle = (quotePlan && quotePlan.display_name) || 'Enterprise / Custom';
       const enterpriseCardHtml = `
         <div class="price-card">
-          <h3>Enterprise / Custom</h3>
+          <h3>${quoteTitle}</h3>
           <div class="price">Let's talk</div>
           <div class="yearly">&nbsp;</div>
           <ul>
