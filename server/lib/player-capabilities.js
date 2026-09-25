@@ -311,52 +311,6 @@ const BASELINE = {
     'audio.volume',
     'sync.clock', 'offline.cache',
   ],
-  /*
-   * Apple TV. ⚠️ THE ONLY PLATFORM HERE THAT IS NOT THE WEB PLAYER IN A SHELL.
-   *
-   * tvOS ships no WKWebView and no browser, and an app may not carry its own engine: there is no JIT
-   * entitlement, so a bundled WebKit/Chromium would interpret its JavaScript, and App Store guideline
-   * 2.5.6 requires web-browsing apps to use Apple's WebKit — which tvOS does not offer. So the page
-   * cannot run there at all, and this player is native.
-   *
-   * What it is NOT is a second implementation of the whole thing. JavaScriptCore IS public on tvOS, so
-   * the already-factored logic modules (play-order, schedule-eval, media-cache, offline-play-queue)
-   * run unmodified in JSC against the same shared/*-vectors.json the web and Tizen players are tested
-   * with — the decisions cannot drift because they are the same code. Only rendering is native, which
-   * is the half tvOS is genuinely better at: AVPlayer is a stronger HLS client than any <video>.
-   *
-   * ⚠️ WHAT IS ABSENT IS ABSENT BECAUSE IT NEEDS A DOM, and no amount of work on our side changes it:
-   *   playback.widget  — 8 of the 9 builtin widget types are data plus layout and are rendered
-   *                      natively, but `webpage` is arbitrary HTML. A capability that is true for
-   *                      eight types and false for one is a capability that would lie, so it is out
-   *                      until the dashboard can express "widgets, except that one".
-   *   playback.bundle  — an HTML bundle is a web page by definition.
-   *   playback.youtube — no embed without a web view, and proxying it breaks YouTube's terms.
-   * And the hardware ones are absent because tvOS has no API for them: the OS is landscape-only
-   * (display.rotation), an app cannot power or dim the panel, cannot reboot the box, cannot update
-   * itself outside the App Store, and cannot enter kiosk mode without MDM supervision.
-   *
-   * remote.screenshot is present on the same terms as Android's fallback path: a snapshot of the
-   * player's own view hierarchy, which is a real picture of the content rather than a dead button.
-   */
-  tvos: [
-    'playback.video', 'playback.image',
-    'playback.zones', 'playback.transitions', 'playback.pip',
-    /*
-     * ⚠️ playback.hls IS DELIBERATELY NOT HERE, even though AVPlayer is a better HLS client than any
-     * <video> element and this is the platform that most deserves it. It is in NO baseline, by design
-     * (server/test/iptv-hls.test.js): a live channel is a URL the PLAYER opens on its own LAN, so an
-     * undeclared or legacy device must be refused rather than handed a stream it will render as a
-     * black screen. The shipped app DECLARES it, and a declared set wins over this list — which is
-     * how it should arrive, because then the capability tracks the build rather than the server's
-     * opinion of the build.
-     */
-    'playback.slide_audio',
-    'audio.mute', 'audio.volume',
-    'remote.screenshot',
-    'system.restart_player',
-    'sync.clock', 'offline.cache',
-  ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
   web: [
@@ -401,21 +355,6 @@ function platformFamily(device) {
   // page that registers is the web player. Without this it would be classified as a browser
   // and would miss the CMA capture cap the shell turns on.
   if (platform.includes('vega')) return 'vega';
-  /*
-   * Apple TV. Two signals for the same reason Tizen has two: `platform` is the primary key but it
-   * lives in a column a register from a client not sending it used to overwrite, and misreading a
-   * native tvOS player as a browser would hand it playback.widget and playback.youtube — capabilities
-   * it cannot honour, rendering as controls with nothing behind them.
-   *
-   * ⚠️ BEFORE the android_version test below. A tvOS client sends no android_version, so it would fall
-   * through to 'web' and inherit the browser baseline, which is exactly the misreading above.
-   */
-  if (platform.includes('tvos') || platform.includes('apple tv') || platform.includes('appletv')) return 'tvos';
-  if (clientType === 'tvos') return 'tvos';
-  // Second, independent signal for a Tizen TV: the .wgt player sends client_type 'wgt' (see
-  // tizen/js/app.js). `platform` is the primary key, but it lives in a column that a register from
-  // a client not sending it used to overwrite — and misreading a Tizen panel as a browser tab
-  // hands it a volume slider with no handler behind it. Two signals, one conclusion.
   if (clientType === 'wgt') return 'tizen';
   // client_type 'apk' is the Android player; android_version that is NOT the web player's
   // "Web/..." shape is the older signal for the same thing.

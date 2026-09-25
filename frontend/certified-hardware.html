@@ -342,7 +342,7 @@
     </section>
 
     <section class="status-group status-not-supported">
-      <h2>Not supported <span class="count">(2)</span></h2>
+      <h2>Not supported <span class="count">(3)</span></h2>
       <p class="group-blurb">Tested and does not work well enough to recommend. Listed with the reason, because otherwise people buy them anyway.</p>
       <article class="device" id="fire-tv-stick-4k-select">
         <h3><a class="anchor" href="#fire-tv-stick-4k-select" aria-label="Link to Amazon Fire TV Stick 4K Select">#</a>Amazon Fire TV Stick 4K Select</h3>
@@ -393,6 +393,33 @@
           <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
         </ul>
         <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
+      </article>
+      <article class="device" id="apple-tv">
+        <h3><a class="anchor" href="#apple-tv" aria-label="Link to Apple TV (all models)">#</a>Apple TV (all models)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Apple</dd>
+          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>tvOS</dd>
+          <dt>ScreenTinker player</dt><dd>None. There is no ScreenTinker player for tvOS and none is planned.</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>⚠️ tvOS ships no web view. WKWebView is not in the public tvOS SDK and Apple&#39;s Human Interface Guidelines state web views are not supported on tvOS. Every ScreenTinker player is the web player inside a shell, and there is no shell to build here.</li>
+          <li>An app cannot carry its own engine: tvOS grants no JIT permission, and App Store guideline 2.5.6 requires web-browsing apps to use Apple&#39;s WebKit, which tvOS does not offer. Shipping a private web view is what gets apps rejected.</li>
+          <li>A native player was scoped and declined. It could do images, video, HLS, zones, schedules and proof-of-play; it could not do widgets, HTML bundles, web pages in a zone or picture-in-picture, or YouTube — all of which are HTML.</li>
+          <li>YouTube is not recoverable. The YouTube app on Apple TV is Google&#39;s own native client against their private backend. What Google publishes to third parties is the iframe embed, which their terms require to run in a web view and whose supported platforms are iOS, iPadOS and macOS — not tvOS.</li>
+          <li>⚠️ Unattended operation requires MDM. Without Single App Mode on a supervised device, an Apple TV sleeps and does not relaunch the app after a power cut. A screen that needs somebody to find the remote is not a digital sign.</li>
+          <li>No sideloading, and every update passes through App Review — so the release cadence would not be ours.</li>
+          <li>Use a Raspberry Pi, a small x86 PC, an Android TV box, or a Samsung/LG commercial panel. All cost less, install freely, recover from a power cut by themselves, and run the full player. See docs/tvos-player.md for the full decision record.</li>
+          <li>This would change if Apple shipped a public web view on tvOS. It would then be the same small shell built for the Vega Fire TV sticks.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/apple-tv-digital-signage.html">Setup guide for this device</a></p>
       </article>
     </section>
 
