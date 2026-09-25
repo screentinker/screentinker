@@ -37,11 +37,69 @@ router.get('/plays', (req, res) => {
   res.json(db.prepare(sql).all(...params));
 });
 
+/*
+ * Parse a `start`/`end` query parameter into an epoch second.
+ *
+ * ⚠️ THIS REPLACED `new Date(end + 'T23:59:59')`, WHICH RETURNED NOTHING FOR A VALID DATETIME.
+ *
+ * The old line assumed `end` was a bare `YYYY-MM-DD` and glued a time onto it to mean "the whole of
+ * that day". Hand it a full ISO timestamp — which is what a client library, a script, or an AI agent
+ * calling the documented API naturally sends — and the concatenation produced
+ * `2026-09-25T15:53:06.947ZT23:59:59`, an Invalid Date, `NaN`, and a WHERE clause that matched no
+ * rows. The endpoint then answered 200 with `[]`: not an error, just "nothing played", which is a
+ * plausible enough answer that nobody questions it. Found when an agent asked for a week of uptime
+ * and was told, convincingly, that every screen had been dark.
+ *
+ * Now: a date-only value still means the whole of that day (the original intent, preserved because
+ * the dashboard sends dates and `end=2026-09-25` must keep including the 25th). A datetime is taken
+ * as given. Anything unparseable is a 400 rather than a silent empty result — an explicit refusal is
+ * the one answer a caller can act on.
+ */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseRangeParam(value, { endOfDay = false } = {}) {
+  if (value === undefined || value === null || value === '') return { ok: true, epoch: null };
+  const raw = String(value).trim();
+  /*
+   * ⚠️ `Z`, BECAUSE THE TWO ENDS WERE IN DIFFERENT TIME ZONES.
+   *
+   * `new Date('2026-09-25')` is UTC midnight, but `new Date('2026-09-25T23:59:59')` — no offset — is
+   * LOCAL. So a start and an end given as the same kind of date resolved into different zones, and
+   * the window was skewed by the server's UTC offset. It has never shown up here because prod and
+   * alpha both run UTC, where the two happen to agree; a self-hosted instance in Chicago has been
+   * getting a five-hour skew on every report. No change where it is deployed, a fix where it is not.
+   */
+  const text = (endOfDay && DATE_ONLY.test(raw)) ? `${raw}T23:59:59.999Z` : raw;
+  const ms = new Date(text).getTime();
+  if (!Number.isFinite(ms)) return { ok: false, epoch: null };
+  return { ok: true, epoch: Math.floor(ms / 1000) };
+}
+
+/* Resolve both ends, or send the 400. Returns null when it has already answered. */
+function resolveRange(req, res, { defaultStart, defaultEnd }) {
+  const start = parseRangeParam(req.query.start);
+  const end = parseRangeParam(req.query.end, { endOfDay: true });
+  if (!start.ok || !end.ok) {
+    res.status(400).json({
+      error: `Invalid ${!start.ok ? 'start' : 'end'} date. Use YYYY-MM-DD or a full ISO 8601 timestamp.`,
+    });
+    return null;
+  }
+  return {
+    startEpoch: start.epoch === null ? defaultStart() : start.epoch,
+    endEpoch: end.epoch === null ? defaultEnd() : end.epoch,
+  };
+}
+
 // Summary report
 router.get('/summary', (req, res) => {
-  const { device_id, start, end, group_by } = req.query;
-  const startEpoch = start ? Math.floor(new Date(start).getTime() / 1000) : Math.floor(Date.now() / 1000) - 30 * 86400;
-  const endEpoch = end ? Math.floor(new Date(end + 'T23:59:59').getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const { device_id, group_by } = req.query;
+  const range = resolveRange(req, res, {
+    defaultStart: () => Math.floor(Date.now() / 1000) - 30 * 86400,
+    defaultEnd: () => Math.floor(Date.now() / 1000),
+  });
+  if (!range) return;
+  const { startEpoch, endEpoch } = range;
 
   // Phase 2.2g: workspace-scope all summary queries, no admin bypass.
   const wsScope = getWorkspaceDeviceSubquery(req);
@@ -121,8 +179,9 @@ router.get('/summary', (req, res) => {
 // play_logs. The added WHERE clause closes that pre-existing cross-tenant leak.
 router.get('/export', (req, res) => {
   const { device_id, start, end } = req.query;
-  const startEpoch = start ? Math.floor(new Date(start).getTime() / 1000) : 0;
-  const endEpoch = end ? Math.floor(new Date(end + 'T23:59:59').getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const range = resolveRange(req, res, { defaultStart: () => 0, defaultEnd: () => Math.floor(Date.now() / 1000) });
+  if (!range) return;
+  const { startEpoch, endEpoch } = range;
 
   const scope = getWorkspaceDeviceFilter(req);
   let sql = `SELECT pl.*, d.name as device_name FROM play_logs pl JOIN devices d ON pl.device_id = d.id WHERE pl.started_at >= ? AND pl.started_at <= ?${scope.sql}`;
@@ -149,9 +208,13 @@ router.get('/export', (req, res) => {
 // summaries for every device on the platform. The added WHERE clause closes
 // that pre-existing cross-tenant leak.
 router.get('/uptime', (req, res) => {
-  const { device_id, start, end } = req.query;
-  const startEpoch = start ? Math.floor(new Date(start).getTime() / 1000) : Math.floor(Date.now() / 1000) - 30 * 86400;
-  const endEpoch = end ? Math.floor(new Date(end + 'T23:59:59').getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const { device_id } = req.query;
+  const range = resolveRange(req, res, {
+    defaultStart: () => Math.floor(Date.now() / 1000) - 30 * 86400,
+    defaultEnd: () => Math.floor(Date.now() / 1000),
+  });
+  if (!range) return;
+  const { startEpoch, endEpoch } = range;
 
   const scope = getWorkspaceDeviceFilter(req);
   let sql = `SELECT dt.device_id, d.name as device_name,
@@ -177,3 +240,5 @@ router.get('/uptime', (req, res) => {
 });
 
 module.exports = router;
+// Exported for tests: the parsing rule is the bug, so it is tested directly.
+module.exports.parseRangeParam = parseRangeParam;
