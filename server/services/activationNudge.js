@@ -119,6 +119,7 @@ async function runActivationNudgeSweep() {
       subject: "Quick check-in - how's ScreenTinker going?",
       text: nudgeText(name),
       html: nudgeHtml(name),
+      unsubscribeUserId: u.id,
     });
     console.log(`[NUDGE] nudge -> ${u.email}: ${JSON.stringify(r)}`);
     // Stamp after the send (no retry, same discipline as the welcome email).

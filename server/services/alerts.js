@@ -82,6 +82,10 @@ async function checkOfflineDevices(io) {
         subject,
         text: body,
         html: buildAlertHtml(device.owner_name, subject, body),
+        // The offline alert is the email people actually want to stop, so it is the one that most
+        // needs a link rather than a support request. email_alerts already gates this send, so the
+        // link and the gate are the same switch.
+        unsubscribeUserId: device.user_id,
       }).catch(e => console.error('[ALERT] sendEmail rejected unexpectedly:', e.message));
 
       // Log activity. Phase 2.2 writer-leak fix: stamp workspace_id from the

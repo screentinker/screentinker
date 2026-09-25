@@ -180,17 +180,18 @@ function getSmtpTransporter() {
 
 // Pure message builder (exported for tests). fromName overrides the display name
 // while keeping the configured From address; otherwise SMTP_FROM is used verbatim.
-function buildSmtpMessage(to, subject, text, html, fromName) {
+function buildSmtpMessage(to, subject, text, html, fromName, headers) {
   const from = fromName
     ? { name: fromName, address: smtpFromAddress() }
     : (config.smtpFrom || smtpFromAddress());
   const msg = { from, to, subject, html };
   if (text) msg.text = text;   // keep a plain-text alternative when the caller gave one
+  if (headers && Object.keys(headers).length) msg.headers = headers;
   return msg;
 }
 
-async function smtpSend(to, subject, text, html, fromName) {
-  await getSmtpTransporter().sendMail(buildSmtpMessage(to, subject, text, html, fromName));
+async function smtpSend(to, subject, text, html, fromName, headers) {
+  await getSmtpTransporter().sendMail(buildSmtpMessage(to, subject, text, html, fromName, headers));
 }
 
 // ─────────────────────────── public surface ───────────────────────────
@@ -200,12 +201,48 @@ function escapeHtml(s) {
     ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
+/*
+ * Unsubscribe furniture for a bulk-ish email.
+ *
+ * ⚠️ OPT-IN PER CALL SITE, never automatic. Transactional mail — password reset, email verification,
+ * a pairing code, a security notice — must not carry an unsubscribe link, because "stop sending me
+ * these" applied to a password reset is an account someone can no longer recover. So a caller that
+ * wants the footer passes `unsubscribeUserId`, and everything else is unaffected.
+ *
+ * ⚠️ THE HEADERS ONLY GO OUT OVER SMTP. Microsoft Graph's `internetMessageHeaders` rejects header
+ * names that are not `X-`-prefixed, and `List-Unsubscribe` is not — attaching it to a Graph payload
+ * fails the whole send, so an alert email would be silently lost in exchange for a nicety. Over Graph
+ * the visible footer link is the unsubscribe path; over SMTP the mail client also gets its own
+ * button. The link works identically either way, which is the part that matters.
+ */
+function unsubscribeParts(userId) {
+  if (!userId) return { footerHtml: '', footerText: '', headers: null };
+  const { unsubscribeUrl } = require('../lib/unsubscribe-token');
+  const url = unsubscribeUrl(userId);
+  // No APP_URL means no absolute origin to build a clickable link from. Emit nothing rather than a
+  // link to `undefined/unsubscribe`.
+  if (!url) return { footerHtml: '', footerText: '', headers: null };
+  return {
+    footerHtml: `<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px">`
+      + `<p style="font-family:sans-serif;font-size:12px;color:#64748b;margin:0">`
+      + `Don't want these alerts? <a href="${url}" style="color:#3b82f6">Unsubscribe</a>.`
+      + ` Account email such as password resets will still reach you.</p>`,
+    footerText: `\n\n---\nDon't want these alerts? Unsubscribe: ${url}`,
+    headers: {
+      'List-Unsubscribe': `<${url}>`,
+      // RFC 8058: tells the client it may POST rather than open a browser. Paired with the route's
+      // refusal to act on GET, this is what makes a mail client's own button safe to wire up.
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+  };
+}
+
 // Caller passes { to, subject, text, html } (html optional; derived from text if
 // absent). rawSubject:true sends the subject verbatim (no "[ScreenTinker] "
 // prefix). fromName overrides the display name. Returns a result object and never
 // throws — delivery failures are logged and returned as sent:false so app flow
 // (offline alerts, signup mail, etc.) keeps running even when email is broken.
-async function sendEmail({ to, subject, text, html, fromName, rawSubject }) {
+async function sendEmail({ to, subject, text, html, fromName, rawSubject, unsubscribeUserId }) {
   if (!isConfigured()) {
     console.log(`[EMAIL] not configured - would send to ${to}: ${subject}`);
     if (text) console.log(`  ${text.split('\n')[0]}`);
@@ -224,10 +261,13 @@ async function sendEmail({ to, subject, text, html, fromName, rawSubject }) {
     }
   }
   const finalSubject = rawSubject ? subject : `[ScreenTinker] ${subject}`;
-  const finalHtml = html || `<pre style="font-family:sans-serif">${escapeHtml(text || '')}</pre>`;
+  const unsub = unsubscribeParts(unsubscribeUserId);
+  const baseHtml = html || `<pre style="font-family:sans-serif">${escapeHtml(text || '')}</pre>`;
+  const finalHtml = baseHtml + unsub.footerHtml;
+  const finalText = text ? text + unsub.footerText : text;
   try {
     if (TRANSPORT === 'smtp') {
-      await smtpSend(to, finalSubject, text, finalHtml, fromName);
+      await smtpSend(to, finalSubject, finalText, finalHtml, fromName, unsub.headers);
     } else {
       const token = await getAccessToken();
       await postSendMail(token, buildGraphPayload(to, finalSubject, finalHtml, fromName));
@@ -242,6 +282,9 @@ async function sendEmail({ to, subject, text, html, fromName, rawSubject }) {
 
 module.exports = {
   sendEmail,
+  // Exported so the footer/header rules are testable without a transport: which mail carries an
+  // unsubscribe link is a correctness question, not a formatting one.
+  unsubscribeParts,
   isConfigured,
   emailConfigStatus,
   // exported for tests
