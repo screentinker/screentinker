@@ -886,11 +886,21 @@ const PUBLIC_SCRIPTS = new Set([
   // BrightSign provisioning payloads, supplied by the deployment rather than the repository.
   'autorun.zip', 'autorun-server.zip', 'server-payload.zip', 'server-payload.json',
 ]);
+//
+// ⚠️ The TYPE comes from the extension, because half this list is binary. Declaring a 93 MB
+// server-payload.zip as `text/plain; charset=utf-8` is what the first version of this route did:
+// the bytes arrive intact, so it boot-tested clean, but it tells every proxy and CDN in front of
+// the instance that a zip is text they may transform — and it was express.static inferring the
+// type correctly that made the old behaviour work.
+const SCRIPT_TYPES = { '.zip': 'application/zip', '.json': 'application/json' };
 app.get('/scripts/:name', (req, res) => {
   // Membership in the set is the whole check: an exact match against a fixed list of basenames
   // cannot be traversed out of, so there is no path to sanitise.
   if (!PUBLIC_SCRIPTS.has(req.params.name)) return res.status(404).type('text/plain').send('not found');
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  const ext = path.extname(req.params.name);
+  // Default to text/plain: a .sh or .bat is meant to be read in a browser before it is run, which
+  // is the whole reason someone clicks one of these links rather than piping it to a shell.
+  res.setHeader('Content-Type', SCRIPT_TYPES[ext] || 'text/plain; charset=utf-8');
   res.sendFile(path.join(__dirname, '..', 'scripts', req.params.name));
 });
 
