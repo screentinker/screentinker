@@ -149,8 +149,13 @@ test('the API catalogue points only at things we serve', () => {
   const hrefs = JSON.stringify(cat).match(new RegExp(`${BASE}/[^"]*`, 'g')) || [];
   for (const href of hrefs) {
     const p = href.slice(BASE.length);
-    assert.match(server, new RegExp(`app\\.get\\(\\s*\\[?'${p.replace(/\//g, '\\/')}'`),
-      `the catalogue advertises ${p}, which no route serves`);
+    // A path is served either by a handler (app.get) or by a mounted router (app.use) — /mcp is the
+    // second. Accept both, or the test refuses a URL that is demonstrably live.
+    const esc = p.replace(/\//g, '\\/');
+    assert.ok(
+      new RegExp(`app\\.(get|use)\\(\\s*\\[?'${esc}'`).test(server),
+      `the catalogue advertises ${p}, which no route serves`
+    );
   }
   // And the OpenAPI file it names is really there — CI lints it, so it cannot silently rot.
   assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'docs', 'openapi.yaml')));

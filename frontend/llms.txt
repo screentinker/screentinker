@@ -59,6 +59,17 @@ so plainly when it has none.
 - [API catalogue](https://screentinker.com/.well-known/api-catalog): RFC 9727 linkset.
 - [How to authenticate](https://screentinker.com/.well-known/auth.md): scoped bearer tokens, what they can and cannot reach, and how a human creates one.
 
+## Acting on a ScreenTinker instance as an agent
+
+- **This software runs an MCP server.** Every instance, hosted or self-hosted, serves the Model Context
+  Protocol at `/mcp`. Point an MCP client at it with `Authorization: Bearer st_...` and you get a curated
+  set of twenty-one tools rather than 133 raw endpoints.
+- [Manage your screens from Claude](https://screentinker.com/guides/mcp-digital-signage.html): setup, the
+  tool list by scope, and how it is kept safe.
+- ⚠️ The tool list is filtered by the token's scope: a `read` token is never shown a tool that writes.
+- ⚠️ Playlist edits are a DRAFT until published. An agent that adds items and stops has changed nothing
+  that appears on a screen.
+
 ## Reading this site as an agent
 
 - Every published page has a **Markdown rendition**: append `.md` to its path, or send
