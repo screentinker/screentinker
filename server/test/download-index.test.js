@@ -194,23 +194,30 @@ test('/scripts serves an allowlist, not the directory', () => {
   );
   assert.match(code, /const PUBLIC_SCRIPTS = new Set\(\[/, 'the allowlist must exist');
 
-  const set = code.match(/const PUBLIC_SCRIPTS = new Set\(\[([^\]]*)\]\)/);
+  const set = code.match(/const PUBLIC_SCRIPTS = new Set\(\[([\s\S]*?)\]\)/);
   const allowed = [...set[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  // The three that are linked as URLs, and nothing else. A fourth entry is a deliberate edit here.
-  assert.deepEqual(
-    allowed.sort(),
-    ['debian-13-setup.sh', 'raspberry-pi-setup.sh', 'windows-setup.bat']
-  );
 
-  // Each allowlisted name must be a file that exists, or the link it was added for is a 404.
-  for (const name of allowed) {
+  // Exactly these, and nothing else. A new entry is a deliberate edit here.
+  const SETUP_SCRIPTS = ['debian-13-setup.sh', 'raspberry-pi-setup.sh', 'windows-setup.bat'];
+  // ⚠️ The BrightSign payloads are NOT in the repository — a deployment bind-mounts them into
+  // scripts/ (compose: ./brightsign/autorun.zip -> /app/scripts/autorun.zip) and
+  // brightsign/server/bs-server-boot.js fetches <server>/scripts/server-payload.zip by URL.
+  // Dropping one does not 404: the SPA fallback answers 200 with HTML, and a provisioning player
+  // writes that to its storage root as its autorun. So they are asserted present on the list and
+  // deliberately NOT asserted present on disk.
+  const DEPLOYMENT_ARTIFACTS = ['autorun-server.zip', 'autorun.zip', 'server-payload.json', 'server-payload.zip'];
+  assert.deepEqual(allowed.slice().sort(), [...SETUP_SCRIPTS, ...DEPLOYMENT_ARTIFACTS].sort());
+
+  // A setup script, though, IS tracked — and one allowlisted but missing is a link that 404s.
+  for (const name of SETUP_SCRIPTS) {
     assert.ok(
       fs.existsSync(path.join(__dirname, '..', '..', 'scripts', name)),
       `${name} is allowlisted but not in scripts/`
     );
   }
 
-  // And nothing sensitive can sneak back in by being added to the set.
+  // And nothing sensitive can sneak back in by being added to the set. Separate from the exact
+  // comparison above so that widening the list for a legitimate artifact still trips this.
   for (const name of allowed) {
     assert.ok(
       !/^(reset-admin|mint-billing-token|support-keygen|migrate-|upgrade|backup|finalize-)/.test(name),
