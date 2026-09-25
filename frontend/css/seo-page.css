@@ -39,6 +39,9 @@ nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: rgba
 .article code { background: var(--card); border: 1px solid var(--border); padding: 2px 6px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: #e2e8f0; }
 .article pre { background: var(--card); border: 1px solid var(--border); padding: 16px; border-radius: 8px; overflow-x: auto; margin: 16px 0; }
 .article pre code { background: transparent; border: none; padding: 0; font-size: 13px; }
+/* Keyboard keys — the setup guides name real key presses (F11, Win+R, Alt+F4), and an unstyled
+   <kbd> is indistinguishable from body text, so the instruction reads as prose. */
+.article kbd { background: var(--card); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; color: #e2e8f0; white-space: nowrap; }
 .article blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 16px 0; color: var(--muted); background: rgba(59,130,246,0.06); border-radius: 4px; }
 
 /* Comparison table */

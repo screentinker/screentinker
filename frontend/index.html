@@ -285,7 +285,18 @@
               &#128187; <span data-i18n="add_display.windows">Windows</span>
             </a>
           </div>
-           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:8px;line-height:1.5"><span data-i18n="add_display.smart_tv_prefix">Smart TVs (LG/Samsung): open the built-in browser and navigate to</span> <code id="addDeviceSmartTvUrl" style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px;white-space:nowrap">/player</code></p>
+           <!--
+             Every player this instance can hand out, and a setup guide for each. The four buttons
+             above cover the common cases; a BrightSign, an LG panel or a Samsung panel needs a
+             different artifact, and an operator holding one of those used to have nowhere to go
+             from here but the marketing site or a GitHub release page. /download is built by this
+             server, so the BrightSign archive it serves already has THIS address inside it.
+           -->
+           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:10px;line-height:1.6">
+             <a href="/download/" target="_blank" style="color:var(--primary,#3b82f6);font-weight:600" data-i18n="add_display.all_downloads">All players &amp; downloads</a>
+             <span data-i18n="add_display.all_downloads_hint">&mdash; BrightSign, LG webOS, Samsung Tizen and more, each with a setup guide.</span>
+           </p>
+           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:6px;line-height:1.5"><span data-i18n="add_display.smart_tv_prefix">Smart TVs (LG/Samsung): open the built-in browser and navigate to</span> <code id="addDeviceSmartTvUrl" style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px;white-space:nowrap">/player</code></p>
         </div>
         <div style="border-top:1px solid var(--border,#1e293b);margin-top:16px;padding-top:16px">
           <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500" data-i18n="add_display.owner_prompt">Provisioning a fresh / factory-reset Android panel? Enroll it as device owner for silent updates, reboot &amp; kiosk:</p>

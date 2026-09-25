@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrightSign Digital Signage CMS Setup | ScreenTinker</title>
+  <meta name="description" content="Use a BrightSign player with ScreenTinker: one autorun.zip from your own server, dual output, BrightWall sync, CEC panel power and real reboots.">
+  <meta name="keywords" content="brightsign digital signage, brightsign cms, brightsign alternative cms, brightsign autorun, brightsign bsn alternative, brightsign html player">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/brightsign-digital-signage.html">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/brightsign-digital-signage.html">
+  <meta property="og:title" content="Digital Signage on BrightSign Players">
+  <meta property="og:description" content="Use a BrightSign player with ScreenTinker: one autorun.zip from your own server, dual output, BrightWall sync, CEC panel power and real reboots.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Digital Signage on BrightSign Players">
+  <meta name="twitter:description" content="Use a BrightSign player with ScreenTinker: one autorun.zip from your own server, dual output, BrightWall sync, CEC panel power and real reboots.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#resources">Guides</a>
+      <span>/</span>
+      <span>BrightSign</span>
+    </nav>
+
+    <h1>Digital signage on BrightSign players</h1>
+    <p class="lead">A BrightSign is the most capable player on this list: real reboots, CEC panel power, dual outputs and frame-accurate video wall sync. Setup is one archive on the storage root and a power cycle.</p>
+
+    <h2>What runs on the player</h2>
+    <p>The <a href="/player">web player</a>, unmodified, inside an <code>roHtmlWidget</code> — with a small BrightScript host around it that owns the widget, keeps the identity, and executes the handful of things a page cannot do for itself.</p>
+    <p>This is not a port. A Series 5 player ran the ordinary player through 4,723 items over 12.4 hours, averaging 9.4 seconds against a 10-second slot. So the question was never whether the page runs; it was the four jobs the host exists for: rebuilding the widget when a reload would not come back, recovering from a dead server, keeping identity in the registry where it survives a content update, and reaching BrightScript-only capabilities on the page&rsquo;s behalf.</p>
+
+    <h2 id="download">One file, from your own server</h2>
+    <p>Open the <a href="/download/">downloads page</a> on your instance and download <code>autorun.zip</code>.</p>
+    <p><strong>Take it from your own server, not from a release page.</strong> The archive has the server address stamped into its bytes when your instance builds it, so the copy you download is already pointed at you — nothing to edit, and no chance of imaging a batch of players against the wrong instance, which is a mistake that looks exactly like a pairing bug.</p>
+
+    <h2 id="install">Install</h2>
+    <p>Put the single file on the root of the player&rsquo;s storage — a microSD card, or internal flash over SFTP — and power-cycle. The player unpacks it in place, renames it so it never extracts twice, and reboots into the player.</p>
+    <p>Two rules the format imposes, both of which fail silently if broken:</p>
+    <ul>
+      <li><strong>Do not unzip it yourself and do not nest it in a folder.</strong> The player extracts to the storage root; a wrapper directory puts the host script somewhere the player never looks, and the card appears to do nothing at all.</li>
+      <li><strong>Do not put an <code>autorun.brs</code> beside the zip.</strong> Its presence stops the archive being processed. The host script belongs inside the archive, which is where ours is.</li>
+    </ul>
+    <p>Needs BrightSign OS 7.0.60 or newer for the in-place unpack.</p>
+    <p><strong>No card slot, or a dead one?</strong> A player boots the host from internal flash just as happily — confirmed on a unit whose microSD interface is physically dead. Push the file to <code>/storage/flash</code> over SFTP once SSH is enabled on the player, and reboot.</p>
+
+    <h2 id="pair">Pairing</h2>
+    <p>The player shows a six-digit code. Enter it under <strong>Add Display</strong> in the dashboard.</p>
+    <p>Identity is kept in the player&rsquo;s registry rather than in browser storage, so it survives reboots, content updates and a change of server origin. The hardware serial is the stable id, which means two players imaged from the same card never collide.</p>
+
+    <h2>Provisioning a batch</h2>
+    <p>A <code>screentinker.json</code> on the card sets the server URL, the sync backend and the output mode, and it wins over the registry and the built-in default. That is how a batch gets imaged without touching each box:</p>
+    <pre><code>{ "server_url": "https://signage.example.com", "sync_backend": "auto", "output_mode": "single" }</code></pre>
+
+    <h2>Two displays from one player</h2>
+    <p><code>output_mode</code> is <code>single</code>, <code>dual</code> or <code>clone</code>. <strong>dual</strong> loads a second widget that the server hands its own playlist — two independent screens, one player. <strong>clone</strong> puts the same content on both outputs.</p>
+    <p>Confirmed multi-output: <strong>XC2055</strong> (dual HDMI) and <strong>XC4055</strong> (quad). <strong>Do not trust a series-level spec blurb here.</strong> The XT5 family description credits XT245, XT1145 and XT2145 with &ldquo;dual HDMI outputs&rdquo;, but an XT245 in hand is single-output — the phrase appears to cover HDMI in plus out. Check the individual model before enabling <code>dual</code>. An unsupported model keeps working as a normal single-screen player rather than failing to start.</p>
+
+    <h2>Video wall sync: ours or BrightSign&rsquo;s</h2>
+    <p>Both, chosen per group. Our protocol is clock-derived, leaderless, accurate to the second, and works across a mixed estate — BrightSign, Android, web and Tizen screens in one synchronised group. BrightSign&rsquo;s own BrightWall sync is frame-accurate but BrightSign-only.</p>
+    <p>Set a group to <code>auto</code> and native sync is used when every member is a BrightSign, ours otherwise. Three conditions force a fallback, and each is <em>reported</em> rather than applied quietly: a non-BrightSign member, members on different subnets (it is multicast and does not cross networks), or the elected leader being offline. A group that half-syncs is worse than one that syncs to the second everywhere — and it would be invisible from the dashboard, because the BrightSigns would look perfect while the odd panel drifted alone.</p>
+
+    <h2>What the dashboard can do here that it cannot do to a browser</h2>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>Command</th><th>Browser player</th><th>BrightSign</th></tr></thead>
+      <tbody>
+        <tr><td>Screen off / on</td><td>Black overlay; the panel stays lit</td><td><strong>CEC</strong> — the display actually sleeps</td></tr>
+        <tr><td>Reboot</td><td>Ignored</td><td><strong>A real reboot</strong></td></tr>
+        <tr><td>Set volume</td><td>&mdash;</td><td>Applied to current and future media</td></tr>
+        <tr><td>Refresh</td><td>Page reload</td><td>The host rebuilds the widget</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>That last row is not a detail. A page-initiated reload does not reliably bring an <code>roHtmlWidget</code> back: on one deploy every connected player reloaded and returned, and the BrightSign was the only screen that never came back. So the page here never reloads itself — it asks the host, and the host tears the widget down and builds a new one.</p>
+    <p>On top of that the host retries a failed load with backoff, falls back to a local page that names the server and keeps probing it, and runs a watchdog: the page beats every 30 seconds and three missed beats rebuild the widget. That covers the failure a load error never reports — a page that loaded fine and then wedged.</p>
+
+    <h2>Which players</h2>
+    <p>Validated here on <strong>Series 5</strong> — XT245 and HD1026, on BrightSign OS 9 and 10 — and listed as <a href="/certified-hardware">certified hardware</a>. Series 6 players run the same package the same way; we have not had one on the bench, so treat that as expected rather than tested, and tell us how it goes.</p>
+    <p>A player paired before this package existed is still recognised, by its BrightSign user agent. You do not have to re-pair a fleet to adopt it.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/download/">Download a player for any platform</a></li>
+        <li><a href="/guides/lg-webos-digital-signage.html">LG webOS panels</a></li>
+        <li><a href="/guides/digital-signage-android-tv.html">Android TV and Fire TV</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+  </main>
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Guides",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "BrightSign",
+        "item": "https://screentinker.com/guides/brightsign-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "Set up a BrightSign player with ScreenTinker",
+    "description": "Use a BrightSign player with ScreenTinker: one autorun.zip from your own server, dual output, BrightWall sync, CEC panel power and real reboots.",
+    "totalTime": "PT10M",
+    "tool": [
+      {
+        "@type": "HowToTool",
+        "name": "A BrightSign player"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "A microSD card or SFTP access to internal flash"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "A ScreenTinker account"
+      }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Download autorun.zip from your instance",
+        "text": "Open the downloads page on your ScreenTinker server and download autorun.zip. It is built for that server, so the address is already inside it.",
+        "url": "https://screentinker.com/guides/brightsign-digital-signage.html#download"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Copy it to the storage root",
+        "text": "Put the single file on the root of the player’s microSD card, or push it to internal flash over SFTP. Do not unzip it.",
+        "url": "https://screentinker.com/guides/brightsign-digital-signage.html#install"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Power-cycle the player",
+        "text": "The player unpacks the archive in place, renames it so it never re-extracts, and reboots into the player.",
+        "url": "https://screentinker.com/guides/brightsign-digital-signage.html#install"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 4,
+        "name": "Pair the screen",
+        "text": "The player shows a six-digit pairing code. Enter it under Add Display in the dashboard.",
+        "url": "https://screentinker.com/guides/brightsign-digital-signage.html#pair"
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

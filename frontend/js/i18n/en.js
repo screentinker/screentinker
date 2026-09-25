@@ -2450,6 +2450,9 @@ export default {
   'add_display.pair_btn': 'Pair Display',
   'add_display.server_url_label': 'Server URL',
   'add_display.server_url_hint': 'Use this URL when configuring the Android app',
+  'onboarding.step.player.all_downloads': 'Other hardware — BrightSign, LG, Samsung, Raspberry Pi, Windows, ChromeOS →',
+  'add_display.all_downloads': 'All players & downloads',
+  'add_display.all_downloads_hint': '— BrightSign, LG webOS, Samsung Tizen and more, each with a setup guide.',
   'add_display.smart_tv_prefix': 'Smart TVs (LG/Samsung): open the built-in browser and navigate to',
 
   // Workspace switcher (Phase 3 MVP). devices_count is the only count exposed
