@@ -16,7 +16,7 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://screentinker.com/">
   <meta property="og:title" content="ScreenTinker - Open-Source Digital Signage CMS">
-  <meta property="og:description" content="Open-source digital signage CMS. Free plan, self-host or cloud. Manage TVs, video walls, kiosks, and schedules across 10 platforms.">
+  <meta property="og:description" content="Open-source digital signage CMS. Free plan, self-host or cloud. Manage TVs, video walls, kiosks, and schedules across 11 platforms.">
   <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
   <meta property="og:image:width" content="2500">
   <meta property="og:image:height" content="1314">
@@ -26,7 +26,7 @@
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="ScreenTinker - Open-Source Digital Signage CMS">
-  <meta name="twitter:description" content="Open-source digital signage CMS. Free plan, self-host or cloud. Video walls, kiosks, scheduling, and live remote control across 10 platforms.">
+  <meta name="twitter:description" content="Open-source digital signage CMS. Free plan, self-host or cloud. Video walls, kiosks, scheduling, and live remote control across 11 platforms.">
   <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
   <meta name="twitter:image:alt" content="ScreenTinker open-source digital signage dashboard showing four online displays with playlist assignments">
 
@@ -284,7 +284,7 @@
       visitor could do about either.
     -->
     <div class="trust-strip cols-3" id="trustStrip">
-      <div><div class="n">10</div><div class="l">platforms, one CMS</div></div>
+      <div><div class="n">11</div><div class="l">platforms, one CMS</div></div>
       <div><div class="n">$0</div><div class="l">per extra screen</div></div>
       <div><div class="n">Self-host</div><div class="l">or managed cloud</div></div>
       <div id="deployed-stat" hidden>
@@ -353,6 +353,7 @@
     <p class="subtitle">Every feature you'd expect from an enterprise <strong>digital signage CMS</strong>: video walls, scheduling, proof-of-play, and remote monitoring. All free and open source.</p>
     <div class="feature-grid">
       <div class="feature-card"><div class="feature-icon">&#129302;</div><h3>Run It From Your AI Assistant</h3><p>ScreenTinker speaks the Model Context Protocol. Point Claude, or any MCP client, at your server and ask it in plain English &mdash; &ldquo;what&rsquo;s offline?&rdquo;, &ldquo;put this video on the lobby screen&rdquo;. <a href="/guides/mcp-digital-signage.html">Set it up &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon">&#128220;</div><h3>E-Paper Signs That Run For Months</h3><p>A battery ESP32 and an e-paper panel, with no browser on the device. The server renders and dithers the frame, tells the board how long to sleep, and answers 304 when nothing changed so it never wakes the panel for nothing. <a href="/guides/eink-esp32-digital-signage.html">How it works &rarr;</a></p></div>
       <div class="feature-card"><div class="feature-icon">&#128336;</div><h3>Display Power Schedules</h3><p>Panels switch themselves off outside opening hours and back on before the doors do. Per screen or per group, on a calendar.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128257;</div><h3>Group Sync</h3><p>A wall of screens starts the same frame at the same moment &mdash; and keeps doing it with the internet unplugged.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127760;</div><h3>Node Mesh</h3><p>One screen on a site pulls a video once and hands it to its neighbours over the LAN. A whole store updates on one download.</p></div>
@@ -391,6 +392,7 @@
     <div class="feature-grid">
       <div class="feature-card"><div class="feature-icon">&#128722;</div><h3>Retail &amp; QSR</h3><p>Menu boards, promotions, and price updates pushed to every location instantly.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127869;</div><h3>Restaurants &amp; Cafés</h3><p>Digital menu boards with dayparting. Breakfast, lunch, and dinner menus that switch themselves on schedule.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128161;</div><h3>LED Walls</h3><p>The LED processor hands the wall&rsquo;s native resolution to the player over EDID, so a 2808&times;648 wall is just a screen with an odd shape. &#9888;&#65039; Streaming sticks can&rsquo;t drive one &mdash; they only output standard resolutions &mdash; so use a Raspberry Pi or a small PC. Verified in production by Watterott electronic. <a href="/guides/led-wall-digital-signage.html">LED wall guide &rarr;</a></p></div>
       <div class="feature-card"><div class="feature-icon">&#127970;</div><h3>Offices &amp; Corporate</h3><p>Lobby welcome screens, meeting-room signs, KPI dashboards, and internal comms.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127979;</div><h3>Schools &amp; Universities</h3><p>Campus announcements, event calendars, and emergency alerts across every building.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127973;</div><h3>Healthcare &amp; Clinics</h3><p>Waiting-room info, wayfinding, and check-in kiosks that keep playing even offline.</p></div>
@@ -414,6 +416,7 @@
       <a class="platform-item" href="/guides/lg-webos-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">LG webOS</div><div class="sub">webOS 4 &rarr; 6+</div></a>
       <a class="platform-item" href="/guides/samsung-tv-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">Samsung Tizen</div><div class="sub">.wgt package</div></a>
       <a class="platform-item" href="/guides/brightsign-digital-signage.html" style="color:inherit"><div class="icon">&#128225;</div><div class="name">BrightSign</div><div class="sub">Series 5 / 6</div></a>
+      <a class="platform-item" href="/guides/eink-esp32-digital-signage.html" style="color:inherit"><div class="icon">&#128220;</div><div class="name">E-Paper &amp; ESP32</div><div class="sub">Battery, no browser</div></a>
       <a class="platform-item" href="/player" style="color:inherit"><div class="icon">&#127758;</div><div class="name">Any Browser</div><div class="sub">No install</div></a>
     </div>
     <!-- The page already links /certified-hardware from the nav and the hero, but this is where
@@ -470,11 +473,12 @@
         <tr><td>Kiosk/Touchscreen</td><td class="yes">&#10003; Included</td><td class="yes">&#10003;</td><td class="yes">&#10003;</td><td class="partial">Limited</td></tr>
         <tr><td>Proof-of-Play</td><td class="yes">&#10003; All plans</td><td class="paid">Paid tier</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
         <tr><td>Display power schedules</td><td class="yes">&#10003; All plans</td><td class="partial">Player-dependent</td><td class="partial">Player-dependent</td><td class="partial">Player-dependent</td></tr>
+        <tr><td>E-paper / microcontroller displays</td><td class="yes">&#10003; Server-side rendering</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
         <tr><td>Control from an AI assistant (MCP)</td><td class="yes">&#10003; Built in</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
         <tr><td>Site-local content distribution</td><td class="yes">&#10003; Node mesh</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
         <tr><td>White Label</td><td class="yes">&#10003; Included</td><td class="paid">Paid</td><td class="paid">Paid tier</td><td class="paid">Enterprise</td></tr>
         <tr><td>Email Alerts</td><td class="yes">&#10003; All plans</td><td class="paid">Paid</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
-        <tr><td>Platforms supported</td><td style="color:var(--accent);font-weight:600">10, incl. Vega OS</td><td>Own player + a few OS</td><td>Several</td><td>Several</td></tr>
+        <tr><td>Platforms supported</td><td style="color:var(--accent);font-weight:600">11, incl. e-paper</td><td>Own player + a few OS</td><td>Several</td><td>Several</td></tr>
       </tbody>
     </table>
     </div>

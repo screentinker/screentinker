@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Paper &amp; ESP32 Digital Signage &mdash; Battery Signs | ScreenTinker</title>
+  <meta name="description" content="Run digital signage on e-paper and ESP32 with no browser on the device. The server renders, dithers and packs each frame, and tells the board how long to sleep.">
+  <meta name="keywords" content="e-paper digital signage, eink digital signage, esp32 digital signage, epaper sign esp32, battery powered digital sign, waveshare epaper signage, low power signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/eink-esp32-digital-signage.html">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/eink-esp32-digital-signage.html">
+  <meta property="og:title" content="E-Paper and ESP32 Digital Signage">
+  <meta property="og:description" content="Run digital signage on e-paper and ESP32 with no browser on the device. The server renders, dithers and packs each frame, and tells the board how long to sleep.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="E-Paper and ESP32 Digital Signage">
+  <meta name="twitter:description" content="Run digital signage on e-paper and ESP32 with no browser on the device. The server renders, dithers and packs each frame, and tells the board how long to sleep.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#resources">Guides</a>
+      <span>/</span>
+      <span>E-Paper &amp; ESP32</span>
+    </nav>
+
+    <h1>E-paper and ESP32 signs</h1>
+    <p class="lead">A battery-powered sign with no browser on it. The board wakes, asks the server for a picture, draws it, and goes back to sleep &mdash; the rendering happens on the server, so the hardware can be a microcontroller and a coin cell.</p>
+
+    <h2>Why this is different</h2>
+    <p>Every other player on this site is a web page: the device runs a browser, fetches your content and
+    renders it. A microcontroller cannot do that, and a battery-powered panel should not want to &mdash; a
+    browser is the single most expensive thing you could ask a coin cell to run.</p>
+    <p>So the work moves to the server. ScreenTinker resolves which playlist item is due, resizes it to your
+    panel, dithers it to the colours the panel actually has, packs it into the byte layout the controller
+    expects, and sends that. The board&rsquo;s entire job is: wake, one HTTP GET, push bytes to the panel,
+    sleep.</p>
+
+    <h2 id="pair">What the device does</h2>
+    <ol>
+      <li>Wake from deep sleep.</li>
+      <li>GET the render endpoint with its device token and the ETag of the frame it already has.</li>
+      <li>Receive a packed frame &mdash; or <strong>304 Not Modified</strong>, and skip the refresh entirely.</li>
+      <li>Read the expiry header and deep sleep for exactly that long.</li>
+    </ol>
+    <p>The 304 is the part that matters for battery life. An e-paper refresh is the most power-hungry thing
+    the device does, and most wakes find nothing has changed &mdash; so most wakes cost one small HTTP round
+    trip and nothing else.</p>
+    <p>There is no local state to keep. Playlist timing and the cursor live on the server, so a board that
+    loses power and reboots asks for the current frame and is immediately correct.</p>
+
+    <h2 id="profile">Panels it already knows</h2>
+    <p>Give a preset name and the rest is filled in. Or set width, height, rotation, colour depth, dithering
+    and output format yourself &mdash; the presets are a convenience, not a whitelist.</p>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>Preset</th><th>Panel</th><th>Output</th></tr></thead>
+      <tbody>
+        <tr><td><code>seeed-reterminal-sticky</code></td><td>Seeed reTerminal Sticky, 800&times;480 B/W</td><td>1-bit, Floyd&ndash;Steinberg</td></tr>
+        <tr><td><code>waveshare-7.5in-v2</code></td><td>Waveshare 7.5&Prime;, 800&times;480</td><td>1-bit, Floyd&ndash;Steinberg</td></tr>
+        <tr><td><code>waveshare-4.2in-v2</code></td><td>Waveshare 4.2&Prime;, 400&times;300</td><td>1-bit, Floyd&ndash;Steinberg</td></tr>
+        <tr><td><code>waveshare-2.9in-v2</code></td><td>Waveshare 2.9&Prime;, 296&times;128</td><td>1-bit, Floyd&ndash;Steinberg</td></tr>
+        <tr><td><code>waveshare-1.54in-v2</code></td><td>Waveshare 1.54&Prime;, 200&times;200</td><td>1-bit, Floyd&ndash;Steinberg</td></tr>
+        <tr><td><code>waveshare-5.65in-acep</code></td><td>7-colour ACeP, 600&times;448</td><td>24-bit RGB, PNG</td></tr>
+        <tr><td><code>generic-320x240-rgb565</code></td><td>ILI9341-class TFT</td><td>16-bit RGB565, raw</td></tr>
+        <tr><td><code>generic-480x320-rgb565</code></td><td>Larger TFT</td><td>16-bit RGB565, raw</td></tr>
+        <tr><td><code>generic-128x64-1bit</code></td><td>SSD1306 OLED</td><td>1-bit, Atkinson</td></tr>
+        <tr><td><code>generic-128x32-1bit</code></td><td>Small SSD1306 OLED</td><td>1-bit, Atkinson</td></tr>
+      </tbody>
+    </table>
+    </div>
+    </div>
+    <p><strong>Two dithering algorithms, and they are not interchangeable.</strong> Floyd&ndash;Steinberg
+    diffuses the full error and suits a large e-paper panel showing a photograph. Atkinson diffuses three
+    quarters of it, which keeps small OLED text legible instead of smearing it into grey &mdash; which is why
+    the OLED presets use it and the e-paper ones do not.</p>
+
+    <h2 id="render">What you can actually put on one</h2>
+    <p>The same content library as every other screen, rendered down: images, and a layout renderer for
+    multi-zone frames. A 296&times;128 panel is not going to show a video, and nothing pretends otherwise
+    &mdash; these are for the signs that carry a room name, a price, a status, a QR code, a meeting.</p>
+
+    <h2 id="sleep">Honest limits</h2>
+    <ul>
+      <li><strong>No video, no audio, no widgets that animate.</strong> A frame is a picture.</li>
+      <li><strong>Refresh is measured in seconds to minutes</strong>, not frames per second. E-paper physically
+      cannot do better, and a battery does not want it to.</li>
+      <li><strong>The device token is permanent</strong> and does not rotate. It lives in the board&rsquo;s
+      flash and stays valid until you delete the display or re-pair it &mdash; treat a board you are throwing
+      away as a credential you should revoke.</li>
+      <li><strong>You write the firmware.</strong> A reference ESP32 implementation ships in the repository
+      documentation; it is a starting point, not a product.</li>
+    </ul>
+    <p>None of these panels are on the <a href="/certified-hardware">certified hardware</a> list, which means
+    exactly what it says: the renderer is tested, and we have not sat a given panel on a bench for a month.
+    Tell us how yours goes.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi</a></li>
+        <li><a href="/guides/led-wall-digital-signage.html">LED walls</a></li>
+        <li><a href="/download/">Download a player</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+  </main>
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Guides",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "E-Paper &amp; ESP32",
+        "item": "https://screentinker.com/guides/eink-esp32-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "Set up an e-paper digital sign with ESP32",
+    "description": "Run digital signage on e-paper and ESP32 with no browser on the device. The server renders, dithers and packs each frame, and tells the board how long to sleep.",
+    "totalTime": "PT30M",
+    "tool": [
+      {
+        "@type": "HowToTool",
+        "name": "An ESP32 or Pi Pico W"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "An e-paper or OLED panel"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "A ScreenTinker account"
+      }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Pair the board",
+        "text": "The firmware posts to the embedded pairing endpoint and gets a permanent device id and token, which it stores in flash.",
+        "url": "https://screentinker.com/guides/eink-esp32-digital-signage.html#pair"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Pick a panel profile",
+        "text": "Choose a preset matching your panel, or give width, height, colour depth and dithering directly.",
+        "url": "https://screentinker.com/guides/eink-esp32-digital-signage.html#profile"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Fetch a frame",
+        "text": "The board GETs the render endpoint with its token and ETag, and gets back a packed image or 304 Not Modified.",
+        "url": "https://screentinker.com/guides/eink-esp32-digital-signage.html#render"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 4,
+        "name": "Sleep",
+        "text": "The response carries a header saying how many seconds to deep sleep before the next frame is due.",
+        "url": "https://screentinker.com/guides/eink-esp32-digital-signage.html#sleep"
+      }
+    ]
+  }
+  </script>
+</body>
+</html>
