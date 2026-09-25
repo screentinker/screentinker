@@ -1364,6 +1364,31 @@
     const WIDGET_SWAP_TIMEOUT_MS = 8000;
     const WIDGET_SOLO_REFRESH_MS = 60000;
     let pendingWidgetSwap = null;   // { iframe, timer } while a new widget iframe loads
+    /*
+     * ⚠️ PLAY-ORDER STATE LIVES UP HERE BECAUSE THE BOOT PATH REACHES IT.
+     *
+     * These were declared next to nextActiveIndex(), three thousand lines further down. That is
+     * fine for every call that happens after the script has finished — and fatal for the one that
+     * does not: the cold-start branch restores a cached playlist and calls startPlaybackAt(0)
+     * DURING the initial pass. With a widget as the first item, renderContent() calls
+     * peekNextIndex(), which touches playOrderState, and `let` had not initialised yet:
+     *
+     *     Uncaught ReferenceError: can't access lexical declaration
+     *                              'playOrderState' before initialization
+     *
+     * ⚠️ AND THE THROW COST THE CONNECTION, which is what made it a brick rather than a log line.
+     * startPlaybackAt(0) was unguarded, so the error escaped into the boot script and everything
+     * after it — including connect() — never ran. The screen sat on a stale cached playlist, 404ing
+     * for content the server no longer had, unreachable and unfixable until someone cleared its
+     * storage. Same shape as the 1.9.32 boot TDZ.
+     *
+     * Reported from a real player: a 12-item cached playlist whose first item was a widget.
+     * player-boot-tdz.test.js did not cover it because only the WIDGET branch of renderContent
+     * peeks ahead; an image or a video first item never reaches it.
+     */
+    let playbackOrder = 'sequential';
+    let playOrderState = {};
+    const zoneOrderState = {};
     // Per-zone rotation timers (multi-zone). Each zone advances independently on
     // its own interval, decoupled from the fullscreen advanceTimer/nextItem.
     let zoneTimers = {};
@@ -2015,7 +2040,20 @@
         playlist = cachedPlaylist;
         layout = loadLayoutCache();
         document.getElementById('setupScreen').style.display = 'none';
-        startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
+        /*
+         * ⚠️ GUARDED, AND THE GUARD IS THE POINT. Everything after this line in the boot script —
+         * the tap overlay, and connect() — is what gets the player talking to the server. An
+         * uncaught throw here skipped all of it, so a screen that failed to render one cached item
+         * never connected, never received a corrected playlist, and could not be recovered
+         * remotely. Rendering from cache is an OPTIMISATION; it must never be able to cost the
+         * connection that makes the player fixable. Whatever goes wrong in here, we still boot.
+         */
+        try {
+          startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
+        } catch (e) {
+          console.error('[boot] cached playlist failed to render — continuing to connect:', e && (e.stack || e.message || e));
+          try { savePlaylistCache([]); } catch (e2) {}   // a cache that cannot render is worse than none
+        }
         // #group-sync: if this device was in a sync group, resume the schedule immediately from the
         // cached clock offset — so a reboot mid-outage comes back aligned WITHOUT waiting for a server.
         try { const cg = localStorage.getItem('st_group_sync'); if (cg) applyGroupSync(JSON.parse(cg)); } catch (e) {}
@@ -5213,9 +5251,12 @@
       return (m === 'cover' || m === 'fill' || m === 'contain') ? m : 'contain';
     }
     function shouldLogPlay(item) { return !item || item.log_play !== 0; }
-    let playbackOrder = 'sequential';
-    let playOrderState = {};
-    const zoneOrderState = {};
+    /*
+     * ⚠️ playbackOrder / playOrderState / zoneOrderState ARE DECLARED WITH THE REST OF THE PLAYER
+     * STATE, near the top. They used to sit here, three thousand lines below the cold-start branch
+     * that reaches them, and `let` in that position is a temporal dead zone — see the comment at
+     * the declaration.
+     */
     function nextActiveIndex(from) {
       try {
         if (window.PlayOrder && !(wallConfig && wallConfig.is_leader === false) && !groupSync) {

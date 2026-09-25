@@ -1277,6 +1277,9 @@ const LIVE_DWELL_RECHECK_MS = 6e4;
 const WIDGET_SWAP_TIMEOUT_MS = 8e3;
 const WIDGET_SOLO_REFRESH_MS = 6e4;
 let pendingWidgetSwap = null;
+let playbackOrder = "sequential";
+let playOrderState = {};
+const zoneOrderState = {};
 let zoneTimers = {};
 let previewBannerParts = {};
 let wallConfig = null;
@@ -1705,7 +1708,15 @@ if (_previewQS.get("preview") === "1" && (_previewQS.get("playlist") || _preview
       playlist = cachedPlaylist;
       layout = loadLayoutCache();
       document.getElementById("setupScreen").style.display = "none";
-      startPlaybackAt(0);
+      try {
+        startPlaybackAt(0);
+      } catch (e) {
+        console.error("[boot] cached playlist failed to render \u2014 continuing to connect:", e && (e.stack || e.message || e));
+        try {
+          savePlaylistCache([]);
+        } catch (e2) {
+        }
+      }
       try {
         const cg = localStorage.getItem("st_group_sync");
         if (cg) applyGroupSync(JSON.parse(cg));
@@ -4112,9 +4123,6 @@ function itemFit(item, zone) {
 function shouldLogPlay(item) {
   return !item || item.log_play !== 0;
 }
-let playbackOrder = "sequential";
-let playOrderState = {};
-const zoneOrderState = {};
 function nextActiveIndex(from) {
   try {
     if (window.PlayOrder && !(wallConfig && wallConfig.is_leader === false) && !groupSync) {
