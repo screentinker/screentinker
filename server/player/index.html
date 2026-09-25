@@ -4089,10 +4089,11 @@
       // would simply never have been declared, hiding the transitions UI for every display, and
       // nothing would have failed loudly enough to notice.
       //
-      // Vega is included. An AFTCA002 ran these wipes. The capture is capped in vegaWipeSize
-      // because CMA ran out, not because the feature is absent. Withholding the name hid a
-      // control the stick has. This function is extracted by the capability tests, which have
-      // no shell; it must not call onVega (a missing predicate would throw out of register).
+      // Vega is included. Image→image wipes run; video boundaries hard-cut in
+      // videoCompositingAvailable, because drawing a <video> traps slatium. The
+      // name stays: withholding it hid a control the stick has for stills. This
+      // function is extracted by the capability tests, which have no shell; it
+      // must not call onVega (a missing predicate would throw out of register).
       try {
         if (typeof transitionRuntimeReady === 'function' && transitionRuntimeReady()) {
           caps.push('playback.transitions');
@@ -4646,10 +4647,10 @@
       const item = playlist[idx];
       if (!item) return;
       // Vega sticks (Fire TV Stick 4K Select, Fire TV Stick HD 2026). A second <video> is a
-      // second decoder, and a decoder allocates from CMA — the contiguous DMA pool, about
-      // 236 MB on an AFTCA002 — not from the MemFree that still looked healthy after the
-      // process died. Group sync still plays; the boundary does not warm the next clip.
-      // Same page, so this is gated on the shell actually being there — a browser is unchanged.
+      // second decoder, and a decoder allocates from CMA — about 236 MB on an AFTCA002.
+      // One run drained that pool to ~1 MB. That is a separate problem from the slatium
+      // trap, which has also fired with the pool mostly free. Group sync still plays;
+      // the boundary does not warm the next clip. A browser is unchanged.
       if (onVega()) { groupPreloadIdx = idx; groupPreloadEl = null; return; }
       const isVid = item.mime_type && item.mime_type.indexOf('video/') === 0 && item.mime_type !== 'video/youtube';
       if (!isVid) { groupPreloadIdx = idx; groupPreloadEl = null; return; }   // mark handled, nothing to warm
@@ -5905,6 +5906,22 @@
     // `let` read before its declaration executes is a TemporalDeadZone throw, not a `null`.)
     function videoCompositingAvailable(v) {
       if (_videoCompositingOk !== null) return _videoCompositingOk;
+      // Vega's 16×16 probe PASSES. Pixels come back. The full-size drawImage of
+      // that <video> then SIGTRAPs in libkepler_slatium.so, called from
+      // libkepler_webview.so. Three crashes, byte-identical stack, both
+      // directions of a video↔image boundary. One died with 72 MB of CMA free
+      // and no memory stall, so this is not the capture cap. A probe cannot see
+      // "the compositor will trap". Do not call it. Image→image never draws a
+      // video, so those wipes stay. Both capture sites (the outgoing frame and
+      // the incoming warm-play snapshot) go through here. typeof onVega: the
+      // transition tests extract this function and have no shell. A missing
+      // predicate is "not Vega", and must not be "simplified" back to the probe.
+      if (typeof onVega === 'function' && onVega()) {
+        _videoCompositingOk = false;
+        console.log('[transition] video frames are not composited on Vega (the compositor traps) — ' +
+                    'transitions involving video will hard-cut; image-to-image still wipes');
+        return false;
+      }
       if (!v || v.readyState < 2 || !v.videoWidth) return true;   // undecided — don't cache a guess
       _videoCompositingOk = videoFrameIsCapturable(v);
       if (!_videoCompositingOk) {
@@ -5955,12 +5972,14 @@
     // so the transition matches the static letterboxing exactly (stays CORS-clean iff the source is). A
     // <video> exposes its intrinsic size as videoWidth/Height, not naturalWidth/width — check both.
     //
-    // On Vega the long edge is capped (vegaWipeSize). texImage2D of a 1920×1080 frame is ~8 MB,
-    // and the GL framebuffer is another, both out of the same ~236 MB CMA pool the decoder uses.
-    // An AFTCA002 ran out of that pool (CmaFree ~1 MB, MemFree still large) while full-frame wipes
-    // were on. The CSS box of the wipe canvas stays the stage; only this backing store shrinks.
-    // The cap has not been re-measured on a stick. The page cannot read CmaFree, so it does not
-    // try to skip only when the pool is low.
+    // CMA mitigation for image wipes, not the crash fix. texImage2D of a 1920×1080
+    // frame is ~8 MB, and the GL framebuffer is another, both out of the same
+    // ~236 MB CMA pool the decoder uses. One AFTCA002 run drove CmaFree to ~1 MB
+    // (MemFree stayed large). Two later crashes died on the same slatium stack
+    // with 72–124 MB of that pool free, so the cap does not explain the trap.
+    // It stays, because image→image wipes still upload into that pool. The CSS
+    // box of the wipe canvas stays the stage; only this backing store shrinks.
+    // The page cannot read CmaFree, so it does not try to skip only when low.
     function vegaWipeSize(w, h) {
       if (!(typeof onVega === 'function' && onVega())) return { w: w, h: h };
       const longEdge = 960;
@@ -6335,12 +6354,13 @@
       // full-stage canvas readbacks (~8MB at 1080p, ~33MB at 4K) on the main thread at the exact
       // moment the new clip decodes, then discard them — with `from` pinned in the closure for the
       // clip's whole duration.
-      // Vega is not a hard cut. The image path already ran the wipe on an AFTCA002, and withholding
-      // this one left the capability and the behaviour disagreeing. The capture is capped in
-      // fitToCanvas (long edge 960) and the bitmap is dropped after upload. The outgoing decoder
-      // is paused once that snapshot exists: the incoming warm-play is already one decoder, and a
-      // second one is the CMA claim groupPreloadNext also refuses. A browser keeps the outgoing
-      // clip playing behind the overlay. typeof onVega: this function is extracted by the
+      // Video boundaries hard-cut on Vega. videoCompositingAvailable() is false
+      // before any drawImage of a <video>, so `from`/`to` come back null and the
+      // hold below mounts without a wipe. Image→image does not come through here.
+      // The outgoing decoder is still paused when a wipe was wanted: the incoming
+      // warm-play is already one decoder, and a second one is the CMA claim
+      // groupPreloadNext also refuses. A browser keeps the outgoing clip playing
+      // behind the overlay. typeof onVega: this function is extracted by the
       // transition tests, which have no shell. A missing predicate means "not Vega".
       const wantsWipe = !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
       const from = wantsWipe ? currentTexturableFrame() : null;  // capture the outgoing frame NOW, before any teardown
@@ -6926,6 +6946,10 @@
     // fade-to-black still reads as captured, while "nothing arrived" reads as not captured.
     function videoFrameIsCapturable(video) {
       if (!video) return false;
+      // Screenshot and zone capture call this, then draw the whole frame if it
+      // passes. On Vega the probe passes and that full draw is the same slatium
+      // trap videoCompositingAvailable refuses. Stop before either canvas write.
+      if (typeof onVega === 'function' && onVega()) return false;
       let pctx;
       try {
         const probe = document.createElement('canvas');

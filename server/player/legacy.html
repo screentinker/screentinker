@@ -4644,6 +4644,11 @@ function shaderSource(id) {
 }
 function videoCompositingAvailable(v) {
   if (_videoCompositingOk !== null) return _videoCompositingOk;
+  if (typeof onVega === "function" && onVega()) {
+    _videoCompositingOk = false;
+    console.log("[transition] video frames are not composited on Vega (the compositor traps) \u2014 transitions involving video will hard-cut; image-to-image still wipes");
+    return false;
+  }
   if (!v || v.readyState < 2 || !v.videoWidth) return true;
   _videoCompositingOk = videoFrameIsCapturable(v);
   if (!_videoCompositingOk) {
@@ -5521,6 +5526,7 @@ function isMediaReadable(el) {
 }
 function videoFrameIsCapturable(video) {
   if (!video) return false;
+  if (typeof onVega === "function" && onVega()) return false;
   let pctx;
   try {
     const probe = document.createElement("canvas");

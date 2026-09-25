@@ -17,9 +17,10 @@ reboot, no display-power API, no RTSP, no package install, no self-update of the
 does ask LCM for a permanent lifespan, which is the policy Vega logs as the screensaver being
 disabled. That is not a wake lock: the panel can still be forced off. Group sync does not warm a
 second video decoder: on an AFTCA002 that is a CMA claim (about 236 MB of decoder DMA), not a
-RAM claim. Transitions do run. The captured frame is downscaled on Vega, because a full-frame
-wipe on that stick drove CmaFree to about 1 MB and the process then died. That cap has not been
-re-measured on hardware. The certified-hardware entries stay **not supported**. See
+RAM claim. Image→image transitions run. A video boundary hard-cuts: drawing a `<video>` into a
+canvas SIGTRAPs in Vega's compositor, on a stack that has also fired with tens of megabytes of
+CMA still free. The 960px capture cap stays as mitigation for the run that did drain that pool.
+The certified-hardware entries stay **not supported**. See
 [`docs/vega-player.md`](docs/vega-player.md).
 
 ### Fixed
