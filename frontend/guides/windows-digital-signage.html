@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Signage on Windows &mdash; Kiosk Mode Setup | ScreenTinker</title>
+  <meta name="description" content="Turn any Windows 10 or 11 PC into a digital signage player: kiosk-mode browser, autostart, autoplay, and the settings that keep a sign up unattended.">
+  <meta name="keywords" content="windows digital signage, digital signage windows 10, digital signage windows 11, windows kiosk mode signage, mini pc digital signage, free windows signage software">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/windows-digital-signage.html">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/windows-digital-signage.html">
+  <meta property="og:title" content="Digital Signage on Windows in Kiosk Mode">
+  <meta property="og:description" content="Turn any Windows 10 or 11 PC into a digital signage player: kiosk-mode browser, autostart, autoplay, and the settings that keep a sign up unattended.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Digital Signage on Windows in Kiosk Mode">
+  <meta name="twitter:description" content="Turn any Windows 10 or 11 PC into a digital signage player: kiosk-mode browser, autostart, autoplay, and the settings that keep a sign up unattended.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#resources">Guides</a>
+      <span>/</span>
+      <span>Windows</span>
+    </nav>
+
+    <h1>Digital signage on Windows</h1>
+    <p class="lead">Any Windows 10 or 11 machine can be a sign. There is no application to install — the player is a web page, and the job is to get a browser opening it fullscreen at boot and staying there.</p>
+
+    <h2>What you need</h2>
+    <p>Windows 10 or 11, and a browser — Chrome or Edge. Almost any machine will do: the player decodes video in the browser, so a low-power mini PC handles a 1080p playlist comfortably. Nothing needs to be installed from us, because on Windows the player <em>is</em> the <a href="/player">web player</a>.</p>
+    <p>That also sets the ceiling. A browser on Windows cannot reboot itself, cannot switch the panel off, and cannot be locked down the way the Android player can. If you need a screen that recovers from anything on its own, an <a href="/guides/digital-signage-android-tv.html">Android TV box</a> or a <a href="/guides/brightsign-digital-signage.html">BrightSign</a> is the better box. If you already own the PC, read on.</p>
+
+    <h2 id="script">The quick way: the setup script</h2>
+    <p>Your ScreenTinker instance serves a batch file that does the whole thing. Get it from the <a href="/download/">downloads page</a> — <code>windows-setup.bat</code> — and run it as Administrator.</p>
+    <p>It creates a launcher in your profile and a shortcut in the Startup folder, so the player opens fullscreen every time that user logs in, and then offers to start it immediately. Open the file in Notepad first if you want to see exactly what it does; it is about thirty lines.</p>
+    <p>One edit is needed: set <code>SERVER_URL</code> at the top of the file to your own instance before running it. The downloads page prints the address to use.</p>
+
+    <h2>The manual way</h2>
+    <p>Two things have to be true: the browser opens the player fullscreen, and Windows starts it at login.</p>
+    <p>Create a shortcut with this as its target, substituting your own server address:</p>
+    <pre><code>"C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk --autoplay-policy=no-user-gesture-required "https://your-server/player"</code></pre>
+    <p>Then press <kbd>Win</kbd>+<kbd>R</kbd>, run <code>shell:startup</code>, and drop the shortcut in the folder that opens.</p>
+    <p><strong><code>--autoplay-policy=no-user-gesture-required</code> is the flag that matters.</strong> By default a browser refuses to start video with sound until somebody clicks the page, and nobody ever clicks a sign. Without the flag the playlist looks like it is stuck on the first image. Edge takes the same two flags; swap the path for <code>msedge.exe</code>.</p>
+    <p><code>--kiosk</code> removes the address bar and tabs. It does not stop someone pressing <kbd>Alt</kbd>+<kbd>F4</kbd> — for a screen the public can reach, use <a href="https://learn.microsoft.com/windows/configuration/assigned-access/" rel="nofollow noopener">Windows Assigned Access</a> to pin the machine to one app.</p>
+
+    <h2 id="pair">Pairing</h2>
+    <p>The player opens on a six-digit code. In the dashboard, choose <strong>Add Display</strong>, type the code, give the screen a name, and it is yours. From then on the screen is driven from the dashboard like any other.</p>
+
+    <h2 id="unattended">The settings that decide whether it survives a month</h2>
+    <p>A Windows sign fails in predictable ways. All four are settings, not software:</p>
+    <ul>
+      <li><strong>Sleep and display timeout.</strong> Set the power plan to never sleep and never turn off the display. A sleeping PC is a black screen that pings.</li>
+      <li><strong>Automatic sign-in.</strong> After a reboot, a machine sitting at the lock screen runs nothing. Enable automatic sign-in for the player account, and set a BIOS option to power on after power loss if the machine has one.</li>
+      <li><strong>Windows Update.</strong> It will reboot the machine. Set active hours, or an update ring, so it happens overnight rather than at 11am. With automatic sign-in the sign comes back by itself.</li>
+      <li><strong>The &ldquo;restore pages?&rdquo; bar.</strong> After a hard power cut Chrome offers to restore the session, which covers part of the sign until someone dismisses it. Launching with a fresh profile directory each boot avoids it.</li>
+    </ul>
+
+    <h2>What the dashboard can and cannot do to a Windows screen</h2>
+    <p>Playlists, schedules, layouts, zones, widgets, proof-of-play, live screen view and the &ldquo;refresh&rdquo; command all work — they are server-side or in the page. The two that do not are physical: <strong>screen off</strong> draws a black overlay rather than putting the panel to sleep, and <strong>reboot</strong> is ignored, because a web page cannot restart the computer hosting it. The dashboard shows the buttons a given screen can actually honour.</p>
+
+    <h2>Several screens from one PC</h2>
+    <p>Each display is a separate browser window pointed at the player, and each pairs as its own screen. On a machine with two outputs that is two windows, two pairing codes, two independent playlists. For a genuine video wall — one image spanning several panels with bezel compensation — use the video wall feature and give each panel its own player.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/download/">Download a player for any platform</a></li>
+        <li><a href="/guides/chromeos-digital-signage.html">ChromeOS and Chromebox</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+  </main>
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Guides",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Windows",
+        "item": "https://screentinker.com/guides/windows-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "Set up a Windows digital signage player",
+    "description": "Turn any Windows 10 or 11 PC into a digital signage player: kiosk-mode browser, autostart, autoplay, and the settings that keep a sign up unattended.",
+    "totalTime": "PT15M",
+    "tool": [
+      {
+        "@type": "HowToTool",
+        "name": "A Windows 10 or 11 PC"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "Google Chrome or Microsoft Edge"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "A ScreenTinker account"
+      }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Run the setup script",
+        "text": "Download windows-setup.bat from your ScreenTinker instance and run it as Administrator. It creates a kiosk launcher and starts the player at login.",
+        "url": "https://screentinker.com/guides/windows-digital-signage.html#script"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Pair the screen",
+        "text": "The player shows a six-digit pairing code. Enter it under Add Display in the dashboard.",
+        "url": "https://screentinker.com/guides/windows-digital-signage.html#pair"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Stop Windows going to sleep",
+        "text": "Set the power plan to never sleep and never turn off the display, and enable automatic sign-in so a reboot returns to the sign rather than the lock screen.",
+        "url": "https://screentinker.com/guides/windows-digital-signage.html#unattended"
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

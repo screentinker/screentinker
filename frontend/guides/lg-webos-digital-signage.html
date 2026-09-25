@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LG webOS Signage Digital Signage Setup | ScreenTinker</title>
+  <meta name="description" content="Install the ScreenTinker player on an LG webOS Signage panel: the .ipk from your own server, USB or SI install, fleet provisioning and self-update.">
+  <meta name="keywords" content="lg webos digital signage, webos signage player, lg signage software, lg supersign alternative, webos ipk signage, lg commercial display signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/lg-webos-digital-signage.html">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/lg-webos-digital-signage.html">
+  <meta property="og:title" content="Digital Signage on LG webOS Signage Panels">
+  <meta property="og:description" content="Install the ScreenTinker player on an LG webOS Signage panel: the .ipk from your own server, USB or SI install, fleet provisioning and self-update.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Digital Signage on LG webOS Signage Panels">
+  <meta name="twitter:description" content="Install the ScreenTinker player on an LG webOS Signage panel: the .ipk from your own server, USB or SI install, fleet provisioning and self-update.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#resources">Guides</a>
+      <span>/</span>
+      <span>LG webOS</span>
+    </nav>
+
+    <h1>Digital signage on LG webOS Signage panels</h1>
+    <p class="lead">LG&rsquo;s commercial panels run webOS, and they will run the player natively — as an installed app that launches on boot and can reach the panel&rsquo;s own power and update controls.</p>
+
+    <h2>What the webOS app is</h2>
+    <p>It is the <a href="/player">web player</a> inside an installed shell. The shell launches on boot, asks once for the server address, then runs the player in a frame — and hands it the three things a web page cannot do for itself, through LG&rsquo;s SCAP library: reboot the panel, switch the screen off and on, and install its own updates.</p>
+    <p>Everything else — playlists, zones, layouts, schedules, widgets, proof-of-play, live view — is the same player every other platform runs, so behaviour matches your other screens exactly.</p>
+
+    <h2 id="download">Get the .ipk from your own server</h2>
+    <p>Open the <a href="/download/">downloads page</a> on your instance and download <code>ScreenTinker.ipk</code>. Take it from there rather than from a release page: the copy your server hosts is the one its self-update route publishes, so panel and server stay in step by construction.</p>
+
+    <h2 id="install">Install it</h2>
+    <ol>
+      <li>Copy the file to a USB stick and plug it into the panel.</li>
+      <li>Install it from the panel&rsquo;s settings. The menu path moves between webOS versions; on most it is under <strong>General &rarr; Install App</strong>.</li>
+      <li>Launch ScreenTinker. Type the server address with the remote and press <strong>Save</strong>.</li>
+      <li>The pairing code appears. Claim it in the dashboard under <strong>Add Display</strong>.</li>
+    </ol>
+    <p>Press <strong>Back</strong> on the remote at any time to return to the server-address screen.</p>
+    <p>An SI server can push the same file to a whole fleet instead of walking round with a stick.</p>
+
+    <h2>Provisioning a fleet without typing an address twenty times</h2>
+    <p>Ship the address inside the package. A <code>config.json</code> beside <code>appinfo.json</code> holding <code>{ "serverUrl": "https://signage.example.com" }</code> is used whenever nothing has been typed in on the panel, so a freshly installed app goes straight to a pairing code.</p>
+
+    <h2>Self-update</h2>
+    <p>The app checks your server on start and every six hours. When the server publishes a newer build and the panel has the SCAP library, it downloads the new <code>.ipk</code> and asks the panel to upgrade itself — one attempt per published version. Without SCAP the app stays where it is and a new build is installed the way the first one was.</p>
+
+    <h2>Which panels</h2>
+    <p>The shell picks a Chrome 53-compatible player build for <strong>webOS 4.x, 5.x and 6.x</strong>, and the modern build for <strong>webOS Signage 22 and later</strong>. webOS 3.x is older than that baseline and shows a plain compatibility message rather than loading a blank frame.</p>
+    <p><strong>Honest status:</strong> LG panels are listed as <a href="/certified-hardware">community-reported</a>, not certified. The app was built against SCAP 1.2 and packaged and unpacked on a build machine; no LG panel was available here. If something needs adjusting on first run it will be the exact install menu path or the local path the upgrade installs from. Tell us what you find and we will fix the guide — and credit you.</p>
+    <p>Power and update controls depend on SCAP being present. LG&rsquo;s licence does not allow us to redistribute that library, so the build we ship does not contain it, and the dashboard <em>hides</em> the reboot and screen-power buttons for a panel whose app reports it cannot honour them — rather than showing buttons that quietly do nothing.</p>
+
+    <h2 id="pair">The zero-install alternative</h2>
+    <p>Every one of these panels has a browser. Point it at <code>https://your-server/player</code> and you have a working sign in a minute, with no package and no SCAP — giving up only panel power control and self-update. It is a perfectly good way to try the whole thing before installing anything.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/download/">Download a player for any platform</a></li>
+        <li><a href="/guides/samsung-tv-digital-signage.html">Samsung Tizen panels</a></li>
+        <li><a href="/guides/brightsign-digital-signage.html">BrightSign</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+  </main>
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Guides",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "LG webOS",
+        "item": "https://screentinker.com/guides/lg-webos-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "Install ScreenTinker on an LG webOS Signage panel",
+    "description": "Install the ScreenTinker player on an LG webOS Signage panel: the .ipk from your own server, USB or SI install, fleet provisioning and self-update.",
+    "totalTime": "PT20M",
+    "tool": [
+      {
+        "@type": "HowToTool",
+        "name": "An LG webOS Signage panel"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "A USB stick"
+      },
+      {
+        "@type": "HowToTool",
+        "name": "A ScreenTinker account"
+      }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Download the .ipk from your instance",
+        "text": "Open the downloads page on your ScreenTinker server and download ScreenTinker.ipk. It is the build your instance serves and updates against.",
+        "url": "https://screentinker.com/guides/lg-webos-digital-signage.html#download"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Install it on the panel",
+        "text": "Copy the file to a USB stick, plug it into the panel, and install it from the panel’s settings. An SI server can push the same file to a fleet.",
+        "url": "https://screentinker.com/guides/lg-webos-digital-signage.html#install"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Enter the server address",
+        "text": "Launch ScreenTinker, type your server address with the remote, and press Save.",
+        "url": "https://screentinker.com/guides/lg-webos-digital-signage.html#install"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 4,
+        "name": "Pair the screen",
+        "text": "The panel shows a six-digit pairing code. Enter it under Add Display in the dashboard.",
+        "url": "https://screentinker.com/guides/lg-webos-digital-signage.html#pair"
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

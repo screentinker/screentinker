@@ -33,6 +33,14 @@ function getSteps() {
             <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('onboarding.step.player.web_desc')}</div>
           </a>
         </div>
+        <!--
+          A first-time operator holding a BrightSign, an LG panel or a Chromebox saw only these two
+          tiles and reasonably concluded their hardware was not supported. One line to the instance's
+          own downloads index, which lists every player it can serve plus a setup guide for each.
+        -->
+        <p style="font-size:12px;margin-top:12px">
+          <a href="/download/" target="_blank" style="color:var(--accent);font-weight:600">${t('onboarding.step.player.all_downloads')}</a>
+        </p>
         <p style="color:var(--text-muted);font-size:12px;margin-top:12px">${t('onboarding.step.player.url_hint')}</p>
         <code style="display:block;background:var(--bg-input);padding:10px;border-radius:6px;margin-top:6px;font-size:14px;user-select:all">${window.location.origin}</code>`,
       action: null

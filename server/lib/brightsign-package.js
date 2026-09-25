@@ -186,6 +186,25 @@ async function getPackage(serverUrl) {
 }
 
 /* Test seam: drop the cache so a changed file is picked up without a restart. */
+/*
+ * Can this deployment build the package at all? Cheap enough for a page render, and it answers the
+ * only question the /download index has: offer the row, or explain why there is nothing behind it.
+ * autozip.brs is the file checked because without it a player never unpacks the archive — the rest
+ * of the payload being present would still leave a card that does nothing when you boot it.
+ */
+function available() {
+  try {
+    fs.accessSync(path.join(brightsignDir(), 'autozip.brs'), fs.constants.R_OK);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// The version the built package will report. Same source as the manifest, so the download index
+// and the player's own update check can never advertise different numbers.
+function version() { return readVersion(); }
+
 function _reset() { cache.clear(); }
 
-module.exports = { getPackage, packageServerUrl, _reset, PACKAGE_FILES };
+module.exports = { getPackage, packageServerUrl, available, version, _reset, PACKAGE_FILES };

@@ -863,8 +863,23 @@ app.use('/player', express.static(path.join(__dirname, 'player'), { etag: true, 
   }
 }}));
 
-// Serve setup scripts
-app.use('/scripts', express.static(path.join(__dirname, '..', 'scripts')));
+// Serve setup scripts — an ALLOWLIST, not the directory.
+//
+// This was `express.static(scripts/)`, which published all of it: reset-admin.js,
+// mint-billing-token.js, support-keygen.js, migrate-multitenancy.js, upgrade.sh, backup.sh. None of
+// those holds a secret (the repository is public), so nothing leaked — but they are operational
+// tooling being handed to anonymous callers, and the directory is where a self-hoster's own script
+// naturally lands. The next person to drop `restore-from-prod.sh` with a connection string in it
+// next to these would publish it without ever touching a route, which is the failure worth closing.
+// Only the three that are linked as URLs are served; adding a fourth is a deliberate edit here.
+const PUBLIC_SCRIPTS = new Set(['raspberry-pi-setup.sh', 'windows-setup.bat', 'debian-13-setup.sh']);
+app.get('/scripts/:name', (req, res) => {
+  // Membership in the set is the whole check: an exact match against a fixed list of basenames
+  // cannot be traversed out of, so there is no path to sanitise.
+  if (!PUBLIC_SCRIPTS.has(req.params.name)) return res.status(404).type('text/plain').send('not found');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.sendFile(path.join(__dirname, '..', 'scripts', req.params.name));
+});
 
 // Serve socket.io client
 app.use('/socket.io-client', express.static(
@@ -2366,6 +2381,43 @@ function apkDownloadName(req) {
   } catch (e) { /* branding is best-effort; the download matters more */ }
   return require('./lib/brand-filename').brandToFilenameStem(brand) + '.apk';
 }
+
+// ---- /download -------------------------------------------------------------------------------
+// The human-facing index of every player THIS instance can hand out. The guides link here instead
+// of at the GitHub releases page: an operator has no reason to have a GitHub account, and the
+// BrightSign archive has the server URL stamped into its bytes, so a release asset would point a
+// freshly imaged player at screentinker.com instead of at the instance the operator runs.
+//
+// Deliberately noindex (lib/download-index.js sets the meta tag): the marketing guides are the
+// pages that should rank, and a self-hosted instance's download index has no business in a search
+// result. The page is public because a player is installed before anyone signs in.
+const downloadIndex = require('./lib/download-index');
+
+app.get(['/download', '/download/'], (req, res) => {
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(downloadIndex.renderPage({
+    apk: apkCache.get(),
+    ipk: ipkCache.get(),
+    wgt: wgtCache.get(),
+    brightsign: { exists: bsPackage.available(), version: bsPackage.version() },
+  }, base));
+});
+
+// A name an operator can read out over the phone, for the archive the BrightSign guide names.
+// Same helper as /api/brightsign/package/download, so the bytes and the checksum cannot diverge
+// between the two URLs — the one mistake that turns a package update into a download loop.
+app.get('/download/autorun.zip', async (req, res) => {
+  const pkg = await bsPackage.getPackage(bsPackage.packageServerUrl(req));
+  if (!pkg) return res.status(404).type('text/plain').send('package unavailable');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Length', String(pkg.size));
+  res.setHeader('Content-Disposition', 'attachment; filename="autorun.zip"');
+  res.setHeader('X-Package-Sha256', pkg.sha256);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(pkg.buffer);
+});
 
 app.get('/download/apk', (req, res) => {
   // Serve the slot the check advertised. If these disagree the client is handed bytes whose
