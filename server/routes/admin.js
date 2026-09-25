@@ -322,6 +322,60 @@ router.put('/users/:id/workspace', requirePlatformAdmin, (req, res) => {
   res.json({ user_id: target.id, workspace_id: ws.id, workspace_name: ws.name, organization_name: org?.name || null, role: 'workspace_viewer' });
 });
 
+/*
+ * Turn a user's alert email on or off, as a platform admin.
+ *
+ * This existed only as a hand-written UPDATE against prod. Two problems with that, and the second is
+ * the one that bites: a raw UPDATE leaves NO activity_log row, so months later there is nothing
+ * distinguishing "the customer asked us to stop emailing them" from "the alert service is broken and
+ * nobody noticed a display went dark". The support answer and the incident response are opposite, and
+ * the only thing that tells them apart is a record of the decision.
+ *
+ * ⚠️ email_alerts is one switch over several senders — offline-device alerts, trial reminders, setup
+ * nudges and payment-failure notices. The response names them so an admin turning it off for a paying
+ * customer can see that dunning goes quiet too, rather than discovering it at renewal.
+ *
+ * requirePlatformAdmin, not requireAdmin: this reaches any account on the box regardless of org, and
+ * platform_operator has no user-management power (#13).
+ */
+router.put('/users/:id/email-alerts', requirePlatformAdmin, (req, res) => {
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') {
+    // Not coerced. `{"enabled":"false"}` is truthy in JavaScript, and silently enabling alerts for
+    // somebody who asked for silence is the exact failure this endpoint exists to prevent.
+    return res.status(400).json({ error: 'enabled must be true or false' });
+  }
+
+  const target = db.prepare('SELECT id, email, name, email_alerts FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  const next = enabled ? 1 : 0;
+  const was = target.email_alerts == null ? 1 : (target.email_alerts ? 1 : 0);   // nullable on old rows
+  const changed = was !== next;
+
+  if (changed) {
+    db.prepare("UPDATE users SET email_alerts = ?, updated_at = strftime('%s','now') WHERE id = ?")
+      .run(next, target.id);
+    logActivity(
+      req.user.id,
+      enabled ? 'admin_enabled_email_alerts' : 'admin_disabled_email_alerts',
+      `target: ${target.email}`,
+      null,
+      getClientIp(req),
+      null
+    );
+  }
+
+  res.json({
+    user_id: target.id,
+    email: target.email,
+    email_alerts: !!next,
+    changed,
+    // Named rather than implied, so the caller can see the blast radius of one boolean.
+    affects: ['device offline alerts', 'trial reminders', 'setup nudges', 'payment-failure notices'],
+  });
+});
+
 // ===================== Per-user workspace membership management =====================
 // Platform-admin only (cross-org, platform-level). Unlike the single-workspace
 // "move" above, these manage a user's FULL set of memberships - a user can

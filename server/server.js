@@ -1048,6 +1048,24 @@ app.use('/api/auth/reset-password', rateLimit(60000, 10));
 // cap the blast radius to 20 resets/min/IP. Express matches the longest
 // path prefix first, so this fires before /api/auth catches the request.
 app.use('/api/auth/users', rateLimit(60000, 20));
+/*
+ * Unsubscribe. Mounted at the ROOT, not under /api, because the URL goes in an email: people read it,
+ * forward it and occasionally retype it, and `/unsubscribe` is legible where `/api/unsubscribe/v1` is
+ * not. It needs no auth by design — the HMAC in the link is the authorisation — and it never acts on
+ * GET, so a mail scanner prefetching the link cannot unsubscribe anyone. See routes/unsubscribe.js.
+ *
+ * Rate-limited even though the token is unguessable: it is an unauthenticated POST that writes, and a
+ * limit costs nothing on a path a human hits once.
+ */
+// ⚠️ urlencoded, not json: both callers post a FORM body. The page's own button is a plain <form>,
+// and an RFC 8058 one-click client posts `List-Unsubscribe=One-Click` urlencoded. That parser is not
+// global (see /api/hardware-submissions above for the same reason), so without it req.body is
+// undefined here and the token silently never arrives. Small limit — the body is two short fields.
+app.use('/unsubscribe',
+  rateLimit(60000, 20),
+  express.urlencoded({ extended: false, limit: '4kb' }),
+  require('./routes/unsubscribe'));
+
 app.use('/api/auth', require('./routes/auth'));
 // Per-organization SSO configuration. Mounted under /api/organizations so the org id is the
 // route's own subject, which is what the org_owner/org_admin check keys on.

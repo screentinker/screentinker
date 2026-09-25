@@ -271,6 +271,7 @@ async function runTrialExpirySweep({ io = null } = {}) {
       subject: `Your ScreenTinker Pro trial ends in ${daysLeft} ${plural(daysLeft, 'day')}`,
       text: endingSoonText(ctx),
       html: endingSoonHtml(ctx),
+      unsubscribeUserId: u.id,
     });
     console.log(`[TRIAL] ending-soon -> ${u.email} (${daysLeft}d, ${u.screens} screens): ${JSON.stringify(r)}`);
     if (stampAfter(r, 'trial_ending_email_sent_at', u.id)) out.endingSoonSent++;
@@ -286,6 +287,7 @@ async function runTrialExpirySweep({ io = null } = {}) {
       subject: 'Your ScreenTinker Pro trial has ended',
       text: expiredText(ctx),
       html: expiredHtml(ctx),
+      unsubscribeUserId: u.id,
     });
     console.log(`[TRIAL] expired -> ${u.email} (${u.screens} screens): ${JSON.stringify(r)}`);
     if (stampAfter(r, 'trial_expired_email_sent_at', u.id)) out.expiredSent++;

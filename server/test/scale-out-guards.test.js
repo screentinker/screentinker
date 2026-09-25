@@ -112,6 +112,12 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   'plugin-submissions.js': 'mounted with tenancy in api-surface; listed for the inline rate-limit mount',
   'agency.js': 'agency-token surface, mounted behind bearerAuth + resolveTenancy (AGENCY_ROUTERS)',
   'kiosk.js': 'mounted with tenancy (PUBLIC_ROUTERS)',
+  // Writes one column on a users row, authorised by an HMAC in an email link — not a workspace write.
+  // ⚠️ It is NOT simply exempt: `users` IS copied and `email_alerts` is not blocklisted, so the POST
+  // proxies to the primary for a copied user (same isCopiedUser test routes/auth.js uses for login).
+  // Writing the copy would leave the primary still sending while the page said "done" — asserted in
+  // test/unsubscribe.test.js.
+  'unsubscribe.js': 'email-link unsubscribe; one users column, and proxies to the primary for a copied user',
 });
 
 const INLINE_NOT_WORKSPACE_SCOPED = Object.freeze({
