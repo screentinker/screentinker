@@ -283,6 +283,113 @@ app.use(express.json({ limit: '12mb' }));
 const { sanitizeBody } = require('./middleware/sanitize');
 app.use(sanitizeBody);
 
+/*
+ * ───────────────────────── the machine-readable front door ─────────────────────────
+ *
+ * Discovery documents and a Markdown rendition of our own pages, for automated clients. Everything
+ * here describes what this deployment ACTUALLY serves: a discovery document is a promise an agent
+ * acts on, so advertising a capability we do not have does not read as capable, it produces agents
+ * that fail in ways they cannot diagnose. Where we do not have the thing, there is no file.
+ */
+const aiSurface = require('./lib/ai-surface');
+const mdRendition = require('./lib/markdown-rendition');
+
+// RFC 9727. One API, described by the OpenAPI document CI already lints — so the catalogue cannot
+// point at a description that has drifted without the build failing first.
+/*
+ * The API's own identity document. The catalogue's linkset ANCHORS on this URL, and an anchor an
+ * agent cannot dereference is a dead end — it will try it. Small on purpose: it says what this is and
+ * points at the two documents that actually describe it.
+ *
+ * Exact path only; every real endpoint lives under /api/<resource> and is unaffected.
+ */
+app.get('/api', (req, res) => {
+  const base = aiSurface.origin(req);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Link', aiSurface.linkHeader(base));
+  res.json({
+    name: 'ScreenTinker Public API',
+    description: 'Token-scoped REST API for digital signage: displays, content, playlists, layouts, schedules and reports.',
+    openapi: `${base}/openapi.yaml`,
+    documentation: `${base}/docs`,
+    authentication: `${base}/.well-known/auth.md`,
+    catalog: `${base}/.well-known/api-catalog`,
+    source: 'https://github.com/screentinker/screentinker',
+  });
+});
+
+app.get('/.well-known/api-catalog', (req, res) => {
+  res.type('application/linkset+json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(aiSurface.apiCatalog(aiSurface.origin(req)));
+});
+
+// How an agent authenticates, in the format an agent reads. Scoped bearer tokens, minted by a human:
+// there is no flow by which a bot obtains one, and saying so plainly is more useful than silence.
+app.get('/.well-known/auth.md', (req, res) => {
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(aiSurface.authMarkdown(aiSurface.origin(req)));
+});
+
+/*
+ * A Markdown rendition of any page we publish, two ways: `Accept: text/markdown` on the HTML URL, or
+ * the same path with `.md` appended.
+ *
+ * ⚠️ MOUNTED HERE: ABOVE app.get('/'), the static middleware AND the SPA catch-all. Below the
+ * landing route the homepage could never negotiate, because Express matches in order and that
+ * route answers first — it returned HTML to `Accept: text/markdown` and looked like the feature
+ * simply not working. Below static or the catch-all, `.md` falls through to index.html with a
+ * 200, which is this deployment's documented trap.
+ *
+ * Generated from the HTML on request rather than kept as files beside it: two copies of the same
+ * prose drift, and the copy nobody looks at is the one that goes stale.
+ */
+function sendMarkdown(req, res, file, canonicalPath) {
+  const base = aiSurface.origin(req);
+  try {
+    const html = fs.readFileSync(file, 'utf8');
+    res.type('text/markdown; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=900');
+    // Content negotiation happened, so caches must key on it or a browser gets a markdown copy.
+    res.setHeader('Vary', 'Accept');
+    res.setHeader('Link', aiSurface.linkHeader(base));
+    return res.send(mdRendition.toMarkdown(html, { url: base + canonicalPath, origin: base }));
+  } catch (e) {
+    return res.status(404).type('text/plain').send('not found');
+  }
+}
+
+app.get(/\.md$/, (req, res, next) => {
+  const file = aiSurface.markdownSource(config.frontendDir, req.path);
+  if (!file) return next();
+  return sendMarkdown(req, res, file, req.path.replace(/\.md$/, '') || '/');
+});
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  // Only our published pages. /api, /app and /player are not documents an agent should be reading a
+  // prose rendition of, and robots.txt already tells crawlers to stay out of them.
+  if (/^\/(api|app|player|uploads|scripts|vendor|assets|js|css)(\/|$)/.test(req.path)) return next();
+
+  const base = aiSurface.origin(req);
+  const file = aiSurface.markdownSource(config.frontendDir, req.path);
+  if (file) {
+    // Advertise the rendition on the HTML response whether or not this request wanted it: a client
+    // that fetched the page learns the plain-text form exists without having to guess the URL.
+    res.setHeader('Link', aiSurface.linkHeader(base, {
+      markdownOf: (req.path === '/' ? '/index' : req.path.replace(/\.html$/, '')) + '.md',
+    }));
+    res.setHeader('Vary', 'Accept');
+    if (aiSurface.prefersMarkdown(req.headers.accept)) {
+      return sendMarkdown(req, res, file, req.path);
+    }
+  } else {
+    res.setHeader('Link', aiSurface.linkHeader(base));
+  }
+  return next();
+});
+
 // Landing page BEFORE static middleware (so / doesn't serve index.html).
 // When DISABLE_HOMEPAGE is set, redirect to the app instead - for self-hosted
 // internal deployments that don't want the public marketing page. 302 (not
