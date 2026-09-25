@@ -331,7 +331,7 @@
         <ul class="device-notes">
           <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
           <li>Played on one AFTCA002 (ScreenTinker 2.1.6, Kepler 1.2): paired, reported 1920x1080, transitions ran, then the process died in-process. Not certified. Do not buy it for a sign until this entry changes.</li>
-          <li>The binding limit on memory is CMA, the decoder&#39;s contiguous DMA pool (about 236 MB on that stick), not the 1 GB of RAM. One run drove CmaFree to about 1 MB. Two later crashes died on the same compositor stack with that pool still mostly free, at a video/image boundary. Image transitions stay. A video boundary hard-cuts. Neither change has been re-run on a stick.</li>
+          <li>Crashes on this stick were a compositor abort, not memory: three died on the same libkepler_slatium stack at a video/image boundary, one with 72 MB of CMA free and no memory stall. Drawing a &lt;video&gt; frame for a transition is what trips it, so video boundaries hard-cut and image transitions stay. CMA pressure is real but survivable — measured falling below 5 MB in 21 of 60 samples, bottoming at 668 kB, with no crash. A 13-minute run across a 44-second image/video cycle was clean.</li>
           <li>Group sync does not warm a second video decoder. A second decoder is another CMA claim.</li>
           <li>1920x1080 is what that AFTCA002 reported. The stick can output 4K, so this may be the panel or the HDMI link, not a device ceiling.</li>
           <li>Offline cache worked on that run: a service worker was in control, images cached, and video decoded offline.</li>
