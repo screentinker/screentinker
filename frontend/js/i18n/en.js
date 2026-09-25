@@ -976,6 +976,7 @@ export default {
   'device.talk.stop': 'End intercom',
   'device.talk.mute': 'Mute mic',
   'device.talk.unmute': 'Unmute mic',
+  'device.talk.no_mic': 'That screen has no microphone — this session is one-way.',
   'device.talk.started': 'Intercom connected',
   'device.talk.failed': 'Intercom failed',
   'device.talk.device_unreachable': 'Device is offline; it cannot join the intercom',

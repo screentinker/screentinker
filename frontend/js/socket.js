@@ -37,6 +37,13 @@ export function connectSocket() {
     emit('screenshot-ready', data);
   });
 
+  // Talk session state from the screen itself. The one that matters is `listen_only_no_mic`: the
+  // player asked for the microphone when the operator clicked 2-way, did not get one, and carried on
+  // one-way. Without this the operator sees a working session that silently is not two-way.
+  dashboardSocket.on('dashboard:talk-state', (data) => {
+    emit('talk-state', data);
+  });
+
   // #161 device-owner tooling: remote-shell output
   dashboardSocket.on('dashboard:shell-result', (data) => {
     emit('shell-result', data);

@@ -3081,7 +3081,26 @@
             duplex: !!(data && data.duplex),   // 2-way: also send this device's mic
             scope: data && data.scope,
             iceServers: (data && data.iceServers) || undefined,
-            onState: (st, reason) => { if (window.__stTalkDebug) console.log('[talk]', st, reason || ''); },
+            onState: (st, reason) => {
+              if (window.__stTalkDebug) console.log('[talk]', st, reason || '');
+              /*
+               * ⚠️ TELL THE OPERATOR WHEN THERE IS NO MICROPHONE.
+               *
+               * The duplex path asks for the mic and falls back to `listen_only_no_mic` when the
+               * browser refuses or the box has none. That fallback is correct, and it used to be
+               * SILENT: an operator clicked "2-way", got a one-way session, and had no way to tell
+               * the difference from a screen that simply was not talking back. The capability is
+               * proven by using it, so the result of using it has to come back.
+               */
+              try {
+                socket.emit('device:talk-state', {
+                  device_id: config.deviceId,
+                  device_token: config.deviceToken,
+                  state: st,
+                  reason: reason || null,
+                });
+              } catch (_) { /* reporting is best-effort; never break the session */ }
+            },
           });
         } catch (_) { /* intercom is best-effort; never break playback */ }
       });
@@ -4109,8 +4128,9 @@
        * integrator needs the second one. Same rule as offline.cache: claim what was verified.
        */
       // #talk: only claim a microphone (unlocks the dashboard's 2-way control) when this browser
-      // actually has an audio input. Detected async at startup (detectMic); a screen without a mic
-      // stays one-way Talk / PA only.
+      // actually has an audio input. ⚠️ NOTHING SETS THIS FLAG AT PRESENT — the probe that did
+      // (detectMic) put a media-permission prompt on top of the pairing code on a fresh Pi, so it is
+      // not called. See register(). Until it is restored, every screen reports one-way Talk / PA.
       if (window.__stHasMic) caps.push('remote.mic');
       if (typeof triggerStats === 'object' && triggerStats.listeners && triggerStats.listeners.http) {
         caps.push('trigger.http');
@@ -4292,7 +4312,25 @@
     }
 
     function register() {
-      detectMic();
+      /*
+       * ⚠️ detectMic() IS DELIBERATELY NOT CALLED.
+       *
+       * It calls navigator.mediaDevices.enumerateDevices(), and register() runs BEFORE pairing — so on
+       * a fresh Raspberry Pi kiosk the browser's media-permission prompt appeared on top of the pairing
+       * code. That is the first screen a new customer ever sees, and a permission dialog over it reads
+       * as "this thing wants my camera", which is the worst possible first impression for a product
+       * whose whole pitch is that it is the honest one. Reported from a production install by Watterott
+       * electronic, September 2026.
+       *
+       * ⚠️ WHAT THIS COSTS: nothing sets window.__stHasMic, so `remote.mic` is never declared and the
+       * dashboard's 2-way Talk control does not appear for any screen. Talk one-way / PA is unaffected.
+       * That is a deliberate trade until the probe can be deferred to a point where a prompt is
+       * expected — after pairing, or when a talk session is actually requested, where the operator has
+       * asked for the microphone and a dialog makes sense.
+       *
+       * The function is left defined, and the capability check that reads the flag is left in place, so
+       * restoring this is one line rather than an archaeology exercise.
+       */
       const data = {};
       // #163: always send device identity when we have it, regardless of paired
       // status. Before this fix, a reconnect before pairing would omit device_id

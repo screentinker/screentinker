@@ -561,7 +561,7 @@ async function loadDevice(deviceId, activeTab = null) {
           </button>` : ''}
           ${talkAvailable && can('remote.talk') ? `
           <button class="btn btn-secondary btn-sm" id="startTalkBtn">🎙️ ${t('device.talk.start')}</button>
-          ${can('remote.mic') ? `<button class="btn btn-secondary btn-sm" id="start2wayBtn">🎙️ ${t('device.talk.two_way')}</button>` : ''}
+          ${can('remote.talk') ? `<button class="btn btn-secondary btn-sm" id="start2wayBtn">🎙️ ${t('device.talk.two_way')}</button>` : ''}
           <button class="btn btn-danger btn-sm" id="stopTalkBtn" style="display:none">${t('device.talk.stop')}</button>
           <button class="btn btn-secondary btn-sm" id="muteTalkBtn" style="display:none">${t('device.talk.mute')}</button>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
@@ -2323,7 +2323,32 @@ function setupRemote(device) {
     if (talkMuteBtn) talkMuteBtn.style.display = live ? '' : 'none';
   };
   // #talk: duplex=false is one-way (your mic+webcam -> the device, works on any screen); duplex=true
-  // is 2-way (the device sends its mic back too — only offered when it declares remote.mic).
+  // is 2-way (the device sends its mic back too).
+  //
+  // ⚠️ THE SCREEN MAY NOT HAVE A MICROPHONE, and that is no longer known in advance. The player used
+  // to probe at startup and declare remote.mic, but that probe put a media-permission prompt on top
+  // of the pairing code on a fresh Pi, so it is gone. The player now asks for the mic when the
+  // operator clicks this button — the one moment a dialog is expected — and falls back to a one-way
+  // session if there is none, reporting `listen_only_no_mic` back. Listened for below, because a
+  // session that is quietly one-way looks identical to a screen that just is not talking.
+  /*
+   * Watch for the screen reporting that it could not get a microphone. One-shot: the state arrives
+   * once per session, and a toast that could fire twice for one click is worse than none.
+   */
+  let noMicOff = null;
+  const armNoMicNotice = () => {
+    if (noMicOff) return;
+    const handler = (data) => {
+      if (!data || data.device_id !== device.id) return;
+      if (data.state !== 'listen_only_no_mic') return;
+      showToast(t('device.talk.no_mic'), 'warning');
+      disarmNoMicNotice();
+    };
+    on('talk-state', handler);
+    noMicOff = () => off('talk-state', handler);
+  };
+  const disarmNoMicNotice = () => { if (noMicOff) { noMicOff(); noMicOff = null; } };
+
   const beginTalk = async (duplex) => {
     if (talkStartBtn) talkStartBtn.disabled = true;
     if (talk2wayBtn) talk2wayBtn.disabled = true;
@@ -2340,9 +2365,11 @@ function setupRemote(device) {
       if (talkMuteBtn) talkMuteBtn.textContent = t('device.talk.mute');
       showTalk(true);
       showToast(t('device.talk.started'), 'info');
+      if (duplex) armNoMicNotice();
     } catch (e) {
       stopTalkSession(device.id);
       showTalk(false);
+      disarmNoMicNotice();
       showToast((t('device.talk.failed')) + (e?.message ? ': ' + e.message : ''), 'error');
     } finally {
       if (talkStartBtn) talkStartBtn.disabled = false;
@@ -2354,6 +2381,9 @@ function setupRemote(device) {
   talkStopBtn?.addEventListener('click', () => {
     stopTalkSession(device.id);
     showTalk(false);
+    // The listener belongs to one session. Leaving it armed means the next session's state — or a
+    // stale one — fires a toast for a click that already finished.
+    disarmNoMicNotice();
   });
   talkMuteBtn?.addEventListener('click', () => {
     talkMuted = !talkMuted;
