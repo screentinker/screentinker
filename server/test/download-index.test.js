@@ -226,6 +226,31 @@ test('/scripts serves an allowlist, not the directory', () => {
   }
 });
 
+/*
+ * ⚠️ A binary payload must not be advertised as text. The first version of this route set
+ * `text/plain; charset=utf-8` on everything, which boot-tests perfectly — the bytes arrive intact
+ * and the sizes match — while telling every proxy and CDN in front of the instance that a 93 MB
+ * zip is text it may transform. express.static inferred the type, so this only became a decision
+ * once the mount became a route.
+ */
+test('/scripts serves the binary payloads with a binary content type', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const map = src.match(/const SCRIPT_TYPES = \{([^}]*)\}/);
+  assert.ok(map, 'the route must map extensions to types');
+  assert.match(map[1], /'\.zip':\s*'application\/zip'/, '.zip must be application/zip');
+  assert.match(map[1], /'\.json':\s*'application\/json'/, '.json must be application/json');
+
+  // Every allowlisted name whose extension is not plain text must have an entry, or it goes out as
+  // text/plain by the fallback and nothing anywhere says so.
+  const set = src.match(/const PUBLIC_SCRIPTS = new Set\(\[([\s\S]*?)\]\)/);
+  const allowed = [...set[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  for (const name of allowed) {
+    const ext = name.slice(name.lastIndexOf('.'));
+    if (['.sh', '.bat'].includes(ext)) continue;   // meant to be read in a browser
+    assert.match(map[1], new RegExp(`'\\${ext}':`), `${name} (${ext}) has no explicit content type`);
+  }
+});
+
 test('the download routes exist and reuse the BrightSign package helper', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(src, /app\.get\(\['\/download', '\/download\/'\]/, '/download index route');
