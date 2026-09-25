@@ -52,6 +52,32 @@ const TOOLS = [
     description: 'Full detail for one screen: telemetry, what it is playing, resolution, app version and schedule.',
     input: { type: 'object', required: ['display_id'], properties: { display_id: { type: 'string' } } },
     call: { method: 'GET', path: '/api/devices/{display_id}' },
+    // The raw row is ~80 columns and the assignments carry filepaths and thumbnail paths. A model
+    // reading that spends its context on storage detail instead of on the question it was asked.
+    shape: (d) => {
+      if (!d || typeof d !== 'object') return d;
+      return {
+        id: d.id, name: d.name, status: d.status,
+        platform: d.platform || d.client_type || null,
+        app_version: d.app_version || null,
+        resolution: d.screen_width && d.screen_height ? `${d.screen_width}x${d.screen_height}` : null,
+        orientation: d.orientation || null,
+        last_heartbeat: d.last_heartbeat ? new Date(d.last_heartbeat * 1000).toISOString() : null,
+        offline_reason: d.status === 'online' ? null : (d.offline_reason || null),
+        playlist_id: d.playlist_id || null,
+        group_id: d.team_id || null,
+        now_playing: (d.assignments || []).map((a) => ({
+          item_id: a.id,
+          name: a.widget_name || a.filename || a.remote_url || '(unnamed item)',
+          kind: a.widget_id ? 'widget' : 'content',
+          duration_sec: a.duration_sec ?? a.content_duration ?? null,
+          zone: a.zone_id || null,
+          // An orphan is an assignment whose content is gone: the screen shows nothing for that slot
+          // and the operator usually has no idea. Worth surfacing rather than hiding in a raw row.
+          orphan: !!a.orphan,
+        })),
+      };
+    },
   },
   {
     name: 'fleet_status',
@@ -128,15 +154,42 @@ const TOOLS = [
         display_id: { type: 'string' },
       },
     },
-    call: { method: 'GET', path: '/api/reports/summary', query: ['from', 'to', 'device_id'] },
-    mapArgs: (a) => ({ from: a.from, to: a.to, device_id: a.display_id }),
+    /*
+     * ⚠️ THE ENDPOINT'S PARAMETERS ARE `start`/`end`, NOT `from`/`to`.
+     *
+     * The first version sent from/to. They are not parameters this endpoint has, so they were ignored
+     * and it returned its DEFAULT 30-day window — which the tool then presented as the answer to
+     * "what played in the first week of September". A wrong answer delivered confidently, with no
+     * error anywhere. The argument names stay from/to because that is what a model reaches for; the
+     * mapping is what has to be right.
+     */
+    call: { method: 'GET', path: '/api/reports/summary', query: ['start', 'end', 'device_id'] },
+    mapArgs: (a) => ({ start: a.from, end: a.to, device_id: a.display_id }),
   },
   {
     name: 'uptime_report',
     scope: 'read',
     description: 'How much of the period each screen was online. Answers "which screen keeps dropping out".',
-    input: { type: 'object', properties: { days: { type: 'integer', minimum: 1, maximum: 90 } } },
-    call: { method: 'GET', path: '/api/reports/uptime', query: ['days'] },
+    input: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', minimum: 1, maximum: 365, description: 'Look back this many days from now. Ignored if from/to are given.' },
+        from: { type: 'string', description: 'ISO date. Use instead of days for an exact window.' },
+        to: { type: 'string', description: 'ISO date.' },
+        display_id: { type: 'string' },
+      },
+    },
+    // ⚠️ Same trap as play_report: this endpoint takes start/end/device_id and has no `days`
+    // parameter at all, so the first version's `days` was dropped on the floor. `days` is kept as an
+    // argument because it is how the question is actually asked, and converted here.
+    call: { method: 'GET', path: '/api/reports/uptime', query: ['start', 'end', 'device_id'] },
+    mapArgs: (a) => {
+      if (a.from || a.to) return { start: a.from, end: a.to, device_id: a.display_id };
+      const days = Math.min(365, Math.max(1, Number(a.days) || 7));
+      const end = new Date();
+      const start = new Date(end.getTime() - days * 86400000);
+      return { start: start.toISOString(), end: end.toISOString(), device_id: a.display_id };
+    },
   },
 
   /* ─────────────────────────────── write ─────────────────────────────── */
