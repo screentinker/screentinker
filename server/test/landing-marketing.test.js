@@ -240,7 +240,22 @@ test('the tail band holds the quote card and the self-host answer, with both rou
 test('every platform tile carries a sub-caption, and BrightSign says Series 5 / 6', () => {
   const grid = LANDING.slice(LANDING.indexOf('<div class="platform-grid">'));
   const tiles = grid.slice(0, grid.indexOf('</div>\n    <!--')).match(/<a class="platform-item"[\s\S]*?<\/a>/g) || [];
-  assert.equal(tiles.length, 10);
+
+  /*
+   * ⚠️ THE COUNT IS DERIVED FROM THE PAGE'S OWN CLAIM, not hardcoded here. The social cards, the trust
+   * strip and the comparison row all state a number of platforms, and adding a tile without updating
+   * them is the exact drift that left "9 platforms" on the page after Vega shipped. Asserting a
+   * literal here would need updating in the same breath as the page and would therefore never catch
+   * it; asserting they AGREE catches it every time.
+   */
+  const claimed = Number((LANDING.match(/across (\d+) platforms/) || [])[1]);
+  assert.ok(claimed >= 10, 'the social cards should state a platform count');
+  assert.equal(tiles.length, claimed,
+    `${tiles.length} platform tiles but the page claims ${claimed} platforms`);
+  assert.match(LANDING, new RegExp(`<div class="n">${claimed}</div><div class="l">platforms`),
+    'the trust strip must state the same number');
+  assert.match(LANDING, new RegExp(`>${claimed}, incl\\.`),
+    'the comparison row must state the same number');
   for (const t of tiles) {
     assert.match(t, /<div class="sub">[^<]+<\/div>/, `a tile has no sub-caption: ${textOf(t).trim()}`);
   }

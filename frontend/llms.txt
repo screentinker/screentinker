@@ -1,6 +1,6 @@
 # ScreenTinker
 
-> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android TV and Fire TV, Amazon Vega OS, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, Windows, ChromeOS, and any web browser — ten platforms, one CMS.
+> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android TV and Fire TV, Amazon Vega OS, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, Windows, ChromeOS, any web browser, and e-paper/ESP32 panels driven by a server-side renderer — eleven platforms, one CMS.
 
 ScreenTinker turns ordinary screens into managed digital signs. A server holds the content, playlists, layouts and schedules; players pair to it and pull what they should be showing. The player is a web page, so a display that can open a URL can run it, and native builds exist for the platforms that need one.
 
@@ -32,6 +32,13 @@ so plainly when it has none.
 - [Digital signage on Windows](https://screentinker.com/guides/windows-digital-signage.html): kiosk-mode browser, autostart, and the settings that decide whether it survives a month.
 - [ChromeOS and Chromebox](https://screentinker.com/guides/chromeos-digital-signage.html): managed kiosk through the Google Admin console, or unmanaged on a single device.
 - [Fire TV Stick 4K Select and HD (Vega OS)](https://screentinker.com/guides/digital-signage-vega.html): these two sticks are not Android, the APK does not install, and they are **not** certified hardware.
+- [E-paper and ESP32 signs](https://screentinker.com/guides/eink-esp32-digital-signage.html): no browser on the
+  device. The server renders, dithers and packs each frame and tells the board how long to deep sleep; a 304
+  when nothing changed means the panel is never refreshed for nothing. Ten panel presets, Floyd–Steinberg
+  and Atkinson dithering.
+- [LED walls](https://screentinker.com/guides/led-wall-digital-signage.html): there is no LED-wall integration
+  and none is needed — the controller presents the wall as one display. ⚠️ Bezel compensation should be
+  OFF: LED tiles are seamless and compensating for a gap that is not there crops the content.
 
 ## Integrations
 
