@@ -30,7 +30,7 @@ const STATUSES = ['certified', 'certified-with-limits', 'community-reported', 'k
 const CATEGORIES = ['streaming-player', 'soc-display', 'media-player', 'browser', 'sbc'];
 const FIELDS = ['id', 'name', 'manufacturer', 'model_numbers', 'category', 'os', 'player', 'status',
   'max_resolution', 'validated_on', 'validated_by', 'player_version', 'min_version',
-  'provisioning_url', 'buy_url', 'notes', 'eol'];
+  'provisioning_url', 'buy_url', 'photo', 'notes', 'eol'];
 
 const CERTIFIED = ['certified', 'certified-with-limits'];
 
@@ -47,6 +47,31 @@ test('every device carries every field, so a missing value is a decision and not
     }
     assert.equal(Object.keys(d).filter((k) => !FIELDS.includes(k)).length, 0,
       `${d.id} has a field the renderer will silently drop: ${Object.keys(d).filter((k) => !FIELDS.includes(k))}`);
+  }
+});
+
+test('a photo is a complete, credited, local claim or it is null', () => {
+  /*
+   * ⚠️ A PHOTO ON THIS PAGE IS A CLAIM, like every other field. It shows the hardware actually running
+   * ScreenTinker, published with the owner's permission and credited to them. A stock product shot
+   * would quietly turn a compatibility record into an advert, on the page reseller agreements point at
+   * — so the credit is mandatory, and the file must be ours rather than hotlinked from a supplier who
+   * can change or remove it.
+   */
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const d of devices) {
+    if (d.photo === null) continue;
+    assert.equal(typeof d.photo, 'object', `${d.id} photo must be an object or null`);
+    for (const k of ['src', 'alt', 'credit']) {
+      assert.ok(d.photo[k], `${d.id} photo is missing "${k}" — an uncredited photo is not publishable`);
+    }
+    assert.ok(d.photo.alt.length > 20, `${d.id} photo needs real alt text, not a label`);
+    assert.match(d.photo.src, /^\/assets\//, `${d.id} photo must be served by us, not hotlinked`);
+    assert.ok(
+      fs.existsSync(path.join(__dirname, '..', '..', 'frontend', d.photo.src.replace(/^\//, ''))),
+      `${d.id} photo ${d.photo.src} is not in frontend/`
+    );
   }
 });
 

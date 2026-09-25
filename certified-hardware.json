@@ -42,6 +42,10 @@
     "  provisioning_url  link to the setup guide for this device, or null",
     "  buy_url        affiliate / where-to-buy link (https URL) shown as a \"Buy this device\" link,",
     "                 or null. Marked rel=sponsored nofollow and disclosed as affiliate on the page.",
+    "  photo          { src, alt, credit, credit_url } for a real installation photograph, or null.",
+    "                 ⚠️ A PHOTO IS A CLAIM. Only use one of THIS hardware actually running",
+    "                 ScreenTinker, with the owner's permission, and credit them. A stock",
+    "                 product shot would turn a compatibility record into an advert.",
     "  notes          array of short strings: gotchas, limitations, required settings",
     "  eol            manufacturer end-of-life date if announced, else null",
     "",
@@ -55,9 +59,7 @@
     "",
     "Order within a status group is the order of this array. Groups are ordered by the list above."
   ],
-
   "last_updated": "2026-09-24",
-
   "devices": [
     {
       "id": "fire-tv-stick-4k-max",
@@ -75,6 +77,7 @@
       "min_version": "1.9.1",
       "provisioning_url": "/guides/digital-signage-android-tv.html",
       "buy_url": "https://amzn.to/4A422nY",
+      "photo": null,
       "notes": [
         "The primary recommendation for a new installation.",
         "Validated at 1920x1080. The device supports higher output, but 4K signage playback has not been validated and is not covered.",
@@ -86,7 +89,10 @@
       "id": "brightsign-series-5",
       "name": "BrightSign Series 5",
       "manufacturer": "BrightSign",
-      "model_numbers": ["XT245", "HD1026"],
+      "model_numbers": [
+        "XT245",
+        "HD1026"
+      ],
       "category": "media-player",
       "os": "BrightSign OS 9 or 10",
       "player": "Web player, running in an roHtmlWidget under the BrightSign autorun package (autorun.zip: autorun.brs plus st-bridge.js)",
@@ -98,6 +104,7 @@
       "min_version": "1.9.33",
       "provisioning_url": null,
       "buy_url": "https://amzn.to/4xmzSSA",
+      "photo": null,
       "notes": [
         "The player code is the ordinary web player, unmodified. The BrightSign-specific part is the host around it: autorun.brs owns the widget lifecycle, identity across reboots, recovery from a dead server, and video-mode and multi-output control, with st-bridge.js as the page's half of that contract. This package has to be installed on the player.",
         "BrightSign's HTML widget does not reliably come back from a page reload. That is why the host exists: on deploy the page asks for a restart and autorun.brs tears the widget down and builds a new one, which is a restart the operating system actually performs. Without that host a deploy can darken the panel until someone power-cycles it.",
@@ -109,7 +116,9 @@
       "id": "brightsign-series-5-server",
       "name": "BrightSign Series 5, running the ScreenTinker server",
       "manufacturer": "BrightSign",
-      "model_numbers": ["XT245"],
+      "model_numbers": [
+        "XT245"
+      ],
       "category": "media-player",
       "os": "BrightSign OS 10",
       "player": "The ScreenTinker server itself, as a real Node process, with the player running in the widget beside it",
@@ -121,6 +130,7 @@
       "min_version": "1.9.36",
       "provisioning_url": null,
       "buy_url": null,
+      "photo": null,
       "notes": [
         "This is the whole system on one box: no separate server to host, and the panel keeps working if the network does not.",
         "BrightSign OS 10 is required, and is not optional. The server runs on the Node runtime that ships with OS 10. OS 9 can run the player but cannot run the server.",
@@ -135,7 +145,9 @@
       "id": "kb1001-portable-android-display",
       "name": "KB1001 Android tablet",
       "manufacturer": "Shenzhen Efercro Electronic Technology",
-      "model_numbers": ["KB1001"],
+      "model_numbers": [
+        "KB1001"
+      ],
       "category": "soc-display",
       "os": "Android 15",
       "player": "Android player (APK)",
@@ -147,6 +159,7 @@
       "min_version": "1.9.4",
       "provisioning_url": "/guides/digital-signage-android-tv.html",
       "buy_url": "https://amzn.to/4cKsp8A",
+      "photo": null,
       "notes": [
         "The panel is 1280x800. It was tested with 1080p content, which the device downscales to fit, so a 1080p playlist plays correctly but is not shown at full resolution.",
         "Requires ScreenTinker 1.9.4 or later. Earlier Android builds could strand a panel on \"waiting for content\" after a restart, with no recovery short of clearing the app and re-provisioning (issue #162, fixed 2026-07-10)."
@@ -169,6 +182,7 @@
       "min_version": "0.0.1",
       "provisioning_url": null,
       "buy_url": null,
+      "photo": null,
       "notes": [
         "Tested on Chrome and Firefox. Edge is expected to work but has not been tested.",
         "Point the browser at /player on your server. Nothing is installed.",
@@ -181,7 +195,9 @@
       "id": "samsung-om55b",
       "name": "Samsung OM55B",
       "manufacturer": "Samsung",
-      "model_numbers": ["OM55B"],
+      "model_numbers": [
+        "OM55B"
+      ],
       "category": "soc-display",
       "os": "Tizen 5.0 (SSSP v6)",
       "player": "Tizen .wgt player",
@@ -193,6 +209,7 @@
       "min_version": "2.0.8",
       "provisioning_url": null,
       "buy_url": null,
+      "photo": null,
       "notes": [
         "ScreenTinker holds no Tizen hardware. This entry rests on user reports and carries no support commitment.",
         "Tizen is not turnkey. There are three install routes and each has a catch.",
@@ -221,6 +238,7 @@
       "min_version": "2.0.8",
       "provisioning_url": null,
       "buy_url": null,
+      "photo": null,
       "notes": [
         "Community contributed. No LG panel was available to ScreenTinker, so no unit is held in the lab and this carries no support commitment.",
         "Installed from a USB stick or an SI server. No vendor signature is needed.",
@@ -245,6 +263,7 @@
       "min_version": "2.0.8",
       "provisioning_url": "/guides/digital-signage-android-tv.html",
       "buy_url": null,
+      "photo": null,
       "notes": [
         "Android TV hardware in general is not certified. Individual models are listed separately when ScreenTinker has tested them.",
         "With group sync enabled the player warms the next clip on a second video decoder shortly before each item boundary. Some chipsets allow only one decoder at higher profiles, and the second request can reclaim the decoder already playing. The picture holds, no error is raised, and the playlist stops advancing.",
@@ -253,10 +272,48 @@
       "eol": null
     },
     {
+      "id": "led-video-wall-colorlight-pi",
+      "name": "LED video wall (Colorlight processor + Raspberry Pi)",
+      "manufacturer": null,
+      "model_numbers": [
+        "Colorlight X4",
+        "Colorlight X8"
+      ],
+      "category": "sbc",
+      "os": "Raspberry Pi OS (Wayland / labwc)",
+      "player": "Web player in a kiosk browser on a Raspberry Pi 4",
+      "status": "community-reported",
+      "max_resolution": "The wall's native mode, e.g. 2808x648 (13x3 modules of 216x216)",
+      "validated_on": "2026-09-22",
+      "validated_by": "Community",
+      "player_version": "2.1.5",
+      "min_version": null,
+      "provisioning_url": "/guides/led-wall-digital-signage.html",
+      "buy_url": null,
+      "photo": {
+        "src": "/assets/hardware/led-wall-watterott.jpg",
+        "alt": "A ScreenTinker advert running on a large outdoor LED video wall mounted on an industrial building",
+        "credit": "Watterott electronic GmbH",
+        "credit_url": "https://www.watterott.com"
+      },
+      "notes": [
+        "Reported by Watterott electronic GmbH (Leinefelde-Worbis, Germany), who run ScreenTinker on LED walls in production. ScreenTinker holds no LED wall and this entry carries no support commitment.",
+        "The LED processor is configured once with the wall's native resolution and advertises it to the player over EDID. The Pi picks it up on boot as if a monitor with that native mode had been plugged in — nothing is configured on the Pi and ScreenTinker needs no LED-wall feature.",
+        "⚠️ Android streaming sticks cannot drive one. Fire TV, Google TV Streamer and similar only output from a fixed list of resolutions, so they cannot produce a wall's native mode. Use a Raspberry Pi or a small x86 PC.",
+        "Colorlight processors can crop and scale instead, but a 4K-class processor large enough to cover the wall without quality loss costs roughly double, and scaling means no longer driving the native pixel grid.",
+        "Brightness, colour calibration and gamma belong to the LED processor and receiving cards, not to ScreenTinker.",
+        "To blank a wall out of hours, set a device-level default image rather than putting a black image in the timetable.",
+        "Tested with MLS LED modules and Colorlight receiving cards, connected to the processor over HDMI."
+      ],
+      "eol": null
+    },
+    {
       "id": "fire-tv-stick-4k-select",
       "name": "Amazon Fire TV Stick 4K Select",
       "manufacturer": "Amazon",
-      "model_numbers": ["AFTCA002"],
+      "model_numbers": [
+        "AFTCA002"
+      ],
       "category": "streaming-player",
       "os": "Vega OS",
       "player": "Vega player (vpkg). Played on one AFTCA002, then the process died",
@@ -268,6 +325,7 @@
       "min_version": null,
       "provisioning_url": "/guides/digital-signage-vega.html",
       "buy_url": null,
+      "photo": null,
       "notes": [
         "Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.",
         "Played on one AFTCA002 (ScreenTinker 2.1.6, Kepler 1.2): paired, reported 1920x1080, transitions ran, then the process died in-process. Not certified. Do not buy it for a sign until this entry changes.",
@@ -283,7 +341,9 @@
       "id": "fire-tv-stick-hd-2026",
       "name": "Amazon Fire TV Stick HD (2026)",
       "manufacturer": "Amazon",
-      "model_numbers": ["AFTCL001"],
+      "model_numbers": [
+        "AFTCL001"
+      ],
       "category": "streaming-player",
       "os": "Vega OS",
       "player": "Vega player (vpkg), not run on this model",
@@ -295,6 +355,7 @@
       "min_version": null,
       "provisioning_url": "/guides/digital-signage-vega.html",
       "buy_url": null,
+      "photo": null,
       "notes": [
         "Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.",
         "Not run on an AFTCL001. The 4K Select run is the only evidence, and that stick is not certified either. Do not buy it for a sign until this entry changes.",

@@ -43,6 +43,10 @@
     .device-spec dd { margin: 2px 0 0; color: var(--text); }
     .device-notes { margin: 16px 0 0; padding-left: 20px; color: var(--text); font-size: 14px; }
     .device-notes li { margin: 6px 0; }
+    .device-photo { margin: 18px 0 0; }
+    .device-photo img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); }
+    .device-photo figcaption { margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .device-photo figcaption a { color: var(--accent); }
     .setup-link { margin: 14px 0 0; font-size: 14px; }
     .buy-link { margin: 8px 0 0; font-size: 14px; }
     .buy-link .affiliate-tag { color: var(--dim); font-size: 12px; }
@@ -236,7 +240,7 @@
     </section>
 
     <section class="status-group status-community-reported">
-      <h2>Community reported <span class="count">(3)</span></h2>
+      <h2>Community reported <span class="count">(4)</span></h2>
       <p class="group-blurb">A user reports that this works. ScreenTinker has not tested it and keeps no unit. These are NOT Certified Hardware and carry no support commitment.</p>
       <article class="device" id="samsung-om55b">
         <h3><a class="anchor" href="#samsung-om55b" aria-label="Link to Samsung OM55B">#</a>Samsung OM55B</h3>
@@ -307,6 +311,33 @@
           <li>Reported on Xiaomi Mi TV P1 panels (issue #333) and fixed in 2.0.8. The chipsets that behave this way have never been identified.</li>
         </ul>
         <p class="setup-link"><a href="/guides/digital-signage-android-tv.html">Setup guide for this device</a></p>
+      </article>
+      <article class="device" id="led-video-wall-colorlight-pi">
+        <h3><a class="anchor" href="#led-video-wall-colorlight-pi" aria-label="Link to LED video wall (Colorlight processor + Raspberry Pi)">#</a>LED video wall (Colorlight processor + Raspberry Pi)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd>Colorlight X4, Colorlight X8</dd>
+          <dt>Category</dt><dd>Single-board computer</dd>
+          <dt>Operating system</dt><dd>Raspberry Pi OS (Wayland / labwc)</dd>
+          <dt>ScreenTinker player</dt><dd>Web player in a kiosk browser on a Raspberry Pi 4</dd>
+          <dt>Maximum resolution</dt><dd>The wall&#39;s native mode, e.g. 2808x648 (13x3 modules of 216x216)</dd>
+          <dt>Validated on</dt><dd>2026-09-22</dd>
+          <dt>Validated by</dt><dd>Community</dd>
+          <dt>Tested against</dt><dd>2.1.5</dd>
+          <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Reported by Watterott electronic GmbH (Leinefelde-Worbis, Germany), who run ScreenTinker on LED walls in production. ScreenTinker holds no LED wall and this entry carries no support commitment.</li>
+          <li>The LED processor is configured once with the wall&#39;s native resolution and advertises it to the player over EDID. The Pi picks it up on boot as if a monitor with that native mode had been plugged in — nothing is configured on the Pi and ScreenTinker needs no LED-wall feature.</li>
+          <li>⚠️ Android streaming sticks cannot drive one. Fire TV, Google TV Streamer and similar only output from a fixed list of resolutions, so they cannot produce a wall&#39;s native mode. Use a Raspberry Pi or a small x86 PC.</li>
+          <li>Colorlight processors can crop and scale instead, but a 4K-class processor large enough to cover the wall without quality loss costs roughly double, and scaling means no longer driving the native pixel grid.</li>
+          <li>Brightness, colour calibration and gamma belong to the LED processor and receiving cards, not to ScreenTinker.</li>
+          <li>To blank a wall out of hours, set a device-level default image rather than putting a black image in the timetable.</li>
+          <li>Tested with MLS LED modules and Colorlight receiving cards, connected to the processor over HDMI.</li>
+        </ul>
+        <figure class="device-photo"><img src="/assets/hardware/led-wall-watterott.jpg" alt="A ScreenTinker advert running on a large outdoor LED video wall mounted on an industrial building" loading="lazy" decoding="async"><figcaption>Photo: <a href="https://www.watterott.com" rel="noopener">Watterott electronic GmbH</a></figcaption></figure>
+        <p class="setup-link"><a href="/guides/led-wall-digital-signage.html">Setup guide for this device</a></p>
       </article>
     </section>
 
