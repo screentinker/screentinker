@@ -61,6 +61,32 @@
     .hero-btns { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
     .hero-badge { display:inline-block; background:var(--card); border:1px solid var(--border); border-radius:20px; padding:6px 16px; font-size:13px; color:var(--muted); margin-bottom:24px; }
 
+    /* Hero trust strip + price-math ribbon. Both stack on a phone: the strip goes 4->2 columns and
+       the ribbon's four prices go to one per row, because four prices side by side at 390px is
+       unreadable and the ribbon is the argument the page is making. */
+    .trust-strip { max-width:1000px; margin:34px auto 0; padding:18px 8px; border-top:1px solid var(--border); border-bottom:1px solid var(--border); display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+    .trust-strip div { text-align:center; }
+    .trust-strip div + div { border-left:1px solid var(--border); }
+    .trust-strip .n { font-size:26px; font-weight:800; color:var(--text); font-variant-numeric:tabular-nums; }
+    .trust-strip .l { font-size:13px; color:var(--muted); margin-top:2px; }
+
+    .price-math { max-width:1000px; margin:30px auto 0; padding:22px 26px; background:var(--card); border:1px solid var(--border); border-radius:14px; text-align:left; display:flex; align-items:center; gap:26px; }
+    .price-math h2 { font-size:17px; font-weight:700; margin:0 0 12px; color:var(--text); }
+    .price-math .rows { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+    .price-math .who { font-size:13px; color:#cbd5e1; }
+    .price-math .amt { font-size:22px; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; }
+    .price-math .cell { padding-left:12px; border-left:3px solid #475569; }
+    .price-math .cell.us { border-left-color:var(--accent); }
+    .price-math .cell.us .amt { color:#60a5fa; font-weight:800; }
+    .price-math .grow { flex-grow:1; }
+    @media (max-width:820px) {
+      .trust-strip { grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 8px; }
+      .trust-strip div + div { border-left:none; }
+      .price-math { flex-direction:column; align-items:stretch; gap:16px; }
+      .price-math .rows { grid-template-columns:1fr; gap:10px; }
+      .price-math .cell { display:flex; align-items:baseline; justify-content:space-between; }
+    }
+
     /* Screenshot */
     .screenshot { max-width:1100px; margin:0 auto 80px; padding:0 24px; }
     .screenshot img, .screenshot .mock { width:100%; max-width:100%; height:auto; display:block; border-radius:12px; border:1px solid var(--border); box-shadow:0 20px 60px rgba(0,0,0,0.5); }
@@ -119,6 +145,9 @@
     .price-card ul { list-style:none; margin-bottom:20px; }
     .price-card li { font-size:14px; color:var(--muted); padding:4px 0; }
     .price-card li::before { content:'✓ '; color:var(--accent); }
+
+    .price-card .per-screen { background:var(--bg); border-radius:7px; padding:8px 10px; margin-bottom:14px; font-size:12px; color:var(--muted); line-height:1.5; }
+    .price-card .per-screen strong { color:var(--text); font-variant-numeric:tabular-nums; }
 
     /* Compare */
     .compare { max-width:1000px; margin:0 auto; padding:80px 24px; }
@@ -210,8 +239,8 @@
   <!-- Hero -->
   <section class="hero">
     <div class="hero-badge">&#9889; Open source &middot; Free plan &middot; 14-day Pro trial, no credit card</div>
-    <h1>Open-Source Digital Signage<br>for <span>Any Screen</span></h1>
-    <p>Free, open-source <strong>digital signage software</strong> to manage TVs, video walls, and kiosks from anywhere. A complete <strong>digital signage CMS</strong> with remote control, scheduling, playlists, and analytics. <strong>Self-host it</strong> on your own server, or use our managed cloud.</p>
+    <h1>Open-Source Digital Signage Software.<br><span>Flat price, any screen.</span></h1>
+    <p>A complete <strong>digital signage CMS</strong> for TVs, video walls and kiosks &mdash; scheduling, playlists, remote control and proof-of-play. Every competitor bills you per screen, every month. We don't. <strong>Self-host it free</strong>, or use our managed cloud.</p>
     <div class="hero-btns">
       <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free Trial</a>
       <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px">
@@ -231,6 +260,34 @@
       <strong id="deployed-count" style="color:var(--text,inherit);font-variant-numeric:tabular-nums"></strong>
       screens deployed with ScreenTinker <span style="font-size:13px;opacity:0.85">(self-reported, opt-in only)</span>
     </p>
+
+    <!-- Trust strip. Four facts, none of them a claim a competitor can also make. -->
+    <div class="trust-strip">
+      <div><div class="n">10</div><div class="l">platforms, one CMS</div></div>
+      <div><div class="n">$0</div><div class="l">per extra screen</div></div>
+      <div><div class="n">Self-host</div><div class="l">or managed cloud</div></div>
+      <div><div class="n">Open</div><div class="l">source on GitHub</div></div>
+    </div>
+
+    <!--
+      The price-math ribbon: the whole flat-vs-per-screen argument, above the fold, in numbers.
+      ⚠️ EVERY FIGURE HERE IS A COMPETITOR'S PUBLISHED PRICE, read off their own pricing page on
+      2026-09-24, and the same numbers appear in the comparison table lower down. If one is edited,
+      edit both — a page that contradicts itself on price is worse than one that is merely out of
+      date. Ours is the Pro plan's annual price, which is what /api/subscription/plans returns.
+    -->
+    <div class="price-math">
+      <div class="grow">
+        <h2>15 screens for a year</h2>
+        <div class="rows">
+          <div class="cell us"><div class="who">ScreenTinker Pro</div><div class="amt">$989</div></div>
+          <div class="cell"><div class="who">Yodeck</div><div class="amt">$1,440&ndash;2,160</div></div>
+          <div class="cell"><div class="who">OptiSigns</div><div class="amt">$1,620&ndash;2,430</div></div>
+          <div class="cell"><div class="who">ScreenCloud</div><div class="amt">$3,600&ndash;5,400</div></div>
+        </div>
+      </div>
+      <a href="#compare" class="btn btn-primary" style="flex-shrink:0;padding:13px 22px;font-size:15px">Compare the math &rarr;</a>
+    </div>
   </section>
 
   <!-- Intro video -->
@@ -271,6 +328,14 @@
     <h2>Everything You Need</h2>
     <p class="subtitle">Every feature you'd expect from an enterprise <strong>digital signage CMS</strong>: video walls, scheduling, proof-of-play, and remote monitoring. All free and open source.</p>
     <div class="feature-grid">
+      <div class="feature-card"><div class="feature-icon">&#128336;</div><h3>Display Power Schedules</h3><p>Panels switch themselves off outside opening hours and back on before the doors do. Per screen or per group, on a calendar.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128257;</div><h3>Group Sync</h3><p>A wall of screens starts the same frame at the same moment &mdash; and keeps doing it with the internet unplugged.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127760;</div><h3>Node Mesh</h3><p>One screen on a site pulls a video once and hands it to its neighbours over the LAN. A whole store updates on one download.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127959;</div><h3>Scale-Out Replicas</h3><p>Put a server in each region and let screens connect to the nearest one. Thousands of displays without one box carrying them all.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128273;</div><h3>SSO With Your Identity Provider</h3><p>OIDC per organisation with DNS-verified domains, so staff sign in with the account they already have.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128737;</div><h3>Two-Factor Authentication</h3><p>TOTP from any authenticator app, with recovery codes. Included, not an enterprise upsell.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127911;</div><h3>Consent-Gated Support Access</h3><p>Support can only look inside your account after you grant it, for a window you choose, and every action is logged.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128241;</div><h3>Portrait-Native Panels</h3><p>Screens that are portrait in hardware &mdash; menu boards, wayfinders &mdash; fill edge to edge without a rotation hack.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128268;</div><h3>Plugins</h3><p>Extend ScreenTinker with plugins: extra widget types, data-source connectors, and event hooks, without forking core. Trusted local code on a self-hosted node, off by default.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128196;</div><h3>PDF to Playlist</h3><p>Upload a PDF and every page becomes a full-screen slide, rendered in the browser. No manual export step.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128197;</div><h3>Meeting Room Signs</h3><p>Connect a calendar (iCal / Webcal) to show live Busy / Available, agendas and the next meeting, in every language the dashboard speaks.</p></div>
@@ -340,23 +405,40 @@
     <h2>How We Compare</h2>
     <div class="table-scroll">
     <table class="compare-table">
-      <thead><tr><th></th><th style="color:var(--accent);font-weight:700">ScreenTinker</th><th>Yodeck</th><th>ScreenCloud</th><th>OptiSigns</th></tr></thead>
+      <thead><tr><th></th><th style="color:var(--accent);font-weight:700">ScreenTinker</th><th>Yodeck</th><th>OptiSigns</th><th>ScreenCloud</th></tr></thead>
       <tbody>
-        <tr><td>Price (15 devices/yr)</td><td style="color:var(--accent);font-weight:600">$1,188</td><td>$1,440+</td><td>$3,600+</td><td>$1,800+</td></tr>
-        <tr><td>Free tier</td><td class="yes">&#10003; 1 device</td><td class="yes">&#10003;</td><td class="no">&#10007;</td><td class="yes">&#10003;</td></tr>
-        <tr><td>Video Wall</td><td class="yes">&#10003; Included</td><td class="partial">Basic</td><td class="partial">Basic<!-- VERIFY: multi-screen confirmed; bezel-compensated video wall not confirmed --></td><td class="partial">Paid add-on</td></tr>
-        <tr><td>Live screen view + remote key presses*</td><td class="yes">&#10003; All plans</td><td class="partial">Limited</td><td class="partial">Limited</td><td class="partial">Limited</td></tr>
-        <tr><td>Kiosk/Touchscreen</td><td class="yes">&#10003; Included</td><td class="yes">&#10003;</td><td class="partial">Limited</td><td class="yes">&#10003;</td></tr>
-        <tr><td>Proof-of-Play</td><td class="yes">&#10003; All plans</td><td class="paid">Paid tier</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
+        <!--
+          ⚠️ EVERY PRICE BELOW WAS READ OFF THE VENDOR'S OWN PRICING PAGE ON 2026-09-24, and the
+          15-screen row also appears in the hero's price-math ribbon. Edit both together.
+            Yodeck     $8 / $12 / $16 per screen/month (same monthly or annual)
+            OptiSigns  $10 monthly, $9 annual (Standard); $15 / $13.50 (Pro-Plus)
+            ScreenCloud $20 (Core) / $30 (Pro) per screen/month, billed annually
+          Ranges are each vendor's cheapest to mid tier, on annual billing where they offer it.
+          ⚠️ OURS IS THE ANNUAL PRICE. This row used to read $1,188 — the monthly price times twelve —
+          which understated our own advantage by $199 against a plan the API already returns.
+        -->
+        <tr><td>Billing model</td><td style="color:var(--accent);font-weight:600">Flat per plan &mdash; extra screens free</td><td>Per screen, per month</td><td>Per screen, per month</td><td>Per screen, per month</td></tr>
+        <tr><td>Price (15 screens/yr)</td><td style="color:var(--accent);font-weight:600">$989</td><td>$1,440&ndash;2,160</td><td>$1,620&ndash;2,430</td><td>$3,600&ndash;5,400</td></tr>
+        <tr><td>Price (50 screens/yr)</td><td style="color:var(--accent);font-weight:600">$1,989</td><td>$4,800&ndash;7,200</td><td>$5,400&ndash;8,100</td><td>$12,000&ndash;18,000</td></tr>
+        <tr><td>Cost per screen/month at 50</td><td style="color:var(--accent);font-weight:600">$3.31</td><td>$8&ndash;12</td><td>$9&ndash;13.50</td><td>$20&ndash;30</td></tr>
+        <tr><td>Free tier</td><td class="yes">&#10003; 1 device</td><td class="yes">&#10003; 1 screen</td><td class="yes">&#10003; 3 screens</td><td class="no">&#10007;</td></tr>
         <tr><td>Self-Hosted</td><td class="yes">&#10003; Only us</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
-        <tr><td>White Label</td><td class="yes">&#10003; Included</td><td class="paid">Paid</td><td class="paid">Enterprise</td><td class="paid">Paid tier</td></tr>
+        <tr><td>Source you can read and change</td><td class="yes">&#10003; Open source</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
+        <tr><td>Video Wall</td><td class="yes">&#10003; Included</td><td class="partial">Basic</td><td class="partial">Paid add-on</td><td class="partial">Basic<!-- VERIFY: multi-screen confirmed; bezel-compensated video wall not confirmed --></td></tr>
+        <tr><td>Live screen view + remote key presses*</td><td class="yes">&#10003; All plans</td><td class="partial">Limited</td><td class="partial">Limited</td><td class="partial">Limited</td></tr>
+        <tr><td>Kiosk/Touchscreen</td><td class="yes">&#10003; Included</td><td class="yes">&#10003;</td><td class="yes">&#10003;</td><td class="partial">Limited</td></tr>
+        <tr><td>Proof-of-Play</td><td class="yes">&#10003; All plans</td><td class="paid">Paid tier</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
+        <tr><td>Display power schedules</td><td class="yes">&#10003; All plans</td><td class="partial">Player-dependent</td><td class="partial">Player-dependent</td><td class="partial">Player-dependent</td></tr>
+        <tr><td>Site-local content distribution</td><td class="yes">&#10003; Node mesh</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
+        <tr><td>White Label</td><td class="yes">&#10003; Included</td><td class="paid">Paid</td><td class="paid">Paid tier</td><td class="paid">Enterprise</td></tr>
         <tr><td>Email Alerts</td><td class="yes">&#10003; All plans</td><td class="paid">Paid</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
+        <tr><td>Platforms supported</td><td style="color:var(--accent);font-weight:600">10, incl. Vega OS</td><td>Own player + a few OS</td><td>Several</td><td>Several</td></tr>
       </tbody>
     </table>
     </div>
     <p style="max-width:1000px;margin:16px auto 0;font-size:12px;color:var(--dim);line-height:1.6">
       * Live screen view + remote key presses is Android only and requires granting the on-device accessibility permission.<br>
-      Comparison as of June 2026, based on each vendor's publicly listed pricing and documentation. Spot an error? <a href="https://github.com/screentinker/screentinker/issues" target="_blank" rel="noopener" style="color:var(--accent)">Open an issue on GitHub</a> and we'll fix it.
+      Prices read off each vendor's own pricing page on 24 September 2026. Ranges are their cheapest to mid tier at that screen count, on annual billing where they offer it; ours is the annual price of the plan that covers those screens. Spot an error? <a href="https://github.com/screentinker/screentinker/issues" target="_blank" rel="noopener" style="color:var(--accent)">Open an issue on GitHub</a> and we'll fix it &mdash; and say who found it.
     </p>
   </section>
 
@@ -715,11 +797,50 @@
         || (p.max_devices === -1 && !(p.price_monthly > 0));
       const publicPlans = plans.filter(p => p.active && !isQuoteSlot(p));
       const quotePlan = plans.find(p => p.active && isQuoteSlot(p));
-      const planCardsHtml = publicPlans.map((p, i) => `
-        <div class="price-card ${i === 2 ? 'featured' : ''}">
+      /*
+       * ⚠️ WHICH CARD IS "MOST POPULAR" IS NOW NAMED, NOT COUNTED.
+       *
+       * This was `i === 2`, chosen when there were four plans and index 2 was Pro. Two plans have
+       * been added since (Home, Business), so index 2 became STARTER and the badge moved off Pro
+       * silently — nothing about adding a plan tells you a marketing badge is positional.
+       *
+       * It is set to 'starter' because that is what the page has actually been rendering, and the
+       * badge's placement affects which plan people pick: changing it is a pricing decision, not a
+       * refactor. Change the id here to move it deliberately.
+       */
+      const FEATURED_PLAN = 'starter';
+
+      /*
+       * Per-screen cost, computed from the row rather than written down. A flat plan's whole argument
+       * is what one screen ends up costing, and that is the number a reader is comparing against the
+       * per-screen price they are quoted everywhere else — so do the division for them.
+       * Only shown where it means something: more than one device, and a yearly price to divide.
+       */
+      const perScreen = (p) => (p.max_devices > 1 && p.price_yearly > 0)
+        ? (p.price_yearly / p.max_devices / 12).toFixed(2)
+        : null;
+
+      const planCardsHtml = publicPlans.map((p) => {
+        const ps = perScreen(p);
+        /*
+         * ⚠️ THE HEADLINE PRICE IS UNCHANGED: monthly, exactly as this page has always shown it.
+         *
+         * Leading with the annual figure is tempting — it is the cheaper effective price and the one
+         * the comparison table quotes — but it swaps "$99" for "$989" as the first number a visitor
+         * reads. This page converts at about seven signups a day; that is not a number to experiment
+         * with as a side effect of a copy refresh. The annual saving keeps its second line, and the
+         * new per-screen figure below does the reframing instead.
+         */
+        const headline = p.price_monthly > 0 ? `$${p.price_monthly}<span>/mo</span>` : 'Free<span></span>';
+        const second = p.price_yearly > 0
+          ? `or $${p.price_yearly.toLocaleString('en-US')}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)`
+          : '&nbsp;';
+        return `
+        <div class="price-card ${p.name === FEATURED_PLAN ? 'featured' : ''}">
           <h3>${p.display_name}</h3>
-          <div class="price">${p.price_monthly > 0 ? '$' + p.price_monthly : 'Free'}<span>${p.price_monthly > 0 ? '/mo' : ''}</span></div>
-          ${p.price_yearly > 0 ? `<div class="yearly">or $${p.price_yearly}/year (save ${Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100)}%)</div>` : '<div class="yearly">&nbsp;</div>'}
+          <div class="price">${headline}</div>
+          <div class="yearly">${second}</div>
+          ${ps ? `<div class="per-screen"><strong>$${ps}</strong> per screen / month at ${p.max_devices} screens</div>` : ''}
           <ul>
             <li>${p.max_devices === -1 ? 'Unlimited' : p.max_devices} device${p.max_devices !== 1 ? 's' : ''}</li>
             <li>${p.max_storage_mb === -1 ? 'Unlimited' : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + ' GB' : p.max_storage_mb + ' MB'} storage</li>
@@ -727,9 +848,11 @@
             ${p.remote_url ? '<li>Remote URL streaming</li>' : ''}
             ${p.priority_support ? '<li>Priority support</li>' : ''}
           </ul>
-          <a href="/app#/login" class="btn ${i === 0 ? 'btn-outline' : 'btn-primary'}" style="width:100%;justify-content:center">${p.price_monthly > 0 ? 'Start Trial' : 'Get Started'}</a>
+          <a href="/app#/login" class="btn ${p.price_monthly > 0 ? 'btn-primary' : 'btn-outline'}" style="width:100%;justify-content:center">${p.price_monthly > 0 ? 'Start Trial' : 'Get Started'}</a>
         </div>
-      `).join('');
+      `;
+      }).join('');
+
       // The quote-only card. Its HEADING comes from the plans row, so renaming the plan in admin
       // shows up here — that rename is the whole reason the page said "Enterprise / Custom" while
       // the database said "Custom". The bullets and the button stay written here: they are sales
