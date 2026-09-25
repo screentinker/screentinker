@@ -2584,6 +2584,33 @@ module.exports = function setupDeviceSocket(io) {
       dispatch('self-unpair', data);
     });
 
+    /*
+     * Talk session state, relayed straight to the dashboards watching this screen.
+     *
+     * ⚠️ NOT a dispatch(): this writes nothing. It is a transient fact about a session in progress —
+     * most usefully `listen_only_no_mic`, which is how an operator learns the screen they just opened
+     * 2-way Talk on has no microphone. Routing it through EVENT_APPLIERS would make it a device-row
+     * mutation and a second writer on a replica, for a value that is meaningless a minute later.
+     *
+     * Workspace-scoped like every other dashboard relay, so a talk state cannot leak to an operator
+     * in another tenant who happens to have a socket open.
+     */
+    socket.on('device:talk-state', (data) => {
+      // Authenticated and identity-checked exactly like every other player event: the socket's own
+      // device id wins, and a forged one in the payload is a no-op rather than a way to speak as
+      // another screen.
+      if (!requireDeviceAuth()) return;
+      const claimed = data && data.device_id;
+      if (claimed && claimed !== currentDeviceId) return;
+      const state = data && typeof data.state === 'string' ? data.state.slice(0, 40) : null;
+      if (!state) return;
+      emitToDeviceWorkspace(_dashboardNsRef, currentDeviceId, 'dashboard:talk-state', {
+        device_id: currentDeviceId,
+        state,
+        reason: data && typeof data.reason === 'string' ? data.reason.slice(0, 120) : null,
+      });
+    });
+
     socket.on('device:trigger-status', (data) => dispatch('trigger-status', data));
 
     socket.on('device:heartbeat', (data) => {

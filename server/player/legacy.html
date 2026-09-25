@@ -2557,6 +2557,15 @@ function connect(serverUrl) {
         iceServers: data && data.iceServers || void 0,
         onState: (st, reason) => {
           if (window.__stTalkDebug) console.log("[talk]", st, reason || "");
+          try {
+            socket.emit("device:talk-state", {
+              device_id: config.deviceId,
+              device_token: config.deviceToken,
+              state: st,
+              reason: reason || null
+            });
+          } catch (_) {
+          }
         }
       });
     } catch (_) {

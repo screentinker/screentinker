@@ -212,10 +212,23 @@ module.exports = function setupDashboardSocket(io) {
       const { device_id } = data || {};
       const duplex = !!(data && data.duplex);   // true = 2-way (device also sends its mic)
       if (!canActOnDevice(socket, device_id, 'write')) return;
-      // One-way Talk needs only remote.talk (play). Two-way additionally needs remote.mic (a device
-      // microphone) — the dashboard only shows the 2-way control for a device that has one.
+      /*
+       * ⚠️ TWO-WAY IS NO LONGER GATED ON A DECLARED remote.mic.
+       *
+       * It used to be, and the declaration came from a probe the player ran at startup — which put a
+       * browser media-permission prompt on top of the pairing code on a fresh Raspberry Pi. That probe
+       * is gone, so nothing declares the capability any more and this gate would refuse 2-way on every
+       * screen in the world.
+       *
+       * The capability is now PROVEN BY USE instead of declared in advance: the player asks for the
+       * microphone when the operator clicks 2-way — the one moment a permission dialog is expected,
+       * because a human just asked for it — and falls back to a one-way session if there is none,
+       * reporting `listen_only_no_mic` back so the dashboard can say so. A screen with no microphone
+       * gets a working one-way session rather than a refusal, which is the better failure anyway.
+       *
+       * remote.talk still gates it, as does the per-org WebRTC switch and go2rtc below.
+       */
       if (capabilityRefused(device_id, 'remote.talk', ack)) return;
-      if (duplex && capabilityRefused(device_id, 'remote.mic', ack)) return;
       const on = orgWebrtc.talkEnabledForDevice(device_id);
       if (!on || !go2rtc.enabled()) { if (typeof ack === 'function') ack({ delivered: false, reason: 'talk_unavailable' }); return; }
       const conn = heartbeat.getConnection(device_id);

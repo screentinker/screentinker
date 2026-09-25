@@ -3081,7 +3081,26 @@
             duplex: !!(data && data.duplex),   // 2-way: also send this device's mic
             scope: data && data.scope,
             iceServers: (data && data.iceServers) || undefined,
-            onState: (st, reason) => { if (window.__stTalkDebug) console.log('[talk]', st, reason || ''); },
+            onState: (st, reason) => {
+              if (window.__stTalkDebug) console.log('[talk]', st, reason || '');
+              /*
+               * ⚠️ TELL THE OPERATOR WHEN THERE IS NO MICROPHONE.
+               *
+               * The duplex path asks for the mic and falls back to `listen_only_no_mic` when the
+               * browser refuses or the box has none. That fallback is correct, and it used to be
+               * SILENT: an operator clicked "2-way", got a one-way session, and had no way to tell
+               * the difference from a screen that simply was not talking back. The capability is
+               * proven by using it, so the result of using it has to come back.
+               */
+              try {
+                socket.emit('device:talk-state', {
+                  device_id: config.deviceId,
+                  device_token: config.deviceToken,
+                  state: st,
+                  reason: reason || null,
+                });
+              } catch (_) { /* reporting is best-effort; never break the session */ }
+            },
           });
         } catch (_) { /* intercom is best-effort; never break playback */ }
       });
