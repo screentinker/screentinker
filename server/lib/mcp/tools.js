@@ -124,9 +124,23 @@ const TOOLS = [
       properties: { search: { type: 'string', description: 'Case-insensitive match on the file or item name.' } },
     },
     call: { method: 'GET', path: '/api/content' },
+    /*
+     * ⚠️ THE COLUMNS ARE filename / mime_type / duration_sec. There is no `name`, `type` or
+     * `duration` on a content row and never has been. Projecting those three produced an item with
+     * an id and nothing else, and `search` - which filtered on the same absent `name` - returned an
+     * empty list for EVERY query. Both answers are well-formed and neither is an error, so an agent
+     * concludes the library is empty or its items are unnamed, and says so convincingly. Same shape
+     * of failure as the report date range: 200, plausible, wrong.
+     *
+     * `filename` is the label for every kind of content, not just uploads - a YouTube item is stored
+     * as `YouTube: <videoId>` or its title, and a web page gets one derived from its URL.
+     */
     shape: (rows, args) => (Array.isArray(rows) ? rows : [])
-      .filter((c) => !args.search || String(c.name || '').toLowerCase().includes(args.search.toLowerCase()))
-      .map((c) => ({ id: c.id, name: c.name, type: c.type, duration: c.duration ?? null, folder: c.folder_id || null })),
+      .filter((c) => !args.search || String(c.filename || '').toLowerCase().includes(args.search.toLowerCase()))
+      .map((c) => ({
+        id: c.id, name: c.filename, type: c.mime_type,
+        duration: c.duration_sec ?? null, folder: c.folder_id || null,
+      })),
   },
   {
     name: 'list_groups',

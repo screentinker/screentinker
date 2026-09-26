@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+**The MCP media-library tool returned items with no name, and its search never matched anything.**
+`list_content` projected `name`, `type` and `duration`; a content row has `filename`, `mime_type` and
+`duration_sec` and has never had the other three. So every item came back as a bare id, and `search` —
+filtering on the same absent field — returned an empty list for every query. ⚠️ Neither answer is an
+error and both are well-formed, so an agent asked to put something on a screen reports that the media
+library is empty, or that its files have no names, and is believed. Found while recording a demo
+against a seeded instance, which is the only reason anybody looked at the payload rather than the
+status code. The projection is now asserted against the schema, so renaming the column fails the test
+instead of quietly emptying the tool again.
+
 ## 2.2.0 (2026-09-26)
 
 Contributed by [@awatterott](https://github.com/awatterott) of

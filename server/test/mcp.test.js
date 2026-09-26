@@ -175,6 +175,40 @@ test('report tools translate the words a model uses into the endpoint\'s paramet
   assert.ok(tools.toRequest(tools.byName('uptime_report'), { days: 'lots' }).query.start);
 });
 
+test('⚠️ list_content names its items, and search matches something that exists', () => {
+  /*
+   * The shape projected c.name / c.type / c.duration. A content row has filename / mime_type /
+   * duration_sec and has never had the other three, so every item came back as a bare id and
+   * `search` - filtering on the same absent field - returned [] for every query. No error, no empty
+   * -looking response: a well-formed empty list, which an agent reports as "your library is empty".
+   *
+   * Asserted against the SCHEMA, not against a handwritten row, so renaming the column in
+   * database.js fails here instead of silently emptying the tool again.
+   */
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'db', 'database.js'), 'utf8');
+  for (const col of ['filename', 'mime_type', 'duration_sec']) {
+    assert.ok(new RegExp(`\\b${col}\\b`).test(schema), `content.${col} should exist in the schema`);
+  }
+  const row = {
+    id: 'c1', filename: 'evacuation-notice.png', mime_type: 'image/png',
+    duration_sec: null, folder_id: null, filepath: '/uploads/x', byte_digest: 'deadbeef',
+  };
+  const [shaped] = tools.byName('list_content').shape([row], {});
+  assert.equal(shaped.name, 'evacuation-notice.png');
+  assert.equal(shaped.type, 'image/png');
+  assert.ok(!('filepath' in shaped), 'storage paths are not a model\'s business');
+
+  // The filter has to match on the field that actually holds the label.
+  assert.equal(tools.byName('list_content').shape([row], { search: 'evacuation' }).length, 1);
+  assert.equal(tools.byName('list_content').shape([row], { search: 'nope' }).length, 0);
+
+  // A YouTube item is stored with its title (or "YouTube: <id>") in the same column.
+  const [yt] = tools.byName('list_content').shape(
+    [{ id: 'c2', filename: 'YouTube: dQw4w9WgXcQ', mime_type: 'video/youtube', duration_sec: 212 }], {});
+  assert.equal(yt.name, 'YouTube: dQw4w9WgXcQ');
+  assert.equal(yt.duration, 212);
+});
+
 test('get_display returns an answer, not a database row', () => {
   // The raw row is ~80 columns and its assignments carry filepaths and thumbnail paths. A model
   // reading that spends its context on storage detail instead of the question it was asked.
