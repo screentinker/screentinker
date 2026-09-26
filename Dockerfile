@@ -49,6 +49,14 @@ COPY release-notes.json /app/release-notes.json
 # the /openapi.yaml route serves ../docs/openapi.yaml (the spec Redoc on /docs fetches);
 # without this it 404s in the image even though it serves fine from a dev checkout.
 COPY docs/openapi.yaml /app/docs/openapi.yaml
+# ⚠️ AND THE CERTIFIED HARDWARE DATA, read from the repo ROOT at runtime by lib/certified-hardware.js.
+# The SAME bug as release-notes.json above, missed when this file was added — and worse, because it
+# fails INVISIBLY: routes/certified-hardware.js catches the ENOENT and serves the committed static
+# page, which looks completely correct. What it silently drops is every approved community submission,
+# since those are merged in at render time. So on every containerised install — which is the
+# documented self-hosting path — the approve link in the email worked, the row went to 'approved',
+# and the report never appeared. Found by submitting one on alpha and watching it not show up.
+COPY certified-hardware.json /app/certified-hardware.json
 # database.js requires scripts/migrate-multitenancy at boot
 COPY scripts/ /app/scripts/
 # The BrightSign bridge and sync modules are served to the player from ../brightsign so the copy
