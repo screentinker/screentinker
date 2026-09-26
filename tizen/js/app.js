@@ -15,7 +15,7 @@
   // packaged config.xml via the Tizen application API; fall back to a constant that
   // build-wgt.sh stamps from config.xml's version="" so the dashboard always shows the
   // version that is actually installed (never the old hardcoded '1.0.0').
-  var APP_VERSION_FALLBACK = '2.2.1'; // st:app-version — stamped by build-wgt.sh
+  var APP_VERSION_FALLBACK = '2.2.2'; // st:app-version — stamped by build-wgt.sh
   var APP_VERSION = (function () {
     try {
       var v = tizen.application.getCurrentApplication().appInfo.version;
