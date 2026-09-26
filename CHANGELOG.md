@@ -4,6 +4,27 @@
 
 ### Added
 
+**OAuth 2.0 Protected Resource Metadata at `/.well-known/oauth-protected-resource`** (RFC 9728).
+ScreenTinker *is* a protected resource that takes bearer tokens, so this document is true and worth
+publishing: the resource identifier, the scopes that exist, that credentials are presented in the
+`Authorization` header, and where the prose lives.
+
+⚠️ **`authorization_servers` is deliberately absent.** It is OPTIONAL in RFC 9728, and this resource
+delegates to nothing — no `/authorize`, no `/token`, and sessions are signed with a symmetric secret
+so there is no key a `jwks_uri` could publish. Naming an issuer would send a client into a
+discovery-and-redirect dance ending at a 404, which is the wasted-retries failure `/auth.md` exists
+to prevent. A reader that finds no authorization server is pointed at the documentation instead.
+
+⚠️ **The advertised scopes and the mintable scopes are now one list** (`lib/api-scopes.js`).
+Advertising a scope the minting code rejects is worse than advertising nothing: a client asks for it,
+is refused, and cannot tell that the advertisement was wrong rather than its request.
+
+**A `401` now carries `WWW-Authenticate` with `resource_metadata`** (RFC 9728 §5.1), from the API and
+from the MCP endpoint, through one shared builder so the two cannot disagree. Without it, an agent
+arriving with no credential can only probe blindly — the exact behaviour the auth guide is written to
+stop.
+
+
 **An MCP server card at `/.well-known/mcp/server-card.json`** (SEP-1649), so a client can learn what
 this server is before connecting to it: `serverInfo`, `capabilities`, the Streamable HTTP endpoint,
 and how to authenticate.

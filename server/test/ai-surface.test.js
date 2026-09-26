@@ -24,6 +24,54 @@ const md = require('../lib/markdown-rendition');
 const FRONTEND = path.join(__dirname, '..', '..', 'frontend');
 const BASE = 'https://screentinker.com';
 
+// ───────────────────────────── protected resource metadata ─────────────────────────────
+
+test('⚠️ the resource metadata advertises only scopes a token can actually be minted with', () => {
+  /*
+   * RFC 9728. A document that offers a scope the minting code rejects is worse than one that says
+   * nothing: a client asks for it and is refused with no way to tell that the ADVERTISEMENT was
+   * wrong rather than its request. Both sides read lib/api-scopes.js, and this asserts the route
+   * that mints tokens still does.
+   */
+  const { SCOPES } = require('../lib/api-scopes');
+  const doc = ai.protectedResourceMetadata(BASE);
+  assert.deepEqual(doc.scopes_supported, [...SCOPES]);
+  const tokensSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'tokens.js'), 'utf8');
+  assert.match(tokensSrc, /require\('\.\.\/lib\/api-scopes'\)/,
+    'tokens.js must mint against the same list the metadata publishes');
+  assert.ok(!/const SCOPES = \[/.test(tokensSrc), 'tokens.js must not keep a second copy');
+});
+
+test('⚠️ the resource metadata claims no authorization server, because there is none', () => {
+  /*
+   * `authorization_servers` is OPTIONAL in RFC 9728 and this resource delegates to nothing: no
+   * /authorize, no /token, and sessions are signed with a symmetric secret so there is no key a
+   * jwks_uri could serve. Naming an issuer would send a client into a redirect dance ending at a
+   * 404 — the wasted-retries failure the auth guide exists to prevent. Everything true is published.
+   */
+  const doc = ai.protectedResourceMetadata(BASE);
+  assert.ok(!('authorization_servers' in doc), 'do not name an authorization server we do not have');
+  assert.ok(!('jwks_uri' in doc), 'there is no public key to publish; sessions are HMAC-signed');
+  assert.equal(doc.resource, BASE);
+  assert.deepEqual(doc.bearer_methods_supported, ['header']);
+  assert.equal(doc.resource_documentation, `${BASE}/auth.md`,
+    'a reader that finds no authorization server must be sent to the prose');
+});
+
+test('⚠️ a 401 says where to read about the resource', () => {
+  // RFC 9728 §5.1. Without it, an agent that arrives with no credential can only probe blindly,
+  // which is exactly what the auth guide is written to stop. One builder, so the API and the MCP
+  // endpoint cannot disagree about the pointer.
+  const authSrc = fs.readFileSync(path.join(__dirname, '..', 'middleware', 'auth.js'), 'utf8');
+  assert.match(authSrc, /function wwwAuthenticate\(req\)/);
+  assert.match(authSrc, /resource_metadata="\$\{base\}\/\.well-known\/oauth-protected-resource"/);
+  assert.match(authSrc, /module\.exports = \{ wwwAuthenticate,/);
+  const mcpSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'mcp.js'), 'utf8');
+  assert.match(mcpSrc, /wwwAuthenticate\(req\)/, 'the MCP 401 must use the shared builder');
+  assert.ok(!/realm="ScreenTinker", error="invalid_token"'/.test(mcpSrc),
+    'the MCP route must not hand-roll its own header');
+});
+
 // ───────────────────────────── auth.md discovery ─────────────────────────────
 
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');

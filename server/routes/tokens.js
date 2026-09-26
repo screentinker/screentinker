@@ -13,7 +13,7 @@ const { isPlatformRole } = require('../middleware/auth');       // #146: billing
 // #73: 'agency' is OFF the read/write/full ladder (not in apiToken.js SCOPE_RANK), so a
 // tokenScopeGate-mounted router rejects it; it reaches only the AGENCY_ROUTER via agencyGate.
 // #146: 'billing:read' is likewise off-ladder — reaches only /api/billing via requireBillingRead.
-const SCOPES = ['read', 'write', 'full', 'agency', 'billing:read'];
+const { SCOPES } = require('../lib/api-scopes');   // shared with the published resource metadata
 
 // #158: per-workspace folder cap (mirrors folders.js) — auto-creating an agency folder must
 // respect the same ceiling so a token-mint can't blow past it.

@@ -348,6 +348,17 @@ const serveAuthMarkdown = (req, res) => {
  * the card says so and points at /auth.md, because the one thing an agent must learn early here is
  * that a human has to issue it a credential.
  */
+/*
+ * OAuth 2.0 Protected Resource Metadata (RFC 9728). We are a protected resource that takes bearer
+ * tokens, so this document is true and useful — even though we delegate to no authorization server
+ * and therefore publish no `authorization_servers`. See ai-surface.protectedResourceMetadata.
+ */
+app.get('/.well-known/oauth-protected-resource', (req, res) => {
+  res.type('application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(aiSurface.protectedResourceMetadata(aiSurface.origin(req)));
+});
+
 app.get('/.well-known/mcp/server-card.json', (req, res) => {
   const base = aiSurface.origin(req);
   const id = mcpProtocol.identity({ version: config.version || require('./package.json').version });

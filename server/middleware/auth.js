@@ -157,9 +157,23 @@ function resolveSessionUser(token, { allowPasswordChange = false, sourceIp = nul
 }
 
 // Express middleware - requires valid JWT
+/*
+ * RFC 9728 §5.1: a 401 from a protected resource points at its own metadata, so a client that
+ * arrived without a credential can find out what this resource is and how it is authenticated
+ * without having to guess a well-known path. Costs one header; saves an agent a round of blind
+ * probing, which is the behaviour the auth guide is written to prevent.
+ */
+function wwwAuthenticate(req) {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  const base = `${proto}://${host}`;
+  return `Bearer realm="ScreenTinker", resource_metadata="${base}/.well-known/oauth-protected-resource"`;
+}
+
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticate(req));
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -248,4 +262,4 @@ function requireSuperAdmin(req, res, next) {
 // Preferred alias for new code.
 const requirePlatformAdmin = requireSuperAdmin;
 
-module.exports = { generateToken, generateMfaPendingToken, generateSupportSessionToken, verifyToken, verifyMfaPendingToken, resolveSessionUser, SessionError, MFA_TOKEN_AUDIENCE, requireAuth, requireAdmin, requireSuperAdmin, requirePlatformAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES, PLATFORM_STAFF, ELEVATED_ROLES };
+module.exports = { wwwAuthenticate, generateToken, generateMfaPendingToken, generateSupportSessionToken, verifyToken, verifyMfaPendingToken, resolveSessionUser, SessionError, MFA_TOKEN_AUDIENCE, requireAuth, requireAdmin, requireSuperAdmin, requirePlatformAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES, PLATFORM_STAFF, ELEVATED_ROLES };

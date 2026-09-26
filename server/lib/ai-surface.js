@@ -1,5 +1,7 @@
 'use strict';
 
+const { SCOPES } = require('./api-scopes');
+
 /*
  * The machine-readable front door: what an automated client is told about this instance.
  *
@@ -43,6 +45,33 @@ function apiCatalog(base) {
         title: 'ScreenTinker MCP server — manage signage from an AI client' }],
       author: [{ href: 'https://github.com/screentinker/screentinker' }],
     }],
+  };
+}
+
+/*
+ * OAuth 2.0 Protected Resource Metadata (RFC 9728).
+ *
+ * ⚠️ `authorization_servers` IS DELIBERATELY ABSENT, and that is the honest document rather than an
+ * incomplete one. The field is OPTIONAL in RFC 9728, and this resource delegates to nothing: there
+ * is no authorization server, no `/authorize`, no `/token`, and sessions are signed with a symmetric
+ * secret so there is no key a `jwks_uri` could publish. Naming an issuer here would send a client
+ * into a discovery-and-redirect dance that ends at a 404 — the same wasted-retries failure the auth
+ * guide exists to prevent. Everything that IS true is published: what the resource is, which scopes
+ * exist, how a credential is presented, and where the prose lives.
+ *
+ * A reader that finds no authorization server here should read resource_documentation and stop; the
+ * credential comes from a human.
+ */
+function protectedResourceMetadata(base) {
+  return {
+    resource: base,
+    resource_name: 'ScreenTinker Public API',
+    scopes_supported: [...SCOPES],
+    bearer_methods_supported: ['header'],
+    resource_documentation: `${base}/auth.md`,
+    // Not an RFC 9728 field. The MCP endpoint is the surface most agents actually want, and a
+    // client that found this document should not have to guess the path.
+    mcp_endpoint: `${base}/mcp`,
   };
 }
 
@@ -229,4 +258,4 @@ function markdownSource(frontendDir, urlPath) {
   return null;
 }
 
-module.exports = { origin, apiCatalog, authMarkdown, linkHeader, prefersMarkdown, markdownSource };
+module.exports = { origin, apiCatalog, authMarkdown, protectedResourceMetadata, linkHeader, prefersMarkdown, markdownSource };

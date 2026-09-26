@@ -19,6 +19,7 @@ const router = express.Router();
 const config = require('../config');
 const { db } = require('../db/database');
 const crypto = require('crypto');
+const { wwwAuthenticate } = require('../middleware/auth');
 const tools = require('../lib/mcp/tools');
 const protocol = require('../lib/mcp/protocol');
 
@@ -146,8 +147,10 @@ is called, so a change that is not published has changed nothing anybody can see
 router.post('/', express.json({ limit: '1mb' }), async (req, res) => {
   const scope = scopeOf(req.headers.authorization);
   if (!scope) {
-    // WWW-Authenticate so a client knows what to present rather than guessing.
-    res.set('WWW-Authenticate', 'Bearer realm="ScreenTinker", error="invalid_token"');
+    // WWW-Authenticate so a client knows what to present rather than guessing — and, per RFC 9728
+    // §5.1, WHERE TO READ ABOUT IT. This is the surface an agent reaches first, so the pointer
+    // matters more here than anywhere else: without it the only next move is blind probing.
+    res.set('WWW-Authenticate', `${wwwAuthenticate(req)}, error="invalid_token"`);
     return res.status(401).json(protocol.rpcError(
       req.body && req.body.id, protocol.ERR.INVALID_REQUEST,
       'A ScreenTinker API token is required. Create one in the dashboard under Settings -> API tokens and send it as: Authorization: Bearer st_...'
