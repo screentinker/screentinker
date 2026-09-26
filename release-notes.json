@@ -14,6 +14,20 @@
   ],
   "releases": [
     {
+      "version": "2.2.0",
+      "date": "2026-09-26",
+      "notes": [
+        "You can now manage your screens by asking an AI assistant. Point Claude, or any app that speaks the Model Context Protocol, at your server with an API token and ask things like “which screens are offline?” A read-only token lets it look without changing anything.",
+        "Every platform now has a setup guide, including Windows, ChromeOS, LG webOS, BrightSign, e-paper signs and LED video walls. A new downloads page lists every player your own server can give you, already pointed at it.",
+        "Reports could return nothing for a date range that definitely had plays in it, and say so with a normal-looking response rather than an error. If you were told nothing played, that is why. Fixed — and if your server is not on UTC, every report window was shifted by your time zone too.",
+        "A player showing a widget as the first item in its playlist could fail to start, and rebooting did not help because the playlist was cached. Fixed.",
+        "Setting up a Raspberry Pi no longer shows a camera-permission popup over the pairing code. Two-way intercom asks for the microphone when you press the button instead, and tells you when a screen has not got one.",
+        "Alert emails now carry an unsubscribe link, and turning a customer’s alerts off leaves a record of who did it and when.",
+        "Fire TV Stick 4K Select and Fire TV Stick HD run Amazon’s Vega OS and cannot install the Android app. There is a player for them now, though those sticks are still listed as not supported — read the guide before buying one for a sign.",
+        "Approved community hardware reports never appeared on the Certified Hardware page on Docker installs. Fixed. If you submitted one and it vanished, it is in the database and will show up now."
+      ]
+    },
+    {
       "version": "2.1.6",
       "date": "2026-09-23",
       "notes": [

@@ -1,8 +1,97 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 (2026-09-26)
+
+Contributed by [@awatterott](https://github.com/awatterott) of
+[Watterott electronic](https://www.watterott.com), who runs ScreenTinker on large LED video walls in
+production and supplied the Colorlight/EDID configuration behind the new LED wall guide, the
+certified-hardware entry and the photograph on it — and who reported the camera-permission prompt on
+the pairing screen that is fixed below.
+
+⚠️ **The APK does not ship with a server upgrade.** As always, staging the Android build is a separate
+step. The Vega `.vpkg` for the 2026 Fire TV sticks is likewise built and installed separately; see
+`docs/vega-player.md`.
+
+⚠️ **Two-way Talk will not appear on any screen until its player is updated.** The capability used to
+be declared from a probe the player ran at startup, and that probe is gone (see below). The dashboard
+now offers 2-way whenever the screen supports Talk at all, and a screen with no microphone reports
+back and says so — but a player from before this release still declares the old capability set.
 
 ### Added
+
+**ScreenTinker speaks the Model Context Protocol.** Every instance, hosted or self-hosted, now serves
+an MCP server at `/mcp`. Point Claude — or any MCP client — at it with the same
+`Authorization: Bearer st_...` the REST API takes, and ask for things in plain English: which screens
+are offline, put this video on the lobby TV, did the autumn campaign actually run. No other digital
+signage CMS does this.
+
+⚠️ **It is a client of our own public API, not a second way into the database.** Every tool call is an
+HTTP request back into the same API you could call with `curl`, carrying the caller's token — so
+workspace isolation, the scope gate, the replica proxy and the rate limits apply to an agent exactly
+as they apply to a script. There is no second copy of the permission model to drift out of step with
+the first.
+
+Twenty-one tools, chosen rather than generated: the spec has 133 operations and a model gets
+measurably worse at picking the right one as the list grows. ⚠️ **The list is filtered by the token's
+scope** — a read-only token is never shown that a write tool exists, so an agent holding one does not
+spend its turns discovering what it may not do.
+
+**The site now tells automated visitors what it is.** `robots.txt` carries Content Signals
+(`search=yes, ai-input=yes, ai-train=yes` — this is documentation for an open-source project, and
+being quoted is the point), and every published page has a Markdown rendition: send
+`Accept: text/markdown`, or append `.md` to the path. There is an RFC 9727 API catalogue at
+`/.well-known/api-catalog`, an authentication guide at `/.well-known/auth.md`, and `Link` headers
+pointing at all of it.
+
+⚠️ The auth guide's most useful sentence is the one saying an agent **cannot** obtain a token — a human
+creates one in the dashboard. Without it, a capable agent burns its retries hunting for a registration
+endpoint that does not exist and reads every 401 as "my token is wrong".
+
+**A downloads page, and a guide for every platform.** `/download` lists every player *this instance*
+can hand out, built from the artifacts it actually has — and says plainly when it has none rather than
+offering a link to nothing. Four platforms that had a name on the homepage and nowhere to click now
+have guides: Windows, ChromeOS, LG webOS and BrightSign. E-paper/ESP32 and LED video walls have them
+too, taking the platform count to eleven.
+
+⚠️ **The guides no longer link a GitHub release for a player.** The BrightSign archive has the server
+URL stamped into its bytes when it is built, so a release asset points a freshly imaged player at
+screentinker.com — which presents as a pairing bug rather than a packaging one, and is expensive to
+diagnose because every individual step looks correct. `/download/autorun.zip` is built for the
+instance serving it.
+
+**Alert email carries an unsubscribe link**, with RFC 8058 headers over SMTP so the mail client's own
+button works. ⚠️ A GET never unsubscribes anyone: mail scanners and link-safety services fetch every
+link in a message with no human involved, and wiring the change to GET would silence accounts nobody
+touched. The link opens a page with a button; the button does the work.
+
+There is also a platform-admin endpoint to turn a customer's alert email off, which writes an
+`activity_log` row. That row is the point: a hand-written database UPDATE leaves nothing behind, so
+months later nothing distinguishes "the customer asked us to stop" from "the alert service is broken
+and nobody noticed a display go dark".
+
+**The marketing site says what the product actually does now.** The homepage had drifted behind the
+software: it advertised nine platforms while eleven shipped, and its comparison table quoted our own
+price as the monthly figure times twelve — understating our own annual plan by $199 against
+competitors whose numbers had also moved. Prices are re-checked against each vendor's public page and
+dated. Eight features that shipped and were never mentioned anywhere a customer would look — display
+power schedules, group sync, node mesh, scale-out replicas, SSO, two-factor authentication,
+consent-gated support access and portrait-native panels — now appear on it.
+
+**E-paper and ESP32 signs, documented at last.** The embedded renderer has been in the product for a
+while and was never mentioned anywhere a customer would look. The server resolves the playlist item,
+dithers it to the colours the panel actually has, packs it into the controller's byte layout, and
+tells the board how long to deep sleep — so a battery-powered sign runs with no browser on the device.
+Ten panel presets, and two dithering algorithms that are not interchangeable.
+
+**LED video walls**, contributed from a production install. The LED processor hands the wall's native
+resolution to the player over EDID, so a 2808×648 wall arrives as an ordinary display and needs no
+LED-wall feature at all. ⚠️ Streaming sticks cannot drive one — they only output standard resolutions
+— so use a Raspberry Pi or a small x86 PC.
+
+**Apple TV is documented as not supported**, with the reasoning, because people ask. tvOS ships no web
+view and an app may not carry its own engine, so the player cannot run there; a native port could not
+show widgets, HTML bundles, web pages or YouTube; and unattended operation needs MDM Single App Mode,
+without which an Apple TV sleeps and does not relaunch after a power cut.
 
 **Vega OS player for Fire TV Stick 4K Select and Fire TV Stick HD (2026).** Those sticks are not
 Android. The APK does not install. `vega/` is an installed WebView shell that loads the same
@@ -22,93 +111,6 @@ canvas SIGTRAPs in Vega's compositor, on a stack that has also fired with tens o
 CMA still free. The 960px capture cap stays as mitigation for the run that did drain that pool.
 The certified-hardware entries stay **not supported**. See
 [`docs/vega-player.md`](docs/vega-player.md).
-
-### Fixed
-
-**Esc on the web player was a public unpair button.** It asked `confirm('Reset player and return to
-setup?')` and, on OK, wiped the display's identity and reloaded — so anyone who could reach a
-keyboard on a kiosk could unpair the screen. The operator's first sign of it was a sign showing a
-pairing code. A `confirm()` dialog is not a permission check: it establishes only that somebody meant
-to press the button, which is precisely what was wrong.
-
-Esc now asks for the **settings PIN the dashboard already provisions for that screen** — the same
-number the Android player's hidden menu uses, reused rather than reinvented so an operator has one
-PIN per screen and rotating it in one place rotates it everywhere. A correct PIN unpairs; a wrong,
-empty or cancelled one does nothing at all and leaves the screen playing.
-
-⚠️ **A screen with no PIN cannot be unpaired at the panel, and Esc does nothing visible** — not even
-an explanation, because the status overlay is full-screen and telling the room "unpair from the
-dashboard" would blank a running sign for anyone who leaned on the key. Unpair that screen from the
-dashboard. Any weaker fallback would restore the old behaviour for exactly the screens least likely
-to have anyone watching them.
-
-⚠️ **The PIN prompt closes itself after 30 seconds.** Without that, someone who presses Esc and walks
-away leaves a PIN box covering a running sign until the next reload — which turns "Esc is harmless"
-into "Esc blanks the screen", the same class of problem as the reset it replaces. Playback is never
-paused while it is up.
-
-On a correct PIN the player tells the server it is unpaired **while it still holds the token that
-proves it may**, then clears its identity, the playlist and layout caches, the trigger config and
-cache, `st_install_id`, the BrightSign registry, and `?k=` from the URL. Server-side the screen goes
-back to unpaired and its fingerprint rows are dropped, so the next registration is a genuinely new
-display instead of being reclaimed onto the row that was just released — **the row itself survives**,
-because assignments, play history and telemetry hang off it and a screen that vanished because
-somebody pressed a key would be worse than one left needing attention.
-
-⚠️ `st_install_id` is the load-bearing part of that list: it salts the fingerprint the server matches
-on, and leaving it means the next register is reclaimed onto the old row and the whole unpair was
-theatre. That is why the decision and the key list now live in `lib/unpair-gate.js` with tests, rather
-than inline in a keydown handler reachable only through a real browser and a real PIN.
-
-⚠️ **A replica cannot relay this event.** Every other player event reports something and a primary may
-believe a peer relaying it; this one changes a screen's pairing state, and a replica holding a scoped
-write grant should not gain "unpair any screen in these workspaces" as a side effect of gaining
-"relay what these screens report". On a replica-attached screen the local wipe still happens and the
-player says on its console that the server was never told.
-
-The web player also now stores the settings PIN it is sent and listens for `device:settings-pin`, so a
-rotation from the dashboard reaches the screen the gate depends on. ⚠️ It is only adopted when the
-field is actually present — some register paths omit it, and there is no "remove the PIN" feature, so
-absent means "this sender did not include it" and an unconditional assignment would erase a
-known-good PIN on the next reconnect.
-
-**The dashboard now notices its own updates.** The "a new version is available, reload?" prompt was
-driven by a hash of a hardcoded list of twenty files — and the playlist view, everything under
-`js/lib/`, and all ten translation files were not on it. A fix shipped to any of those reached no
-open dashboard at all: nothing prompted a reload, so an operator sitting on the page saw no change
-and reasonably concluded it had not been fixed. Every view added since that list was written
-inherited the same hole, silently, because nothing about adding a view tells you to edit an array
-in the server.
-
-There is no list any more — it walks what is actually served, so a new file is covered the day it
-is added. It reads file metadata rather than contents, which keeps the work off the event loop that
-answers every screen's heartbeat.
-
-**`refresh` was implemented on the panel and impossible to send.** `MainActivity` has handled it for a
-long time — it reconnects the socket, so the screen re-fetches its playlist — and nothing anywhere on
-the server could ask for it. It is now in `ALLOWED_COMMANDS`, so "the sign is stale, kick it" works
-from the dashboard, the API and the new LAN door. Found by the test that holds the LAN door's command
-list to the panel's: the door wanted `refresh`, and the subset check failed because the *server* was
-missing it.
-
-**A new secret column would have replicated to every replica.** `lib/mesh/replication.js` copies
-"every column except", which is the right shape for a faithful copy and the wrong shape for a schema
-that grows — it ships a secret added later by default. The local API secret was exactly that column.
-Caught by the guard that exists for it (`test_replication_blocklist_covers_every_secret_column`),
-which walks `PRAGMA table_info` for every replicated table and fails on any column whose name looks
-like a credential and is not listed. The flag replicates and the secret does not: a replica showing
-"the control door is open on this screen" is the truth an operator needs, while a replica holding the
-key multiplies the number of places one compromise is enough.
-
-**A new device column reached no player.** The device SELECT that feeds every playlist payload is an
-explicit column list, and the two new columns were not in it — so the feature was written, tested at
-the route, and dead on the wire. This is the third time that exact list has done it (#325's
-background colour, then `workspace_id`), and the reason it was caught this time is that the test
-asserts on what a real registered device receives over its socket rather than on what the JavaScript
-says it sends.
-
-
-### Added
 
 **Device-side REST — a screen can now make an HTTP request on its own network.** Signage sits on the
 customer's LAN next to the things worth asking: a PLC, a door sensor, a local Home Assistant. The
@@ -210,6 +212,150 @@ library now opens on four choices instead of thirty-nine.
 The dropdown stays for jumping straight to a folder you can already name, now indented to show the
 same structure. Both controls read and write one piece of state, so they cannot disagree on screen.
 
+**Reports returned an empty result for a valid date range.** All three report endpoints built the end
+of the window as `new Date(end + 'T23:59:59')`, which assumes a bare `YYYY-MM-DD`. Hand them a full ISO
+timestamp — what a client library, a script or an AI agent naturally sends — and the concatenation
+produced an Invalid Date, `NaN`, and a query matching nothing. ⚠️ The endpoint then answered **200 with
+an empty list**. Not an error: "nothing played", which is plausible enough that nobody questions it.
+Found by asking the new MCP server for a week of uptime and being told, convincingly, that every screen
+had been dark.
+
+⚠️ **And the two ends of a range were in different time zones.** A bare date parses as UTC midnight
+while `T23:59:59` without an offset parses as *local*, so the window was skewed by the server's UTC
+offset. Invisible on our own infrastructure, which runs UTC — and five hours wrong on a self-hosted
+instance in Chicago, on every report it has ever produced.
+
+**The player asked for camera permission on top of the pairing code.** `register()` runs before a
+screen is paired and probed for a microphone, so on a fresh Raspberry Pi kiosk the browser's
+permission dialog appeared over the pairing code — the first screen a new customer ever sees, and a
+dialog there reads as "this thing wants my camera". The probe is gone. Two-way Talk now proves the
+microphone by *using* it: the player asks when the operator clicks the button, which is the one moment
+a dialog is expected, and a screen with no microphone falls back to a one-way session and says so
+instead of going quietly one-way.
+
+**Approved community hardware reports never appeared on any container.** `certified-hardware.json` is
+read from the repository root at runtime and was never copied into the Docker image. The route catches
+the resulting error and serves the committed static page, which looks entirely correct — so the
+failure was invisible, and what it silently dropped was every approved submission, which is merged in
+at render time. The approve link worked, the row was marked approved, and the report never showed up.
+⚠️ This was the third file to go missing from the image this way, so it is now a test: every
+repository-root path the server resolves at runtime must appear in the Dockerfile.
+
+**`/scripts` served the whole directory.** It published `reset-admin.js`, `mint-billing-token.js`,
+`support-keygen.js`, `upgrade.sh` and `backup.sh` to anonymous callers. Nothing secret — the repository
+is public — but that directory is where a self-hoster's own script lands, and the next person to drop
+a restore script with a connection string beside them would have published it without touching a
+route. It is an allowlist now. ⚠️ Which immediately needed widening: a deployment bind-mounts four
+BrightSign provisioning payloads into that same directory, and narrowing it without them would have
+404'd every BrightSign install — silently, because a missing archive gets the SPA fallback with a 200
+and a player writes that to its storage root as its autorun.
+
+**A 93 MB zip was served as `text/plain`.** The bytes arrived intact, which is why it passed every
+check; what it did was tell every proxy and CDN in front of the instance that a zip was text they
+could transform. The type comes from the extension now, and `.sh`/`.bat` deliberately stay text so
+they can be read in a browser before being run.
+
+**The pricing page ignored its own database.** The Enterprise/Custom card is a row in the `plans`
+table, and the page displayed a hardcoded title regardless — so the database said "Custom", the page
+said "Enterprise / Custom", and renaming the plan changed nothing. ⚠️ The exclusion that keeps that row
+out of the main grid also needed two conditions rather than one: the schema seeds it *priced*, so a
+shape test alone would have shown two enterprise cards on every fresh self-hosted install.
+
+**"Most Popular" had quietly moved.** The badge was positional — correct when there were four plans —
+and two were added, so it drifted onto Starter and stayed there for months. Nobody decided that. It is
+pinned to a named plan now, and the test asserts which one.
+
+### Fixed
+
+**A widget first in a cached playlist bricked the player at boot.** Second time a temporal dead zone
+has done this. The boot render ran before `playbackOrder` and its two companions were initialised, so
+a playlist whose first item was a widget threw on every start — and because the playlist is cached,
+rebooting could not clear it. The declarations are hoisted above the boot path now, and the boot
+render is wrapped: a cached playlist that cannot render logs why, drops the cache and carries on to
+connect, rather than taking the screen down with it. A test asserts the placement, not just the
+behaviour, because the behaviour is correct right up until someone moves a `const`.
+
+**Esc on the web player was a public unpair button.** It asked `confirm('Reset player and return to
+setup?')` and, on OK, wiped the display's identity and reloaded — so anyone who could reach a
+keyboard on a kiosk could unpair the screen. The operator's first sign of it was a sign showing a
+pairing code. A `confirm()` dialog is not a permission check: it establishes only that somebody meant
+to press the button, which is precisely what was wrong.
+
+Esc now asks for the **settings PIN the dashboard already provisions for that screen** — the same
+number the Android player's hidden menu uses, reused rather than reinvented so an operator has one
+PIN per screen and rotating it in one place rotates it everywhere. A correct PIN unpairs; a wrong,
+empty or cancelled one does nothing at all and leaves the screen playing.
+
+⚠️ **A screen with no PIN cannot be unpaired at the panel, and Esc does nothing visible** — not even
+an explanation, because the status overlay is full-screen and telling the room "unpair from the
+dashboard" would blank a running sign for anyone who leaned on the key. Unpair that screen from the
+dashboard. Any weaker fallback would restore the old behaviour for exactly the screens least likely
+to have anyone watching them.
+
+⚠️ **The PIN prompt closes itself after 30 seconds.** Without that, someone who presses Esc and walks
+away leaves a PIN box covering a running sign until the next reload — which turns "Esc is harmless"
+into "Esc blanks the screen", the same class of problem as the reset it replaces. Playback is never
+paused while it is up.
+
+On a correct PIN the player tells the server it is unpaired **while it still holds the token that
+proves it may**, then clears its identity, the playlist and layout caches, the trigger config and
+cache, `st_install_id`, the BrightSign registry, and `?k=` from the URL. Server-side the screen goes
+back to unpaired and its fingerprint rows are dropped, so the next registration is a genuinely new
+display instead of being reclaimed onto the row that was just released — **the row itself survives**,
+because assignments, play history and telemetry hang off it and a screen that vanished because
+somebody pressed a key would be worse than one left needing attention.
+
+⚠️ `st_install_id` is the load-bearing part of that list: it salts the fingerprint the server matches
+on, and leaving it means the next register is reclaimed onto the old row and the whole unpair was
+theatre. That is why the decision and the key list now live in `lib/unpair-gate.js` with tests, rather
+than inline in a keydown handler reachable only through a real browser and a real PIN.
+
+⚠️ **A replica cannot relay this event.** Every other player event reports something and a primary may
+believe a peer relaying it; this one changes a screen's pairing state, and a replica holding a scoped
+write grant should not gain "unpair any screen in these workspaces" as a side effect of gaining
+"relay what these screens report". On a replica-attached screen the local wipe still happens and the
+player says on its console that the server was never told.
+
+The web player also now stores the settings PIN it is sent and listens for `device:settings-pin`, so a
+rotation from the dashboard reaches the screen the gate depends on. ⚠️ It is only adopted when the
+field is actually present — some register paths omit it, and there is no "remove the PIN" feature, so
+absent means "this sender did not include it" and an unconditional assignment would erase a
+known-good PIN on the next reconnect.
+
+**The dashboard now notices its own updates.** The "a new version is available, reload?" prompt was
+driven by a hash of a hardcoded list of twenty files — and the playlist view, everything under
+`js/lib/`, and all ten translation files were not on it. A fix shipped to any of those reached no
+open dashboard at all: nothing prompted a reload, so an operator sitting on the page saw no change
+and reasonably concluded it had not been fixed. Every view added since that list was written
+inherited the same hole, silently, because nothing about adding a view tells you to edit an array
+in the server.
+
+There is no list any more — it walks what is actually served, so a new file is covered the day it
+is added. It reads file metadata rather than contents, which keeps the work off the event loop that
+answers every screen's heartbeat.
+
+**`refresh` was implemented on the panel and impossible to send.** `MainActivity` has handled it for a
+long time — it reconnects the socket, so the screen re-fetches its playlist — and nothing anywhere on
+the server could ask for it. It is now in `ALLOWED_COMMANDS`, so "the sign is stale, kick it" works
+from the dashboard, the API and the new LAN door. Found by the test that holds the LAN door's command
+list to the panel's: the door wanted `refresh`, and the subset check failed because the *server* was
+missing it.
+
+**A new secret column would have replicated to every replica.** `lib/mesh/replication.js` copies
+"every column except", which is the right shape for a faithful copy and the wrong shape for a schema
+that grows — it ships a secret added later by default. The local API secret was exactly that column.
+Caught by the guard that exists for it (`test_replication_blocklist_covers_every_secret_column`),
+which walks `PRAGMA table_info` for every replicated table and fails on any column whose name looks
+like a credential and is not listed. The flag replicates and the secret does not: a replica showing
+"the control door is open on this screen" is the truth an operator needs, while a replica holding the
+key multiplies the number of places one compromise is enough.
+
+**A new device column reached no player.** The device SELECT that feeds every playlist payload is an
+explicit column list, and the two new columns were not in it — so the feature was written, tested at
+the route, and dead on the wire. This is the third time that exact list has done it (#325's
+background colour, then `workspace_id`), and the reason it was caught this time is that the test
+asserts on what a real registered device receives over its socket rather than on what the JavaScript
+says it sends.
 
 ## 2.1.6 (2026-09-23)
 
