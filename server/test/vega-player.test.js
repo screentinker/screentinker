@@ -15,6 +15,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..', '..');
+// Read from VERSION rather than pinning a literal: the point of the check below is that all three
+// copies agree with the release, and a pinned literal only ever fails after the bump script has
+// already done the right thing.
+const VERSION = fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim();
+const VERSION_RE = VERSION.replace(/\./g, '\\.');
 const VEGA = path.join(ROOT, 'vega');
 const pkg = JSON.parse(fs.readFileSync(path.join(VEGA, 'package.json'), 'utf8'));
 const app = JSON.parse(fs.readFileSync(path.join(VEGA, 'app.json'), 'utf8'));
@@ -54,9 +59,9 @@ test('vega: the build targets the stick, not the simulator, and can actually bun
 });
 
 test('vega: manifest, app.json and package.json name the same component', () => {
-  assert.equal(pkg.version, '2.1.6');
+  assert.equal(pkg.version, VERSION);
   assert.match(manifest, /^id = "com\.screentinker\.vega"$/m);
-  assert.match(manifest, /^version = "2\.1\.6"$/m);
+  assert.match(manifest, new RegExp(`^version = "${VERSION_RE}"$`, 'm'));
   assert.match(manifest, /id = "com\.screentinker\.vega\.main"/);
   assert.equal(app.name, 'com.screentinker.vega.main', 'AppRegistry name must be the interactive component id');
   assert.match(manifest, /com\.amazon\.webview\.renderer_service/);
@@ -68,15 +73,28 @@ test('vega: manifest, app.json and package.json name the same component', () => 
   // A required privilege we do not have would make the package uninstallable. DRM is wants.
   assert.doesNotMatch(manifest, /^\[needs\]\n[\s\S]*privilege/m);
   assert.ok(fs.existsSync(path.join(VEGA, 'assets/image/app_icon.png')));
-  assert.match(fs.readFileSync(path.join(VEGA, 'src/deviceInfo.ts'), 'utf8'), /APP_VERSION = '2\.1\.6'/);
+  assert.match(fs.readFileSync(path.join(VEGA, 'src/deviceInfo.ts'), 'utf8'),
+    new RegExp(`APP_VERSION = '${VERSION_RE}'`));
 });
 
 test('vega: bump-version.sh stamps every copy of the version, and stages them', () => {
   const bump = fs.readFileSync(path.join(ROOT, 'scripts/bump-version.sh'), 'utf8');
-  for (const f of ['vega/package.json', 'vega/manifest.toml', 'vega/src/deviceInfo.ts']) {
+  // The webOS/Tizen shells are here and not in their own suites because the failure is the same
+  // one: a version literal the bump script does not stamp AND stage is stale in the tagged tree.
+  for (const f of ['vega/package.json', 'vega/manifest.toml', 'vega/src/deviceInfo.ts',
+    'webos/js/app.js', 'tizen/js/app.js']) {
     assert.match(bump, new RegExp(f.replace(/\//g, '\\/')), `bump-version.sh must stamp ${f}`);
     const staged = bump.slice(bump.indexOf('git add '));
     assert.match(staged, new RegExp(f.replace(/\//g, '\\/')));
+  }
+});
+
+test('the webOS and Tizen shells carry this release\'s version literal', () => {
+  // Both builds stamp these from appinfo.json / config.xml, so a stale literal never reaches a
+  // shipped package - it reaches the SOURCE TARBALL, and a test run rewrites it under you.
+  for (const f of ['webos/js/app.js', 'tizen/js/app.js']) {
+    assert.match(fs.readFileSync(path.join(ROOT, f), 'utf8'),
+      new RegExp(`var APP_VERSION_FALLBACK = '${VERSION_RE}';`), `${f} is not on ${VERSION}`);
   }
 });
 

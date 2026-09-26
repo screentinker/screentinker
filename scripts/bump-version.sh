@@ -110,8 +110,7 @@ sed -i -E "s/(versionCode.*\?:[[:space:]]*)\"[0-9]+\"/\1\"$((CODE + 1))\"/" andr
 NUMERIC="${NEW%%-*}"
 sed -i -E "/^<\?xml/! s/([[:space:]]version=\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" tizen/config.xml
 
-# 4b) webOS app version. Same numeric-only rule as Tizen (appinfo.json version is x.y.z), and
-#     build-ipk.sh stamps js/app.js from it, so this is the one place it is written.
+# 4b) webOS app version. Same numeric-only rule as Tizen (appinfo.json version is x.y.z).
 sed -i -E "s/(\"version\": *\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" webos/appinfo.json
 
 # 4c) Vega app version. package.json "version" is the first such key; manifest.toml's
@@ -122,6 +121,15 @@ sed -i -E "s/(\"version\": *\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" webos/appinfo.js
 sed -i -E "0,/\"version\":/s/(\"version\": *\")[0-9][^\"]*/\1${NUMERIC}/" vega/package.json
 sed -i -E "s/^(version = \")[0-9][^\"]*/\1${NUMERIC}/" vega/manifest.toml
 sed -i -E "s/(export const APP_VERSION = ')[0-9][^']*/\1${NUMERIC}/" vega/src/deviceInfo.ts
+
+# 4c-bis) The two web shells carry the version as a literal fallback, for when the host bridge
+#     cannot answer. build-ipk.sh and build-wgt.sh stamp them at BUILD time, which is why leaving
+#     them alone here never broke a shipped package - and why nobody noticed the committed tizen
+#     copy sitting on 2.1.4 for two releases while the tag said otherwise. Stamp them here so the
+#     TAGGED TREE agrees with the tag, and so a test run (which runs both builds) leaves it clean.
+for _shell in webos tizen; do
+  sed -i -E "s/(var APP_VERSION_FALLBACK = ')[0-9][^']*/\\1${NUMERIC}/" "$_shell/js/app.js"
+done
 
 # 4d) Vega BUILD NUMBER, stamped into the build scripts themselves.
 #
@@ -235,9 +243,10 @@ fi
 #    webos-player.test.js asserts that parity, which means the tagged commit failed its own test
 #    suite and the release job never ran. A stamp that is not staged is worse than no stamp: the
 #    working tree looks correct and only CI sees the truth.
-#    js/app.js is stamped from appinfo.json by webos/build-ipk.sh, which the test suite runs, so it
-#    is listed too and the tree stays clean after a test run.
-git add VERSION server/package.json server/package-lock.json android/app/build.gradle.kts tizen/config.xml docs/openapi.yaml webos/appinfo.json webos/js/app.js vega/package.json vega/manifest.toml vega/src/deviceInfo.ts
+#    The two js/app.js fallbacks are stamped at 4c-bis. They used to be left to build-ipk.sh /
+#    build-wgt.sh, which run during the test suite - so the tagged commit carried a stale literal
+#    and a test run dirtied the tree. v2.2.0 was tagged that way once before this was fixed.
+git add VERSION server/package.json server/package-lock.json android/app/build.gradle.kts tizen/config.xml tizen/js/app.js docs/openapi.yaml webos/appinfo.json webos/js/app.js vega/package.json vega/manifest.toml vega/src/deviceInfo.ts
 git commit -q -m "chore(release): v$NEW"
 git tag -a "v$NEW" -m "ScreenTinker v$NEW"
 
