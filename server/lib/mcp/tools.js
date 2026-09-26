@@ -341,6 +341,32 @@ function toolsForScope(scope) {
   return TOOLS.filter((t) => (SCOPE_RANK[t.scope] || 99) <= have);
 }
 
+/*
+ * ⚠️ NOTHING CREDENTIAL-SHAPED REACHES A MODEL, and this is enforced HERE rather than in each tool.
+ *
+ * `rename_display` had no shape, so it answered with the raw device row — eighty columns including a
+ * live `settings_pin`, which is the number 2.2.0 made load-bearing for the Esc-unpair gate on the web
+ * player. An agent that renamed a screen was handed the PIN that unpairs it, in its context, its
+ * transcript, and whatever logs either. `get_display` strips secrets and has a test saying so, but
+ * that guard only ever covered one tool out of twenty-one.
+ *
+ * A per-tool shape cannot be the security boundary: the next tool added without one reopens it. This
+ * runs over every result, and the name pattern is the same one mesh replication uses to decide what
+ * never leaves for a replica — one definition, in lib/secret-names.js.
+ */
+const { isSecretName } = require('../secret-names');
+
+function redact(value, depth = 0) {
+  if (depth > 12 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (isSecretName(k)) continue;
+    out[k] = redact(v, depth + 1);
+  }
+  return out;
+}
+
 /* The MCP wire shape. Names and descriptions are the entire basis on which a model picks a tool, so
  * they say what the thing is FOR, not which endpoint it calls. */
 function manifest(scope) {
@@ -385,4 +411,4 @@ function toRequest(tool, args = {}) {
   return { method: tool.call.method, path, query, body };
 }
 
-module.exports = { TOOLS, toolsForScope, manifest, byName, toRequest, SCOPE_RANK };
+module.exports = { TOOLS, toolsForScope, manifest, byName, toRequest, redact, SCOPE_RANK };

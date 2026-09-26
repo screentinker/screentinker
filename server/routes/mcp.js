@@ -118,8 +118,13 @@ async function callTool(name, args, authorization, scope) {
       return { isError: true, text: `${req.method} ${req.path} failed: ${res.status} ${detail}${hint}` };
     }
 
+    /*
+     * Shape, then redact — in that order, and never one without the other. The shape decides what is
+     * WORTH sending a model; the redaction decides what may never be sent at all, and it runs on
+     * every tool including the ones with no shape. See tools.redact.
+     */
     const shaped = tool.shape ? tool.shape(payload, args || {}) : payload;
-    return { isError: false, text: JSON.stringify(shaped, null, 2) };
+    return { isError: false, text: JSON.stringify(tools.redact(shaped), null, 2) };
   } catch (e) {
     const why = e.name === 'AbortError' ? `timed out after ${CALL_TIMEOUT_MS}ms` : e.message;
     return { isError: true, text: `${req.method} ${req.path} failed: ${why}` };

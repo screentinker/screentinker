@@ -68,8 +68,12 @@ const BLOCKLIST = Object.freeze({
  * What a column name looks like when it holds a secret. The schema test walks every replicated
  * table with this regex and fails on a matching column that is not on the BLOCKLIST or on
  * NOT_A_SECRET, so a new secret column cannot ship by omission.
+ *
+ * ⚠️ Shared with the MCP layer, which uses it to keep credentials out of a model's context. It lives
+ * in lib/secret-names.js so the two cannot drift: a pattern that catches a new secret for a replica
+ * and misses it for an agent is worse than either copy alone.
  */
-const SECRET_NAME_RE = /hash|secret|token|password|totp|stripe|_pin$|^pin$|credential|api_key|auth_header|_enc$/i;
+const { SECRET_NAME_RE } = require('../secret-names');
 /** Columns the regex catches that are NOT secrets, each with the reason. */
 const NOT_A_SECRET = Object.freeze({
   'revisions.state_hash': 'content fingerprint of the revision body, not a credential',

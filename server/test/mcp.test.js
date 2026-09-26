@@ -175,6 +175,55 @@ test('report tools translate the words a model uses into the endpoint\'s paramet
   assert.ok(tools.toRequest(tools.byName('uptime_report'), { days: 'lots' }).query.start);
 });
 
+test('⚠️ no tool can hand a model a credential, shape or no shape', () => {
+  /*
+   * rename_display had no shape and answered with the raw device row: eighty columns including a
+   * live settings_pin, the number the Esc-unpair gate depends on. get_display strips secrets and has
+   * a test saying so, but that covered one tool out of twenty-one, and the next tool added without a
+   * shape reopens the hole. So redaction is a property of the RESULT PATH, tested as one.
+   */
+  const row = {
+    id: 'd1', name: 'Lobby', status: 'online',
+    settings_pin: '4821', device_token: 'dt_live', claim_secret: 'cs_live',
+    trigger_clear_all_token: 'tok_live', local_api_secret: 'las_live',
+    password_hash: 'argon2id$...', totp_secret: 'JBSWY3DP', stripe_customer_id: 'cus_1',
+    nested: { also: { settings_pin: '9999', keep: 'this' }, list: [{ device_token: 'x', ok: 1 }] },
+  };
+  const clean = tools.redact(row);
+  const json = JSON.stringify(clean);
+  for (const leak of ['4821', 'dt_live', 'cs_live', 'tok_live', 'las_live', 'argon2id', 'JBSWY3DP', 'cus_1', '9999']) {
+    assert.ok(!json.includes(leak), `redact let ${leak} through`);
+  }
+  assert.equal(clean.name, 'Lobby', 'redaction must not eat the answer');
+  assert.equal(clean.nested.also.keep, 'this', 'it has to walk nested objects');
+  assert.equal(clean.nested.list[0].ok, 1, 'and arrays of objects');
+
+  // ⚠️ The result path must actually CALL it. A redactor nothing invokes is decoration.
+  assert.match(ROUTE_SRC, /tools\.redact\(shaped\)/,
+    'routes/mcp.js must redact every tool result, not only the shaped ones');
+
+  // One definition of "looks like a credential", shared with mesh replication.
+  const repl = fs.readFileSync(path.join(__dirname, '..', 'lib', 'mesh', 'replication.js'), 'utf8');
+  assert.match(repl, /require\('\.\.\/secret-names'\)/,
+    'replication must share the pattern, not keep a second copy of it');
+
+  /*
+   * ⚠️ THE UNION IS THE GUARD. Replication already decided which device and trigger columns are
+   * secrets; two of them — pairing_code and enrol_key — do not look like secrets and a name-shape
+   * test alone lets them through. Read that list and require every name on it to be caught here, so
+   * adding a secret column for a replica also protects it from an agent.
+   */
+  const { isSecretName } = require('../lib/secret-names');
+  const block = repl.match(/const BLOCKLIST = [\s\S]*?\n\}\);/);
+  assert.ok(block, 'could not find replication BLOCKLIST to cross-check');
+  const named = [...block[0].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  const cols = named.filter((n) => /token|secret|key|pin|code|hash|password/.test(n));
+  assert.ok(cols.length >= 8, `expected a real blocklist, parsed ${cols.length} names`);
+  for (const c of cols) {
+    assert.ok(isSecretName(c), `replication treats ${c} as a secret but isSecretName does not`);
+  }
+});
+
 test('⚠️ list_content names its items, and search matches something that exists', () => {
   /*
    * The shape projected c.name / c.type / c.duration. A content row has filename / mime_type /

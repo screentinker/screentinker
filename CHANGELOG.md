@@ -4,6 +4,20 @@
 
 ### Fixed
 
+**An MCP tool could hand a model a screen's settings PIN.** `rename_display` had no output shape, so it
+answered with the raw device row — eighty columns, including a live `settings_pin`. That is the number
+2.2.0 made load-bearing: it is what the Esc-unpair gate on the web player now demands. So an agent that
+renamed a screen was handed the PIN that unpairs it, in its context, its transcript, and whatever logs
+either. `claim_secret` and `trigger_clear_all_token` went the same way on a device that has them.
+
+⚠️ **The fix is not a shape for that tool.** `get_display` already strips secrets and has a test saying
+so, and that guard covered one tool out of twenty-one — the next tool added without a shape reopens the
+hole. Redaction now runs on every tool result at the one point where results are serialised, and what
+counts as a credential is the same definition mesh replication uses to decide what never leaves for a
+replica, in `lib/secret-names.js`. The test cross-reads replication's own blocklist and fails if
+anything on it would reach a model, which is how `pairing_code` and `enrol_key` were caught: both are
+credentials, neither has a name that looks like one.
+
 **The MCP media-library tool returned items with no name, and its search never matched anything.**
 `list_content` projected `name`, `type` and `duration`; a content row has `filename`, `mime_type` and
 `duration_sec` and has never had the other three. So every item came back as a bare id, and `search` —
