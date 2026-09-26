@@ -24,6 +24,80 @@ const md = require('../lib/markdown-rendition');
 const FRONTEND = path.join(__dirname, '..', '..', 'frontend');
 const BASE = 'https://screentinker.com';
 
+// ───────────────────────────── auth.md discovery ─────────────────────────────
+
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+
+test('⚠️ auth.md is served from the service ROOT, not only from /.well-known', () => {
+  /*
+   * The convention puts this document at /auth.md. We published only the well-known copy, so a
+   * scanner asking for /auth.md got the SPA shell — 200, text/html, 21 KB — and recorded the
+   * instance as not supporting the standard at all. A soft-404 is indistinguishable from a wrong
+   * answer to anything that is not a browser.
+   */
+  assert.match(SERVER_SRC, /app\.get\('\/auth\.md', serveAuthMarkdown\)/);
+  assert.match(SERVER_SRC, /app\.get\('\/\.well-known\/auth\.md', serveAuthMarkdown\)/);
+  // One handler, so the two copies cannot drift into disagreeing about how to authenticate.
+  assert.equal((SERVER_SRC.match(/const serveAuthMarkdown =/g) || []).length, 1);
+});
+
+test('⚠️ the auth.md H1 names the document, because that is what identifies it', () => {
+  // Scanners key on the heading as well as the path. "Authenticating with the ScreenTinker API"
+  // reads as a page that happens to be about auth, not as the document the convention defines.
+  const h1 = ai.authMarkdown(BASE).split('\n')[0];
+  assert.match(h1, /^# /);
+  assert.match(h1, /auth\.md/i, 'the H1 must contain "auth.md"');
+});
+
+test('⚠️ with no OAuth, auth.md has to be self-contained', () => {
+  /*
+   * This instance has no authorization server, so there is no protected-resource metadata to point
+   * at and inventing some would be worse than silence. Everything an agent needs is therefore in
+   * this one document: who it is for, how to get a credential, the one supported method, and what
+   * to do when it has none.
+   */
+  const doc = ai.authMarkdown(BASE);
+  assert.match(doc, /\*\*Audience:\*\*/, 'it must say who it is for');
+  assert.match(doc, /## Registration/);
+  assert.match(doc, /no programmatic registration endpoint/i);
+  assert.match(doc, /bearer/i, 'it must name the supported method');
+  assert.match(doc, new RegExp(`${BASE}/app#/settings`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    'it must name the human provisioning surface');
+  assert.match(doc, /Authorization: Bearer st_/, 'it must show how the credential is used');
+  // ⚠️ And it must NOT claim an OAuth capability this deployment does not have.
+  assert.ok(!/oauth-protected-resource|authorization_servers/.test(doc),
+    'do not advertise OAuth metadata that is not published');
+});
+
+test('⚠️ an unknown /.well-known path 404s instead of returning the app shell', () => {
+  /*
+   * Everything under /.well-known is machine-read and the SPA catch-all answers any unmatched path
+   * with index.html and a 200 — so /.well-known/oauth-protected-resource replied with 21 KB of HTML
+   * and a success code. "We do not do OAuth" is a useful answer that only a 404 conveys.
+   */
+  assert.match(SERVER_SRC, /app\.all\('\/\.well-known\/\*'/);
+  const guard = SERVER_SRC.indexOf("app.all('/.well-known/*'");
+  // After the real routes, or it would swallow them.
+  assert.ok(SERVER_SRC.indexOf("app.get('/.well-known/api-catalog'") < guard);
+  assert.ok(SERVER_SRC.indexOf("app.get('/.well-known/auth.md', serveAuthMarkdown)") < guard);
+  // Before the SPA catch-all, or the shell answers first and the guard never runs.
+  assert.ok(guard < SERVER_SRC.lastIndexOf("app.get('*'"));
+  /*
+   * ⚠️ AND AFTER express.static. Above it, this would have swallowed
+   * /.well-known/acme-challenge/... — certbot's webroot proof of domain control — so a self-hoster's
+   * TLS renewal would fail silently and the certificate would expire sixty days later, nowhere near
+   * this code. Anything real has already answered by the time the guard runs.
+   */
+  assert.ok(SERVER_SRC.indexOf('express.static(config.frontendDir') < guard,
+    'the /.well-known guard must sit below express.static or it breaks ACME renewal');
+});
+
+test('the discovery documents point at the root copy we actually serve', () => {
+  const cat = ai.apiCatalog(BASE).linkset[0];
+  assert.equal(cat['service-meta'][0].href, `${BASE}/auth.md`);
+  assert.match(ai.linkHeader(BASE), /<https:\/\/screentinker\.com\/auth\.md>; rel="service-meta"/);
+});
+
 // ───────────────────────────── content negotiation ─────────────────────────────
 
 test('a browser never gets Markdown', () => {

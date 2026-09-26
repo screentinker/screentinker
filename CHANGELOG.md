@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added
+
+**Agent registration discovery: `auth.md` is served from the service root.** The convention puts that
+document at `/auth.md`; we published only `/.well-known/auth.md`, so anything following the standard
+asked for `/auth.md` and got the app shell — 200, `text/html`, 21 KB — and concluded the instance did
+not support it. Its H1 now names the document as well, because scanners identify it by heading as
+well as by path.
+
+This instance has no authorization server, so there is no OAuth protected-resource metadata to point
+at and inventing some would be worse than publishing nothing. `/auth.md` is therefore self-contained:
+who it is for, the single supported method (a bearer token in the `Authorization` header), where a
+human provisions one, the credential format and lifetime, and — stated plainly — that there is **no
+programmatic registration endpoint and none is planned**, so an agent stops and asks rather than
+hunting for one.
+
+⚠️ **An unknown `/.well-known/…` path now returns 404 instead of the app shell.** Everything under
+that prefix is machine-read, and a 200 with HTML is indistinguishable from a malformed document;
+"this instance does not do OAuth" is a useful answer that only a 404 conveys. ⚠️ The guard sits
+**below** the static middleware on purpose: above it, it would have swallowed
+`/.well-known/acme-challenge/…` and broken certbot's webroot renewal — silently, with the certificate
+expiring sixty days later.
+
 ### Fixed
 
 **The pre-upgrade database backup could never finish on a busy instance.** `upgrade.sh` used the

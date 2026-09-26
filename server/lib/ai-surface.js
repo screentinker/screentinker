@@ -35,7 +35,7 @@ function apiCatalog(base) {
         title: 'ScreenTinker Public API — OpenAPI 3 description' }],
       'service-doc': [{ href: `${base}/docs`, type: 'text/html',
         title: 'ScreenTinker Public API reference' }],
-      'service-meta': [{ href: `${base}/.well-known/auth.md`, type: 'text/markdown',
+      'service-meta': [{ href: `${base}/auth.md`, type: 'text/markdown',
         title: 'How to authenticate against the ScreenTinker API' }],
       // The MCP endpoint is part of this API's surface, so it belongs in the catalogue an agent reads
       // first rather than only in prose.
@@ -47,7 +47,7 @@ function apiCatalog(base) {
 }
 
 /*
- * How an agent authenticates. Served as Markdown at /.well-known/auth.md because that is the format
+ * How an agent authenticates. Served as Markdown at /auth.md (and /.well-known/auth.md) because
  * the convention asks for and the format a model reads without a parser.
  *
  * ⚠️ EVERY CLAIM BELOW IS CHECKED AGAINST middleware/apiToken.js AND config/api-surface.js. The
@@ -55,11 +55,37 @@ function apiCatalog(base) {
  * do more than it can produces an agent that retries a 401 forever.
  */
 function authMarkdown(base) {
-  return `# Authenticating with the ScreenTinker API
+  /*
+   * ⚠️ THE H1 CONTAINS "auth.md" ON PURPOSE. Discovery scanners identify this document by its
+   * heading, not only by its path, so a purely descriptive title ("Authenticating with the
+   * ScreenTinker API") reads as a page that happens to be about auth rather than as the document
+   * the convention defines. The descriptive title survives as the line under it.
+   */
+  return `# ScreenTinker auth.md
+
+*How an automated client authenticates with this ScreenTinker instance.*
+
+**Audience:** AI agents, MCP clients and scripts acting on behalf of a ScreenTinker user.
 
 ScreenTinker uses **scoped personal access tokens**. There is no OAuth flow, no client registration,
 and no way for an agent to obtain a token on its own — a human creates one in the dashboard and gives
 it to you. If you do not have one, stop here and ask for one.
+
+## Registration
+
+**There is no programmatic registration endpoint, and none is planned.** Do not look for one, and do
+not treat a \`401\` as a prompt to go and find one.
+
+| | |
+| --- | --- |
+| Supported method | \`bearer\` — a long-lived token in the \`Authorization\` header |
+| Provisioning surface | ${base}/app#/settings (human, signed in) |
+| OAuth authorization server | none — this resource does not delegate authentication |
+| Credential format | opaque string beginning \`st_\` |
+| Credential lifetime | until revoked in the dashboard |
+
+⚠️ An agent that cannot present a token cannot obtain access by any other route here. The correct
+behaviour is to stop and ask the person you are working for, naming this page.
 
 ## Presenting a token
 
@@ -128,6 +154,10 @@ function linkHeader(base, { markdownOf = null } = {}) {
     `<${base}/.well-known/api-catalog>; rel="api-catalog"`,
     `<${base}/openapi.yaml>; rel="service-desc"; type="application/yaml"`,
     `<${base}/docs>; rel="service-doc"; type="text/html"`,
+    // The auth document is advertised from every page, not only from the catalogue: a client that
+    // landed on any URL should be able to find out how to authenticate without a second discovery
+    // hop it may not know to make.
+    `<${base}/auth.md>; rel="service-meta"; type="text/markdown"`,
     `<${base}/llms.txt>; rel="describedby"; type="text/plain"`,
   ];
   if (markdownOf) {

@@ -312,7 +312,7 @@ app.get('/api', (req, res) => {
     description: 'Token-scoped REST API for digital signage: displays, content, playlists, layouts, schedules and reports.',
     openapi: `${base}/openapi.yaml`,
     documentation: `${base}/docs`,
-    authentication: `${base}/.well-known/auth.md`,
+    authentication: `${base}/auth.md`,
     catalog: `${base}/.well-known/api-catalog`,
     source: 'https://github.com/screentinker/screentinker',
   });
@@ -326,11 +326,19 @@ app.get('/.well-known/api-catalog', (req, res) => {
 
 // How an agent authenticates, in the format an agent reads. Scoped bearer tokens, minted by a human:
 // there is no flow by which a bot obtains one, and saying so plainly is more useful than silence.
-app.get('/.well-known/auth.md', (req, res) => {
+//
+// ⚠️ SERVED AT BOTH `/auth.md` AND `/.well-known/auth.md`. The convention puts it at the service
+// root; we published only the well-known copy, so a scanner asking for `/auth.md` got the SPA shell
+// — 200, text/html, 21 KB — and recorded the instance as not supporting the standard. A soft-404 is
+// indistinguishable from a wrong answer to anything that is not a browser.
+const serveAuthMarkdown = (req, res) => {
   res.type('text/markdown; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.send(aiSurface.authMarkdown(aiSurface.origin(req)));
-});
+};
+app.get('/auth.md', serveAuthMarkdown);
+app.get('/.well-known/auth.md', serveAuthMarkdown);
+
 
 /*
  * A Markdown rendition of any page we publish, two ways: `Accept: text/markdown` on the HTML URL, or
@@ -2734,6 +2742,28 @@ const NOT_FOUND_PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-
 
 // SPA fallback for app routes. Unmatched /api/ paths return 404 so misrouted
 // clients fail fast instead of hanging until Cloudflare's 15s upstream timeout.
+/*
+ * ⚠️ AN UNKNOWN /.well-known PATH MUST 404, NOT FALL THROUGH TO THE APP SHELL.
+ *
+ * Everything under /.well-known is machine-read, and the SPA catch-all below answers any unmatched
+ * path with index.html and a 200. So `/.well-known/oauth-protected-resource` — which this instance
+ * deliberately does not publish, having no authorization server — replied with 21 KB of HTML and a
+ * success code. A client cannot tell that from a malformed document, and "we do not do OAuth" is a
+ * useful, honest answer that only a 404 conveys.
+ *
+ * ⚠️ MOUNTED HERE, BELOW express.static AND IMMEDIATELY ABOVE THE SPA CATCH-ALL, NOT UP WITH THE
+ * OTHER /.well-known ROUTES. Above the static middleware it would have swallowed
+ * `/.well-known/acme-challenge/...`, which is how certbot's webroot mode proves domain control — so
+ * a self-hoster's TLS renewal would start failing silently and the certificate would expire sixty
+ * days later, a long way from this change. Anything genuinely served by an earlier route or by
+ * static has already answered by the time we get here.
+ */
+app.all('/.well-known/*', (req, res) => {
+  res.status(404).type('text/plain; charset=utf-8').send(
+    'Not found. This instance publishes /.well-known/auth.md and /.well-known/api-catalog.\n'
+    + 'It does not delegate authentication, so there is no OAuth metadata here; see /auth.md.\n');
+});
+
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Not found' });
