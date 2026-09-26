@@ -355,10 +355,6 @@ function platformFamily(device) {
   // page that registers is the web player. Without this it would be classified as a browser
   // and would miss the CMA capture cap the shell turns on.
   if (platform.includes('vega')) return 'vega';
-  // Second, independent signal for a Tizen TV: the .wgt player sends client_type 'wgt' (see
-  // tizen/js/app.js). `platform` is the primary key, but it lives in a column that a register from
-  // a client not sending it used to overwrite — and misreading a Tizen panel as a browser tab
-  // hands it a volume slider with no handler behind it. Two signals, one conclusion.
   if (clientType === 'wgt') return 'tizen';
   // client_type 'apk' is the Android player; android_version that is NOT the web player's
   // "Web/..." shape is the older signal for the same thing.

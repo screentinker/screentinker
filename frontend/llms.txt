@@ -32,6 +32,10 @@ so plainly when it has none.
 - [Digital signage on Windows](https://screentinker.com/guides/windows-digital-signage.html): kiosk-mode browser, autostart, and the settings that decide whether it survives a month.
 - [ChromeOS and Chromebox](https://screentinker.com/guides/chromeos-digital-signage.html): managed kiosk through the Google Admin console, or unmanaged on a single device.
 - [Fire TV Stick 4K Select and HD (Vega OS)](https://screentinker.com/guides/digital-signage-vega.html): these two sticks are not Android, the APK does not install, and they are **not** certified hardware.
+- [Apple TV](https://screentinker.com/guides/apple-tv-digital-signage.html): ⚠️ NOT supported, and not
+  planned. tvOS ships no web view, so the player cannot run there and a native port could not show
+  widgets, HTML bundles, web pages or YouTube. Unattended operation also requires MDM. Use a Raspberry
+  Pi or a commercial panel instead.
 - [E-paper and ESP32 signs](https://screentinker.com/guides/eink-esp32-digital-signage.html): no browser on the
   device. The server renders, dithers and packs each frame and tells the board how long to deep sleep; a 304
   when nothing changed means the panel is never refreshed for nothing. Ten panel presets, Floyd–Steinberg

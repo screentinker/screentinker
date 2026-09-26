@@ -364,6 +364,35 @@
         "No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control."
       ],
       "eol": null
+    },
+    {
+      "id": "apple-tv",
+      "name": "Apple TV (all models)",
+      "manufacturer": "Apple",
+      "model_numbers": null,
+      "category": "streaming-player",
+      "os": "tvOS",
+      "player": "None. There is no ScreenTinker player for tvOS and none is planned.",
+      "status": "not-supported",
+      "max_resolution": null,
+      "validated_on": null,
+      "validated_by": "ScreenTinker",
+      "player_version": null,
+      "min_version": null,
+      "provisioning_url": "/guides/apple-tv-digital-signage.html",
+      "buy_url": null,
+      "photo": null,
+      "notes": [
+        "⚠️ tvOS ships no web view. WKWebView is not in the public tvOS SDK and Apple's Human Interface Guidelines state web views are not supported on tvOS. Every ScreenTinker player is the web player inside a shell, and there is no shell to build here.",
+        "An app cannot carry its own engine: tvOS grants no JIT permission, and App Store guideline 2.5.6 requires web-browsing apps to use Apple's WebKit, which tvOS does not offer. Shipping a private web view is what gets apps rejected.",
+        "A native player was scoped and declined. It could do images, video, HLS, zones, schedules and proof-of-play; it could not do widgets, HTML bundles, web pages in a zone or picture-in-picture, or YouTube — all of which are HTML.",
+        "YouTube is not recoverable. The YouTube app on Apple TV is Google's own native client against their private backend. What Google publishes to third parties is the iframe embed, which their terms require to run in a web view and whose supported platforms are iOS, iPadOS and macOS — not tvOS.",
+        "⚠️ Unattended operation requires MDM. Without Single App Mode on a supervised device, an Apple TV sleeps and does not relaunch the app after a power cut. A screen that needs somebody to find the remote is not a digital sign.",
+        "No sideloading, and every update passes through App Review — so the release cadence would not be ours.",
+        "Use a Raspberry Pi, a small x86 PC, an Android TV box, or a Samsung/LG commercial panel. All cost less, install freely, recover from a power cut by themselves, and run the full player. See docs/tvos-player.md for the full decision record.",
+        "This would change if Apple shipped a public web view on tvOS. It would then be the same small shell built for the Vega Fire TV sticks."
+      ],
+      "eol": null
     }
   ]
 }
