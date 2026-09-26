@@ -9,10 +9,23 @@
 # restarts the service, and reports the running version. Schema migrations run
 # automatically on the next boot.
 #
-# Env overrides: SERVICE_NAME (systemd unit, default screentinker), DB,
+# Env overrides: SERVICE_NAME (systemd unit, default screentinker), APP_DIR, DB,
 # BACKUP_DIR, STATUS_URL.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# APP_DIR defaults to the checkout this script lives in, but is overridable like DB and BACKUP_DIR
+# already were.
+#
+# ⚠️ WITHOUT THE OVERRIDE THIS SCRIPT CANNOT BE RUN FROM ANYWHERE ELSE, and there is a good reason to
+# want to: upgrade.sh is itself tracked, so the copy that RUNS is the one from the release you are
+# leaving, not the one you are going to. A fix to this file therefore does nothing for the very next
+# upgrade — it takes effect one release later — unless an operator keeps a corrected copy outside the
+# tree. Installed at /usr/local/bin, `dirname $0/..` resolved APP_DIR to /usr/local and it would have
+# looked for the database there.
+if [ -n "${APP_DIR:-}" ]; then
+  cd "$APP_DIR"
+else
+  cd "$(dirname "$0")/.."
+fi
 APP_DIR="$(pwd)"
 SERVICE_NAME="${SERVICE_NAME:-screentinker}"
 DB="${DB:-$APP_DIR/server/db/remote_display.db}"

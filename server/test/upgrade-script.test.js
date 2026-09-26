@@ -63,3 +63,16 @@ test('⚠️ the backup is verified, and a bad one stops the upgrade', () => {
   // The check has to run before the checkout, or it is guarding nothing.
   assert.ok(SRC.indexOf('integrity_check') < SRC.indexOf('git checkout -q "$TARGET"'));
 });
+
+test('⚠️ upgrade.sh can be run from outside the checkout', () => {
+  /*
+   * upgrade.sh is itself a tracked file, so the copy that RUNS is the one from the release you are
+   * LEAVING. A fix to this script does nothing for the very next upgrade — it takes effect one
+   * release later — unless an operator keeps a corrected copy outside the tree and points it at the
+   * app. Installed at /usr/local/bin without this, `dirname $0/..` made APP_DIR /usr/local and it
+   * would have gone looking for the database there.
+   */
+  assert.match(SRC, /if \[ -n "\$\{APP_DIR:-\}" \]/, 'APP_DIR must be overridable');
+  assert.ok(SRC.indexOf('APP_DIR:-') < SRC.indexOf('DB="${DB:-$APP_DIR'),
+    'the override has to be resolved before DB and BACKUP_DIR are derived from it');
+});
