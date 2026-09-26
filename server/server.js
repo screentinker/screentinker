@@ -291,6 +291,7 @@ app.use(sanitizeBody);
  * acts on, so advertising a capability we do not have does not read as capable, it produces agents
  * that fail in ways they cannot diagnose. Where we do not have the thing, there is no file.
  */
+const mcpProtocol = require('./lib/mcp/protocol');
 const aiSurface = require('./lib/ai-surface');
 const mdRendition = require('./lib/markdown-rendition');
 
@@ -336,6 +337,37 @@ const serveAuthMarkdown = (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.send(aiSurface.authMarkdown(aiSurface.origin(req)));
 };
+/*
+ * The MCP server card (SEP-1649): what this server is, before a client has connected to it.
+ *
+ * ⚠️ BUILT FROM THE SAME `identity()` THE HANDSHAKE USES. A card that disagrees with `initialize`
+ * is worse than no card — a client picks tools and an auth strategy from it, then discovers the
+ * mismatch only after connecting.
+ *
+ * ⚠️ IT DESCRIBES, IT DOES NOT GRANT. The endpoint still refuses everything without a token, and
+ * the card says so and points at /auth.md, because the one thing an agent must learn early here is
+ * that a human has to issue it a credential.
+ */
+app.get('/.well-known/mcp/server-card.json', (req, res) => {
+  const base = aiSurface.origin(req);
+  const id = mcpProtocol.identity({ version: config.version || require('./package.json').version });
+  res.type('application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({
+    ...id,
+    protocolVersion: mcpProtocol.LATEST,
+    transport: { type: 'streamable-http', endpoint: `${base}/mcp` },
+    endpoint: `${base}/mcp`,
+    authentication: {
+      type: 'bearer',
+      description: 'A scoped ScreenTinker API token, issued by a human in the dashboard. '
+        + 'There is no programmatic registration.',
+      documentation: `${base}/auth.md`,
+    },
+    documentation: `${base}/guides/mcp-digital-signage.html`,
+  });
+});
+
 app.get('/auth.md', serveAuthMarkdown);
 app.get('/.well-known/auth.md', serveAuthMarkdown);
 

@@ -31,6 +31,24 @@ const rpcError = (id, code, message, data) => ({
 });
 const rpcResult = (id, result) => ({ jsonrpc: '2.0', id, result });
 
+/*
+ * Who this server says it is, and what it can do.
+ *
+ * ⚠️ SHARED WITH THE PUBLISHED SERVER CARD (/.well-known/mcp/server-card.json). A card is a promise
+ * a client acts on BEFORE it has spoken to us; if it disagrees with the handshake, the client finds
+ * out only after connecting, which is the expensive moment to discover it. One definition, both
+ * callers.
+ *
+ * `listChanged` is false because the catalogue is static for a given token — promising change
+ * notifications we will never send would leave a client subscribed forever.
+ */
+function identity(ctx = {}) {
+  return {
+    capabilities: { tools: { listChanged: false } },
+    serverInfo: { name: 'screentinker', version: ctx.version || '0.0.0' },
+  };
+}
+
 function negotiateVersion(requested) {
   return PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST;
 }
@@ -54,10 +72,7 @@ async function handleMessage(msg, ctx) {
     case 'initialize':
       return rpcResult(id, {
         protocolVersion: negotiateVersion(params.protocolVersion),
-        // Only what we have. `listChanged` is false: the catalogue is static for a given token, so
-        // promising change notifications we will never send would leave a client subscribed forever.
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'screentinker', version: ctx.version || '0.0.0' },
+        ...identity(ctx),
         instructions: ctx.instructions || undefined,
       });
 
@@ -100,4 +115,4 @@ async function handleMessage(msg, ctx) {
   }
 }
 
-module.exports = { handleMessage, negotiateVersion, PROTOCOL_VERSIONS, LATEST, ERR, rpcError, rpcResult };
+module.exports = { handleMessage, identity, negotiateVersion, PROTOCOL_VERSIONS, LATEST, ERR, rpcError, rpcResult };

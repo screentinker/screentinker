@@ -328,6 +328,36 @@ test('get_display returns an answer, not a database row', () => {
   assert.equal(shaped.offline_reason, null);
 });
 
+test('⚠️ the published server card cannot disagree with the handshake', () => {
+  /*
+   * SEP-1649. A card is a promise a client acts on BEFORE it connects — it picks an endpoint, a
+   * transport and an auth strategy from it. If it disagrees with `initialize`, the client finds out
+   * only after connecting, which is the expensive moment. So both come from `identity()`, and this
+   * asserts the route uses it rather than restating the same fields by hand.
+   */
+  const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const start = routeSrc.indexOf("app.get('/.well-known/mcp/server-card.json'");
+  assert.ok(start > 0, 'the server card route is missing');
+  // ⚠️ To the NEXT route, not to the first `});` — the identity call ends in `});` itself, so that
+  // cut the window off before the half of the handler worth asserting on.
+  const body = routeSrc.slice(start, routeSrc.indexOf('app.get(', start + 10));
+  assert.match(body, /mcpProtocol\.identity\(/, 'the card must be built from the shared identity');
+  assert.ok(!/name: 'screentinker'/.test(body), 'the card must not restate serverInfo by hand');
+  assert.ok(!/listChanged/.test(body), 'the card must not restate capabilities by hand');
+
+  // What the spec requires of the document itself.
+  const id = protocol.identity({ version: '9.9.9' });
+  assert.equal(id.serverInfo.name, 'screentinker');
+  assert.equal(id.serverInfo.version, '9.9.9');
+  assert.ok(id.capabilities.tools, 'the card must list the tools capability');
+  assert.match(body, /endpoint: `\$\{base\}\/mcp`/, 'it must name the transport endpoint');
+
+  // ⚠️ And it must not read as a grant. The endpoint still refuses everything without a token, so
+  // the card points at the document that says a human has to issue one.
+  assert.match(body, /auth\.md/);
+  assert.match(body, /no programmatic registration/i);
+});
+
 // ───────────────────────────── the protocol ─────────────────────────────
 
 const ctx = () => ({

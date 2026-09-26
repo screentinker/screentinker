@@ -4,6 +4,27 @@
 
 ### Added
 
+**An MCP server card at `/.well-known/mcp/server-card.json`** (SEP-1649), so a client can learn what
+this server is before connecting to it: `serverInfo`, `capabilities`, the Streamable HTTP endpoint,
+and how to authenticate.
+
+⚠️ **It is built from the same `identity()` the `initialize` handshake returns.** A card that
+disagrees with the handshake is worse than no card — a client picks its endpoint, transport and auth
+strategy from the card and only discovers the mismatch after connecting. The test asserts the route
+uses the shared definition rather than restating the same fields by hand.
+
+⚠️ **The card describes, it does not grant.** The endpoint still refuses everything without a token,
+so the card says the credential is issued by a human and points at `/auth.md`.
+
+**No OAuth or OIDC discovery metadata is published, deliberately.** ScreenTinker is not an
+authorization server: it has no `/authorize`, no `/token`, and its sessions are signed with a
+symmetric secret, so there is no public key a `jwks_uri` could serve. Publishing metadata naming
+endpoints that do not exist would make a scanner pass and send real agents into a flow that cannot
+complete — the precise failure `/auth.md` exists to prevent. ScreenTinker *consumes* OIDC discovery as
+a relying party for per-organisation SSO; that is the opposite direction and does not make it a
+provider.
+
+
 **Every published page now names its Markdown twin in the document**, as
 `<link rel="alternate" type="text/markdown">`, not only in the `Link` header.
 
