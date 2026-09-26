@@ -5,7 +5,7 @@ schema-version = 1
 
 [package]
 title = "ScreenTinker"
-version = "2.2.2"
+version = "2.2.3"
 id = "com.screentinker.vega"
 icon = "@image/app_icon.png"
 

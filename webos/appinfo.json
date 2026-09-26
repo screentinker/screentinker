@@ -1,6 +1,6 @@
 {
   "id": "com.screentinker.player",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "vendor": "ScreenTinker",
   "type": "web",
   "main": "index.html",
