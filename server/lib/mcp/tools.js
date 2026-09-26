@@ -114,6 +114,7 @@ const TOOLS = [
     description: 'A playlist with its items in order, including each item duration and any per-item schedule.',
     input: { type: 'object', required: ['playlist_id'], properties: { playlist_id: { type: 'string' } } },
     call: { method: 'GET', path: '/api/playlists/{playlist_id}' },
+    shape: shapePlaylist,
   },
   {
     name: 'list_content',
@@ -216,6 +217,7 @@ const TOOLS = [
       properties: { url: { type: 'string' }, name: { type: 'string', description: 'Defaults to the video title.' } },
     },
     call: { method: 'POST', path: '/api/content/youtube', body: ['url', 'name'] },
+    shape: shapeContent,
   },
   {
     name: 'add_web_page',
@@ -226,6 +228,7 @@ const TOOLS = [
       properties: { url: { type: 'string' }, name: { type: 'string' } },
     },
     call: { method: 'POST', path: '/api/content/remote', body: ['url', 'name'] },
+    shape: shapeContent,
   },
   {
     name: 'create_playlist',
@@ -236,6 +239,7 @@ const TOOLS = [
       properties: { name: { type: 'string' }, description: { type: 'string' } },
     },
     call: { method: 'POST', path: '/api/playlists', body: ['name', 'description'] },
+    shape: shapePlaylist,
   },
   {
     name: 'add_to_playlist',
@@ -249,6 +253,8 @@ const TOOLS = [
       },
     },
     call: { method: 'POST', path: '/api/playlists/{playlist_id}/items', body: ['content_id', 'duration'] },
+    shape: (i) => ({ id: i.id, playlist_id: i.playlist_id, name: itemName(i), kind: itemKind(i),
+      duration: i.content_duration ?? i.duration_sec ?? null }),
   },
   {
     name: 'remove_from_playlist',
@@ -268,6 +274,7 @@ const TOOLS = [
     description: 'Publish a playlist: snapshot the draft and push it to every screen using it. Nothing an agent changes appears on a screen until this is called.',
     input: { type: 'object', required: ['playlist_id'], properties: { playlist_id: { type: 'string' } } },
     call: { method: 'POST', path: '/api/playlists/{playlist_id}/publish' },
+    shape: shapePlaylist,
   },
   {
     name: 'assign_playlist_to_display',
@@ -339,6 +346,56 @@ const SCOPE_RANK = { read: 1, write: 2, full: 3 };
 function toolsForScope(scope) {
   const have = SCOPE_RANK[scope] || 0;
   return TOOLS.filter((t) => (SCOPE_RANK[t.scope] || 99) <= have);
+}
+
+/*
+ * ⚠️ A PLAYLIST ROW IS NOT AN ANSWER, AND IT CARRIES THE PLAYLIST TWICE.
+ *
+ * get_playlist and publish_playlist answered with the raw row: `items` with every storage column,
+ * plus `published_snapshot` AND `published_structure`, which are serialised copies of the same
+ * playlist. Measured on a ONE-item playlist: 2,397 bytes, of which 794 are the two duplicates and ~51
+ * are the item detail a model asked for. Both duplicates grow with the item count, so the bigger the
+ * playlist the worse the ratio — and a model that reads the snapshot instead of `items` is reading the
+ * LAST PUBLISHED version while being asked about the draft, which is the one distinction the tool
+ * instructions go out of their way to explain.
+ */
+const itemName = (i) => i.filename || i.child_playlist_name || i.widget_name || null;
+const itemKind = (i) => (i.child_playlist_id ? 'playlist' : (i.widget_id ? 'widget' : 'content'));
+
+function shapePlaylist(p) {
+  if (!p || typeof p !== 'object') return p;
+  const items = Array.isArray(p.items) ? p.items : [];
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description || null,
+    // draft vs published is the distinction that decides whether anybody can SEE the change.
+    status: p.status,
+    playback_order: p.playback_order,
+    item_count: items.length,
+    items: items.map((i) => ({
+      id: i.id,
+      name: itemName(i),
+      kind: itemKind(i),
+      duration: i.content_duration ?? i.duration_sec ?? null,
+      ...(i.enabled === 0 ? { enabled: false } : {}),
+      ...(i.play_from || i.play_until ? { play_from: i.play_from || null, play_until: i.play_until || null } : {}),
+      ...(i.orphan ? { orphan: true } : {}),
+    })),
+  };
+}
+
+/* A content row the same way: what it is called and what it is, not where its bytes live. */
+function shapeContent(c) {
+  if (!c || typeof c !== 'object') return c;
+  return {
+    id: c.id,
+    name: c.filename,
+    type: c.mime_type,
+    duration: c.duration_sec ?? null,
+    folder: c.folder_id || null,
+    ...(c.remote_url ? { url: c.remote_url } : {}),
+  };
 }
 
 /*

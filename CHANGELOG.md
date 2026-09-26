@@ -4,6 +4,15 @@
 
 ### Fixed
 
+**A playlist answer carried the playlist twice.** `get_playlist` and `publish_playlist` returned the
+raw row: `items` with every storage column, plus `published_snapshot` and `published_structure`, which
+are serialised copies of the same playlist. Measured on a one-item playlist, that is 2,397 bytes to say
+something worth about fifty — and both duplicates grow with the item count, so the bigger the playlist
+the worse it gets. ⚠️ The real cost is not the bytes: a model that reads the snapshot is reading the
+**last published** version while being asked about the draft, which is the one distinction the tool
+instructions go out of their way to explain. Those tools, and the three that create content or add an
+item, now answer with what a screen would play rather than with a database row.
+
 **An MCP tool could hand a model a screen's settings PIN.** `rename_display` had no output shape, so it
 answered with the raw device row — eighty columns, including a live `settings_pin`. That is the number
 2.2.0 made load-bearing: it is what the Esc-unpair gate on the web player now demands. So an agent that

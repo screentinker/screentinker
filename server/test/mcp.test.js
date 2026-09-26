@@ -175,6 +175,50 @@ test('report tools translate the words a model uses into the endpoint\'s paramet
   assert.ok(tools.toRequest(tools.byName('uptime_report'), { days: 'lots' }).query.start);
 });
 
+test('⚠️ a playlist answer does not carry the playlist twice', () => {
+  /*
+   * The raw row ships `items` with every storage column AND `published_snapshot` plus
+   * `published_structure`, which are serialised copies of the same playlist. On a one-item playlist
+   * that measured 2,397 bytes for ~51 bytes of useful item detail, and both duplicates grow with the
+   * item count. Worse than the waste: a model that reads the snapshot is reading the LAST PUBLISHED
+   * version while being asked about the draft — the one distinction the tool instructions exist to
+   * explain.
+   */
+  const row = {
+    id: 'p1', name: 'Lobby — daytime', description: 'Reception deck', status: 'draft',
+    playback_order: 'sequential', user_id: 'u1', workspace_id: 'w1',
+    published_snapshot: JSON.stringify({ items: [{ filename: 'STALE.png' }] }),
+    published_structure: { items: [{ id: 9 }] },
+    items: [
+      { id: 1, filename: 'promo.mp4', content_duration: 15, filepath: '/uploads/x', file_size: 90000, mime_type: 'video/mp4' },
+      { id: 2, widget_id: 'w9', widget_name: 'Weather', duration_sec: 10, enabled: 0 },
+      { id: 3, child_playlist_id: 'p2', child_playlist_name: 'Ward B — handover', duration_sec: 30 },
+    ],
+  };
+  const out = tools.byName('get_playlist').shape(row, {});
+  assert.equal(out.item_count, 3);
+  assert.deepEqual(out.items.map((i) => i.name), ['promo.mp4', 'Weather', 'Ward B — handover']);
+  assert.deepEqual(out.items.map((i) => i.kind), ['content', 'widget', 'playlist']);
+  assert.equal(out.items[1].enabled, false, 'a disabled item must still say so');
+  assert.equal(out.status, 'draft', 'draft vs published decides whether anyone can see the change');
+  const json = JSON.stringify(out);
+  for (const leak of ['published_snapshot', 'published_structure', 'STALE', 'filepath', '/uploads/', 'file_size', 'workspace_id']) {
+    assert.ok(!json.includes(leak), `a playlist answer should not carry ${leak}`);
+  }
+  // Same shape is used by the tools that RETURN a playlist after changing it.
+  for (const t of ['create_playlist', 'publish_playlist']) {
+    assert.equal(typeof tools.byName(t).shape, 'function', `${t} must shape its answer`);
+    assert.ok(!JSON.stringify(tools.byName(t).shape(row, {})).includes('STALE'));
+  }
+  // And a content row says what it is called, not where its bytes live.
+  const c = tools.byName('add_web_page').shape(
+    { id: 'c1', filename: 'Ward board', mime_type: 'text/html', duration_sec: null,
+      remote_url: 'https://example.com/b', filepath: '/uploads/y', byte_digest: 'abc' }, {});
+  assert.equal(c.name, 'Ward board');
+  assert.equal(c.url, 'https://example.com/b');
+  assert.ok(!('filepath' in c) && !('byte_digest' in c));
+});
+
 test('⚠️ no tool can hand a model a credential, shape or no shape', () => {
   /*
    * rename_display had no shape and answered with the raw device row: eighty columns including a
