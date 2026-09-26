@@ -74,9 +74,19 @@ human provisions one, the credential format and lifetime, and — stated plainly
 programmatic registration endpoint and none is planned**, so an agent stops and asks rather than
 hunting for one.
 
+**No A2A agent card is published, deliberately.** An agent card's `supportedInterfaces` is a promise
+of a protocol endpoint: a client reads it and then speaks A2A JSON-RPC (`message/send`, `tasks/get`)
+to the URL it names. ScreenTinker does not implement A2A, and pointing the card at `/mcp` would name
+an endpoint that speaks a different protocol, so every call would fail after the client had committed
+to it. A2A is for tasking an autonomous agent; ScreenTinker is a tool provider, which is what MCP is
+for — the two are complementary by design. The 404 below says so.
+
 ⚠️ **An unknown `/.well-known/…` path now returns 404 instead of the app shell.** Everything under
 that prefix is machine-read, and a 200 with HTML is indistinguishable from a malformed document;
-"this instance does not do OAuth" is a useful answer that only a 404 conveys. ⚠️ The guard sits
+"this instance does not do OAuth" is a useful answer that only a 404 conveys. ⚠️ The body lists what
+*is* published, **derived from the registered routes** — the first version hand-listed two documents
+and was wrong within the day, once two more were added, and a 404 that misdescribes the server is
+worse than a bare one because it is what a client reads when it is already lost. ⚠️ The guard sits
 **below** the static middleware on purpose: above it, it would have swallowed
 `/.well-known/acme-challenge/…` and broken certbot's webroot renewal — silently, with the certificate
 expiring sixty days later.

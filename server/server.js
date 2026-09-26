@@ -2802,9 +2802,22 @@ const NOT_FOUND_PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-
  * static has already answered by the time we get here.
  */
 app.all('/.well-known/*', (req, res) => {
+  /*
+   * ⚠️ THE LIST IS DERIVED FROM THE ROUTES, NOT TYPED OUT. The first version named auth.md and
+   * api-catalog by hand and was already wrong the same day, once the protected-resource metadata and
+   * the MCP server card were added — a 404 that misdescribes what the server publishes is worse than
+   * a bare one, because it is the document a client reads when it is already lost.
+   */
+  const published = app._router.stack
+    .map((l) => l.route && l.route.path)
+    // …excluding this catch-all itself, which is a guard and not a document.
+    .filter((path) => typeof path === 'string' && path.startsWith('/.well-known/') && !path.endsWith('*'))
+    .sort();
   res.status(404).type('text/plain; charset=utf-8').send(
-    'Not found. This instance publishes /.well-known/auth.md and /.well-known/api-catalog.\n'
-    + 'It does not delegate authentication, so there is no OAuth metadata here; see /auth.md.\n');
+    `Not found.\n\nThis instance publishes:\n${published.map((x) => `  ${x}\n`).join('')}`
+    + '\nIt is not an OAuth authorization server and not an A2A agent, so there is no\n'
+    + 'authorization-server metadata and no agent card here. Authentication is documented\n'
+    + 'at /auth.md: a human issues a scoped token, and there is no programmatic registration.\n');
 });
 
 app.get('*', (req, res) => {

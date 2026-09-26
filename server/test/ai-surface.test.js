@@ -138,6 +138,21 @@ test('⚠️ an unknown /.well-known path 404s instead of returning the app shel
    */
   assert.ok(SERVER_SRC.indexOf('express.static(config.frontendDir') < guard,
     'the /.well-known guard must sit below express.static or it breaks ACME renewal');
+
+  /*
+   * ⚠️ AND THE 404 MUST DESCRIBE ITSELF FROM THE ROUTES, NOT FROM A TYPED LIST. The first version
+   * named auth.md and api-catalog by hand and was wrong the same day, once the protected-resource
+   * metadata and the MCP server card were added. A 404 that misdescribes what the server publishes
+   * is worse than a bare one: it is what a client reads when it is already lost.
+   */
+  const body = SERVER_SRC.slice(guard, SERVER_SRC.indexOf('app.get(', guard));
+  // ⚠️ Strip comments before asserting ABSENCE — the comment here explains why the list is derived
+  // and names the documents it used to hand-list, so the raw text always "contains" them. Third
+  // suite this has caught out.
+  const code = body.split('\n').filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l)).join('\n');
+  assert.match(code, /app\._router\.stack/, 'the published list must be derived from the routes');
+  assert.ok(!/auth\.md and/.test(code), 'do not hand-list the published documents');
+  assert.match(code, /!path\.endsWith\('\*'\)/, 'the guard route must not list itself');
 });
 
 test('the discovery documents point at the root copy we actually serve', () => {
