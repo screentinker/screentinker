@@ -49,6 +49,56 @@ function apiCatalog(base) {
 }
 
 /*
+ * ARD capability manifest (agenticresourcediscovery.org, ai-catalog data model).
+ *
+ * ⚠️ EVERY ENTRY IS SOMETHING THIS INSTANCE ACTUALLY SERVES, and each is reachable by the URL given.
+ * A catalogue is read by something that will then GO THERE; an entry for a capability we do not have
+ * costs an agent a request and its trust, and we would never hear about it.
+ *
+ * ⚠️ Exactly one of `url` or `data` per entry — never both, never neither.
+ */
+function aiCatalog(base) {
+  return {
+    specVersion: '1.0',
+    host: {
+      displayName: 'ScreenTinker',
+      identifier: base,
+      description: 'Open-source digital signage: manage screens, playlists and schedules.',
+    },
+    entries: [
+      {
+        identifier: `${base}/mcp`,
+        displayName: 'ScreenTinker MCP server',
+        description: 'Model Context Protocol endpoint. 21 tools, filtered by the token\'s scope.',
+        type: 'application/json',
+        url: `${base}/.well-known/mcp/server-card.json`,
+      },
+      {
+        identifier: `${base}/openapi.yaml`,
+        displayName: 'ScreenTinker Public API',
+        description: 'OpenAPI 3 description of the REST API the MCP server is a client of.',
+        type: 'application/yaml',
+        url: `${base}/openapi.yaml`,
+      },
+      {
+        identifier: `${base}/.well-known/agent-skills/index.json`,
+        displayName: 'ScreenTinker agent skills',
+        description: 'Skill documents describing how to operate a screen estate.',
+        type: 'application/json',
+        url: `${base}/.well-known/agent-skills/index.json`,
+      },
+      {
+        identifier: `${base}/auth.md`,
+        displayName: 'Authentication guide',
+        description: 'Scoped bearer tokens, issued by a human. No programmatic registration.',
+        type: 'text/markdown',
+        url: `${base}/auth.md`,
+      },
+    ],
+  };
+}
+
+/*
  * OAuth 2.0 Protected Resource Metadata (RFC 9728).
  *
  * ⚠️ `authorization_servers` IS DELIBERATELY ABSENT, and that is the honest document rather than an
@@ -258,4 +308,4 @@ function markdownSource(frontendDir, urlPath) {
   return null;
 }
 
-module.exports = { origin, apiCatalog, authMarkdown, protectedResourceMetadata, linkHeader, prefersMarkdown, markdownSource };
+module.exports = { origin, apiCatalog, aiCatalog, authMarkdown, protectedResourceMetadata, linkHeader, prefersMarkdown, markdownSource };

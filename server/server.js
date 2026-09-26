@@ -292,6 +292,7 @@ app.use(sanitizeBody);
  * that fail in ways they cannot diagnose. Where we do not have the thing, there is no file.
  */
 const mcpProtocol = require('./lib/mcp/protocol');
+const agentSkills = require('./lib/agent-skills');
 const aiSurface = require('./lib/ai-surface');
 const mdRendition = require('./lib/markdown-rendition');
 
@@ -377,6 +378,39 @@ app.get('/.well-known/mcp/server-card.json', (req, res) => {
     },
     documentation: `${base}/guides/mcp-digital-signage.html`,
   });
+});
+
+/*
+ * ARD capability manifest. ⚠️ CORS is part of the spec here, not an afterthought: this is read by
+ * browser-side agents, and without the header the document exists and is unreadable by half the
+ * clients it is published for.
+ */
+app.get('/.well-known/ai-catalog.json', (req, res) => {
+  res.type('application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(aiSurface.aiCatalog(aiSurface.origin(req)));
+});
+
+/*
+ * Agent Skills Discovery. The index carries a sha256 of each artifact, computed from the same bytes
+ * the SKILL.md route returns — see lib/agent-skills.js. A digest that does not describe the artifact
+ * reads to a verifying agent as tampering, not as staleness.
+ */
+app.get('/.well-known/agent-skills/index.json', (req, res) => {
+  res.type('application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(agentSkills.skillsIndex(aiSurface.origin(req)));
+});
+
+app.get('/.well-known/agent-skills/:name/SKILL.md', (req, res) => {
+  const skill = agentSkills.byName(req.params.name);
+  if (!skill) return res.status(404).type('text/plain; charset=utf-8').send('No such skill.\n');
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  return res.send(agentSkills.skillMarkdown(skill, aiSurface.origin(req)));
 });
 
 app.get('/auth.md', serveAuthMarkdown);

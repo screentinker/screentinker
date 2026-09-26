@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Agent Skills Discovery at `/.well-known/agent-skills/index.json`**, with two skill documents that
+describe what this product actually does: operating a screen estate through the MCP server or the
+REST API, and choosing hardware and getting a player onto it.
+
+⚠️ **Each index entry carries a sha256 computed from the bytes the artifact route returns**, not a
+digest stored beside the prose. A hand-maintained digest is wrong the first time anybody edits a
+sentence — and to a verifying agent a mismatch reads as *tampering*, not as staleness.
+
+⚠️ **A skill is read by something that will then act on it**, so a plausible instruction that does
+not match the API is worse than no skill: the agent follows it, fails, and cannot tell that the
+document was wrong rather than its own request. The test cross-checks every tool and command name a
+skill mentions against the ones the server publishes.
+
+**An ARD capability manifest at `/.well-known/ai-catalog.json`**, listing the MCP server, the OpenAPI
+description, the skills index and the auth guide — each an entry an agent can actually fetch, served
+with `Access-Control-Allow-Origin: *` because browser-side agents read it. `robots.txt` points at it
+with an `Agentmap:` line.
+
+**Still deliberately absent:** OAuth authorization-server metadata, an A2A agent card, WebMCP tools
+and the agent-payment profiles. Each would mean publishing a document that names an endpoint or a
+capability this instance does not have. The `/.well-known` 404 says what is published instead.
+
 ## 2.2.2 (2026-09-26)
 
 ### Added

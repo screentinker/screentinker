@@ -36,3 +36,4 @@ Disallow: /unsubscribe
 # Every published page is also available as Markdown: append .md to its path, or send
 # `Accept: text/markdown`.
 Sitemap: https://screentinker.com/sitemap.xml
+Agentmap: https://screentinker.com/.well-known/ai-catalog.json

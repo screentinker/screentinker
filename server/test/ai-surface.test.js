@@ -24,6 +24,82 @@ const md = require('../lib/markdown-rendition');
 const FRONTEND = path.join(__dirname, '..', '..', 'frontend');
 const BASE = 'https://screentinker.com';
 
+// ───────────────────────────── agent skills & capability catalogue ─────────────────────────────
+
+const skills = require('../lib/agent-skills');
+
+test('⚠️ every published skill digest describes the bytes we actually serve', () => {
+  /*
+   * An agent may verify the digest before trusting the artifact, so a digest maintained separately
+   * from the prose is wrong the first time anybody edits a sentence — and a mismatch reads as
+   * TAMPERING, not as staleness, which is a far worse thing to be accused of. Both come from one
+   * function over one string.
+   */
+  const crypto = require('node:crypto');
+  const idx = skills.skillsIndex(BASE);
+  assert.ok(idx.skills.length > 0);
+  assert.equal(idx.$schema, 'https://schemas.agentskills.io/discovery/0.2.0/schema.json');
+  for (const entry of idx.skills) {
+    assert.match(entry.name, /^[a-z0-9-]+$/, 'skill names are lowercase alphanumeric and hyphens');
+    assert.equal(entry.type, 'skill-md');
+    assert.ok(entry.description && entry.description.length > 20);
+    assert.equal(entry.url, `${BASE}/.well-known/agent-skills/${entry.name}/SKILL.md`);
+    const served = skills.skillMarkdown(skills.byName(entry.name), BASE);
+    const real = `sha256:${crypto.createHash('sha256').update(served, 'utf8').digest('hex')}`;
+    assert.equal(entry.digest, real, `${entry.name}: the index digest does not describe the artifact`);
+  }
+});
+
+test('⚠️ a skill does not instruct an agent to do something this product cannot do', () => {
+  /*
+   * A skill is read by something that will then go and act. A plausible instruction that does not
+   * match the API is worse than no skill at all: the agent follows it, fails, and has no way to tell
+   * that the DOCUMENT was wrong rather than its own request. So the tool names a skill mentions must
+   * be tools we actually publish.
+   */
+  const tools = require('../lib/mcp/tools');
+  // ⚠️ Tool names AND command values. A skill legitimately names both — `send_command` is a tool,
+  // `screen_on` is one of the commands you pass to it — and the first version of this test failed on
+  // that, which would have pushed the prose into being LESS accurate to satisfy the check. Both
+  // vocabularies are verified, which is what we actually want.
+  const { ALLOWED_COMMANDS } = require('../lib/device-command');
+  const known = new Set([...tools.TOOLS.map((t) => t.name), ...ALLOWED_COMMANDS]);
+  for (const s of skills.SKILLS) {
+    const body = skills.skillMarkdown(s, BASE);
+    const mentioned = [...body.matchAll(/`([a-z_]{4,})`/g)].map((m) => m[1])
+      .filter((w) => w.includes('_') && !['text_markdown', 'st_install_id'].includes(w));
+    for (const m of mentioned) {
+      assert.ok(known.has(m), `${s.name} names \`${m}\`, which is not a tool we publish`);
+    }
+    // And it must not promise the one thing we deliberately do not offer.
+    assert.ok(!/register(ation)? endpoint(?!.{0,40}(no|not|cannot))/i.test(body)
+      || /no registration endpoint|cannot obtain a token/i.test(body),
+      `${s.name} must not imply an agent can register itself`);
+  }
+});
+
+test('⚠️ the capability catalogue lists only things we serve', () => {
+  // A catalogue is read by something that will then GO THERE. An entry for a capability we do not
+  // have costs an agent a request and its trust, and we would never hear about it.
+  const cat = ai.aiCatalog(BASE);
+  assert.ok(typeof cat.specVersion === 'string' && cat.specVersion.length);
+  assert.ok(cat.host && cat.host.displayName && cat.host.identifier);
+  assert.ok(Array.isArray(cat.entries) && cat.entries.length);
+  for (const e of cat.entries) {
+    assert.ok(e.identifier && e.displayName && e.type, 'identifier, displayName and type are required');
+    const has = ('url' in e ? 1 : 0) + ('data' in e ? 1 : 0);
+    assert.equal(has, 1, `${e.identifier}: exactly one of url or data`);
+    assert.match(e.type, /^[a-z]+\/[a-z0-9.+-]+$/, `${e.type} is not a media type`);
+    if (e.url) assert.ok(e.url.startsWith(BASE), `${e.url} is not served by this instance`);
+  }
+  // ⚠️ CORS is part of the spec here: browser-side agents read this, and without the header the
+  // document exists and is unreadable by half the clients it is published for.
+  assert.match(SERVER_SRC, /ai-catalog\.json[\s\S]{0,240}Access-Control-Allow-Origin/);
+  // robots.txt points at it, which is the other way the scanner and a crawler find it.
+  const robots = fs.readFileSync(path.join(FRONTEND, 'robots.txt'), 'utf8');
+  assert.match(robots, /^Agentmap: https:\/\/screentinker\.com\/\.well-known\/ai-catalog\.json$/m);
+});
+
 // ───────────────────────────── protected resource metadata ─────────────────────────────
 
 test('⚠️ the resource metadata advertises only scopes a token can actually be minted with', () => {
