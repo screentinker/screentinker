@@ -32,12 +32,52 @@ if [ -z "$TARGET" ] || ! git rev-parse -q --verify "refs/tags/$TARGET^{commit}" 
 fi
 echo "==> Target release: $TARGET"
 
-# Back up the db first (reuses backup.sh's .backup - a consistent online copy).
+# Back up the db first. This copy is the ONLY way back from a bad upgrade, so it is taken with a
+# method that finishes, and it is verified before anything is changed.
+#
+# ⚠️ NOT `.backup`. The sqlite3 shell copies every page in ONE step while holding a read lock, so a
+# single write from the running server aborts it with SQLITE_BUSY and it begins again at page one.
+# On a busy database that never converges. Observed on production 2026-09-26: a 1.4 GB database with
+# 33 displays heartbeating, sqlite3 at 94% CPU for over eight minutes with the destination frozen at
+# 1227 MB. There is no error and no progress output, so the upgrade simply appears to hang — which
+# is the worst way for a backup to fail, because the obvious response is to kill it and skip it.
+#
+# ⚠️ AND IT FAILS BY LOAD, NOT BY SIZE, so it passes every quiet-hour test. The nightly backup of
+# that same database at 03:00 finishes in about 80 seconds. The upgrade you run at lunchtime does
+# not finish at all.
+#
+# VACUUM INTO writes a fresh database from a single read transaction and completes on a busy WAL
+# database. The same 1.4 GB production database took under a minute.
 if [ -f "$DB" ]; then
   mkdir -p "$BACKUP_DIR"
   BK="$BACKUP_DIR/remote_display-pre-${TARGET}-$(date +%Y%m%d-%H%M%S).db"
   echo "==> Backing up db -> $BK"
-  sqlite3 "$DB" ".backup '$BK'"
+  # VACUUM INTO refuses to write a destination that already exists.
+  rm -f "$BK"
+
+  # ⚠️ DECIDE ON THE VERSION, NOT ON THE FAILURE. Treating any VACUUM INTO error as "your sqlite is
+  # too old" printed "VACUUM INTO unavailable (sqlite3 3.45.1)" when the real fault was an unreadable
+  # source database — blaming the tool, naming a version that supports it perfectly well, and hiding
+  # the actual error. A check that cannot tell "this is broken" from "I could not do it" sends you
+  # to the wrong place with confidence.
+  SQLITE_VER="$(sqlite3 --version 2>/dev/null | cut -d' ' -f1)"
+  if [ -n "$SQLITE_VER" ] && [ "$(printf '%s\n3.27.0\n' "$SQLITE_VER" | sort -V | head -1)" = "3.27.0" ]; then
+    sqlite3 "$DB" "VACUUM INTO '$BK'"   # any failure here is real: let it abort and show why
+  else
+    echo "    sqlite3 ${SQLITE_VER:-unknown} predates VACUUM INTO (3.27, 2019); using .backup,"
+    echo "    which may stall on a busy database. Upgrading sqlite3 avoids that."
+    sqlite3 "$DB" ".backup '$BK'"
+  fi
+
+  # ⚠️ THE COPY IS COMPACTED, so it is SMALLER than the source — 1405 MB -> 1004 MB on that run.
+  # That is a complete database, not a truncated one. Judge it with integrity_check, never by size.
+  INTEG="$(sqlite3 "$BK" 'PRAGMA integrity_check' 2>/dev/null | head -1)"
+  if [ "$INTEG" != "ok" ]; then
+    echo "ERROR: the backup failed its integrity check (${INTEG:-no answer})." >&2
+    echo "       Refusing to upgrade: an unverified backup is not a way back." >&2
+    exit 1
+  fi
+  echo "==> Backup verified ($(du -h "$BK" | cut -f1), integrity ok)"
 else
   echo "==> No db at $DB yet (fresh install) - skipping backup"
 fi

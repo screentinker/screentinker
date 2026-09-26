@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+**The pre-upgrade database backup could never finish on a busy instance.** `upgrade.sh` used the
+sqlite3 shell's `.backup`, which copies every page in a single step while holding a read lock — so
+one write from the running server aborts it and it starts again at page one. On a 1.4 GB database
+with 33 displays heartbeating it ran at 94% CPU for over eight minutes with the destination frozen at
+1227 MB, printing nothing. ⚠️ **It fails by load, not by size**, so it passes every quiet-hour
+rehearsal: the nightly backup of that same database at 03:00 finishes in about 80 seconds, while the
+upgrade you run at lunchtime does not finish at all. And because there is no error and no progress,
+the obvious response is to kill it and skip the backup — losing the only way back, at exactly the
+moment you are about to need it.
+
+It uses `VACUUM INTO` now, which writes a fresh database from one read transaction and completes on a
+busy WAL database; the same 1.4 GB production database took under a minute. Older sqlite (before
+3.27) still falls back to `.backup`, chosen by **comparing the version** rather than by catching the
+failure — the first draft fell back on any error and announced "VACUUM INTO unavailable (sqlite3
+3.45.1)" when the real fault was an unreadable source file.
+
+⚠️ **The copy is compacted, so it is smaller than the source** (1405 MB → 1004 MB on that run). That
+is a complete database, not a truncated one. The upgrade now runs `PRAGMA integrity_check` on it and
+refuses to go any further if it does not answer `ok`, because an unverified backup is not a way back.
+
+`backup.sh` still uses `.backup` for the nightlies and has the same exposure.
+
 ## 2.2.1 (2026-09-26)
 
 ### Fixed
