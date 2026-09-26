@@ -94,10 +94,37 @@ if ! tar tzf "$OUT" | grep -qx '.env.example'; then
 fi
 echo "    clean ($(tar tzf "$OUT" | wc -l) files, .env.example present)"
 
-echo "==> Uploading APK + complete tarball to $TAG"
-gh release upload "$TAG" "$OUT" ScreenTinker.apk ScreenTinker.apk.version --clobber
+# ---------------------------------------------------------------------------
+# The Vega .vpkg. bump-version.sh already built it as a pre-tag guard (it refuses to tag a
+# package with no JS bundle), so on the machine that cut the tag it is sitting right here.
+#
+# ⚠️ IT LIVES IN A GITIGNORED DIRECTORY AND NOTHING EVER CLEARS IT. `vega/build/` survives a
+# checkout, a branch switch and a failed bump, so the file present is not necessarily THIS
+# release's - and a .vpkg for the previous version installs happily and then reports the wrong
+# version to the dashboard forever. Trust vpkg-info.json, not the filename or the mtime.
+VPKG_DIR=vega/build/armv7-release
+VPKG="$VPKG_DIR/screentinker-vega_armv7.vpkg"
+VPKG_INFO="$VPKG_DIR/vpkg-info.json"
+if [ ! -f "$VPKG" ]; then
+  echo "ERROR: $VPKG is missing, so $TAG would ship without the Vega package." >&2
+  echo "       bump-version.sh builds it when the SDK is present; if the tag was cut on a" >&2
+  echo "       machine without it, build it here and re-run:" >&2
+  echo "           source ~/vega/env && cd vega && npm run build:release" >&2
+  exit 1
+fi
+VPKG_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$VPKG_INFO" 2>/dev/null | head -1)"
+if [ "$VPKG_VERSION" != "$VERSION" ]; then
+  echo "ERROR: $VPKG declares version '${VPKG_VERSION:-<none>}', not $VERSION - it is a STALE build." >&2
+  echo "       Rebuild it, do not upload it:" >&2
+  echo "           source ~/vega/env && cd vega && npm run build:release" >&2
+  exit 1
+fi
+echo "==> Vega package OK: $(du -h "$VPKG" | cut -f1), declares $VPKG_VERSION"
 
-echo "==> Done: $TAG now carries the standalone APK and a tarball bundling apk + wgt."
+echo "==> Uploading APK + complete tarball + Vega package to $TAG"
+gh release upload "$TAG" "$OUT" ScreenTinker.apk ScreenTinker.apk.version "$VPKG" --clobber
+
+echo "==> Done: $TAG now carries the standalone APK, the Vega .vpkg and a tarball bundling apk + wgt."
 
 # ---------------------------------------------------------------------------
 # COMPLETENESS GATE. This is the last step of a release, so it is the right and
@@ -123,6 +150,7 @@ ScreenTinker.wgt
 ScreenTinker.ipk
 screentinker-$VERSION.tar.gz
 screentinker-sbom-$VERSION.cdx.json
+screentinker-vega_armv7.vpkg
 "
 echo "==> Checking $TAG carries every expected asset"
 PRESENT="$(gh release view "$TAG" --json assets -q '.assets[].name')"

@@ -89,6 +89,18 @@ test('vega: bump-version.sh stamps every copy of the version, and stages them', 
   }
 });
 
+test('vega: finalize-release.sh ships the .vpkg, and refuses a stale one', () => {
+  const fin = fs.readFileSync(path.join(ROOT, 'scripts/finalize-release.sh'), 'utf8');
+  // It must UPLOAD the package, not merely expect it: an EXPECTED entry nothing uploads turns
+  // every future finalize into a failure AFTER the APK has already gone up.
+  assert.match(fin, /gh release upload[^\n]*"\$VPKG"/, 'finalize must upload the .vpkg');
+  assert.match(fin, /screentinker-vega_armv7\.vpkg/);
+  // vega/build/ is gitignored and nothing ever clears it, so the file sitting there may belong to
+  // an older release. The version comes from vpkg-info.json, and a mismatch has to be fatal.
+  assert.match(fin, /vpkg-info\.json/);
+  assert.match(fin, /\[ "\$VPKG_VERSION" != "\$VERSION" \]/, 'finalize must compare the declared version');
+});
+
 test('the webOS and Tizen shells carry this release\'s version literal', () => {
   // Both builds stamp these from appinfo.json / config.xml, so a stale literal never reaches a
   // shipped package - it reaches the SOURCE TARBALL, and a test run rewrites it under you.
