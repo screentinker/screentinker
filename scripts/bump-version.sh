@@ -180,10 +180,23 @@ if [ -f "$HOME/vega/env" ]; then
     VPKG=build/armv7-release/screentinker-vega_armv7.vpkg
     # ⚠️ A .vpkg with no JS bundle still "builds" and still exits 0. Check for the bundle, not the
     # exit code — that empty 4.5 KB package is what installs and then does nothing on a stick.
-    if ! zstd -d -c "$VPKG" 2>/dev/null | tar tf - 2>/dev/null | grep -q "bundle/index.bundle"; then
-      echo "ERROR: $VPKG has no JS bundle - refusing to tag." >&2
-      exit 1
-    fi
+    #
+    # ⚠️ THE LISTING GOES INTO A VARIABLE, AND grep -q IS NOT USED. This guard's first version piped
+    # into `grep -q`, which stops reading the moment it matches — that closes the pipe, the upstream
+    # `tar` and `zstd` die on SIGPIPE, and under `set -o pipefail` (line 1 of this script) the whole
+    # pipeline reports failure. So it refused to tag a PERFECTLY GOOD package, every time, and the
+    # error it printed said the package had no JavaScript in it. A check that cannot tell "the thing
+    # is broken" from "I could not finish looking" is worse than no check: it blocks every release
+    # and points at the wrong thing while doing it.
+    VPKG_LIST="$(zstd -d -c "$VPKG" 2>/dev/null | tar tf - 2>/dev/null || true)"
+    case "$VPKG_LIST" in
+      *bundle/index.bundle*) : ;;
+      *)
+        echo "ERROR: $VPKG has no JS bundle - refusing to tag." >&2
+        echo "       (it listed ${VPKG_LIST:+$(printf '%s' "$VPKG_LIST" | wc -l) entries}${VPKG_LIST:-nothing at all - is zstd installed?})" >&2
+        exit 1
+        ;;
+    esac
     echo "  vega .vpkg OK: $(du -h "$VPKG" | cut -f1), build_number ${VEGA_BUILD_NUMBER}"
   ) || exit 1
 else
