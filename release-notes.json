@@ -14,6 +14,15 @@
   ],
   "releases": [
     {
+      "version": "2.2.3",
+      "date": "2026-09-26",
+      "notes": [
+        "Two short guides written for AI assistants are now published by the server: how to inspect and control your screens, and how to choose hardware and get a player onto it. Each is listed with a checksum so a client can verify it got the real thing.",
+        "There is also a machine-readable index of what this server offers an automated client, so an assistant can find the assistant endpoint, the API description and the authentication guide without being told where they are.",
+        "Nothing changed for people using the dashboard, and no screen needs updating."
+      ]
+    },
+    {
       "version": "2.2.2",
       "date": "2026-09-26",
       "notes": [
