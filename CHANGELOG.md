@@ -4,6 +4,21 @@
 
 ### Added
 
+**Every published page now names its Markdown twin in the document**, as
+`<link rel="alternate" type="text/markdown">`, not only in the `Link` header.
+
+⚠️ **This exists because a CDN defeats content negotiation.** The server has negotiated
+`Accept: text/markdown` since 2.2.0 and sends `Vary: Accept` — but Cloudflare ignores `Vary` for
+caching, for everything except `Accept-Encoding`. So one cached variant is served to every client: on
+a cache HIT, a request asking for Markdown gets 87 KB of HTML with a `200`, while the same request
+with a cache-buster gets the 18 KB Markdown from the origin. The cached body also carries whatever
+`Link` header it was stored with, which can predate the feature entirely.
+
+The in-document link is inside that cached body, so it survives, and it is what an HTML-parsing
+client looks for anyway. It is the only half of the problem the application controls — **the other
+half is a cache rule on the zone**, bypassing cache when `Accept` contains `text/markdown`.
+
+
 **Agent registration discovery: `auth.md` is served from the service root.** The convention puts that
 document at `/auth.md`; we published only `/.well-known/auth.md`, so anything following the standard
 asked for `/auth.md` and got the app shell — 200, `text/html`, 21 KB — and concluded the instance did

@@ -45,6 +45,28 @@ function fileFor(urlPath) {
 const urls = [...fs.readFileSync(SITEMAP, 'utf8').matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/g)]
   .map((m) => m[1].replace(/^https?:\/\/[^/]+/, ''));
 
+test('⚠️ every published page names its Markdown twin IN THE DOCUMENT', () => {
+  /*
+   * The server already negotiates `Accept: text/markdown` and advertises the rendition in a `Link`
+   * header. Neither survives a CDN: Cloudflare ignores `Vary` for caching (everything except
+   * Accept-Encoding), so one cached variant is served to every client — a request asking for
+   * Markdown gets the cached HTML body, and the cached body carries whatever `Link` header it was
+   * stored with, which may predate the feature.
+   *
+   * A <link rel="alternate"> inside the <head> is part of that body, so it survives the cache and
+   * is what an HTML-parsing agent looks for anyway. It is the only part of this we control.
+   */
+  for (const u of urls) {
+    const html = fs.readFileSync(fileFor(u), 'utf8');
+    const m = html.match(/<link rel="alternate" type="text\/markdown" href="([^"]+)">/);
+    assert.ok(m, `${u} does not name its Markdown twin`);
+    // And it must point at the URL the server actually serves: /foo.html -> /foo.md, / -> /index.md.
+    const expected = u === '/' ? '/index.md'
+      : (u.endsWith('/') ? `${u}index.md` : `${u.replace(/\.html$/, '')}.md`);
+    assert.equal(m[1], `https://screentinker.com${expected}`, `${u} points at the wrong rendition`);
+  }
+});
+
 test('the sitemap is not empty and every URL it advertises exists on disk', () => {
   assert.ok(urls.length > 0, 'sitemap.xml lists no URLs');
   for (const u of urls) {

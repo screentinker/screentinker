@@ -177,6 +177,9 @@ function render(data) {
   <meta name="keywords" content="certified hardware, digital signage hardware, signage player hardware, screentinker supported devices">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="${URL}">
+  <!-- The plain-text twin, named in the document as well as in the Link header: a CDN may serve a
+       cached HTML body to a request that asked for Markdown, and this survives inside that body. -->
+  <link rel="alternate" type="text/markdown" href="${URL.replace(/\.html$/, '')}.md">
 
   <meta property="og:type" content="article">
   <meta property="og:url" content="${URL}">
