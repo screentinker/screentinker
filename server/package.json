@@ -1,6 +1,6 @@
 {
   "name": "screentinker",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "license": "MIT",
   "description": "ScreenTinker - Digital Signage Management Server",
   "main": "server.js",
