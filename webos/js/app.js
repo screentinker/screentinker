@@ -15,7 +15,7 @@
  */
 (function () {
   'use strict';
-  var APP_VERSION_FALLBACK = '2.1.6';   // stamped from appinfo.json by build-ipk.sh
+  var APP_VERSION_FALLBACK = '2.2.0';   // stamped from appinfo.json by build-ipk.sh
   var KEY_SERVER = 'st_server_url';
   var KEY_UPDATE_TRIED = 'st_update_tried';
   var BACK_KEY = 461;                    // webOS remote "Back"

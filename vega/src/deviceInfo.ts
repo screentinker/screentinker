@@ -10,7 +10,7 @@
  * Every call is optional. A missing turbo module must not keep the player off the screen.
  */
 
-export const APP_VERSION = '2.1.6';
+export const APP_VERSION = '2.2.0';
 
 export type VegaIdentity = {
   model: string;
