@@ -14,6 +14,16 @@
   ],
   "releases": [
     {
+      "version": "2.2.1",
+      "date": "2026-09-26",
+      "notes": [
+        "Fixes for the new AI assistant support, all found by pointing an assistant at a real server and reading what came back. Nothing else changed, and no screen needs updating.",
+        "Asking an assistant about your media library returned items with no names, and searching it never matched anything. Both looked like an empty library rather than a fault, so the assistant would tell you there was nothing there.",
+        "Renaming a screen through an assistant sent back the screen's whole record, including its settings PIN. Nothing sensitive is sent to an assistant now, on any request.",
+        "Asking about a playlist sent back the playlist twice over, including an older published copy of it. An assistant could describe the last published version while you were asking about your unpublished changes."
+      ]
+    },
+    {
       "version": "2.2.0",
       "date": "2026-09-26",
       "notes": [
