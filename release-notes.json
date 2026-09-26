@@ -14,6 +14,16 @@
   ],
   "releases": [
     {
+      "version": "2.2.2",
+      "date": "2026-09-26",
+      "notes": [
+        "Upgrading is safer. The database backup taken before an upgrade could never finish on a busy server, because a single write from the running system made it start over. It now completes in under a minute, and the upgrade checks the backup and stops if it is not readable.",
+        "Automated clients can now find their way around on their own. The authentication guide is served where the standard expects it, there is a card describing the AI assistant endpoint, and every page names its plain-text version in the page itself.",
+        "A request refused for want of a token now says where to read about getting one, instead of leaving a client to guess.",
+        "Asking this server for something it does not publish now returns a proper not-found with a list of what it does publish, rather than quietly returning the web app."
+      ]
+    },
+    {
       "version": "2.2.1",
       "date": "2026-09-26",
       "notes": [
