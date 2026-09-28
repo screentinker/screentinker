@@ -1,8 +1,8 @@
 const heartbeat = require('../services/heartbeat');
-const { resolveSessionUser } = require('../middleware/auth');
+const { resolveSessionUser, isPlatformRole } = require('../middleware/auth');
 const { db } = require('../db/database');
 const { accessContext, accessibleWorkspaceIds } = require('../lib/tenancy');
-const { workspaceRoom } = require('../lib/socket-rooms');
+const { roomsForDashboard } = require('../lib/socket-rooms');
 const { protectSocket } = require('../lib/safe-socket');
 const playerCapabilities = require('../lib/player-capabilities');
 const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
@@ -77,9 +77,13 @@ module.exports = function setupDashboardSocket(io) {
     // window.location.reload() after switching, which forces a new socket
     // connection with fresh JWT claims. So workspace memberships are
     // re-evaluated at connect time and we don't need to re-evaluate per-emit.
+    // Platform roles additionally join the unclaimed-device room, so live events about a screen
+    // that has registered but not yet been paired reach the one operator allowed to see it,
+    // instead of being dropped for want of a room. See lib/socket-rooms UNCLAIMED_ROOM.
     const wsIds = accessibleWorkspaceIds(socket.userId, socket.userRole);
-    for (const wsId of wsIds) socket.join(workspaceRoom(wsId));
-    console.log(`Dashboard client connected: ${socket.id} (user: ${socket.userId}, rooms: ${wsIds.length})`);
+    const rooms = roomsForDashboard(wsIds, isPlatformRole(socket.userRole));
+    for (const room of rooms) socket.join(room);
+    console.log(`Dashboard client connected: ${socket.id} (user: ${socket.userId}, rooms: ${rooms.length})`);
 
     /*
      * The capability gate for the remote-view handlers.

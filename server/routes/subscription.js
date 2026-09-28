@@ -17,6 +17,42 @@ router.get('/me', requireAuth, (req, res) => {
   const deviceCount = getUserDeviceCount(req.user.id);
   const storageMB = getUserStorageMB(req.user.id);
 
+  /*
+   * ⚠️ getUserPlan RETURNS NULL FOR A CALLER WITH NO `users` ROW, and this route used to
+   * dereference it one line later (`plan.plan_id`).
+   *
+   * That caller is not hypothetical: a support session authenticates as `support:<jti>` and has
+   * no users row by design (the same reason dashboardSocket refuses break-glass identities), and
+   * so does a session whose account was deleted mid-flight. getUserPlan's own comment states the
+   * contract — null means "unrestricted", and checkDeviceAccess honours it — but this reader did
+   * not, so opening Subscription threw a TypeError.
+   *
+   * An unhandled throw in an API route reaches Express's DEFAULT error handler, which answers
+   * with an HTML error page. The dashboard's `r.json()` then dies on `Unexpected token '<',
+   * "<!DOCTYPE "... is not valid JSON` and the page reads "Failed to load" — so a null
+   * dereference is reported as a broken Subscription page, pointing nowhere near the cause.
+   * Seen on a customer's self-hosted instance on 2026-09-28 while signed in with a support token.
+   *
+   * Answering with the unrestricted shape rather than 404/500 keeps the contract in one place
+   * and keeps the page renderable: the view reads plan.display_name, plan.max_devices and
+   * usage.devices unconditionally, so `plan: null` would only move the same crash client-side.
+   */
+  if (!plan) {
+    return res.json({
+      plan: {
+        id: null, name: 'unbilled', display_name: 'Not billed',
+        max_devices: -1, max_storage_mb: -1,
+        remote_control: true, remote_url: true, priority_support: false,
+        price_monthly: 0, price_yearly: 0,
+      },
+      usage: { devices: deviceCount, devices_limit: -1, storage_mb: storageMB, storage_limit_mb: -1 },
+      subscription: { status: null, ends: null, stripe_customer_id: null, stripe_subscription_id: null },
+      trial: { active: false, days_left: 0, end: null, plan: null, expired_at: null },
+      self_hosted: config.selfHosted,
+      unbilled: true,   // this session has no billable account; the page says so rather than inventing one
+    });
+  }
+
   res.json({
     plan: {
       id: plan.plan_id,
