@@ -270,6 +270,10 @@ const SUPPORT_ID_PREFIX = 'support:';
  * customer generated) and time-boxed (12h by default, MAX_HOURS ceiling), and every grant is
  * recorded in support_grants.
  */
+function isSupportUserId(id) {
+  return typeof id === 'string' && id.startsWith(SUPPORT_ID_PREFIX);
+}
+
 function isSupportSession(user) {
   return !!user
     && user.auth_provider === 'support'
@@ -294,5 +298,5 @@ module.exports = {
   publicKey, signingKey, canIssue, _resetKeyCache,
   newRequestCode, normaliseRequestCode, createRequest, listOpenRequests, cancelRequest,
   issueToken, verifyToken, redeemToken,
-  grantActive, listActiveGrants, revokeGrant, revokeAllGrants, pruneExpired, supportUser, isSupportSession,
+  grantActive, listActiveGrants, revokeGrant, revokeAllGrants, pruneExpired, supportUser, isSupportSession, isSupportUserId,
 };

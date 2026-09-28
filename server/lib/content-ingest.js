@@ -12,6 +12,7 @@ const { db } = require('../db/database');
 const config = require('../config');
 const { cleanUserText } = require('../middleware/sanitize');
 const { videoDisplayDims, imageDisplayDims } = require('./media-orientation');
+const { isSupportUserId } = require('./support-access');
 const { digestFile } = require('./content-digest');
 const { finalizeUpload } = require('./upload-sniff');
 const htmlBundle = require('./html-bundle');
@@ -165,10 +166,29 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
   let digest = null;
   try { digest = await digestFile(path.join(config.contentDir, filepath)); } catch (e) { digest = null; }
 
+  /*
+   * ⚠️ content.user_id IS A FOREIGN KEY INTO users, AND A SUPPORT SESSION HAS NO users ROW.
+   *
+   * Binding `support:<jti>` here threw `FOREIGN KEY constraint failed` — but only at the very
+   * END of the upload, after every byte had been received, the file moved into contentDir and the
+   * thumbnail rendered. A 47 MB upload on a 2 Mbps link therefore transferred for three minutes
+   * and then vanished, leaving the media and its thumbnail orphaned on disk with no row pointing
+   * at them. The dashboard reported it only as a failed upload. Observed 2026-09-28.
+   *
+   * The column is nullable and workspace_id already carries the tenancy, so an upload made during
+   * a support session is recorded as belonging to the workspace with no owning account — which is
+   * true. It also keeps it out of getUserStorageMB, which sums by user_id: support bytes are not
+   * the customer's allowance.
+   *
+   * ⚠️ The same FK sits on playlists, content_folders, layouts, widgets and schedules, all of
+   * which bind req.user.id the same way and are NOT fixed here. See the PR for why.
+   */
+  const ownerUserId = isSupportUserId(userId) ? null : userId;
+
   db.prepare(`
     INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id, byte_digest, bundle_entry)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry);
+  `).run(id, ownerUserId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry);
 
   try {
     require('./plugins/hooks').emit('content.uploaded', {
