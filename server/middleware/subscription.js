@@ -1,5 +1,6 @@
 const { db } = require('../db/database');
 const config = require('../config');
+const { isSupportSession } = require('../lib/support-access');
 
 const TRIAL_DAYS = 14;
 
@@ -234,7 +235,22 @@ function storageRoomBytes(userId) {
 // Check if user can add more devices
 function checkDeviceLimit(req, res, next) {
   const plan = getUserPlan(req.user.id);
-  if (!plan) return res.status(403).json({ error: 'No plan found' });
+  if (!plan) {
+    /*
+     * A support session has no `users` row by design, so getUserPlan finds no plan and this
+     * refused it — `No plan found`, before a single byte was accepted. Reported from the field
+     * on 2026-09-28: signed in through a support token to reproduce a customer's playback
+     * problem, uploading content was impossible.
+     *
+     * Only a support session is let through, NOT every plan-less caller. getUserPlan returns null
+     * for two different situations and they deserve opposite answers: a session with no billable
+     * account (support), and a real user whose plan_id does not join a plans row — a data fault,
+     * where silently granting unlimited storage is the wrong repair. Support sessions are consent
+     * -gated, time-boxed and recorded in support_grants, so they are the narrow case.
+     */
+    if (isSupportSession(req.user)) return next();
+    return res.status(403).json({ error: 'No plan found' });
+  }
 
   // -1 means unlimited
   if (plan.max_devices === -1) return next();
@@ -255,7 +271,22 @@ function checkDeviceLimit(req, res, next) {
 // Check if user can upload more content
 function checkStorageLimit(req, res, next) {
   const plan = getUserPlan(req.user.id);
-  if (!plan) return res.status(403).json({ error: 'No plan found' });
+  if (!plan) {
+    /*
+     * A support session has no `users` row by design, so getUserPlan finds no plan and this
+     * refused it — `No plan found`, before a single byte was accepted. Reported from the field
+     * on 2026-09-28: signed in through a support token to reproduce a customer's playback
+     * problem, uploading content was impossible.
+     *
+     * Only a support session is let through, NOT every plan-less caller. getUserPlan returns null
+     * for two different situations and they deserve opposite answers: a session with no billable
+     * account (support), and a real user whose plan_id does not join a plans row — a data fault,
+     * where silently granting unlimited storage is the wrong repair. Support sessions are consent
+     * -gated, time-boxed and recorded in support_grants, so they are the narrow case.
+     */
+    if (isSupportSession(req.user)) return next();
+    return res.status(403).json({ error: 'No plan found' });
+  }
 
   // -1 means unlimited
   if (plan.max_storage_mb === -1) return next();

@@ -253,6 +253,30 @@ function pruneExpired(now = Math.floor(Date.now() / 1000), graceSec = 30 * 86400
 }
 
 /** The synthetic identity a support session runs as. Not a users row; see module comment. */
+// The id routes/auth.js mints for a redeemed token: `support:<jti>`. Named here so the check
+// below and the minting site cannot drift apart silently.
+const SUPPORT_ID_PREFIX = 'support:';
+
+/**
+ * Is this request authenticated by a redeemed support token, rather than by an account?
+ *
+ * Deliberately NOT "has no users row". A deleted account mid-flight also has no users row, and a
+ * plan lookup failing for a real user is a data fault that should keep refusing rather than
+ * silently become unlimited. This asks the narrow question instead: was this session minted by
+ * supportUser() below. Both halves are required — auth_provider alone could be set on a stored
+ * users row, and the `support:` id prefix is never a real account id (those are uuids).
+ *
+ * A session this returns true for is already consent-gated (it redeemed a request code the
+ * customer generated) and time-boxed (12h by default, MAX_HOURS ceiling), and every grant is
+ * recorded in support_grants.
+ */
+function isSupportSession(user) {
+  return !!user
+    && user.auth_provider === 'support'
+    && typeof user.id === 'string'
+    && user.id.startsWith(SUPPORT_ID_PREFIX);
+}
+
 function supportUser(decoded) {
   return {
     id: decoded.id,
@@ -270,5 +294,5 @@ module.exports = {
   publicKey, signingKey, canIssue, _resetKeyCache,
   newRequestCode, normaliseRequestCode, createRequest, listOpenRequests, cancelRequest,
   issueToken, verifyToken, redeemToken,
-  grantActive, listActiveGrants, revokeGrant, revokeAllGrants, pruneExpired, supportUser,
+  grantActive, listActiveGrants, revokeGrant, revokeAllGrants, pruneExpired, supportUser, isSupportSession,
 };
