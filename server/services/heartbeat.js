@@ -7,6 +7,7 @@ const statusLogWriter = require('../lib/status-log-writer');
 const { chunkedDelete, currentBand, yieldTick } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
 const { expireStrandedPlays } = require('../lib/play-backfill');
 const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player defer
+const playRollup = require('./play-rollup');      // proof-of-play aggregation; gates the raw prune
 const pluginHooks = require('../lib/plugins/hooks');
 
 const liveness = require('../lib/liveness'); // v4 core pass: server-derived 3-state liveness
@@ -144,8 +145,26 @@ function startHeartbeatChecker(io) {
 // #146: batched play-log prune (idx_play_logs_time), chunked so a 90-day backlog
 // trims across many bounded DELETEs instead of one large statement.
 const _delPlayLogs = db.prepare('DELETE FROM play_logs WHERE rowid IN (SELECT rowid FROM play_logs WHERE started_at < ? LIMIT ?)');
+
+/*
+ * ⚠️ THE CUTOFF COMES FROM services/play-rollup, NOT FROM RETENTION ALONE.
+ *
+ * Raw plays are the only copy until they have been aggregated into play_log_hourly, so this prune
+ * is only allowed below the rollup watermark. prunableBefore() returns the EARLIER of the
+ * retention cutoff and the last aggregated hour: if the rollup is behind — a long outage, a slow
+ * first pass over an adopted database, an exception in the sweep — the prune waits for it instead
+ * of deleting proof-of-play that was never counted.
+ *
+ * Ordering the calls in runMaintenance() is not sufficient on its own. A crash between them, or a
+ * later edit that reorders or conditionally skips the rollup, would silently destroy records; the
+ * watermark makes the guarantee checkable here, at the moment of deletion.
+ *
+ * The 90-day window itself is now config.playLogRetentionDays (PLAY_LOG_RETENTION_DAYS), matching
+ * device_events and event_loop_lag. It was the only retention in the system that was hardcoded.
+ */
 async function prunePlayLogs() {
-  const cutoff = Math.floor(Date.now() / 1000) - (90 * 86400);
+  const cutoff = playRollup.prunableBefore();
+  if (!(cutoff > 0)) return 0;   // nothing aggregated yet: never prune on the first boot
   return (await chunkedDelete((lim) => _delPlayLogs.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
 }
 
@@ -304,6 +323,10 @@ async function runMaintenance() {
   _maintRunning = true;
   try {
     await pruneProvisioningDevices();
+    // Aggregate before pruning. prunePlayLogs() enforces this independently via the watermark,
+    // so the ORDER here is an optimisation (prune the hours we just rolled up on the same pass),
+    // not the safety property.
+    try { playRollup.rollupOnce(); } catch (e) { console.warn(`[play-rollup] sweep failed: ${e && e.message}`); }
     await prunePlayLogs();
     await pruneStatusLog({ bandGate: true });   // per-device chunked; own re-entrancy
     await pruneTelemetryRetention({ bandGate: true });   // #240 device_telemetry age sweep (per-device chunked)

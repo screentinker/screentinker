@@ -340,6 +340,22 @@ module.exports = {
   // telemetry) delete in batches of this size, yielding to the event loop between
   // batches, so no sweep can block the loop regardless of table size. Keep well under
   // the ~50ms invariant per batch.
+  /*
+   * Raw proof-of-play retention. Was hardcoded `90 * 86400` in services/heartbeat, the only
+   * retention window in the system that could not be configured — device_events and
+   * event_loop_lag both read theirs from here.
+   *
+   * ⚠️ LOWERING THIS DESTROYS RAW ROWS, but not the proof-of-play record: services/play-rollup
+   * aggregates every hour into play_log_hourly BEFORE the prune is allowed past it, and reports
+   * read the aggregate for anything older than the raw floor. Raw is what you need for
+   * per-play debugging and exact device-local day boundaries; the rollup is what you need for
+   * "how many times did this play in August".
+   *
+   * Left at 90 on purpose while the rollup is proven against live reports. Measured on
+   * production 2026-09-29: 90 days of raw is ~3.4 GB at the current insert rate, 30 days is
+   * ~1.1 GB, and a YEAR of hourly rollups is ~108 MB.
+   */
+  playLogRetentionDays: parseFloat(process.env.PLAY_LOG_RETENTION_DAYS) || 90,
   statusLogPruneBatch: parseInt(process.env.STATUS_LOG_PRUNE_BATCH) || 2000,
   // #146 P1.3 kill switch: when false, interval maintenance runs regardless of loop-lag
   // band (disables the band-gate that skips maintenance while loaded). Startup prune is

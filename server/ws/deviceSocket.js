@@ -100,8 +100,9 @@ function takeOpenPlay(deviceId, contentId, widgetId) {
 const _insertBackfillPlay = db.prepare(`
   INSERT OR IGNORE INTO play_logs
     (device_id, content_id, widget_id, zone_id, content_name, started_at, ended_at,
-     duration_sec, completed, trigger_type, client_event_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'playlist', ?)
+     duration_sec, completed, trigger_type, client_event_id, workspace_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'playlist', ?,
+          (SELECT workspace_id FROM devices WHERE id = ?))
 `);
 
 /*
@@ -110,9 +111,19 @@ const _insertBackfillPlay = db.prepare(`
  * through an outage must be recorded at the time it happened, not the time the queue drained —
  * otherwise a day of proof-of-play collapses onto one second. A local socket passes Date.now().
  */
+/*
+ * ⚠️ workspace_id IS SNAPSHOTTED HERE, IN THE SAME STATEMENT, and must never be resolved later by
+ * joining devices. Where a play happened is a fact about the past. A reseller moving a display
+ * from one client's workspace to another's would otherwise rewrite history — the old plays start
+ * appearing in the new tenant's reports and disappear from the previous one's — and once
+ * services/play-rollup has aggregated and the raw rows are pruned, that is unrecoverable.
+ *
+ * A correlated subquery rather than a second round trip: this is the hot path (107k inserts/day
+ * measured on production) and the lookup is a covering hit on the devices primary key.
+ */
 const _insertPlay = db.prepare(`
-  INSERT INTO play_logs (device_id, content_id, widget_id, zone_id, content_name, started_at, trigger_type)
-  VALUES (?, ?, ?, ?, ?, ?, 'playlist')
+  INSERT INTO play_logs (device_id, content_id, widget_id, zone_id, content_name, started_at, trigger_type, workspace_id)
+  VALUES (?, ?, ?, ?, ?, ?, 'playlist', (SELECT workspace_id FROM devices WHERE id = ?))
 `);
 
 /* Close by rowid — the whole point of remembering it. */
@@ -1388,7 +1399,10 @@ const EVENT_APPLIERS = Object.freeze({
           const isWidget = (!explicitWidget && !isContent && content_id) ? !!widgetExists.get(content_id) : false;
           const wid = explicitWidget || (isWidget ? content_id : null);
           const cid = isContent ? content_id : null;
-          const info = _insertPlay.run(device_id, cid, wid, zone_id || null, content_name || 'Unknown', Math.floor(nowMs / 1000));
+          // device_id is bound TWICE: once as the column, once for the workspace snapshot subquery.
+          // (better-sqlite3 refuses positional .run() against ?1-style placeholders, so the
+          // parameter cannot simply be reused by number.)
+          const info = _insertPlay.run(device_id, cid, wid, zone_id || null, content_name || 'Unknown', Math.floor(nowMs / 1000), device_id);
           /*
            * ⚠️ #307: REMEMBER THE ROW WE JUST OPENED.
            *
@@ -1487,7 +1501,8 @@ const EVENT_APPLIERS = Object.freeze({
             p.ended_at,
             p.duration_sec,
             p.completed,
-            p.client_event_id
+            p.client_event_id,
+            device_id          // bound again for the workspace-snapshot subquery
           );
           written += info.changes;
         }
