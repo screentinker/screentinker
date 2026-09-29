@@ -591,9 +591,16 @@ class PlaylistController(
      */
     private val fault = PlaybackFault()
 
+    /*
+     * Set when the NEXT advance is caused by a fault rather than an item reaching its end, so the
+     * outgoing item's play_end can say so. Consumed and cleared by playCurrentItem() at the moment
+     * it emits, which is also what stops it leaking into a later, healthy advance.
+     */
+    private var advancingAfterFault = false
+
     fun onVideoFault() {
         when (fault.recovery(wallFollower, currentIndex, System.currentTimeMillis())) {
-            PlaybackFault.Recovery.ADVANCE -> next()
+            PlaybackFault.Recovery.ADVANCE -> { advancingAfterFault = true; next() }
             PlaybackFault.Recovery.REPLAY_CURRENT -> {
                 val item = currentItem ?: return
                 Log.w("PlaylistController", "video fault in follower/group mode — replaying ${item.filename} (index $currentIndex)")
@@ -667,7 +674,17 @@ class PlaylistController(
         // Proof-of-play (parity with the web player): close the outgoing item and open this one.
         // Wall followers don't log — the leader's single row represents the whole wall.
         if (!wallFollower) {
-            loggedItem?.let { prev -> if (prev !== item && prev.logPlay) onPlayLog?.invoke("play_end", prev, true) }
+            /*
+             * ⚠️ NOT a hardcoded `true`. This passed the literal true, so `completed` could not be
+             * false however badly playback went: a screen failing every item in ~2s wrote a perfect
+             * run of completed=1, duration_sec=0 rows and Reports showed 100% completion for
+             * content that never rendered a frame. See PlayEnd.
+             */
+            val completed = PlayEnd.completed(advancingAfterFault)
+            loggedItem?.let { prev -> if (prev !== item && prev.logPlay) onPlayLog?.invoke("play_end", prev, completed) }
+            // Cleared whether or not anything was emitted: a fault that advances onto an item with
+            // logPlay off must not leave the flag armed for the next healthy advance.
+            advancingAfterFault = false
             if (item.logPlay) onPlayLog?.invoke("play_start", item, false)
             loggedItem = if (item.logPlay) item else null
         }
