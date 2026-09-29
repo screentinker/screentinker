@@ -354,7 +354,7 @@ router.get('/uploads/:id', (req, res) => {
  * no multipart parse per chunk.
  */
 router.patch('/uploads/:id',
-  express.raw({ type: () => true, limit: uploadSession.CHUNK_SIZE * 2 }),
+  express.raw({ type: () => true, limit: uploadSession.MAX_CHUNK_BYTES }),
   (req, res) => {
     if (!uploadSessionGate(req, res)) return;
     const session = uploadSession.get(req.params.id, req.workspaceId);

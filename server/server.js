@@ -1119,39 +1119,7 @@ const rateLimits = new Map();
  * exhausted the limit for `/sso-only` — trading a bypass for a denial of service. Known shapes get
  * their own keys; everything else shares one, separate from all of them.
  */
-const LIMIT_PATH_SHAPES = [
-  [/^\/api\/auth\/oidc\/[^/]+\/(start|callback)$/, (m) => `/api/auth/oidc/:slug/${m[1]}`],
-  [/^\/api\/organizations\/sso-only\/removal-requests\/[^/]+\/[^/]+$/, () => '/api/organizations/sso-only/removal-requests/:id/:decision'],
-  [/^\/api\/organizations\/sso-only\/removal-requests$/, () => '/api/organizations/sso-only/removal-requests'],
-  [/^\/api\/organizations\/[^/]+\/sso-only\/removal-request\/[^/]+$/, () => '/api/organizations/:id/sso-only/removal-request/:id'],
-  [/^\/api\/organizations\/[^/]+\/sso-only\/removal-request$/, () => '/api/organizations/:id/sso-only/removal-request'],
-  [/^\/api\/organizations\/[^/]+\/sso-only$/, () => '/api/organizations/:id/sso-only'],
-  // The reset/target routes mint a bucket per TARGET without this, which is the same
-  // caller-chosen-segment defect, at the mount next door.
-  [/^\/api\/auth\/users\/[^/]+\/(.+)$/, (m) => `/api/auth/users/:id/${m[1]}`],
-  [/^\/api\/content\/[^/]+$/, () => '/api/content/:id'],
-  [/^\/api\/organizations\/[^/]+\/sso\/[^/]+\/domains\/[^/]+\/verify$/, () => '/api/organizations/:id/sso/:id/domains/:domain/verify'],
-  [/^\/api\/organizations\/[^/]+\/sso\/[^/]+\/test$/, () => '/api/organizations/:id/sso/:id/test'],
-  [/^\/api\/organizations\/[^/]+\/sso\/[^/]+$/, () => '/api/organizations/:id/sso/:id'],
-  [/^\/api\/organizations\/[^/]+\/sso$/, () => '/api/organizations/:id/sso'],
-  [/^\/api\/data-sources\/[^/]+\/refresh$/, () => '/api/data-sources/:id/refresh'],
-];
-
-function canonicalLimitPath(rawPath) {
-  const p = rawPath
-    .replace(/\/{2,}/g, '/')      // collapse doubled separators
-    .replace(/\/+$/, '')          // a trailing slash is the same endpoint
-    .toLowerCase()
-    || '/';
-  for (const [re, to] of LIMIT_PATH_SHAPES) {
-    const m = p.match(re);
-    if (m) return to(m);
-  }
-  // Unrecognised, but still under a mount whose ids are caller-chosen: one shared bucket, kept
-  // apart from every real endpoint so flooding it cannot starve them.
-  if (p.startsWith('/api/organizations/')) return '/api/organizations/:unmatched';
-  return p;
-}
+const { canonicalLimitPath } = require('./lib/limit-paths');
 
 function rateLimit(windowMs, maxRequests) {
   return (req, res, next) => {
@@ -1289,7 +1257,27 @@ app.use('/api/provision', rateLimit(60000, 5));
 // Rate limit expensive operations
 app.use('/api/status/export', rateLimit(60000, 5)); // 5 exports per minute
 app.use('/api/status/import', rateLimit(60000, 3)); // 3 imports per minute
-app.use('/api/content', rateLimit(60000, 30)); // 30 content operations per minute
+/*
+ * ⚠️ A CHUNKED UPLOAD IS MANY REQUESTS BY CONSTRUCTION, so it cannot share the general content
+ * budget. At the 1 MiB chunk size (lib/upload-session) a 500 MB file is ~500 PATCHes, and on a
+ * fast uplink those arrive well inside a minute — 30/min would refuse the upload partway through
+ * and the operator would see a transfer die for no visible reason.
+ *
+ * Raising it is not a hole: the bytes an IP can push are bounded by the session's declared size
+ * (the server refuses anything past it) and by express.raw's per-request cap, not by how many
+ * requests it takes to get there. What must stay tight is SESSION CREATION, which is the thing
+ * that actually allocates disk, and that keeps the 30/min budget below.
+ */
+const contentLimiter = rateLimit(60000, 30);           // 30 content operations per minute
+const uploadSessionLimiter = rateLimit(60000, 1200);   // chunk traffic for an already-open session
+app.use('/api/content', (req, res, next) => {
+  // Operations on an OPEN session (chunk PATCH, offset GET, DELETE, finalize) — never creation,
+  // which has no id segment and stays on the general budget.
+  const p = (req.originalUrl || req.url || '').split('?')[0].replace(/\/+$/, '');
+  return /^\/api\/content\/uploads\/[^/]+(\/finalize)?$/.test(p)
+    ? uploadSessionLimiter(req, res, next)
+    : contentLimiter(req, res, next);
+});
 
 // Subscription routes (mixed auth)
 app.use('/api/subscription', require('./routes/subscription'));

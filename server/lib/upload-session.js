@@ -27,14 +27,44 @@ const { db } = require('../db/database');
  */
 
 /**
- * ⚠️ 5 MiB, AND IT IS SIZED FOR THE WORST LINK RATHER THAN THE AVERAGE.
+ * ⚠️ 1 MiB, AND IT IS SIZED FOR THE WORST LINK RATHER THAN THE AVERAGE.
  *
- * The average link never had this bug. On the ~4 Mbps uplink that produced the failures above, a
- * 5 MiB chunk takes about ten seconds — a twelvefold margin against the 125s ceiling. At 1 Mbps it
- * is forty seconds, still threefold. Larger chunks would mean fewer round trips on a fast
- * connection and a return to the exact cliff this replaces on a slow one.
+ * The average link never had this bug. Sized against the 125s ceiling described above:
+ *
+ *     link        5 MiB (was)      1 MiB (now)
+ *     4 Mbps      ~10s             ~2s
+ *     1 Mbps      ~40s             ~8s
+ *     0.3 Mbps    ~133s  FAILS     ~27s
+ *
+ * The old size did not merely have a thin margin on a slow link, it went straight through the
+ * ceiling: a 0.3 Mbps uplink could not transfer a single 5 MiB chunk inside 125 seconds, so the
+ * upload could never progress at all. A chunk has to fit the worst link that must work, not the
+ * one that usually does.
+ *
+ * ⚠️ AND THE SECOND REASON IS THAT A CHUNK IS THE UNIT OF VISIBLE PROGRESS. The client can only
+ * report what the server has confirmed, so the bar moves once per chunk and never between. At
+ * 5 MiB on a 2 Mbps link that is one movement every twenty seconds, and an operator uploading a
+ * 47 MB file watched it sit on 0% while 10 MB had in fact landed. Reported twice as "stuck", once
+ * causing a rollback to 2.1.0. At 1 MiB the same upload moves every four seconds.
+ *
+ * ⚠️ SMALLER CHUNKS MEAN MORE REQUESTS, WHICH IS WHY THIS COULD NOT BE CHANGED ALONE. Chunk PATCHes
+ * are rate limited; at this size a large file on a fast link sends far more of them per minute
+ * than the general content limit allows, so server.js gives the session endpoints their own
+ * budget. Lowering this without that change trades a slow-link failure for a fast-link one.
  */
-const CHUNK_SIZE = 5 * 1024 * 1024;
+const CHUNK_SIZE = 1024 * 1024;
+
+/**
+ * ⚠️ THE LARGEST CHUNK THE SERVER WILL ACCEPT, WHICH IS NOT THE SAME NUMBER AS CHUNK_SIZE.
+ *
+ * A browser caches the dashboard's JavaScript. The moment CHUNK_SIZE shrinks, every tab still
+ * holding the previous bundle carries on sending the OLD size — so a body cap derived from the new
+ * CHUNK_SIZE would 413 those uploads the instant the server restarted, for as long as the stale
+ * bundle lived. The append handler does not care how big a chunk is (it writes at the offset it is
+ * given), so the cap exists only to bound a single request's memory. Keeping it comfortably above
+ * any size previously shipped (5 MiB) makes a chunk-size change a server-only decision.
+ */
+const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 
 /** Sessions idle this long are collectable. Long enough that a stalled-but-alive client recovers. */
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -214,7 +244,7 @@ function startSweep(intervalMs = 60 * 60 * 1000) {
 function stopSweep() { if (_sweepTimer) { clearInterval(_sweepTimer); _sweepTimer = null; } }
 
 module.exports = {
-  CHUNK_SIZE, SESSION_TTL_MS,
+  CHUNK_SIZE, MAX_CHUNK_BYTES, SESSION_TTL_MS,
   create, get, append, offsetOf, isComplete, stageForIngest, discard, forget,
   sweep, startSweep, stopSweep, incomingDir, partPath,
 };

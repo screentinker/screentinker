@@ -141,7 +141,12 @@ export async function uploadFileResumable(file, opts = {}) {
   onProgress(offset, file.size);
 
   // 3. Send the rest, one chunk at a time.
-  const chunkSize = session.chunk_size || 5 * 1024 * 1024;
+  /*
+   * The SERVER dictates the chunk size (lib/upload-session CHUNK_SIZE) and this is only the
+   * fallback for a response that somehow omitted it. Kept equal to the server's value: a fallback
+   * that disagrees would silently produce chunks the server rejects at a 409 on every request.
+   */
+  const chunkSize = session.chunk_size || 1024 * 1024;
   while (offset < file.size) {
     if (signal && signal.aborted) throw Object.assign(new Error('cancelled'), { cancelled: true });
 
