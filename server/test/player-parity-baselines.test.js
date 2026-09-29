@@ -313,6 +313,8 @@ test('no baseline claims anything that needs a host bridge or a privilege grant'
   const CONDITIONAL = [
     'system.kiosk', 'system.brightness', 'system.screen_timeout', 'system.install_apk',
     'system.shell', 'system.time', 'system.device_owner', 'sync.native', 'display.resolution',
+    // An interactive root-capable terminal is the most conditional capability there is.
+    'system.pty',
   ];
   for (const [family, list] of Object.entries(caps.BASELINE)) {
     for (const c of CONDITIONAL) {

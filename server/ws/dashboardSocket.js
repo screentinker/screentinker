@@ -14,6 +14,7 @@ const bsDeviceSocketRef = require('./deviceSocket');
 const go2rtc = require('../lib/go2rtc');
 const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
 const appConfig = require('../config');
+const ptyRelay = require('../lib/pty-relay');   // interactive terminal (system.pty) — one socket, never a room
 
 // Phase 2.3: workspace-scoped socket rooms + per-command permission gates.
 // Replaces the previous flat dashboardNs.emit broadcast (which leaked every
@@ -44,6 +45,14 @@ function canActOnDevice(socket, deviceId, tier /* 'read' | 'write' */) {
 module.exports = function setupDashboardSocket(io) {
   const dashboardNs = io.of('/dashboard');
   const deviceNs = io.of('/device');
+  /*
+   * The PTY relay authorises an open with EXACTLY the gate a `shell` command passes through below:
+   * write tier on the device's workspace (canActOnDevice). A PTY is at least as powerful as a
+   * one-shot shell, so it must never be reachable by anyone the shell command would refuse.
+   */
+  ptyRelay.bind(io);
+  ptyRelay.setAuthorizer((socket, deviceId) => canActOnDevice(socket, deviceId, 'write'));
+  const pty = ptyRelay.relay();
 
   dashboardNs.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -399,7 +408,19 @@ module.exports = function setupDashboardSocket(io) {
       }
     });
 
+    /*
+     * Interactive terminal. Every rule — authorisation, the system.pty gate, session ownership in
+     * both directions, the caps, idle timeout, audit — lives in lib/pty-relay.js so the device half
+     * (ws/deviceSocket.js) enforces the same ones. The ack is optional, like the remote handlers.
+     */
+    socket.on('dashboard:pty-open', (data, ack) => { pty.open(socket, data || {}, ack); });
+    socket.on('dashboard:pty-input', (data) => { pty.input(socket, data || {}); });
+    socket.on('dashboard:pty-resize', (data) => { pty.resize(socket, data || {}); });
+    socket.on('dashboard:pty-close', (data) => { pty.close(socket, data || {}); });
+
     socket.on('disconnect', () => {
+      // A closed tab must not leave a shell running on the screen that nobody can see or close.
+      pty.dashboardGone(socket);
       console.log(`Dashboard client disconnected: ${socket.id}`);
       // Stop any remote screenshot streams this socket left running (tab closed / navigated away),
       // so the device isn't left capturing forever.

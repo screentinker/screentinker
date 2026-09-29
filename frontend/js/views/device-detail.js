@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish, startTalk, stopTalk } from '../socket.js';
+import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish, startTalk, stopTalk, ptyOpen, ptyInput, ptyResize, ptyClose } from '../socket.js';
 import { TalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge, hydrateAuthImages, screenshotUrl } from '../utils.js';
@@ -190,6 +190,9 @@ let screenshotHandler = null;
 let playbackHandler = null;
 let logHandler = null;
 let shellHandler = null;
+// Interactive terminal (system.pty): the live xterm.js instance, its session and its socket listeners,
+// kept at module scope so leaving the page (cleanup()) can close the session on the device.
+let ptyState = null;
 let diagPollTimer = null; // polls a diag-smoothness widget's reported frame stats while the page is open
 let screenshotInterval = null;
 let liveViewer = null;        // #go2rtc WebRTC viewer for the Now Playing tile
@@ -285,6 +288,8 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', () => {
     if (remoteActive && currentDevice) { remoteActive = false; try { stopRemote(currentDevice.id); } catch (e) {} }
     if (talkClient && currentDevice) { try { stopTalkSession(currentDevice.id); } catch (e) {} }
+    // An interactive terminal is a shell on the screen; closing the tab must close it there too.
+    try { teardownPty(true); } catch (e) {}
   });
 }
 
@@ -302,6 +307,37 @@ const TERMINAL_PRESETS = [
   { label: '3rd-party apps', cmd: 'pm list packages -3 2>/dev/null | sed s/package:// | head -40 || echo "pm list denied at app uid"' },
   { label: 'Props', cmd: 'getprop | grep -iE "model|version.release|serialno|wifi.interface|timezone"' },
   { label: 'Whoami', cmd: 'id' },
+];
+
+// The same idea for the native Raspberry Pi / Linux player. Read-only diagnostics that are safe to
+// run as the player's service user; anything needing root is for Interactive mode, where sudo can
+// actually prompt.
+const LINUX_TERMINAL_PRESETS = [
+  { label: 'System', cmd: 'uname -a; cat /etc/os-release 2>/dev/null | head -2' },
+  { label: 'Model', cmd: 'tr -d "\\0" < /proc/device-tree/model 2>/dev/null; echo' },
+  { label: 'SoC temp', cmd: 'vcgencmd measure_temp 2>/dev/null || cat /sys/class/thermal/thermal_zone0/temp' },
+  { label: 'Throttled', cmd: 'vcgencmd get_throttled 2>/dev/null || echo "vcgencmd not available"' },
+  { label: 'Storage', cmd: 'df -h' },
+  { label: 'Memory', cmd: 'free -m' },
+  { label: 'Network', cmd: 'ip -br a' },
+  { label: 'Uptime', cmd: 'uptime' },
+  { label: 'Player status', cmd: 'systemctl status screentinker-pi --no-pager' },
+  { label: 'Player log', cmd: 'journalctl -u screentinker-pi -n 50 --no-pager' },
+  { label: 'Whoami', cmd: 'id' },
+];
+
+// The native Windows player: its one-shot shell is PowerShell (`powershell -NoProfile -Command`), run
+// as the signed-in player user. Read-only diagnostics only; anything needing elevation is not
+// reachable from here at all (the SYSTEM helper takes a fixed verb list, not commands).
+const WINDOWS_TERMINAL_PRESETS = [
+  { label: 'System', cmd: 'Get-ComputerInfo | Select-Object WindowsProductName,OsBuildNumber,CsModel' },
+  { label: 'Memory', cmd: 'Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory,TotalVisibleMemorySize' },
+  { label: 'Storage', cmd: 'Get-PSDrive C' },
+  { label: 'Network', cmd: 'Get-NetIPAddress -AddressFamily IPv4 | Select InterfaceAlias,IPAddress' },
+  { label: 'Helper service', cmd: 'Get-Service ScreenTinkerHelper' },
+  { label: 'Player process', cmd: 'Get-Process ScreenTinker*' },
+  { label: 'Player events', cmd: "Get-WinEvent -LogName Application -MaxEvents 30 | ? ProviderName -like '*ScreenTinker*'" },
+  { label: 'Whoami', cmd: 'whoami /all' },
 ];
 
 function formatBytes(mb) {
@@ -406,9 +442,48 @@ function isAndroidDevice(device) {
   // Second, independent signal for a Tizen TV: the .wgt player sends client_type 'wgt'. `platform`
   // is the primary key, but it lives in a column an older client's register could overwrite.
   if (device.client_type === 'wgt') return false;
+  // The native Raspberry Pi player. Before the android_version fallback for the same reason the
+  // server puts 'linux' there: that fallback claims ANY non-Web android_version, and a Pi build that
+  // ever reported an OS string in it would be offered MediaProjection and device-owner provisioning.
+  // Inlined rather than calling isLinuxDevice(): device-controls-hidden.test.js evals this function
+  // on its own to pin the precedence, and a call to a sibling would be a ReferenceError there.
+  if (device.client_type === 'pi' || platform.startsWith('linux/')) return false;
+  // The native Windows player, same reasoning and same inlining (see isWindowsDevice below).
+  if (device.client_type === 'win' || platform.startsWith('windows/')) return false;
   if (device.client_type === 'apk') return true;
   const av = String(device.android_version || '');
   return av !== '' && !av.startsWith('Web/');
+}
+
+// Mirrors the 'linux' arm of platformFamily() in server/lib/player-capabilities.js: the native
+// Raspberry Pi player registers client_type 'pi' and platform 'Linux/<distro> (<model>)'. Either
+// signal is enough. NOT the Chromium-kiosk web player on a Pi, which is a browser and says so.
+function isLinuxDevice(device) {
+  if (!device) return false;
+  if (device.client_type === 'pi') return true;
+  return String(device.platform || '').toLowerCase().startsWith('linux/');
+}
+
+// Mirrors the 'windows' arm of platformFamily(): the native Windows player registers client_type
+// 'win' and platform 'Windows/<edition> (<model>)'. NOT the kiosk-browser shortcut from
+// windows-setup.bat, which is a browser and says so.
+function isWindowsDevice(device) {
+  if (!device) return false;
+  if (device.client_type === 'win') return true;
+  return String(device.platform || '').toLowerCase().startsWith('windows/');
+}
+
+// Either native player (the shared Python/Qt engine): what they have in common is that they are not
+// Android, have no device-owner tier, and carry an on-device settings menu behind the PIN.
+function isNativeDevice(device) {
+  return isLinuxDevice(device) || isWindowsDevice(device);
+}
+
+// The one-shot shell's presets and wording, per native OS. Android keeps TERMINAL_PRESETS.
+function terminalPresets(device) {
+  if (isWindowsDevice(device)) return WINDOWS_TERMINAL_PRESETS;
+  if (isLinuxDevice(device)) return LINUX_TERMINAL_PRESETS;
+  return TERMINAL_PRESETS;
 }
 
 export function render(container, deviceId) {
@@ -564,7 +639,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ${can('remote.talk') ? `<button class="btn btn-secondary btn-sm" id="start2wayBtn">🎙️ ${t('device.talk.two_way')}</button>` : ''}
           <button class="btn btn-danger btn-sm" id="stopTalkBtn" style="display:none">${t('device.talk.stop')}</button>
           <button class="btn btn-secondary btn-sm" id="muteTalkBtn" style="display:none">${t('device.talk.mute')}</button>` : ''}
-          ${device.android_version && !device.android_version.startsWith('Web/') ? `
+          ${device.android_version && !device.android_version.startsWith('Web/') && !isNativeDevice(device) ? `
           <button class="btn btn-secondary btn-sm" id="deviceOwnerBtn" title="${t('device.owner_provision.tip')}">${t('device.owner_provision.btn')}</button>` : ''}
           <button class="btn btn-secondary btn-sm" id="blockDeviceBtn">${device.blocked ? 'Unblock' : 'Block'}</button>
           <button class="btn btn-danger btn-sm" id="deleteDeviceBtn">${t('device.remove')}</button>
@@ -574,14 +649,19 @@ async function loadDevice(deviceId, activeTab = null) {
       ${/* tier===2 is kept alongside the capability: it is already an accurate RUNTIME signal from
             the panel, and a device-owner display that has not yet shipped a capability declaration
             would otherwise lose these buttons the day this deploys. */
-        (device.tier === 2 || can('system.device_owner')) ? `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 0 4px" title="${t('device.tier2.tip')}">
-        <span style="font-size:12px;color:var(--text-muted)">${t('device.tier2.label')}</span>
-        <button class="btn btn-secondary btn-sm" id="t2Reboot">${t('device.tier2.reboot')}</button>
+        /* system.kiosk opens the row too: COMMAND_CAPABILITY accepts it for lock_now / power_menu,
+           and it is how a Linux player that runs its own kiosk session gets these controls without
+           claiming to be an Android device owner. Each button is gated on what it sends. */
+        (device.tier === 2 || can('system.device_owner') || can('system.kiosk')) ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 0 4px" title="${isNativeDevice(device) ? t('device.tier2.tip_linux') : t('device.tier2.tip')}">
+        <span style="font-size:12px;color:var(--text-muted)">${isNativeDevice(device) ? t('device.tier2.label_linux') : t('device.tier2.label')}</span>
+        ${(device.tier === 2 || can('system.reboot')) ? `
+        <button class="btn btn-secondary btn-sm" id="t2Reboot">${t('device.tier2.reboot')}</button>` : ''}
         <button class="btn btn-secondary btn-sm" id="t2Lock">${t('device.tier2.lock')}</button>
         ${(device.tier === 2 || can('system.kiosk')) ? `
         <button class="btn btn-secondary btn-sm" id="t2KioskOn">${t('device.tier2.kiosk_on')}</button>
         <button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>` : ''}
+        <button class="btn btn-secondary btn-sm" id="t2PowerMenu">${t('device.tier2.power_menu')}</button>
       </div>` : ''}
 
       <!-- Step 4 sends you to this page to assign a playlist. Losing the checklist on arrival is
@@ -594,7 +674,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <div class="tab" data-tab="info">${t('device.tab.info')} <span class="help-tip" data-tip="${t('device.tab.info_tip')}">?</span></div>
         ${(can('remote.stream') || can('remote.input') || can('remote.screenshot')) ? `<div class="tab" data-tab="remote">${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>` : ''}
         ${(can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) ? `<div class="tab" data-tab="controls">${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
-        ${device.tier === 2 ? `<div class="tab" data-tab="terminal">${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
+        ${(device.tier === 2 || can('system.shell') || can('system.pty')) ? `<div class="tab" data-tab="terminal">${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
         <!--
           #313 — only for a display that actually HAS an enrolment key, i.e. one created for a
           player that cannot stay paired. Every other display keeps its own credentials and would
@@ -798,7 +878,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ` : `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.player_type')}</div>
-            <div class="info-card-value small">${isBrightSignDevice(device) ? t('device.info.brightsign_player') : t('device.info.web_player')}</div>
+            <div class="info-card-value small">${isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : t('device.info.web_player')}</div>
           </div>
           ${device.hardware_model ? `
           <div class="info-card">
@@ -871,7 +951,7 @@ async function loadDevice(deviceId, activeTab = null) {
               ${device.edid.checksumValid === false ? `<br><span style="color:var(--warning,#f59e0b)">${t('device.info.edid_checksum_bad')}</span>` : ''}
             </div>
           </div>` : ''}
-          ${device.android_version && !device.android_version.startsWith('Web/') ? `
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || (isNativeDevice(device) && latestTelemetry.wifi_rssi != null) ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.wifi')}</div>
             <!-- ⚠️ The network NAME is deliberately gone (Phase −1). An SSID is geolocatable
@@ -898,11 +978,16 @@ async function loadDevice(deviceId, activeTab = null) {
             ${device.client_version && device.client_version !== device.app_version ? `
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(device.client_version)}</div>` : ''}
           </div>
+          <!-- The Linux player sends android_version '' (it is not Android), so it never reaches the
+               Android arm; its OS and model are on the hardware_os_version / hardware_model cards
+               above. It DOES have an on-device settings menu behind the same PIN, so the PIN card
+               is rendered for it too. -->
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || isNativeDevice(device) ? `
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.android_version')}</div>
             <div class="info-card-value small">${device.android_version}</div>
-          </div>
+          </div>` : ''}
           <div class="info-card">
             <div class="info-card-label">${t('device.info.settings_pin')}</div>
             <div class="info-card-value small" style="font-family:monospace;letter-spacing:1px">${device.settings_pin || '--'}</div>
@@ -1227,27 +1312,52 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
       </div>` : ''}
 
-      ${device.tier === 2 ? `
-      <!-- Terminal Tab (device owner) -->
+      ${(device.tier === 2 || can('system.shell') || can('system.pty')) ? `
+      <!-- Terminal Tab. Android: the device-owner app-UID shell (tier 2). Linux: a one-shot shell
+           (system.shell) and, where the player declares system.pty, an Interactive mode that is a
+           real PTY relayed by server/lib/pty-relay.js into xterm.js. Each half is gated on its own
+           capability, so a player may offer either without the other. -->
       <div class="tab-content" id="tab-terminal">
-        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
-          ${TERMINAL_PRESETS.map(p => `<button class="btn btn-secondary btn-sm term-preset" data-cmd="${esc(p.cmd)}" title="${esc(p.cmd)}">${esc(p.label)}</button>`).join('')}
-        </div>
-        <div id="termOut" style="background:#0b1020;color:#c8e1ff;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;padding:12px;border-radius:8px;height:360px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border)">${t('device.terminal.welcome')}\n</div>
-        <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
-          <span style="color:var(--success);font-family:monospace;font-weight:700">$</span>
-          <input id="termCmd" class="input" style="flex:1;font-family:monospace;font-size:13px" placeholder="${t('device.terminal.placeholder')}" autocomplete="off" spellcheck="false"/>
-          <button class="btn btn-primary btn-sm" id="termRun">${t('device.terminal.run')}</button>
-          <button class="btn btn-secondary btn-sm" id="termClear">${t('device.terminal.clear')}</button>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${t('device.terminal.uid_note')}</div>
+        ${can('system.pty') && (device.tier === 2 || can('system.shell')) ? `
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <button class="btn btn-primary btn-sm" id="termModeOneshot">${t('device.terminal.mode_oneshot')}</button>
+          <button class="btn btn-secondary btn-sm" id="termModeInteractive">${t('device.terminal.mode_interactive')}</button>
+        </div>` : ''}
+        ${(device.tier === 2 || can('system.shell')) ? `
+        <div id="termOneshot">
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
+            ${terminalPresets(device).map(p => `<button class="btn btn-secondary btn-sm term-preset" data-cmd="${esc(p.cmd)}" title="${esc(p.cmd)}">${esc(p.label)}</button>`).join('')}
+          </div>
+          <div id="termOut" style="background:#0b1020;color:#c8e1ff;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;padding:12px;border-radius:8px;height:360px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border)">${isWindowsDevice(device) ? t('device.terminal.welcome_windows') : isLinuxDevice(device) ? t('device.terminal.welcome_linux') : t('device.terminal.welcome')}\n</div>
+          <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+            <span style="color:var(--success);font-family:monospace;font-weight:700">$</span>
+            <input id="termCmd" class="input" style="flex:1;font-family:monospace;font-size:13px" placeholder="${isWindowsDevice(device) ? t('device.terminal.placeholder_windows') : isLinuxDevice(device) ? t('device.terminal.placeholder_linux') : t('device.terminal.placeholder')}" autocomplete="off" spellcheck="false"/>
+            <button class="btn btn-primary btn-sm" id="termRun">${t('device.terminal.run')}</button>
+            <button class="btn btn-secondary btn-sm" id="termClear">${t('device.terminal.clear')}</button>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${isWindowsDevice(device) ? t('device.terminal.uid_note_windows') : isLinuxDevice(device) ? t('device.terminal.uid_note_linux') : t('device.terminal.uid_note')}</div>
+        </div>` : ''}
+        ${can('system.pty') ? `
+        <div id="termInteractive" style="display:${(device.tier === 2 || can('system.shell')) ? 'none' : 'block'}">
+          <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+            <button class="btn btn-primary btn-sm" id="ptyConnect">${t('device.terminal.pty_connect')}</button>
+            <button class="btn btn-secondary btn-sm" id="ptyDisconnect" disabled>${t('device.terminal.pty_disconnect')}</button>
+            <span id="ptyStatus" style="font-size:11px;color:var(--text-muted)"></span>
+          </div>
+          <div id="ptyHost" style="background:#0b1020;border-radius:8px;height:420px;padding:6px;border:1px solid var(--border);overflow:hidden"></div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${t('device.terminal.pty_hint')}</div>
+        </div>` : ''}
+        ${(device.tier === 2 || can('system.install_apk')) ? `
         <hr style="border-color:var(--border);margin:14px 0 10px">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${t('device.terminal.push_apk')}</div>
+        <!-- Same install_apk command on every platform; a Linux player hands the URL to dpkg and a
+             Windows player to its helper service, so the field names the package type each accepts
+             rather than inviting an APK it would refuse. -->
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${isWindowsDevice(device) ? t('device.terminal.push_exe') : isLinuxDevice(device) ? t('device.terminal.push_deb') : t('device.terminal.push_apk')}</div>
         <div style="display:flex;gap:6px">
-          <input id="apkUrl" class="input" placeholder="${t('device.owner_tools.apk_ph')}" style="flex:1;font-size:12px"/>
-          <button class="btn btn-secondary btn-sm" id="apkInstall">${t('device.owner_tools.install')}</button>
+          <input id="apkUrl" class="input" placeholder="${isWindowsDevice(device) ? t('device.terminal.exe_ph') : isLinuxDevice(device) ? t('device.terminal.deb_ph') : t('device.owner_tools.apk_ph')}" style="flex:1;font-size:12px"/>
+          <button class="btn btn-secondary btn-sm" id="apkInstall">${isNativeDevice(device) ? t('device.terminal.deb_install') : t('device.owner_tools.install')}</button>
         </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${t('device.terminal.push_apk_hint')}</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${isWindowsDevice(device) ? t('device.terminal.push_exe_hint') : isLinuxDevice(device) ? t('device.terminal.push_deb_hint') : t('device.terminal.push_apk_hint')}</div>` : ''}
       </div>` : ''}
     `;
     // If this device is assigned the smoothness-diagnostic widget, poll THIS device's reported stats.
@@ -1279,8 +1389,10 @@ async function loadDevice(deviceId, activeTab = null) {
       }, 5000);
     };
 
-    // #161 device-owner Terminal tab (tier 2 only): a real scrollback shell + preset commands + push-APK.
-    if (device.tier === 2) {
+    // Terminal tab: #161 device-owner shell on Android (tier 2), or the Linux player's one-shot shell
+    // (system.shell), plus push-a-package; and the Interactive PTY where system.pty is declared.
+    const native = isNativeDevice(device);
+    if (device.tier === 2 || can('system.shell') || can('system.install_apk')) {
       const termOut = document.getElementById('termOut');
       const append = (text) => { if (!termOut) return; termOut.textContent += text; termOut.scrollTop = termOut.scrollHeight; };
       const runCmd = (cmd) => { if (!cmd) return; append('\n$ ' + cmd + '\n'); sendCommand(device.id, 'shell', { cmd }); };
@@ -1293,9 +1405,11 @@ async function loadDevice(deviceId, activeTab = null) {
         const url = document.getElementById('apkUrl')?.value?.trim();
         if (!url) return;
         if (!/^https?:\/\//.test(url)) { showToast(t('device.owner_tools.bad_url'), 'error'); return; }
+        // Same command on every platform: a Linux player routes install_apk to dpkg, a Windows player
+        // to the SYSTEM helper's `install` verb (which verifies the sha256 itself).
         sendCommand(device.id, 'install_apk', { url });
-        append('\n# push apk → ' + url + '  (installs silently on a device owner)\n');
-        showToast(t('device.owner_tools.apk_sent'), 'success');
+        append(native ? '\n# install package → ' + url + '\n' : '\n# push apk → ' + url + '  (installs silently on a device owner)\n');
+        showToast(native ? t('device.terminal.deb_sent') : t('device.owner_tools.apk_sent'), 'success');
       });
       if (shellHandler) off('shell-result', shellHandler);
       shellHandler = (data) => {
@@ -1304,6 +1418,7 @@ async function loadDevice(deviceId, activeTab = null) {
       };
       on('shell-result', shellHandler);
     }
+    if (can('system.pty')) setupInteractiveTerminal(device);
 
     // Render uptime timeline
     renderUptimeTimeline(device.uptimeData || [], device.statusLog || []);
@@ -1632,6 +1747,158 @@ function setupEnrolKey(device) {
   }
 
   draw();
+}
+
+/*
+ * Interactive terminal (system.pty) — xterm.js on a PTY that the player spawns, relayed through
+ * server/lib/pty-relay.js. The server never interprets the bytes; this side only turns keystrokes
+ * into base64 frames and base64 frames back into bytes for xterm.
+ *
+ * xterm.js is vendored (frontend/vendor/xterm, MIT) and imported lazily on the first Connect, so the
+ * ~340 KB never loads for an operator who does not open a terminal. Loaded as ES modules from 'self',
+ * which the dashboard CSP already allows — no inline script, no CDN.
+ *
+ * ⚠️ One session per tab and per page render. loadDevice() re-renders the whole view (rename, assign
+ * a playlist…), which throws the terminal's DOM away; the session is closed on the device rather than
+ * left running behind a terminal nobody can see. The server enforces the same on socket loss.
+ */
+const PTY_CHUNK_BYTES = 32 * 1024;   // raw bytes per frame; base64 grows it to ~43 KiB, under the relay's 64 KiB cap
+let xtermModules = null;
+
+async function loadXterm() {
+  if (xtermModules) return xtermModules;
+  if (!document.getElementById('xtermCss')) {
+    const link = document.createElement('link');
+    link.id = 'xtermCss'; link.rel = 'stylesheet'; link.href = '/vendor/xterm/xterm.css';
+    document.head.appendChild(link);
+  }
+  const [x, f] = await Promise.all([import('/vendor/xterm/xterm.mjs'), import('/vendor/xterm/addon-fit.mjs')]);
+  xtermModules = { Terminal: x.Terminal, FitAddon: f.FitAddon };
+  return xtermModules;
+}
+
+function bytesToB64(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function teardownPty(notifyServer) {
+  const st = ptyState;
+  if (!st) return;
+  ptyState = null;
+  for (const [ev, fn] of st.listeners) off(ev, fn);
+  if (st.resizeObs) { try { st.resizeObs.disconnect(); } catch (e) { /* */ } }
+  if (notifyServer && st.sessionId) { try { ptyClose(st.sessionId); } catch (e) { /* */ } }
+  if (st.term) { try { st.term.dispose(); } catch (e) { /* */ } }
+}
+
+function setupInteractiveTerminal(device) {
+  teardownPty(true);   // a re-render must not strand the previous session
+  const oneshot = document.getElementById('termOneshot');
+  const inter = document.getElementById('termInteractive');
+  const btnOne = document.getElementById('termModeOneshot');
+  const btnInt = document.getElementById('termModeInteractive');
+  const setMode = (interactive) => {
+    if (oneshot) oneshot.style.display = interactive ? 'none' : 'block';
+    if (inter) inter.style.display = interactive ? 'block' : 'none';
+    if (btnOne) btnOne.className = 'btn btn-sm ' + (interactive ? 'btn-secondary' : 'btn-primary');
+    if (btnInt) btnInt.className = 'btn btn-sm ' + (interactive ? 'btn-primary' : 'btn-secondary');
+    if (interactive && ptyState && ptyState.fit) { try { ptyState.fit.fit(); } catch (e) { /* */ } }
+  };
+  btnOne?.addEventListener('click', () => setMode(false));
+  btnInt?.addEventListener('click', () => setMode(true));
+
+  const host = document.getElementById('ptyHost');
+  const status = document.getElementById('ptyStatus');
+  const connectBtn = document.getElementById('ptyConnect');
+  const disconnectBtn = document.getElementById('ptyDisconnect');
+  const setStatus = (text) => { if (status) status.textContent = text || ''; };
+  const setConnected = (on) => {
+    if (connectBtn) connectBtn.disabled = on;
+    if (disconnectBtn) disconnectBtn.disabled = !on;
+  };
+
+  connectBtn?.addEventListener('click', async () => {
+    if (ptyState || !host) return;
+    setConnected(true);
+    setStatus(t('device.terminal.pty_connecting'));
+    let mods;
+    try { mods = await loadXterm(); } catch (e) {
+      setConnected(false); setStatus(t('device.terminal.pty_load_failed')); return;
+    }
+    host.innerHTML = '';
+    const term = new mods.Terminal({ cursorBlink: true, fontSize: 13, convertEol: false, scrollback: 5000,
+      fontFamily: 'ui-monospace, Menlo, Consolas, monospace', theme: { background: '#0b1020' } });
+    const fit = new mods.FitAddon();
+    term.loadAddon(fit);
+    term.open(host);
+    try { fit.fit(); } catch (e) { /* hidden host — the observer refits once it has a size */ }
+    const st = { term, fit, sessionId: null, listeners: [], resizeObs: null, deviceId: device.id };
+    ptyState = st;
+    const listen = (ev, fn) => { on(ev, fn); st.listeners.push([ev, fn]); };
+
+    const ended = (msg) => {
+      term.write('\r\n\x1b[33m' + msg + '\x1b[0m\r\n');
+      setStatus(msg);
+      setConnected(false);
+      // Keep the scrollback visible; only the wiring goes.
+      for (const [ev, fn] of st.listeners) off(ev, fn);
+      st.listeners = [];
+      if (st.resizeObs) { try { st.resizeObs.disconnect(); } catch (e) { /* */ } }
+      st.sessionId = null;
+      if (ptyState === st) ptyState = null;
+    };
+
+    listen('pty-opened', (d) => {
+      if (!d || d.device_id !== device.id || st.sessionId) return;
+      st.sessionId = d.session_id;
+      setStatus('');
+      term.focus();
+    });
+    listen('pty-data', (d) => {
+      if (!d || d.session_id !== st.sessionId || typeof d.data !== 'string') return;
+      try { term.write(b64ToBytes(d.data)); } catch (e) { /* a malformed frame is dropped, not fatal */ }
+    });
+    listen('pty-exit', (d) => {
+      if (!d || d.session_id !== st.sessionId) return;
+      ended(t('device.terminal.pty_closed', { reason: d.reason || (d.code != null ? 'exit ' + d.code : 'closed') }));
+    });
+    listen('pty-error', (d) => {
+      if (!d || d.device_id !== device.id || st.sessionId) return;
+      ended(t('device.terminal.pty_error', { error: d.error || 'unknown' }));
+    });
+
+    const enc = new TextEncoder();
+    const send = (bytes) => {
+      if (!st.sessionId) return;
+      for (let i = 0; i < bytes.length; i += PTY_CHUNK_BYTES) ptyInput(st.sessionId, bytesToB64(bytes.subarray(i, i + PTY_CHUNK_BYTES)));
+    };
+    term.onData((str) => send(enc.encode(str)));
+    // onBinary carries raw bytes as a "binary string" (one char per byte), e.g. some mouse reports.
+    term.onBinary((str) => { const b = new Uint8Array(str.length); for (let i = 0; i < str.length; i++) b[i] = str.charCodeAt(i) & 0xff; send(b); });
+    term.onResize(({ cols, rows }) => { if (st.sessionId) ptyResize(st.sessionId, cols, rows); });
+    if (typeof ResizeObserver !== 'undefined') {
+      st.resizeObs = new ResizeObserver(() => { try { fit.fit(); } catch (e) { /* */ } });
+      st.resizeObs.observe(host);
+    }
+    ptyOpen(device.id, term.cols, term.rows);
+  });
+
+  disconnectBtn?.addEventListener('click', () => {
+    const st = ptyState;
+    if (!st) return;
+    if (st.sessionId) ptyClose(st.sessionId);
+    // The server answers with dashboard:pty-exit (closed_by_user), which runs ended(); if the socket
+    // is gone that never arrives, so tear down locally regardless.
+    setTimeout(() => { if (ptyState === st) { teardownPty(false); setConnected(false); setStatus(''); } }, 1500);
+  });
 }
 
 function setupTabs() {
@@ -2059,6 +2326,7 @@ function setupActions(device) {
   document.getElementById('t2Lock')?.addEventListener('click', () => t2('lock_now'));
   document.getElementById('t2KioskOn')?.addEventListener('click', () => t2('kiosk_lock'));
   document.getElementById('t2KioskOff')?.addEventListener('click', () => t2('kiosk_unlock'));
+  document.getElementById('t2PowerMenu')?.addEventListener('click', () => t2('power_menu'));
 
   // #160 Track-A system control — send on release ('change', not 'input') so we don't spam the panel.
   const bindLevel = (id, cmd) => {
@@ -3097,6 +3365,7 @@ export function cleanup() {
   if (playbackHandler) off('playback-state', playbackHandler);
   if (logHandler) off('device-log', logHandler);
   if (shellHandler) off('shell-result', shellHandler);   // #161 owner-tools listener
+  teardownPty(true);   // leaving the page ends the interactive terminal on the device too
   if (screenshotInterval) clearInterval(screenshotInterval);
   stopLiveTile();
   if (remoteActive && currentDevice) stopRemote(currentDevice.id);

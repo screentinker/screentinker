@@ -2645,6 +2645,22 @@ module.exports = function setupDeviceSocket(io) {
 
     socket.on('device:play-event', (data) => dispatch('play-event', data));
 
+    /*
+     * Interactive terminal output (lib/pty-relay.js). NOT a dispatch(): it writes nothing, is never
+     * forwarded to a primary (a PTY is only ever opened to a screen attached to THIS process), and
+     * must reach exactly one dashboard socket rather than the workspace room every applier emits to.
+     * The relay drops a frame whose session is not on currentDeviceId — the socket's own
+     * authenticated id, never one from the payload.
+     */
+    socket.on('device:pty-data', (data) => {
+      if (!requireDeviceAuth()) return;
+      require('../lib/pty-relay').relay().fromDeviceData(currentDeviceId, data);
+    });
+    socket.on('device:pty-exit', (data) => {
+      if (!requireDeviceAuth()) return;
+      require('../lib/pty-relay').relay().fromDeviceExit(currentDeviceId, data);
+    });
+
 
     // Video wall sync relay. Sender must be a member of the wall it claims —
     // otherwise an authenticated device could inject sync packets into a wall
@@ -2731,6 +2747,14 @@ module.exports = function setupDeviceSocket(io) {
       // timer) uses it as the fallback offline reason when the device sent no explicit
       // exit signal this session. Falls back to 'silent' when absent.
       const socketOfflineReason = incidentClassify.normalizeDisconnectReason(reason);
+      // Interactive terminals end with the socket that carried them — BEFORE the eviction and
+      // stale-socket early returns below, because an evicted socket's sessions are just as dead.
+      // Scoped to THIS socket id inside the relay, so a late disconnect cannot end a session the
+      // screen's newer socket opened. Immediate, not debounced: a terminal that looks alive for the
+      // offline debounce window swallows keystrokes into nothing.
+      if (currentDeviceId) {
+        try { require('../lib/pty-relay').relay().deviceGone(currentDeviceId, socket.id); } catch (_) { /* never block the offline path */ }
+      }
       // #146: this socket was force-evicted by a newer registration for the same
       // device. The new socket owns the device now (or is mid-register), so this
       // disconnect must NOT arm an offline timer — doing so was the self-reset race

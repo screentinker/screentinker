@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ScreenTinker Player
+Comment=Starts the ScreenTinker player when this desktop is configured for it (screentinker-pi setup --mode desktop)
+Exec=/usr/bin/screentinker-pi autostart
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

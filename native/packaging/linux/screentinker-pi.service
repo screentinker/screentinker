@@ -1,0 +1,29 @@
+[Unit]
+Description=ScreenTinker native signage player
+Documentation=https://screentinker.com/guides/raspberry-pi-digital-signage
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+# The player owns the display over KMS; a console login on tty1 would fight it for the screen.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=screentinker
+Group=screentinker
+SupplementaryGroups=video render input audio
+RuntimeDirectory=screentinker-pi
+Environment=XDG_RUNTIME_DIR=/run/screentinker-pi
+Environment=ST_STATE_DIR=/var/lib/screentinker-pi
+Environment=HOME=/var/lib/screentinker-pi
+ExecStart=/usr/bin/screentinker-pi run
+Restart=always
+RestartSec=3
+# A player that hangs (a wedged decoder deep in GStreamer) must not stay hung: the heartbeat thread
+# keeps working, so this is the backstop for the Qt thread only.
+TimeoutStopSec=15
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

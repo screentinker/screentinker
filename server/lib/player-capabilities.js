@@ -91,6 +91,21 @@ const CAPABILITIES = [
   // device management (Android device-owner territory)
   'system.kiosk', 'system.brightness', 'system.screen_timeout',
   'system.install_apk', 'system.shell', 'system.time',
+  /*
+   * An INTERACTIVE terminal: a real PTY on the device, relayed byte-for-byte both ways over the
+   * sockets (lib/pty-relay.js), as opposed to system.shell's one-shot `shell` command that runs one
+   * line and returns its output. Separate on purpose, because the two are not the same privilege in
+   * practice even where they are the same UID: a one-shot command is auditable line by line in
+   * activity_log and the command queue; a PTY is a session whose keystrokes are NOT recorded (only
+   * its open and close are), and it can run a full-screen program, su, or an editor. A player
+   * declares it only when it actually spawns a PTY — today the native Pi and Windows players. Android's
+   * app-UID shell has no PTY and never declares it.
+   *
+   * ⚠️ Gates EVENTS, not a command: dashboard:pty-open is refused server-side without it, and it is
+   * never in COMMAND_CAPABILITY because a PTY session is not a `device:command`. NOT a mesh command
+   * either — no peer server can ever open one (see the relay's header).
+   */
+  'system.pty',
   // The rest of the Tier-2 surface: lock the screen now, show the power menu, hide the status
   // bar, block uninstall. Separate from 'system.kiosk' because kiosk means lock-task specifically
   // and a panel can hold one without the other — and separate from the individual names above
@@ -311,6 +326,82 @@ const BASELINE = {
     'audio.volume',
     'sync.clock', 'offline.cache',
   ],
+  /*
+   * The NATIVE Raspberry Pi player (pi/, Python + Qt) — client_type 'pi', platform 'Linux/<distro>
+   * (<model>)'. Not the Chromium-kiosk install of the web player that scripts/raspberry-pi-setup.sh
+   * sets up; that one registers as a browser and is BASELINE.web.
+   *
+   * ⚠️ THIS BASELINE BREAKS THE RULE ABOVE, knowingly, and the reason is that the rule has nothing to
+   * check it against: no Pi player has ever been released, so there is no "last released build" to
+   * cite. What makes that tolerable is that the Pi player declares on EVERY register — its
+   * CAPABILITIES_ALWAYS list is unconditional, and contract v4 carries it — so a real Pi row
+   * essentially always has a declaration and never reads this list. It answers only for a row whose
+   * capabilities column is NULL for some other reason (a restore from a pre-capability backup, a
+   * manual row), and for that row "what the first Pi release ships" is the least-wrong guess.
+   *
+   * Once a Pi build has shipped, re-derive this from `git show <tag>:native/screentinker_native/capabilities.py`
+   * the way every other entry here was, and delete this paragraph.
+   *
+   * ⚠️ NOT system.shell / system.pty / system.time / system.kiosk / system.install_apk, although the
+   * Pi player is expected to declare most of them. Each depends on what the .deb's postinst actually
+   * granted on THIS unit (a sudoers drop-in, a polkit rule, the kiosk session) — runtime privilege,
+   * the same reason Android keeps them out of its baseline — and player-parity-baselines.test.js
+   * holds every baseline to that rule. Since the Pi always declares, leaving them out costs a
+   * declaring Pi nothing; putting them in would hand a remote shell to a row nobody can vouch for.
+   * system.device_owner / system.brightness / system.screen_timeout / display.resolution /
+   * remote.talk / remote.mic / sync.native are out too — no Pi implementation behind them yet.
+   *
+   * And NOT playback.hls / playback.rtsp / net.http_request / display.power_schedule /
+   * remote.set_server_url: each of those is "in NO baseline — brand new" by this file's own rule
+   * (and by iptv-hls / http-request-command tests), because what they gate is only safe to send to
+   * a player that has said so. A declaring Pi gets them; an undeclared row does not.
+   */
+  linux: [
+    'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
+    'playback.zones', 'playback.transitions', 'playback.pip',
+    'playback.bundle', 'playback.slide_audio',
+    'audio.mute', 'audio.volume',
+    'display.rotation', 'display.power', 'display.brightness',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.reboot', 'system.restart_player', 'system.self_update',
+    'sync.clock', 'offline.cache',
+  ],
+  /*
+   * The NATIVE Windows player — the same Python + Qt engine as the Pi (native/screentinker_native)
+   * with a Windows OS backend (platform/windows) — client_type 'win', platform 'Windows/<edition>
+   * (<model>)'. Not the kiosk-browser shortcut that scripts/windows-setup.bat creates; that one
+   * registers as a browser and is BASELINE.web.
+   *
+   * ⚠️ Same knowing exception as BASELINE.linux, for the same reason: no Windows build has been
+   * released, so there is no tag to derive this from, and the player declares on EVERY register
+   * (CAPABILITIES_ALWAYS + platform/windows/ops.extra_capabilities), so a real row essentially never
+   * reads this list. Once a Windows build has shipped, re-derive it from that tag and delete this
+   * paragraph.
+   *
+   * STRICTER than BASELINE.linux: only what the SHARED ENGINE does by itself — playback, zones,
+   * transitions, the Qt-scene screenshot/stream (grabWindow), input injected into the player's own
+   * window, the per-window dim (display.brightness), restart, clock sync, the media cache. Every
+   * OS-specific row is still being brought up on Windows (docs/player-parity.md "Windows (native)"),
+   * so it stays out until a released build proves it:
+   *   - display.power (SC_MONITORPOWER / DDC/CI D6 / overlay), audio.volume (Core Audio endpoint),
+   *     system.self_update (the helper runs the installer), system.reboot (the helper service);
+   *   - and, as for every family, the privilege-conditional ones (system.shell / pty / kiosk / time /
+   *     install_apk / brightness / screen_timeout) and the brand-new ones that are in NO baseline
+   *     (playback.hls / playback.rtsp / net.http_request / display.power_schedule /
+   *     remote.set_server_url / remote.talk).
+   * audio.mute stays: every family keeps it (player-parity-baselines.test.js), and on this engine it
+   * is the Qt media element's own mute, not the OS mixer.
+   */
+  windows: [
+    'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
+    'playback.zones', 'playback.transitions', 'playback.pip',
+    'playback.bundle', 'playback.slide_audio',
+    'audio.mute',
+    'display.rotation', 'display.brightness',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.restart_player',
+    'sync.clock', 'offline.cache',
+  ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
   web: [
@@ -356,6 +447,20 @@ function platformFamily(device) {
   // and would miss the CMA capture cap the shell turns on.
   if (platform.includes('vega')) return 'vega';
   if (clientType === 'wgt') return 'tizen';
+  /*
+   * The native Raspberry Pi player. ⚠️ MUST SIT BEFORE THE ANDROID TEST BELOW, which is a fallback
+   * that claims ANY non-empty, non-"Web/" android_version. The Pi sends android_version '' today, so
+   * it would fall through to web rather than android — but that is one field away from breaking: a
+   * Pi build that ever fills android_version with its kernel or OS string would be classified as an
+   * Android panel and offered MediaProjection bootstraps and device-owner provisioning. Two signals,
+   * either sufficient, for the same reason client_type 'wgt' backs up platform for Tizen: platform
+   * is the primary key, client_type survives an older register overwriting it.
+   */
+  if (clientType === 'pi' || platform.startsWith('linux/')) return 'linux';
+  // The native Windows player: the same engine, the same reasoning, the same two signals. Also
+  // before the Android fallback — it sends android_version '' today, and a build that ever put its
+  // OS string there must not become an Android panel.
+  if (clientType === 'win' || platform.startsWith('windows/')) return 'windows';
   // client_type 'apk' is the Android player; android_version that is NOT the web player's
   // "Web/..." shape is the older signal for the same thing.
   if ((device && device.client_type === 'apk') || (android && !android.startsWith('Web/'))) return 'android';

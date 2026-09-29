@@ -36,6 +36,8 @@ function entries(state = {}) {
   const ipk = state.ipk || {};
   const wgt = state.wgt || {};
   const brightsign = state.brightsign || {};
+  const deb = state.deb || {};
+  const exe = state.exe || {};
 
   return [
     {
@@ -94,6 +96,24 @@ function entries(state = {}) {
       fallback: '/player',
     },
     {
+      /*
+       * The NATIVE Pi player (pi/, a .deb). Separate from the 'raspberry-pi' row below, which is the
+       * kiosk-browser install and is always available: the native package exists only where someone
+       * built it or mounted it (lib/deb-cache.js), and must say so rather than 404.
+       */
+      id: 'raspberry-pi-native',
+      name: 'Raspberry Pi (native player)',
+      file: deb.filename || 'screentinker-pi_<version>_all.deb',
+      what: 'A native player for Raspberry Pi OS (Bookworm). Install with apt; it updates itself against this instance afterwards.',
+      url: '/download/pi',
+      guide: '/guides/raspberry-pi-digital-signage.html',
+      available: !!deb.exists,
+      version: deb.version || null,
+      size: formatSize(deb.size),
+      absent: 'No Raspberry Pi package is hosted on this instance. The kiosk-browser install below works on any Pi meanwhile.',
+      fallback: '/player',
+    },
+    {
       id: 'raspberry-pi',
       name: 'Raspberry Pi',
       file: 'raspberry-pi-setup.sh',
@@ -104,6 +124,25 @@ function entries(state = {}) {
       available: true,
       version: null,
       size: null,
+    },
+    {
+      /*
+       * The NATIVE Windows player (native/, an Inno Setup installer). Separate from the 'windows' row
+       * below, which is the kiosk-browser shortcut script and is always available: the installer
+       * exists only where someone built it or mounted it (lib/win-cache.js), and must say so rather
+       * than 404.
+       */
+      id: 'windows-native',
+      name: 'Windows (native player)',
+      file: exe.filename || 'ScreenTinker-Setup-<version>.exe',
+      what: 'A native player for Windows 10/11. Run the installer as an administrator; it updates itself against this instance afterwards.',
+      url: '/download/win',
+      guide: '/guides/windows-digital-signage.html',
+      available: !!exe.exists,
+      version: exe.version || null,
+      size: formatSize(exe.size),
+      absent: 'No Windows installer is hosted on this instance. The kiosk-browser setup below works on any Windows PC meanwhile.',
+      fallback: '/player',
     },
     {
       id: 'windows',

@@ -99,3 +99,11 @@ server/plugin-inbox/
 # drafts land here.
 docs/samsung-partnership-request.txt
 docs/cec-display-power-plan.md
+
+# Native player (Pi + Windows) build output + Python caches
+native/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+native/build/
+native/packaging/windows/THIRD-PARTY-NOTICES.txt

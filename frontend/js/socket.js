@@ -49,6 +49,13 @@ export function connectSocket() {
     emit('shell-result', data);
   });
 
+  // Interactive terminal (system.pty). The server sends these to THIS socket only — never to a
+  // workspace room — because a terminal echoes whatever is typed into it. See server/lib/pty-relay.js.
+  dashboardSocket.on('dashboard:pty-opened', (data) => emit('pty-opened', data));
+  dashboardSocket.on('dashboard:pty-data', (data) => emit('pty-data', data));
+  dashboardSocket.on('dashboard:pty-exit', (data) => emit('pty-exit', data));
+  dashboardSocket.on('dashboard:pty-error', (data) => emit('pty-error', data));
+
   // Device added
   dashboardSocket.on('dashboard:device-added', (data) => {
     emit('device-added', data);
@@ -209,6 +216,20 @@ export function sendCommand(deviceId, type, payload, callback) {
   } else {
     dashboardSocket.emit('dashboard:device-command', { device_id: deviceId, type, payload });
   }
+}
+
+// Interactive terminal. `data` is base64 of the raw bytes, in both directions.
+export function ptyOpen(deviceId, cols, rows, cb) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:pty-open', { device_id: deviceId, cols, rows }, cb);
+}
+export function ptyInput(sessionId, data) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:pty-input', { session_id: sessionId, data });
+}
+export function ptyResize(sessionId, cols, rows) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:pty-resize', { session_id: sessionId, cols, rows });
+}
+export function ptyClose(sessionId) {
+  if (dashboardSocket) dashboardSocket.emit('dashboard:pty-close', { session_id: sessionId });
 }
 
 export function getSocket() { return dashboardSocket; }

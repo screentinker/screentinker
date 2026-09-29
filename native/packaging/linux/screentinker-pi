@@ -1,0 +1,186 @@
+#!/usr/bin/python3
+"""screentinker-pi — launcher and setup for the native ScreenTinker Raspberry Pi player.
+
+  screentinker-pi setup URL [--name NAME] [--mode lite|desktop] [--user USER]
+                            [--allow-package-install] [--state-dir DIR]     (as root)
+  screentinker-pi run                  start the player in the foreground (what the service runs)
+  screentinker-pi status               show configuration and service state
+  screentinker-pi unpair               forget this panel's pairing (as root, or as the player user)
+
+Two run modes:
+  lite     Pi OS Lite, no desktop: a system service draws straight to the display over KMS (eglfs)
+           as the dedicated `screentinker` user. The recommended shape for signage.
+  desktop  Pi OS with a desktop: the player starts full screen inside the desktop session of --user
+           (labwc / wayfire / X11), through /etc/xdg/autostart.
+"""
+
+import argparse
+import glob
+import json
+import os
+import pwd
+import subprocess
+import sys
+
+LIB = "/usr/lib/screentinker-pi"
+SYSTEM_CONFIG = "/etc/screentinker-pi/config.json"
+SERVICE = "screentinker-pi"
+
+
+def load_cfg():
+    try:
+        with open(SYSTEM_CONFIG) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cfg(cfg):
+    os.makedirs(os.path.dirname(SYSTEM_CONFIG), exist_ok=True)
+    tmp = SYSTEM_CONFIG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=1)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, SYSTEM_CONFIG)
+
+
+def need_root():
+    if os.geteuid() != 0:
+        sys.exit("run this as root (sudo screentinker-pi ...)")
+
+
+def sh(*argv, check=False):
+    return subprocess.run(list(argv), check=check)
+
+
+def kms_card():
+    """The DRM card that actually has connectors. A Pi 5 exposes TWO cards (v3d renders, vc4
+    displays) and eglfs picks card0 by default — the wrong one — which is a black screen with no error."""
+    for d in sorted(glob.glob("/sys/class/drm/card[0-9]-*")):
+        try:
+            if open(os.path.join(d, "status")).read().strip() == "connected":
+                return "/dev/dri/" + os.path.basename(d).split("-", 1)[0]
+        except OSError:
+            continue
+    cards = sorted({os.path.basename(p).split("-", 1)[0] for p in glob.glob("/sys/class/drm/card[0-9]-*")})
+    return "/dev/dri/" + cards[0] if cards else None
+
+
+def cmd_run(args):
+    env = dict(os.environ)
+    env["PYTHONPATH"] = LIB + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    graphical = env.get("WAYLAND_DISPLAY") or env.get("DISPLAY")
+    if not graphical and "QT_QPA_PLATFORM" not in env:
+        env["QT_QPA_PLATFORM"] = "eglfs"
+        env.setdefault("QT_QPA_EGLFS_INTEGRATION", "eglfs_kms")
+        env.setdefault("QT_QPA_EGLFS_HIDECURSOR", "1")
+        env.setdefault("QT_QPA_EGLFS_ALWAYS_SET_MODE", "1")
+        card = kms_card()
+        if card and "QT_QPA_EGLFS_KMS_CONFIG" not in env:
+            rundir = env.get("XDG_RUNTIME_DIR") or "/run/screentinker-pi"
+            os.makedirs(rundir, exist_ok=True)
+            kcfg = os.path.join(rundir, "eglfs-kms.json")
+            with open(kcfg, "w") as f:
+                json.dump({"device": card, "hwcursor": False}, f)
+            env["QT_QPA_EGLFS_KMS_CONFIG"] = kcfg
+    elif env.get("WAYLAND_DISPLAY") and "QT_QPA_PLATFORM" not in env:
+        env["QT_QPA_PLATFORM"] = "wayland"
+    # WebEngine: GPU rasterisation on the Pi's V3D is where Chromium is least stable; the scene graph
+    # (video, images, transitions) keeps its GPU path regardless.
+    env.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
+                   "--autoplay-policy=no-user-gesture-required --disable-gpu-rasterization --enable-zero-copy")
+    argv = [sys.executable, "-m", "screentinker_native"] + args.rest
+    os.execve(sys.executable, argv, env)
+
+
+def cmd_setup(args):
+    need_root()
+    cfg = load_cfg()
+    cfg["server_url"] = args.url.rstrip("/")
+    if args.name:
+        cfg["device_name"] = args.name
+    cfg["mode"] = args.mode
+    cfg["allow_package_install"] = bool(args.allow_package_install)
+    if args.mode == "desktop":
+        user = args.user or os.environ.get("SUDO_USER")
+        if not user:
+            sys.exit("--mode desktop needs --user (the desktop login user)")
+        pwd.getpwnam(user)
+        cfg["desktop_user"] = user
+        # The helper is granted to the screentinker GROUP: put the desktop user in it.
+        sh("adduser", user, "screentinker")
+        sh("systemctl", "disable", "--now", SERVICE)
+        print("Desktop mode: the player starts full screen at %s's next desktop login." % user)
+        print("⚠️  The dashboard's remote terminal runs as %s — if that user has sudo, so does the terminal." % user)
+    else:
+        cfg.pop("desktop_user", None)
+        sh("systemctl", "enable", SERVICE)
+        sh("systemctl", "restart", SERVICE)
+        print("Lite mode: the player runs as a system service on the display (screentinker-pi.service).")
+    save_cfg(cfg)
+    print("Server: %s" % cfg["server_url"])
+    print("A pairing code will appear on screen; enter it in the dashboard (Displays → Add display).")
+
+
+def cmd_autostart(args):
+    """Invoked by /etc/xdg/autostart in EVERY desktop session: start only for the configured user."""
+    cfg = load_cfg()
+    me = pwd.getpwuid(os.getuid()).pw_name
+    if cfg.get("mode") != "desktop" or cfg.get("desktop_user") != me:
+        return 0
+    args.rest = []
+    cmd_run(args)
+
+
+def cmd_status(args):
+    cfg = load_cfg()
+    print(json.dumps(cfg, indent=1) if cfg else "not configured (sudo screentinker-pi setup URL)")
+    sh("systemctl", "--no-pager", "status", SERVICE)
+
+
+def cmd_unpair(args):
+    for d in ("/var/lib/screentinker-pi",):
+        p = os.path.join(d, "state.json")
+        if os.path.exists(p):
+            with open(p) as f:
+                st = json.load(f)
+            for k in ("device_id", "device_token", "paired", "pairing_code", "cached_payload"):
+                st.pop(k, None)
+            with open(p, "w") as f:
+                json.dump(st, f)
+            print("forgot pairing in", p)
+    sh("systemctl", "restart", SERVICE)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="screentinker-pi")
+    sub = ap.add_subparsers(dest="cmd")
+    s = sub.add_parser("setup")
+    s.add_argument("url")
+    s.add_argument("--name")
+    s.add_argument("--mode", choices=("lite", "desktop"), default="lite")
+    s.add_argument("--user")
+    s.add_argument("--allow-package-install", action="store_true",
+                   help="let the dashboard install ANY .deb (maintainer scripts run as root)")
+    sub.add_parser("run", help="start the player; any further options (--server, -v, --windowed) pass through")
+    sub.add_parser("autostart")
+    sub.add_parser("status")
+    sub.add_parser("unpair")
+    # parse_known_args: `run` hands every option it does not know to the player itself.
+    args, extra = ap.parse_known_args()
+    if args.cmd not in (None, "run") and extra:
+        ap.error("unrecognized arguments: %s" % " ".join(extra))
+    args.rest = extra
+    if args.cmd == "setup":
+        return cmd_setup(args)
+    if args.cmd == "autostart":
+        return cmd_autostart(args)
+    if args.cmd == "status":
+        return cmd_status(args)
+    if args.cmd == "unpair":
+        return cmd_unpair(args)
+    return cmd_run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

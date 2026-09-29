@@ -72,11 +72,26 @@ function render(device, telemetry) {
       const p = String(d.platform || '').toLowerCase();
       if (p.includes('brightsign') || p.includes('tizen')) return false;
       if (d.client_type === 'wgt') return false;
+      if (d.client_type === 'pi' || p.startsWith('linux/')) return false;   // the native Pi player
+      if (d.client_type === 'win' || p.startsWith('windows/')) return false;   // the native Windows player
       if (d.client_type === 'apk') return true;
       const av = String(d.android_version || '');
       return av !== '' && !av.startsWith('Web/');
     },
     TERMINAL_PRESETS: [],
+    LINUX_TERMINAL_PRESETS: [{ label: 'SoC temp', cmd: 'vcgencmd measure_temp' }],
+    // Mirrors isLinuxDevice() in device-detail.js (and the 'linux' arm of platformFamily()).
+    isLinuxDevice: (d) => !!d && (d.client_type === 'pi' || String(d.platform || '').toLowerCase().startsWith('linux/')),
+    // Mirrors isWindowsDevice() / isNativeDevice() / terminalPresets() in device-detail.js.
+    isWindowsDevice: (d) => !!d && (d.client_type === 'win' || String(d.platform || '').toLowerCase().startsWith('windows/')),
+    isNativeDevice: (d) => !!d && (d.client_type === 'pi' || d.client_type === 'win'
+      || /^(linux|windows)\//.test(String(d.platform || '').toLowerCase())),
+    terminalPresets: (d) => {
+      const p = String((d && d.platform) || '').toLowerCase();
+      if (d && (d.client_type === 'win' || p.startsWith('windows/'))) return [{ label: 'Helper service', cmd: 'Get-Service ScreenTinkerHelper' }];
+      if (d && (d.client_type === 'pi' || p.startsWith('linux/'))) return [{ label: 'SoC temp', cmd: 'vcgencmd measure_temp' }];
+      return [];
+    },
     // Panels rendered by helpers OUTSIDE the sliced template are stubbed to empty: this file is
     // about which CONTROLS a platform is offered, and a diagnostics panel is not a control. Stubbing
     // keeps the slice honest — the alternative is widening it until the test is about the whole page.
@@ -525,4 +540,257 @@ test('the Android-only cards stay Android-only', () => {
   assert.ok(!bs.includes('device.info.android_version'), 'android_version is an APK concept');
   const android = render({ ...ANDROID_FULL, app_version: '1.9.36' });
   assert.ok(android.includes('device.info.settings_pin'), 'Android keeps its PIN card');
+});
+
+// ---------------------------------------------------------------------------------------------
+// The native Raspberry Pi player (client_type 'pi', platform 'Linux/<distro> (<model>)').
+//
+// Every control on this page used to be decided by "is it Android?" or "is it tier 2?", and a Pi is
+// neither: it sends android_version '' and has no device-owner tier. So the Terminal tab, the kiosk
+// row and the OS card were unreachable for it even when it declared the capabilities behind them —
+// and the Android-only bootstraps (MediaProjection, device-owner QR, Recents) must stay off it.
+// ---------------------------------------------------------------------------------------------
+
+const PI = {
+  client_type: 'pi', platform: 'Linux/Debian 12 (Raspberry Pi 5 Model B Rev 1.0)', android_version: '',
+  hardware_model: 'Raspberry Pi 5 Model B Rev 1.0', hardware_os_version: 'Debian GNU/Linux 12 (bookworm)',
+  hardware_serial: '10000000abcdef01', tier: 0, settings_pin: '4321',
+  capabilities: ['playback.video', 'audio.volume', 'display.power', 'display.brightness', 'display.rotation',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.reboot', 'system.restart_player', 'system.self_update',
+    'system.shell', 'system.pty', 'system.kiosk', 'system.install_apk', 'system.time'],
+};
+const PI_TELEMETRY = { ram_free_mb: 3100, ram_total_mb: 8000, cpu_usage: 12.5, temperature_c: 52.1,
+  storage_free_mb: 20000, storage_total_mb: 29000, uptime_seconds: 3600 };
+
+test('a Pi gets the Terminal tab, with Linux presets and both modes', () => {
+  const html = render(PI);
+  assert.ok(html.includes('data-tab="terminal"'), 'the tab trigger');
+  assert.ok(has(html, 'tab-terminal'), 'and its body');
+  assert.ok(has(html, 'termModeOneshot') && has(html, 'termModeInteractive'), 'the mode switch');
+  assert.ok(has(html, 'termOneshot') && has(html, 'termCmd'), 'the one-shot shell');
+  assert.ok(has(html, 'ptyHost') && has(html, 'ptyConnect'), 'the interactive terminal host');
+  assert.ok(html.includes('vcgencmd measure_temp'), 'Linux presets, not getprop');
+  assert.ok(html.includes('device.terminal.welcome_linux'), 'and Linux wording');
+});
+
+test('the package field on a Pi asks for a .deb, and still sends install_apk', () => {
+  const html = render(PI);
+  assert.ok(has(html, 'apkUrl'), 'the field renders (the command is install_apk on both platforms)');
+  assert.ok(html.includes('device.terminal.push_deb'), 'labelled for a .deb');
+  assert.equal(html.includes('device.terminal.push_apk'), false, 'not an APK prompt');
+  // And not offered to a Pi that did not declare it — the server would refuse the command.
+  const noInstall = render({ ...PI, capabilities: PI.capabilities.filter((c) => c !== 'system.install_apk') });
+  assert.equal(has(noInstall, 'apkUrl'), false);
+});
+
+test('Interactive mode needs system.pty, and one-shot needs system.shell', () => {
+  const noPty = render({ ...PI, capabilities: PI.capabilities.filter((c) => c !== 'system.pty') });
+  assert.ok(has(noPty, 'tab-terminal'), 'the tab stays for the one-shot shell');
+  assert.equal(has(noPty, 'ptyHost'), false, 'no interactive terminal without system.pty');
+  assert.equal(has(noPty, 'termModeInteractive'), false, 'and no switch to a mode that is not there');
+
+  const ptyOnly = render({ ...PI, capabilities: PI.capabilities.filter((c) => c !== 'system.shell') });
+  assert.ok(has(ptyOnly, 'ptyHost'), 'a PTY-only player still gets a terminal');
+  assert.equal(has(ptyOnly, 'termOneshot'), false, 'but no one-shot shell it cannot run');
+  assert.ok(ptyOnly.includes('id="termInteractive" style="display:block"'), 'and it is visible without a mode switch');
+
+  const neither = render({ ...PI, capabilities: PI.capabilities.filter((c) => c !== 'system.shell' && c !== 'system.pty' && c !== 'system.install_apk') });
+  assert.equal(neither.includes('data-tab="terminal"'), false, 'no terminal capability, no tab');
+});
+
+test('the Terminal tab did not move for Android or appear for a browser', () => {
+  const owner = render({ ...ANDROID_FULL, tier: 2 });
+  assert.ok(has(owner, 'tab-terminal'), 'a device owner keeps its shell');
+  assert.ok(owner.includes('device.terminal.push_apk'), 'and its APK push');
+  assert.equal(has(owner, 'ptyHost'), false, 'Android declares no system.pty');
+  assert.equal(render({ ...ANDROID_FULL, tier: 0 }).includes('data-tab="terminal"'), false, 'tier 0 without system.shell: none');
+  assert.equal(render(WEB).includes('data-tab="terminal"'), false, 'a browser tab: none');
+});
+
+test('a Pi declaring system.kiosk gets kiosk lock/unlock and the power menu', () => {
+  const html = render(PI);
+  for (const id of ['t2KioskOn', 't2KioskOff', 't2PowerMenu', 't2Reboot']) assert.ok(has(html, id), `${id} missing`);
+  assert.ok(html.includes('device.tier2.label_linux'), 'not labelled "Device owner" on a Pi');
+  const noKiosk = render({ ...PI, capabilities: PI.capabilities.filter((c) => c !== 'system.kiosk') });
+  assert.equal(has(noKiosk, 't2KioskOn'), false, 'no kiosk capability, no kiosk row');
+  assert.equal(has(noKiosk, 't2PowerMenu'), false);
+});
+
+test('a Pi is never offered the Android-only bootstraps', () => {
+  const html = render(PI);
+  assert.equal(has(html, 'deviceOwnerBtn'), false, 'no device-owner QR');
+  assert.equal(has(html, 'enableSystemCaptureBtn'), false, 'no MediaProjection');
+  assert.equal(html.includes('KEYCODE_APP_SWITCH'), false, 'no Recents');
+  assert.equal(html.includes("_sendCmd('settings')"), false, 'no Android settings activity');
+  // Even if a Pi build ever reported something in android_version.
+  const odd = render({ ...PI, android_version: 'Linux 6.6.31' });
+  assert.equal(has(odd, 'deviceOwnerBtn'), false);
+  assert.equal(has(odd, 'enableSystemCaptureBtn'), false);
+  const style = padStyle(html);
+  assert.ok(style && !style.includes('pointer-events:none'), 'and the key pad is not locked behind a tier it cannot earn');
+});
+
+test('a Pi shows its OS, model, settings PIN and the telemetry it sends', () => {
+  const html = renderWith(PI, PI_TELEMETRY);
+  assert.ok(html.includes('device.info.linux_player'), 'player type says Linux, not "Web Player"');
+  assert.ok(html.includes('Debian GNU/Linux 12 (bookworm)'), 'the OS card');
+  assert.ok(html.includes('Raspberry Pi 5 Model B Rev 1.0'), 'the model card');
+  assert.ok(html.includes('device.info.settings_pin') && html.includes('4321'), 'the settings PIN card');
+  assert.equal(html.includes('device.info.android_version'), false, 'but no "Android Version"');
+  for (const id of ['telRam', 'telCpu', 'telTemp', 'telStorage']) assert.ok(has(html, id), `${id} missing`);
+  assert.equal(has(html, 'telBattery'), false, 'no battery on a Pi');
+});
+
+test('Pi markup is balanced in every gating combination', () => {
+  for (const device of [PI, { ...PI, capabilities: [] }, { ...PI, capabilities: ['system.pty'] }, { ...PI, tier: 2 }]) {
+    const html = render(device);
+    assert.equal((html.match(/<div\b/g) || []).length, (html.match(/<\/div>/g) || []).length, 'unbalanced <div>');
+    assert.equal((html.match(/<button\b/g) || []).length, (html.match(/<\/button>/g) || []).length, 'unbalanced <button>');
+    for (const m of html.matchAll(/data-tab="([\w-]+)"/g)) assert.ok(has(html, `tab-${m[1]}`), `orphan tab ${m[1]}`);
+  }
+});
+
+test('the shipped isAndroidDevice rejects a Pi before the android_version fallback', () => {
+  const i = SRC.indexOf('function isAndroidDevice(device) {');
+  let depth = 0, end = -1;
+  for (let k = SRC.indexOf('{', i); k < SRC.length; k++) {
+    if (SRC[k] === '{') depth++;
+    else if (SRC[k] === '}' && --depth === 0) { end = k + 1; break; }
+  }
+  const fn = SRC.slice(i, end);
+  assert.ok(fn.indexOf("'pi'") !== -1 && fn.indexOf("'pi'") < fn.indexOf("startsWith('Web/')"),
+    'the Pi short-circuit must come BEFORE the android_version test');
+  const real = eval(`(${fn.replace('function isAndroidDevice', 'function')})`);   // eslint-disable-line no-eval
+  assert.equal(real({ client_type: 'pi', android_version: 'Linux 6.6' }), false, 'client_type alone');
+  assert.equal(real({ platform: 'Linux/Debian 12 (Raspberry Pi 4 Model B)', android_version: '12' }), false, 'platform alone');
+  assert.equal(real({ client_type: 'apk', android_version: '13' }), true, 'Android unchanged');
+});
+
+// ---------------------------------------------------------------------------------------------
+// The native Windows player (client_type 'win', platform 'Windows/<edition> (<model>)'). The same
+// engine as the Pi, so the same controls — but PowerShell presets and wording, an .exe/.msi package
+// field, its own player-type card, and never an Android bootstrap.
+// ---------------------------------------------------------------------------------------------
+
+const WIN = {
+  client_type: 'win', platform: 'Windows/11 Pro 25H2 (OptiPlex 7010)', android_version: '',
+  hardware_model: 'OptiPlex 7010', hardware_os_version: 'Windows 11 Pro 25H2 (build 26200)',
+  hardware_serial: 'ABC1234', tier: 0, settings_pin: '8765',
+  capabilities: ['playback.video', 'audio.volume', 'display.power', 'display.brightness', 'display.rotation',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.reboot', 'system.restart_player', 'system.self_update',
+    'system.shell', 'system.pty', 'system.kiosk', 'system.install_apk', 'system.time', 'system.screen_timeout'],
+};
+
+test('a Windows player gets the Terminal tab with PowerShell presets, both modes, and Windows wording', () => {
+  const html = render(WIN);
+  assert.ok(html.includes('data-tab="terminal"') && has(html, 'tab-terminal'));
+  assert.ok(has(html, 'termModeOneshot') && has(html, 'termModeInteractive'));
+  assert.ok(has(html, 'ptyHost'), 'PowerShell over ConPTY rides the same system.pty relay');
+  assert.ok(html.includes('Get-Service ScreenTinkerHelper'), 'PowerShell presets');
+  assert.equal(html.includes('vcgencmd'), false, 'not the Pi presets');
+  assert.ok(html.includes('device.terminal.welcome_windows'));
+  assert.ok(html.includes('device.terminal.placeholder_windows'));
+  assert.ok(html.includes('device.terminal.uid_note_windows'));
+  assert.equal(html.includes('device.terminal.welcome_linux'), false);
+});
+
+test('the package field on Windows asks for an .exe/.msi, and is gated on system.install_apk', () => {
+  const html = render(WIN);
+  assert.ok(has(html, 'apkUrl'));
+  assert.ok(html.includes('device.terminal.push_exe'), 'labelled for an installer');
+  assert.ok(html.includes('device.terminal.exe_ph'));
+  assert.equal(html.includes('device.terminal.push_deb'), false, 'not a .deb prompt');
+  assert.equal(html.includes('device.terminal.push_apk'), false, 'not an APK prompt');
+  const noInstall = render({ ...WIN, capabilities: WIN.capabilities.filter((c) => c !== 'system.install_apk') });
+  assert.equal(has(noInstall, 'apkUrl'), false);
+});
+
+test('a Windows player is never offered the Android-only bootstraps', () => {
+  for (const d of [WIN, { ...WIN, android_version: 'Windows 11' }, { client_type: 'win', android_version: '10', capabilities: WIN.capabilities }]) {
+    const html = render(d);
+    assert.equal(has(html, 'deviceOwnerBtn'), false, 'no device-owner QR');
+    assert.equal(has(html, 'enableSystemCaptureBtn'), false, 'no MediaProjection');
+    assert.equal(html.includes('KEYCODE_APP_SWITCH'), false, 'no Recents');
+    assert.equal(html.includes("_sendCmd('settings')"), false, 'no Android settings activity');
+  }
+  const style = padStyle(render(WIN));
+  assert.ok(style && !style.includes('pointer-events:none'), 'the key pad is not locked behind a tier it cannot earn');
+});
+
+test('a Windows player shows its type, OS, model and PIN — not an Android version', () => {
+  const html = renderWith(WIN, PI_TELEMETRY);
+  assert.ok(html.includes('device.info.windows_player'), 'player type says Windows');
+  assert.equal(html.includes('device.info.linux_player'), false);
+  assert.ok(html.includes('Windows 11 Pro 25H2 (build 26200)'), 'the OS card');
+  assert.ok(html.includes('OptiPlex 7010'), 'the model card');
+  assert.ok(html.includes('device.info.settings_pin') && html.includes('8765'));
+  assert.equal(html.includes('device.info.android_version'), false);
+});
+
+test('Windows kiosk / power row is capability-gated and labelled as a native player', () => {
+  const html = render(WIN);
+  for (const id of ['t2KioskOn', 't2KioskOff', 't2PowerMenu', 't2Reboot']) assert.ok(has(html, id), `${id} missing`);
+  assert.ok(html.includes('device.tier2.label_linux'), 'the generic "System:" label, not "Device owner"');
+  const bare = render({ ...WIN, capabilities: WIN.capabilities.filter((c) => !['system.kiosk', 'system.reboot'].includes(c)) });
+  assert.equal(has(bare, 't2KioskOn'), false);
+  assert.equal(has(bare, 't2Reboot'), false);
+  const none = render({ ...WIN, capabilities: ['playback.video'] });
+  assert.equal(none.includes('data-tab="terminal"'), false, 'no terminal capability, no tab');
+});
+
+test('Windows markup is balanced in every gating combination', () => {
+  for (const device of [WIN, { ...WIN, capabilities: [] }, { ...WIN, capabilities: ['system.pty'] }, { ...WIN, capabilities: ['system.shell'] }]) {
+    const html = render(device);
+    assert.equal((html.match(/<div\b/g) || []).length, (html.match(/<\/div>/g) || []).length, 'unbalanced <div>');
+    assert.equal((html.match(/<button\b/g) || []).length, (html.match(/<\/button>/g) || []).length, 'unbalanced <button>');
+    for (const m of html.matchAll(/data-tab="([\w-]+)"/g)) assert.ok(has(html, `tab-${m[1]}`), `orphan tab ${m[1]}`);
+  }
+});
+
+test('the shipped isAndroidDevice rejects a Windows player before the android_version fallback', () => {
+  const i = SRC.indexOf('function isAndroidDevice(device) {');
+  let depth = 0, end = -1;
+  for (let k = SRC.indexOf('{', i); k < SRC.length; k++) {
+    if (SRC[k] === '{') depth++;
+    else if (SRC[k] === '}' && --depth === 0) { end = k + 1; break; }
+  }
+  const fn = SRC.slice(i, end);
+  assert.ok(fn.indexOf("'win'") !== -1 && fn.indexOf("'win'") < fn.indexOf("startsWith('Web/')"),
+    'the Windows short-circuit must come BEFORE the android_version test');
+  const real = eval(`(${fn.replace('function isAndroidDevice', 'function')})`);   // eslint-disable-line no-eval
+  assert.equal(real({ client_type: 'win', android_version: 'Windows 11' }), false, 'client_type alone');
+  assert.equal(real({ platform: 'Windows/11 Pro 25H2 (OptiPlex 7010)', android_version: '12' }), false, 'platform alone');
+  assert.equal(real({ client_type: 'apk', android_version: '13' }), true, 'Android unchanged');
+  // The kiosk-browser install on Windows is a browser, and stays one.
+  assert.equal(real({ client_type: 'player', platform: 'Win32', android_version: 'Web/Chrome' }), false);
+});
+
+test('the shipped isWindowsDevice / terminalPresets agree with the harness stubs', () => {
+  const grab = (name) => {
+    const i = SRC.indexOf(`function ${name}(device) {`);
+    assert.ok(i > 0, `${name} missing from device-detail.js`);
+    let depth = 0;
+    for (let k = SRC.indexOf('{', i); k < SRC.length; k++) {
+      if (SRC[k] === '{') depth++;
+      else if (SRC[k] === '}' && --depth === 0) return SRC.slice(i, k + 1);
+    }
+    return null;
+  };
+  const ctx = { WINDOWS_TERMINAL_PRESETS: ['W'], LINUX_TERMINAL_PRESETS: ['L'], TERMINAL_PRESETS: ['A'] };
+  vm.runInNewContext([grab('isLinuxDevice'), grab('isWindowsDevice'), grab('isNativeDevice'), grab('terminalPresets')].join('\n')
+    + '\nthis.w = isWindowsDevice; this.n = isNativeDevice; this.p = terminalPresets;', ctx);
+  assert.equal(ctx.w({ client_type: 'win' }), true);
+  assert.equal(ctx.w({ platform: 'windows/10 Enterprise LTSC (NUC)' }), true);
+  assert.equal(ctx.w({ client_type: 'player', platform: 'Win32' }), false, 'navigator.platform is not our prefix');
+  assert.equal(ctx.w({ client_type: 'pi' }), false);
+  assert.equal(ctx.n({ client_type: 'pi' }), true);
+  assert.equal(ctx.n({ client_type: 'apk' }), false);
+  assert.deepEqual(ctx.p(WIN), ['W']);
+  assert.deepEqual(ctx.p(PI), ['L']);
+  assert.deepEqual(ctx.p(ANDROID_FULL), ['A']);
+  // And the real Windows presets are PowerShell, including the helper-service check.
+  const presets = SRC.slice(SRC.indexOf('const WINDOWS_TERMINAL_PRESETS'), SRC.indexOf('];', SRC.indexOf('const WINDOWS_TERMINAL_PRESETS')));
+  for (const cmd of ['Get-ComputerInfo', 'Get-PSDrive C', 'Get-Service ScreenTinkerHelper', 'Get-WinEvent']) assert.ok(presets.includes(cmd), cmd);
 });

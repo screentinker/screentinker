@@ -1,0 +1,129 @@
+#!/bin/bash
+# ScreenTinker Pi player — privileged helper.
+#
+# Installed root-owned at /usr/lib/screentinker-pi/st-helper and granted to the player's user by
+# /etc/sudoers.d/screentinker-pi for THIS PATH ONLY. It is the security boundary between "the
+# dashboard can run commands as the player user" and root, so:
+#   * a fixed verb list — there is no generic "run this" verb, and there must never be one;
+#   * every argument re-validated here, never trusted from the caller;
+#   * no eval, no shell interpolation of arguments.
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+SYSTEM_CONFIG=/etc/screentinker-pi/config.json
+STATE_DIR=${ST_STATE_DIR_FOR_HELPER:-/var/lib/screentinker-pi}
+
+die() { echo "st-helper: $*" >&2; exit 2; }
+
+verb=${1:-}
+shift || true
+
+case "$verb" in
+  reboot)
+    systemctl reboot
+    ;;
+  poweroff)
+    systemctl poweroff
+    ;;
+  set-time)
+    # epoch milliseconds. Android's DevicePolicyManager.setTime refuses while automatic time is on;
+    # the equivalent here is that NTP would undo the change within minutes, so it is switched off
+    # and the caller is told so (the player logs it to the dashboard).
+    ms=${1:-}
+    [[ "$ms" =~ ^[0-9]{10,14}$ ]] || die "set-time: epoch milliseconds expected"
+    timedatectl set-ntp false 2>/dev/null || true
+    date -u -s "@$((ms / 1000))" >/dev/null
+    echo "clock set; NTP disabled (re-enable: set-ntp on)"
+    ;;
+  set-ntp)
+    case "${1:-}" in on) timedatectl set-ntp true ;; off) timedatectl set-ntp false ;; *) die "set-ntp: on|off" ;; esac
+    ;;
+  set-timezone)
+    tz=${1:-}
+    [[ "$tz" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$ ]] || die "set-timezone: bad zone name"
+    [[ -f "/usr/share/zoneinfo/$tz" ]] || die "set-timezone: unknown zone $tz"
+    timedatectl set-timezone "$tz"
+    ;;
+  set-backlight)
+    name=${1:-}; val=${2:-}
+    [[ "$name" =~ ^[A-Za-z0-9_.:-]+$ ]] || die "set-backlight: bad device"
+    [[ "$val" =~ ^[0-9]+$ ]] || die "set-backlight: integer expected"
+    dev="/sys/class/backlight/$name"
+    [[ -d "$dev" ]] || die "set-backlight: no such device"
+    max=$(cat "$dev/max_brightness")
+    (( val <= max )) || val=$max
+    echo "$val" > "$dev/brightness"
+    ;;
+  set-bl-power)
+    # 0 = on, 4 = off (FB_BLANK_POWERDOWN) — the DSI touch display's real screen-off.
+    name=${1:-}; val=${2:-}
+    [[ "$name" =~ ^[A-Za-z0-9_.:-]+$ ]] || die "set-bl-power: bad device"
+    [[ "$val" == 0 || "$val" == 4 ]] || die "set-bl-power: 0|4"
+    [[ -w "/sys/class/backlight/$name/bl_power" ]] || die "set-bl-power: no such device"
+    echo "$val" > "/sys/class/backlight/$name/bl_power"
+    ;;
+  hold)
+    # block_uninstall: the Pi equivalent of Android's setUninstallBlocked — apt will not remove or
+    # upgrade the player package until unheld (self-update unholds for the duration of its install).
+    apt-mark hold screentinker-pi
+    ;;
+  unhold)
+    apt-mark unhold screentinker-pi
+    ;;
+  install-deb)
+    # Only files the player downloaded into its own OTA directory, and only after THIS script has
+    # decided they are trustworthy:
+    #   * a screentinker-pi package is installed only if its sha256 equals what the server in the
+    #     ROOT-OWNED system config announces — fetched here, never taken from the player. ⚠️ The
+    #     package NAME proves nothing: the player user (i.e. anyone with the dashboard shell) can build
+    #     a .deb called screentinker-pi whose maintainer scripts run as root. The Windows helper closes
+    #     the same hole the same way (winhelper/service.py v_install).
+    #   * any other package — only when the operator opted in at install time
+    #     ("allow_package_install": true in the system config).
+    path=${1:-}
+    real=$(readlink -f -- "$path") || die "install-deb: bad path"
+    # Lite mode keeps state in /var/lib; desktop mode in the desktop user's ~/.local/state.
+    [[ "$real" =~ ^(/var/lib/screentinker-pi|/home/[^/]+/\.local/state/screentinker-pi)/ota/[^/]+\.deb$ ]] \
+      || die "install-deb: only <state>/ota/*.deb"
+    [[ -f "$real" ]] || die "install-deb: missing file"
+    # Verify and install a ROOT-OWNED COPY: the player user can write its OTA directory, so checking
+    # the original and then installing it would let the file be swapped in between.
+    stage=/var/cache/screentinker-pi
+    install -d -o root -g root -m 0700 "$stage"
+    copy="$stage/install-$$.deb"
+    install -o root -g root -m 0600 -- "$real" "$copy"
+    trap 'rm -f -- "$copy"' EXIT
+    pkg=$(dpkg-deb -f "$copy" Package 2>/dev/null) || die "install-deb: not a .deb"
+    have=$(sha256sum -- "$copy" | cut -d' ' -f1)
+    cfg() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$SYSTEM_CONFIG" "$1" 2>/dev/null || true; }
+    trusted=no
+    if [[ "$pkg" == "screentinker-pi" ]]; then
+      server=$(cfg server_url); server=${server%/}
+      if [[ "$server" =~ ^https?://[^[:space:]]+$ ]]; then
+        want=$(curl -fsS --max-time 30 --proto '=http,https' --max-redirs 0 \
+                 "$server/api/pi/update/check?version=0.0.0&forced=1" 2>/dev/null \
+               | python3 -c 'import json,sys; print((json.load(sys.stdin).get("sha256") or "").lower())' 2>/dev/null || true)
+        [[ -n "$want" && "$want" == "$have" ]] && trusted=yes
+      fi
+    fi
+    if [[ "$trusted" != yes && "$(cfg allow_package_install)" != "True" ]]; then
+      die "install-deb: refused: $pkg ($have) is not the release ${server:-(no server_url in $SYSTEM_CONFIG)} announces, and allow_package_install is off"
+    fi
+    # Detached from the player's own cgroup: upgrading screentinker-pi restarts the player service,
+    # which would otherwise kill the dpkg run half way through. The unit owns the copy from here.
+    # A held package (block_uninstall) is un-held for the upgrade and held again after — the hold
+    # exists to stop REMOVAL, and apt-mark hold also freezes upgrades.
+    trap - EXIT
+    systemd-run --quiet --unit="screentinker-pi-install-$(date +%s)" --collect /bin/sh -c '
+      held=""; if apt-mark showhold | grep -qx screentinker-pi; then held=1; apt-mark unhold screentinker-pi >/dev/null; fi
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-confold "$1"
+      rc=$?
+      [ -n "$held" ] && apt-mark hold screentinker-pi >/dev/null
+      rm -f -- "$1"
+      exit $rc' sh "$copy"
+    echo "install of $pkg started ($([[ $trusted == yes ]] && echo "verified release" || echo "operator-allowed package"))"
+    ;;
+  *)
+    die "unknown verb '${verb}'"
+    ;;
+esac

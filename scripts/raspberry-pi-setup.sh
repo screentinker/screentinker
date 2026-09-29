@@ -36,21 +36,25 @@ err()  { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # -- Parse arguments --
 PLAYER_ONLY=false
+NATIVE=false
 SERVER_URL=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --player-only) PLAYER_ONLY=true; shift ;;
+        --native) NATIVE=true; shift ;;
         --help|-h)
             echo "Usage: sudo ./raspberry-pi-setup.sh [OPTIONS] [SERVER_URL]"
             echo ""
             echo "Options:"
-            echo "  --player-only URL    Player-only mode (no local server)"
+            echo "  --player-only URL    Player-only mode (no local server), Chromium kiosk"
+            echo "  --native URL         Native player (Qt, no browser) with Android-app parity"
             echo "  --help               Show this help"
             echo ""
             echo "Examples:"
             echo "  sudo ./raspberry-pi-setup.sh                                    # All-in-One (interactive)"
             echo "  sudo ./raspberry-pi-setup.sh --player-only https://screentinker.com"
+            echo "  sudo ./raspberry-pi-setup.sh --native https://screentinker.com"
             exit 0
             ;;
         http*) SERVER_URL="$1"; shift ;;
@@ -106,7 +110,7 @@ if [[ "$ARCH" != "aarch64" && "$ARCH" != "armv7l" ]]; then
 fi
 
 # -- Interactive mode selection (if no flags passed) --
-if [ "$PLAYER_ONLY" = false ] && [ -z "$SERVER_URL" ]; then
+if [ "$PLAYER_ONLY" = false ] && [ "$NATIVE" = false ] && [ -z "$SERVER_URL" ]; then
     echo ""
     echo -e "${BLUE}======================================${NC}"
     echo -e "${BLUE}   ScreenTinker Raspberry Pi Setup${NC}"
@@ -118,7 +122,11 @@ if [ "$PLAYER_ONLY" = false ] && [ -z "$SERVER_URL" ]; then
     echo ""
     echo "  2) Player Only"
     echo "     Connects to an existing ScreenTinker server."
-    echo "     This Pi just displays content."
+    echo "     This Pi just displays content (web player in Chromium)."
+    echo ""
+    echo "  3) Native Player"
+    echo "     Connects to an existing ScreenTinker server with the native"
+    echo "     player: reboot, remote terminal, screen power, self-update."
     echo ""
     if [ "$HAVE_TTY" = false ]; then
         # No terminal to ask at. Say which way we went, rather than letting an empty answer
@@ -126,8 +134,15 @@ if [ "$PLAYER_ONLY" = false ] && [ -z "$SERVER_URL" ]; then
         warn "No terminal available for the menu — defaulting to All-in-One."
         warn "To choose Player-Only non-interactively:  ... | sudo bash -s -- --player-only https://your-server"
     else
-        ask MODE_CHOICE "Choose [1/2]: "
+        ask MODE_CHOICE "Choose [1/2/3]: "
         case "$MODE_CHOICE" in
+            3)
+                NATIVE=true
+                while [ -z "$SERVER_URL" ]; do
+                    ask SERVER_URL "Server URL (e.g., https://screentinker.com): "
+                    [ -z "$SERVER_URL" ] && warn "The native player needs a server URL."
+                done
+                ;;
             2)
                 PLAYER_ONLY=true
                 while [ -z "$SERVER_URL" ]; do
@@ -142,6 +157,45 @@ fi
 
 # Strip trailing slash from server URL
 SERVER_URL="${SERVER_URL%/}"
+
+# -- Native player: a package from the operator's OWN server, then done --
+#
+# The .deb comes from <server>/download/pi rather than a fixed release URL on purpose: the player a
+# panel runs must match the server it talks to, and a self-hosted server serves the build it shipped
+# with. apt resolves the dependencies (PyQt6, QtWebEngine, GStreamer) from Pi OS's own archive.
+if [ "$NATIVE" = true ]; then
+    [ -z "$SERVER_URL" ] && err "The native player requires a server URL:  --native https://your-server"
+    # The native player is built on PySide6 (LGPL — ScreenTinker ships no GPL), which Debian packages
+    # from 13 "trixie" on. Say so here rather than letting apt fail on an unmet dependency.
+    OS_VER=$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID:-0}")
+    if [ "${OS_VER%%.*}" -lt 13 ] 2>/dev/null; then
+        err "The native player needs Raspberry Pi OS based on Debian 13 (Trixie); this is Debian ${OS_VER}. Upgrade the OS, or run this script with --player-only for the browser player."
+    fi
+    exec > >(tee -a "$LOG_FILE") 2>&1
+    log "Native player for $SERVER_URL"
+    command -v curl >/dev/null || { apt-get update -qq; apt-get install -y -qq curl; }
+    DEB=$(mktemp --suffix=.deb)
+    curl -fSL --retry 3 -o "$DEB" "$SERVER_URL/download/pi" \
+        || err "Could not download the native player from $SERVER_URL/download/pi (is the server 2.3 or later?)"
+    chmod 0644 "$DEB"
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$DEB" || err "Package install failed (see $LOG_FILE)"
+    rm -f "$DEB"
+    NATIVE_MODE=lite
+    if dpkg -l xserver-xorg 2>/dev/null | grep -q "^ii" || dpkg -l labwc 2>/dev/null | grep -q "^ii"; then
+        NATIVE_MODE=desktop
+    fi
+    DESKTOP_USER="${SUDO_USER:-$(getent passwd 1000 | cut -d: -f1)}"
+    if [ "$NATIVE_MODE" = desktop ]; then
+        screentinker-pi setup "$SERVER_URL" --mode desktop --user "$DESKTOP_USER"
+    else
+        systemctl disable getty@tty1.service 2>/dev/null || true
+        screentinker-pi setup "$SERVER_URL" --mode lite
+    fi
+    log "Done. The pairing code is on the display; enter it in the dashboard."
+    [ "$NATIVE_MODE" = desktop ] && log "Log out and back in (or reboot) to start the player in the desktop."
+    exit 0
+fi
 
 # Set kiosk URL
 if [ "$PLAYER_ONLY" = true ]; then

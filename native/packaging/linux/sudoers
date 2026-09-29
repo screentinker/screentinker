@@ -1,0 +1,4 @@
+# ScreenTinker Pi player: the privileged helper, and nothing else. See /usr/lib/screentinker-pi/st-helper
+# for the fixed verb list; every argument is re-validated there.
+%screentinker ALL=(root) NOPASSWD: /usr/lib/screentinker-pi/st-helper
+%screentinker ALL=(root) NOPASSWD: /usr/lib/screentinker-pi/st-helper *

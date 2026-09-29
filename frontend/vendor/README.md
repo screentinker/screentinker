@@ -56,3 +56,26 @@ be kept as a separate file next to it. Record the licence below and add a `<name
   ```
   Then bump the version in this section and in `pdf-pages.js` (it pins the version for the
   worker path).
+
+## xterm/
+- **Library:** xterm.js (`@xterm/xterm`) + its fit addon (`@xterm/addon-fit`) — the terminal
+  emulator behind the device Terminal tab's **Interactive** mode (a real PTY on a native Linux
+  player, relayed by `server/lib/pty-relay.js`). The one-shot shell mode does not use it.
+- **Version:** xterm 6.0.0, addon-fit 0.11.0
+- **Licence:** MIT for both — Copyright (c) 2017-2024 The xterm.js authors, (c) 2014-2016
+  SourceLair, (c) 2012-2013 Christopher Jeffrey. Full texts in
+  [`xterm/xterm.LICENSE`](xterm/xterm.LICENSE) and [`xterm/addon-fit.LICENSE`](xterm/addon-fit.LICENSE).
+  The `.mjs` bundles keep their `@license MIT` headers; the files are kept anyway, per the rule above.
+- **Files:** `xterm.mjs` (ESM build, exports `Terminal`), `addon-fit.mjs` (exports `FitAddon`),
+  `xterm.css` (required — without it the helper textarea and the viewport render as visible junk).
+- **Why committed:** offline instances and no build step. Loaded lazily with `import()` the first
+  time an operator opens Interactive mode, so the ~340 KB never lands on a session that does not.
+- **Regenerate / update:**
+  ```sh
+  cd "$(mktemp -d)" && npm pack @xterm/xterm@6.0.0 @xterm/addon-fit@0.11.0 --silent
+  mkdir x f && tar xzf xterm-xterm-*.tgz -C x && tar xzf xterm-addon-fit-*.tgz -C f
+  V=<repo>/frontend/vendor/xterm
+  cp x/package/lib/xterm.mjs x/package/css/xterm.css "$V"/ && cp f/package/lib/addon-fit.mjs "$V"/
+  cp x/package/LICENSE "$V"/xterm.LICENSE && cp f/package/LICENSE "$V"/addon-fit.LICENSE
+  sed -i '/^\/\/# sourceMappingURL=/d' "$V"/xterm.mjs "$V"/addon-fit.mjs
+  ```

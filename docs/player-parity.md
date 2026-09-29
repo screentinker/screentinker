@@ -22,6 +22,17 @@ has not been re-run there, is not a certification.
 **Legend** — ✅ verified in source · ⚠️ partial/conditional (reason given) · ❌ not supported (reason
 given) · 💀 **dead**: the capability is declared or baselined but the control cannot work · ❓
 **unverifiable from source** — needs hardware, and is marked as such rather than asserted.
+🔜 **in progress** — being brought up; the mechanism is named, the status is not yet a claim.
+
+**Raspberry Pi (native)** and **Windows (native)** are one engine (`native/screentinker_native`,
+Python + Qt) with two OS backends (`platform/linux`, `platform/windows`). Where a row is the engine —
+playback, zones, transitions, sync, triggers, the remote view, shell and PTY — the Windows column
+reads "as Pi". Every row that is the OS (screen power, the mixer, the backlight, reboot, the clock,
+installing, the display timeout, self-update, kiosk) is its own Windows work; each is marked with
+what ran on a Windows 11 25H2 VM (2026-09-29) and ❓ where only real display hardware can answer.
+Both native players are built on PySide6 (LGPL-3.0), never PyQt6 (GPL-3.0); the Pi needs Pi OS
+Trixie (Debian 13), the first release that packages PySide6. Server and dashboard contract: [`pi-native-player.md`](pi-native-player.md),
+[`windows-native-player.md`](windows-native-player.md).
 
 BrightSign runs the *same* `server/player/index.html` as the browser, so it differs only where the
 `autorun.brs` host bridge adds something the browser cannot reach. The bridge has two halves: the
@@ -108,16 +119,16 @@ that could not be sent it. The command is now ungated.
 No command routes to any `playback.*` capability and no dashboard control is gated on one, so these
 describe content rendering. They are informational, and shown to the operator in the Info tab.
 
-| capability | Android | Web | Tizen | BrightSign |
-|---|---|---|---|---|
-| `playback.video` | ✅ ExoPlayer (`MediaPlayerManager`) | ✅ `<video>` | ✅ AVPlay | ✅ hardware plane |
-| `playback.image` | ✅ `ImageLoader` | ✅ | ✅ | ✅ |
-| `playback.widget` | ✅ WebView | ✅ iframe | ✅ iframe | ✅ iframe |
-| `playback.youtube` | ✅ WebView embed | ✅ IFrame API | ✅ iframe embed | ✅ IFrame API |
-| `playback.zones` | ✅ `ZoneManager` | ✅ | ✅ | ✅ |
-| `playback.transitions` | ✅ `TransitionCompositor` | ⚠️ declared only when the bundle loads (`transitionRuntimeReady()`) — a failed load hard-cuts rather than breaking playback | ✅ `transitions.js` | ⚠️ composites DOM over video; with hwz it may be **invisible over video** and degrade to a hard cut |
-| `playback.pip` | ✅ `PipOverlay` | ✅ `#pipContainer` | ✅ `pip-overlay.js` | ⚠️ same hwz caveat as transitions |
-| `playback.bundle` | ✅ WebView, `playItem` + `ZoneManager` | ✅ `renderBundleBuffered`, server-flattened document | ✅ `renderBundle` + zone branch | ✅ inherits the web player |
+| capability | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|---|---|
+| `playback.video` | ✅ ExoPlayer (`MediaPlayerManager`) | ✅ `<video>` | ✅ AVPlay | ✅ hardware plane | ✅ QtMultimedia `MediaPlayer` (GStreamer on Bookworm, FFmpeg on Trixie); needs `gstreamer1.0-libav` for H.264/AAC (a Depends) | ✅ as Pi — shared engine (QtMultimedia `MediaPlayer`, Qt's Windows media backend); ❓ codec coverage not yet run on Windows |
+| `playback.image` | ✅ `ImageLoader` | ✅ | ✅ | ✅ | ✅ QML `Image`, decoded at surface size (e2e) | ✅ as Pi — shared engine |
+| `playback.widget` | ✅ WebView | ✅ iframe | ✅ iframe | ✅ iframe | ✅ `WebEngineView`, same-URL reuse like Android (e2e: clock widget in a zone) | ✅ as Pi — shared engine (`WebEngineView`) |
+| `playback.youtube` | ✅ WebView embed | ✅ IFrame API | ✅ iframe embed | ✅ IFrame API | ✅ Android's embed wrapper byte-for-byte, `screentinker.com` base; live mute via the IFrame API | ✅ as Pi — shared engine |
+| `playback.zones` | ✅ `ZoneManager` | ✅ | ✅ | ✅ | ✅ `ZoneRunner` — Android's rules incl. orphan→largest-zone fallback (e2e) | ✅ as Pi — shared engine |
+| `playback.transitions` | ✅ `TransitionCompositor` | ⚠️ declared only when the bundle loads (`transitionRuntimeReady()`) — a failed load hard-cuts rather than breaking playback | ✅ `transitions.js` | ⚠️ composites DOM over video; with hwz it may be **invisible over video** and degrade to a hard cut | ✅ the shared GLSL wrapped for Qt 6 (GLSL-4.40 reserved words renamed) and baked with `qsb`: all 15 bake on Bookworm arm64, and VanEck ran on an OpenGL scene graph (e2e). On a **software** scene graph (no GPU) it crossfades instead — never the black frames ShaderEffect gives there. ❓ not yet seen on a Pi's V3D | ✅ as Pi — shared engine (the same baked shaders); ❓ not yet seen on a Windows GPU (D3D11 RHI) |
+| `playback.pip` | ✅ `PipOverlay` | ✅ `#pipContainer` | ✅ `pip-overlay.js` | ⚠️ same hwz caveat as transitions | ✅ `PipLayer.qml` (Android geometry) | ✅ as Pi — shared engine |
+| `playback.bundle` | ✅ WebView, `playItem` + `ZoneManager` | ✅ `renderBundleBuffered`, server-flattened document | ✅ `renderBundle` + zone branch | ✅ inherits the web player | ✅ server-flattened render, cached on disk (24 MB) like Android's `BundleCache` | ✅ as Pi — shared engine |
 
 `playback.bundle` is an uploaded HTML bundle (`.wgt` / `.zip`) played as a playlist item. It means
 the player can **mount** one — today that is the server's flattened single-document render at
@@ -148,19 +159,19 @@ baselines must not claim it until a release that has it is fielded.
 
 ## Audio
 
-| capability | Android | Web | Tizen | BrightSign |
-|---|---|---|---|---|
-| `audio.mute` | ✅ `device:mute-changed` → `setVideoMuted`, incl. YouTube via the IFrame bridge | ✅ | ✅ incl. YouTube via `postMessage` | ✅ as web |
-| `audio.volume` | ✅ `set_volume` reads `payload.level` | ✅ reads `payload.level` (1.9.31) | ✅ `applyVolume` reads `payload.level` (1.9.31, incl. `tizen.tvaudiocontrol`) | ✅ as web |
+| capability | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|---|---|
+| `audio.mute` | ✅ `device:mute-changed` → `setVideoMuted`, incl. YouTube via the IFrame bridge | ✅ | ✅ incl. YouTube via `postMessage` | ✅ as web | ✅ incl. YouTube via the IFrame API | ✅ as Pi — shared engine (player media mute, not the OS mixer) |
+| `audio.volume` | ✅ `set_volume` reads `payload.level` | ✅ reads `payload.level` (1.9.31) | ✅ `applyVolume` reads `payload.level` (1.9.31, incl. `tizen.tvaudiocontrol`) | ✅ as web | ✅ `payload.level` → PipeWire `wpctl` / ALSA `amixer`, player output as the fallback (e2e) | ✅ Core Audio endpoint volume (pycaw), the taskbar slider's own control; player output as the fallback |
 
 ## Display
 
-| capability | Android | Web | Tizen | BrightSign |
-|---|---|---|---|---|
-| `display.rotation` | ✅ native `rootView.rotation` — the ExoPlayer surface rotates with it | ✅ CSS transform | ✅ CSS + AVPlay `setDisplayRotation` for video | ⚠️ CSS cannot turn the hardware video plane; the host would have to (`roVideoMode`), and the page never calls `BS.setVideoMode` |
-| `display.power` | ⚠️ conditional. `screen_off` needs owner / device-admin FORCE_LOCK / accessibility; `screen_on` is a **wake lock**, which works anywhere — but only since `812e89f`. On the fielded build `screen_on` is a logged no-op, which is why the Android baseline no longer claims this | ❌ a browser tab cannot power a panel — the overlay only paints black | ✅ both halves on every build, no signing needed: `showScreenOff()` / `clearScreenOff()`, plus the real panel API where `STDeviceControl` finds one | ⚠️ needs `hasHost()`. Media teardown always blanks; ❓ **CEC is unverified** — our XT245 resolves `@brightsign/cec` while the kernel logs `failed to get cec clock` and the display never responds |
-| `display.resolution` | ❌ needs system/root | ❌ not addressable from a browser | ❌ no web-accessible mode setting on the TV profile | ⚠️ **declared but unreachable** — `st-bridge.js` exposes `setVideoMode`, the page never calls it, and no command maps to this capability |
-| `display.brightness` (per-window dim, Tier 0) | ✅ `set_brightness` → `setWindowBrightness`, no privilege needed | ❌ | ❌ | ❌ |
+| capability | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|---|---|
+| `display.rotation` | ✅ native `rootView.rotation` — the ExoPlayer surface rotates with it | ✅ CSS transform | ✅ CSS + AVPlay `setDisplayRotation` for video | ⚠️ CSS cannot turn the hardware video plane; the host would have to (`roVideoMode`), and the page never calls `BS.setVideoMode` | ✅ QML rotation, Android's `orientationRotSwap` rule (unit-tested) | ✅ as Pi — shared engine (QML rotation) |
+| `display.power` | ⚠️ conditional. `screen_off` needs owner / device-admin FORCE_LOCK / accessibility; `screen_on` is a **wake lock**, which works anywhere — but only since `812e89f`. On the fielded build `screen_on` is a logged no-op, which is why the Android baseline no longer claims this | ❌ a browser tab cannot power a panel — the overlay only paints black | ✅ both halves on every build, no signing needed: `showScreenOff()` / `clearScreenOff()`, plus the real panel API where `STDeviceControl` finds one | ⚠️ needs `hasHost()`. Media teardown always blanks; ❓ **CEC is unverified** — our XT245 resolves `@brightsign/cec` while the kernel logs `failed to get cec clock` and the display never responds | ⚠️ always blanks (overlay, e2e) and mutes; the real power-down is layered — DSI `bl_power`, HDMI-CEC, `wlopm`/`xset dpms`. ❓ CEC/DPMS unverified on hardware | ⚠️ always blanks (overlay) and mutes; DDC/CI VCP D6 + SC_MONITORPOWER for the real power-down. ❓ monitor power-down unverified on hardware (the VM has no DDC) |
+| `display.resolution` | ❌ needs system/root | ❌ not addressable from a browser | ❌ no web-accessible mode setting on the TV profile | ⚠️ **declared but unreachable** — `st-bridge.js` exposes `setVideoMode`, the page never calls it, and no command maps to this capability | ❌ not declared | ❌ not declared |
+| `display.brightness` (per-window dim, Tier 0) | ✅ `set_brightness` → `setWindowBrightness`, no privilege needed | ❌ | ❌ | ❌ | ✅ black dim layer, capped at 90% (e2e) | ✅ as Pi — shared engine (black dim layer) |
 
 ⚠️ `PlayerCapabilities.kt` **does not declare `display.brightness`**, though `MainActivity` handles
 `set_brightness` unconditionally. So an *updated* Android panel loses the per-window dim slider that
@@ -168,19 +179,19 @@ an un-updated one keeps via the baseline. See gap 2.
 
 ## Remote view and control
 
-| capability | Android | Web | Tizen | BrightSign |
-|---|---|---|---|---|
-| `remote.screenshot` | ⚠️ `captureView` always (a real frame of the player's own view); full-screen only with accessibility or MediaProjection. Declared **only** for the full-screen path | ⚠️ canvas only — same-origin content, and the alpha probe rejects frames where no pixels arrived | ⚠️ `captureAndSend` captures **images only**; video and YouTube get an honest status card reading "Live preview unavailable for video / YouTube on Tizen" | ⚠️ `st-bridge.js` gates host framebuffer capture on **primary storage**; without a disk it falls back to canvas, which cannot read the video plane |
-| `remote.stream` | ✅ | ✅ 1fps | ✅ 1s interval over `captureAndSend`, so the same image-only limit | ⚠️ as web |
-| `remote.input` | ✅ `TouchInjector` — plain `dispatchTouchEvent`, no privilege | ✅ | ✅ `elementFromPoint().click()` + D-pad/volume keys | ✅ synthesised DOM events, needs no host |
+| capability | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|---|---|
+| `remote.screenshot` | ⚠️ `captureView` always (a real frame of the player's own view); full-screen only with accessibility or MediaProjection. Declared **only** for the full-screen path | ⚠️ canvas only — same-origin content, and the alpha probe rejects frames where no pixels arrived | ⚠️ `captureAndSend` captures **images only**; video and YouTube get an honest status card reading "Live preview unavailable for video / YouTube on Tizen" | ⚠️ `st-bridge.js` gates host framebuffer capture on **primary storage**; without a disk it falls back to canvas, which cannot read the video plane | ✅ `grabWindow()` — the whole scene incl. video and WebEngine, JPEG q40 ≤960 px (e2e) | ✅ as Pi — shared engine (`grabWindow()`) |
+| `remote.stream` | ✅ | ✅ 1fps | ✅ 1s interval over `captureAndSend`, so the same image-only limit | ⚠️ as web | ✅ Android pacing 350–1200 ms (e2e: 18 frames / 6 s) | ✅ as Pi — shared engine |
+| `remote.input` | ✅ `TouchInjector` — plain `dispatchTouchEvent`, no privilege | ✅ | ✅ `elementFromPoint().click()` + D-pad/volume keys | ✅ synthesised DOM events, needs no host | ✅ Qt mouse/key events into the player window; POWER/HOME/VOLUME mapped | ✅ as Pi — shared engine (Qt events into the player window) |
 
 ## Lifecycle
 
-| capability | Android | Web | Tizen | BrightSign |
-|---|---|---|---|---|
-| `system.restart_player` | ✅ `launch` / `refresh` | ✅ `location.reload()` | ✅ `location.reload()` via `STDeviceControl` | ⚠️ needs `hasHost()` so the host rebuilds the widget. **A page-initiated reload does not reliably bring an roHtmlWidget back** — that darkened a customer's panel on 2026-07-28, which is why neither `st-bridge.js` nor the baseline offers this without a host |
-| `system.reboot` | ⚠️ **device owner only** (`STPolicy.reboot()`). Off-owner it degrades to an accessibility power *dialog*, which needs someone at the screen | ❌ a browser tab cannot reboot its host | ⚠️ only on a **partner-signed** panel where `STDeviceControl.capabilities().reboot` is true | ⚠️ `RebootSystem()` via the host |
-| `system.self_update` | ✅ APK OTA (`UpdateChecker`), and `update` forces a check | ❌ the server deploys the player; there is nothing for it to update | ❌ a `.wgt` is installed by the panel, not the app | 💀 **for the dashboard button.** The host really does self-update — `autorun.brs` polls `CheckPackageUpdate` every `PKG_CHECK_MS` — but that is a host-side poll on a socket it is not listening to. The page declares `system.self_update` behind `hasHost()`, the dashboard renders "Force update", and `index.html` has **no `update` branch at all**. See gap 3 |
+| capability | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|---|---|
+| `system.restart_player` | ✅ `launch` / `refresh` | ✅ `location.reload()` | ✅ `location.reload()` via `STDeviceControl` | ⚠️ needs `hasHost()` so the host rebuilds the widget. **A page-initiated reload does not reliably bring an roHtmlWidget back** — that darkened a customer's panel on 2026-07-28, which is why neither `st-bridge.js` nor the baseline offers this without a host | ✅ `refresh` reconnects and re-pulls; `launch` raises the window | ✅ as Pi — shared engine |
+| `system.reboot` | ⚠️ **device owner only** (`STPolicy.reboot()`). Off-owner it degrades to an accessibility power *dialog*, which needs someone at the screen | ❌ a browser tab cannot reboot its host | ⚠️ only on a **partner-signed** panel where `STDeviceControl.capabilities().reboot` is true | ⚠️ `RebootSystem()` via the host | ✅ via the root helper (`st-helper reboot/poweroff`), declared only when it is installed | ✅ helper verb `reboot` — verified in the Win11 VM: reboot, auto-logon, watchdog, back online unattended |
+| `system.self_update` | ✅ APK OTA (`UpdateChecker`), and `update` forces a check | ❌ the server deploys the player; there is nothing for it to update | ❌ a `.wgt` is installed by the panel, not the app | 💀 **for the dashboard button.** The host really does self-update — `autorun.brs` polls `CheckPackageUpdate` every `PKG_CHECK_MS` — but that is a host-side poll on a socket it is not listening to. The page declares `system.self_update` behind `hasHost()`, the dashboard renders "Force update", and `index.html` has **no `update` branch at all**. See gap 3 | ✅ 30-min poll + `update`; the root helper re-verifies the .deb's sha256 against the server in the root-owned `/etc` config before apt runs it (a forged `screentinker-pi` package is refused); a `block_uninstall` hold is lifted for the upgrade and restored. Verified 2.2.3→2.2.4 on Trixie arm64, automatic and dashboard-triggered | ✅ `update` + 30-min poll → download → helper re-verifies sha256 with the admin-configured server → silent install; 2.2.3→2.2.4 verified in the VM |
 
 ## Device management
 
@@ -188,31 +199,32 @@ Android device-owner territory. Everything here is ❌ elsewhere for the same re
 privilege model exists on those platforms — so the column is collapsed. Tizen and BrightSign both
 decline these explicitly and in writing in their own capability modules.
 
-| capability | Android | Web / Tizen / BrightSign |
-|---|---|---|
-| `system.kiosk` | ⚠️ owner-only. Off-owner `startLockTask()` is screen pinning, which prompts — unusable on a panel with no input | ❌ no device-owner concept |
-| `system.brightness` | ⚠️ `WRITE_SETTINGS` **or** owner (`setSystemSetting`) | ❌ |
-| `system.screen_timeout` | ⚠️ same gate as above | ❌ |
-| `system.install_apk` | ⚠️ owner **or** a foreign DPC that delegated the install scope | ❌ not an APK platform |
-| `system.shell` | ✅ declared unconditionally — it is an **app-UID** `sh -c`, not root, so it works at any tier. Handled in `WebSocketService` | ❌ |
-| `system.time` | ⚠️ owner-only | ❌ |
-| `system.device_owner` | 💀 **declared by nobody.** See the red section above | ❌ |
+| capability | Android | Web / Tizen / BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|
+| `system.kiosk` | ⚠️ owner-only. Off-owner `startLockTask()` is screen pinning, which prompts — unusable on a panel with no input | ❌ no device-owner concept | ✅ the player IS the session; `kiosk_lock` hides the on-device Exit, `lock_now`/`power_menu` handled | ✅ topmost fullscreen shell window; `kiosk_lock` hides the on-device Exit; the helper watchdog relaunches the player (exit 42 = operator exit) |
+| `system.brightness` | ⚠️ `WRITE_SETTINGS` **or** owner (`setSystemSetting`) | ❌ | ⚠️ declared only when a sysfs backlight or a DDC/CI monitor is detected | ⚠️ declared only when DDC/CI (dxva2 VCP 10) or WMI WmiMonitorBrightness answers. ❓ unverified on hardware |
+| `system.screen_timeout` | ⚠️ same gate as above | ❌ | ⚠️ X11 sessions only (`xset s`/`dpms`) | ✅ helper verb → `powercfg /change monitor-timeout-ac/dc` (verified: 600000 ms → 600 s) |
+| `system.install_apk` | ⚠️ owner **or** a foreign DPC that delegated the install scope | ❌ not an APK platform | ⚠️ `install_apk {url}` installs a **.deb**; any package other than the player itself needs `allow_package_install` at setup (maintainer scripts run as root) | ✅ .exe/.msi via the helper: the release is sha-verified; anything else needs `allow_package_install` (verified refused without it) |
+| `system.shell` | ✅ declared unconditionally — it is an **app-UID** `sh -c`, not root, so it works at any tier. Handled in `WebSocketService` | ❌ | ✅ Android's output format byte-for-byte, as the service user (e2e) | ✅ as Pi — shared engine; the one-shot command runs `powershell -NoProfile -Command <cmd>` as the signed-in player user |
+| `system.pty` | ❌ the app-UID shell has no PTY and never declares it | ❌ | ✅ interactive PTY over `device:pty-*` (e2e incl. resize and ordered exit) | ✅ as Pi — shared engine; PowerShell over ConPTY |
+| `system.time` | ⚠️ owner-only | ❌ | ✅ via the helper; `set_time` switches NTP off (Android's owner API requires auto-time off too) | ✅ `set_timezone` IANA→Windows via tzutil (verified); `set_time` sets the clock and turns off w32time sync |
+| `system.device_owner` | 💀 **declared by nobody.** See the red section above | ❌ | ❌ an Android concept | ❌ an Android concept |
 
 ## Synchronisation and resilience
 
-| capability | Android | Web | Tizen | BrightSign |
-|---|---|---|---|---|
-| `sync.clock` | ✅ `GroupScheduleController` | ✅ | ✅ `syncedNow()` + `schedule-eval.js` | ✅ as web |
-| `sync.native` | ❌ no native protocol | ❌ | ❌ | ⚠️ `st-sync.js` / SyncManager, gated on module presence **and** BOS 8.2.10+ (below the floor the module can resolve and silently do nothing, which on a wall means every panel reports healthy while drifting). ❓ **unverified on hardware** |
-| `offline.cache` | ✅ `ContentCache` + `DownloadCoordinator`, resumable (Range/If-Range), revision-keyed | ✅ service worker, resumable chunked prefetch, revision-keyed; declared only when a worker is genuinely **controlling** the page | ⚠️ `js/media-cache.js` caches media to `wgt-private` — **new at HEAD**, absent from the fielded build, and declared at runtime only where the platform grants storage | ❓ **unverified.** See gap 4 |
+| capability | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|---|---|
+| `sync.clock` | ✅ `GroupScheduleController` | ✅ | ✅ `syncedNow()` + `schedule-eval.js` | ✅ as web | ✅ Android's clock-schedule engine: two players switched item within 2 ms of each other on every boundary (e2e, image items). ❓ video drift correction (seek/rate nudge) not yet run on hardware | ✅ as Pi — shared engine |
+| `sync.native` | ❌ no native protocol | ❌ | ❌ | ⚠️ `st-sync.js` / SyncManager, gated on module presence **and** BOS 8.2.10+ (below the floor the module can resolve and silently do nothing, which on a wall means every panel reports healthy while drifting). ❓ **unverified on hardware** | ❌ | ❌ |
+| `offline.cache` | ✅ `ContentCache` + `DownloadCoordinator`, resumable (Range/If-Range), revision-keyed | ✅ service worker, resumable chunked prefetch, revision-keyed; declared only when a worker is genuinely **controlling** the page | ⚠️ `js/media-cache.js` caches media to `wgt-private` — **new at HEAD**, absent from the fielded build, and declared at runtime only where the platform grants storage | ❓ **unverified.** See gap 4 | ✅ Android's cache rules — resumable Range/If-Range, revision sidecars, READY-then-USABLE; cold start from the cached playlist before the network | ✅ as Pi — shared engine |
 
 ---
 
 ## Where the four declaration sites disagree with each other
 
-| | Android | Web | Tizen | BrightSign |
-|---|---|---|---|---|
-| declaration site | `telemetry/PlayerCapabilities.kt` | `declaredCapabilities()` in `index.html` | `js/capabilities.js` | **`index.html` again** |
+| | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |
+|---|---|---|---|---|---|---|
+| declaration site | `telemetry/PlayerCapabilities.kt` | `declaredCapabilities()` in `index.html` | `js/capabilities.js` | **`index.html` again** | `native/screentinker_native/capabilities.py` (`CAPABILITIES_ALWAYS` + `declared_capabilities()`) | `capabilities.py` (`CAPABILITIES_ALWAYS`) + `platform/windows/ops.py` `extra_capabilities()` |
 
 ⚠️ **`brightsign/st-bridge.js` `computeCapabilities()` IS DEAD CODE.** It is exported as
 `BS.capabilities`, and nothing calls it: `grep -n "BS\.[a-zA-Z]*(" server/player/index.html` lists

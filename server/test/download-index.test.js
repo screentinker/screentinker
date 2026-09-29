@@ -277,3 +277,30 @@ test('the BrightSign package helper answers availability without building the zi
   // Called on every render of the download index, so it must not be the async build.
   assert.equal(typeof bs.available(), 'boolean');
 });
+
+test('the native Pi package is offered only when a .deb is hosted, and names its version', () => {
+  const bare = di.entries({}).find((x) => x.id === 'raspberry-pi-native');
+  assert.equal(bare.available, false, 'no .deb, no download button');
+  assert.ok(bare.absent, 'and it says what to do instead');
+  assert.equal(di.entries({}).find((x) => x.id === 'raspberry-pi').available, true, 'the kiosk-browser row is unaffected');
+  const hosted = di.entries({ deb: { exists: true, version: '1.2.0', size: 400_000, filename: 'screentinker-pi_1.2.0_all.deb' } })
+    .find((x) => x.id === 'raspberry-pi-native');
+  assert.equal(hosted.available, true);
+  assert.equal(hosted.url, '/download/pi');
+  assert.equal(hosted.file, 'screentinker-pi_1.2.0_all.deb');
+  assert.equal(hosted.version, '1.2.0');
+});
+
+test('the native Windows installer is offered only when an .exe is hosted, and the kiosk script stays', () => {
+  const bare = di.entries({}).find((x) => x.id === 'windows-native');
+  assert.equal(bare.available, false, 'no installer, no download button');
+  assert.ok(bare.absent, 'and it says what to do instead');
+  assert.equal(di.entries({}).find((x) => x.id === 'windows').available, true, 'the kiosk-script row is unaffected');
+  const hosted = di.entries({ exe: { exists: true, version: '1.2.0', size: 60_000_000, filename: 'ScreenTinker-Setup-1.2.0.exe' } })
+    .find((x) => x.id === 'windows-native');
+  assert.equal(hosted.available, true);
+  assert.equal(hosted.url, '/download/win');
+  assert.equal(hosted.file, 'ScreenTinker-Setup-1.2.0.exe');
+  assert.equal(hosted.version, '1.2.0');
+  assert.ok(!/github/i.test(JSON.stringify(hosted)), 'never a GitHub release link for a player');
+});
