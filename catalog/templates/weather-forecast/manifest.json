@@ -1,0 +1,30 @@
+{
+  "id": "weather-forecast",
+  "name": "Weather forecast",
+  "version": "1.0.0",
+  "kind": "slide",
+  "description": "Current conditions and a five-day forecast from one of your Weather data sources. Your server fetches the weather itself; the template only lays it out.",
+  "author": "ScreenTinker",
+  "homepage": "https://github.com/screentinker/templates/tree/main/templates/weather-forecast",
+  "license": "MIT",
+  "tags": ["weather", "forecast", "data-source", "clock"],
+  "orientation": ["landscape"],
+  "min_server": "2.2.0",
+  "entry": "template.json",
+  "thumbnail": "thumbnail.png",
+  "params": [
+    { "name": "weather", "type": "data_source", "label": "Weather data source", "required": true,
+      "help": "A data source of type Weather (Data Sources → New → Weather). Its location, units and language are set there." },
+    { "name": "location", "type": "text", "label": "Location name", "max": 60, "default": "Local weather",
+      "help": "The heading. Usually the city or the site's name." },
+    { "name": "units_label", "type": "text", "label": "Temperature suffix", "max": 4, "default": "°",
+      "help": "Shown after every temperature: ° on its own, or °C / °F to match the data source." },
+    { "name": "accent", "type": "color", "label": "Accent colour", "default": "#6CC4F0" },
+    { "name": "background", "type": "color", "label": "Background colour", "default": "#0B1D2E" },
+    { "name": "text_color", "type": "color", "label": "Text colour", "default": "#FFFFFF" },
+    { "name": "timezone", "type": "timezone", "label": "Clock timezone", "help": "Leave empty to use the screen's own clock.", "default": "" },
+    { "name": "locale", "type": "locale", "label": "Date language", "help": "For example en-GB or de-DE. Leave empty for the screen's language.", "default": "" },
+    { "name": "clock_format", "type": "select", "label": "Clock format", "default": "24",
+      "options": [ { "value": "24", "label": "24-hour" }, { "value": "12", "label": "12-hour" } ] }
+  ]
+}

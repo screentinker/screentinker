@@ -1,0 +1,29 @@
+{
+  "id": "lobby-welcome",
+  "name": "Lobby welcome",
+  "version": "1.0.0",
+  "kind": "slide",
+  "description": "A calm welcome screen for a reception or lobby: your logo, a headline and a line of detail, with a live clock and date in the building's own timezone and language.",
+  "author": "ScreenTinker",
+  "homepage": "https://github.com/screentinker/templates/tree/main/templates/lobby-welcome",
+  "license": "MIT",
+  "tags": ["welcome", "lobby", "reception", "clock", "corporate"],
+  "orientation": ["landscape"],
+  "min_server": "2.2.0",
+  "entry": "template.json",
+  "thumbnail": "thumbnail.png",
+  "params": [
+    { "name": "logo", "type": "image", "label": "Logo", "help": "A PNG or SVG with a transparent background works best. Shown top left.", "default": "tpl:logo.png" },
+    { "name": "eyebrow", "type": "text", "label": "Small heading", "max": 40, "default": "WELCOME" },
+    { "name": "headline", "type": "text", "label": "Headline", "max": 60, "default": "Good to see you at Northwind Studio" },
+    { "name": "subline", "type": "text", "label": "Detail line", "max": 120, "default": "Please check in at the front desk — your host will be with you shortly." },
+    { "name": "footer", "type": "text", "label": "Footer", "max": 80, "default": "Guest Wi-Fi: Northwind-Guest" },
+    { "name": "accent", "type": "color", "label": "Accent colour", "default": "#E8A33D" },
+    { "name": "background", "type": "color", "label": "Background colour", "default": "#0F1720" },
+    { "name": "text_color", "type": "color", "label": "Text colour", "default": "#F4F1EA" },
+    { "name": "timezone", "type": "timezone", "label": "Clock timezone", "help": "Leave empty to use the screen's own clock.", "default": "" },
+    { "name": "locale", "type": "locale", "label": "Date language", "help": "For example en-GB, de-DE or fr-CA. Leave empty for the screen's language.", "default": "" },
+    { "name": "clock_format", "type": "select", "label": "Clock format", "default": "24",
+      "options": [ { "value": "24", "label": "24-hour" }, { "value": "12", "label": "12-hour" } ] }
+  ]
+}

@@ -1,0 +1,10 @@
+Weather — animated — third-party material bundled in this template
+
+fonts/inter.woff2
+  Inter (latin subset), Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)
+  SIL Open Font License 1.1 — full text in fonts/OFL-inter.txt
+
+The weather icons and the sky scene are drawn in code (app.js) and are original work under the
+MIT licence in LICENSE. Weather data comes from the operator's own Weather data source (by
+default Open-Meteo, https://open-meteo.com, CC BY 4.0), attributed by the server, not by this
+template.

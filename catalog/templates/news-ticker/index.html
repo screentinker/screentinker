@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>News ticker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="bg" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="brand"><span class="dot"></span><span id="title" class="title"></span></div>
+  <div id="clockbox" class="clockbox">
+    <div id="clock" class="clock"></div>
+    <div id="date" class="date"></div>
+  </div>
+</header>
+
+<main class="feature">
+  <div class="count"><span id="num">01</span><span class="of"> / </span><span id="total">01</span></div>
+  <h1 id="featured" class="featured"></h1>
+  <div class="progress"><div id="bar" class="bar"></div></div>
+</main>
+
+<footer class="ticker">
+  <div class="label"><span id="label"></span></div>
+  <div class="viewport"><div id="track" class="track"></div></div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const { db } = require('../db/database');
 const { syncDataSource, withFetchSlot, bumpDependentWidgets } = require('../lib/data-sources/service');
 const { resolveIcalData } = require('../lib/data-sources/ical-resolver');
+const { resolveWeatherData, validateWeatherConfig } = require('../lib/data-sources/weather-resolver');
 const { requireWorkspaceWrite, canWrite } = require('../lib/permissions');
 const { parseSafeUrl } = require('../lib/ssrf-guard');
 const { makePluginFetch } = require('../lib/plugins/egress');
@@ -18,7 +19,7 @@ const pluginRegistry = require('../lib/plugins/registry');
 const { redactSecrets, mergeSecrets, encryptSecrets, decryptSecrets, fieldsForDataSource } = require('../lib/plugins/secrets');
 
 function isSupportedDataSourceType(type) {
-  return type === 'ical' || pluginRegistry.hasDataSource(type);
+  return type === 'ical' || type === 'weather' || pluginRegistry.hasDataSource(type);
 }
 
 // Two configs share a secret destination when their `url` fields resolve to the same origin.
@@ -67,6 +68,10 @@ function sanitizeConfigForRole(cfg, req, type) {
 
 function validateDataSourceConfig(type, config) {
   if (!config || typeof config !== 'object') return null;
+
+  // Weather has its own schema (location or coordinates, units, locale, 'auto' timezone) and makes
+  // no request to a user-supplied URL, so the iCal URL / IANA checks below do not apply to it.
+  if (type === 'weather') return validateWeatherConfig(config);
 
   if (config.timezone) {
     const tzStr = String(config.timezone).trim();
@@ -192,6 +197,8 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
     let previewData = null;
     if (type === 'ical') {
       previewData = await withFetchSlot(() => resolveIcalData(parsedConfig));
+    } else if (type === 'weather') {
+      previewData = await withFetchSlot(() => resolveWeatherData(parsedConfig, { now: new Date() }));
     } else {
       const plugin = pluginRegistry.getDataSource(type);
       if (!plugin) return res.status(400).json({ error: `Unsupported data source type: ${type}` });
@@ -214,7 +221,9 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
     console.warn(`[data-sources] Test failed for type "${type}": ${err.message}`);
     res.status(422).json({
       status: 'error',
-      error: 'Could not fetch or parse the data source. Check the URL and try again.',
+      error: type === 'weather'
+        ? 'Could not fetch the weather. Check the location and try again.'
+        : 'Could not fetch or parse the data source. Check the URL and try again.',
     });
   }
 });

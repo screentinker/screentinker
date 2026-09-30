@@ -1,0 +1,107 @@
+/* News ticker — ScreenTinker community template. MIT. Fonts: Inter and Oswald, SIL OFL 1.1 (see NOTICE). */
+@font-face { font-family: 'Inter'; font-weight: 400 800; font-style: normal; src: url(fonts/inter.woff2) format('woff2'); }
+@font-face { font-family: 'Oswald'; font-weight: 300 700; font-style: normal; src: url(fonts/oswald.woff2) format('woff2'); }
+
+:root {
+  --bg: #11161D;
+  --accent: #FF5A36;
+  --text: #F5F3EE;
+  --bar-h: 11.5vh;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  cursor: none;
+}
+.bg {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(120vh 90vh at 88% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.25));
+}
+/* Older engines without color-mix: a fixed, faint glow. */
+@supports not (background: color-mix(in srgb, red 50%, transparent)) {
+  .bg { background: radial-gradient(120vh 90vh at 88% -10%, rgba(255,255,255,.07), transparent 70%); }
+}
+
+/* ---------- header ---------- */
+.top {
+  position: absolute; left: 6vw; right: 6vw; top: 6.5vh;
+  display: flex; align-items: flex-start; justify-content: space-between;
+}
+.brand { display: flex; align-items: center; gap: 2.6vh; }
+.dot {
+  width: 2.1vh; height: 2.1vh; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent); animation: pulse 2.4s ease-out infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+  100% { box-shadow: 0 0 0 2.4vh transparent; }
+}
+.title {
+  font-family: 'Oswald', 'Inter', sans-serif; font-weight: 600;
+  font-size: 4.2vh; letter-spacing: .14em; text-transform: uppercase;
+}
+.clockbox { text-align: right; }
+.clock { font-family: 'Oswald', 'Inter', sans-serif; font-weight: 500; font-size: 7vh; line-height: 1; font-variant-numeric: tabular-nums; }
+.date { margin-top: 1vh; font-size: 2.2vh; font-weight: 600; letter-spacing: .06em; opacity: .65; text-transform: uppercase; }
+.hide-clock .clockbox { display: none; }
+
+/* ---------- featured headline ---------- */
+.feature {
+  position: absolute; left: 6vw; right: 14vw; top: 27vh; bottom: calc(var(--bar-h) + 8vh);
+  display: flex; flex-direction: column; justify-content: center;
+}
+.count { font-family: 'Oswald', sans-serif; font-size: 3vh; font-weight: 500; letter-spacing: .1em; color: var(--accent); }
+.count .of, .count #total { opacity: .55; color: var(--text); }
+.featured {
+  margin: 2.2vh 0 4vh; font-weight: 800; font-size: 8.4vh; line-height: 1.08; letter-spacing: -.015em;
+  max-width: 72vw; text-wrap: balance;
+  transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1);
+}
+.featured.out { opacity: 0; transform: translateY(2.5vh); }
+.featured.in { animation: rise .8s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(3vh); } to { opacity: 1; transform: none; } }
+.progress { width: 22vw; height: .55vh; background: rgba(255,255,255,.14); border-radius: 1vh; overflow: hidden; }
+.bar { height: 100%; width: 0; background: var(--accent); border-radius: 1vh; }
+.bar.run { animation-name: fill; animation-timing-function: linear; animation-fill-mode: forwards; }
+@keyframes fill { from { width: 0; } to { width: 100%; } }
+
+/* ---------- ticker bar ---------- */
+.ticker {
+  position: absolute; left: 0; right: 0; bottom: 0; height: var(--bar-h);
+  display: flex; align-items: stretch;
+  background: rgba(0,0,0,.35); border-top: .35vh solid var(--accent);
+}
+.label {
+  flex: none; display: flex; align-items: center; padding: 0 3.2vw 0 6vw;
+  background: var(--accent); color: var(--bg);
+  font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 3.4vh; letter-spacing: .14em; text-transform: uppercase;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 2.2vh) 100%, 0 100%);
+  position: relative; z-index: 2;
+}
+.viewport {
+  position: relative; flex: 1; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 4vw, #000 calc(100% - 4vw), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 4vw, #000 calc(100% - 4vw), transparent 100%);
+}
+.track {
+  position: absolute; top: 0; bottom: 0; left: 0; display: flex; align-items: center; white-space: nowrap;
+  will-change: transform;
+}
+.item { font-size: 3.7vh; font-weight: 600; padding: 0 2.2vw; }
+.sep { width: 1.1vh; height: 1.1vh; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* ---------- a thin strip zone: the ticker is the whole widget ---------- */
+.strip .top, .strip .feature, .strip .bg { display: none; }
+.strip { --bar-h: 100vh; }
+.strip .ticker { border-top: 0; background: transparent; }
+.strip .label { font-size: 34vh; padding: 0 24vh 0 14vh; clip-path: polygon(0 0, 100% 0, calc(100% - 20vh) 100%, 0 100%); }
+.strip .item { font-size: 40vh; }
+.strip .sep { width: 12vh; height: 12vh; }
+
+/* ---------- nothing to show ---------- */
+.empty .featured { opacity: .5; }

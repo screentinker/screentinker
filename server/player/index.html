@@ -5802,7 +5802,18 @@
         clearTimeout(pendingWidgetSwap.timer);
         pendingWidgetSwap = null;
         iframe.style.visibility = 'visible';
+        /*
+         * An interactive widget (a game, a kiosk form) has keyboard focus because somebody clicked
+         * it. When the SAME widget is re-rendered under them — an edit bumped its rev — the new
+         * frame would otherwise start unfocused and every key would land on the player instead
+         * (Esc opening the PIN prompt mid-game). Carry focus across a swap of the same widget
+         * only: an advance to a different item never inherits someone's keyboard.
+         */
+        const ae = document.activeElement;
+        const keepFocus = !!(ae && ae !== iframe && ae.tagName === 'IFRAME' && container.contains(ae)
+          && String(ae.src || '').includes(`/api/widgets/${item.widget_id}/render`));
         teardownCurrentMedia(iframe);   // remove the outgoing content, keep this iframe
+        if (keepFocus) { try { iframe.focus(); } catch (e) { /* best effort */ } }
         if (PREVIEW_MODE && item.widget_type === 'webpage') addWebpageNote(container); // #104
       };
       iframe.addEventListener('load', reveal);

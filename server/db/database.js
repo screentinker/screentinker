@@ -1969,6 +1969,51 @@ const migrations = [
     source_ip      TEXT
   )`,
   "CREATE INDEX IF NOT EXISTS idx_support_grants_expires ON support_grants(expires_at)",
+  // Templates library (lib/templates). Installs are instance-wide, like plugins, because the
+  // package bytes are shared; a workspace USES one through a widget of type 'template'.
+  //   templates_installed — one row per `catalog/id`, pinned to one version + sha256.
+  //   template_catalogs   — the official catalog plus any an admin added; caches the last
+  //                         verified index and the highest serial seen (rollback protection).
+  //   template_seen       — per-user "New" badges in the library.
+  `CREATE TABLE IF NOT EXISTS templates_installed (
+    id             TEXT PRIMARY KEY,
+    catalog        TEXT NOT NULL,
+    template_id    TEXT NOT NULL,
+    version        TEXT NOT NULL,
+    sha256         TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    manifest_json  TEXT NOT NULL,
+    trust          TEXT NOT NULL,
+    signer         TEXT,
+    status         TEXT NOT NULL DEFAULT 'active',
+    status_reason  TEXT,
+    installed_by   TEXT,
+    installed_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`,
+  'ALTER TABLE templates_installed ADD COLUMN signer_key_id TEXT',
+  `CREATE TABLE IF NOT EXISTS template_catalogs (
+    id             TEXT PRIMARY KEY,
+    label          TEXT NOT NULL,
+    url            TEXT,
+    public_key     TEXT NOT NULL,
+    builtin        INTEGER NOT NULL DEFAULT 0,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    last_serial    INTEGER NOT NULL DEFAULT 0,
+    index_json     TEXT,
+    index_expires  TEXT,
+    last_checked   INTEGER,
+    last_ok        INTEGER,
+    last_error     TEXT,
+    created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS template_seen (
+    user_id      TEXT NOT NULL,
+    template_key TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    PRIMARY KEY (user_id, template_key)
+  )`,
   // Scale-out C1 (docs/scale-out-design.md §11). All additive; a stock install gets three NULL
   // columns and two empty tables and nothing reads them.
   //   workspaces.origin_node_id — NULL means "mine". Set on a copied workspace to the node UUID of

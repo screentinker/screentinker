@@ -1,0 +1,147 @@
+# Pull-request checks for the template catalog.
+#
+# ⚠️ NO SECRETS, READ-ONLY TOKEN. This runs on `pull_request` (never `pull_request_target`), so a
+# fork's PR gets a read-only GITHUB_TOKEN and no secrets — and the catalog signing key is not a
+# secret anywhere, so there is nothing here to steal. The template's own code runs only inside
+# headless Chrome, under the same CSP a server sends. The checking tools (tools/*.js) are taken
+# from the BASE branch, so a PR cannot weaken the checks it is judged by; a PR that edits
+# .github/ or tools/ needs a CODEOWNERS maintainer review before it can merge.
+#
+# The ScreenTinker CLI and server code come from screentinker/screentinker at a PINNED commit:
+# the rules a template is validated against must not move under a PR. Bump SCREENTINKER_REF
+# deliberately, in its own PR, to a released commit.
+name: validate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # The screentinker/screentinker commit whose scripts/template-catalog.js and server/lib/templates
+  # validate and render templates. Must be a full 40-hex commit SHA of a release that ships
+  # lib/templates (the first one that does). Placeholder until that release exists.
+  SCREENTINKER_REF: REPLACE_WITH_RELEASE_COMMIT_SHA
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (validate every template)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check the pinned ScreenTinker ref
+        run: |
+          [[ "$SCREENTINKER_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::SCREENTINKER_REF must be a full commit SHA"; exit 1; }
+      - uses: actions/checkout@v4
+        with: { path: catalog, persist-credentials: false }
+      - uses: actions/checkout@v4
+        with: { repository: screentinker/screentinker, ref: '${{ env.SCREENTINKER_REF }}', path: st, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Fetch the published catalog (for version-bump and history checks)
+        run: |
+          git clone --depth 1 -b gh-pages "https://github.com/${GITHUB_REPOSITORY}.git" published 2>/dev/null \
+            && test -f published/index.json || { rm -rf published; echo "no published catalog yet"; }
+      - name: Build — the same validation every server applies
+        # --previous is verified against the key compiled into the pinned CLI (the official key),
+        # so a tampered gh-pages cannot feed history into the build.
+        run: |
+          PREV=""; [ -f published/index.json ] && PREV="--previous published"
+          node st/scripts/template-catalog.js build catalog/templates -o dist $PREV
+          jq -r '.templates[] | "\(.id)\t\(.versions[0].version)\t\(.versions[0].sha256)"' dist/index.json | column -t
+      - name: Every changed template bumped its version
+        run: |
+          cd catalog
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD -- templates | cut -d/ -f2 | sort -u)
+          for id in $changed; do
+            [ -f "templates/$id/manifest.json" ] || continue
+            new=$(jq -r .version "templates/$id/manifest.json")
+            old=$(git show "${{ github.event.pull_request.base.sha }}:templates/$id/manifest.json" 2>/dev/null | jq -r .version || true)
+            if [ -n "$old" ] && [ "$old" = "$new" ]; then echo "::error::$id changed but its version is still $new"; exit 1; fi
+            echo "$id: ${old:-new} -> $new"
+          done
+      - uses: actions/upload-artifact@v4
+        with: { name: pr-dist, path: dist, retention-days: 14 }
+
+  lint:
+    name: lint (review rules)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: catalog, persist-credentials: false }
+      - uses: actions/checkout@v4
+        with: { ref: '${{ github.event.pull_request.base.sha }}', path: base, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Lint every template (eval / new Function, undeclared hosts, CDN assets, LICENSE, NOTICE, thumbnail ≤ 200 KB, minified code)
+        run: node base/tools/lint-templates.js catalog/templates
+      - name: revoked.json is well formed (a malformed entry makes servers refuse the WHOLE index)
+        run: |
+          jq -e 'type == "array" and all(.[];
+                   type == "object"
+                   and ((.id == null) or (.id | type == "string" and test("^[a-z][a-z0-9-]{1,63}$")))
+                   and ((.versions // ["*"]) | type == "array" and all(.[]; type == "string" and test("^(\\*|(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5}))$")))
+                   and ((.sha256 // []) | type == "array" and all(.[]; type == "string" and test("^[0-9a-f]{64}$")))
+                   and (.id != null or ((.sha256 // []) | length > 0))
+                   and ((.reason // "") | type == "string" and length <= 300))' catalog/revoked.json
+
+  render:
+    name: render (screenshots for the reviewer)
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: catalog, persist-credentials: false }
+      - uses: actions/checkout@v4
+        with: { ref: '${{ github.event.pull_request.base.sha }}', path: base, persist-credentials: false }
+      - uses: actions/checkout@v4
+        with: { repository: screentinker/screentinker, ref: '${{ env.SCREENTINKER_REF }}', path: st, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm, cache-dependency-path: st/server/package-lock.json }
+      - name: Install the server's dependencies (for the real render path)
+        run: npm ci --prefix st/server --no-audit --no-fund
+      - name: Build, sign with a THROWAWAY key, bundle
+        # The key below is generated on this runner and discarded with it. It is NOT the catalog key
+        # and nothing it signs is published; it only lets the server's verified install path run.
+        run: |
+          node st/scripts/template-catalog.js build catalog/templates -o dist
+          node st/scripts/template-catalog.js keygen "$RUNNER_TEMP/throwaway.pem" > /dev/null
+          openssl pkey -in "$RUNNER_TEMP/throwaway.pem" -pubout -out "$RUNNER_TEMP/throwaway.pub"
+          node st/scripts/template-catalog.js sign dist --key "$RUNNER_TEMP/throwaway.pem" --source catalog/templates
+          node st/scripts/template-catalog.js verify dist --pubkey "$RUNNER_TEMP/throwaway.pub"
+          node st/scripts/template-catalog.js bundle dist -o "$RUNNER_TEMP/offline.zip"
+      - name: Install, render and screenshot every template through the server code
+        run: |
+          node base/tools/render-previews.js --st st --bundle "$RUNNER_TEMP/offline.zip" \
+               --pubkey "$RUNNER_TEMP/throwaway.pub" --out screenshots --sizes 1920x200,1080x1920 \
+               --chrome "$(command -v google-chrome || command -v chromium)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: screenshots, path: screenshots, retention-days: 30 }
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Rendered templates" >> "$GITHUB_STEP_SUMMARY"
+          echo "Download the **screenshots** artifact above: every template at 1920×1080, a 1920×200 strip and a 1080×1920 portrait zone, rendered under its real CSP." >> "$GITHUB_STEP_SUMMARY"
+          ls screenshots | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY" || true
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Every commit is Signed-off-by its author
+        run: |
+          bad=0
+          for c in $(git rev-list "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"); do
+            email=$(git show -s --format=%ae "$c")
+            git show -s --format=%B "$c" | grep -qi "^Signed-off-by: .*<$email>" || { echo "::error::commit $c is not signed off by $email (git commit -s)"; bad=1; }
+          done
+          exit $bad

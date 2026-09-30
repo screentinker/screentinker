@@ -90,6 +90,8 @@ const JWT_ONLY_ROUTERS = [
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */
   { path: '/api/plugin-submissions', mod: './routes/plugin-submissions', tenancy: true },
+  // Templates library (lib/templates). JWT only: installing changes what code the server serves.
+  { path: '/api/templates',   mod: './routes/templates',    tenancy: true },
   /*
    * Server diagnostics for a platform operator: instance shape, the loop-lag history the server has
    * always recorded and never shown, and an in-process CPU profile. JWT-only and gated again inside

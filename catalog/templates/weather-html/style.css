@@ -1,0 +1,90 @@
+/* Weather — animated. ScreenTinker community template. MIT. Font: Inter, SIL OFL 1.1 (see NOTICE). */
+@font-face { font-family: 'Inter'; font-weight: 400 800; font-style: normal; src: url(fonts/inter.woff2) format('woff2'); }
+
+:root { --accent: #FFD166; --solid: #0E1A2B; --top: #1E6FD9; --bottom: #6EC1FF; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body {
+  color: #fff; font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; cursor: none;
+  background: #0E1A2B;
+}
+
+/* ---------- the sky ---------- */
+.sky { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: linear-gradient(165deg, var(--top) 0%, var(--bottom) 100%); transition: background 2s; }
+.sky::after { /* a vignette that keeps the text readable on every sky */
+  content: ''; position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  background: radial-gradient(140vh 100vh at 20% 30%, transparent 40%, rgba(0,0,0,.28) 100%),
+              linear-gradient(180deg, transparent 55%, rgba(0,0,0,.35) 100%);
+}
+.solid .sky { background: radial-gradient(150vh 110vh at 25% 20%, rgba(255,255,255,.08), transparent 70%), var(--solid); }
+
+.fx { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden; pointer-events: none; }
+.drift { position: absolute; opacity: .09; animation: drift linear infinite; }
+.drift svg { width: 100%; height: auto; display: block; }
+@keyframes drift { from { transform: translateX(-40vw); } to { transform: translateX(140vw); } }
+.streak { position: absolute; top: -12vh; width: .18vw; height: 9vh; border-radius: 1vh;
+  background: linear-gradient(180deg, transparent, rgba(210,230,255,.55)); animation: fall linear infinite; }
+@keyframes fall { from { transform: translate3d(0,0,0) rotate(12deg); } to { transform: translate3d(-18vh,125vh,0) rotate(12deg); } }
+.flake { position: absolute; top: -4vh; border-radius: 50%; background: rgba(255,255,255,.85); animation: snow linear infinite; }
+@keyframes snow { 0% { transform: translate3d(0,0,0); } 50% { transform: translate3d(3vw,55vh,0); } 100% { transform: translate3d(-1vw,110vh,0); } }
+.glow { position: absolute; left: -10vh; top: -20vh; width: 90vh; height: 90vh; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,236,170,.45), rgba(255,236,170,0) 65%); animation: breathe 7s ease-in-out infinite alternate; }
+@keyframes breathe { from { opacity: .7; transform: scale(1); } to { opacity: 1; transform: scale(1.08); } }
+.flash { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #fff; opacity: 0; animation: flash 9s infinite; }
+@keyframes flash { 0%, 88%, 100% { opacity: 0; } 89% { opacity: .22; } 90% { opacity: 0; } 91.5% { opacity: .14; } 93% { opacity: 0; } }
+.still * { animation: none !important; }
+
+/* ---------- header ---------- */
+.top { position: absolute; left: 6vw; right: 6vw; top: 6vh; display: flex; justify-content: space-between; align-items: flex-start; }
+.place { font-size: 5.6vh; font-weight: 800; letter-spacing: -.01em; text-shadow: 0 .3vh 2vh rgba(0,0,0,.25); }
+.date { margin-top: .9vh; font-size: 2.3vh; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.clock { font-size: 6.4vh; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; text-shadow: 0 .3vh 2vh rgba(0,0,0,.25); }
+
+/* ---------- now ---------- */
+.now { position: absolute; left: 5vw; right: 6vw; top: 17vh; height: 46vh; display: flex; align-items: center; gap: 3vw; }
+.bigicon { width: 42vh; height: 42vh; flex: none; filter: drop-shadow(0 1.5vh 3vh rgba(0,0,0,.25)); }
+.bigicon svg { width: 100%; height: 100%; overflow: visible; }
+.reading { min-width: 0; }
+.temp { font-size: 27vh; font-weight: 500; line-height: .9; letter-spacing: -.04em; display: flex; align-items: flex-start; text-shadow: 0 .6vh 4vh rgba(0,0,0,.2); }
+.deg { font-size: .5em; font-weight: 600; line-height: 1; color: var(--accent); margin: 2.4vh 0 0 .6vw; }
+.unit { font-size: 5vh; font-weight: 700; margin: 3.2vh 0 0 .3vw; opacity: .7; letter-spacing: 0; }
+.cond { margin-top: 1.5vh; font-size: 5.4vh; font-weight: 700; letter-spacing: -.01em; }
+.chips { display: flex; flex-wrap: wrap; gap: 1.2vh 1vw; margin-top: 2.8vh; }
+.chip { font-size: 2.3vh; font-weight: 600; padding: 1vh 1.6vh; border-radius: 10vh; background: rgba(255,255,255,.14); white-space: nowrap; }
+.chip b { font-weight: 800; }
+
+/* ---------- five days ---------- */
+.days { position: absolute; left: 6vw; right: 6vw; bottom: 6vh; height: 25vh; display: flex; gap: 1.6vw; }
+.day { flex: 1; min-width: 0; border-radius: 2.4vh; padding: 2.2vh 1.6vw 2.4vh; background: rgba(8,16,32,.28);
+  border: .15vh solid rgba(255,255,255,.14); display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  animation: up .9s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes up { from { opacity: 0; transform: translateY(4vh); } to { opacity: 1; transform: none; } }
+.dname { font-size: 2.6vh; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.dicon { width: 8.5vh; height: 8.5vh; }
+.dicon svg { width: 100%; height: 100%; overflow: visible; }
+.hl { width: 100%; display: flex; align-items: center; gap: .8vw; font-size: 2.6vh; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hl .lo { opacity: .65; min-width: 2.6em; text-align: right; }
+.hl .hi { min-width: 2.6em; }
+.range { position: relative; flex: 1; height: .8vh; border-radius: 1vh; background: rgba(255,255,255,.18); }
+.range i { position: absolute; top: 0; bottom: 0; border-radius: 1vh; background: linear-gradient(90deg, #7FD3FF, var(--accent)); }
+.rain { font-size: 1.8vh; font-weight: 600; opacity: .75; }
+
+/* ---------- icon parts ---------- */
+.spin { transform-box: fill-box; transform-origin: center; animation: spin 40s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.bob { animation: bob 6s ease-in-out infinite alternate; }
+@keyframes bob { from { transform: translateX(-2px); } to { transform: translateX(3px); } }
+.drop { animation: drop 1.1s linear infinite; }
+@keyframes drop { from { transform: translateY(-6px); opacity: 0; } 20% { opacity: 1; } to { transform: translateY(16px); opacity: 0; } }
+.fl { animation: fl 2.6s linear infinite; }
+@keyframes fl { from { transform: translateY(-4px); opacity: 0; } 20% { opacity: 1; } to { transform: translateY(16px); opacity: 0; } }
+.bolt { animation: bolt 4s infinite; }
+@keyframes bolt { 0%, 80%, 100% { opacity: 1; } 84% { opacity: .2; } 88% { opacity: 1; } 91% { opacity: .3; } }
+.fogline { animation: fogline 5s ease-in-out infinite alternate; }
+@keyframes fogline { from { transform: translateX(-5px); } to { transform: translateX(5px); } }
+
+/* ---------- no data yet ---------- */
+.waiting { position: absolute; left: 6vw; right: 6vw; top: 40vh; text-align: left; }
+.waiting .w-title { font-size: 6vh; font-weight: 800; }
+.waiting .w-sub { margin-top: 2vh; font-size: 2.8vh; max-width: 70vw; opacity: .8; line-height: 1.35; }
+.nodata .now, .nodata .days { display: none; }

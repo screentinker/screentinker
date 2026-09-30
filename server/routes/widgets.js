@@ -173,6 +173,11 @@ router.post('/', (req, res) => {
   if (!pluginRegistry.isAcceptedWidgetType(widget_type)) {
     return res.status(400).json({ error: 'Unknown widget_type' });
   }
+  // A template widget's config is only ever built by lib/templates (POST /api/templates/:key/use),
+  // which validates every value against the installed template. Here it would be a free blob.
+  if (widget_type === 'template') {
+    return res.status(400).json({ error: 'Create template widgets from the Templates library' });
+  }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
 
@@ -255,6 +260,19 @@ router.put('/:id', (req, res) => {
   let { config } = req.body;
   if (config && typeof config === 'object' && !Array.isArray(config)) {
     config = mergeSecrets(config, storedWidgetConfig(widget), fieldsForWidget(widget.widget_type));
+  }
+  /*
+   * ⚠️ A TEMPLATE WIDGET'S CONFIG IS RE-BUILT, NEVER STORED AS SENT. Its values are checked against
+   * the installed template (types, the workspace's own images and data sources) and the template
+   * key cannot be pointed at something else by editing the blob.
+   */
+  if (widget.widget_type === 'template' && config) {
+    try {
+      const stored = storedWidgetConfig(widget);
+      config = require('../lib/templates/widget').buildConfig(stored.template, config.values, widget.workspace_id);
+    } catch (e) {
+      return res.status(e.status || 400).json({ error: e.message, param: e.param });
+    }
   }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
@@ -419,6 +437,28 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
   }
   res.setHeader('Content-Type', 'text/html');
+  /*
+   * ⚠️ A TEMPLATE CARRIES ITS OWN CONTENT-SECURITY-POLICY, and the `sandbox` in it is the part
+   * that matters: it makes the document an opaque origin even when it is opened top-level (an
+   * Android panel loads a fullscreen widget straight into its WebView, and an admin can click the
+   * link). Without it an html template's code would run as this server's origin — the origin
+   * whose localStorage holds the dashboard session. See lib/templates/render.js.
+   */
+  if (widget.widget_type === 'template') {
+    const out = require('../lib/templates/widget').renderTemplateWidget(widget, {
+      origin: `${req.protocol}://${req.get('host')}`,
+      resolveImage: imageResolverFor(widget),
+      resolveFont: require('./fonts').fontResolverFor(widget),
+      resolveData: dataResolverFor(widget),
+    });
+    res.setHeader('Content-Security-Policy', out.csp);
+    // private, not public: a shared cache (a CDN in front of the server) must not keep serving a
+    // template's old code after it is revoked. Players still cache the rev-pinned copy.
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    return res.send(out.html);
+  }
   res.send(renderWidgetHtml(widget.widget_type, config, {
     iframeSandbox,
     origin: `${req.protocol}://${req.get('host')}`,

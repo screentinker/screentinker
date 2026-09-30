@@ -8,6 +8,7 @@
 
 const { db } = require('../../db/database');
 const { resolveIcalData } = require('./ical-resolver');
+const { resolveWeatherData, weatherIntervalMin } = require('./weather-resolver');
 const pluginRegistry = require('../plugins/registry');
 const { makePluginFetch } = require('../plugins/egress');
 const { decryptSecrets, fieldsForDataSource } = require('../plugins/secrets');
@@ -40,6 +41,13 @@ async function withFetchSlot(fn) {
   }
 }
 
+// How often a source may be re-fetched. Weather is floored at 10 minutes: Open-Meteo's current
+// conditions only move every 15 minutes and it is a free, keyless service we must not hammer.
+function syncIntervalMin(type, config) {
+  if (type === 'weather') return weatherIntervalMin(config);
+  return Math.max(1, parseInt(config && config.interval_min, 10) || 15);
+}
+
 let pollTimer = null;
 let ioInstance = null;
 
@@ -61,7 +69,7 @@ function pollDueDataSources() {
       if (inFlight.has(row.id)) continue;
       let config = {};
       try { config = JSON.parse(row.config || '{}'); } catch (_) {}
-      const intervalMin = Math.max(1, parseInt(config.interval_min, 10) || 15);
+      const intervalMin = syncIntervalMin(row.type, config);
       const isDue = !row.last_fetched_at || (nowSec - row.last_fetched_at >= intervalMin * 60);
       if (isDue) {
         syncDataSource(row.id, true).catch(err => {
@@ -133,7 +141,7 @@ async function syncDataSource(sourceOrId, force = false) {
     config = decryptSecrets(JSON.parse(row.config || '{}'), fieldsForDataSource(row.type));
   } catch (_) {}
 
-  const intervalMin = Math.max(1, parseInt(config.interval_min, 10) || 15);
+  const intervalMin = syncIntervalMin(row.type, config);
   const nowSec = Math.floor(Date.now() / 1000);
 
   // Return existing cache if not expired and not forced
@@ -152,6 +160,8 @@ async function syncDataSource(sourceOrId, force = false) {
 
     if (row.type === 'ical') {
       resolvedData = await withFetchSlot(() => resolveIcalData(config));
+    } else if (row.type === 'weather') {
+      resolvedData = await withFetchSlot(() => resolveWeatherData(config, { now: new Date() }));
     } else {
       const plugin = pluginRegistry.getDataSource(row.type);
       if (!plugin) throw new Error(`Unsupported data source type: ${row.type}`);
@@ -276,6 +286,15 @@ function describeSyncError(err) {
   if (/No valid iCal URL/i.test(m)) {
     return 'No calendar URL or data configured';
   }
+  if (err.code === 'weather-location' || /^Location not found/i.test(m)) {
+    return 'The location could not be found';
+  }
+  if (err.code === 'weather-config' || /^Invalid weather configuration/i.test(m)) {
+    return 'The weather configuration is invalid';
+  }
+  if (err.code === 'egress-not-allowed') {
+    return 'The address is not allowed';
+  }
   if (/could not be parsed|parse/i.test(m)) {
     return 'The data could not be parsed';
   }
@@ -371,6 +390,7 @@ module.exports = {
   describeSyncError,
   getWorkspaceDataMapSync,
   withFetchSlot,
+  syncIntervalMin,
   pollDueDataSources,
   startDataSourcesPoller,
   stopDataSourcesPoller,

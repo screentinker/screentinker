@@ -1,0 +1,54 @@
+# Build the catalog from main — UNSIGNED.
+#
+# ⚠️ CI NEVER SIGNS. The catalog key is not a secret here or anywhere else: a maintainer downloads
+# this artifact, rebuilds from the reviewed source to prove the package hashes match, signs it
+# offline and publishes it to gh-pages (SIGNING.md). A compromised workflow can therefore at worst
+# produce a dist that the maintainer's hash comparison rejects — never a signed one.
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}        # the monthly heartbeat re-sign (SIGNING.md) starts here too
+
+permissions:
+  contents: read
+
+env:
+  SCREENTINKER_REF: REPLACE_WITH_RELEASE_COMMIT_SHA   # keep in step with validate.yml
+
+concurrency:
+  group: build-main
+  cancel-in-progress: false
+
+jobs:
+  dist:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check the pinned ScreenTinker ref
+        run: |
+          [[ "$SCREENTINKER_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::SCREENTINKER_REF must be a full commit SHA"; exit 1; }
+      - uses: actions/checkout@v4
+        with: { path: catalog, persist-credentials: false }
+      - uses: actions/checkout@v4
+        with: { repository: screentinker/screentinker, ref: '${{ env.SCREENTINKER_REF }}', path: st, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Fetch the currently published catalog (keeps history, signatures and a rising serial)
+        run: |
+          git clone --depth 1 -b gh-pages "https://github.com/${GITHUB_REPOSITORY}.git" previous 2>/dev/null \
+            && test -f previous/index.json || { rm -rf previous; echo "no published catalog yet — first release"; }
+      - name: Build (unsigned)
+        # build refuses a --previous dist whose index is not signed by the official catalog key.
+        run: |
+          PREV=""; [ -f previous/index.json ] && PREV="--previous previous"
+          node st/scripts/template-catalog.js build catalog/templates -o dist $PREV
+          test ! -e dist/index.json.sig
+          echo "commit ${GITHUB_SHA}" > dist/BUILT_FROM
+          echo "screentinker ${SCREENTINKER_REF}" >> dist/BUILT_FROM
+          jq -r '.templates[] | .id as $id | .versions[] | "\($id)@\(.version)  \(.sha256)"' dist/index.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: catalog-dist-${{ github.sha }}
+          path: dist
+          retention-days: 90

@@ -154,10 +154,28 @@ function renderDataSourceCard(ds) {
   const statusColor = isOk ? '#10b981' : isPending ? '#f59e0b' : '#ef4444';
   const statusLabel = isOk ? 'OK' : isPending ? t('common.pending') : t('common.error');
   const lastSync = ds.last_fetched_at ? new Date(ds.last_fetched_at * 1000).toLocaleString() : t('data_sources.never_synced');
-  const urlSnippet = ds.config?.url ? ds.config.url.replace(/^https?:\/\//, '').slice(0, 38) + '...' : t('data_sources.inline_data');
+  const isWeather = ds.type === 'weather';
+  const weatherLoc = isWeather
+    ? (ds.config?.location || (ds.config?.latitude != null && ds.config?.longitude != null ? `${ds.config.latitude}, ${ds.config.longitude}` : ''))
+    : '';
+  const urlSnippet = isWeather
+    ? `Open-Meteo · ${weatherLoc}`.slice(0, 48)
+    : ds.config?.url ? ds.config.url.replace(/^https?:\/\//, '').slice(0, 38) + '...' : t('data_sources.inline_data');
+  const primaryKey = isWeather ? 'temperature' : 'status';
 
-  // Standard variables for iCal
-  const sampleVars = [
+  // Standard variables: weather keys are the template contract (TEMPLATES-BUILD-SPEC.md).
+  const sampleVars = isWeather ? [
+    { key: 'location', label: t('data_sources.weather_var_location') },
+    { key: 'temperature', label: t('data_sources.weather_var_temperature') },
+    { key: 'units', label: t('data_sources.weather_var_units') },
+    { key: 'condition', label: t('data_sources.weather_var_condition') },
+    { key: 'icon', label: t('data_sources.weather_var_icon') },
+    { key: 'humidity', label: t('data_sources.weather_var_humidity') },
+    { key: 'wind_speed', label: t('data_sources.weather_var_wind') },
+    { key: 'day1_name', label: t('data_sources.weather_var_day_name') },
+    { key: 'day1_high', label: t('data_sources.weather_var_day_high') },
+    { key: 'day1_low', label: t('data_sources.weather_var_day_low') },
+  ] : [
     { key: 'status', label: t('data_sources.status_frei') },
     { key: 'status_detail', label: t('data_sources.status_detail_label') },
     { key: 'current_title', label: t('data_sources.current_event_label') },
@@ -183,7 +201,7 @@ function renderDataSourceCard(ds) {
           <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted,#94a3b8)">
             <span>${esc(t('data_sources.slug_label'))}:</span>
             <code style="background:var(--bg-input,#0f172a);padding:2px 6px;border-radius:4px;color:#38bdf8;font-size:11px">${esc(ds.slug)}</code>
-            <button class="btn btn-sm" style="padding:1px 6px;font-size:10px;background:none;border:none;color:var(--text-muted);cursor:pointer" data-act="copy-tag" data-tag="{{ds:${esc(ds.slug)}.status}}" title="Copy {{ds:${esc(ds.slug)}.status}}">
+            <button class="btn btn-sm" style="padding:1px 6px;font-size:10px;background:none;border:none;color:var(--text-muted);cursor:pointer" data-act="copy-tag" data-tag="{{ds:${esc(ds.slug)}.${primaryKey}}}" title="Copy {{ds:${esc(ds.slug)}.${primaryKey}}}">
               📋
             </button>
           </div>
@@ -198,7 +216,7 @@ function renderDataSourceCard(ds) {
       <div style="font-size:12px;background:var(--bg-input,#0f172a);padding:10px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);display:flex;flex-direction:column;gap:6px">
         <div style="display:flex;justify-content:space-between">
           <span style="color:var(--text-muted,#64748b)">${esc(t('data_sources.source_label'))}</span>
-          <span style="color:var(--text-primary,#e2e8f0);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(ds.config?.url || '')}">${esc(urlSnippet)}</span>
+          <span style="color:var(--text-primary,#e2e8f0);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(isWeather ? weatherLoc : (ds.config?.url || ''))}">${esc(urlSnippet)}</span>
         </div>
         <div style="display:flex;justify-content:space-between">
           <span style="color:var(--text-muted,#64748b)">${esc(t('data_sources.last_sync_label'))}</span>
@@ -268,6 +286,7 @@ function openEditModal(ds) {
           <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text-primary,#f8fafc)">${esc(t('data_sources.integration_type'))}</label>
           <select id="dsTypeInput" class="input" style="width:100%" ${isEdit ? 'disabled' : ''}>
             <option value="ical" ${!ds?.type || ds.type === 'ical' ? 'selected' : ''}>${esc(t('data_sources.type_ical'))}</option>
+            <option value="weather" ${ds?.type === 'weather' ? 'selected' : ''}>${esc(t('data_sources.type_weather'))}</option>
             ${pluginDsTypes.map((p) => `<option value="${esc(p.type)}" ${ds?.type === p.type ? 'selected' : ''}>${esc(p.label || p.type)}</option>`).join('')}
             ${pluginDsTypes.some((p) => p.type === 'json-api') ? '' : `<option value="api" disabled>${esc(t('data_sources.type_api_soon'))}</option>`}
             <option value="sheets" disabled>${esc(t('data_sources.type_sheets_soon'))}</option>
@@ -347,6 +366,48 @@ function openEditModal(ds) {
         </details>
         </div>
 
+        <div id="dsWeatherFields" style="display:none;flex-direction:column;gap:14px">
+          <div>
+            <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text-primary,#f8fafc)">${esc(t('data_sources.weather_location_label'))}</label>
+            <input type="text" id="dsWxLocationInput" class="input" style="width:100%" maxlength="100" placeholder="${esc(t('data_sources.weather_location_placeholder'))}" value="${esc(ds?.type === 'weather' ? (cfg.location || '') : '')}">
+            <span style="font-size:11px;color:var(--text-muted)">${esc(t('data_sources.weather_location_hint'))}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <label style="display:block;font-size:12px;margin-bottom:4px;color:var(--text-muted)">${esc(t('data_sources.weather_latitude_label'))}</label>
+              <input type="number" id="dsWxLatInput" class="input" style="width:100%" step="any" min="-90" max="90" value="${esc(ds?.type === 'weather' && cfg.latitude != null ? cfg.latitude : '')}">
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;margin-bottom:4px;color:var(--text-muted)">${esc(t('data_sources.weather_longitude_label'))}</label>
+              <input type="number" id="dsWxLonInput" class="input" style="width:100%" step="any" min="-180" max="180" value="${esc(ds?.type === 'weather' && cfg.longitude != null ? cfg.longitude : '')}">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+            <div>
+              <label style="display:block;font-size:12px;margin-bottom:4px;color:var(--text-muted)">${esc(t('data_sources.weather_units_label'))}</label>
+              <select id="dsWxUnitsInput" class="input" style="width:100%">
+                <option value="metric" ${cfg.units !== 'imperial' ? 'selected' : ''}>${esc(t('data_sources.weather_units_metric'))}</option>
+                <option value="imperial" ${cfg.units === 'imperial' ? 'selected' : ''}>${esc(t('data_sources.weather_units_imperial'))}</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;margin-bottom:4px;color:var(--text-muted)">${esc(t('data_sources.weather_locale_label'))}</label>
+              <select id="dsWxLocaleInput" class="input" style="width:100%">
+                ${getAvailableLanguages().map((lang) => `<option value="${esc(lang.code)}" ${(cfg.locale || 'en') === lang.code ? 'selected' : ''}>${esc(lang.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;margin-bottom:4px;color:var(--text-muted)">${esc(t('data_sources.interval_label'))}</label>
+              <select id="dsWxIntervalInput" class="input" style="width:100%">
+                <option value="15" ${(!cfg.interval_min || cfg.interval_min < 30) ? 'selected' : ''}>${esc(t('data_sources.interval_15min'))}</option>
+                <option value="30" ${cfg.interval_min == 30 ? 'selected' : ''}>${esc(t('data_sources.interval_30min'))}</option>
+                <option value="60" ${cfg.interval_min >= 60 ? 'selected' : ''}>${esc(t('data_sources.interval_1hr'))}</option>
+              </select>
+            </div>
+          </div>
+          <span style="font-size:11px;color:var(--text-muted)">${esc(t('data_sources.weather_attribution'))}</span>
+        </div>
+
         <div id="dsPluginFields"></div>
 
         <!-- Test Connection & Live Preview Button -->
@@ -373,14 +434,21 @@ function openEditModal(ds) {
 
   const typeInput = overlay.querySelector('#dsTypeInput');
   const icalFields = overlay.querySelector('#dsIcalFields');
+  const weatherFields = overlay.querySelector('#dsWeatherFields');
+  const isWeatherType = () => typeInput.value === 'weather';
   const pluginFieldsHost = overlay.querySelector('#dsPluginFields');
   const selectedPlugin = () => pluginDsTypes.find((p) => p.type === typeInput.value) || null;
   const paintPluginFields = () => {
     const plugin = selectedPlugin();
+    weatherFields.style.display = isWeatherType() ? 'flex' : 'none';
     if (plugin) {
       icalFields.style.display = 'none';
       pluginFieldsHost.style.display = '';
       pluginFieldsHost.innerHTML = pluginFieldsHtml(plugin.fields || [], cfg, 'dsPlugin_');
+    } else if (isWeatherType()) {
+      icalFields.style.display = 'none';
+      pluginFieldsHost.style.display = 'none';
+      pluginFieldsHost.innerHTML = '';
     } else {
       icalFields.style.display = '';
       pluginFieldsHost.style.display = 'none';
@@ -412,19 +480,38 @@ function openEditModal(ds) {
     };
   }
 
+  function weatherConfig() {
+    const out = {
+      units: overlay.querySelector('#dsWxUnitsInput').value === 'imperial' ? 'imperial' : 'metric',
+      locale: overlay.querySelector('#dsWxLocaleInput').value,
+      interval_min: parseInt(overlay.querySelector('#dsWxIntervalInput').value, 10) || 15,
+    };
+    const location = overlay.querySelector('#dsWxLocationInput').value.trim();
+    const latRaw = overlay.querySelector('#dsWxLatInput').value.trim();
+    const lonRaw = overlay.querySelector('#dsWxLonInput').value.trim();
+    if (location) out.location = location;
+    if (latRaw !== '' || lonRaw !== '') {
+      out.latitude = latRaw === '' ? null : Number(latRaw);
+      out.longitude = lonRaw === '' ? null : Number(lonRaw);
+    }
+    return out;
+  }
+  const weatherConfigMissing = (c) => !c.location && (c.latitude == null || c.longitude == null);
+
   // Test button
   const testBtn = overlay.querySelector('#dsTestBtn');
   const testResult = overlay.querySelector('#dsTestResult');
   testBtn.onclick = async () => {
     const plugin = selectedPlugin();
-    const type = plugin ? plugin.type : 'ical';
-    const testConfig = plugin ? readPluginFields(plugin.fields || [], 'dsPlugin_') : icalConfig();
+    const weather = !plugin && isWeatherType();
+    const type = plugin ? plugin.type : weather ? 'weather' : 'ical';
+    const testConfig = plugin ? readPluginFields(plugin.fields || [], 'dsPlugin_') : weather ? weatherConfig() : icalConfig();
     const missingRequired = plugin
       ? (plugin.fields || []).some((f) => f.required && (testConfig[f.name] == null || testConfig[f.name] === ''))
-      : !testConfig.url;
+      : weather ? weatherConfigMissing(testConfig) : !testConfig.url;
     if (missingRequired) {
       testResult.style.display = 'block';
-      testResult.innerHTML = `<div style="padding:10px;border-radius:6px;background:rgba(239,68,68,0.1);color:#ef4444;font-size:12px">${esc(t('data_sources.test_url_required'))}</div>`;
+      testResult.innerHTML = `<div style="padding:10px;border-radius:6px;background:rgba(239,68,68,0.1);color:#ef4444;font-size:12px">${esc(t(weather ? 'data_sources.weather_location_required' : 'data_sources.test_url_required'))}</div>`;
       return;
     }
 
@@ -441,6 +528,17 @@ function openEditModal(ds) {
           <div style="padding:12px;border-radius:6px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);font-size:12px;color:var(--text-primary)">
             <div style="color:#10b981;font-weight:600;margin-bottom:8px">${esc(t('data_sources.test_plugin_ok'))}</div>
             <pre style="margin:0;white-space:pre-wrap;font-size:11px">${esc(JSON.stringify(prev, null, 2).slice(0, 1200))}</pre>
+          </div>`;
+      } else if (weather) {
+        testResult.innerHTML = `
+          <div style="padding:12px;border-radius:6px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);font-size:12px">
+            <div style="color:#10b981;font-weight:600;margin-bottom:8px">${esc(t('data_sources.weather_test_success', { location: prev.location || '' }))}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--bg-card);padding:8px;border-radius:4px;color:var(--text-primary)">
+              <div><strong>${esc(t('data_sources.weather_var_temperature'))}:</strong> ${esc(String(prev.temperature ?? ''))}°${esc(prev.units || '')}</div>
+              <div><strong>${esc(t('data_sources.weather_var_condition'))}:</strong> ${esc(prev.icon || '')} ${esc(prev.condition || '')}</div>
+              <div><strong>${esc(t('data_sources.weather_var_humidity'))}:</strong> ${esc(String(prev.humidity ?? ''))}%</div>
+              <div><strong>${esc(t('data_sources.weather_var_wind'))}:</strong> ${esc(String(prev.wind_speed ?? ''))}</div>
+            </div>
           </div>`;
       } else {
         testResult.innerHTML = `
@@ -475,8 +573,9 @@ function openEditModal(ds) {
     const name = nameInput.value.trim();
     const slug = slugInput.value.trim();
     const plugin = selectedPlugin();
-    const type = plugin ? plugin.type : 'ical';
-    const config = plugin ? readPluginFields(plugin.fields || [], 'dsPlugin_') : icalConfig();
+    const weather = !plugin && isWeatherType();
+    const type = plugin ? plugin.type : weather ? 'weather' : 'ical';
+    const config = plugin ? readPluginFields(plugin.fields || [], 'dsPlugin_') : weather ? weatherConfig() : icalConfig();
 
     if (!name) {
       alert(t('data_sources.fill_required'));
@@ -486,6 +585,11 @@ function openEditModal(ds) {
       const missing = (plugin.fields || []).some((f) => f.required && (config[f.name] == null || config[f.name] === ''));
       if (missing) {
         alert(t('data_sources.fill_required'));
+        return;
+      }
+    } else if (weather) {
+      if (weatherConfigMissing(config)) {
+        alert(t('data_sources.weather_location_required'));
         return;
       }
     } else if (!config.url) {

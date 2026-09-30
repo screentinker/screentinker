@@ -9,6 +9,7 @@ import * as layoutEditor from './views/layout-editor.js';
 import * as schedule from './views/schedule.js';
 import * as widgets from './views/widgets.js';
 import * as slides from './views/slides.js';
+import * as templates from './views/templates.js';
 import * as dataSources from './views/data-sources.js';
 import * as reviews from './views/reviews.js';
 import * as videoWall from './views/video-wall.js';
@@ -228,6 +229,7 @@ const NAV_LABEL_KEYS = {
   layouts: 'nav.layouts',
   widgets: 'nav.widgets',
   slides: 'nav.slides',
+  templates: 'nav.templates',
   'data-sources': 'nav.data_sources',
   reviews: 'nav.reviews',
   schedule: 'nav.schedule',
@@ -554,6 +556,7 @@ function route() {
     else if (hash === '#/schedule' && link.dataset.view === 'schedule') link.classList.add('active');
     else if (hash === '#/widgets' && link.dataset.view === 'widgets') link.classList.add('active');
     else if (hash === '#/slides' && link.dataset.view === 'slides') link.classList.add('active');
+    else if (hash === '#/templates' && link.dataset.view === 'templates') link.classList.add('active');
     else if ((hash === '#/data-sources' || hash.startsWith('#/data-sources/')) && link.dataset.view === 'data-sources') link.classList.add('active');
     else if ((hash.startsWith('#/wall') || hash === '#/walls') && link.dataset.view === 'walls') link.classList.add('active');
     else if (hash === '#/reports' && link.dataset.view === 'reports') link.classList.add('active');
@@ -587,6 +590,9 @@ function route() {
   } else if (hash === '#/slides') {
     currentView = slides;
     slides.render(app);
+  } else if (hash === '#/templates') {
+    currentView = templates;
+    templates.render(app);
   } else if (hash === '#/data-sources' || hash.startsWith('#/data-sources/')) {
     currentView = dataSources;
     dataSources.render(app);

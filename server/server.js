@@ -157,6 +157,9 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return next();
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return next();
   if (req.path.startsWith('/api/widgets/preview-session/')) return next();
+  // Template previews carry their own sandboxing CSP (lib/templates/render.js).
+  if (req.path.startsWith('/api/templates/preview/')) return next();
+  if (req.path.startsWith('/api/templates/asset/')) return next();   // sets its own `sandbox` CSP
   if (req.path.startsWith('/api/kiosk/') && req.path.endsWith('/render')) return next();
   /*
    * ⚠️ AN HTML BUNDLE IS THE SAME CASE AS A WIDGET RENDER, and it fails the same way without this.
@@ -279,7 +282,13 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '12mb' }));
+/*
+ * The templates import takes a RAW body (a .sttemplate is JSON, but it must reach the route as the
+ * exact bytes that were signed, and a bundle is a zip). The route parses it itself, after auth and
+ * with a size decided per upload kind — so the global JSON parser leaves that one path alone.
+ */
+const jsonBody = express.json({ limit: '12mb' });
+app.use((req, res, next) => (req.path === '/api/templates/import' ? next() : jsonBody(req, res, next)));
 const { sanitizeBody } = require('./middleware/sanitize');
 app.use(sanitizeBody);
 
@@ -1708,6 +1717,19 @@ app.post('/api/plugin-submissions', rateLimit(3600000, 10)); // 10 plugin zips p
 app.post('/api/admin/plugins/submissions', rateLimit(3600000, 20));
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 
+/*
+ * Templates: the two public reads (a preview token and a thumbnail by package hash) are served by
+ * a tiny router mounted BEFORE the JWT-only /api/templates mount, because requireAuth has no
+ * _skipAuth bypass and an <iframe>/<img> cannot send the dashboard's bearer token.
+ */
+{
+  const tplPublic = require('express').Router();
+  const tplRoutes = require('./routes/templates');
+  tplPublic.get('/preview/:token', (req, res, next) => tplRoutes.handle(req, res, next));
+  tplPublic.get('/thumb/:sha', (req, res, next) => tplRoutes.handle(req, res, next));
+  tplPublic.get(/^\/asset\/[0-9a-f]{64}\/.+$/, (req, res, next) => tplRoutes.handle(req, res, next));
+  app.use('/api/templates', rateLimit(60000, 120), tplPublic);
+}
 for (const r of PUBLIC_ROUTERS) {
   // renderBypass routers let the public /:id/render through (req._skipAuth) before bearerAuth.
   const front = r.renderBypass
@@ -2255,6 +2277,24 @@ startAlertService(io);
 // Start universal data sources background poller
 const { startDataSourcesPoller } = require('./lib/data-sources/service');
 startDataSourcesPoller(io);
+
+// Templates library: panels re-render a template's widgets when the template is updated or
+// revoked, and the catalog poller runs only once an admin has switched the library on.
+try {
+  require('./lib/templates/store').setWidgetsChangedHook((ids) => {
+    const { buildPlaylistPayload } = require('./ws/deviceSocket');
+    const commandQueue = require('./lib/command-queue');
+    const { devicesPlayingWidget } = require('./lib/devices-playing');
+    const seen = new Set();
+    for (const id of ids) for (const d of devicesPlayingWidget(id)) seen.add(d);
+    for (const d of seen) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), d, buildPlaylistPayload);
+  });
+  const tplCatalog = require('./lib/templates/catalog');
+  tplCatalog.ensureOfficial();
+  if (tplCatalog.networkEnabled()) tplCatalog.startPoller();
+} catch (e) {
+  console.warn('[templates] startup failed:', e.message);
+}
 
 /*
  * A2 — threshold alerts. Safe to start unconditionally: with no rules configured the sweep reads an
