@@ -23,6 +23,9 @@ function secretNames(fields) {
 }
 
 function fieldsForDataSource(type) {
+  // Built-in types (REST's auth token / password) first: a plugin can never claim their names.
+  const builtin = require('../data-sources/builtin-types').getBuiltinType(type);
+  if (builtin) return builtin.fields;
   try {
     const pluginRegistry = require('./registry');
     const spec = pluginRegistry.getDataSource(type);

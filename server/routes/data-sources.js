@@ -17,9 +17,20 @@ const { makePluginFetch } = require('../lib/plugins/egress');
 const { isRealTimezone } = require('../lib/device-timezone');
 const pluginRegistry = require('../lib/plugins/registry');
 const { redactSecrets, mergeSecrets, encryptSecrets, decryptSecrets, fieldsForDataSource } = require('../lib/plugins/secrets');
+const { getBuiltinType } = require('../lib/data-sources/builtin-types');
 
 function isSupportedDataSourceType(type) {
-  return type === 'ical' || type === 'weather' || pluginRegistry.hasDataSource(type);
+  return type === 'ical' || type === 'weather' || !!getBuiltinType(type) || pluginRegistry.hasDataSource(type);
+}
+
+// The message a failed test or sync may show. A UserFacingError (lib/data-sources/http.js) was
+// written for the operator and reveals nothing a public URL did not; anything else stays generic.
+function testErrorMessage(type, err) {
+  if (err && typeof err.userMessage === 'string' && err.userMessage) return err.userMessage;
+  if (type === 'weather') return 'Could not fetch the weather. Check the location and try again.';
+  if (type === 'sheets') return 'Could not reach Google Sheets. Check the link and try again.';
+  if (type === 'rss') return 'Could not fetch the feed. Check the address and try again.';
+  return 'Could not fetch or parse the data source. Check the URL and try again.';
 }
 
 // Two configs share a secret destination when their `url` fields resolve to the same origin.
@@ -60,6 +71,10 @@ function sanitizeConfigForRole(cfg, req, type) {
       safe.url = '***';
     }
   }
+  // A Google Sheet link IS the read grant for every tab of that spreadsheet, and a REST body can
+  // carry credentials of its own: a read-only member sees the data, not the keys to the source.
+  if (type === 'sheets' && safe.url) safe.url = 'https://docs.google.com/spreadsheets/d/***';
+  if (safe.body) safe.body = '[redacted]';
   if (safe.ics_data) safe.ics_data = '[redacted]';
   if (safe.raw_data) safe.raw_data = '[redacted]';
   if (safe.raw_ics) safe.raw_ics = '[redacted]';
@@ -72,6 +87,19 @@ function validateDataSourceConfig(type, config) {
   // Weather has its own schema (location or coordinates, units, locale, 'auto' timezone) and makes
   // no request to a user-supplied URL, so the iCal URL / IANA checks below do not apply to it.
   if (type === 'weather') return validateWeatherConfig(config);
+  const builtin = getBuiltinType(type);
+  if (builtin) {
+    const msg = builtin.validate(config);
+    if (msg) return msg;
+    // The same SSRF pre-check as iCal, so an internal address is refused at save time rather
+    // than failing on every sync. (The guarded request re-checks every hop regardless.)
+    if (builtin.network && config.url) {
+      try { parseSafeUrl(String(config.url).trim()); } catch (err) {
+        return err.reason && err.reason.startsWith('blocked-ip') ? 'The address is not allowed' : 'Invalid URL format';
+      }
+    }
+    return null;
+  }
 
   if (config.timezone) {
     const tzStr = String(config.timezone).trim();
@@ -195,6 +223,11 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
 
   try {
     let previewData = null;
+    const builtin = getBuiltinType(type);
+    if (builtin) {
+      const out = await withFetchSlot(() => builtin.resolve(parsedConfig, { now: new Date() }));
+      return res.json({ status: 'ok', preview: out.data, table: out.table || null, raw: out.raw === undefined ? null : out.raw });
+    }
     if (type === 'ical') {
       previewData = await withFetchSlot(() => resolveIcalData(parsedConfig));
     } else if (type === 'weather') {
@@ -221,9 +254,7 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
     console.warn(`[data-sources] Test failed for type "${type}": ${err.message}`);
     res.status(422).json({
       status: 'error',
-      error: type === 'weather'
-        ? 'Could not fetch the weather. Check the location and try again.'
-        : 'Could not fetch or parse the data source. Check the URL and try again.',
+      error: testErrorMessage(type, err),
     });
   }
 });

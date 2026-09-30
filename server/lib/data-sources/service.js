@@ -13,6 +13,7 @@ const pluginRegistry = require('../plugins/registry');
 const { makePluginFetch } = require('../plugins/egress');
 const { decryptSecrets, fieldsForDataSource } = require('../plugins/secrets');
 const { LOCAL_ROWS_SQL } = require('../replica-proxy');
+const { getBuiltinType } = require('./builtin-types');
 
 // Bound how many remote calendar feeds may be in flight at once across the whole
 // process. Data source syncs (and `/test`) can fire several fetches near-simultaneously;
@@ -45,6 +46,8 @@ async function withFetchSlot(fn) {
 // conditions only move every 15 minutes and it is a free, keyless service we must not hammer.
 function syncIntervalMin(type, config) {
   if (type === 'weather') return weatherIntervalMin(config);
+  const builtin = getBuiltinType(type);
+  if (builtin) return builtin.interval(config);
   return Math.max(1, parseInt(config && config.interval_min, 10) || 15);
 }
 
@@ -158,7 +161,11 @@ async function syncDataSource(sourceOrId, force = false) {
   try {
     let resolvedData = null;
 
-    if (row.type === 'ical') {
+    const builtin = getBuiltinType(row.type);
+    if (builtin) {
+      const out = await withFetchSlot(() => builtin.resolve(config, { now: new Date() }));
+      resolvedData = keepUpdatedStamp(out.data, row.cached_data);
+    } else if (row.type === 'ical') {
       resolvedData = await withFetchSlot(() => resolveIcalData(config));
     } else if (row.type === 'weather') {
       resolvedData = await withFetchSlot(() => resolveWeatherData(config, { now: new Date() }));
@@ -264,8 +271,25 @@ async function syncDataSource(sourceOrId, force = false) {
  * shown to every workspace member, viewers included, while /test deliberately answers with a
  * fixed string for exactly that reason. One vocabulary, no addresses.
  */
+/*
+ * Built-in types stamp `updated` into their data. Stamped with the fetch time it would differ on
+ * every sync, so every sync would look like a change, bump every bound widget's revision and
+ * defeat the players' immutable render cache. It means "when this data last CHANGED": if nothing
+ * else moved, the previous stamp is kept.
+ */
+function keepUpdatedStamp(data, prevJson) {
+  if (!data || typeof data !== 'object' || !('updated' in data) || !prevJson) return data;
+  let prev;
+  try { prev = JSON.parse(prevJson); } catch (_) { return data; }
+  if (!prev || typeof prev !== 'object' || !('updated' in prev)) return data;
+  const strip = (o) => { const c = { ...o }; delete c.updated; return JSON.stringify(c); };
+  return strip(data) === strip(prev) ? { ...data, updated: prev.updated } : data;
+}
+
 function describeSyncError(err) {
   if (!err) return 'Sync failed';
+  // Written for the operator by the built-in resolvers (lib/data-sources/http.js UserFacingError).
+  if (typeof err.userMessage === 'string' && err.userMessage) return err.userMessage.slice(0, 300);
   const m = String(err.message || '');
   if (err.name === 'SsrfError' || err.code === 'ssrf' || /^blocked:/i.test(m)) {
     return 'The address is not allowed';
@@ -391,6 +415,7 @@ module.exports = {
   getWorkspaceDataMapSync,
   withFetchSlot,
   syncIntervalMin,
+  keepUpdatedStamp,
   pollDueDataSources,
   startDataSourcesPoller,
   stopDataSourcesPoller,
