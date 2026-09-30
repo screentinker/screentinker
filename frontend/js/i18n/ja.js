@@ -1,6 +1,13 @@
 // Japanese translations. This file mirrors every key in en.js.
 // Keep placeholders, markup, and control tokens unchanged when editing.
 export default {
+  'nav.group.devices': 'デバイス',
+  'nav.group.publish': '公開',
+  'nav.group.create': '作成',
+  'nav.group.automate': '自動化',
+  'nav.group.insights': '分析',
+  'nav.group.workspace': 'ワークスペース',
+  'nav.new': '新着',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': '{name} のアップロードを再開しますか？前回すでに {done}% 送信済みです。',

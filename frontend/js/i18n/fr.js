@@ -53,6 +53,13 @@ export default {
   'power.day.fri': 'Ven',
   'power.day.sat': 'Sam',
 
+  'nav.group.devices': 'Appareils',
+  'nav.group.publish': 'Publier',
+  'nav.group.create': 'Créer',
+  'nav.group.automate': 'Automatiser',
+  'nav.group.insights': 'Analyses',
+  'nav.group.workspace': 'Espace de travail',
+  'nav.new': 'Nouveau',
   'nav.members': "Membres",
   'common.close': "Fermer",
   'slides.ai.placeholder': "Decrivez une diapositive : « soldes d'automne, -40% »",

@@ -53,6 +53,13 @@ export default {
   'power.day.fri': 'Vie',
   'power.day.sat': 'Sáb',
 
+  'nav.group.devices': 'Dispositivos',
+  'nav.group.publish': 'Publicar',
+  'nav.group.create': 'Crear',
+  'nav.group.automate': 'Automatizar',
+  'nav.group.insights': 'Análisis',
+  'nav.group.workspace': 'Espacio de trabajo',
+  'nav.new': 'Nuevo',
   'nav.members': 'Miembros',
   'common.close': 'Cerrar',
   'slides.ai.placeholder': 'Describe una diapositiva: "rebajas de otono, 40% de descuento"',

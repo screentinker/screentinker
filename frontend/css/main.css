@@ -263,6 +263,46 @@ body {
   color: white;
 }
 
+/* ---- Sidebar groups (components/nav-groups.js) ---- */
+.nav-group { list-style: none; margin-top: 10px; }
+.nav-group[hidden] { display: none; }
+.nav-group-items { list-style: none; margin: 2px 0 0; padding: 0; }
+.nav-group.collapsed .nav-group-items { display: none; }
+.nav-group-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 12px; border: 0; border-radius: var(--radius);
+  /* --text-secondary, not --text-muted: #64748b on the sidebar is ~3.1:1 and fails WCAG AA for
+     text this small; #94a3b8 is ~5.7:1. */
+  background: transparent; color: var(--text-secondary);
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  cursor: pointer; text-align: left;
+}
+.nav-group-toggle:hover { color: var(--text-primary); background: var(--bg-card); }
+.nav-group-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.nav-group-label { flex: 1; }
+.nav-group-chevron { flex: none; transition: transform var(--transition); }
+.nav-group.collapsed .nav-group-chevron { transform: rotate(-90deg); }
+/* Collapsed, but the page you are on is inside: keep that visible on the header. */
+.nav-group.collapsed.has-active .nav-group-toggle { color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.nav-group-badge {
+  flex: none; min-width: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--accent); color: #fff; font-size: 10px; line-height: 18px; text-align: center;
+  letter-spacing: 0;
+}
+.nav-group-badge[hidden] { display: none; }
+/* "New" on a nav link, until that page has been opened once (nav-groups.js). */
+.nav-new-pill {
+  margin-left: auto; padding: 1px 7px; border-radius: 9px;
+  background: rgba(59,130,246,.18); color: #93c5fd; border: 1px solid rgba(59,130,246,.45);
+  font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+}
+.nav-link.active .nav-new-pill { background: rgba(255,255,255,.2); color: #fff; border-color: transparent; }
+.nav-new-pill[hidden] { display: none; }
+/* A tool being retired: still reachable, visibly not the way forward. */
+.nav-legacy .nav-link:not(.active) { opacity: .6; }
+/* Help lives with the utilities in the footer, not among the jobs. */
+.nav-link-utility { padding: 6px 10px; margin-bottom: 10px; font-size: 13px; }
+
 .sidebar-footer {
   padding: 16px;
   border-top: 1px solid var(--border);

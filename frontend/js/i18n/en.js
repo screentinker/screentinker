@@ -53,6 +53,13 @@ export default {
   'power.day.fri': 'Fri',
   'power.day.sat': 'Sat',
 
+  'nav.group.devices': 'Devices',
+  'nav.group.publish': 'Publish',
+  'nav.group.create': 'Create',
+  'nav.group.automate': 'Automate',
+  'nav.group.insights': 'Insights',
+  'nav.group.workspace': 'Workspace',
+  'nav.new': 'New',
   'nav.members': 'Members',
   'common.close': 'Close',
   'slides.ai.placeholder': 'Describe a slide — "autumn sale, 40% off, bold"',

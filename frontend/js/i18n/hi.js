@@ -16,6 +16,13 @@
 // To add a key: copy from en.js and translate the value. Order doesn't matter;
 // the loader merges over English fallback.
 export default {
+  'nav.group.devices': 'डिवाइस',
+  'nav.group.publish': 'प्रकाशित करें',
+  'nav.group.create': 'बनाएँ',
+  'nav.group.automate': 'स्वचालन',
+  'nav.group.insights': 'विश्लेषण',
+  'nav.group.workspace': 'वर्कस्पेस',
+  'nav.new': 'नया',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': '{name} का अपलोड फिर से शुरू करें? पिछली बार {done}% पहले ही भेजा जा चुका है।',

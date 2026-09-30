@@ -3,6 +3,13 @@
 import en from './en.js';
 
 export default {
+  'nav.group.devices': '设备',
+  'nav.group.publish': '发布',
+  'nav.group.create': '创建',
+  'nav.group.automate': '自动化',
+  'nav.group.insights': '分析',
+  'nav.group.workspace': '工作区',
+  'nav.new': '新',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': '是否继续上传 {name}？上次已上传 {done}%。',

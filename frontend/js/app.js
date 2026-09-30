@@ -32,6 +32,7 @@ import * as noWorkspace from './views/no-workspace.js';
 import { applyBranding } from './branding.js';
 import { t } from './i18n.js';
 import { isPlatformAdmin } from './utils.js';
+import { initNavGroups } from './components/nav-groups.js';
 import { renderWorkspaceSwitcher, selectedRemoteOrg, clearRemoteOrg } from './components/workspace-switcher.js';
 
 /*
@@ -897,6 +898,7 @@ setTimeout(refreshReviewsBadge, 1500);
 // Initialize
 renderNavLabels();
 translateStaticDom();
+initNavGroups();
 window.addEventListener('language-changed', () => {
   renderNavLabels();
   translateStaticDom();

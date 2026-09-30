@@ -1,6 +1,13 @@
 // Dutch translations.
 
 export default {
+  'nav.group.devices': 'Apparaten',
+  'nav.group.publish': 'Publiceren',
+  'nav.group.create': 'Maken',
+  'nav.group.automate': 'Automatiseren',
+  'nav.group.insights': 'Inzichten',
+  'nav.group.workspace': 'Werkruimte',
+  'nav.new': 'Nieuw',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': 'Uploaden van {name} hervatten? Vorige keer was al {done}% verzonden.',

@@ -2,6 +2,13 @@
 // Reviewed for UI register (informal você). Native review recommended before
 // publicizing as fully supported.
 export default {
+  'nav.group.devices': 'Dispositivos',
+  'nav.group.publish': 'Publicar',
+  'nav.group.create': 'Criar',
+  'nav.group.automate': 'Automatizar',
+  'nav.group.insights': 'Análises',
+  'nav.group.workspace': 'Espaço de trabalho',
+  'nav.new': 'Novo',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': 'Retomar o envio de {name}? {done}% já foram enviados da última vez.',

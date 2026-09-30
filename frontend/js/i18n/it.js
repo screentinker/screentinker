@@ -53,6 +53,13 @@ export default {
   'power.day.fri': 'Ven',
   'power.day.sat': 'Sab',
 
+  'nav.group.devices': 'Dispositivi',
+  'nav.group.publish': 'Pubblica',
+  'nav.group.create': 'Crea',
+  'nav.group.automate': 'Automatizza',
+  'nav.group.insights': 'Analisi',
+  'nav.group.workspace': 'Area di lavoro',
+  'nav.new': 'Nuovo',
   'nav.members': 'Membri',
   'common.close': 'Chiudi',
   'slides.ai.placeholder': 'Descrivi una slide: "saldi autunnali, -40%"',

@@ -54,6 +54,13 @@ export default {
   'power.day.fri': 'Fr',
   'power.day.sat': 'Sa',
 
+  'nav.group.devices': 'Geräte',
+  'nav.group.publish': 'Veröffentlichen',
+  'nav.group.create': 'Erstellen',
+  'nav.group.automate': 'Automatisieren',
+  'nav.group.insights': 'Auswertungen',
+  'nav.group.workspace': 'Arbeitsbereich',
+  'nav.new': 'Neu',
   'nav.members': 'Mitglieder',
   'common.close': 'Schließen',
   'slides.ai.placeholder': 'Beschreiben Sie eine Folie – „Herbstaktion, 40% Rabatt, fett“',
