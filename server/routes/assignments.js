@@ -92,15 +92,17 @@ function ensureDevicePlaylist(deviceId, userId) {
 
 // Standard item query with joined content/widget info
 const ITEM_SELECT = `
-  SELECT pi.id, pi.playlist_id, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
+  SELECT pi.id, pi.playlist_id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
          pi.created_at, pi.updated_at,
-         COALESCE(c.filename, w.name) as filename,
+         COALESCE(c.filename, w.name, cp.name) as filename,
+         cp.name as child_playlist_name,
          c.mime_type, c.filepath, c.thumbnail_path,
          c.duration_sec as content_duration, c.file_size, c.remote_url,
          w.name as widget_name, w.widget_type, w.config as widget_config
   FROM playlist_items pi
   LEFT JOIN content c ON pi.content_id = c.id
   LEFT JOIN widgets w ON pi.widget_id = w.id
+  LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
 `;
 
 // Get assignments (playlist items) for a device
@@ -126,9 +128,12 @@ router.get('/device/:deviceId', (req, res) => {
 router.post('/device/:deviceId', (req, res) => {
   const access = checkDeviceAccess(req, res, 'deviceId', true);
   if (!access) return;
-  const { content_id, widget_id, zone_id, sort_order } = req.body;
+  const { content_id, widget_id, child_playlist_id, zone_id, sort_order } = req.body;
 
-  if (!content_id && !widget_id) return res.status(400).json({ error: 'content_id or widget_id required' });
+  if (!content_id && !widget_id && !child_playlist_id) return res.status(400).json({ error: 'content_id, widget_id or child_playlist_id required' });
+  if ([content_id, widget_id, child_playlist_id].filter(Boolean).length > 1) {
+    return res.status(400).json({ error: 'an item is content, a widget, or a child playlist — not more than one' });
+  }
 
   let content = null;
   if (content_id) {
@@ -149,7 +154,20 @@ router.post('/device/:deviceId', (req, res) => {
     }
   }
 
+  // A playlist nested into the display's own playlist: the same rules as Playlists → + Add
+  // Content (lib/playlist-nesting.js), checked against the display's workspace BEFORE its playlist
+  // is created, so a refused nesting does not leave an empty playlist behind.
+  if (child_playlist_id) {
+    const existing = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
+    const bad = require('../lib/playlist-nesting').nestingError(db, existing && existing.playlist_id, child_playlist_id, access.device.workspace_id);
+    if (bad) return res.status(bad.status).json({ error: bad.error });
+  }
+
   const playlistId = ensureDevicePlaylist(req.params.deviceId, req.user.id);
+  if (child_playlist_id) {
+    const bad = require('../lib/playlist-nesting').nestingError(db, playlistId, child_playlist_id, access.device.workspace_id);
+    if (bad) return res.status(bad.status).json({ error: bad.error });
+  }
 
   // Hardening: clear a zone_id that isn't in THIS device's active layout (prevents new orphans).
   const devLayout = db.prepare('SELECT layout_id FROM devices WHERE id = ?').get(req.params.deviceId);
@@ -164,9 +182,9 @@ router.post('/device/:deviceId', (req, res) => {
 
   try {
     const result = db.prepare(`
-      INSERT INTO playlist_items (playlist_id, content_id, widget_id, zone_id, sort_order, duration_sec)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(playlistId, content_id || null, widget_id || null, effZone, order, duration_sec);
+      INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(playlistId, content_id || null, widget_id || null, child_playlist_id || null, effZone, order, duration_sec);
 
     markDraft(playlistId);
 

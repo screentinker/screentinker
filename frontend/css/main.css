@@ -587,6 +587,27 @@ body {
   opacity: 0;
   transition: opacity 0.15s;
 }
+/* The drag handle: the visible half of "you can reorder these" (#106). Shown on hover, like the
+   select box opposite it. */
+.device-card { position: relative; }
+.device-card-drag {
+  position: absolute;
+  top: 8px;
+  left: 40px;   /* beside the select box; the right corner is the status badge's */
+  z-index: 5;
+  background: rgba(0,0,0,0.6);
+  color: #e5e7eb;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 15px;
+  line-height: 1.4;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity var(--transition);
+  user-select: none;
+}
+.device-card:hover .device-card-drag { opacity: 1; }
+.device-card.dragging { opacity: 0.45; }
 .device-card:hover .device-card-select,
 .device-card.selected .device-card-select { opacity: 1; }
 .device-card-select input { cursor: pointer; margin: 0; }

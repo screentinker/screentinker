@@ -521,3 +521,57 @@ test('⚠️ paste refuses a child that would build a second nesting level', asy
   assert.equal(res.body.added, 0, 'the over-deep child must be skipped, not pasted');
   assert.equal(rawItems(P.id).length, 0, 'nothing landed in the destination');
 });
+
+/*
+ * Display → Playlist → + Add Content now offers the same Playlists tab as a playlist does, so the
+ * display route takes child_playlist_id too — under the SAME rules (lib/playlist-nesting.js).
+ */
+test('a display can nest a playlist into its own playlist, under the same rules as a playlist', async () => {
+  const raw = dbHandle();
+  const u = raw.prepare('SELECT id FROM users LIMIT 1').get();
+  const devId = crypto.randomUUID();
+  raw.prepare('INSERT INTO devices (id, name, status, workspace_id, user_id) VALUES (?,?,?,?,?)')
+    .run(devId, 'Lobby', 'online', workspaceId, u.id);
+  raw.close();
+  const child = await newPlaylist('menu-board');
+  await addContent(child.id);
+
+  const ok = await api(`/api/assignments/device/${devId}`, J(jwt, { child_playlist_id: child.id }));
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal(ok.body.child_playlist_id, child.id);
+  assert.equal(ok.body.child_playlist_name, 'menu-board');
+
+  const dev = await api(`/api/devices/${devId}`, J(jwt, undefined, 'GET'));
+  const row = dev.body.assignments.find((a) => a.child_playlist_id === child.id);
+  assert.ok(row, 'the display page lists the nested playlist');
+  assert.equal(row.filename, 'menu-board');
+  assert.equal(row.child_item_count, 1);
+
+  // Two levels deep is refused here exactly as on the playlist route, naming the culprit.
+  const inner = await newPlaylist('inner');
+  const outer = await newPlaylist('outer');
+  await addContent(inner.id);
+  await addChild(outer.id, inner.id);
+  const deep = await api(`/api/assignments/device/${devId}`, J(jwt, { child_playlist_id: outer.id }));
+  assert.equal(deep.status, 400);
+  assert.match(deep.body.error, /"outer" already contains the playlist "inner"/);
+
+  // Exactly one of content / widget / child playlist.
+  const both = await api(`/api/assignments/device/${devId}`, J(jwt, { child_playlist_id: child.id, content_id: contentId }));
+  assert.equal(both.status, 400);
+});
+
+test('a refused nesting on a display that has no playlist yet leaves no empty playlist behind', async () => {
+  const raw = dbHandle();
+  const u = raw.prepare('SELECT id FROM users LIMIT 1').get();
+  const devId = crypto.randomUUID();
+  raw.prepare('INSERT INTO devices (id, name, status, workspace_id, user_id) VALUES (?,?,?,?,?)')
+    .run(devId, 'Fresh', 'online', workspaceId, u.id);
+  raw.close();
+  const r = await api(`/api/assignments/device/${devId}`, J(jwt, { child_playlist_id: crypto.randomUUID() }));
+  assert.equal(r.status, 404);
+  const check = dbHandle();
+  const d = check.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(devId);
+  check.close();
+  assert.equal(d.playlist_id, null, 'the display was not given a playlist for a refused add');
+});

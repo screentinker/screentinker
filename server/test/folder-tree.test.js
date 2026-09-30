@@ -135,3 +135,19 @@ test('junk in, no throw out', () => {
   }
   assert.equal(T.unfiledCount(null), 0);
 });
+
+test('the shared picker walks the tree through childrenOf(tree, parent), never childrenOf.get', () => {
+  /*
+   * #419 shipped the picker with `childrenOf.get(parent)` — the Map API — against the function
+   * this module exports. It threw on every render, the load path swallowed the TypeError and
+   * painted the list anyway, and folders silently never appeared in v2.2.0–v2.2.3. A customer
+   * then asked for folders in the picker. Guard the call shape at the source.
+   */
+  const fs = require('fs');
+  const path = require('path');
+  const fe = path.join(__dirname, '..', '..', 'frontend', 'js');
+  for (const f of ['components/content-picker.js', 'views/playlists.js', 'views/device-detail.js']) {
+    const src = fs.readFileSync(path.join(fe, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.doesNotMatch(src, /childrenOf\.get\s*\(/, `${f} calls childrenOf.get — childrenOf is a function (tree, parent)`);
+  }
+});

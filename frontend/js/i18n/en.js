@@ -78,6 +78,8 @@ export default {
   'switcher.rename': 'Rename workspace',
   'wall.rename': 'Rename wall',
   'wall.remove_from_wall': 'Remove from wall',
+  'dashboard.drag_hint': 'Drag a display to reorder it, or onto a group to add it there.',
+  'dashboard.drag_to_reorder': 'Drag to reorder',
   'dashboard.select_for_wall': 'Select for video wall',
   'dashboard.select_all': 'All',
   'dashboard.invert_selection': 'Invert',
@@ -1038,6 +1040,8 @@ export default {
   'device.remote.unlocked_hint': 'Navigation and system controls unlocked',
   // Playlist item
   'device.pl_item.widget_with_type': 'Widget ({type})',
+  'device.pl_item.playlist_with_count_one': 'Playlist · {n} item',
+  'device.pl_item.playlist_with_count_other': 'Playlist · {n} items',
   'device.pl_item.youtube': 'YouTube',
   'device.pl_item.video': 'Video',
   'device.pl_item.image': 'Image',
@@ -1766,6 +1770,10 @@ export default {
   'playlist.tab_content': 'Content',
   // Playlists of playlists (phase 1, stateless). See docs/playlist-nesting-design.md.
   'playlist.tab_playlists': 'Playlists',
+  'playlist.tab_kiosk': 'Kiosk',
+  'playlist.folders_matching': 'Folders matching:',
+  'playlist.no_kiosk_found': 'No kiosk pages yet.',
+  'playlist.item_kiosk': 'Kiosk page',
   'playlist.item_nested': 'Playlist',
   'playlist.tag_nested': 'Contains a playlist',
   'playlist.contains_tip': 'This playlist includes another playlist, so it cannot itself be added to one.',

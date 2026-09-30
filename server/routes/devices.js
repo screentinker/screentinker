@@ -168,14 +168,17 @@ router.get('/:id', (req, res) => {
   let playlist_has_published = false;
   if (device.playlist_id) {
     assignments = db.prepare(`
-      SELECT pi.id, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
+      SELECT pi.id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
              pi.created_at, pi.updated_at,
-             COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.thumbnail_path,
+             COALESCE(c.filename, w.name, cp.name) as filename, c.mime_type, c.filepath, c.thumbnail_path,
              c.duration_sec as content_duration, c.remote_url,
-             w.name as widget_name, w.widget_type, w.config as widget_config
+             w.name as widget_name, w.widget_type, w.config as widget_config,
+             cp.name as child_playlist_name,
+             (SELECT COUNT(*) FROM playlist_items ci WHERE ci.playlist_id = pi.child_playlist_id) as child_item_count
       FROM playlist_items pi
       LEFT JOIN content c ON pi.content_id = c.id
       LEFT JOIN widgets w ON pi.widget_id = w.id
+      LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
       WHERE pi.playlist_id = ?
       ORDER BY pi.sort_order ASC
     `).all(device.playlist_id);

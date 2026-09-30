@@ -143,11 +143,16 @@ test('the picker calls the paging helper, not the single-page one', () => {
    * 100 items — which is exactly why it shipped. If this reverts to api.getContent(), a large
    * library silently loses its oldest half again.
    */
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'playlists.js'), 'utf8');
+  // The picker is shared by Playlists and Display → Playlist (components/content-picker.js), and
+  // both views must open THAT rather than growing a picker of their own again.
+  const fe = path.join(__dirname, '..', '..', 'frontend', 'js');
+  const src = fs.readFileSync(path.join(fe, 'components', 'content-picker.js'), 'utf8');
   assert.match(src, /api\.getAllContent\(\)/, 'the add-item modal must page through the whole library');
-  const modal = src.slice(src.indexOf('async function showAddItemModal'));
-  assert.doesNotMatch(modal.slice(0, modal.indexOf('function renderTab')), /api\.getContent\(\)/,
+  assert.doesNotMatch(src.slice(0, src.indexOf('function renderTab')), /api\.getContent\(\)/,
     'a bare api.getContent() in this modal is the bug');
+  for (const v of ['playlists.js', 'device-detail.js']) {
+    assert.match(fs.readFileSync(path.join(fe, 'views', v), 'utf8'), /openContentPicker\(/, `${v} must use the shared picker`);
+  }
 });
 
 test('api.getAllContent reports truncation instead of pretending', () => {
@@ -155,7 +160,7 @@ test('api.getAllContent reports truncation instead of pretending', () => {
   const api = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'api.js'), 'utf8');
   assert.match(api, /getAllContent/);
   assert.match(api, /truncated:\s*true/, 'the helper must be able to admit it stopped early');
-  const view = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'playlists.js'), 'utf8');
+  const view = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'components', 'content-picker.js'), 'utf8');
   assert.match(view, /library_truncated/, 'and the picker must render that admission');
 });
 

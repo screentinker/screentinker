@@ -953,38 +953,8 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
      * costs one query.
      */
     if (child_playlist_id) {
-      if (child_playlist_id === req.params.id) {
-        return res.status(400).json({ error: 'a playlist cannot contain itself' });
-      }
-      const child = db.prepare('SELECT id, name, workspace_id FROM playlists WHERE id = ?').get(child_playlist_id);
-      if (!child) return res.status(404).json({ error: 'Child playlist not found' });
-      if (child.workspace_id && child.workspace_id !== req.playlist.workspace_id) {
-        return res.status(403).json({ error: 'Child playlist is not in this playlist\'s workspace' });
-      }
-      const grandchild = db.prepare(`
-        SELECT p.name FROM playlist_items pi
-          JOIN playlists p ON p.id = pi.child_playlist_id
-         WHERE pi.playlist_id = ? LIMIT 1
-      `).get(child_playlist_id);
-      if (grandchild) {
-        return res.status(400).json({
-          error: `"${child.name}" already contains the playlist "${grandchild.name}", and playlists `
-            + 'may only nest one level deep',
-        });
-      }
-      // ⚠️ And the reverse direction: this playlist must not already BE a child somewhere. Without
-      // it, A (already inside B) could take C, giving B→A→C — two levels, built from the far end.
-      const parent = db.prepare(`
-        SELECT p.name FROM playlist_items pi
-          JOIN playlists p ON p.id = pi.playlist_id
-         WHERE pi.child_playlist_id = ? LIMIT 1
-      `).get(req.params.id);
-      if (parent) {
-        return res.status(400).json({
-          error: `this playlist is already used inside "${parent.name}", so it cannot contain `
-            + 'another playlist — playlists may only nest one level deep',
-        });
-      }
+      const bad = require('../lib/playlist-nesting').nestingError(db, req.params.id, child_playlist_id, req.playlist.workspace_id);
+      if (bad) return res.status(bad.status).json({ error: bad.error });
     }
     // 0 is allowed through here (it is the live "stay until skipped" dwell); resolveItemDuration
     // below coerces a 0 on any NON-live item back to a safe default, so a 0ms advance can never

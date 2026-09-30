@@ -590,6 +590,8 @@ export const api = {
   // Widgets
   getWidgets: () => request('/widgets'),
   getWidget: (id) => request('/widgets/' + id),
+  createWidget: (data) => request('/widgets', { method: 'POST', body: JSON.stringify(data) }),
+  getKioskPages: () => request('/kiosk'),
 
   // Device Groups
   getGroups: () => request('/groups'),

@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish, startTalk, stopTalk, ptyOpen, ptyInput, ptyResize, ptyClose } from '../socket.js';
 import { TalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
+import { openContentPicker } from '../components/content-picker.js';
 import { esc, livenessBadge, hydrateAuthImages, screenshotUrl } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
@@ -1646,9 +1647,11 @@ function renderPlaylist(assignments) {
           <line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/>
         </svg>
       </div>
-      ${a.widget_id && !a.content_id
+      ${a.child_playlist_id
+        ? `<div class="playlist-item-thumb" style="display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--text-muted)">☰</div>`
+        : a.widget_id && !a.content_id
         ? `<div class="playlist-item-thumb" style="display:flex;align-items:center;justify-content:center;font-size:20px">
-            ${{clock:'&#128339;',weather:'&#9925;',rss:'&#128240;',text:'&#128221;',webpage:'&#127760;',social:'&#128172;'}[a.widget_type] || '&#9881;'}
+            ${{clock:'&#128339;',weather:'&#9925;',rss:'&#128240;',text:'&#128221;',webpage:'&#127760;',social:'&#128172;',slide:'&#128444;',template:'&#10024;'}[a.widget_type] || '&#9881;'}
           </div>`
         : a.thumbnail_path
           ? `<img class="playlist-item-thumb" data-auth-src="/api/content/${a.content_id}/thumbnail" alt="">`
@@ -1661,7 +1664,7 @@ function renderPlaylist(assignments) {
       <div class="playlist-item-info">
         <div class="playlist-item-name">${esc(a.filename || a.widget_name || t('common.unknown'))}</div>
         <div class="playlist-item-meta">
-          ${a.widget_id && !a.content_id ? t('device.pl_item.widget_with_type', { type: a.widget_type || 'custom' }) : a.mime_type === 'video/youtube' ? t('device.pl_item.youtube') : a.mime_type?.startsWith('video/') ? t('device.pl_item.video') : t('device.pl_item.image')}
+          ${a.child_playlist_id ? esc(tn('device.pl_item.playlist_with_count', a.child_item_count || 0)) : a.widget_id && !a.content_id ? t('device.pl_item.widget_with_type', { type: a.widget_type || 'custom' }) : a.mime_type === 'video/youtube' ? t('device.pl_item.youtube') : a.mime_type?.startsWith('video/') ? t('device.pl_item.video') : t('device.pl_item.image')}
           ${a.zone_id ? ` &middot; <span style="color:var(--accent)">${t('device.pl_item.zone_label', { id: a.zone_id.slice(0,8) })}</span>` : ''}
           ${a.content_duration ? ` &middot; ${Math.floor(a.content_duration / 60)}:${String(Math.floor(a.content_duration % 60)).padStart(2, '0')}` : ''}
           ${!a.content_duration && !a.mime_type?.startsWith('video/') && a.duration_sec ? ` &middot; ${a.duration_sec}s` : ''}
@@ -2740,203 +2743,91 @@ async function setupPlaylistActions(device) {
     }
   });
 
-  // Add content button
+  /*
+   * Add content: the SAME picker as Playlists → + Add Content (components/content-picker.js) —
+   * folders, search, sort, multi-select, widgets, nested playlists and kiosk pages. Only the zone
+   * and duration fields are the display's own, and every pick goes through the display's route
+   * (routes/assignments.js), which creates or forks the display's playlist and checks the zone
+   * against the display's layout.
+   */
   document.getElementById('addContentBtn')?.addEventListener('click', async () => {
-    const token = localStorage.getItem('token');
-    const headers = { Authorization: `Bearer ${token}` };
-
-    try {
-      // ⚠️ getAllContent — see #417. Same cap, same symptom: a zone you cannot fill with a file
-      // that is plainly in the library.
-      const [contentPage, widgets, kioskPages] = await Promise.all([
-        api.getAllContent(),
-        fetch('/api/widgets', { headers }).then(r => r.json()),
-        fetch('/api/kiosk', { headers }).then(r => r.json()),
-      ]);
-      const content = contentPage.items;
-
-      // Get layout zones if device has a layout assigned. We track
-      // zonesFetchFailed separately so the modal can distinguish "fetch
-      // broke" from "fetch succeeded, layout genuinely has no zones" -
-      // both end with zones=[] but the user message differs.
-      // The !res.ok throw is required because fetch only rejects on network
-      // errors; an HTTP 403/404 would otherwise json-parse into {error: ...}
-      // and zones would silently be [].
-      let zones = [];
-      let zonesFetchFailed = false;
-      if (device.layout_id) {
-        try {
-          const res = await fetch(`/api/layouts/${device.layout_id}`, { headers });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const layout = await res.json();
-          zones = layout.zones || [];
-        } catch (e) {
-          console.warn('Failed to load layout for zone picker:', e.message);
-          zonesFetchFailed = true;
-        }
+    const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+    // The zone list, told apart from "the layout genuinely has no zones": fetch only rejects on
+    // network errors, so a 403/404 must throw here or zones would silently be [].
+    let zones = [];
+    let zonesFetchFailed = false;
+    if (device.layout_id) {
+      try {
+        const res = await fetch(`/api/layouts/${device.layout_id}`, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        zones = (await res.json()).zones || [];
+      } catch (e) {
+        console.warn('Failed to load layout for zone picker:', e.message);
+        zonesFetchFailed = true;
       }
-
-      if (!content.length && !widgets.length && !kioskPages.length) {
-        showToast(t('device.assign.empty_all'), 'error');
-        return;
-      }
-
-      const modal = document.createElement('div');
-      modal.className = 'modal-overlay';
-      modal.innerHTML = `
-        <div class="modal" style="max-width:650px;width:95vw">
-          <div class="modal-header">
-            <h3>${t('device.assign.modal_title')}</h3>
-            <button class="btn-icon" id="closeAssignModal">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-          </div>
-          <div class="modal-body">
-            <div class="form-group">
-              <label>${t('device.assign.zone_label')}</label>
-              ${zones.length > 0 ? `
-                <select id="assignZone" class="input" style="background:var(--bg-input)">
-                  <option value="">${t('device.assign.zone_default')}</option>
-                  ${zones.map(z => `<option value="${z.id}">${esc(z.name)} (${Math.round(z.width_percent)}% x ${Math.round(z.height_percent)}%)</option>`).join('')}
-                </select>
-              ` : !device.layout_id ? `
-                <div style="font-size:12px;color:var(--text-muted);padding:6px 0;line-height:1.5">${t('device.assign.zone_no_layout')}</div>
-              ` : zonesFetchFailed ? `
-                <div style="font-size:12px;color:var(--danger);padding:6px 0;line-height:1.5">${t('device.assign.zone_load_failed')}</div>
-              ` : `
-                <div style="font-size:12px;color:var(--text-muted);padding:6px 0;line-height:1.5">${t('device.assign.zone_empty_layout')}</div>
-              `}
-            </div>
-            <div class="form-group">
-              <label>${t('device.assign.duration_label')}</label>
-              <!-- max is the server's absurd-duration ceiling (12h): a feature-length clip
-                   pre-filled from its own length must not land in an out-of-range field. -->
-              <input type="number" id="assignDuration" class="input" value="10" min="1" max="43200">
-            </div>
-            <!-- Tabs -->
-            <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:12px">
-              <div class="assign-tab active" data-tab="media" style="padding:8px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid var(--accent);color:var(--accent)">${t('device.assign.tab.media', { n: content.length })}</div>
-              <div class="assign-tab" data-tab="widgets" style="padding:8px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-secondary)">${t('device.assign.tab.widgets', { n: widgets.length })}</div>
-              <div class="assign-tab" data-tab="kiosk" style="padding:8px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-secondary)">${t('device.assign.tab.kiosk', { n: kioskPages.length })}</div>
-            </div>
-            <!-- Media grid -->
-            <div class="assign-content-grid" id="assignMedia">
-              ${content.map(c => `
-                <div class="assign-content-item" data-content-id="${c.id}" data-type="content" data-duration="${Number(c.duration_sec) > 0 ? Math.ceil(c.duration_sec) : ''}">
-                  ${c.thumbnail_path
-                    ? `<img data-auth-src="/api/content/${c.id}/thumbnail" alt="">`
-                    : c.remote_url
-                      ? `<div style="aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:var(--bg-primary)">
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                        </div>`
-                      : `<div style="aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:var(--bg-primary)">
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        </div>`
-                  }
-                  <div class="assign-content-item-name">${esc(c.filename)}</div>
-                </div>
-              `).join('') || `<p style="color:var(--text-muted);padding:16px;text-align:center">${t('device.assign.no_media')}</p>`}
-            </div>
-            <!-- Widgets grid -->
-            <div class="assign-content-grid" id="assignWidgets" style="display:none">
-              ${widgets.map(w => {
-                const icons = {clock:'&#128339;',weather:'&#9925;',rss:'&#128240;',text:'&#128221;',webpage:'&#127760;',social:'&#128172;'};
-                return `
-                <div class="assign-content-item" data-content-id="${w.id}" data-type="widget">
-                  <div style="aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:var(--bg-primary);font-size:32px">
-                    ${icons[w.widget_type] || '&#9881;'}
-                  </div>
-                  <div class="assign-content-item-name">${esc(w.name)}</div>
-                </div>`;
-              }).join('') || `<p style="color:var(--text-muted);padding:16px;text-align:center">${t('device.assign.no_widgets')} <a href="#/widgets" style="color:var(--accent)">${t('device.assign.create_one')}</a></p>`}
-            </div>
-            <!-- Kiosk grid -->
-            <div class="assign-content-grid" id="assignKiosk" style="display:none">
-              ${kioskPages.map(k => `
-                <div class="assign-content-item" data-content-id="${k.id}" data-type="kiosk">
-                  <div style="aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:var(--bg-primary);font-size:32px">&#128433;</div>
-                  <div class="assign-content-item-name">${esc(k.name)}</div>
-                </div>
-              `).join('') || `<p style="color:var(--text-muted);padding:16px;text-align:center">${t('device.assign.no_kiosk')} <a href="#/kiosk" style="color:var(--accent)">${t('device.assign.create_one')}</a></p>`}
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" id="cancelAssign">${t('common.cancel')}</button>
-            <button class="btn btn-primary" id="confirmAssign">${t('device.assign.add_selected')}</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      hydrateAuthImages(modal, { eager: true });
-
-      // Tab switching
-      modal.querySelectorAll('.assign-tab').forEach(tab => {
-        tab.onclick = () => {
-          modal.querySelectorAll('.assign-tab').forEach(t => { t.style.borderBottomColor = 'transparent'; t.style.color = 'var(--text-secondary)'; });
-          tab.style.borderBottomColor = 'var(--accent)'; tab.style.color = 'var(--accent)';
-          document.getElementById('assignMedia').style.display = tab.dataset.tab === 'media' ? '' : 'none';
-          document.getElementById('assignWidgets').style.display = tab.dataset.tab === 'widgets' ? '' : 'none';
-          document.getElementById('assignKiosk').style.display = tab.dataset.tab === 'kiosk' ? '' : 'none';
-        };
-      });
-
-      let selectedId = null;
-      let selectedType = null;
-      // #237: this modal always SENDS a duration, so the server's "default a video to its own
-      // length" rule can never fire here — the field has to carry the clip length itself, or
-      // picking a 32s video silently assigns a 10s item that cuts off. Anything the operator
-      // typed is theirs and is never overwritten.
-      const durInput = modal.querySelector('#assignDuration');
-      let durationTouched = false;
-      durInput?.addEventListener('input', () => { durationTouched = true; });
-      modal.querySelectorAll('.assign-content-item').forEach(item => {
-        item.addEventListener('click', () => {
-          modal.querySelectorAll('.assign-content-item').forEach(i => i.classList.remove('selected'));
-          item.classList.add('selected');
-          selectedId = item.dataset.contentId;
-          selectedType = item.dataset.type;
-          const clip = parseInt(item.dataset.duration || '', 10);
-          if (durInput && !durationTouched) durInput.value = clip > 0 ? clip : 10;
-        });
-      });
-
-      modal.querySelector('#closeAssignModal').onclick = () => modal.remove();
-      modal.querySelector('#cancelAssign').onclick = () => modal.remove();
-      modal.querySelector('#confirmAssign').onclick = async () => {
-        if (!selectedId) {
-          showToast(t('device.assign.select_first'), 'error');
-          return;
-        }
-        const duration = parseInt(modal.querySelector('#assignDuration').value) || 10;
-        const zoneId = modal.querySelector('#assignZone')?.value || null;
-        try {
-          if (selectedType === 'content') {
-            await api.addAssignment(device.id, { content_id: selectedId, duration_sec: duration, zone_id: zoneId });
-          } else if (selectedType === 'widget') {
-            await api.addAssignment(device.id, { widget_id: selectedId, duration_sec: duration, zone_id: zoneId });
-          } else if (selectedType === 'kiosk') {
-            // Keep this same-origin. A dashboard opened through localhost is reachable only from
-            // the dashboard machine, not from the display that will render the widget.
-            const wRes = await fetch('/api/widgets', {
-              method: 'POST',
-              headers: { ...headers, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ widget_type: 'webpage', name: t('device.assign.kiosk_widget_name', { name: kioskPages.find(k => k.id === selectedId)?.name || 'Page' }), config: { url: `/api/kiosk/${selectedId}/render` } })
-            });
-            const widget = await wRes.json();
-            await api.addAssignment(device.id, { widget_id: widget.id, duration_sec: 0 });
-          }
-          modal.remove();
-          showToast(t('device.toast.added_to_playlist'), 'success');
-          loadDevice(device.id, 'playlist');
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-      };
-    } catch (err) {
-      showToast(err.message, 'error');
     }
+    const zoneHtml = zones.length > 0 ? `
+        <select id="assignZone" class="input" style="background:var(--bg-input)">
+          <option value="">${t('device.assign.zone_default')}</option>
+          ${zones.map(z => `<option value="${esc(z.id)}">${esc(z.name)} (${Math.round(z.width_percent)}% x ${Math.round(z.height_percent)}%)</option>`).join('')}
+        </select>`
+      : `<div style="font-size:12px;color:${zonesFetchFailed ? 'var(--danger)' : 'var(--text-muted)'};padding:6px 0;line-height:1.5">${
+        !device.layout_id ? t('device.assign.zone_no_layout') : zonesFetchFailed ? t('device.assign.zone_load_failed') : t('device.assign.zone_empty_layout')}</div>`;
+    const extraFieldsHtml = `
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="form-group" style="flex:1;min-width:200px;margin:0"><label>${t('device.assign.zone_label')}</label>${zoneHtml}</div>
+        <div class="form-group" style="width:190px;margin:0">
+          <label>${t('device.assign.duration_label')}</label>
+          <!-- max is the server's absurd-duration ceiling (12h). -->
+          <input type="number" id="assignDuration" class="input" value="10" min="1" max="43200">
+        </div>
+      </div>`;
+
+    /*
+     * #237: a picked video should land with its own length, not a 10s cut. If the operator never
+     * touched the field, the duration is left to the server (resolveItemDuration: the clip's own
+     * length for a video, the default otherwise); the field only previews that for the last pick.
+     * Anything the operator typed is theirs and is always sent.
+     */
+    let durationTouched = false;
+    const readExtras = (modal) => {
+      const dur = parseInt(modal.querySelector('#assignDuration')?.value, 10);
+      return {
+        zone_id: modal.querySelector('#assignZone')?.value || null,
+        duration_sec: durationTouched && dur > 0 ? dur : undefined,
+      };
+    };
+    const payload = (item, extras) => {
+      const base = item.type === 'widget' ? { widget_id: item.id }
+        : item.type === 'playlist' ? { child_playlist_id: item.id } : { content_id: item.id };
+      // A kiosk page is interactive: it stays up until skipped (duration 0 = live dwell).
+      if (item.kiosk) return { ...base, duration_sec: 0, zone_id: extras.zone_id };
+      return { ...base, ...extras };
+    };
+
+    const picker = await openContentPicker({
+      title: t('device.assign.modal_title'),
+      targetPlaylistId: device.playlist_id || null,
+      extraFieldsHtml,
+      readExtras,
+      add: (item, extras) => api.addAssignment(device.id, payload(item, extras)),
+      // In the order shown, one at a time through the display's own route, so each item gets
+      // the same zone check and duration rule as a single add. What is refused is named.
+      addBulk: async (ids, extras) => {
+        const added = []; const skipped = [];
+        for (const id of ids) {
+          try { added.push(await api.addAssignment(device.id, payload({ type: 'content', id }, extras))); }
+          catch (e) { skipped.push({ id, error: e.message }); }
+        }
+        return { added, skipped };
+      },
+      onPick: (item, modal) => {
+        const input = modal.querySelector('#assignDuration');
+        if (input && !durationTouched) input.value = item.duration > 0 ? item.duration : 10;
+      },
+      onClose: (changed) => { if (changed) loadDevice(device.id, 'playlist'); },
+    });
+    picker.modal.querySelector('#assignDuration')?.addEventListener('input', () => { durationTouched = true; });
   });
 
   attachRemoveHandlers(device);

@@ -136,6 +136,7 @@ function renderDeviceCard(device) {
   const canShot = !Array.isArray(device.capabilities) || device.capabilities.includes('remote.screenshot');
   return `
     <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" onclick="window.location.hash='/device/${device.id}'">
+      <span class="device-card-drag" title="${esc(t('dashboard.drag_to_reorder'))}" onclick="event.stopPropagation()">⠿</span>
       <label class="device-card-select" title="${t('dashboard.select_for_wall')}" onclick="event.stopPropagation()">
         <input type="checkbox" class="device-select-cb" data-device-id="${device.id}"${checked ? ' checked' : ''}>
       </label>
@@ -466,6 +467,9 @@ export function render(container) {
           <option value="offline:clean_exit">${t('dashboard.filter.offline_clean')}</option>
         </optgroup>
       </select>
+      <!-- #106 reordering has existed since 2.1, and a customer still asked "is it possible to
+           reorder the screens?". A feature nobody can see is a feature nobody has. -->
+      <span style="font-size:12px;color:var(--text-muted);margin-left:auto">${t('dashboard.drag_hint')}</span>
     </div>
     <div id="groupedDevices"></div>
   `;
@@ -953,6 +957,7 @@ async function loadRemoteDashboard(org) {
      */
     card.removeAttribute('draggable');
     card.querySelector('.device-card-select')?.remove();
+    card.querySelector('.device-card-drag')?.remove();
   });
 
   const stat = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
@@ -1206,8 +1211,9 @@ function attachGroupHandlers(groupsWithDevices) {
       e.dataTransfer.effectAllowed = 'move';
       dragDeviceId = card.dataset.deviceId;   // #106
       dragSectionKey = sectionKeyOf(card);    // #106
+      card.classList.add('dragging');
     });
-    card.addEventListener('dragend', () => { dragDeviceId = null; dragSectionKey = null; clearDropIndicators(); });
+    card.addEventListener('dragend', () => { card.classList.remove('dragging'); dragDeviceId = null; dragSectionKey = null; clearDropIndicators(); });
 
     // #106 within-section reorder. Engages ONLY when the target is another card in the
     // SAME section; otherwise it no-ops and the event bubbles to the section handler
