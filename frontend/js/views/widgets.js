@@ -1397,6 +1397,7 @@ export async function render(container) {
           </div>
           <div class="content-item-actions">
             <button class="btn btn-secondary btn-sm" data-edit-widget="${escAttr(w.id)}">${t('common.edit')}</button>
+            <button class="btn btn-secondary btn-sm" data-duplicate-widget="${escAttr(w.id)}" title="${escAttr(t('widget.duplicate_hint'))}">${t('widget.duplicate')}</button>
             <button class="btn btn-secondary btn-sm" data-history-widget="${escAttr(w.id)}" title="${t('history.button')}">${t('history.button')}</button>
             <button class="btn btn-danger btn-sm" data-delete-widget="${escAttr(w.id)}">${t('common.delete')}</button>
           </div>
@@ -1416,6 +1417,30 @@ export async function render(container) {
       });
     }
     grid.onclick = async (e) => {
+      /*
+       * Duplicate: an independent copy (same type and settings, same workspace), opened straight in
+       * its editor — one menu per screen without typing the first one in again. The server copies
+       * the LIVE config, never a pending draft, and rebuilds a template widget through its template.
+       */
+      const dupBtn = e.target.closest('[data-duplicate-widget]');
+      if (dupBtn) {
+        const src = widgets.find(x => x.id === dupBtn.dataset.duplicateWidget);
+        dupBtn.disabled = true;
+        try {
+          const copy = await API(`/widgets/${encodeURIComponent(dupBtn.dataset.duplicateWidget)}/duplicate`, {
+            method: 'POST',
+            body: JSON.stringify({ name: src ? t('widget.copy_name', { name: src.name }).slice(0, 120) : undefined }),
+          });
+          showToast(t('widget.toast.duplicated', { name: copy.name }), 'success');
+          await loadWidgets();
+          const edit = document.querySelector(`#widgetGrid [data-edit-widget="${CSS.escape(copy.id)}"]`);
+          if (edit) { edit.scrollIntoView({ block: 'center' }); edit.click(); }
+        } catch (err) {
+          showToast(err.message, 'error');
+          dupBtn.disabled = false;
+        }
+        return;
+      }
       const histBtn = e.target.closest('[data-history-widget]');
       if (histBtn) {
         const w = widgets.find(x => x.id === histBtn.dataset.historyWidget);

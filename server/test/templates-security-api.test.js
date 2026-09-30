@@ -692,3 +692,79 @@ test('preview store: bounded memory, and one tenant cannot evict another tenant\
   const still = await api(null, 'GET', mine.json.url);
   assert.equal(still.status, 200, `BUG (medium): org B's ${made} previews evicted org A's live preview (global FIFO cap of 200)`);
 });
+
+/* ================================================================== 12. duplicate */
+
+test('duplicate: an independent copy of a template widget, in the original\'s workspace, with the same values', async () => {
+  const src = sqlite.prepare('SELECT * FROM widgets WHERE id = ?').get(W.slideA);
+  const d = await api(U.editor, 'POST', `/api/widgets/${W.slideA}/duplicate`, {});
+  assert.equal(d.status, 201, d.text);
+  assert.notEqual(d.json.id, W.slideA);
+  assert.equal(d.json.workspace_id, src.workspace_id);
+  assert.equal(d.json.widget_type, 'template');
+  assert.equal(d.json.name, `${src.name} (copy)`);
+  const copy = sqlite.prepare('SELECT * FROM widgets WHERE id = ?').get(d.json.id);
+  assert.deepEqual(JSON.parse(copy.config).values, JSON.parse(src.config).values);
+  // Independent: editing the copy leaves the original alone.
+  const cfg = JSON.parse(copy.config);
+  const e = await api(U.editor, 'PUT', `/api/widgets/${d.json.id}`, { config: { values: { ...cfg.values, headline: 'Only the copy' } } });
+  assert.equal(e.status, 200, e.text);
+  assert.notEqual(JSON.parse(sqlite.prepare('SELECT config FROM widgets WHERE id = ?').get(W.slideA).config).values.headline, 'Only the copy');
+  // A chosen name is used.
+  const n = await api(U.editor, 'POST', `/api/widgets/${W.slideA}/duplicate`, { name: 'Menu — screen 3' });
+  assert.equal(n.status, 201);
+  assert.equal(n.json.name, 'Menu — screen 3');
+});
+
+test('duplicate: viewer and another org are refused; the copy never lands in the caller\'s other workspace', async () => {
+  const v = await api(U.viewer, 'POST', `/api/widgets/${W.slideA}/duplicate`, {});
+  assert.equal(v.status, 403, 'BUG: a viewer duplicated a widget');
+  const b = await api(U.otherB, 'POST', `/api/widgets/${W.slideA}/duplicate`, {}, { 'X-Workspace-Id': wsA });
+  assert.ok(b.status === 403 || b.status === 404, `BUG: org B duplicated org A's widget (${b.status})`);
+  const count = sqlite.prepare('SELECT COUNT(*) n FROM widgets WHERE workspace_id = ?').get(wsB).n;
+  const again = await api(U.otherB, 'POST', `/api/widgets/${W.slideA}/duplicate`, {});
+  assert.notEqual(again.status, 201);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM widgets WHERE workspace_id = ?').get(wsB).n, count);
+});
+
+test('duplicate: copies the LIVE config, never a pending draft (no way around approval)', async () => {
+  const live = sqlite.prepare('SELECT config FROM widgets WHERE id = ?').get(W.slideA).config;
+  const liveValues = JSON.parse(live).values;
+  const draft = { name: 'draft name', config: { ...JSON.parse(live), values: { ...liveValues, headline: 'UNREVIEWED-DRAFT' } } };
+  sqlite.prepare('UPDATE widgets SET draft_config = ? WHERE id = ?').run(JSON.stringify(draft), W.slideA);
+  try {
+    const d = await api(U.editor, 'POST', `/api/widgets/${W.slideA}/duplicate`, {});
+    assert.equal(d.status, 201, d.text);
+    const copy = sqlite.prepare('SELECT * FROM widgets WHERE id = ?').get(d.json.id);
+    assert.ok(!copy.config.includes('UNREVIEWED-DRAFT'), 'BUG: the unreviewed draft went live in the copy');
+    assert.equal(copy.draft_config, null);
+    assert.deepEqual(JSON.parse(copy.config).values, liveValues);
+  } finally {
+    sqlite.prepare('UPDATE widgets SET draft_config = NULL WHERE id = ?').run(W.slideA);
+  }
+});
+
+test('duplicate: a template widget is rebuilt — refused while its template cannot be used', async () => {
+  // With unsigned code off, the unsigned html template is unusable: a copy must not resurrect it as a
+  // blob. (Switched off here and restored: an earlier test turns it back on for the preview flood.)
+  const was = (await api(U.admin, 'GET', '/api/templates/settings')).json.unsigned_code_allowed;
+  const off = await api(U.admin, 'PUT', '/api/templates/settings', { unsigned_code_allowed: false });
+  assert.equal(off.status, 200);
+  try {
+    const d = await api(U.editor, 'POST', `/api/widgets/${W.htmlA}/duplicate`, {});
+    assert.equal(d.status, 409, `BUG: duplicated a widget of an unusable template (${d.status} ${d.text})`);
+  } finally {
+    if (was) await api(U.admin, 'PUT', '/api/templates/settings', { unsigned_code_allowed: true, confirm: PHRASE });
+  }
+});
+
+test('duplicate: a built-in widget copies its settings verbatim', async () => {
+  const c = await api(U.editor, 'POST', '/api/widgets', { widget_type: 'clock', name: 'Lobby clock', config: { timezone: 'Europe/London', format: '24h' } });
+  assert.equal(c.status, 201, c.text);
+  const d = await api(U.editor, 'POST', `/api/widgets/${c.json.id}/duplicate`, {});
+  assert.equal(d.status, 201, d.text);
+  assert.equal(d.json.widget_type, 'clock');
+  assert.deepEqual(JSON.parse(d.json.config), { timezone: 'Europe/London', format: '24h' });
+  const missing = await api(U.editor, 'POST', '/api/widgets/00000000-0000-4000-8000-000000000000/duplicate', {});
+  assert.equal(missing.status, 404);
+});

@@ -244,6 +244,48 @@ function checkWidgetWrite(req, res) {
   return widget;
 }
 
+/*
+ * Duplicate a widget: a new, independent widget with the same type and settings — three screens,
+ * three menus, without typing the first one in three times.
+ *
+ * ⚠️ THE COPY STAYS IN THE ORIGINAL'S WORKSPACE. Its config names that workspace's data sources and
+ *    content by id/slug; landing it anywhere else would either break those or reach across tenants.
+ * ⚠️ THE LIVE CONFIG IS COPIED, NEVER A PENDING DRAFT. With approval on, copying the draft would put
+ *    unreviewed changes into a brand-new live widget — a way around review. The copy is what the
+ *    original's screens are showing now; its first edit becomes a draft like any other.
+ * ⚠️ A TEMPLATE WIDGET IS REBUILT, not copied as a blob — exactly what "Use…" and PUT do. Since the
+ *    original was made, its template may have been revoked or uninstalled, unsigned code switched
+ *    off, or an image/data source it names deleted.
+ */
+router.post('/:id/duplicate', (req, res) => {
+  if (denyReadOnly(req, res)) return;
+  const widget = checkWidgetWrite(req, res);
+  if (!widget) return;
+  if (widget.widget_type !== 'template' && !pluginRegistry.isAcceptedWidgetType(widget.widget_type)) {
+    return res.status(400).json({ error: 'This widget type is not available on this server any more' });
+  }
+  let config;
+  try { config = JSON.parse(widget.config || '{}'); } catch { config = {}; }
+  if (widget.widget_type === 'template') {
+    try {
+      config = require('../lib/templates/widget').buildConfig(config.template, config.values, widget.workspace_id);
+    } catch (e) {
+      return res.status(e.status || 400).json({ error: e.message, param: e.param });
+    }
+  }
+  const asked = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const name = (asked || `${widget.name} (copy)`).slice(0, 120);
+
+  const id = uuidv4();
+  db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, req.user.id, widget.workspace_id, widget.widget_type, name, JSON.stringify(config));
+  require('../lib/revisions').recordCurrent(db, 'widget', id, {
+    actor: require('../lib/releases').actorOf(req),
+    summary: `Duplicated from "${String(widget.name).slice(0, 120)}"`,
+  });
+  res.status(201).json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id)));
+});
+
 // Get widget
 router.get('/:id', (req, res) => {
   const widget = checkWidgetRead(req, res);

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Duplicate a widget.** Every widget card has a *Duplicate* button: an independent copy with the same
+  type and settings, opened straight in its editor, so three screens can show three menus without
+  typing the first one in three times (`POST /api/widgets/:id/duplicate`). Suggested by **カタカナ**
+  (Discord).
+  - ⚠️ The copy stays in the original's workspace (its data sources and images belong there), takes
+    the **live** config and never a pending draft (no way around approval), and a template widget is
+    rebuilt through its template, so a revoked or no-longer-allowed template cannot be copied back to life.
+- **Templates → Installed** shows how many widgets each template is behind ("In 2 widgets · use it
+  again for another screen"), and the "created" message says a template can be used again — "Use…"
+  always made a new, independent widget, but nothing said so.
+
 ## 2.3.0 (2026-09-30)
 
 A feature release: live data sources, a signed template library, native players for Raspberry Pi

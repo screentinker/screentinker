@@ -191,7 +191,19 @@ async function renderInstalled(body, admin, refresh) {
       <p>${esc(admin ? t('templates.installed_empty_admin') : t('templates.installed_empty_user'))}</p></div>`;
     return;
   }
-  body.innerHTML = `<div class="content-grid tpl-grid">${list.map((tpl) => installedCard(tpl, admin)).join('')}</div>`;
+  // How many of this workspace's widgets each template is behind, so it is obvious that "Use…" makes
+  // ANOTHER independent widget rather than being a one-time step. Best-effort: no count on failure.
+  const inUse = new Map();
+  try {
+    for (const w of (await TAPI('/widgets')) || []) {
+      if (w.widget_type !== 'template') continue;
+      let key = null;
+      try { key = JSON.parse(w.config || '{}').template; } catch { /* unreadable config */ }
+      if (key) inUse.set(key, (inUse.get(key) || 0) + 1);
+    }
+  } catch { /* counts are a hint, never a blocker */ }
+  if (activeTab !== 'installed') return;
+  body.innerHTML = `<div class="content-grid tpl-grid">${list.map((tpl) => installedCard(tpl, admin, inUse.get(tpl.key) || 0)).join('')}</div>`;
   body.querySelectorAll('[data-use]').forEach((b) => b.addEventListener('click', () => {
     const tpl = list.find((x) => x.key === b.dataset.use);
     if (tpl) openUseModal({ tpl });
@@ -203,7 +215,7 @@ async function renderInstalled(body, admin, refresh) {
   wireThumbFallbacks(body);
 }
 
-function installedCard(tpl, admin) {
+function installedCard(tpl, admin, used = 0) {
   const revoked = tpl.status && tpl.status !== 'active';
   const preview = thumbHtml(tpl.thumbnail, tpl.kind);
   return `
@@ -217,6 +229,7 @@ function installedCard(tpl, admin) {
         ${tpl.description ? `<div class="tpl-desc">${esc(tpl.description)}</div>` : ''}
         ${tpl.kind === 'html' ? hostsLine(tpl.network) : ''}
         ${!tpl.usable && !revoked && tpl.unusable_reason ? `<div class="tpl-meta tpl-warn-text">${esc(tpl.unusable_reason)}</div>` : ''}
+        ${used ? `<div class="tpl-meta tpl-inuse"><a href="#/widgets">${esc(used === 1 ? t('templates.in_use_one') : t('templates.in_use_many', { count: used }))}</a>${tpl.usable ? ` · ${esc(t('templates.use_again_hint'))}` : ''}</div>` : ''}
       </div>
       <div class="content-item-actions">
         ${admin ? `<button class="btn btn-danger btn-sm" data-uninstall="${esc(tpl.key)}">${esc(t('templates.uninstall'))}</button>` : ''}
@@ -768,6 +781,7 @@ async function showCreated(m, w) {
   done.innerHTML = `<div class="tpl-callout tpl-callout-ok">
       <strong>${esc(t('templates.created_title', { name: w.name }))}</strong>
       <p class="tpl-meta">${esc(t('templates.created_desc'))}</p>
+      <p class="tpl-meta">${esc(t('templates.created_again'))}</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select class="input" id="tplAddPl" style="flex:1;min-width:180px"><option value="">${esc(t('templates.loading'))}</option></select>
         <button class="btn btn-primary btn-sm" id="tplAddPlGo" disabled>${esc(t('templates.add_to_playlist'))}</button>
