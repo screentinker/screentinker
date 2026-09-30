@@ -724,6 +724,10 @@ export const api = {
   adminListOrgs: () => request('/admin/orgs'),
   // Platform-admin view: EVERY plan incl. hidden ones, with subscriber counts.
   adminListPlans: () => request('/admin/plans'),
+  adminListPromotions: () => request('/admin/promotions'),
+  adminCreatePromotion: (body) => request('/admin/promotions', { method: 'POST', body: JSON.stringify(body) }),
+  adminEndPromotion: (id) => request(`/admin/promotions/${encodeURIComponent(id)}/end`, { method: 'POST' }),
+  getPromotion: () => request('/subscription/promotion'),
   adminDeleteOrg: (id) => request(`/admin/orgs/${id}`, { method: 'DELETE' }),
   // #talk: per-org talk flag + optional per-org ICE (STUN/TURN) override. data = { talk_enabled, ice_servers }.
   adminSetOrgTalk: (id, data) => request(`/admin/orgs/${id}/talk`, { method: 'PUT', body: JSON.stringify(data) }),

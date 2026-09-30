@@ -2008,6 +2008,23 @@ const migrations = [
     last_error     TEXT,
     created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   )`,
+  // Sales / limited-time discounts (lib/promotions.js). Each row is backed by a Stripe coupon.
+  `CREATE TABLE IF NOT EXISTS promotions (
+    id                 TEXT PRIMARY KEY,
+    name               TEXT NOT NULL,
+    headline           TEXT NOT NULL,
+    percent_off        INTEGER NOT NULL,
+    cycles             TEXT NOT NULL DEFAULT 'both',
+    duration           TEXT NOT NULL DEFAULT 'once',
+    duration_in_months INTEGER,
+    plan_ids           TEXT NOT NULL DEFAULT '[]',
+    starts_at          INTEGER NOT NULL,
+    ends_at            INTEGER,
+    ended_at           INTEGER,
+    stripe_coupon_id   TEXT,
+    created_by         TEXT,
+    created_at         INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS template_seen (
     user_id      TEXT NOT NULL,
     template_key TEXT NOT NULL,

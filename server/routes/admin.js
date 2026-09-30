@@ -689,6 +689,40 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
   res.json({ plans, orphaned });
 });
 
+// ─── Sales / limited-time discounts (lib/promotions.js) ─────────────────────────
+// Platform admin only: a sale changes what every customer is charged.
+router.get('/promotions', requirePlatformAdmin, (req, res) => {
+  const promotions = require('../lib/promotions');
+  const cur = promotions.current();
+  res.json({
+    promotions: promotions.list(),
+    current_id: cur ? cur.id : null,
+    stripe_configured: !!require('../lib/stripe-client').get(),
+    // Why sales cannot run here, if they cannot (self-hosted, or no Stripe). One rule for every surface.
+    unavailable_reason: promotions.salesAvailable(require('../lib/stripe-client').get()).reason,
+  });
+});
+
+router.post('/promotions', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const promo = await promotions.create(req.body, require('../lib/stripe-client').get(), req.user.id);
+    res.status(201).json({ promotion: promo });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not create the sale' });
+  }
+});
+
+router.post('/promotions/:id/end', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const out = await promotions.end(req.params.id, require('../lib/stripe-client').get());
+    res.json({ promotion: out.promo, stripe_warning: out.stripeWarning });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not end the sale' });
+  }
+});
+
 router.get('/limiter-rejections', requirePlatformAdmin, (req, res) => {
   const rows = require('../lib/limiter-telemetry').snapshot();
   res.json({

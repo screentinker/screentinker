@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { mountPromotionsAdmin } from '../components/promotions-admin.js';
 import { showToast } from '../components/toast.js';
 import { esc, isPlatformAdmin } from '../utils.js';
 import { t } from '../i18n.js';
@@ -129,6 +130,12 @@ export async function render(container) {
     </div>
 
     <div class="settings-section">
+      <h3>${t('admin.promo.title')}</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.promo.desc')}</p>
+      <div id="promotionsAdmin"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
+    </div>
+
+    <div class="settings-section">
       <h3>${t('admin.system')}</h3>
       <div id="systemInfo"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
     </div>
@@ -185,6 +192,8 @@ export async function render(container) {
   loadSsoOnlyRequests();
   loadBranding();
   loadPlans();
+  const promoEl = document.getElementById('promotionsAdmin');
+  if (promoEl) mountPromotionsAdmin(promoEl);
   loadSystem();
   loadStatusDebug();
   loadPlugins();

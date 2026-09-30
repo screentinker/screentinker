@@ -42,13 +42,13 @@ const appBase = (req) => {
   return `${String(raw).replace(/\/+$/, '')}/app`;
 };
 
-let stripe = null;
-if (config.stripeSecretKey) {
-  stripe = require('stripe')(config.stripeSecretKey);
-}
+// Resolved per request (lib/stripe-client.js) so a test can substitute a double; null when
+// STRIPE_SECRET_KEY is unset.
+const stripeClient = require('../lib/stripe-client');
 
 // Create checkout session - user clicks "Upgrade" on a plan
 router.post('/checkout', requireAuth, async (req, res) => {
+  const stripe = stripeClient.get();
   if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
 
   const { plan_id, interval } = req.body; // interval: 'monthly' or 'yearly'
@@ -81,20 +81,29 @@ router.post('/checkout', requireAuth, async (req, res) => {
       return res.json({ url: portal.url, type: 'portal' });
     }
 
+    // A running sale that covers this plan and interval (lib/promotions.js). The price the pricing
+    // page showed is only true if checkout charges it, so its coupon goes on the session here.
+    const promo = require('../lib/promotions').activeFor(plan.id, interval === 'yearly' ? 'yearly' : 'monthly');
+    const discount = promo && promo.stripe_coupon_id
+      // ⚠️ Stripe refuses `discounts` together with `allow_promotion_codes`, so during a sale the
+      // "Add promotion code" field is not offered: the sale price is already applied.
+      ? { discounts: [{ coupon: promo.stripe_coupon_id }] }
+      // Renders the "Add promotion code" field on Stripe's hosted checkout page. For
+      // API-created sessions this is the ONLY way to enable it — there is no Stripe Dashboard
+      // toggle for it outside Payment Links (which we don't use). Do not remove thinking it's
+      // redundant with a dashboard setting.
+      : { allow_promotion_codes: true };
+
     // Create checkout session for new subscription
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'subscription',
       payment_method_types: ['card'],
-      // Renders the "Add promotion code" field on Stripe's hosted checkout page. For
-      // API-created sessions this is the ONLY way to enable it — there is no Stripe Dashboard
-      // toggle for it outside Payment Links (which we don't use). Do not remove thinking it's
-      // redundant with a dashboard setting.
-      allow_promotion_codes: true,
+      ...discount,
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${appBase(req)}#/billing?payment=success`,
       cancel_url: `${appBase(req)}#/billing?payment=cancelled`,
-      metadata: { user_id: req.user.id, plan_id },
+      metadata: { user_id: req.user.id, plan_id, ...(promo ? { promotion_id: promo.id } : {}) },
       subscription_data: {
         metadata: { user_id: req.user.id, plan_id },
       },
@@ -109,6 +118,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
 
 // Customer portal - manage existing subscription (change plan, cancel, update payment)
 router.post('/portal', requireAuth, async (req, res) => {
+  const stripe = stripeClient.get();
   if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
 
   const customerId = req.user.stripe_customer_id;
@@ -128,6 +138,7 @@ router.post('/portal', requireAuth, async (req, res) => {
 
 // Stripe webhook - handles all subscription lifecycle events
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const stripe = stripeClient.get();
   if (!stripe) return res.status(404).json({ error: 'Stripe not configured' });
 
   let event;

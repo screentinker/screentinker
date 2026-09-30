@@ -288,3 +288,50 @@ test('the live deployed count sits in the trust strip and degrades to three colu
   // The old standalone paragraph is gone, so the count is not rendered twice.
   assert.ok(!LANDING.includes('screens deployed with ScreenTinker'));
 });
+
+/* ─────────────── sales (lib/promotions.js): the page shows what checkout charges ─────────────── */
+
+test('a running sale strikes through the covered plans only, in the covered cycle only', () => {
+  const plans = PLANS.map((p) => ({ ...p, id: p.name }));
+  globalThis.window = { __stSale: { headline: 'Launch sale', percent_off: 30, cycles: 'yearly', duration: 'once', plan_ids: ['pro'], ends_at: null } };
+  try {
+    const out = render(plans);
+    const pro = () => cardsOf(out.grid).find((c) => /<h3>Pro<\/h3>/.test(c));
+    // Monthly view: the sale is yearly-only, so nothing is discounted.
+    assert.ok(!/class="off"/.test(out.grid), 'no sale badge on the monthly view of a yearly sale');
+    const annual = out.click('Annual');
+    const proA = cardsOf(annual).find((c) => /<h3>Pro<\/h3>/.test(c));
+    assert.match(proA, /class="off">&minus;30%/);
+    assert.equal(priceOf(proA), '$989$692.30/year', 'was + now, to the cent');
+    assert.match(proA, /Sale price for your first year/);
+    const starter = cardsOf(annual).find((c) => /<h3>Starter<\/h3>/.test(c));
+    assert.ok(!/class="off"/.test(starter), 'a plan outside the sale is full price');
+    assert.equal(typeof pro, 'function');
+  } finally {
+    delete globalThis.window;
+  }
+});
+
+test('the sale arrives through a hook, so it can land after the plans have rendered, and leave again', () => {
+  const plans = PLANS.map((p) => ({ ...p, id: p.name }));
+  globalThis.window = {};
+  try {
+    const out = render(plans);
+    assert.ok(!/class="off"/.test(out.grid));
+    assert.equal(typeof globalThis.window.__stPricingSetSale, 'function');
+    globalThis.window.__stPricingSetSale({ headline: 'x', percent_off: 10, cycles: 'both', duration: 'forever', plan_ids: [], ends_at: null });
+    const onSale = out.click('Annual');
+    assert.equal((onSale.match(/class="off"/g) || []).length, 4, 'every paid plan when plan_ids is empty');
+    assert.match(onSale, /for as long as you subscribe/);
+    globalThis.window.__stPricingSetSale(null); // the countdown hit zero
+    assert.ok(!/class="off"/.test(out.click('Monthly')), 'an ended sale leaves no trace');
+  } finally {
+    delete globalThis.window;
+  }
+});
+
+test('the banner countdown runs on the server clock and ends the sale at zero', () => {
+  assert.match(LANDING, /fetch\('\/api\/subscription\/promotion'\)/);
+  assert.match(LANDING, /promo\.server_now \* 1000 - Date\.now\(\)/, 'skew-corrected against the server clock');
+  assert.match(LANDING, /window\.__stPricingSetSale\(null\)/, 'prices revert when the countdown ends');
+});

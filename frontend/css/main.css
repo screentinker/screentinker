@@ -2201,3 +2201,35 @@ body {
 .ds-del { flex: none; width: 24px; height: 24px; margin: 0 4px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px; line-height: 1; }
 .ds-del:hover, .ds-del:focus-visible { background: rgba(239,68,68,.15); color: #f87171; outline: none; }
 .ds-grid-tools { display: flex; gap: 8px; align-items: center; }
+
+/* ─── Admin → Sales & discounts (components/promotions-admin.js) ─────────────────────────────── */
+.promo-warn { color: var(--warning); background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3); padding: 10px 12px; border-radius: var(--radius); font-size: 13px; margin: 0 0 12px; }
+.promo-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.promo-row { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); }
+.promo-main { flex: 1; min-width: 0; font-size: 13px; }
+.promo-sub { color: var(--text-secondary); font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+.promo-status { flex: none; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 3px 9px; border-radius: 999px; }
+.promo-live { color: #4ade80; background: rgba(34,197,94,.12); }
+.promo-scheduled { color: #c4b5fd; background: rgba(139,92,246,.14); }
+.promo-ended { color: var(--text-muted); background: var(--bg-input); }
+.promo-new { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); }
+.promo-new > summary { padding: 11px 14px; font-weight: 600; font-size: 13px; cursor: pointer; }
+.promo-form { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+.promo-form label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 600; }
+.promo-form label[hidden] { display: none; }
+.promo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.promo-plans { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.promo-plans legend { font-size: 12.5px; font-weight: 600; padding: 0 4px; }
+.promo-plans label { flex-direction: row; align-items: center; gap: 6px; font-weight: 500; }
+.promo-preview { font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.promo-preview:empty { display: none; }
+.promo-preview-h { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); }
+.promo-preview span { display: inline-block; min-width: 90px; color: var(--text-secondary); }
+.promo-preview b { color: #4ade80; }
+.promo-note { font-size: 12px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
+.billing-sale { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; padding: 12px 14px; border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(139,92,246,.18), rgba(34,197,94,.10)); border: 1px solid rgba(139,92,246,.4); font-size: 14px; }
+.billing-sale-tag { background: #8b5cf6; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; }
+.billing-sale-end { margin-left: auto; color: var(--text-secondary); font-size: 12.5px; }
+.billing-was { color: var(--text-muted); font-weight: 500; font-size: .7em; margin-right: 4px; }
+.promo-form .btn:disabled { opacity: .5; cursor: not-allowed; }
