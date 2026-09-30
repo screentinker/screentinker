@@ -185,16 +185,21 @@ test('[SAFE] a package signed by a DISABLED catalog key imports as unverified/lo
   assert.throws(() => catalog.acceptIndex('community', idx2.bytes, idx2.sig), /disabled/);
 });
 
-test('[BUG-02 MEDIUM] a small-order (identity) Ed25519 public key must be refused as a catalog key — it verifies a forged signature over ANY message', () => {
+test('[BUG-02 MEDIUM] a small-order (identity) Ed25519 public key must be refused as a catalog key — it verifies a forged signature over ANY message', (t) => {
   freshCatalogState();
   // The identity point (y = 1). Node/OpenSSL accept it as a public key, and (R = identity, S = 0)
   // then "verifies" for every message: anyone, not just the key holder, can sign for this catalog.
   const identity = Buffer.alloc(32); identity[0] = 1;
   const pem = rawKeyToPem(identity);
   const forged = Buffer.alloc(64); forged[0] = 1;
-  // Demonstrate the primitive (this part is Node's behaviour, not ours):
-  assert.equal(crypto.verify(null, Buffer.from('anything at all'), crypto.createPublicKey(pem), forged), true, 'precondition: OpenSSL accepts the forgery');
-  // The safe behaviour: the catalog layer refuses such a key.
+  // Whether the forgery verifies is the CRYPTO LIBRARY's behaviour, and it differs by version:
+  // Node 20's OpenSSL accepts it; Node 24's rejects it. The catalog must not depend on which one a
+  // server happens to run, so the refusal below is asserted either way and the primitive is only
+  // recorded.
+  let forgeryVerifies = false;
+  try { forgeryVerifies = crypto.verify(null, Buffer.from('anything at all'), crypto.createPublicKey(pem), forged); } catch { /* rejected outright */ }
+  t.diagnostic(`this OpenSSL ${forgeryVerifies ? 'ACCEPTS' : 'rejects'} the small-order forgery`);
+  // The safe behaviour: the catalog layer refuses such a key, whatever OpenSSL does.
   assert.throws(() => catalog.addCatalog({ id: 'weak', label: 'Weak', url: 'https://w.example/', publicKey: pem }), /key/,
     'addCatalog accepted a small-order public key: any index/package "signed" by anyone verifies for this catalog');
 });
