@@ -3517,10 +3517,20 @@ function startPlaylistRefresh() {
 }
 let knownServerHash = null;
 let versionCheckTimer = null;
+function observeServerHash(data) {
+  if (!data || typeof data.hash !== "string" || !data.hash) return false;
+  if (knownServerHash && data.hash !== knownServerHash) {
+    console.log("[player] /api/version hash changed", knownServerHash, "->", data.hash, "- triggering reload");
+    restartPlayer("server code updated");
+    return true;
+  }
+  if (!knownServerHash) knownServerHash = data.hash;
+  return false;
+}
 function startVersionCheck() {
   if (versionCheckTimer) clearInterval(versionCheckTimer);
   fetch(config.serverUrl + "/api/version").then((r) => r.json()).then((data) => {
-    knownServerHash = data.hash;
+    if (observeServerHash(data)) return;
     console.log("Server version:", data.version, "hash:", data.hash);
     try {
       if (data.version && PLAYER_VERSION && PLAYER_VERSION !== "1.1.0-web" && data.version !== PLAYER_VERSION) {
@@ -3546,10 +3556,7 @@ function startVersionCheck() {
   });
   versionCheckTimer = setInterval(() => {
     fetch(config.serverUrl + "/api/version").then((r) => r.json()).then((data) => {
-      if (knownServerHash && data.hash !== knownServerHash) {
-        console.log("[player] /api/version hash changed", knownServerHash, "->", data.hash, "- triggering reload (a code edit/restart on the server, NOT a dashboard action)");
-        restartPlayer("server code updated");
-      }
+      observeServerHash(data);
     }).catch(() => {
     });
   }, 3e4);

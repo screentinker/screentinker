@@ -4474,11 +4474,24 @@
     // ==================== Auto-reload on code update ====================
     let knownServerHash = null;
     let versionCheckTimer = null;
+    // Keep the baseline for this loaded page across registrations/reconnects. Replacing it
+    // with a new server hash would hide a same-version deployment from the next poll.
+    function observeServerHash(data) {
+      if (!data || typeof data.hash !== 'string' || !data.hash) return false;
+      if (knownServerHash && data.hash !== knownServerHash) {
+        console.log('[player] /api/version hash changed', knownServerHash, '->', data.hash, '- triggering reload');
+        restartPlayer('server code updated');
+        return true;
+      }
+      if (!knownServerHash) knownServerHash = data.hash;
+      return false;
+    }
+
     function startVersionCheck() {
       if (versionCheckTimer) clearInterval(versionCheckTimer);
-      // Initial fetch to learn current hash
+      // Learn the initial hash, or check the existing baseline immediately after reconnect.
       fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
-        knownServerHash = data.hash;
+        if (observeServerHash(data)) return;
         console.log('Server version:', data.version, 'hash:', data.hash);
         // Self-heal a stale shell. The player page is network-first (sw.js), so a reload that lands
         // during a deploy's brief server blip falls back to the CACHED shell and then records the new
@@ -4504,12 +4517,7 @@
       // Poll every 30s
       versionCheckTimer = setInterval(() => {
         fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
-          if (knownServerHash && data.hash !== knownServerHash) {
-            console.log('[player] /api/version hash changed', knownServerHash, '->', data.hash, '- triggering reload (a code edit/restart on the server, NOT a dashboard action)');
-            // THE deploy path — this is the exact line that darkened a BrightSign panel on
-            // 2026-07-28, when every connected player self-reloaded and that one never returned.
-            restartPlayer('server code updated');
-          }
+          observeServerHash(data);
         }).catch(() => {});
       }, 30000);
     }
