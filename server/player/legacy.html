@@ -4559,7 +4559,15 @@ function renderWidgetBuffered(item) {
     clearTimeout(pendingWidgetSwap.timer);
     pendingWidgetSwap = null;
     iframe.style.visibility = "visible";
+    const ae = document.activeElement;
+    const keepFocus = !!(ae && ae !== iframe && ae.tagName === "IFRAME" && container.contains(ae) && String(ae.src || "").includes("/api/widgets/".concat(item.widget_id, "/render")));
     teardownCurrentMedia(iframe);
+    if (keepFocus) {
+      try {
+        iframe.focus();
+      } catch (e) {
+      }
+    }
     if (PREVIEW_MODE && item.widget_type === "webpage") addWebpageNote(container);
   };
   iframe.addEventListener("load", reveal);
