@@ -2,7 +2,7 @@ import { api } from '../api.js';
 import { mountPromotionsAdmin } from '../components/promotions-admin.js';
 import { showToast } from '../components/toast.js';
 import { esc, isPlatformAdmin } from '../utils.js';
-import { t } from '../i18n.js';
+import { t, tn } from '../i18n.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
 import { openManageWorkspacesModal } from '../components/admin-user-workspaces-modal.js';
@@ -65,39 +65,99 @@ function workspaceCell(u) {
   </td>`;
 }
 
-export async function render(container) {
+export async function render(container, section = 'overview') {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   if (!isPlatformAdmin(user)) {
     container.innerHTML = `<div class="empty-state"><h3>${t('admin.access_denied')}</h3><p>${t('admin.access_denied_desc')}</p></div>`;
     return;
   }
 
+  // #/admin (bookmarks, old emails) lands on the overview. app.js routes #/platform/<section> here.
+  const def = SECTIONS[section] ? SECTIONS[section] : SECTIONS.overview;
+  const current = SECTIONS[section] ? section : 'overview';
+
   container.innerHTML = `
     <div class="page-header">
-      <div><h1>${t('admin.title')}</h1><div class="subtitle">${t('admin.subtitle')}</div></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary" id="adminCreateOrgBtn">${t('admin.create_org.button')}</button>
-        <button class="btn btn-primary" id="adminAddUserBtn">${t('admin.add_user')}</button>
-      </div>
+      <div><h1>${esc(t(def.title))}</h1><div class="subtitle">${esc(t(def.subtitle))}</div></div>
+      <div style="display:flex;gap:8px">${def.actions ? def.actions() : ''}</div>
     </div>
+    <nav class="platform-tabs" aria-label="${esc(t('platform.nav_label'))}">
+      ${Object.entries(SECTIONS).map(([id, d]) => `<a href="#/platform/${id}" class="platform-tab${id === current ? ' active' : ''}"${id === current ? ' aria-current="page"' : ''}>${esc(t(d.tab))}</a>`).join('')}
+    </nav>
+    ${def.html()}
+  `;
+  def.load();
+}
 
-    <!-- Single sign-on removal approvals. First, because it is the only screen on this page an
-         operator is DIRECTED to by an email, and because a tenant is locked out of their own
-         product while it sits here. -->
+/*
+ * The Platform area: one page per job instead of ten unrelated sections on one scroll.
+ * Each entry renders ONLY its own markup and runs ONLY its own loaders, so opening Branding no
+ * longer fires the diagnostics, plugin and user-table requests as well.
+ * ⚠️ The section markup and loaders are the ones the single page used, moved, not rewritten:
+ * every loader still finds its container by id, and returns quietly when that container is absent.
+ */
+const section = (title, desc, body) => `
+    <div class="settings-section">
+      <h3>${title}</h3>
+      ${desc ? `<p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${desc}</p>` : ''}
+      ${body}
+    </div>`;
+const loading = () => `<p style="color:var(--text-muted)">${t('common.loading')}</p>`;
+
+const SECTIONS = {
+  overview: {
+    tab: 'platform.tab.overview', title: 'platform.overview.title', subtitle: 'platform.overview.subtitle',
+    html: () => `<div id="platformOverview">${loading()}</div>`,
+    load: () => loadOverview(),
+  },
+  users: {
+    tab: 'platform.tab.users', title: 'platform.users.title', subtitle: 'platform.users.subtitle',
+    actions: () => `<button class="btn btn-primary" id="adminAddUserBtn">${t('admin.add_user')}</button>`,
+    html: () => section(t('admin.all_users'), '', `
+      <div class="platform-filters">
+        <input type="search" class="input" id="userSearch" placeholder="${esc(t('platform.users.search'))}" aria-label="${esc(t('platform.users.search'))}">
+        <select class="input" id="userRoleFilter" aria-label="${esc(t('platform.users.role_filter'))}">
+          <option value="">${esc(t('platform.users.role_all'))}</option>
+          <option value="platform">${esc(t('platform.users.role_platform'))}</option>
+          <option value="user">${esc(t('platform.users.role_user'))}</option>
+        </select>
+        <span class="platform-count" id="userCount"></span>
+      </div>
+      <div id="allUsersTable">${loading()}</div>`),
+    load: () => { wireAddUser(); loadUsers(); },
+  },
+  orgs: {
+    tab: 'platform.tab.orgs', title: 'platform.orgs.title', subtitle: 'platform.orgs.subtitle',
+    actions: () => `<button class="btn btn-primary" id="adminCreateOrgBtn">${t('admin.create_org.button')}</button>`,
+    html: () => `
     <div class="settings-section" id="ssoOnlySection" style="display:none">
       <h3>${t('admin.sso_only.title')}</h3>
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.sso_only.desc')}</p>
       <div id="ssoOnlyRequests"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
     </div>
-
-    <div class="settings-section">
-      <h3>${t('admin.all_users')}</h3>
-      <div id="allUsersTable"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
-    </div>
-
-    <!-- Server diagnostics. Everything here was already being recorded and shown nowhere: the
-         loop-lag history is written every second, and the instance shape used to mean asking a
-         customer to run a shell script as root on their production box. -->
+${section(t('admin.orgs.title'), t('admin.orgs.desc'), `
+      <div class="platform-filters">
+        <input type="search" class="input" id="orgSearch" placeholder="${esc(t('platform.orgs.search'))}" aria-label="${esc(t('platform.orgs.search'))}">
+        <span class="platform-count" id="orgCount"></span>
+      </div>
+      <div id="orgsTable">${loading()}</div>`)}`,
+    load: () => { wireCreateOrg(); loadSsoOnlyRequests(); loadOrgs(); },
+  },
+  billing: {
+    tab: 'platform.tab.billing', title: 'platform.billing.title', subtitle: 'platform.billing.subtitle',
+    html: () => section(t('admin.plans'), '', `<div id="plansTable">${loading()}</div>`)
+      + section(t('admin.promo.title'), t('admin.promo.desc'), `<div id="promotionsAdmin">${loading()}</div>`),
+    load: () => { loadPlans(); mountPromotionsAdmin(document.getElementById('promotionsAdmin')); },
+  },
+  branding: {
+    tab: 'platform.tab.branding', title: 'platform.branding.title', subtitle: 'platform.branding.subtitle',
+    html: () => section(t('admin.branding.title'), t('admin.branding.desc'), `<div id="brandingForm">${loading()}</div>`),
+    load: () => loadBranding(),
+  },
+  system: {
+    tab: 'platform.tab.system', title: 'platform.system.title', subtitle: 'platform.system.subtitle',
+    html: () => `
+      ${section(t('admin.system'), '', `<div id="systemInfo">${loading()}</div>`)}
     <div class="settings-section">
       <h3>${t('admin.diag.title')}</h3>
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.diag.desc')}</p>
@@ -111,40 +171,18 @@ export async function render(container) {
       </div>
       <div id="diagBody"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
     </div>
-
-    <div class="settings-section">
-      <h3>${t('admin.orgs.title')}</h3>
-      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.orgs.desc')}</p>
-      <div id="orgsTable"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>${t('admin.branding.title')}</h3>
-      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.branding.desc')}</p>
-      <div id="brandingForm"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>${t('admin.plans')}</h3>
-      <div id="plansTable"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>${t('admin.promo.title')}</h3>
-      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.promo.desc')}</p>
-      <div id="promotionsAdmin"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>${t('admin.system')}</h3>
-      <div id="systemInfo"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Status endpoint</h3>
-      <div id="statusDebugForm"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
-    </div>
-
+      ${section(esc(t('platform.system.status_endpoint')), '', `<div id="statusDebugForm">${loading()}</div>`)}
+      ${section(esc(t('platform.system.player_debug')), esc(t('platform.system.player_debug_desc')), `<a class="btn btn-secondary" href="#/admin/player-debug">${esc(t('platform.system.player_debug_open'))} &rarr;</a>`)}`,
+    load: () => { loadSystem(); loadDiagnostics(); wireDiagnostics(); loadStatusDebug(); },
+  },
+  cleanup: {
+    tab: 'platform.tab.cleanup', title: 'platform.cleanup.title', subtitle: 'platform.cleanup.subtitle',
+    html: () => `<div id="cleanupPane">${loading()}</div>`,
+    load: () => mountCleanup(document.getElementById('cleanupPane')),
+  },
+  plugins: {
+    tab: 'platform.tab.plugins', title: 'platform.plugins.title', subtitle: 'platform.plugins.subtitle',
+    html: () => `
     <div class="settings-section" id="pluginsSection" style="display:none">
       <h3>${t('admin.plugins.title')}</h3>
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.plugins.desc')}</p>
@@ -160,12 +198,15 @@ export async function render(container) {
       <h4 style="margin:16px 0 8px;font-size:13px">${t('admin.plugins.allowlist_title')}</h4>
       <div id="pluginAllowlist"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
     </div>
-  `;
+      <p class="platform-empty" id="pluginsOff" hidden>${esc(t('platform.plugins.off'))}</p>`,
+    load: () => loadPlugins(),
+  },
+};
 
-  // Add User (#10): platform admin provisions a user into ANY workspace. The
-  // page is platform_admin-gated; the modal opens in picker mode (no fixed
-  // workspace) so the admin chooses the target org/workspace. The endpoint
-  // additionally enforces canAdminWorkspace (platform_admin passes everywhere).
+// Add User (#10): platform admin provisions a user into ANY workspace. The modal opens in picker
+// mode (no fixed workspace) so the admin chooses the target org/workspace. The endpoint
+// additionally enforces canAdminWorkspace (platform_admin passes everywhere).
+function wireAddUser() {
   document.getElementById('adminAddUserBtn')?.addEventListener('click', () => {
     openAddUserModal(null, {
       onSuccess: (result) => {
@@ -175,29 +216,151 @@ export async function render(container) {
       mapError: mapMutationError,
     });
   });
+}
 
-  // Create Organization (#35): platform admin provisions a new customer org +
-  // its first workspace (owned by the admin). The modal reloads on success so
-  // the new org shows up in the switcher.
+// Create Organization (#35): platform admin provisions a new customer org + its first workspace
+// (owned by the admin). The modal reloads on success so the new org shows up in the switcher.
+function wireCreateOrg() {
   document.getElementById('adminCreateOrgBtn')?.addEventListener('click', () => {
     openCreateOrgModal({
       onSuccess: (result) => showToast(t('admin.create_org.success', { name: result.name }), 'success'),
     });
   });
+}
 
-  loadUsers();
-  loadOrgs();
-  loadDiagnostics();
-  wireDiagnostics();
-  loadSsoOnlyRequests();
-  loadBranding();
-  loadPlans();
-  const promoEl = document.getElementById('promotionsAdmin');
-  if (promoEl) mountPromotionsAdmin(promoEl);
-  loadSystem();
-  loadStatusDebug();
-  loadPlugins();
+/*
+ * Overview: the numbers an operator checks first, and a list of what needs them — the SSO-only
+ * removal requests (a tenant is locked out while one waits), plugin submissions, an available
+ * update. Each item links to the page that deals with it. Server: GET /api/admin/overview.
+ */
+function formatBytes(n) {
+  const b = Number(n) || 0;
+  if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`;
+  if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${(b / 1024 ** 3).toFixed(2)} GB`;
+}
 
+/*
+ * One expanded "Needs your attention" item: what exactly is wrong, and a link to where it is fixed.
+ * Every value is escaped: organization names, emails and screen names are customer-chosen.
+ */
+async function loadAttentionDetail(d) {
+  const body = d.querySelector('.att-body');
+  const item = d.dataset.item;
+  const go = (label) => `<a class="att-go" href="${body.dataset.href}">${esc(label)} &rarr;</a>`;
+  const ago = (sec) => (sec ? relAgo(sec) : t('platform.att.never'));
+  const table = (heads, rows) => rows.length ? `<div class="table-wrap"><table class="att-table"><thead><tr>${heads.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : `<p class="platform-empty">${esc(t('platform.att.nothing_now'))}</p>`;
+  let r;
+  try { r = await api.adminAttention(item); } catch (err) { body.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; return; }
+  switch (item) {
+    case 'sso':
+      body.innerHTML = `<p class="att-why">${esc(t('platform.att.sso_why'))}</p>` +
+        table([t('platform.att.col_org'), t('platform.att.col_requested_by'), t('platform.att.col_reason'), t('platform.att.col_waiting')],
+          r.rows.map((x) => [esc(x.organization || '—'), esc(x.requested_by || '—'), esc(x.reason || '—'), esc(ago(x.created_at))])) + go(t('platform.att.go_orgs'));
+      break;
+    case 'plugins':
+      body.innerHTML = `<p class="att-why">${esc(t('platform.att.plugins_why'))}</p>` +
+        table([t('platform.att.col_plugin'), t('platform.att.col_version'), t('platform.att.col_submitted_by'), t('platform.att.col_waiting')],
+          r.rows.map((x) => [esc(x.name || x.plugin_id), esc(x.version || '—'), esc(x.submitted_by || '—'), esc(ago(x.submitted_at))])) + go(t('platform.att.go_plugins'));
+      break;
+    case 'update':
+      body.innerHTML = `<p class="att-why">${esc(t('platform.att.update_why', { current: r.current, latest: r.latest || '?' }))}</p>` + go(t('platform.att.go_system'));
+      break;
+    case 'orphans':
+      body.innerHTML = `<p class="att-why">${esc(t('platform.att.orphans_why'))}</p>` +
+        table([t('platform.att.col_missing_plan'), t('platform.att.col_accounts'), t('platform.att.col_examples')],
+          r.rows.map((x) => [`<code>${esc(x.plan_id)}</code>`, esc(String(x.accounts)), esc(x.emails)])) + go(t('platform.att.go_billing'));
+      break;
+    case 'offline':
+      body.innerHTML = `<p class="att-why">${esc(t('platform.att.offline_why'))}</p>` +
+        table([t('platform.att.col_screen'), t('platform.att.col_org'), t('platform.att.col_workspace'), t('platform.att.col_last_seen'), t('platform.att.col_app')],
+          r.rows.map((x) => [esc(x.screen), esc(x.organization), esc(x.workspace), esc(ago(x.last_heartbeat)), esc(x.app_version || '—')])) + go(t('platform.att.go_orgs'));
+      break;
+    case 'stale': {
+      const c = r.counts || {};
+      body.innerHTML = `<p class="att-why">${esc(t('platform.att.stale_why', { a: c.not_warned || 0, b: c.notice || 0, c: c.ready || 0 }))}</p>` +
+        table([t('platform.att.col_account'), t('platform.att.col_last_activity'), t('platform.att.col_notice'), t('platform.att.col_uploads')],
+          r.rows.map((x) => [esc(x.email), esc(ago(x.last_activity)), esc(t(NOTICE_KEYS[x.notice] || NOTICE_KEYS.not_warned)), esc(x.content_bytes ? formatBytes(x.content_bytes) : '—')])) + go(t('platform.att.go_cleanup'));
+      break;
+    }
+    default:
+      body.innerHTML = go(t('platform.att.open'));
+  }
+}
+
+const NOTICE_KEYS = {
+  not_warned: 'platform.att.notice_not_warned',
+  notice: 'platform.att.notice_notice',
+  ready: 'platform.att.notice_ready',
+};
+
+function relAgo(sec) {
+  const d = Math.max(0, Math.floor(Date.now() / 1000) - sec);
+  if (d < 3600) return t('platform.att.ago_min', { n: Math.max(1, Math.round(d / 60)) });
+  if (d < 86400) return t('platform.att.ago_h', { n: Math.round(d / 3600) });
+  return t('platform.att.ago_d', { n: Math.round(d / 86400) });
+}
+
+async function loadOverview() {
+  const el = document.getElementById('platformOverview');
+  if (!el) return;
+  try {
+    const o = await api.adminOverview();
+    const card = (href, value, label, sub) => `
+      <a class="platform-stat" href="${href}">
+        <span class="platform-stat-n">${esc(String(value))}</span>
+        <span class="platform-stat-l">${esc(label)}</span>
+        ${sub ? `<span class="platform-stat-s">${esc(sub)}</span>` : ''}
+      </a>`;
+    const attention = [];
+    if (o.sso_only_requests > 0) attention.push(['sso', '#/platform/orgs', tn('platform.overview.att_sso', o.sso_only_requests), 'warn']);
+    if (o.plugin_submissions > 0) attention.push(['plugins', '#/platform/plugins', tn('platform.overview.att_plugins', o.plugin_submissions), 'info']);
+    if (o.update_available) attention.push(['update', '#/platform/system', t('platform.overview.att_update', { v: o.latest_version }), 'info']);
+    if (o.orphaned_plan_users > 0) attention.push(['orphans', '#/platform/billing', tn('platform.overview.att_orphans', o.orphaned_plan_users), 'warn']);
+    if (o.stale_accounts_180d > 0) attention.push(['stale', '#/platform/cleanup', tn('platform.overview.att_stale', o.stale_accounts_180d), 'info']);
+    if (o.screens_offline_24h > 0) attention.push(['offline', '#/platform/orgs', tn('platform.overview.att_offline', o.screens_offline_24h), 'info']);
+    const mini = (href, value, label, sub) => `
+      <a class="platform-mini" href="${href}">
+        <span class="platform-mini-n">${esc(String(value))}</span>
+        <span class="platform-mini-l">${esc(label)}</span>
+        ${sub ? `<span class="platform-mini-s">${esc(sub)}</span>` : ''}
+      </a>`;
+    el.innerHTML = `
+      <div class="platform-stats">
+        ${card('#/platform/users', o.users, t('platform.overview.users'), tn('platform.overview.users_sub', o.platform_staff))}
+        ${card('#/platform/orgs', o.organizations, t('platform.overview.orgs'), tn('platform.overview.workspaces', o.workspaces))}
+        ${card('#/platform/orgs', o.devices, t('platform.overview.devices'), t('platform.overview.online', { n: o.devices_online }))}
+        ${card('#/platform/billing', o.paying_accounts, t('platform.overview.paying'), tn('platform.overview.trialing', o.trialing))}
+      </div>
+      <h3 class="platform-subhead">${esc(t('platform.overview.health'))}</h3>
+      <div class="platform-minis">
+        ${mini('#/platform/users', o.new_users_7d, t('platform.overview.new_7d'))}
+        ${mini('#/platform/cleanup', o.inactive_30d, t('platform.overview.inactive_30d'), tn('platform.overview.never_signed_in', o.never_signed_in))}
+        ${mini('#/platform/cleanup', o.accounts_no_screens, t('platform.overview.no_screens'), tn('platform.overview.orgs_no_screens', o.orgs_no_screens))}
+        ${mini('#/platform/orgs', o.screens_offline_24h, t('platform.overview.offline_24h'))}
+        ${mini('#/platform/billing', o.trials_ending_7d, t('platform.overview.trials_ending'))}
+        ${mini('#/platform/users', o.unverified_emails, t('platform.overview.unverified'))}
+        ${mini('#/platform/system', formatBytes(o.storage_bytes), t('platform.overview.storage'))}
+        ${mini('#/platform/cleanup', o.stale_accounts_180d, t('platform.overview.stale'), t('platform.overview.stale_sub'))}
+      </div>
+      <div class="settings-section">
+        <h3>${esc(t('platform.overview.attention'))}</h3>
+        ${attention.length ? `<div class="platform-attention">${attention.map(([item, href, text, kind]) => `
+          <details class="att att-${kind}" data-item="${item}">
+            <summary><span>${esc(text)}</span><span class="att-chev" aria-hidden="true"></span></summary>
+            <div class="att-body" data-href="${href}"><p class="platform-empty">${esc(t('common.loading'))}</p></div>
+          </details>`).join('')}</div>`
+          : `<p class="platform-empty">${esc(t('platform.overview.all_clear'))}</p>`}
+      </div>
+      <p class="platform-version">${esc(t('platform.overview.version', { v: o.version }))}</p>`;
+    // Details load the first time an item is opened (GET /admin/overview/attention/:item).
+    el.querySelectorAll('details.att').forEach((d) => {
+      d.addEventListener('toggle', () => { if (d.open && !d.dataset.loaded) { d.dataset.loaded = '1'; loadAttentionDetail(d); } });
+    });
+  } catch (err) {
+    el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`;
+  }
 }
 
 // #36: list organizations with owner + resource counts; platform admin can
@@ -266,6 +429,22 @@ async function loadSsoOnlyRequests() {
   host.querySelectorAll('[data-sso-reject]').forEach((b) => b.addEventListener('click', () => decide(b.dataset.ssoReject, 'reject')));
 }
 
+// Search the organization cards by org name, owner name/email or workspace name.
+function wireOrgFilter(el) {
+  const search = document.getElementById('orgSearch');
+  const count = document.getElementById('orgCount');
+  if (!search) return;
+  const cards = [...el.querySelectorAll('.org-card[data-filter-text]')];
+  const apply = () => {
+    const q = search.value.trim().toLowerCase();
+    let shown = 0;
+    for (const c of cards) { const ok = !q || c.dataset.filterText.includes(q); c.hidden = !ok; if (ok) shown++; }
+    if (count) count.textContent = t('platform.orgs.showing', { n: shown, total: cards.length });
+  };
+  search.oninput = apply;
+  apply();
+}
+
 async function loadOrgs() {
   const el = document.getElementById('orgsTable');
   if (!el) return;
@@ -293,7 +472,7 @@ async function loadOrgs() {
         <button class="btn btn-danger btn-sm" data-del-ws="${esc(w.id)}" data-ws-name="${esc(w.name)}">${t('admin.orgs.delete_ws')}</button>
       </div>`).join('');
     return `
-      <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px">
+      <div class="org-card" style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px" data-filter-text="${esc([o.name, o.owner_email, o.owner_name, ...(o.workspaces || []).map((w) => w.name)].filter(Boolean).join(' ').toLowerCase())}">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-secondary)">
           <div>
             <div style="font-weight:600">${esc(o.name)}</div>
@@ -318,6 +497,7 @@ async function loadOrgs() {
         ${wsRows}
       </div>`;
   }).join('');
+  wireOrgFilter(el);
 
   if (talkMaster) el.querySelectorAll('[data-org-talk-save]').forEach(btn => btn.addEventListener('click', async () => {
     const id = btn.dataset.orgTalkSave;
@@ -397,6 +577,31 @@ async function loadBranding() {
   };
 }
 
+/*
+ * Search + role filter over the rendered users table (Platform → Users). Client-side: the list is
+ * already fully loaded, and filtering must not re-fire the plan and role selects' requests.
+ */
+function wireUserFilters(el) {
+  const search = document.getElementById('userSearch');
+  const role = document.getElementById('userRoleFilter');
+  const count = document.getElementById('userCount');
+  if (!search || !role) return;
+  const rows = [...el.querySelectorAll('tr[data-filter-text]')];
+  const apply = () => {
+    const q = search.value.trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      const ok = (!q || r.dataset.filterText.includes(q)) && (!role.value || r.dataset.filterKind === role.value);
+      r.hidden = !ok;
+      if (ok) shown++;
+    }
+    if (count) count.textContent = t('platform.users.showing', { n: shown, total: rows.length });
+  };
+  search.oninput = apply;
+  role.onchange = apply;
+  apply();
+}
+
 async function loadUsers() {
   const el = document.getElementById('allUsersTable');
   try {
@@ -420,7 +625,7 @@ async function loadUsers() {
         </tr></thead>
         <tbody>
           ${users.map(u => `
-            <tr style="border-bottom:1px solid var(--border)">
+            <tr style="border-bottom:1px solid var(--border)" data-filter-text="${esc([u.name, u.email, workspaceSummary(u)].filter(Boolean).join(' ').toLowerCase())}" data-filter-kind="${isPlatformStaffRole(u.role) ? 'platform' : 'user'}">
               <!-- ESCAPED: these come from self-registration and from an identity provider's
                    email claim, so they are attacker-chosen. A reviewer registered an address whose
                    local part was an img tag with an onerror handler, anonymously, and got script
@@ -452,6 +657,7 @@ async function loadUsers() {
       </div>
       <p style="color:var(--text-muted);font-size:11px;margin-top:8px">${t('admin.total_users', { n: users.length })}</p>
     `;
+    wireUserFilters(el);
 
     el.querySelectorAll('[data-role-user]').forEach(select => {
       select.onchange = async () => {
@@ -842,7 +1048,13 @@ async function loadPlugins() {
   let body;
   try {
     const res = await fetch('/api/admin/plugins', { headers });
-    if (res.status === 404) { section.style.display = 'none'; return; }
+    if (res.status === 404) {
+      section.style.display = 'none';
+      // PLUGINS_ENABLED is unset: say so, rather than leave the Plugins page blank.
+      const off = document.getElementById('pluginsOff');
+      if (off) off.hidden = false;
+      return;
+    }
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
     body = await res.json();
   } catch (e) {
@@ -1063,4 +1275,164 @@ async function loadPlugins() {
       }
     });
   }
+}
+
+/*
+ * Platform → Cleanup: stale customer accounts (server: lib/account-cleanup.js).
+ *
+ * Notice first, then delete: select → "Send notice" (emails "deleted on <date> unless you sign in")
+ * → after the notice period, the accounts still silent are "Ready" → select → type "DELETE N".
+ * The server re-checks every account at each step. Deleting without notice is an explicit override
+ * with its own phrase. Nothing here decides what "stale" or "ready" means; the server does.
+ */
+async function mountCleanup(el, days = 180, lastResult = null, noticeDays = 14) {
+  if (!el) return;
+  el.innerHTML = `<p style="color:var(--text-muted)">${esc(t('common.loading'))}</p>`;
+  let data;
+  try { data = await api.adminStaleAccounts(days); } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; return; }
+  const when = (sec) => (sec ? new Date(sec * 1000).toLocaleDateString() : t('platform.cleanup.never'));
+  const noticeCell = (a) => {
+    if (a.notice === 'ready') return `<span class="notice-pill notice-ready">${esc(t('platform.cleanup.st_ready'))}</span>`;
+    if (a.notice === 'notice') return `<span class="notice-pill notice-running">${esc(t('platform.cleanup.st_notice', { date: when(a.cleanup_delete_after) }))}</span>`;
+    return `<span class="notice-pill">${esc(t('platform.cleanup.st_not_warned'))}</span>`;
+  };
+  const rows = data.accounts.map((a) => `
+    <tr data-notice="${esc(a.notice)}">
+      <td><input type="checkbox" class="cleanup-pick" value="${esc(a.id)}" data-notice="${esc(a.notice)}" aria-label="${esc(t('platform.cleanup.select', { email: a.email }))}"></td>
+      <td><div style="font-weight:500">${esc(a.name || a.email)}</div><div style="font-size:11px;color:var(--text-muted)">${esc(a.email)}</div></td>
+      <td>${esc(when(a.created_at))}</td>
+      <td>${a.never_signed_in ? `<span class="cleanup-never">${esc(t('platform.cleanup.never'))}</span>` : esc(when(a.last_login))}<div style="font-size:11px;color:var(--text-muted)">${esc(t('platform.cleanup.last_activity', { date: when(a.last_activity) }))}</div></td>
+      <td>${esc(String(a.workspaces))} · ${esc(String(a.content_items))}${a.content_bytes ? ` <span style="color:var(--text-muted)">(${esc(formatBytes(a.content_bytes))})</span>` : ''}</td>
+      <td>${noticeCell(a)}</td>
+    </tr>`).join('');
+  const summary = lastResult ? `
+    <div class="cleanup-summary">
+      <strong>${esc(lastResult.warned ? tn('platform.cleanup.warned_done', lastResult.warned.length) : tn('platform.cleanup.done', lastResult.deleted.length))}</strong>
+      ${lastResult.files_removed ? ` · ${esc(t('platform.cleanup.freed', { n: lastResult.files_removed, size: formatBytes(lastResult.bytes_freed) }))}` : ''}
+      ${lastResult.skipped.length ? `<div class="cleanup-skipped">${esc(tn('platform.cleanup.skipped', lastResult.skipped.length))}<ul>${lastResult.skipped.map((k) => `<li>${esc(k.email || k.id)}: ${esc(k.reason)}</li>`).join('')}</ul></div>` : ''}
+    </div>` : '';
+  el.innerHTML = `
+    ${summary}
+    <div class="settings-section">
+      <h3>${esc(t('platform.cleanup.rules_title'))}</h3>
+      <div class="cleanup-rules">
+        <label>${esc(t('platform.cleanup.inactive_for'))}
+          <select class="input" id="cleanupDays">${[30, 90, 180, 365].map((d) => `<option value="${d}" ${d === data.inactive_days ? 'selected' : ''}>${esc(tn('platform.cleanup.days', d))}</option>`).join('')}</select>
+        </label>
+        <label>${esc(t('platform.cleanup.notice_period'))}
+          <select class="input" id="cleanupNotice">${[14, 30].map((d) => `<option value="${d}" ${d === noticeDays ? 'selected' : ''}>${esc(tn('platform.cleanup.days', d))}</option>`).join('')}</select>
+        </label>
+        <ul>
+          <li>${esc(tn('platform.cleanup.rule_login', data.inactive_days))}</li>
+          <li>${esc(t('platform.cleanup.rule_screens'))}</li>
+          <li>${esc(t('platform.cleanup.rule_paying'))}</li>
+          <li>${esc(t('platform.cleanup.rule_shared'))}</li>
+          <li>${esc(t('platform.cleanup.rule_staff'))}</li>
+        </ul>
+      </div>
+      <ol class="cleanup-steps">
+        <li>${esc(t('platform.cleanup.step1'))}</li>
+        <li>${esc(t('platform.cleanup.step2'))}</li>
+        <li>${esc(t('platform.cleanup.step3'))}</li>
+      </ol>
+      ${data.email_configured ? '' : `<p class="cleanup-warn">${esc(t('platform.cleanup.no_email'))}</p>`}
+    </div>
+    <div class="settings-section">
+      <div class="cleanup-head">
+        <h3 style="margin:0">${esc(tn('platform.cleanup.found', data.total))}${data.reclaimable_bytes ? ` <span class="cleanup-bytes">${esc(t('platform.cleanup.reclaim', { size: formatBytes(data.reclaimable_bytes) }))}</span>` : ''}</h3>
+        <span style="flex:1"></span>
+        <button class="btn btn-secondary btn-sm" id="cleanupExport" ${data.total ? '' : 'disabled'}>${esc(t('platform.cleanup.export'))}</button>
+      </div>
+      ${data.total ? `
+      <div class="cleanup-filters">
+        <button class="chip-btn" data-pick="not_warned">${esc(tn('platform.cleanup.pick_not_warned', data.counts.not_warned))}</button>
+        <button class="chip-btn" data-pick="notice">${esc(tn('platform.cleanup.pick_notice', data.counts.notice))}</button>
+        <button class="chip-btn chip-ready" data-pick="ready">${esc(tn('platform.cleanup.pick_ready', data.counts.ready))}</button>
+        <button class="chip-btn" data-pick="none">${esc(t('platform.cleanup.pick_none'))}</button>
+      </div>
+      <div class="table-wrap"><table class="org-members-table cleanup-table">
+        <thead><tr><th><input type="checkbox" id="cleanupAll" aria-label="${esc(t('platform.cleanup.select_all'))}"></th>
+          <th>${esc(t('platform.cleanup.col_account'))}</th><th>${esc(t('platform.cleanup.col_created'))}</th><th>${esc(t('platform.cleanup.col_last_login'))}</th>
+          <th>${esc(t('platform.cleanup.col_holdings'))}</th><th>${esc(t('platform.cleanup.col_notice'))}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div class="cleanup-actions">
+        <button class="btn btn-primary btn-sm" id="cleanupWarn" disabled>${esc(t('platform.cleanup.warn_selected'))}</button>
+        <button class="btn btn-danger btn-sm" id="cleanupDelete" disabled>${esc(t('platform.cleanup.delete_selected'))}</button>
+        <label class="cleanup-override"><input type="checkbox" id="cleanupSkipNotice"> ${esc(t('platform.cleanup.skip_notice'))}</label>
+      </div>` : `<p class="platform-empty">${esc(t('platform.cleanup.none'))}</p>`}
+      <p class="cleanup-note">${esc(t('platform.cleanup.note'))}</p>
+    </div>`;
+
+  const reload = (result) => mountCleanup(el, data.inactive_days, result, noticeDays);
+  el.querySelector('#cleanupDays').onchange = (e) => mountCleanup(el, parseInt(e.target.value, 10), null, noticeDays);
+  el.querySelector('#cleanupNotice').onchange = (e) => { noticeDays = parseInt(e.target.value, 10); };
+  el.querySelector('#cleanupExport').onclick = () => {
+    const csvCell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const lines = [['email', 'name', 'created', 'last_login', 'last_activity', 'workspaces', 'content_items', 'content_bytes', 'notice'].join(',')]
+      .concat(data.accounts.map((a) => [a.email, a.name, when(a.created_at), a.never_signed_in ? 'never' : when(a.last_login), when(a.last_activity), a.workspaces, a.content_items, a.content_bytes, a.notice].map(csvCell).join(',')));
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+    link.download = `stale-accounts-${data.inactive_days}d-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  };
+  if (!data.total) return;
+
+  const boxes = [...el.querySelectorAll('.cleanup-pick')];
+  const picked = () => boxes.filter((c) => c.checked);
+  const warnBtn = el.querySelector('#cleanupWarn');
+  const delBtn = el.querySelector('#cleanupDelete');
+  const skip = el.querySelector('#cleanupSkipNotice');
+  const sync = () => {
+    const sel = picked();
+    const toWarn = sel.filter((c) => c.dataset.notice === 'not_warned').length;
+    const toDelete = skip.checked ? sel.length : sel.filter((c) => c.dataset.notice === 'ready').length;
+    warnBtn.disabled = !toWarn || !data.email_configured;
+    warnBtn.textContent = toWarn ? tn('platform.cleanup.warn_n', toWarn) : t('platform.cleanup.warn_selected');
+    delBtn.disabled = !toDelete;
+    delBtn.textContent = toDelete ? tn(skip.checked ? 'platform.cleanup.delete_n_now' : 'platform.cleanup.delete_n', toDelete) : t('platform.cleanup.delete_selected');
+  };
+  boxes.forEach((c) => { c.onchange = sync; });
+  skip.onchange = sync;
+  const all = el.querySelector('#cleanupAll');
+  all.onchange = () => { boxes.forEach((c) => { c.checked = all.checked; }); sync(); };
+  el.querySelectorAll('[data-pick]').forEach((b) => {
+    b.onclick = () => { boxes.forEach((c) => { c.checked = b.dataset.pick !== 'none' && c.dataset.notice === b.dataset.pick; }); all.checked = false; sync(); };
+  });
+
+  warnBtn.onclick = () => {
+    const ids = picked().filter((c) => c.dataset.notice === 'not_warned').map((c) => c.value);
+    if (!ids.length) return;
+    const phrase = `NOTIFY ${ids.length}`;
+    openTypeToConfirmModal({
+      title: tn('platform.cleanup.warn_title', ids.length),
+      body: esc(tn('platform.cleanup.warn_body', noticeDays)),
+      expected: phrase,
+      confirmLabel: tn('platform.cleanup.warn_n', ids.length),
+      onConfirm: async () => {
+        const out = await api.adminWarnStale({ ids, days: data.inactive_days, notice_days: noticeDays });
+        showToast(tn('platform.cleanup.warned_done', out.warned.length), 'success');
+        reload(out);
+      },
+    });
+  };
+
+  delBtn.onclick = () => {
+    const sel = picked();
+    const ids = (skip.checked ? sel : sel.filter((c) => c.dataset.notice === 'ready')).map((c) => c.value);
+    if (!ids.length) return;
+    const phrase = skip.checked ? `DELETE ${ids.length} WITHOUT NOTICE` : `DELETE ${ids.length}`;
+    openTypeToConfirmModal({
+      title: tn('platform.cleanup.confirm_title', ids.length),
+      body: esc(t(skip.checked ? 'platform.cleanup.confirm_body_now' : 'platform.cleanup.confirm_body')),
+      expected: phrase,
+      confirmLabel: tn(skip.checked ? 'platform.cleanup.delete_n_now' : 'platform.cleanup.delete_n', ids.length),
+      onConfirm: async () => {
+        const out = await api.adminPurgeStale({ ids, days: data.inactive_days, confirm: phrase, skip_notice: skip.checked });
+        showToast(tn('platform.cleanup.done', out.deleted.length), 'success');
+        reload(out);
+      },
+    });
+  };
 }

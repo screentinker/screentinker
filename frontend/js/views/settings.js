@@ -1,9 +1,9 @@
 import { api } from '../api.js';
 import * as whatsNew from '../components/whats-new.js';
 import { showToast } from '../components/toast.js';
-import { getLanguage, setLanguage, getAvailableLanguages, t, tn } from '../i18n.js';
+import { getLanguage, setLanguage, getAvailableLanguages, t } from '../i18n.js';
 import { esc, isPlatformAdmin } from '../utils.js';
-import { resetBranding } from '../branding.js';
+import { resetBranding, applyAccent } from '../branding.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
@@ -222,11 +222,14 @@ export async function render(container) {
       </div>
     </div>
 
-    ${isSuperAdmin ? `<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${t('settings.platform_admin_link')} <a href="#/admin" style="color:var(--accent)">${t('nav.admin')}</a> ${t('settings.platform_admin_page_suffix')}</p>` : ''}
-
+    <!-- Every account on the server used to be listed and edited HERE as well as on the admin page:
+         two copies of the same table (and of its escaping bugs). Instance-wide user management now
+         lives only in the Platform area; Settings is about you and your organization. -->
     <div class="settings-section">
-      <h3>${t('settings.user_management')}</h3>
-      <div id="userManagement"><p style="color:var(--text-muted)">${t('settings.loading_users')}</p></div>
+      <h3>${t('settings.platform_moved_title')}</h3>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px">${t('settings.platform_moved_desc')}</p>
+      <a class="btn btn-secondary btn-sm" href="#/platform/users">${t('settings.platform_moved_users')} &rarr;</a>
+      <a class="btn btn-secondary btn-sm" href="#/platform/overview" style="margin-left:6px">${t('settings.platform_moved_overview')} &rarr;</a>
     </div>
 
     <div class="settings-section" id="whiteLabelSection">
@@ -335,7 +338,6 @@ export async function render(container) {
     .catch(() => { /* About must render with or without it */ });
 
   if (isAdmin) {
-    loadUsers();
     loadWhiteLabel();
     loadTelemetry();
 
@@ -1670,132 +1672,10 @@ async function loadWhiteLabel() {
   document.getElementById('previewWhiteLabelBtn')?.addEventListener('click', () => {
     const primary = document.getElementById('wlPrimaryColor').value;
     const bg = document.getElementById('wlBgColor').value;
-    document.documentElement.style.setProperty('--accent', primary);
+    applyAccent(document.documentElement, primary);
     document.documentElement.style.setProperty('--bg-primary', bg);
     showToast(t('settings.toast.preview_applied'), 'info');
   });
-}
-
-async function loadUsers() {
-  const el = document.getElementById('userManagement');
-  if (!el) return;
-
-  try {
-    const [users, plans] = await Promise.all([
-      api.getUsers(),
-      fetch('/api/subscription/plans').then(r => r.json())
-    ]);
-
-    const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
-
-    el.innerHTML = `
-      <div class="table-wrap">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">
-        <thead>
-          <tr style="border-bottom:1px solid var(--border);text-align:left">
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_user')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_auth')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_role')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_plan')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_actions')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${users.map(u => `
-            <!-- ESCAPED. A SECOND copy of the platform users table lives here, rendered from the
-                 same endpoint as the one in views/admin.js. Escaping only that one left this whole
-                 table wide open, including a raw text node for the email - and an org or workspace
-                 admin can choose an email, so this executed in the platform admin's session. When
-                 you touch one of these tables, touch both. -->
-            <tr style="border-bottom:1px solid var(--border)" data-user-id="${esc(u.id)}">
-              <td style="padding:10px 12px">
-                <div style="font-weight:500">${esc(u.name || u.email)}</div>
-                <div style="font-size:11px;color:var(--text-muted)">${esc(u.email)}</div>
-              </td>
-              <td style="padding:10px 12px">
-                <span style="background:var(--bg-primary);padding:2px 8px;border-radius:10px;font-size:11px">${esc(u.auth_provider)}</span>
-              </td>
-              <td style="padding:10px 12px">
-                <span style="color:${isPlatformAdmin(u) ? 'var(--accent)' : 'var(--text-secondary)'}">${esc(u.role)}</span>
-              </td>
-              <td style="padding:10px 12px">
-                <select class="input plan-select" data-user-id="${esc(u.id)}" style="padding:4px 8px;font-size:12px;width:auto">
-                  ${plans.map(p => `<option value="${esc(p.id)}" ${u.plan_id === p.id ? 'selected' : ''}>${esc(p.display_name)}</option>`).join('')}
-                </select>
-              </td>
-              <td style="padding:10px 12px;white-space:nowrap">
-                ${u.auth_provider === 'local' && u.id !== currentUser.id ? `<button class="btn btn-secondary btn-sm reset-user-pw-btn" data-user-id="${esc(u.id)}" data-user-email="${esc(u.email)}" style="margin-right:4px">${t('settings.user.reset_password')}</button>` : ''}
-                ${u.id !== currentUser.id ? `<button class="btn btn-danger btn-sm delete-user-btn" data-user-id="${esc(u.id)}">${t('settings.user.remove')}</button>` : `<span style="color:var(--text-muted);font-size:11px">${t('settings.user.you')}</span>`}
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-      </div>
-      <p style="color:var(--text-muted);font-size:11px;margin-top:12px">${tn('settings.user.count', users.length)}</p>
-    `;
-
-    // Plan change handlers
-    el.querySelectorAll('.plan-select').forEach(select => {
-      select.addEventListener('change', async () => {
-        const userId = select.dataset.userId;
-        const planId = select.value;
-        try {
-          await api.assignPlan(userId, planId);
-          showToast(t('settings.toast.plan_updated'), 'success');
-        } catch (err) {
-          showToast(err.message, 'error');
-          loadUsers(); // Revert
-        }
-      });
-    });
-
-    // Reset password handlers
-    el.querySelectorAll('.reset-user-pw-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const email = btn.dataset.userEmail;
-        const pw = prompt(t('settings.user.prompt_reset_password', { email }));
-        if (pw === null) return;
-        if (pw.length < 8) { showToast(t('settings.toast.new_password_min_8'), 'error'); return; }
-        try {
-          await api.resetUserPassword(btn.dataset.userId, pw);
-          showToast(t('settings.toast.password_reset_for_user'), 'success');
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-      });
-    });
-
-    // Delete user handlers
-    el.querySelectorAll('.delete-user-btn').forEach(btn => {
-      let confirming = false;
-      btn.addEventListener('click', async () => {
-        if (confirming) {
-          try {
-            await api.deleteUser(btn.dataset.userId);
-            showToast(t('settings.toast.user_removed'), 'success');
-            loadUsers();
-          } catch (err) {
-            showToast(err.message, 'error');
-          }
-          return;
-        }
-        confirming = true;
-        btn.textContent = t('settings.user.confirm');
-        btn.style.background = 'var(--danger)';
-        btn.style.color = 'white';
-        setTimeout(() => {
-          confirming = false;
-          btn.textContent = t('settings.user.remove');
-          btn.style.background = '';
-          btn.style.color = '';
-        }, 3000);
-      });
-    });
-
-  } catch (err) {
-    el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`;
-  }
 }
 
 export function cleanup() {}

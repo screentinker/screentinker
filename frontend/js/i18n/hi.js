@@ -16,6 +16,7 @@
 // To add a key: copy from en.js and translate the value. Order doesn't matter;
 // the loader merges over English fallback.
 export default {
+  'nav.group.platform': 'प्लेटफ़ॉर्म',
   'nav.group.devices': 'डिवाइस',
   'nav.group.publish': 'प्रकाशित करें',
   'nav.group.create': 'बनाएँ',

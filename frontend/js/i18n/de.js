@@ -2,6 +2,7 @@
 // standard for B2B software in DACH). Native review recommended before
 // publicizing as fully supported.
 export default {
+  'nav.group.platform': 'Plattform',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': 'Upload von {name} fortsetzen? {done} % wurden beim letzten Mal bereits übertragen.',

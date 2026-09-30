@@ -1,6 +1,7 @@
 // Spanish translations. Reviewed for UI register (informal tú).
 // Native review still recommended before publicizing as fully supported.
 export default {
+  'nav.group.platform': 'Plataforma',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': '¿Reanudar la subida de {name}? Ya se envió el {done}% la vez anterior.',

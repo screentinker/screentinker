@@ -1,6 +1,7 @@
 // Japanese translations. This file mirrors every key in en.js.
 // Keep placeholders, markup, and control tokens unchanged when editing.
 export default {
+  'nav.group.platform': 'プラットフォーム',
   'nav.group.devices': 'デバイス',
   'nav.group.publish': '公開',
   'nav.group.create': '作成',

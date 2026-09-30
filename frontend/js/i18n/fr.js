@@ -1,6 +1,7 @@
 // French translations. Use the formal vous register for this B2B interface.
 // This file mirrors every key in en.js; keep placeholders, markup, and control tokens unchanged.
 export default {
+  'nav.group.platform': 'Plateforme',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': 'Reprendre l’envoi de {name} ? {done} % avaient déjà été transférés la dernière fois.',

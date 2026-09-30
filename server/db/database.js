@@ -2025,6 +2025,11 @@ const migrations = [
     created_by         TEXT,
     created_at         INTEGER NOT NULL
   )`,
+  // Stale-account cleanup (lib/account-cleanup.js): the deletion notice, and an index so "last
+  // activity" (MAX(activity_log.created_at) per user) is not a table scan on a big log.
+  'ALTER TABLE users ADD COLUMN cleanup_warned_at INTEGER',
+  'ALTER TABLE users ADD COLUMN cleanup_delete_after INTEGER',
+  'CREATE INDEX IF NOT EXISTS idx_activity_log_user_time ON activity_log(user_id, created_at)',
   `CREATE TABLE IF NOT EXISTS template_seen (
     user_id      TEXT NOT NULL,
     template_key TEXT NOT NULL,

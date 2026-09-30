@@ -2,6 +2,7 @@
 // Reviewed for UI register (informal você). Native review recommended before
 // publicizing as fully supported.
 export default {
+  'nav.group.platform': 'Plataforma',
   'nav.group.devices': 'Dispositivos',
   'nav.group.publish': 'Publicar',
   'nav.group.create': 'Criar',

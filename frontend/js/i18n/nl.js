@@ -1,6 +1,7 @@
 // Dutch translations.
 
 export default {
+  'nav.group.platform': 'Platform',
   'nav.group.devices': 'Apparaten',
   'nav.group.publish': 'Publiceren',
   'nav.group.create': 'Maken',

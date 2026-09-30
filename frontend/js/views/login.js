@@ -2,6 +2,7 @@ import { showToast } from '../components/toast.js';
 import { loginFormState } from '../lib/login-form-state.js';
 import { t } from '../i18n.js';
 import { esc } from '../utils.js';
+import { applyAccent } from '../branding.js';
 
 
 /*
@@ -56,7 +57,7 @@ function brandEsc(s) {
 // Apply document-level branding (colors, favicon, title, custom CSS) for login.
 function applyLoginBrandingDoc(b) {
   const root = document.documentElement;
-  if (b.primary_color) root.style.setProperty('--accent', b.primary_color);
+  applyAccent(root, b.primary_color);
   if (b.bg_color) root.style.setProperty('--bg-primary', b.bg_color);
   if (b.brand_name) document.title = b.brand_name;
   if (b.favicon_url) {

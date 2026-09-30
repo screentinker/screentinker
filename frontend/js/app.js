@@ -400,7 +400,13 @@ function route() {
   // Cleanup previous view
   if (currentView && currentView.cleanup) currentView.cleanup();
 
-  const hash = window.location.hash || '#/';
+  let hash = window.location.hash || '#/';
+  // The admin page became the Platform area (#/platform/<section>). Old links, bookmarks and the
+  // SSO-removal notification emails say #/admin: send them to the overview without a history entry.
+  if (hash === '#/admin' || hash === '#/platform' || hash === '#/platform/') {
+    history.replaceState(null, '', window.location.pathname + '#/platform/overview');
+    hash = '#/platform/overview';
+  }
 
   // Slice 2C - direct hits on #/accept-invite/{id}. Handle BEFORE the
   // auth-redirect-to-login because an unauthed visit needs to stash the
@@ -566,6 +572,9 @@ function route() {
     else if ((hash === '#/kiosk' || hash.startsWith('#/kiosk/')) && link.dataset.view === 'kiosk') link.classList.add('active');
     else if (hash === '#/help' && link.dataset.view === 'help') link.classList.add('active');
     else if (hash.startsWith('#/device/') && link.dataset.view === 'dashboard') link.classList.add('active');
+    else if (hash.startsWith('#/platform/') && link.dataset.view === 'platform-' + hash.slice(11).split(/[/?]/)[0]) link.classList.add('active');
+    else if (hash.startsWith('#/admin/player-debug') && link.dataset.view === 'platform-system') link.classList.add('active');
+    else if ((hash === '#/members' || (hash.startsWith('#/workspace/') && hash.includes('/members'))) && link.dataset.view === 'members') link.classList.add('active');
   });
 
   // Route to view
@@ -664,9 +673,9 @@ function route() {
     // Match prefix so query params (?page=2&ua=Tizen) route correctly.
     currentView = adminPlayerDebug;
     adminPlayerDebug.render(app);
-  } else if (hash === '#/admin') {
+  } else if (hash.startsWith('#/platform/')) {
     currentView = admin;
-    admin.render(app);
+    admin.render(app, hash.slice(11).split(/[/?]/)[0]);
   } else if (hash === '#/settings') {
     currentView = settings;
     settings.render(app);
@@ -698,9 +707,10 @@ function updateSidebarUser() {
   updateBillingBanner(user);
   updateWidgetSandboxWarningBanner(user);
 
-  // Show admin nav only for platform admins (legacy 'superadmin' or Phase 1 renamed 'platform_admin')
-  const adminNav = document.getElementById('adminNavItem');
-  if (adminNav) adminNav.style.display = isPlatformAdmin(user) ? '' : 'none';
+  // The Platform nav group is for platform admins only (legacy 'superadmin' or 'platform_admin').
+  // nav-groups.js hides a group whose every link is hidden, so hiding the items hides the group.
+  const platformAdmin = isPlatformAdmin(user);
+  document.querySelectorAll('.platform-nav').forEach((li) => { li.style.display = platformAdmin ? '' : 'none'; });
 
   // #116: hide the Subscription nav item when HIDE_BILLING is set (surfaced on /me).
   // Runs at boot from the cached user (no flash on warm loads) and again after /me.

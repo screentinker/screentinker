@@ -1,6 +1,7 @@
 // Italian translations. This file is the source of truth for keys —
 // every other locale should mirror its keys (or fall back to en).
 export default {
+  'nav.group.platform': 'Piattaforma',
   // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
   // See frontend/js/lib/chunked-upload.js.
   'content.upload_resume_prompt': 'Riprendere il caricamento di {name}? Il {done}% era già stato inviato la volta scorsa.',

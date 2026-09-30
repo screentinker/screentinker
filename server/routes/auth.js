@@ -86,7 +86,8 @@ function logFailedLogin(email, ip, reason) {
  */
 function stampLastLogin(userId) {
   try {
-    db.prepare("UPDATE users SET last_login = strftime('%s','now') WHERE id = ?").run(userId);
+    // Signing in also cancels a pending stale-account deletion notice (lib/account-cleanup.js).
+    db.prepare("UPDATE users SET last_login = strftime('%s','now'), cleanup_warned_at = NULL, cleanup_delete_after = NULL WHERE id = ?").run(userId);
   } catch {}
 }
 
@@ -812,6 +813,10 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     w.can_admin = isPlatformAdmin
       || w.org_role === 'org_owner' || w.org_role === 'org_admin'
       || w.workspace_role === 'workspace_admin';
+    // Members → "Whole organization" (GET /workspaces/:id/organization-members): the same rule the
+    // endpoint enforces, as a capability flag so org_role itself stays server-side.
+    w.can_view_org_members = isPlatformStaffUser
+      || w.org_role === 'org_owner' || w.org_role === 'org_admin';
     delete w.org_role; // internal-only; don't leak to client
   }
 

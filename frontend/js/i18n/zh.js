@@ -3,6 +3,7 @@
 import en from './en.js';
 
 export default {
+  'nav.group.platform': '平台',
   'nav.group.devices': '设备',
   'nav.group.publish': '发布',
   'nav.group.create': '创建',

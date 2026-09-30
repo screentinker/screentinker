@@ -3,7 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const { db } = require('../db/database');
 const { canAdminWorkspace, canAccessWorkspace } = require('../lib/permissions');
-const { isPlatformRole } = require('../middleware/auth');
+const { isPlatformRole, isPlatformStaff } = require('../middleware/auth');
 const go2rtc = require('../lib/go2rtc');
 const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
 const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
@@ -380,6 +380,53 @@ router.get('/:id/members', (req, res) => {
   const ws = loadWorkspace(req, res, false);
   if (!ws) return;
   res.json(listMembers(ws.id, ws.organization_id));
+});
+
+/*
+ * GET /:id/organization-members — everyone in the ORGANIZATION this workspace belongs to: its
+ * org owners/admins plus every direct member of any of its workspaces, each with the workspaces
+ * they are in and their role there. Powers Members → "Whole organization".
+ *
+ * ⚠️ ORG ADMINS AND PLATFORM STAFF ONLY. A workspace admin sees their own workspace (/:id/members)
+ * and nothing more: the org-wide list names people in workspaces they have no access to. And it is
+ * scoped by the workspace's organization_id, never by a caller-supplied org id, so it can only
+ * ever describe the organization the caller was already allowed into.
+ */
+router.get('/:id/organization-members', (req, res) => {
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.params.id);
+  if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+  const orgId = ws.organization_id;
+  const isOrgAdmin = !!db.prepare(
+    "SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ? AND role IN ('org_owner','org_admin')"
+  ).get(orgId, req.user.id);
+  if (!isOrgAdmin && !isPlatformStaff(req.user.role)) {
+    return res.status(403).json({ error: 'Organization admin access required' });
+  }
+  req.workspaceId = ws.id;
+  const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(orgId) || { id: orgId, name: '' };
+  const workspaces = db.prepare('SELECT id, name FROM workspaces WHERE organization_id = ? ORDER BY name COLLATE NOCASE').all(orgId);
+  const people = new Map();
+  const person = (r) => {
+    if (!people.has(r.user_id)) people.set(r.user_id, { user_id: r.user_id, email: r.email, name: r.name, org_role: null, workspaces: [], last_login: r.last_login || null });
+    return people.get(r.user_id);
+  };
+  for (const r of db.prepare(`
+    SELECT u.id AS user_id, u.email, u.name, u.last_login, om.role
+      FROM organization_members om JOIN users u ON u.id = om.user_id
+     WHERE om.organization_id = ?
+  `).all(orgId)) person(r).org_role = r.role;
+  for (const r of db.prepare(`
+    SELECT u.id AS user_id, u.email, u.name, u.last_login, wm.role, w.id AS ws_id, w.name AS ws_name
+      FROM workspace_members wm
+      JOIN workspaces w ON w.id = wm.workspace_id
+      JOIN users u ON u.id = wm.user_id
+     WHERE w.organization_id = ?
+     ORDER BY w.name COLLATE NOCASE
+  `).all(orgId)) person(r).workspaces.push({ id: r.ws_id, name: r.ws_name, role: r.role });
+  const rank = { org_owner: 0, org_admin: 1 };
+  const members = [...people.values()].sort((a, b) =>
+    (rank[a.org_role] ?? 2) - (rank[b.org_role] ?? 2) || String(a.name || a.email).localeCompare(String(b.name || b.email)));
+  res.json({ organization: org, workspaces, members });
 });
 
 // GET /:id/invites - admin only. Pending (non-expired) rows.

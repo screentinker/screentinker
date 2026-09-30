@@ -723,6 +723,166 @@ router.post('/promotions/:id/end', requirePlatformAdmin, async (req, res) => {
   }
 });
 
+// ─── Platform overview (frontend: views/admin.js, #/platform/overview) ─────────────
+// The numbers an operator checks first plus the things waiting on them. Counts only — no names,
+// no emails. Each count is independent and tolerant: a table an older install lacks reads as 0
+// instead of failing the whole page.
+router.get('/overview', requirePlatformAdmin, (req, res) => {
+  const n = (sql, ...args) => { try { return db.prepare(sql).get(...args).n || 0; } catch (_) { return 0; } };
+  const now = Math.floor(Date.now() / 1000);
+  const TRIAL_SECS = 14 * 86400; // middleware/subscription.js TRIAL_DAYS
+  const latest = require('../lib/ghcr-check').getLatestVersion();
+  const cmp = latest ? require('../lib/ghcr-check').compareVersions(latest, VERSION) : 0;
+  res.json({
+    version: VERSION,
+    latest_version: latest || null,
+    update_available: cmp > 0,
+    users: n('SELECT COUNT(*) AS n FROM users'),
+    platform_staff: n("SELECT COUNT(*) AS n FROM users WHERE role IN ('platform_admin','superadmin','platform_operator')"),
+    organizations: n('SELECT COUNT(*) AS n FROM organizations'),
+    workspaces: n('SELECT COUNT(*) AS n FROM workspaces'),
+    devices: n('SELECT COUNT(*) AS n FROM devices'),
+    devices_online: n("SELECT COUNT(*) AS n FROM devices WHERE status = 'online'"),
+    paying_accounts: n("SELECT COUNT(*) AS n FROM users WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id != '' AND COALESCE(subscription_status,'active') IN ('active','trialing','past_due')"),
+    trialing: n('SELECT COUNT(*) AS n FROM users WHERE trial_started IS NOT NULL AND trial_started + ? > ?', TRIAL_SECS, now),
+    sso_only_requests: n("SELECT COUNT(*) AS n FROM org_sso_only_requests WHERE status = 'pending'"),
+    // lib/plugins/submissions.js: a submission awaiting review is 'pending'. Only meaningful when
+    // plugins are on — with them off there is no page to review them on.
+    plugin_submissions: require('../config').pluginsEnabled ? n("SELECT COUNT(*) AS n FROM plugin_submissions WHERE status = 'pending'") : 0,
+    orphaned_plan_users: n('SELECT COUNT(*) AS n FROM users WHERE plan_id IS NOT NULL AND plan_id NOT IN (SELECT id FROM plans)'),
+    // Activity and health
+    new_users_7d: n('SELECT COUNT(*) AS n FROM users WHERE created_at > ?', now - 7 * 86400),
+    inactive_30d: n("SELECT COUNT(*) AS n FROM users WHERE COALESCE(last_login, created_at) < ?", now - 30 * 86400),
+    never_signed_in: n('SELECT COUNT(*) AS n FROM users WHERE last_login IS NULL'),
+    unverified_emails: n('SELECT COUNT(*) AS n FROM users WHERE email_verified = 0'),
+    trials_ending_7d: n('SELECT COUNT(*) AS n FROM users WHERE trial_started IS NOT NULL AND trial_started + ? BETWEEN ? AND ?', TRIAL_SECS, now, now + 7 * 86400),
+    // A customer account with no paired screen in any workspace it can reach.
+    accounts_no_screens: n(`
+      SELECT COUNT(*) AS n FROM users u
+       WHERE u.role = 'user' AND NOT EXISTS (
+         SELECT 1 FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+          WHERE w.id IN (SELECT workspace_id FROM workspace_members WHERE user_id = u.id)
+             OR w.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = u.id))`),
+    orgs_no_screens: n('SELECT COUNT(*) AS n FROM organizations o WHERE NOT EXISTS (SELECT 1 FROM devices d JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = o.id)'),
+    screens_offline_24h: n("SELECT COUNT(*) AS n FROM devices WHERE status != 'online' AND workspace_id IS NOT NULL AND COALESCE(last_heartbeat, 0) < ?", now - 86400),
+    storage_bytes: n('SELECT COALESCE(SUM(file_size), 0) AS n FROM content'),
+    stale_accounts_180d: require('../lib/account-cleanup').countStale(db, { inactiveDays: 180, now }),
+  });
+});
+
+// ─── Overview → "Needs your attention" details ───────────────────────────────────────
+// The overview itself returns counts only; the specifics (which orgs, which screens, which
+// accounts) load here when an item is expanded. Each list is capped: this is a briefing that
+// links to the page that fixes it, not a second copy of that page.
+const ATTENTION_LIMIT = 25;
+router.get('/overview/attention/:item', requirePlatformAdmin, (req, res) => {
+  const now = Math.floor(Date.now() / 1000);
+  const q = (sql, ...args) => { try { return db.prepare(sql).all(...args); } catch (_) { return []; } };
+  switch (req.params.item) {
+    case 'sso':
+      return res.json({ rows: q(`
+        SELECT o.name AS organization, u.email AS requested_by, r.reason, r.created_at
+          FROM org_sso_only_requests r
+          LEFT JOIN organizations o ON o.id = r.organization_id
+          LEFT JOIN users u ON u.id = r.requested_by
+         WHERE r.status = 'pending' ORDER BY r.created_at ASC LIMIT ?`, ATTENTION_LIMIT) });
+    case 'plugins':
+      return res.json({ rows: q(`
+        SELECT s.plugin_id, s.name, s.version, s.size_bytes, u.email AS submitted_by, s.submitted_at
+          FROM plugin_submissions s LEFT JOIN users u ON u.id = s.submitted_by
+         WHERE s.status = 'pending' ORDER BY s.submitted_at ASC LIMIT ?`, ATTENTION_LIMIT) });
+    case 'update': {
+      const latest = require('../lib/ghcr-check').getLatestVersion();
+      return res.json({ current: VERSION, latest: latest || null });
+    }
+    case 'orphans':
+      return res.json({ rows: q(`
+        SELECT u.plan_id, COUNT(*) AS accounts, GROUP_CONCAT(u.email, ', ') AS emails
+          FROM users u WHERE u.plan_id IS NOT NULL AND u.plan_id NOT IN (SELECT id FROM plans)
+         GROUP BY u.plan_id ORDER BY accounts DESC LIMIT ?`, ATTENTION_LIMIT)
+        .map((r) => ({ ...r, emails: String(r.emails || '').split(', ').slice(0, 5).join(', ') })) });
+    case 'offline':
+      return res.json({ rows: q(`
+        SELECT d.name AS screen, o.name AS organization, w.name AS workspace, d.last_heartbeat, d.app_version
+          FROM devices d
+          JOIN workspaces w ON w.id = d.workspace_id
+          JOIN organizations o ON o.id = w.organization_id
+         WHERE d.status != 'online' AND COALESCE(d.last_heartbeat, 0) < ?
+         ORDER BY COALESCE(d.last_heartbeat, 0) DESC LIMIT ?`, now - 86400, ATTENTION_LIMIT) });
+    case 'stale': {
+      const r = require('../lib/account-cleanup').findStale(db, { inactiveDays: 180, now });
+      return res.json({
+        counts: r.counts,
+        rows: r.accounts.slice(0, ATTENTION_LIMIT).map((a) => ({ email: a.email, last_activity: a.last_activity, notice: a.notice, content_bytes: a.content_bytes })),
+      });
+    }
+    default:
+      return res.status(404).json({ error: 'Unknown item' });
+  }
+});
+
+// ─── Stale-account cleanup (lib/account-cleanup.js; #/platform/cleanup) ─────────────
+// GET previews; POST deletes. The POST re-checks every account server-side, and must carry a
+// typed confirmation naming the count, so a stale page or a stray click cannot delete anybody.
+router.get('/cleanup/stale-accounts', requirePlatformAdmin, (req, res) => {
+  res.json({
+    ...require('../lib/account-cleanup').findStale(db, { inactiveDays: req.query.days }),
+    email_configured: require('../services/email').isConfigured(),
+  });
+});
+
+router.post('/cleanup/stale-accounts', requirePlatformAdmin, (req, res) => {
+  const cleanup = require('../lib/account-cleanup');
+  const { ids, days, confirm, skip_notice: skipNotice } = req.body || {};
+  const count = Array.isArray(ids) ? new Set(ids).size : 0;
+  // Deleting without the notice period is an override, and it has its own, longer phrase.
+  const phrase = skipNotice ? `DELETE ${count} WITHOUT NOTICE` : `DELETE ${count}`;
+  if (confirm !== phrase) {
+    return res.status(400).json({ error: `Type ${phrase} to confirm` });
+  }
+  const { unlinkIfUnreferenced } = require('../lib/content-files');
+  try {
+    const out = cleanup.purge(db, {
+      ids, inactiveDays: days, actingAdminId: req.user.id, skipNotice: !!skipNotice,
+      unlink: (rel, column) => unlinkIfUnreferenced(rel, '__deleted_account__', column),
+    });
+    logActivity(req.user.id, 'cleanup_stale_accounts',
+      `deleted=${out.deleted.length} skipped=${out.skipped.length} days=${out.inactive_days} files=${out.files_removed} notice=${skipNotice ? 'skipped' : 'required'} ` +
+      `emails=${out.deleted.map((d) => d.email).join(',').slice(0, 1500)}`, null, getClientIp(req));
+    res.json(out);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Cleanup failed' });
+  }
+});
+
+// Send the deletion notice ("will be deleted on <date> unless you sign in"). Outward-facing: it
+// emails customers, so it is platform-admin only and records only notices that were actually sent.
+router.post('/cleanup/stale-accounts/warn', requirePlatformAdmin, async (req, res) => {
+  const cleanup = require('../lib/account-cleanup');
+  const { sendEmail, isConfigured } = require('../services/email');
+  if (!isConfigured()) {
+    return res.status(503).json({ error: 'Email is not configured on this server, so no notice can be sent. Configure email, or delete without notice.' });
+  }
+  const appUrl = String(process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  const { ids, days, notice_days: noticeDays } = req.body || {};
+  try {
+    const out = await cleanup.warn(db, {
+      ids, inactiveDays: days, noticeDays,
+      send: async ({ user, deleteAfter }) => {
+        const mail = cleanup.noticeEmail({ user, deleteAfter, appUrl });
+        const r = await sendEmail({ to: user.email, subject: mail.subject, text: mail.text });
+        return !!(r && r.sent === true); // suppressed (dev allow-list) or failed = not warned
+      },
+    });
+    logActivity(req.user.id, 'cleanup_stale_accounts_warned',
+      `warned=${out.warned.length} skipped=${out.skipped.length} notice_days=${out.notice_days} ` +
+      `emails=${out.warned.map((w) => w.email).join(',').slice(0, 1500)}`, null, getClientIp(req));
+    res.json(out);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not send the notices' });
+  }
+});
+
 router.get('/limiter-rejections', requirePlatformAdmin, (req, res) => {
   const rows = require('../lib/limiter-telemetry').snapshot();
   res.json({

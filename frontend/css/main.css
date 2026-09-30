@@ -2233,3 +2233,138 @@ body {
 .billing-sale-end { margin-left: auto; color: var(--text-secondary); font-size: 12.5px; }
 .billing-was { color: var(--text-muted); font-weight: 500; font-size: .7em; margin-right: 4px; }
 .promo-form .btn:disabled { opacity: .5; cursor: not-allowed; }
+/* ─── Platform area (views/admin.js, #/platform/<section>) ──────────────────────────────────────
+   The platform group is instance-wide administration; a violet accent keeps it visually apart
+   from the org- and workspace-scoped groups above it. */
+.nav-group-platform > .nav-group-toggle .nav-group-label { color: #c4b5fd; }
+.nav-group-platform .nav-link.active { box-shadow: inset 3px 0 0 #8b5cf6; }
+.platform-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: -6px 0 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.platform-tab { padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); text-decoration: none; }
+.platform-tab:hover { color: var(--text-primary); background: var(--bg-card); }
+.platform-tab.active { color: #fff; background: linear-gradient(135deg, #7c3aed, #6d28d9); }
+.platform-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.platform-stat { display: flex; flex-direction: column; gap: 2px; padding: 18px; border-radius: var(--radius-lg); background: var(--bg-card); border: 1px solid var(--border);
+  text-decoration: none; color: inherit; position: relative; overflow: hidden; transition: border-color .2s, transform .2s; }
+.platform-stat::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, #8b5cf6, #22c55e); }
+.platform-stat:hover { border-color: rgba(139,92,246,.5); transform: translateY(-1px); }
+.platform-stat-n { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.platform-stat-l { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.platform-stat-s { font-size: 12px; color: var(--text-muted); }
+.platform-attention { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.platform-attention li a { display: block; padding: 10px 14px; border-radius: var(--radius); text-decoration: none; font-size: 13.5px; font-weight: 600; }
+.platform-attention .att-warn a { color: #fcd34d; background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3); }
+.platform-attention .att-info a { color: #c4b5fd; background: rgba(139,92,246,.1); border: 1px solid rgba(139,92,246,.3); }
+.platform-empty { color: var(--text-secondary); font-size: 13px; margin: 0; }
+.platform-version { color: var(--text-muted); font-size: 12px; }
+.platform-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.platform-filters input[type="search"] { flex: 1 1 240px; }
+.platform-filters select { width: auto; }
+.platform-count { color: var(--text-muted); font-size: 12px; margin-left: auto; }
+tr[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .platform-stat:hover { transform: none; } }
+
+/* Members → This workspace | Whole organization (views/workspace-members.js) */
+.members-tabs { display: flex; gap: 4px; margin: 0 0 16px; padding: 3px; width: fit-content; max-width: 100%; flex-wrap: wrap;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 10px; }
+.members-tabs[hidden] { display: none; }
+.members-tab { border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+.members-tab.active { background: var(--accent); color: #fff; }
+.org-members-intro { color: var(--text-secondary); font-size: 13px; margin: 0 0 12px; }
+.org-members-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+.org-members-table th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 8px; border-bottom: 1px solid var(--border); }
+.org-members-table td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.org-role-pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; color: #c4b5fd; background: rgba(139,92,246,.14); }
+.ws-chip { display: inline-block; margin: 0 4px 4px 0; padding: 2px 8px; border-radius: 6px; font-size: 12px; background: var(--bg-input); border: 1px solid var(--border); }
+.ws-chip em { font-style: normal; color: var(--text-muted); margin-left: 4px; }
+.platform-subhead { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-secondary); margin: 4px 0 10px; }
+.platform-minis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 20px; }
+.platform-mini { display: flex; flex-direction: column; gap: 1px; padding: 12px 14px; border-radius: var(--radius); background: var(--bg-card); border: 1px solid var(--border); text-decoration: none; color: inherit; }
+.platform-mini:hover { border-color: rgba(139,92,246,.5); }
+.platform-mini-n { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.platform-mini-l { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.platform-mini-s { font-size: 11px; color: var(--text-muted); }
+.cleanup-rules { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; font-size: 13px; }
+.cleanup-rules label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; }
+.cleanup-rules ul { margin: 0; padding-left: 18px; color: var(--text-secondary); display: grid; gap: 4px; }
+.cleanup-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.cleanup-bytes { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.cleanup-never { color: #fcd34d; font-weight: 600; }
+.cleanup-note { font-size: 12px; color: var(--text-secondary); margin: 12px 0 0; line-height: 1.5; }
+.cleanup-summary { margin-bottom: 16px; padding: 12px 14px; border-radius: var(--radius); background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.3); font-size: 13px; }
+.cleanup-skipped { margin-top: 8px; color: #fcd34d; }
+.cleanup-skipped ul { margin: 4px 0 0; padding-left: 18px; color: var(--text-secondary); }
+.org-card[hidden] { display: none; }
+.cleanup-steps { margin: 14px 0 0; padding-left: 20px; font-size: 13px; color: var(--text-secondary); display: grid; gap: 4px; }
+.cleanup-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.chip-btn { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; cursor: pointer; background: var(--bg-input); color: var(--text-secondary); border: 1px solid var(--border); }
+.chip-btn:hover { color: var(--text-primary); border-color: var(--border-light); }
+.chip-btn.chip-ready { color: #fca5a5; border-color: rgba(239,68,68,.35); }
+.notice-pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: var(--bg-input); color: var(--text-secondary); white-space: nowrap; }
+.notice-running { color: #fcd34d; background: rgba(245,158,11,.12); }
+.notice-ready { color: #fca5a5; background: rgba(239,68,68,.14); }
+.cleanup-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.cleanup-override { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); margin-left: auto; }
+.cleanup-warn { margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius); font-size: 13px; color: #fcd34d; background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3); }
+.cleanup-actions .btn:disabled { opacity: .45; cursor: not-allowed; }
+/* Overview → Needs your attention: expandable items */
+.platform-attention { display: flex; flex-direction: column; gap: 8px; }
+.att { border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+.att > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; font-size: 13.5px; font-weight: 600; }
+.att > summary::-webkit-details-marker { display: none; }
+.att > summary span:first-child { flex: 1; }
+.att-chev { width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform .2s; margin-right: 4px; }
+.att[open] .att-chev { transform: rotate(-135deg); }
+.att-warn { border-color: rgba(245,158,11,.35); }
+.att-warn > summary { color: #fcd34d; background: rgba(245,158,11,.1); }
+.att-info { border-color: rgba(139,92,246,.35); }
+.att-info > summary { color: #c4b5fd; background: rgba(139,92,246,.1); }
+.att-body { padding: 12px 14px 14px; background: var(--bg-card); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.att-why { margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+.att-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.att-table th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.att-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); }
+.att-go { align-self: flex-start; font-size: 13px; font-weight: 600; color: #a78bfa; text-decoration: none; }
+.att-go:hover { text-decoration: underline; }
+.att-go { border: 0; background: none; padding: 0; outline-offset: 3px; }
+
+/* ═══ The release palette, dashboard-wide ═══════════════════════════════════════════════════════
+   What made the Platform pages feel different, applied to the shared components every page is built
+   from: gradient primary actions and active nav, a thin gradient bar on cards, and violet focus and
+   hover states. Colours come from tokens (css/variables.css), so a white-label brand colour replaces
+   all of it. Decoration only: no layout or copy changes. */
+
+/* Primary actions and the active nav link */
+.btn-primary { background: var(--grad-accent); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-2) 22%, transparent); }
+.btn-primary:hover { background: var(--grad-accent); filter: brightness(1.1); }
+.btn-primary:disabled { filter: none; box-shadow: none; }
+.nav-link.active { background: var(--grad-accent); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-2) 25%, transparent); }
+.nav-group-toggle:hover { color: var(--text-primary); }
+
+/* Page headers: a short gradient rule under the title */
+.page-header h1 { position: relative; padding-bottom: 8px; }
+.page-header h1::after { content: ''; position: absolute; left: 0; bottom: 0; width: 40px; height: 3px; border-radius: 3px; background: var(--grad-bar); }
+
+/* Cards: the gradient top bar */
+/* No overflow:hidden here: dropdowns and popovers inside sections and modals must not be clipped.
+   The bar rounds its own top corners instead. */
+.settings-section, .info-card, .modal { position: relative; }
+.settings-section::before, .info-card::before, .modal::before {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--grad-bar); opacity: .75; pointer-events: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.info-card::before { border-radius: var(--radius) var(--radius) 0 0; }
+.settings-section { transition: border-color var(--transition); }
+.settings-section:hover { border-color: color-mix(in srgb, var(--accent-2) 30%, var(--border)); }
+.info-card { transition: border-color var(--transition), transform var(--transition); }
+.info-card:hover { border-color: color-mix(in srgb, var(--accent-2) 45%, var(--border)); }
+.info-card-label { color: color-mix(in srgb, var(--accent-2) 55%, var(--text-secondary)); font-weight: 700; }
+.device-card:hover { border-color: color-mix(in srgb, var(--accent-2) 60%, var(--border)); box-shadow: 0 14px 34px rgba(0,0,0,.4), 0 0 0 1px color-mix(in srgb, var(--accent-2) 20%, transparent); }
+
+/* Tabs, focus, empty states */
+.tab.active { color: color-mix(in srgb, var(--accent-2) 65%, #fff); border-bottom-color: var(--accent-2); }
+.input:focus, select.input:focus, textarea.input:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 22%, transparent); }
+.empty-state svg { color: var(--accent-2); opacity: .8; }
+.members-tab.active { background: var(--grad-accent); }
+.platform-tab.active { background: var(--grad-accent); }
+
+@media (prefers-reduced-motion: reduce) { .device-card:hover { transform: none; } }
