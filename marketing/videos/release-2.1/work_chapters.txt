@@ -1,0 +1,12 @@
+0:00 What's new since 2.0
+0:12 Live view (WebRTC)
+0:25 Talk: intercom & PA
+0:39 Live data on your slides
+0:55 Meeting-room signs, every language
+1:10 Plugins
+1:25 Plugins: approve to run
+1:38 PDF to playlist
+1:52 Approval & version history
+2:06 More screens & certified hardware
+2:21 Player polish
+2:36 Open source & upgrade

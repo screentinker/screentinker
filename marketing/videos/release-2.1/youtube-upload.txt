@@ -1,0 +1,66 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: ScreenTinker 2.1 - What's New Since 2.0
+File:  screentinker-2p1.mp4  (3:04 - 1080p30 - -20.1 LUFS)
+Thumb: thumbnail.png (2560x1440)
+========================================================================
+
+------------------------------- TITLE ----------------------------------
+RECOMMENDED:
+ScreenTinker 2.1: Plugins, Live Video & Room Signs (Open-Source Digital Signage)
+
+Alternates:
+What's New in ScreenTinker 2.1 (Free, Open-Source Digital Signage)
+ScreenTinker 2.1: Plugins, Live Data & Meeting-Room Signs in Every Language
+
+---------------------------- DESCRIPTION -------------------------------
+
+Everything ScreenTinker picked up since 2.0: live video of what a screen is
+actually showing, a voice/PA channel to your screens, live data bound straight
+into slides, meeting-room signs that speak every language, and a plugin system.
+ScreenTinker is open source: use the hosted option and we run it for you, or host
+it yourself. (Every scene in this video is a real ScreenTinker slide.)
+
+In this video:
+- Live view: watch a display's real output, sub-second, over WebRTC.
+- Talk: a voice intercom and public-address channel to your screens.
+- Data sources: bind a calendar or any JSON feed into a slide or widget.
+- Meeting-room signs: Busy / Available in every dashboard language (defaults to English).
+- Plugins: add widget types, data connectors and hooks without forking. Off by default, and a plugin never runs until an admin approves that exact copy.
+- PDF to playlist: every page becomes a full-screen slide, in the browser.
+- Approval and version history for teams.
+- More screens: LG webOS, e-paper and microcontrollers, plus a certified-hardware list.
+- Player polish: custom transition shaders, no black flash between clips, portrait panels that fill the screen.
+
+Source: https://github.com/screentinker/screentinker
+Site:   https://screentinker.com
+A star on the repository genuinely helps.
+
+And the fun part: this whole video was built and tested in ScreenTinker. Every slide is a real ScreenTinker slide, playing on a real ScreenTinker screen.
+
+------------------------------ CHAPTERS --------------------------------
+0:00 What's new since 2.0
+0:12 Live view (WebRTC)
+0:25 Talk: intercom & PA
+0:39 Live data on your slides
+0:54 Meeting-room signs, every language
+1:09 Plugins
+1:24 Plugins: approve to run
+1:38 PDF to playlist
+1:52 Approval & version history
+2:05 More screens & certified hardware
+2:20 Player polish
+2:35 Hosted or self-host
+2:52 Built & tested in ScreenTinker
+-------------------------------- TAGS ----------------------------------
+digital signage, open source signage, self-hosted, screentinker, digital signage software,
+free digital signage, signage cms, meeting room signage, room booking display, webrtc,
+raspberry pi signage, brightsign, webos signage, plugins, digital signage plugin
+
+-------------------------------- NOTES ---------------------------------
+- Every claim traces to CHANGELOG.md (2.0.1 .. 2.1.0) in ~/Downloads/remote_display.
+- Every scene is a real ScreenTinker slide, authored + rendered on the alpha 2.1.0 instance
+  (dogfood). Element entrances are timed to the voiceover (word-level TTS timing), so each point
+  appears as it is spoken. The 12 slides also play as a narrated playlist on a real player.
+  Screenshots are real UI incl. the version-history modal (fictional demo org); no third-party media.
+- NOT uploaded. Upload requires explicit go.

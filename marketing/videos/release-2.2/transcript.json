@@ -1,0 +1,158 @@
+{
+  "init": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "protocolVersion": "2025-06-18",
+      "capabilities": {
+        "tools": {
+          "listChanged": false
+        }
+      },
+      "serverInfo": {
+        "name": "screentinker",
+        "version": "2.2.0"
+      },
+      "instructions": "ScreenTinker manages digital signage: screens (\"displays\"), the media library,\nplaylists and schedules.\n\nTypical flow to change what a screen shows: find the display with list_displays, add or find media\nwith list_content / add_youtube_video, build a playlist with create_playlist and add_to_playlist,\nthen assign_playlist_to_display.\n\n\u26a0\ufe0f Playlist edits are a DRAFT. Screens keep playing the last published version until publish_playlist\nis called, so a change that is not published has changed nothing anybody can see."
+    }
+  },
+  "tools_full": [
+    "list_displays",
+    "get_display",
+    "fleet_status",
+    "list_playlists",
+    "get_playlist",
+    "list_content",
+    "list_groups",
+    "list_schedules",
+    "play_report",
+    "uptime_report",
+    "add_youtube_video",
+    "add_web_page",
+    "create_playlist",
+    "add_to_playlist",
+    "remove_from_playlist",
+    "publish_playlist",
+    "assign_playlist_to_display",
+    "assign_playlist_to_group",
+    "send_command",
+    "send_group_command",
+    "rename_display"
+  ],
+  "calls": [
+    {
+      "q": "Which of my screens are offline?",
+      "steps": [
+        {
+          "tool": "fleet_status",
+          "arguments": {},
+          "raw": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\n  \"total\": 5,\n  \"online\": 4,\n  \"offline\": 1,\n  \"offline_displays\": [\n    {\n      \"id\": \"3aac2f6c-d767-4540-afe4-93d4a3daf296\",\n      \"name\": \"Staff Room\",\n      \"last_heartbeat\": \"2026-09-26T03:46:23.000Z\",\n      \"reason\": \"silent\"\n    }\n  ]\n}"
+                }
+              ],
+              "isError": false
+            }
+          },
+          "isError": false,
+          "text": "{\n  \"total\": 5,\n  \"online\": 4,\n  \"offline\": 1,\n  \"offline_displays\": [\n    {\n      \"id\": \"3aac2f6c-d767-4540-afe4-93d4a3daf296\",\n      \"name\": \"Staff Room\",\n      \"last_heartbeat\": \"2026-09-26T03:46:23.000Z\",\n      \"reason\": \"silent\"\n    }\n  ]\n}"
+        }
+      ]
+    },
+    {
+      "q": "Put the autumn campaign on the lobby screen.",
+      "steps": [
+        {
+          "tool": "list_displays",
+          "arguments": {},
+          "raw": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "[\n  {\n    \"id\": \"72d6cce7-a36d-4428-9764-a79db7d7b16e\",\n    \"name\": \"Main Lobby\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"140a45da-18fe-445f-89d5-692182720a33\",\n    \"name\": \"Ward B Day Room\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"640e9eb2-44b3-4751-b219-549b456b7492\",\n    \"name\": \"Cafeteria Menu\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"348f57f8-e951-4ffe-a511-49564a946ed5\",\n    \"name\": \"Radiology Waiting\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"3aac2f6c-d767-4540-afe4-93d4a3daf296\",\n    \"name\": \"Staff Room\",\n    \"status\": \"offline\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:46:23.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  }\n]"
+                }
+              ],
+              "isError": false
+            }
+          },
+          "isError": false,
+          "text": "[\n  {\n    \"id\": \"72d6cce7-a36d-4428-9764-a79db7d7b16e\",\n    \"name\": \"Main Lobby\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"140a45da-18fe-445f-89d5-692182720a33\",\n    \"name\": \"Ward B Day Room\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"640e9eb2-44b3-4751-b219-549b456b7492\",\n    \"name\": \"Cafeteria Menu\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"348f57f8-e951-4ffe-a511-49564a946ed5\",\n    \"name\": \"Radiology Waiting\",\n    \"status\": \"online\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:47:06.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  },\n  {\n    \"id\": \"3aac2f6c-d767-4540-afe4-93d4a3daf296\",\n    \"name\": \"Staff Room\",\n    \"status\": \"offline\",\n    \"platform\": \"unknown\",\n    \"last_heartbeat\": \"2026-09-26T03:46:23.000Z\",\n    \"playlist_id\": null,\n    \"group_id\": null\n  }\n]"
+        },
+        {
+          "tool": "list_content",
+          "arguments": {},
+          "raw": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "[\n  {\n    \"id\": \"46fd99ae-09ca-451f-ab30-bf590d88cf63\",\n    \"duration\": null,\n    \"folder\": null\n  },\n  {\n    \"id\": \"e4f0c9af-24eb-4aa0-8fcf-c43d0766a048\",\n    \"duration\": null,\n    \"folder\": null\n  }\n]"
+                }
+              ],
+              "isError": false
+            }
+          },
+          "isError": false,
+          "text": "[\n  {\n    \"id\": \"46fd99ae-09ca-451f-ab30-bf590d88cf63\",\n    \"duration\": null,\n    \"folder\": null\n  },\n  {\n    \"id\": \"e4f0c9af-24eb-4aa0-8fcf-c43d0766a048\",\n    \"duration\": null,\n    \"folder\": null\n  }\n]"
+        },
+        {
+          "tool": "create_playlist",
+          "arguments": {
+            "name": "Autumn Campaign"
+          },
+          "raw": {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\n  \"id\": \"7422f0a0-17a5-4b57-bb48-db8d05aec84a\",\n  \"user_id\": \"b12b46bc-7279-4ca8-b62f-faecffc66cf0\",\n  \"name\": \"Autumn Campaign\",\n  \"description\": \"\",\n  \"is_auto_generated\": 0,\n  \"status\": \"draft\",\n  \"published_snapshot\": null,\n  \"playback_order\": \"sequential\",\n  \"published_playback_order\": null,\n  \"created_at\": 1790394427,\n  \"updated_at\": 1790394427,\n  \"published_structure\": null,\n  \"workspace_id\": \"908a30d9-f21b-405f-b540-065c4dfcc02c\",\n  \"item_count\": 0,\n  \"display_count\": 0\n}"
+                }
+              ],
+              "isError": false
+            }
+          },
+          "isError": false,
+          "text": "{\n  \"id\": \"7422f0a0-17a5-4b57-bb48-db8d05aec84a\",\n  \"user_id\": \"b12b46bc-7279-4ca8-b62f-faecffc66cf0\",\n  \"name\": \"Autumn Campaign\",\n  \"description\": \"\",\n  \"is_auto_generated\": 0,\n  \"status\": \"draft\",\n  \"published_snapshot\": null,\n  \"playback_order\": \"sequential\",\n  \"published_playback_order\": null,\n  \"created_at\": 1790394427,\n  \"updated_at\": 1790394427,\n  \"published_structure\": null,\n  \"workspace_id\": \"908a30d9-f21b-405f-b540-065c4dfcc02c\",\n  \"item_count\": 0,\n  \"display_count\": 0\n}"
+        }
+      ]
+    },
+    {
+      "q": "How much uptime did each screen have this week?",
+      "steps": [
+        {
+          "tool": "uptime_report",
+          "arguments": {
+            "days": 7
+          },
+          "raw": {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "[\n  {\n    \"device_id\": \"640e9eb2-44b3-4751-b219-549b456b7492\",\n    \"device_name\": \"Cafeteria Menu\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"72d6cce7-a36d-4428-9764-a79db7d7b16e\",\n    \"device_name\": \"Main Lobby\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"348f57f8-e951-4ffe-a511-49564a946ed5\",\n    \"device_name\": \"Radiology Waiting\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"3aac2f6c-d767-4540-afe4-93d4a3daf296\",\n    \"device_name\": \"Staff Room\",\n    \"heartbeat_count\": 40,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394383,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"140a45da-18fe-445f-89d5-692182720a33\",\n    \"device_name\": \"Ward B Day Room\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  }\n]"
+                }
+              ],
+              "isError": false
+            }
+          },
+          "isError": false,
+          "text": "[\n  {\n    \"device_id\": \"640e9eb2-44b3-4751-b219-549b456b7492\",\n    \"device_name\": \"Cafeteria Menu\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"72d6cce7-a36d-4428-9764-a79db7d7b16e\",\n    \"device_name\": \"Main Lobby\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"348f57f8-e951-4ffe-a511-49564a946ed5\",\n    \"device_name\": \"Radiology Waiting\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"3aac2f6c-d767-4540-afe4-93d4a3daf296\",\n    \"device_name\": \"Staff Room\",\n    \"heartbeat_count\": 40,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394383,\n    \"estimated_uptime_pct\": 0.1\n  },\n  {\n    \"device_id\": \"140a45da-18fe-445f-89d5-692182720a33\",\n    \"device_name\": \"Ward B Day Room\",\n    \"heartbeat_count\": 43,\n    \"first_seen\": 1790394032,\n    \"last_seen\": 1790394426,\n    \"estimated_uptime_pct\": 0.1\n  }\n]"
+        }
+      ]
+    }
+  ]
+}

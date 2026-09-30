@@ -1,0 +1,73 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: Free Digital Signage on a Samsung TV (No App, Just a URL)
+File:  screentinker-samsung.mp4  (2:14 · 1080p30)
+========================================================================
+
+
+------------------------------- TITLE ----------------------------------
+(pick one — both lead with the key phrase)
+
+Free Digital Signage on a Samsung TV — No App, Open Source
+
+Free Digital Signage on a Samsung TV (No App, No Box, No Monthly Fees)
+
+
+---------------------------- DESCRIPTION -------------------------------
+
+Turn a Samsung TV into a fully managed digital signage display — with no
+extra box, no app to install, and no monthly fees. ScreenTinker is open
+source and self-hostable, so there are no per-screen fees and your content
+stays on your own server.
+
+The trick: the player is just a web page. Point your Samsung display's URL
+Launcher (or its built-in browser) at your server's /player address, save it
+as the boot source, and the screen opens straight into a live sign — pair it
+with a 6-digit code and push content from the dashboard.
+
+Works on Samsung signage / business displays (SSSP) with a URL Launcher, and
+Samsung TVs with a built-in web browser. No MagicINFO, no license.
+
+▶ Chapters
+0:00  No box, no app — signage on a Samsung TV
+0:16  What you need
+0:33  It's just a web page
+0:45  Point the TV at it (URL Launcher)
+1:02  It loads on boot
+1:10  The pairing code
+1:21  Add the display in your dashboard
+1:31  Push content — updates live
+1:47  The same rich layouts everywhere
+1:58  Get started
+
+🔗 Links
+• Try it free (hosted): https://screentinker.com
+• Self-hosting guide: https://screentinker.com/guides/self-hosted-digital-signage.html
+• Source (MIT licensed) — a star helps! https://github.com/screentinker/screentinker
+• Community & support (Discord): https://discord.gg/utTdsrqq4Z
+
+Free plan supports 1 device. Pro trial unlocks 15 devices for 14 days — no
+credit card. Or self-host on a $5 VPS and run hundreds of screens.
+
+Open source · Self-hostable · No per-screen fees · Your data on your hardware
+
+#DigitalSignage #SamsungTV #Tizen #OpenSource #SelfHosted
+
+
+------------------------------- TAGS -----------------------------------
+digital signage, samsung tv digital signage, samsung signage, tizen signage,
+tizen digital signage, url launcher, sssp signage, samsung smart signage,
+free digital signage, open source digital signage, self hosted digital signage,
+digital signage software, screentinker, yodeck alternative, screencloud alternative,
+optisigns alternative, magicinfo alternative, menu board software, kiosk software,
+digital menu board, no app digital signage, self hosted, open source
+
+
+------------------------------- NOTES ----------------------------------
+• Category: Science & Technology
+• No burned-in captions — enable YouTube auto-captions.
+• Honest scope: Samsung signage displays (SSSP) + Samsung TVs with a URL Launcher
+  or web browser. The video never demonstrates AUDIO (the Tizen player is muted) —
+  keep the demo to images / video / menu boards.
+• No matching guide page exists yet (Pi & Android TV have one). Consider adding a
+  Samsung/Tizen guide later so the video and a page reinforce each other.

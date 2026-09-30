@@ -1,0 +1,72 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: Self-Host Free Digital Signage on a $5 VPS (Docker, 5 min)
+File:  screentinker-selfhost.mp4  (2:13 · 1080p30)
+========================================================================
+
+
+------------------------------- TITLE ----------------------------------
+(pick one — both lead with the key phrase)
+
+Self-Host Free Digital Signage on a $5 VPS (Docker, 5 Minutes)
+
+Self-Hosted Digital Signage with Docker — Open Source, No Monthly Fees
+
+
+---------------------------- DESCRIPTION -------------------------------
+
+Run your own free, open-source digital signage server — no per-screen fees,
+no vendor lock-in, and your content and data never leave your infrastructure.
+With Docker, the whole platform (dashboard + web player + API) is up in about
+five minutes on a $5 VPS.
+
+The whole install is: grab the compose file, `docker compose up -d`, register
+the first admin, and pair a display. Optionally front it with Caddy for
+automatic HTTPS — or run it plain on your LAN, fully air-gapped.
+
+You get the entire platform, nothing paywalled: playlists, scheduling,
+multi-zone layouts, video walls, widgets, proof-of-play analytics, multiple
+workspaces, and a scoped REST API.
+
+▶ Chapters
+0:00  Self-host it — your server, $0 forever
+0:15  What you need ($5 VPS + Docker)
+0:31  Get the compose file
+0:42  docker compose up
+0:56  Register the first admin
+1:09  Clean HTTPS with Caddy (optional)
+1:23  Pair a display
+1:34  The whole platform — nothing paywalled
+1:47  It's yours — your data, your disk
+1:59  Get started
+
+🔗 Links
+• Source + Docker image (MIT) — a star helps! https://github.com/screentinker/screentinker
+• Self-hosting guide: https://screentinker.com/guides/self-hosted-digital-signage.html
+• Open-source guide: https://screentinker.com/guides/open-source-digital-signage.html
+• Try the cloud version first: https://screentinker.com
+• Community & support (Discord): https://discord.gg/utTdsrqq4Z
+
+No credit card, no license keys, no device caps. Run one screen or a thousand.
+
+Open source · Self-hostable · No per-screen fees · Your data on your hardware
+
+#SelfHosted #DigitalSignage #Docker #OpenSource #Homelab
+
+
+------------------------------- TAGS -----------------------------------
+self hosted digital signage, digital signage docker, docker compose, self host,
+homelab, selfhosted, free digital signage, open source digital signage,
+digital signage software, digital signage server, screentinker, vps signage,
+yodeck alternative, screencloud alternative, optisigns alternative, xibo alternative,
+raspberry pi signage server, kiosk software, self hosted, open source, r/selfhosted
+
+
+------------------------------- NOTES ----------------------------------
+• Category: Science & Technology
+• Audience: developers / r/selfhosted / homelab — good candidate to share in those
+  communities on launch (drives GitHub stars + Discord).
+• No burned-in captions — enable YouTube auto-captions.
+• All commands verified against the repo (Dockerfile + docker-compose.example.yml):
+  ghcr.io/screentinker/screentinker:latest, SELF_HOSTED=true, st-data:/data volume,
+  serves :3001, first user = admin.

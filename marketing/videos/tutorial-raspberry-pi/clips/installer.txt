@@ -1,0 +1,27 @@
+[ScreenTinker] Player-only mode: https://alpha.screentinker.com
+[ScreenTinker] Setup log: /var/log/screentinker-setup.log
+[ScreenTinker] Detected: Pi OS Lite (headless)
+[ScreenTinker] Updating system packages...
+[ScreenTinker] Installing base dependencies...
+[ScreenTinker] Installing kiosk packages...
+[ScreenTinker] Creating kiosk launcher...
+[ScreenTinker] Creating kiosk service...
+Created symlink /etc/systemd/system/multi-user.target.wants/screentinker-kiosk.service → /etc/systemd/system/screentinker-kiosk.service.
+[ScreenTinker] Kiosk service enabled
+[ScreenTinker] Configuring auto-login on tty1...
+[ScreenTinker] Applying display optimizations...
+======================================
+   ScreenTinker Setup Complete!
+======================================
+Mode: Player Only
+Server: https://alpha.screentinker.com
+After reboot this Pi will:
+  - Open the player in fullscreen kiosk mode
+  - Auto-reconnect if the server goes down
+To pair:
+  1. Reboot:  sudo reboot
+  2. The pairing screen will appear on the TV
+  3. Enter the code in your ScreenTinker dashboard
+Services:
+  sudo systemctl [start|stop|restart] screentinker-kiosk
+Reboot to start:  sudo reboot
