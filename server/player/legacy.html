@@ -1656,6 +1656,51 @@ function generateBrowserFingerprint() {
   }
   return salt ? hw + "-" + salt.slice(0, 16) : hw;
 }
+let offlinePlayOpen = null;
+let offlinePlayFlushing = false;
+const OFFLINE_PLAY_KEY = "st_offline_plays";
+const offlinePlays = new OfflinePlayQueue();
+try {
+  offlinePlays.restore(localStorage.getItem(OFFLINE_PLAY_KEY));
+} catch (e) {
+}
+if (offlinePlays.size()) console.log("[play] offline backlog restored:", offlinePlays.size());
+function persistOfflinePlays() {
+  try {
+    localStorage.setItem(OFFLINE_PLAY_KEY, offlinePlays.serialize());
+  } catch (e) {
+  }
+}
+function queueOfflinePlay(open, completed) {
+  offlinePlays.add(OfflinePlayQueue.makePlay({
+    client_event_id: OfflinePlayQueue.newId(),
+    content_id: open.content_id,
+    widget_id: open.widget_id,
+    content_name: open.content_name,
+    started_at: open.started_at,
+    ended_at: Math.floor(Date.now() / 1e3),
+    completed
+  }));
+  persistOfflinePlays();
+}
+function flushOfflinePlays() {
+  if (offlinePlayFlushing || !offlinePlays.size() || !(socket == null ? void 0 : socket.connected)) return;
+  const batch = offlinePlays.peekBatch();
+  if (!batch.length) return;
+  offlinePlayFlushing = true;
+  socket.emit("device:play-event", {
+    device_id: config.deviceId,
+    event: "play_offline",
+    plays: batch
+  });
+  setTimeout(() => {
+    offlinePlays.ack(batch.map((p) => p.client_event_id));
+    persistOfflinePlays();
+    offlinePlayFlushing = false;
+    if (offlinePlays.size()) flushOfflinePlays();
+  }, 4e3);
+  console.log("[play] flushed", batch.length, "offline plays,", offlinePlays.size(), "queued");
+}
 let autoContinueTimer;
 function cancelAutoContinue() {
   if (!autoContinueTimer) return;
@@ -2107,51 +2152,6 @@ function connect(serverUrl) {
     document.getElementById("setupSpinner").style.display = "none";
     document.getElementById("connectBtn").disabled = false;
   });
-  let offlinePlayOpen2 = null;
-  let offlinePlayFlushing = false;
-  const OFFLINE_PLAY_KEY = "st_offline_plays";
-  const offlinePlays = new OfflinePlayQueue();
-  try {
-    offlinePlays.restore(localStorage.getItem(OFFLINE_PLAY_KEY));
-  } catch (e) {
-  }
-  if (offlinePlays.size()) console.log("[play] offline backlog restored:", offlinePlays.size());
-  function persistOfflinePlays() {
-    try {
-      localStorage.setItem(OFFLINE_PLAY_KEY, offlinePlays.serialize());
-    } catch (e) {
-    }
-  }
-  function queueOfflinePlay2(open, completed) {
-    offlinePlays.add(OfflinePlayQueue.makePlay({
-      client_event_id: OfflinePlayQueue.newId(),
-      content_id: open.content_id,
-      widget_id: open.widget_id,
-      content_name: open.content_name,
-      started_at: open.started_at,
-      ended_at: Math.floor(Date.now() / 1e3),
-      completed
-    }));
-    persistOfflinePlays();
-  }
-  function flushOfflinePlays() {
-    if (offlinePlayFlushing || !offlinePlays.size() || !(socket == null ? void 0 : socket.connected)) return;
-    const batch = offlinePlays.peekBatch();
-    if (!batch.length) return;
-    offlinePlayFlushing = true;
-    socket.emit("device:play-event", {
-      device_id: config.deviceId,
-      event: "play_offline",
-      plays: batch
-    });
-    setTimeout(() => {
-      offlinePlays.ack(batch.map((p) => p.client_event_id));
-      persistOfflinePlays();
-      offlinePlayFlushing = false;
-      if (offlinePlays.size()) flushOfflinePlays();
-    }, 4e3);
-    console.log("[play] flushed", batch.length, "offline plays,", offlinePlays.size(), "queued");
-  }
   socket.on("device:play-offline-ack", (d) => {
     console.log("[play] backfill ack:", JSON.stringify(d));
   });

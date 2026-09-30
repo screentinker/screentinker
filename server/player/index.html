@@ -1960,6 +1960,64 @@
       return salt ? hw + '-' + salt.slice(0, 16) : hw;
     }
 
+    /* ============================ #299 offline proof-of-play ============================
+     * Shared player scope, initialized before cached playback can run. connect() must not
+     * own this state: playback runs before it connects and while its socket is down.
+     * Playback is offline-native; reporting was not. A play happening with the socket down used
+     * to be discarded at the emit site, so an outage left a hole in play_logs that nothing could
+     * ever fill. These keep it, and replay it with its REAL times once the socket is back.
+     */
+    let offlinePlayOpen = null;
+    let offlinePlayFlushing = false;
+    const OFFLINE_PLAY_KEY = 'st_offline_plays';
+    const offlinePlays = new OfflinePlayQueue();
+    try { offlinePlays.restore(localStorage.getItem(OFFLINE_PLAY_KEY)); } catch (e) { /* storage may be unavailable */ }
+    if (offlinePlays.size()) console.log('[play] offline backlog restored:', offlinePlays.size());
+
+    function persistOfflinePlays() {
+      // ⚠️ A private-mode or quota-full localStorage must not take the player down; the backlog
+      // is the expendable half here, playback is not.
+      try { localStorage.setItem(OFFLINE_PLAY_KEY, offlinePlays.serialize()); } catch (e) { /* ignore */ }
+    }
+
+    function queueOfflinePlay(open, completed) {
+      offlinePlays.add(OfflinePlayQueue.makePlay({
+        client_event_id: OfflinePlayQueue.newId(),
+        content_id: open.content_id,
+        widget_id: open.widget_id,
+        content_name: open.content_name,
+        started_at: open.started_at,
+        ended_at: Math.floor(Date.now() / 1000),
+        completed: completed,
+      }));
+      persistOfflinePlays();
+    }
+
+    function flushOfflinePlays() {
+      if (offlinePlayFlushing || !offlinePlays.size() || !socket?.connected) return;
+      const batch = offlinePlays.peekBatch();
+      if (!batch.length) return;
+      offlinePlayFlushing = true;
+      socket.emit('device:play-event', {
+        device_id: config.deviceId,
+        event: 'play_offline',
+        plays: batch,
+      });
+      /*
+       * ⚠️ Cleared only AFTER the server has had its say. Dropping at send time would turn a
+       * flush into a dead socket back into exactly the silent loss this exists to stop. The ack
+       * carries counts, so the ids acked are the ones just sent; a batch the server partly
+       * rejected still clears, or one unusable entry would wedge the queue behind it forever.
+       */
+      setTimeout(() => {
+        offlinePlays.ack(batch.map(p => p.client_event_id));
+        persistOfflinePlays();
+        offlinePlayFlushing = false;
+        if (offlinePlays.size()) flushOfflinePlays();
+      }, 4000);
+      console.log('[play] flushed', batch.length, 'offline plays,', offlinePlays.size(), 'queued');
+    }
+
     // ==================== Boot ====================
 
     // Function used by connect button and auto-connect
@@ -2556,62 +2614,6 @@
         document.getElementById('setupSpinner').style.display = 'none';
         document.getElementById('connectBtn').disabled = false;
       });
-
-      /* ============================ #299 offline proof-of-play ============================
-       * Playback is offline-native; reporting was not. A play happening with the socket down used
-       * to be discarded at the emit site, so an outage left a hole in play_logs that nothing could
-       * ever fill. These keep it, and replay it with its REAL times once the socket is back.
-       */
-      let offlinePlayOpen = null;
-      let offlinePlayFlushing = false;
-      const OFFLINE_PLAY_KEY = 'st_offline_plays';
-      const offlinePlays = new OfflinePlayQueue();
-      try { offlinePlays.restore(localStorage.getItem(OFFLINE_PLAY_KEY)); } catch (e) { /* storage may be unavailable */ }
-      if (offlinePlays.size()) console.log('[play] offline backlog restored:', offlinePlays.size());
-
-      function persistOfflinePlays() {
-        // ⚠️ A private-mode or quota-full localStorage must not take the player down; the backlog
-        // is the expendable half here, playback is not.
-        try { localStorage.setItem(OFFLINE_PLAY_KEY, offlinePlays.serialize()); } catch (e) { /* ignore */ }
-      }
-
-      function queueOfflinePlay(open, completed) {
-        offlinePlays.add(OfflinePlayQueue.makePlay({
-          client_event_id: OfflinePlayQueue.newId(),
-          content_id: open.content_id,
-          widget_id: open.widget_id,
-          content_name: open.content_name,
-          started_at: open.started_at,
-          ended_at: Math.floor(Date.now() / 1000),
-          completed: completed,
-        }));
-        persistOfflinePlays();
-      }
-
-      function flushOfflinePlays() {
-        if (offlinePlayFlushing || !offlinePlays.size() || !socket?.connected) return;
-        const batch = offlinePlays.peekBatch();
-        if (!batch.length) return;
-        offlinePlayFlushing = true;
-        socket.emit('device:play-event', {
-          device_id: config.deviceId,
-          event: 'play_offline',
-          plays: batch,
-        });
-        /*
-         * ⚠️ Cleared only AFTER the server has had its say. Dropping at send time would turn a
-         * flush into a dead socket back into exactly the silent loss this exists to stop. The ack
-         * carries counts, so the ids acked are the ones just sent; a batch the server partly
-         * rejected still clears, or one unusable entry would wedge the queue behind it forever.
-         */
-        setTimeout(() => {
-          offlinePlays.ack(batch.map(p => p.client_event_id));
-          persistOfflinePlays();
-          offlinePlayFlushing = false;
-          if (offlinePlays.size()) flushOfflinePlays();
-        }, 4000);
-        console.log('[play] flushed', batch.length, 'offline plays,', offlinePlays.size(), 'queued');
-      }
 
       socket.on('device:play-offline-ack', (d) => {
         console.log('[play] backfill ack:', JSON.stringify(d));
@@ -5400,17 +5402,8 @@
       // followers would just spam duplicate proof-of-play rows for the same item.
       // #299: offline, the same leader test decides who QUEUES, so a follower cannot
       // backfill duplicates of what the leader already recorded.
-      /*
-       * ⚠️ NOT IN PREVIEW. A preview is somebody checking a deck in a browser tab, not a screen
-       * playing to a room, and proof-of-play is a billing and reporting record — inventing rows
-       * from an operator clicking Preview would put fiction into a report an advertiser is shown.
-       *
-       * It also happens to be why preview froze on its first item. queueOfflinePlay is defined
-       * INSIDE connect(), which a preview never calls, so the matching close in nextItem threw
-       * ReferenceError before the advance timer could re-arm. Real offline playback was never
-       * affected — it has always connected at least once — but preview advanced no further than
-       * slide one, silently, and looked like a rendering problem.
-       */
+      // Preview never records proof-of-play. The shared offline queue also serves cached
+      // startup playback before connect() has run, and playback during a network outage.
       if (!PREVIEW_MODE && !socket?.connected && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
         offlinePlayOpen = {
           content_id: item.content_id || null,
@@ -5463,16 +5456,8 @@
        * do not know when it began, and inventing a time would put fabricated data into a report,
        * so an unmatched end is dropped rather than guessed at.
        */
-      /*
-       * ⚠️ !PREVIEW_MODE FIRST, AND IT HAS TO BE FIRST. `offlinePlayOpen` and queueOfflinePlay are
-       * both declared inside connect(), which a preview never calls — so merely READING
-       * offlinePlayOpen here threw ReferenceError, before the advance timer could re-arm. A preview
-       * therefore froze on its first item and looked like a rendering fault rather than a crash.
-       *
-       * Guarding rather than hoisting those declarations: a preview has no business recording
-       * proof-of-play at all. It is somebody checking a deck in a browser tab, and these rows end
-       * up in reports an advertiser is billed from.
-       */
+      // Keep preview out of reporting while allowing real playback to close its offline
+      // record from the shared queue, whether or not connect() has run yet.
       if (!PREVIEW_MODE && playlist[currentIndex] && !socket?.connected && offlinePlayOpen) {
         const open = offlinePlayOpen; offlinePlayOpen = null;
         queueOfflinePlay(open, true);
