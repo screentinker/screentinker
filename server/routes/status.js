@@ -374,6 +374,27 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
 
   if (!workspaceId) return res.status(403).json({ error: 'No workspace context for import. Switch to a workspace first.' });
 
+  /*
+   * ⚠️ AN IMPORT IS A WRITE, SO A READ-ONLY MEMBER MAY NOT RUN ONE. This route is outside the
+   * tenancy middleware (it resolves its own session to take a multipart upload), so nothing else
+   * applied denyReadOnly's rule — a workspace_viewer could create devices, playlists and widgets
+   * and overwrite the workspace's branding. Same rule as lib/tenancy.js denyReadOnly.
+   */
+  let sessionRole = null;
+  try {
+    sessionRole = resolveSessionUser(authHeader.split(' ')[1]).user.role;
+    const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    const ctx = ws && accessContext(userId, sessionRole, ws);
+    if (!ctx || (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer')) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(403).json({ error: 'Read-only access' });
+    }
+  } catch (err) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  const importerIsPlatformAdmin = PLATFORM_ROLES.includes(sessionRole);
+
   let data;
   let extractedFiles = {}; // Map of old content ID -> { filepath, thumbnail }
 
@@ -527,7 +548,19 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
     for (const w of (data.widgets || [])) {
       const newId = uuid.v4();
       idMap.widgets[w.id] = newId;
-      const config = typeof w.config === 'string' ? w.config : JSON.stringify(w.config || {});
+      let config = typeof w.config === 'string' ? w.config : JSON.stringify(w.config || {});
+      // A template widget's config is only ever built by lib/templates. From an export it is
+      // re-validated against what THIS server has installed and THIS workspace owns; anything
+      // that does not pass keeps only the template key, and render falls back to defaults.
+      if (w.widget_type === 'template') {
+        let parsed = {};
+        try { parsed = JSON.parse(config); } catch { parsed = {}; }
+        try {
+          config = JSON.stringify(require('../lib/templates/widget').buildConfig(parsed.template, parsed.values, workspaceId));
+        } catch {
+          config = JSON.stringify({ template: typeof parsed.template === 'string' ? parsed.template.slice(0, 100) : '', values: {}, ds_refs: [] });
+        }
+      }
       db.prepare(`INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, w.widget_type, w.name, config, w.created_at || Math.floor(Date.now() / 1000));
       stats.widgets++;
     }
@@ -654,11 +687,13 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
     // Import white label - UPSERT into the importer's current workspace.
     if (data.white_label && workspaceId) {
       const wl = data.white_label;
-      const existing = db.prepare('SELECT id FROM white_labels WHERE workspace_id = ?').get(workspaceId);
+      // custom_domain and custom_css stay platform-admin only, exactly as routes/white-label.js
+      // enforces: the domain drives the pre-auth branding resolver, the CSS lands on the login page.
+      const existing = db.prepare('SELECT id, custom_domain, custom_css FROM white_labels WHERE workspace_id = ?').get(workspaceId);
       if (existing) {
-        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0, workspaceId);
+        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : (existing.custom_domain ?? null), importerIsPlatformAdmin ? (wl.custom_css || null) : (existing.custom_css ?? null), wl.hide_branding || 0, workspaceId);
       } else {
-        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', wl.custom_domain || null, wl.custom_css || null, wl.hide_branding || 0);
+        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : null, importerIsPlatformAdmin ? (wl.custom_css || null) : null, wl.hide_branding || 0);
       }
     }
   });

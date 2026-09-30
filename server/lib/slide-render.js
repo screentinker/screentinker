@@ -804,7 +804,11 @@ function renderSlideHtml(rawConfig, opts = {}) {
     const css = [
       `left:${e.x}%`, `top:${e.y}%`, `width:${e.w}%`,
       e.h == null ? '' : `height:${e.h}%`,
-      s.opacity === 1 ? '' : `opacity:${s.opacity}`,
+      // --st-o is where the entrance keyframes END. They used to end at opacity:1 with fill-mode
+      // both, which overrode this very declaration: a 9%-opaque box with a slide-in rendered
+      // fully opaque. On an engine without custom properties the keyframe value is dropped and
+      // the plain opacity below still applies.
+      s.opacity === 1 ? '' : `opacity:${s.opacity};--st-o:${s.opacity}`,
       s.radius ? `border-radius:${s.radius}cqw` : '',
     ];
 
@@ -1027,12 +1031,12 @@ function renderSlideHtml(rawConfig, opts = {}) {
   .e img.fit { object-fit:contain; }
   .ph { width:100%; height:100%; background:rgba(255,255,255,.06);
         border:1px dashed rgba(255,255,255,.18); box-sizing:border-box; }
-  @keyframes st-fade    { from { opacity:0 } to { opacity:1 } }
-  @keyframes st-slide-l { from { opacity:0; transform:translateX(-14%) } to { opacity:1; transform:none } }
-  @keyframes st-slide-r { from { opacity:0; transform:translateX(14%) }  to { opacity:1; transform:none } }
-  @keyframes st-slide-u { from { opacity:0; transform:translateY(26%) }  to { opacity:1; transform:none } }
-  @keyframes st-slide-d { from { opacity:0; transform:translateY(-26%) } to { opacity:1; transform:none } }
-  @keyframes st-zoom    { from { opacity:0; transform:scale(.86) }       to { opacity:1; transform:none } }
+  @keyframes st-fade    { from { opacity:0 } to { opacity:var(--st-o,1) } }
+  @keyframes st-slide-l { from { opacity:0; transform:translateX(-14%) } to { opacity:var(--st-o,1); transform:none } }
+  @keyframes st-slide-r { from { opacity:0; transform:translateX(14%) }  to { opacity:var(--st-o,1); transform:none } }
+  @keyframes st-slide-u { from { opacity:0; transform:translateY(26%) }  to { opacity:var(--st-o,1); transform:none } }
+  @keyframes st-slide-d { from { opacity:0; transform:translateY(-26%) } to { opacity:var(--st-o,1); transform:none } }
+  @keyframes st-zoom    { from { opacity:0; transform:scale(.86) }       to { opacity:var(--st-o,1); transform:none } }
   @keyframes st-wipe    { from { clip-path:inset(0 100% 0 0) }           to { clip-path:inset(0 0 0 0) } }
 </style></head>
 <body><div class="stage">

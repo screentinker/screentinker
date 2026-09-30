@@ -103,6 +103,32 @@ function allowedFile(rel) {
   return ext === '.js' && /^[a-zA-Z0-9._-]{1,64}\.js$/.test(base);
 }
 
+/*
+ * ⚠️ NEVER `entry.buffer()`. It inflates the whole entry and only then lets anyone look at the
+ * size, so the caps above were checked against the CLAIMED sizes and the real bytes were counted
+ * after they were already in memory. A 300 KB archive whose headers claimed 10 bytes grew the
+ * process by ~600 MB before inspectZip refused it; at the 2 MB upload cap that is ~2 GB, from any
+ * editor who can submit a plugin. Count as it inflates and stop at the cap.
+ */
+function inflateCapped(entry, cap, name) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let n = 0;
+    const s = entry.stream();
+    s.on('data', (c) => {
+      n += c.length;
+      if (n > cap) {
+        s.destroy();
+        reject(new InboxError(`Plugin file inflated past the per-file cap: ${name}`));
+        return;
+      }
+      chunks.push(c);
+    });
+    s.on('error', () => reject(new InboxError(`Plugin entry is corrupt: ${name}`)));
+    s.on('end', () => resolve(Buffer.concat(chunks, n)));
+  });
+}
+
 function hashFile(filePath) {
   const h = crypto.createHash('sha256');
   h.update(fs.readFileSync(filePath));
@@ -214,8 +240,7 @@ async function inspectZip(archivePath) {
 
   let rawManifest;
   try {
-    const buf = await manifestEntry.buffer();
-    if (buf.length > 32 * 1024) throw new InboxError('plugin.json is too large');
+    const buf = await inflateCapped(manifestEntry, 32 * 1024, 'plugin.json');
     rawManifest = JSON.parse(buf.toString('utf8'));
   } catch (e) {
     if (e instanceof InboxError) throw e;
@@ -237,7 +262,7 @@ async function inspectZip(archivePath) {
   const files = [];
   let realTotal = 0;
   for (const [rel, entry] of mapped) {
-    const buf = await entry.buffer();
+    const buf = await inflateCapped(entry, Math.min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - realTotal), rel);
     realTotal += buf.length;
     if (realTotal > MAX_TOTAL_BYTES) throw new InboxError('Plugin archive unpacks larger than the cap');
     if (buf.length > MAX_FILE_BYTES) throw new InboxError(`Plugin file inflated past the per-file cap: ${rel}`);
@@ -275,7 +300,7 @@ async function extractZip(archivePath, destDir, inspected) {
     const rel = wrapper ? (raw.startsWith(wrapper + '/') ? raw.slice(wrapper.length + 1) : raw) : raw;
     if (!wanted.has(rel)) continue;
     if (!allowedFile(rel)) throw new InboxError(`refusing to extract ${rel}`);
-    const buf = await e.buffer();
+    const buf = await inflateCapped(e, MAX_FILE_BYTES, rel);
     const target = path.resolve(destDir, rel);
     if (!isInside(destReal, target)) {
       throw new InboxError(`extract escaped the destination: ${rel}`);

@@ -174,8 +174,13 @@ Item {
             // A page that never finishes (a long-poll, a stalled font) must still be shown.
             Timer { interval: 5000; running: !slot.isReady; onTriggered: slot.markReady() }
             onRenderProcessTerminated: function(status, code) { retry.interval = 1000; retry.start() }
+            // ⚠️ NOTHING IS GRANTED HERE. This view shows playlist content — widgets, bundles,
+            // community templates, arbitrary web pages — and a microphone granted to one of those
+            // is a room bug. It used to grant MediaAudioCapture to any origin (copied from
+            // TalkVideo.qml, whose own view is the only one that needs it); Android's widget
+            // WebViews have no onPermissionRequest override, so they deny, and this now matches.
             onFeaturePermissionRequested: function(origin, feature) {
-                grantFeaturePermission(origin, feature, feature === WebEngineView.MediaAudioCapture)
+                grantFeaturePermission(origin, feature, false)
             }
         }
     }

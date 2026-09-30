@@ -28,10 +28,29 @@ const LIMIT_PATH_SHAPES = [
   [/^\/api\/organizations\/[^/]+\/sso\/[^/]+$/, () => '/api/organizations/:id/sso/:id'],
   [/^\/api\/organizations\/[^/]+\/sso$/, () => '/api/organizations/:id/sso'],
   [/^\/api\/data-sources\/[^/]+\/refresh$/, () => '/api/data-sources/:id/refresh'],
+  // Templates: every id below is caller-chosen, and a preview holds a rendered document in memory.
+  [/^\/api\/templates\/installed\/[^/]+\/[^/]+\/(preview|use)$/, (m) => `/api/templates/installed/:catalog/:id/${m[1]}`],
+  [/^\/api\/templates\/installed\/[^/]+\/[^/]+$/, () => '/api/templates/installed/:catalog/:id'],
+  [/^\/api\/templates\/preview\/[^/]+$/, () => '/api/templates/preview/:token'],
+  [/^\/api\/templates\/thumb\/[^/]+$/, () => '/api/templates/thumb/:sha'],
+  [/^\/api\/templates\/asset\/.+$/, () => '/api/templates/asset/:sha/:path'],
 ];
 
+/*
+ * ⚠️ DECODED PER SEGMENT, because Express routes on the decoded path. Without this,
+ * `/installed/local/%68tml-big/preview` reached the same handler as `/installed/local/html-big/preview`
+ * but minted a fresh bucket — a limit anyone could step around by spelling a letter differently.
+ * A decoded `/` is re-encoded so it cannot invent a path separator the router never saw.
+ */
+function decodeSegments(p) {
+  return p.split('/').map((seg) => {
+    if (!seg.includes('%')) return seg;
+    try { return decodeURIComponent(seg).replace(/\//g, '%2f'); } catch { return seg; }
+  }).join('/');
+}
+
 function canonicalLimitPath(rawPath) {
-  const p = rawPath
+  const p = decodeSegments(rawPath)
     .replace(/\/{2,}/g, '/')      // collapse doubled separators
     .replace(/\/+$/, '')          // a trailing slash is the same endpoint
     .toLowerCase()
