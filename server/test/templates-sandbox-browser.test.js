@@ -273,11 +273,31 @@ before(async () => {
     widgetIds[id] = use.json.id;
   }
 
-  browser = await puppeteer.launch({
-    executablePath: CHROME, headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--mute-audio'],
-  });
+  browser = await launchBrowser();
 });
+
+/*
+ * ⚠️ CHROME'S STARTUP TIME ON A CI RUNNER IS NOT BOUNDED BY 30 SECONDS. On 2026-09-30, three of
+ * five GitHub-hosted runs (same image, unrelated code on each) timed out at puppeteer's default 30s
+ * "waiting for the WS endpoint" while the other two launched in ~10s — so every assertion in this
+ * file failed on a browser that simply had not come up yet, and main went red on nothing.
+ * A longer launch timeout, the first-run flags a fresh CI profile otherwise pays for, one retry,
+ * and Chrome's own stderr when it still fails — so the next failure explains itself.
+ */
+async function launchBrowser() {
+  const opts = {
+    executablePath: CHROME, headless: true, timeout: 120000,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--mute-audio',
+      '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-extensions',
+      '--disable-background-networking', '--disable-component-update'],
+  };
+  try {
+    return await puppeteer.launch(opts);
+  } catch (e) {
+    console.error(`[sbx] chrome launch failed (${e.message}); retrying once with its output shown`);
+    return puppeteer.launch({ ...opts, dumpio: true });
+  }
+}
 
 after(async () => {
   if (browser) { try { await browser.close(); } catch {} }
