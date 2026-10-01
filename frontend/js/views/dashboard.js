@@ -2,7 +2,7 @@ import { api } from '../api.js';
 import { on, off, requestScreenshot, startGroupTalk, stopGroupTalk } from '../socket.js';
 import { BroadcastTalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
-import { esc, livenessBadge, isPlatformAdmin, screenshotUrl } from '../utils.js';
+import { esc, livenessBadge, isPlatformAdmin, screenshotUrl, compareVersions } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import * as gettingStarted from '../components/getting-started.js';
 import * as whatsNew from '../components/whats-new.js';
@@ -120,6 +120,70 @@ function frameCardScreenshots(root) {
   (root || document).querySelectorAll('.device-card-preview[data-orientation]').forEach(frameCard);
 }
 
+/*
+ * #467 — the app version on every card, and which screens are behind.
+ *
+ * A fleet with OTA turned off (an MDM owns updates) has no other way to find a straggler than
+ * opening each display. "Behind" compares an ANDROID player against the APK this server serves
+ * (/api/version apk_version) — the only player that APK applies to; a web, Tizen, BrightSign or
+ * native player's version is shown but never marked, because nothing here would update it.
+ */
+let servedApkVersion = null;
+let servedApkFetched = false;
+async function loadServedApkVersion() {
+  if (servedApkFetched) return servedApkVersion;
+  servedApkFetched = true;
+  try {
+    const r = await fetch('/api/version');
+    servedApkVersion = (await r.json()).apk_version || null;
+  } catch (_) { servedApkVersion = null; }
+  return servedApkVersion;
+}
+/** The "App version" section of the status filter: behind-the-served-APK, then every version in use. */
+function fillVersionFilter(devices) {
+  const group = document.getElementById('versionFilterGroup');
+  if (!group) return;
+  const sel = document.getElementById('deviceFilter');
+  const keep = sel ? sel.value : '';
+  const counts = new Map();
+  for (const d of devices) if (d.app_version) counts.set(d.app_version, (counts.get(d.app_version) || 0) + 1);
+  const versions = [...counts.keys()].sort((x, y) => {
+    const c = compareVersions(y, x);
+    return c === null ? String(y).localeCompare(String(x)) : c;
+  });
+  const behind = devices.filter(isBehindServedApk).length;
+  group.innerHTML = (servedApkVersion && behind
+    ? `<option value="version:behind">${esc(t('dashboard.filter.version_behind', { version: servedApkVersion, n: behind }))}</option>`
+    : '') + versions.map((v) => `<option value="version:=${esc(v)}">v${esc(String(v).replace(/^v/, ''))} (${counts.get(v)})</option>`).join('');
+  group.hidden = !group.children.length;
+  if (sel && keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+}
+
+function isBehindServedApk(device) {
+  if (device.platform_family !== 'android' || !servedApkVersion || !device.app_version) return false;
+  const c = compareVersions(device.app_version, servedApkVersion);
+  return c !== null && c < 0;
+}
+
+/*
+ * #467 — which details a card shows, per browser. Battery and Wi-Fi mean little on wall-mounted,
+ * mains-powered signage, and a panel that reports a fixed or zero battery reads as a fault to
+ * staff. Hidden with a class on the grid (CSS), so toggling never re-renders or re-fetches.
+ */
+const CARD_FIELDS = ['version', 'battery', 'wifi', 'storage'];
+const CARD_FIELDS_KEY = 'st_card_fields_hidden';
+function hiddenCardFields() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CARD_FIELDS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((f) => CARD_FIELDS.includes(f)) : [];
+  } catch (_) { return []; }
+}
+function applyCardFields(root) {
+  if (!root) return;
+  const hidden = hiddenCardFields();
+  for (const f of CARD_FIELDS) root.classList.toggle(`hide-card-${f}`, hidden.includes(f));
+}
+
 function renderDeviceCard(device) {
   const token = localStorage.getItem('token');
   // ⚠️ NOT named screenshotUrl: that is the imported helper, and a const of the same name shadows
@@ -134,8 +198,13 @@ function renderDeviceCard(device) {
   // list now carries the RESOLVED capability set (routes/devices.js), so a device that declares
   // nothing still reads as its platform baseline and keeps being polled exactly as today.
   const canShot = !Array.isArray(device.capabilities) || device.capabilities.includes('remote.screenshot');
+  const behind = isBehindServedApk(device);
+  // A 0% battery that is not charging, on a screen that is running, is no battery at all: a
+  // mains-powered panel reporting the field it has no hardware for. Shown, it reads as a fault.
+  const realBattery = device.battery_level !== null && device.battery_level !== undefined
+    && !(Number(device.battery_level) === 0 && !device.battery_charging);
   return `
-    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" onclick="window.location.hash='/device/${device.id}'">
+    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" data-app-version="${esc(device.app_version || '')}" data-behind="${behind ? '1' : '0'}" onclick="window.location.hash='/device/${device.id}'">
       <span class="device-card-drag" title="${esc(t('dashboard.drag_to_reorder'))}" onclick="event.stopPropagation()">⠿</span>
       <label class="device-card-select" title="${t('dashboard.select_for_wall')}" onclick="event.stopPropagation()">
         <input type="checkbox" class="device-select-cb" data-device-id="${device.id}"${checked ? ' checked' : ''}>
@@ -185,15 +254,24 @@ function renderDeviceCard(device) {
             </svg>
             ${formatTimeAgo(device.last_heartbeat)}
           </div>
-          ${device.battery_level !== null && device.battery_level !== undefined ? `
-          <div class="meta-item">
+          ${device.app_version ? `
+          <div class="meta-item meta-version${behind ? ' is-behind' : ''}" data-card-field="version" title="${esc(behind
+            ? t('dashboard.app_behind_tip', { version: servedApkVersion })
+            : t('dashboard.app_version_tip'))}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+            </svg>
+            v${esc(String(device.app_version).replace(/^v/, ''))}${behind ? ' ↓' : ''}
+          </div>` : ''}
+          ${realBattery ? `
+          <div class="meta-item" data-card-field="battery">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="1" y="6" width="18" height="12" rx="2" ry="2"/><line x1="23" y1="13" x2="23" y2="11"/>
             </svg>
             ${device.battery_level}%
           </div>` : ''}
           ${device.wifi_rssi ? `
-          <div class="meta-item">
+          <div class="meta-item" data-card-field="wifi">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/>
               <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
@@ -201,7 +279,7 @@ function renderDeviceCard(device) {
             ${device.wifi_rssi} dBm
           </div>` : ''}
           ${device.storage_free_mb ? `
-          <div class="meta-item">
+          <div class="meta-item" data-card-field="storage">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
               <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
@@ -466,7 +544,15 @@ export function render(container) {
           <option value="offline:crashed">${t('dashboard.filter.offline_crashed')}</option>
           <option value="offline:clean_exit">${t('dashboard.filter.offline_clean')}</option>
         </optgroup>
+        <optgroup id="versionFilterGroup" label="${t('dashboard.filter.by_version')}" hidden></optgroup>
       </select>
+      <details class="card-fields-menu" id="cardFieldsMenu">
+        <summary class="btn btn-secondary btn-sm">${t('dashboard.card_fields')}</summary>
+        <div class="card-fields-pop">
+          ${['version', 'battery', 'wifi', 'storage'].map((f) => `
+            <label><input type="checkbox" data-card-field-toggle="${f}"> ${t('dashboard.field.' + f)}</label>`).join('')}
+        </div>
+      </details>
       <!-- #106 reordering has existed since 2.1, and a customer still asked "is it possible to
            reorder the screens?". A feature nobody can see is a feature nobody has. -->
       <span style="font-size:12px;color:var(--text-muted);margin-left:auto">${t('dashboard.drag_hint')}</span>
@@ -514,6 +600,20 @@ export function render(container) {
   // Search and filter
   document.getElementById('deviceSearch').oninput = () => filterDevices();
   document.getElementById('deviceFilter').onchange = () => filterDevices();
+  // #467: card details, remembered per browser.
+  {
+    const hidden = hiddenCardFields();
+    document.querySelectorAll('[data-card-field-toggle]').forEach((cb) => {
+      cb.checked = !hidden.includes(cb.dataset.cardFieldToggle);
+      cb.onchange = () => {
+        const now = [...document.querySelectorAll('[data-card-field-toggle]')]
+          .filter((x) => !x.checked).map((x) => x.dataset.cardFieldToggle);
+        try { localStorage.setItem(CARD_FIELDS_KEY, JSON.stringify(now)); } catch (_) { /* private mode: this view only */ }
+        applyCardFields(document.getElementById('groupedDevices'));
+      };
+    });
+    applyCardFields(document.getElementById('groupedDevices'));
+  }
 
   function filterDevices() {
     const search = document.getElementById('deviceSearch').value.toLowerCase();
@@ -522,13 +622,16 @@ export function render(container) {
     // matched nothing and emptied the list. data-liveness carries the state for a robust match.
     const filter = document.getElementById('deviceFilter').value;    // '' | healthy | degraded | offline | offline:<reason>
     const reasonDrill = filter.startsWith('offline:') ? filter.slice(8) : null; // drill into a manner-of-death
+    const versionDrill = filter.startsWith('version:') ? filter.slice(8) : null;  // #467: 'behind' | '=<version>' 
     document.querySelectorAll('.device-card').forEach(card => {
       const name = card.querySelector('.device-card-name')?.textContent.toLowerCase() || '';
       const el = card.querySelector('.device-card-status [data-liveness]');
       const cardState = el?.dataset.liveness || '';
       const cardReason = el?.dataset.offlineReason || '';
       const matchSearch = !search || name.includes(search);
-      const matchState = reasonDrill
+      const matchState = versionDrill
+        ? (versionDrill === 'behind' ? card.dataset.behind === '1' : card.dataset.appVersion === versionDrill.slice(1))
+        : reasonDrill
         ? (cardState === 'offline' && cardReason === reasonDrill)     // Offline drill-in: liveness AND reason (e.g. silent = MDM-killed set)
         : (!filter || cardState === filter);                         // existing three-state filter — unchanged
       card.style.display = (matchSearch && matchState) ? '' : 'none';
@@ -995,6 +1098,8 @@ async function loadDashboard() {
     const seen = new Map();
     for (const d of rawDevices) seen.set(d.id, d);
     const devices = Array.from(seen.values());
+    await loadServedApkVersion();   // #467: before any card renders, so "behind" is decided once
+    fillVersionFilter(devices);
 
     /*
      * What's new. shouldFetch() is a localStorage read against the version app.js already knows,

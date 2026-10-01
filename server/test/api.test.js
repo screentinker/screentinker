@@ -432,6 +432,23 @@ test('gap: device PUT REJECTS a cross-tenant layout_id (400)', async () => {
   assert.equal(res.status, 400, 'a layout from another workspace must be rejected');
 });
 
+test('#467: the device list carries each display\'s platform_family and app_version', async () => {
+  const r = await jfetch('/api/devices', auth(S.jwt));
+  assert.equal(r.status, 200);
+  const d = r.body.find((x) => x.id === S.deviceId);
+  assert.ok(d, 'the paired test device is listed');
+  assert.ok(['android', 'web', 'tizen', 'brightsign', 'vega', 'linux', 'windows'].includes(d.platform_family), String(d.platform_family));
+  assert.ok('app_version' in d);
+});
+
+test('#467: /api/version reports the served APK version (null when none is staged), without auth', async () => {
+  const r = await jfetch('/api/version');
+  assert.equal(r.status, 200);
+  assert.ok('apk_version' in r.body, 'apk_version key present');
+  assert.ok(r.body.apk_version === null || typeof r.body.apk_version === 'string');
+  assert.equal(typeof r.body.hash, 'string');
+});
+
 test('docs: /openapi.yaml serves the spec document', async () => {
   const res = await fetch(BASE + '/openapi.yaml');
   assert.equal(res.status, 200);

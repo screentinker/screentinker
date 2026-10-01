@@ -14,6 +14,17 @@
 - **Templates → Installed** shows how many widgets each template is behind ("In 2 widgets · use it
   again for another screen"), and the "created" message says a template can be used again — "Use…"
   always made a new, independent widget, but nothing said so.
+- **The player app version on every Displays card, and which screens are behind (#467).** Each card
+  shows the version its player reports; an Android player older than the APK this server serves is
+  marked amber (`v1.9.6 ↓`, with the served version in its tooltip). The status filter gains an
+  *App version* section — *Behind v2.3.0 (n)* and every version in use — so a straggler no longer
+  needs opening each display or a database query. Requested by **Bold Media Group**.
+  - Only Android players are marked: the served APK is the only update that applies to them, so a
+    web, Tizen, BrightSign or native player's version is shown but never flagged. The list carries
+    each device's `platform_family`, and `/api/version` reports `apk_version`, for that.
+  - *Card details* chooses what a card shows (app version, battery, Wi-Fi, storage), per browser.
+    A 0% battery that is not charging is treated as no battery and not shown — on a running,
+    mains-powered panel it reads as a fault to staff and customers.
 
 ### Fixed
 
@@ -27,6 +38,13 @@
   code hash the page had loaded with, so the change was never noticed. Thanks to **@tizmagik**.
   - Hardened: the reload now waits a random 0–30 s, so a deploy does not reload the whole fleet in the
     same second as its reconnect burst.
+- **ffmpeg reported "not found" after a slow boot, for the life of the process (#466).** The startup
+  probe gave `ffmpeg -version` 5 s and cached ANY failure — so a NAS whose first boot after upgrading
+  ran a 1.5M-row migration logged a present ffmpeg as "not found on PATH", and video thumbnails
+  (including the backfill) stayed off until a restart. Now a missing binary (`ENOENT`), a broken one
+  and a timeout are told apart; only definite answers are cached; a timeout is logged as one and
+  re-checked on a backoff, and when a re-check finds the tools the thumbnail backfill runs again.
+  The probe allows 15 s. Reported with the diagnosis by **Bold Media Group**.
 - **CI:** the template-sandbox browser test waits up to 120 s for Chrome and retries once, after GitHub
   runners started timing out at 30 s (#464).
 

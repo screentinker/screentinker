@@ -974,6 +974,26 @@ body {
   gap: 4px;
 }
 
+/* #467: the player version on a card; amber when an Android player is behind the served APK. */
+.device-card-meta { flex-wrap: wrap; row-gap: 4px; }
+.device-card-meta .meta-version { font-variant-numeric: tabular-nums; }
+.device-card-meta .meta-version.is-behind { color: var(--warning, #f59e0b); font-weight: 600; }
+/* #467: card details chosen per browser — hidden by a class on the grid, no re-render. */
+.hide-card-version [data-card-field="version"],
+.hide-card-battery [data-card-field="battery"],
+.hide-card-wifi [data-card-field="wifi"],
+.hide-card-storage [data-card-field="storage"] { display: none !important; }
+.card-fields-menu { position: relative; }
+.card-fields-menu > summary { list-style: none; cursor: pointer; }
+.card-fields-menu > summary::-webkit-details-marker { display: none; }
+.card-fields-pop {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 170px;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px;
+  background: var(--bg-card, #1e293b); border: 1px solid var(--border, #334155); border-radius: 10px;
+  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, .5); font-size: 13px;
+}
+.card-fields-pop label { display: flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap; }
+
 /* Device Detail */
 .device-detail {
   max-width: 1200px;

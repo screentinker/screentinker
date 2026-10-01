@@ -62,6 +62,10 @@ router.get('/', (req, res) => {
   res.json(devices.map(d => ({
     ...stripDeviceSecretsForList(d),
     capabilities: playerCapabilities.capabilitiesFor(d),
+    // #467: which player family this is (android | web | tizen | brightsign | vega | linux | windows),
+    // so the Displays page can tell an APK player — the only kind the served APK applies to —
+    // from the rest without re-deriving the precedence rules client-side.
+    platform_family: playerCapabilities.platformFamily(d),
     orphan_count: orphanCounts[d.id] || 0,
   })));
 });
