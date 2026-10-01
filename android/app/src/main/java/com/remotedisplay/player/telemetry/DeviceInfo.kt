@@ -54,6 +54,10 @@ class DeviceInfo(private val context: Context) {
             put("local_ip6", getLocalIp6() ?: JSONObject.NULL)
             put("wifi_rssi", getWifiRSSI())
             put("uptime_seconds", getUptimeSeconds())
+            // SoC temperature. The server and dashboard already handle temperature_c (BrightSign
+            // sends it); leaving the key out when there is no usable sensor is what the server reads
+            // as "no thermometer", so a null is never sent as a number. See SocTemperature.
+            SocTemperature.read()?.let { put("temperature_c", it) }
             // #74/#75: OS timezone + UTC clock (effective-tz resolution + dashboard skew indicator)
             put("timezone", java.util.TimeZone.getDefault().id)
             put("device_utc", System.currentTimeMillis())
