@@ -1865,7 +1865,12 @@ app.get('/api/version', async (req, res) => {
   if (!frontendHash) { try { await updateFrontendHash(); } catch { /* fall through to the seed */ } }
   const latest = ghcrCheck.getLatestVersion();
   const updateAvailable = latest ? ghcrCheck.compareVersions(latest, VERSION) > 0 : false;
-  res.json({ hash: frontendHash, version: VERSION, latest_version: latest, update_available: updateAvailable });
+  // #467: the Android player version this server would hand out (the same answer /api/update/check
+  // advertises, without logging an OTA check), so the Displays page can mark screens behind it.
+  // null when no APK is staged here. Public, like /download, which already shows it.
+  let apkVersion = null;
+  try { const apk = apkCache.get(); apkVersion = apk && apk.exists ? (apk.version || VERSION) : null; } catch { /* not resolved yet */ }
+  res.json({ hash: frontendHash, version: VERSION, latest_version: latest, update_available: updateAvailable, apk_version: apkVersion });
 });
 
 /*
@@ -2989,28 +2994,32 @@ server.listen(listenPort, '0.0.0.0', () => {
   // every video uploads fine and silently gets no thumbnail: exactly the kind of
   // misconfiguration that deserves a loud line, like the email block above.
   // (The probe is async so a hung binary can't block serving on the bound port.)
-  require('./lib/media-tools').mediaToolStatus()
-    .then((mt) => {
-      if (!mt.ffmpeg || !mt.ffprobe) {
-        const missing = [!mt.ffmpeg && 'ffmpeg', !mt.ffprobe && 'ffprobe'].filter(Boolean).join(', ');
-        console.error(`[MEDIA] ${missing} not found on PATH — video thumbnails and durations are DISABLED until installed (e.g. apt-get install ffmpeg). Image thumbnails are unaffected.`);
-      } else {
-        console.log('[MEDIA] ffmpeg/ffprobe found — video thumbnails enabled');
-      }
-    })
-    .catch((e) => console.error(`[MEDIA] tooling check failed: ${e.message}`));
-
+  //
   // Heal rows that missed ingest-time thumbnail generation (uploads from before the
   // feature, or videos uploaded while ffmpeg was missing). Delayed past boot so it
   // never competes with startup work; paced internally so it never competes with
   // serving. Timer unref'd: it must not hold the process open on shutdown.
-  setTimeout(() => {
+  //
+  // ⚠️ #466: a probe that only TIMED OUT on a busy boot is re-checked on a backoff, and when a
+  // re-check finds the tools the backfill runs again — it skipped every video the first time.
+  // One run at a time; a request that arrives mid-run is folded into one more pass after it.
+  let thumbBackfillRunning = false, thumbBackfillAgain = false;
+  const runThumbnailBackfill = () => {
+    if (thumbBackfillRunning) { thumbBackfillAgain = true; return; }
+    thumbBackfillRunning = true;
     require('./lib/thumbnail-backfill').backfillMissingThumbnails()
       .then((s) => {
         if (s.scanned > 0) console.log(`[MEDIA] thumbnail backfill: ${s.generated} generated, ${s.skipped} skipped, ${s.failed} failed (of ${s.scanned} without thumbnails)`);
       })
-      .catch((e) => console.error(`[MEDIA] thumbnail backfill failed: ${e.message}`));
-  }, 15000).unref();
+      .catch((e) => console.error(`[MEDIA] thumbnail backfill failed: ${e.message}`))
+      .finally(() => {
+        thumbBackfillRunning = false;
+        if (thumbBackfillAgain) { thumbBackfillAgain = false; runThumbnailBackfill(); }
+      });
+  };
+  require('./lib/media-tools').startupCheck({ onRecovered: runThumbnailBackfill })
+    .catch((e) => console.error(`[MEDIA] tooling check failed: ${e.message}`));
+  setTimeout(runThumbnailBackfill, 15000).unref();
 });
 
 // If SSL is enabled, also start an HTTP server that redirects to HTTPS
