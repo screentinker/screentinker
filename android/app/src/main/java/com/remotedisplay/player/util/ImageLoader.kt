@@ -117,10 +117,24 @@ object ImageLoader {
         }
     }
 
-    private fun calcSampleSize(srcW: Int, srcH: Int, maxW: Int, maxH: Int): Int {
-        if (maxW <= 0 || maxH <= 0) return 1
+    /*
+     * ⚠️ THE DECODE MUST STAY AT LEAST AS LARGE AS THE BOX IT IS SHOWN IN.
+     *
+     * inSampleSize only steps in powers of two, so the question is where to stop. This used to
+     * keep halving until the image was SMALLER than the box in both directions, which decoded an
+     * image just above screen size at half resolution and left the ImageView to stretch it back up:
+     * a 1280x720 still on a 1024x600 panel was decoded at 640x360 and shown 1.6x enlarged - soft
+     * text and edges on exactly the HD assets people make for these panels. COVER fit made it
+     * worse, because a bitmap that no longer covers the box has to be enlarged further still.
+     *
+     * Stop instead at the last step that is still >= the box in BOTH directions. The ImageView then
+     * only ever scales DOWN, with filtering. Memory stays bounded: the decode is under 2x the box per
+     * axis, i.e. under 4x its pixels (a 4K source on a 1080p box decodes to 1920x1080, as before).
+     */
+    internal fun calcSampleSize(srcW: Int, srcH: Int, maxW: Int, maxH: Int): Int {
+        if (maxW <= 0 || maxH <= 0 || srcW <= 0 || srcH <= 0) return 1
         var sample = 1
-        while (srcW / sample > maxW || srcH / sample > maxH) sample *= 2
+        while (srcW / (sample * 2) >= maxW && srcH / (sample * 2) >= maxH) sample *= 2
         return sample
     }
 
