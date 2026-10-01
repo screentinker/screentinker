@@ -21,7 +21,7 @@ function extract(name) {
 
 // Run the shipped playback functions, preserving the queue's enclosing scope. Rendering and
 // transport are fakes; the advancement callback and reporting code are the actual player code.
-function player({ connected = false, preview = false, storageBroken = false } = {}) {
+function player({ connected = false, preview = false, storageBroken = false, queueMissing = false } = {}) {
   const timers = new Map(), stored = new Map(), rendered = [], events = [];
   let id = 0;
   const scope = {
@@ -39,6 +39,7 @@ function player({ connected = false, preview = false, storageBroken = false } = 
     setTimeout: (fn, ms) => { timers.set(++id, { fn, ms }); return id; },
     clearTimeout: key => timers.delete(key), rendered,
   };
+  if (queueMissing) delete scope.OfflinePlayQueue;   // offline-play-queue.js failed to load
   vm.createContext(scope);
   const queueStart = HTML.indexOf('let offlinePlayOpen = null;');
   const declarations = HTML.slice(queueStart, HTML.indexOf('function persistOfflinePlays()', queueStart));
@@ -125,4 +126,16 @@ test('unavailable storage cannot stop offline playback', () => {
   p.advance(); p.advance();
   assert.deepEqual(p.rendered, [0, 1, 0]);
   assert.equal(p.timers.size, 1);
+});
+
+test('a missing offline-play-queue.js cannot stop the player: playback advances, reporting is skipped', () => {
+  const p = player({ queueMissing: true });
+  p.run('connectQueue(); playCurrentItem();');
+  p.advance(); p.advance();
+  assert.deepEqual(p.rendered, [0, 1, 0]);
+  assert.equal(p.timers.size, 1);
+  assert.equal(p.stored.size, 0, 'nothing queued without the queue');
+  p.scope.socket.connected = true;
+  p.run('flushOfflinePlays();');
+  assert.equal(p.events.length, 0);
 });

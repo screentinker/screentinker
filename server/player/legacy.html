@@ -1659,7 +1659,25 @@ function generateBrowserFingerprint() {
 let offlinePlayOpen = null;
 let offlinePlayFlushing = false;
 const OFFLINE_PLAY_KEY = "st_offline_plays";
-const offlinePlays = new OfflinePlayQueue();
+const offlineQueueAvailable = typeof OfflinePlayQueue === "function";
+const offlinePlays = offlineQueueAvailable ? new OfflinePlayQueue() : {
+  restore() {
+  },
+  size() {
+    return 0;
+  },
+  serialize() {
+    return "[]";
+  },
+  add() {
+  },
+  peekBatch() {
+    return [];
+  },
+  ack() {
+  }
+};
+if (!offlineQueueAvailable) console.log("[play] offline-play-queue.js unavailable \u2014 offline proof-of-play disabled, playback unaffected");
 try {
   offlinePlays.restore(localStorage.getItem(OFFLINE_PLAY_KEY));
 } catch (e) {
@@ -1672,6 +1690,7 @@ function persistOfflinePlays() {
   }
 }
 function queueOfflinePlay(open, completed) {
+  if (!offlineQueueAvailable) return;
   offlinePlays.add(OfflinePlayQueue.makePlay({
     client_event_id: OfflinePlayQueue.newId(),
     content_id: open.content_id,
@@ -3517,11 +3536,16 @@ function startPlaylistRefresh() {
 }
 let knownServerHash = null;
 let versionCheckTimer = null;
+const CODE_RELOAD_SPREAD_MS = 3e4;
+let codeReloadTimer = null;
 function observeServerHash(data) {
   if (!data || typeof data.hash !== "string" || !data.hash) return false;
   if (knownServerHash && data.hash !== knownServerHash) {
-    console.log("[player] /api/version hash changed", knownServerHash, "->", data.hash, "- triggering reload");
-    restartPlayer("server code updated");
+    if (!codeReloadTimer) {
+      const delay = Math.floor(Math.random() * CODE_RELOAD_SPREAD_MS);
+      console.log("[player] /api/version hash changed", knownServerHash, "->", data.hash, "- reloading in", delay, "ms (a code change on the server, NOT a dashboard action)");
+      codeReloadTimer = setTimeout(() => restartPlayer("server code updated"), delay);
+    }
     return true;
   }
   if (!knownServerHash) knownServerHash = data.hash;

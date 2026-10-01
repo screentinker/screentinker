@@ -1970,7 +1970,17 @@
     let offlinePlayOpen = null;
     let offlinePlayFlushing = false;
     const OFFLINE_PLAY_KEY = 'st_offline_plays';
-    const offlinePlays = new OfflinePlayQueue();
+    /*
+     * ⚠️ GUARDED, BECAUSE THIS NOW RUNS AS THE PAGE LOADS (#460), not inside connect(). If
+     * offline-play-queue.js ever failed to load — and a missing script on this server answers 200
+     * with index.html, not a 404 — an unguarded `new` here would stop the WHOLE player at boot,
+     * not just offline reporting. Proof-of-play is the expendable half; playback is not.
+     */
+    const offlineQueueAvailable = typeof OfflinePlayQueue === 'function';
+    const offlinePlays = offlineQueueAvailable ? new OfflinePlayQueue() : {
+      restore() {}, size() { return 0; }, serialize() { return '[]'; }, add() {}, peekBatch() { return []; }, ack() {},
+    };
+    if (!offlineQueueAvailable) console.log('[play] offline-play-queue.js unavailable — offline proof-of-play disabled, playback unaffected');
     try { offlinePlays.restore(localStorage.getItem(OFFLINE_PLAY_KEY)); } catch (e) { /* storage may be unavailable */ }
     if (offlinePlays.size()) console.log('[play] offline backlog restored:', offlinePlays.size());
 
@@ -1981,6 +1991,7 @@
     }
 
     function queueOfflinePlay(open, completed) {
+      if (!offlineQueueAvailable) return;
       offlinePlays.add(OfflinePlayQueue.makePlay({
         client_event_id: OfflinePlayQueue.newId(),
         content_id: open.content_id,
@@ -4478,11 +4489,27 @@
     let versionCheckTimer = null;
     // Keep the baseline for this loaded page across registrations/reconnects. Replacing it
     // with a new server hash would hide a same-version deployment from the next poll.
+    /*
+     * THE deploy path — the reload that darkened a BrightSign panel on 2026-07-28, when every
+     * connected player self-reloaded and that one never returned. restartPlayer() now hands a
+     * BrightSign or Vega reload to its host rather than reloading the page itself.
+     *
+     * ⚠️ SPREAD, DON'T STAMPEDE. A deploy restarts the server; every screen reconnects within the same
+     * few seconds, and since #461 each one then notices the new code at once. Reloading them all
+     * together would add a second burst — page, assets and another reconnect per screen — on top of
+     * the reconnect burst (#146), against a server that has only just booted. A random delay of up
+     * to CODE_RELOAD_SPREAD_MS spreads them out; the old code keeps playing in the meantime.
+     */
+    const CODE_RELOAD_SPREAD_MS = 30000;
+    let codeReloadTimer = null;
     function observeServerHash(data) {
       if (!data || typeof data.hash !== 'string' || !data.hash) return false;
       if (knownServerHash && data.hash !== knownServerHash) {
-        console.log('[player] /api/version hash changed', knownServerHash, '->', data.hash, '- triggering reload');
-        restartPlayer('server code updated');
+        if (!codeReloadTimer) {
+          const delay = Math.floor(Math.random() * CODE_RELOAD_SPREAD_MS);
+          console.log('[player] /api/version hash changed', knownServerHash, '->', data.hash, '- reloading in', delay, 'ms (a code change on the server, NOT a dashboard action)');
+          codeReloadTimer = setTimeout(() => restartPlayer('server code updated'), delay);
+        }
         return true;
       }
       if (!knownServerHash) knownServerHash = data.hash;

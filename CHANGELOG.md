@@ -15,6 +15,21 @@
   again for another screen"), and the "created" message says a template can be used again — "Use…"
   always made a new, independent widget, but nothing said so.
 
+### Fixed
+
+- **Web and Raspberry Pi players froze on a slide while offline (#460).** The offline proof-of-play
+  queue lived inside `connect()`, so any advance with the socket down threw `ReferenceError` and the
+  slide never moved again — even after the connection came back. Present since #299 (2026-08-29).
+  Thanks to **@tizmagik**, who found it on a real Pi and fixed it.
+  - Hardened: the queue is now created as the page loads, so a missing `offline-play-queue.js` only
+    turns off offline reporting instead of stopping the whole player.
+- **Players kept running old code after a same-version deploy (#461).** Each reconnect overwrote the
+  code hash the page had loaded with, so the change was never noticed. Thanks to **@tizmagik**.
+  - Hardened: the reload now waits a random 0–30 s, so a deploy does not reload the whole fleet in the
+    same second as its reconnect burst.
+- **CI:** the template-sandbox browser test waits up to 120 s for Chrome and retries once, after GitHub
+  runners started timing out at 30 s (#464).
+
 ## 2.3.0 (2026-09-30)
 
 A feature release: live data sources, a signed template library, native players for Raspberry Pi

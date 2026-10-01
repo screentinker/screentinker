@@ -13,7 +13,7 @@ const SOURCE = HTML.slice(start, end);
 // Exercise the shipped version-check section with a controllable transport and interval.
 function player() {
   let response = { hash: 'old-build', version: '2.3.0' }, fail = false, poll;
-  const restarts = [], timers = new Map(), storage = new Map();
+  const restarts = [], timers = new Map(), storage = new Map(), delays = [];
   let id = 0;
   const scope = {
     config: { serverUrl: 'http://test' }, PLAYER_VERSION: '2.3.0',
@@ -21,13 +21,15 @@ function player() {
     fetch: async () => { if (fail) throw new Error('offline'); return { json: async () => response }; },
     setInterval: (fn, ms) => { assert.equal(ms, 30000); poll = fn; timers.set(++id, fn); return id; },
     clearInterval: key => timers.delete(key), restartPlayer: reason => restarts.push(reason),
+    // The code reload is spread over a random delay; run it at once here and record the delay.
+    setTimeout: (fn, ms) => { delays.push(ms); fn(); return ++id; },
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
   };
   vm.createContext(scope);
   vm.runInContext(SOURCE, scope);
   const settle = () => new Promise(resolve => setImmediate(resolve));
   return {
-    restarts, timers, storage,
+    restarts, timers, storage, delays,
     async connect() { scope.startVersionCheck(); await settle(); },
     async tick() { poll(); await settle(); },
     response: value => { response = value; }, offline: value => { fail = value; },
@@ -91,4 +93,13 @@ test('release-version mismatch still uses the throttled self-heal', async () => 
   await p.connect(); await p.connect();
   assert.deepEqual(p.restarts, ['version mismatch self-heal']);
   assert.ok(p.storage.get('st_selfheal_at'));
+});
+
+test('a detected code change reloads after a random delay under 30 s, and only once', async () => {
+  const p = player(); await p.connect();
+  p.response({ hash: 'new-build', version: '2.3.0' });
+  await p.connect(); await p.tick(); await p.tick();
+  assert.deepEqual(p.restarts, ['server code updated'], 'one reload, however many polls see the new hash');
+  assert.equal(p.delays.length, 1);
+  assert.ok(p.delays[0] >= 0 && p.delays[0] < 30000, `delay ${p.delays[0]} spreads the fleet over 30 s`);
 });
