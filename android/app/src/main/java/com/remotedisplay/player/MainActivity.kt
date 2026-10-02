@@ -97,7 +97,7 @@ class MainActivity : AppCompatActivity() {
     private var playbackStarted = false
 
     // Multi-tap BACK/ESC for hidden settings menu.
-    // Collect taps in a 2-second window; on expiry: 2 taps → PIN → settings, 3+ taps → exit.
+    // Collect taps in a 2-second window; on expiry: 2+ taps → PIN → settings (Exit lives there).
     private val backTapTimes = mutableListOf<Long>()
     private var backTapRunnable: Runnable? = null
     private val TAP_WINDOW_MS = 1800L
@@ -1605,7 +1605,7 @@ class MainActivity : AppCompatActivity() {
         Log.i("MainActivity", "Back press intercepted (kiosk mode)")
     }
 
-    // Multi-tap BACK/ESC detection — 2 taps → settings, 3+ taps → exit dialog.
+    // Multi-tap BACK/ESC detection — 2+ taps → PIN → settings (which holds Exit).
     // Catches hardware BACK, D-pad BACK (KEYCODE_BACK=4), and ESC (111).
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
@@ -1634,8 +1634,11 @@ class MainActivity : AppCompatActivity() {
             val count = backTapTimes.size
             backTapTimes.clear()
             when {
-                count >= 3 -> showExitDialog()
-                count == 2 -> showPinDialog()
+                // #471: every multi-tap goes through the PIN. 3+ presses used to open the exit
+                // dialog directly, so anyone with a remote, a keyboard or the nav bar could close
+                // the kiosk - and 3 presses are easier to hit than exactly 2. Exit is still one
+                // item away, inside the PIN-gated settings menu.
+                count >= 2 -> showPinDialog()
                 // count == 1 → ignored (kiosk)
             }
         }
