@@ -338,8 +338,13 @@ router.post('/login', (req, res) => {
   // The response is deliberately IDENTICAL to a wrong password: a distinct 429 would tell
   // an attacker "this account exists and is under attack", turning the endpoint into an
   // account-existence oracle. The trade is that a locked-out legitimate user sees the
-  // generic message, so the trip is written to activity_log for the operator instead.
+  // generic message, so the trip is written to activity_log AND the server console (#472).
+  //
+  // ⚠️ Do NOT "still check the password and say 'locked' if it is correct" (suggested in
+  // #472). A different answer for the right password during the lock lets an attacker keep
+  // guessing straight through it and stop on the changed answer: the lock would stop nothing.
   if (loginLockout.isLocked(user.id)) {
+    loginLockout.warnLocked(user.id, `${email} (user ${user.id})`);
     logFailedLogin(email, getClientIp(req), 'Locked out (too many failed passwords)');
     return res.status(401).json({ error: 'Invalid email or password' });
   }
@@ -364,7 +369,10 @@ router.post('/login', (req, res) => {
       return ssoRefusal();
     }
     const rec = loginLockout.recordFailure(user.id);
-    if (rec.lockedUntil) logActivity(null, 'auth:login_locked', `${email} - locked after repeated failures`, null, getClientIp(req));
+    if (rec.lockedUntil) {
+      logActivity(null, 'auth:login_locked', `${email} - locked after repeated failures`, null, getClientIp(req));
+      loginLockout.warnLocked(user.id, `${email} (user ${user.id})`);
+    }
     logFailedLogin(email, getClientIp(req), 'Wrong password');
     return res.status(401).json({ error: 'Invalid email or password' });
   }

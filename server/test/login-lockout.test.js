@@ -147,3 +147,40 @@ test('route: a correct password clears the counter before any TOTP/verify step',
   for (let i = 0; i < lockout.MAX_FAILS - 1; i++) await post({ email, password: 'nope' });
   assert.equal(lockout.isLocked(id), false, 'the successful login reset the counter');
 });
+
+// ---------------------------------------------------------------------------
+// #472: the server console says the account is locked, without flooding
+// ---------------------------------------------------------------------------
+test('a lock is announced on the console with the time left and how to clear it', () => {
+  const key = k();
+  const t0 = 5_000_000;
+  for (let i = 0; i < lockout.MAX_FAILS; i++) lockout.recordFailure(key, t0);
+  const lines = [];
+  assert.equal(lockout.warnLocked(key, 'admin@example.com', t0, (m) => lines.push(m)), true);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /admin@example\.com is LOCKED for 15 more minute/);
+  assert.match(lines[0], /password reset, or restart the server/);
+});
+
+test('repeat attempts during a lock log at most once a minute per account', () => {
+  const key = k();
+  const t0 = 9_000_000;
+  for (let i = 0; i < lockout.MAX_FAILS; i++) lockout.recordFailure(key, t0);
+  const lines = [];
+  const log = (m) => lines.push(m);
+  lockout.warnLocked(key, 'x', t0, log);
+  for (let s = 1; s < 60; s++) lockout.warnLocked(key, 'x', t0 + s * 1000, log);
+  assert.equal(lines.length, 1, 'no second line inside the minute');
+  lockout.warnLocked(key, 'x', t0 + 60_000, log);
+  assert.equal(lines.length, 2);
+  assert.match(lines[1], /14 more minute/);
+});
+
+test('minutesLeft is 0 once unlocked or reset', () => {
+  const key = k();
+  const t0 = 12_000_000;
+  for (let i = 0; i < lockout.MAX_FAILS; i++) lockout.recordFailure(key, t0);
+  assert.equal(lockout.minutesLeft(key, t0 + lockout.LOCKOUT_MS + 1), 0);
+  lockout.reset(key);
+  assert.equal(lockout.minutesLeft(key, t0), 0);
+});
