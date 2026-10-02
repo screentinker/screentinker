@@ -315,6 +315,19 @@ class MediaPlayerManager(
     @Volatile private var stageRotation = 0f
     private var geomWarned = false
 
+    /*
+     * #477: the box a still is DECODED against is the stage, not displayMetrics. On a rotated
+     * (portrait) mount the stage is the transpose of the panel - 600x1024 on a 1024x600 screen - while
+     * displayMetrics keeps reporting 1024x600, so a portrait photo was subsampled to fit a landscape
+     * box and then enlarged ~2x onto the stage (1080x1920 -> 270x480). Before the first orientation
+     * pass there is no stage yet, and the screen is the best guess.
+     */
+    private fun decodeBox(): Pair<Int, Int> {
+        val w = stageW; val h = stageH
+        return if (w > 0 && h > 0) w to h
+        else ImageLoader.screenWidth(context) to ImageLoader.screenHeight(context)
+    }
+
     fun setTransitionStage(stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotationDeg: Float) {
         this.stageW = stageW; this.stageH = stageH
         this.screenW = screenW; this.screenH = screenH
@@ -614,7 +627,7 @@ class MediaPlayerManager(
         val from = if (transition != null) captureCurrentFrame() else null
         val myGeneration = ++mountGeneration
         Thread {
-            val bitmap = ImageLoader.decodeUrl(url, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
+            val bitmap = decodeBox().let { (w, h) -> ImageLoader.decodeUrl(url, w, h) }
             mainHandler.post {
                 // Something else has been asked for since this decode started — including the
                 // error branch, whose onImageError posts next() and would otherwise cut short
@@ -724,7 +737,7 @@ class MediaPlayerManager(
 
     fun showImage(file: File, transition: TransitionSpec? = null) {
         Log.i("MediaPlayerManager", "Showing image: ${file.absolutePath}")
-        val bitmap = ImageLoader.decodeFile(file, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
+        val bitmap = decodeBox().let { (w, h) -> ImageLoader.decodeFile(file, w, h) }
         if (bitmap == null) {
             Log.w("MediaPlayerManager", "Skipping unloadable image: ${file.name}")
             onImageError?.invoke()

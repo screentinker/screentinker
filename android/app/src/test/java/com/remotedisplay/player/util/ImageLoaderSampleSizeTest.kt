@@ -49,6 +49,23 @@ class ImageLoaderSampleSizeTest {
         assertEquals(1, ImageLoader.calcSampleSize(0, 0, 1024, 600))
     }
 
+    @Test fun `panorama is capped instead of decoding at full size`() {
+        // Neither half of 20000x800 covers 1024x600, so the cover rule alone keeps all 16 MP.
+        val s = ImageLoader.calcSampleSize(20000, 800, 1024, 600)
+        assertTrue(20000 / s <= ImageLoader.MAX_DECODE_SIDE)
+        assertTrue((20000L / s) * (800 / s) <= ImageLoader.MAX_DECODE_PIXELS)
+    }
+
+    @Test fun `huge source on a 4K box stays under the pixel budget`() {
+        // 8000x4200 vs 3840x2160: the cover rule stops at full size (33.6 MP, 134 MB).
+        val s = ImageLoader.calcSampleSize(8000, 4200, 3840, 2160)
+        assertEquals(2, s)
+    }
+
+    @Test fun `unknown box still honours the caps`() {
+        assertEquals(4, ImageLoader.calcSampleSize(12000, 9000, 0, 0))
+    }
+
     @Test fun `decode is never below the box and under 2x per axis`() {
         val boxes = listOf(1024 to 600, 600 to 1024, 1920 to 1080, 1080 to 1920, 3840 to 2160)
         val sources = listOf(800 to 480, 1024 to 600, 1280 to 720, 1920 to 1080, 2000 to 1125,
@@ -57,8 +74,11 @@ class ImageLoaderSampleSizeTest {
             val (dw, dh) = decoded(sw, sh, bw, bh)
             val coversBox = dw >= bw && dh >= bh
             val sourceCoveredBox = sw >= bw && sh >= bh
-            if (sourceCoveredBox) assertTrue("$sw x $sh on $bw x $bh -> $dw x $dh is below the box", coversBox)
-            if (ImageLoader.calcSampleSize(sw, sh, bw, bh) > 1) {
+            // Only the memory/texture caps may push a decode below the box.
+            val capped = dw.toLong() * 2 * dh * 2 > ImageLoader.MAX_DECODE_PIXELS ||
+                maxOf(dw, dh) * 2 > ImageLoader.MAX_DECODE_SIDE
+            if (sourceCoveredBox && !capped) assertTrue("$sw x $sh on $bw x $bh -> $dw x $dh is below the box", coversBox)
+            if (ImageLoader.calcSampleSize(sw, sh, bw, bh) > 1 && !capped) {
                 assertTrue("$sw x $sh on $bw x $bh -> $dw x $dh is 2x+ the box on both axes",
                     dw < bw * 2 || dh < bh * 2)
             }

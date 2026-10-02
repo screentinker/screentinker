@@ -205,7 +205,11 @@ class TriggerOverlay(
             iv.scaleType = ImageView.ScaleType.FIT_CENTER
             iv.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            val bmp = ImageLoader.decodeFile(file, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
+            // #477: decode against the box the image is shown in. The overlay lives inside the
+            // stage, so on a portrait mount it is portrait while displayMetrics stays landscape.
+            val bw = if (b.width > 0) b.width else ImageLoader.screenWidth(context)
+            val bh = if (b.height > 0) b.height else ImageLoader.screenHeight(context)
+            val bmp = ImageLoader.decodeFile(file, bw, bh)
             if (bmp != null) iv.setImageBitmap(bmp) else log("warn", "trigger image $id failed to decode")
             b.addView(iv)
             if (multi) scheduleAdvance(durMs)
