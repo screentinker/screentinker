@@ -33,6 +33,9 @@ class DeviceInfo(private val context: Context) {
      */
     private val serverConfig by lazy { ServerConfig(context) }
 
+    // Keeps the previous /proc/stat sample, so it lives as long as this object (one per service).
+    private val cpuLoad = CpuLoad()
+
     fun getTelemetry(): JSONObject {
         return JSONObject().apply {
             put("battery_level", getBatteryLevel())
@@ -41,7 +44,8 @@ class DeviceInfo(private val context: Context) {
             put("storage_total_mb", getStorageTotalMB())
             put("ram_free_mb", getRamFreeMB())
             put("ram_total_mb", getRamTotalMB())
-            put("cpu_usage", getCpuUsage())
+            // #474: real CPU load, or no key at all where /proc/stat is unreadable (see CpuLoad).
+            cpuLoad.sample()?.let { put("cpu_usage", Math.round(it * 10) / 10.0) }
             put("wifi_ssid", getWifiSSID())
             // The screen's OWN address on the network. The server separately records the PUBLIC
             // address it sees the connection from; showing only that had customers reading their
@@ -180,18 +184,6 @@ class DeviceInfo(private val context: Context) {
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
         return memInfo.totalMem / (1024 * 1024)
-    }
-
-    private fun getCpuUsage(): Double {
-        // Simple estimation - in production you'd read /proc/stat
-        return try {
-            val runtime = Runtime.getRuntime()
-            val usedMem = runtime.totalMemory() - runtime.freeMemory()
-            val maxMem = runtime.maxMemory()
-            (usedMem.toDouble() / maxMem.toDouble()) * 100.0
-        } catch (e: Exception) {
-            0.0
-        }
     }
 
     /**
