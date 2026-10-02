@@ -1336,6 +1336,11 @@ body {
 .content-item-actions {
   display: flex;
   justify-content: flex-end;
+  /* ⚠️ WRAP, NEVER OVERFLOW. A right-aligned (flex-end) row that is wider than its card spills out
+     of the LEFT edge, and .content-item clips with overflow:hidden — so the FIRST button vanished.
+     Adding Duplicate made the widget row Edit · Duplicate · History · Delete (~280px) in cards that
+     auto-fill down to 200px, and Edit disappeared from every widget on a wide screen. */
+  flex-wrap: wrap;
   padding: 0 12px 10px;
   gap: 4px;
 }
