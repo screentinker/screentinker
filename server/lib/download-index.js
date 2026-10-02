@@ -104,7 +104,9 @@ function entries(state = {}) {
       id: 'raspberry-pi-native',
       name: 'Raspberry Pi (native player)',
       file: deb.filename || 'screentinker-pi_<version>_all.deb',
-      what: 'A native player for Raspberry Pi OS (Bookworm). Install with apt; it updates itself against this instance afterwards.',
+      // Trixie, not Bookworm: the .deb needs PySide6, packaged only from Debian 13 on, so apt refuses
+      // it on Bookworm (native/packaging/linux/build-deb.sh). Bookworm Pis use the kiosk row below.
+      what: 'A native player for Raspberry Pi OS 13 (Trixie) or newer; on older Pi OS use the kiosk install below. Install with apt; it updates itself against this instance afterwards.',
       url: '/download/pi',
       guide: '/guides/raspberry-pi-digital-signage.html',
       available: !!deb.exists,

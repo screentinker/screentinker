@@ -291,6 +291,13 @@ test('the native Pi package is offered only when a .deb is hosted, and names its
   assert.equal(hosted.version, '1.2.0');
 });
 
+test('the native Pi card names the OS the .deb actually installs on (Trixie, not Bookworm)', () => {
+  // The .deb depends on PySide6, packaged only from Debian 13 "trixie" on — apt refuses it on Bookworm.
+  const row = di.entries({}).find((x) => x.id === 'raspberry-pi-native');
+  assert.match(row.what, /Trixie/);
+  assert.doesNotMatch(row.what, /Bookworm/, 'BUG: the card sends Bookworm users to a package apt will refuse');
+});
+
 test('the native Windows installer is offered only when an .exe is hosted, and the kiosk script stays', () => {
   const bare = di.entries({}).find((x) => x.id === 'windows-native');
   assert.equal(bare.available, false, 'no installer, no download button');
