@@ -1041,8 +1041,16 @@ function checkDeviceAccess(deviceId) {
     }
   }
 
-  // Check if over plan device limit (non-trial)
-  if (!plan.trial_started && plan.max_devices > 0) {
+  // Check if over plan device limit — for everyone EXCEPT a trial that is genuinely still running.
+  //
+  // ⚠️ Keyed on "the trial is running", NOT on `!plan.trial_started`. trial_started is stamped at
+  // signup and only expireTrial() ever cleared it, and expireTrial only fires for an account still
+  // on its trial plan with no subscription — so a trial that CONVERTED (paid, then downgraded or
+  // cancelled to Free) kept trial_started for ever and this branch never ran: 20 screens playing on
+  // a 2-screen Free plan. "Running" = inside the 14 days, still on the plan the trial granted, and
+  // nothing paid for; anything else is held to its plan like any other account.
+  const trialRunning = plan.trial_active && plan.plan_id === plan.trial_plan && !plan.stripe_subscription_id;
+  if (!trialRunning && plan.max_devices > 0) {
     const userDevices = db.prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at ASC').all(device.user_id);
     const deviceIndex = userDevices.findIndex(d => d.id === deviceId);
     if (deviceIndex >= plan.max_devices) {

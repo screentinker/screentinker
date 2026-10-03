@@ -186,7 +186,12 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const userId = session.metadata?.user_id;
         const planId = session.metadata?.plan_id;
         if (userId && session.subscription) {
-          db.prepare(`UPDATE users SET stripe_subscription_id = ?, plan_id = ?, subscription_status = 'active', updated_at = strftime('%s','now') WHERE id = ?`)
+          // ⚠️ trial_started = NULL: a trial that converts is OVER. Left set, the account looked like
+          // a trial for ever (the Billing page's trial block, checkDeviceAccess's trial exemption),
+          // because the only other writer that clears it — expireTrial — skips anyone with a
+          // subscription. trial_expired_at stays NULL: that column means "lapsed to Free", which
+          // this is not.
+          db.prepare(`UPDATE users SET stripe_subscription_id = ?, plan_id = ?, subscription_status = 'active', trial_started = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
             .run(session.subscription, planId || 'starter', userId);
           console.log(`User ${userId} subscribed to ${planId} (sub: ${session.subscription})`);
         }
