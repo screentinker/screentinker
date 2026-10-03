@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
-const PATH_ENV = ['DATA_DIR', 'DB_PATH', 'UPLOADS_DIR', 'CERTS_DIR'];
+const PATH_ENV = ['DATA_DIR', 'DB_PATH', 'UPLOADS_DIR', 'CERTS_DIR', 'PLUGINS_ENABLED', 'PLUGINS_DIR', 'BUNDLED_PLUGINS_DIR', 'PLUGIN_INBOX_DIR'];
 const serverDir = path.join(__dirname, '..'); // config.js lives in server/
 
 function loadConfig(overrides) {
@@ -25,6 +25,8 @@ test('UNSET -> exactly the legacy in-repo paths (zero change for existing instal
   assert.strictEqual(c.contentDir, path.join(serverDir, 'uploads', 'content'));
   assert.strictEqual(c.screenshotsDir, path.join(serverDir, 'uploads', 'screenshots'));
   assert.strictEqual(c.certsDir, path.join(serverDir, 'certs'));
+  assert.strictEqual(c.pluginsEnabled, false, 'plugins stay off when PLUGINS_ENABLED is unset');
+  assert.strictEqual(c.pluginInboxDir, path.join(serverDir, 'plugin-inbox'));
 });
 
 test('DATA_DIR relocates db / uploads / certs onto the volume', () => {
@@ -34,6 +36,8 @@ test('DATA_DIR relocates db / uploads / certs onto the volume', () => {
   assert.strictEqual(c.contentDir, path.join('/data', 'uploads', 'content'));
   assert.strictEqual(c.screenshotsDir, path.join('/data', 'uploads', 'screenshots'));
   assert.strictEqual(c.certsDir, path.join('/data', 'certs'));
+  assert.strictEqual(c.dataPluginsDir, path.join('/data', 'plugins'));
+  assert.strictEqual(c.pluginInboxDir, path.join('/data', 'plugin-inbox'));
 });
 
 test('individual overrides win over DATA_DIR', () => {

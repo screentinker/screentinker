@@ -1,0 +1,5 @@
+data/
+scratch/
+demo/shots/
+ui-screenshots/
+demo/doom-attract/*.wasm

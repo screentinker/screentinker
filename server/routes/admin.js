@@ -194,7 +194,7 @@ router.post('/orgs', requirePlatformAdmin, (req, res) => {
 // its workspaces (#36, drives the Organizations admin section). Platform-admin only.
 router.get('/orgs', requirePlatformAdmin, (req, res) => {
   const orgs = db.prepare(`
-    SELECT o.id, o.name, o.created_at, u.email AS owner_email, u.name AS owner_name,
+    SELECT o.id, o.name, o.created_at, o.talk_enabled, o.ice_servers, u.email AS owner_email, u.name AS owner_name,
       (SELECT COUNT(*) FROM organization_members m WHERE m.organization_id = o.id) AS member_count,
       (SELECT COUNT(*) FROM workspaces w WHERE w.organization_id = o.id) AS workspace_count,
       (SELECT COUNT(*) FROM devices d JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = o.id) AS device_count
@@ -227,6 +227,38 @@ router.delete('/orgs/:id', requirePlatformAdmin, (req, res) => {
   }
   logActivity(req.user.id, 'admin_delete_org', `org: ${org.name} (${org.id})`, null, getClientIp(req), null);
   res.json({ deleted: true, id: org.id });
+});
+
+// PUT /api/admin/orgs/:id/talk - platform-admin toggle for the per-org #talk feature and an
+// optional per-org ICE (STUN/TURN) override. talk_enabled gates the voice intercom / PA on top of
+// the global TALK_ENABLED master switch; ice_servers (a JSON array of {urls, username?, credential?})
+// overrides the sidecar's ICE servers for this org's live video AND talk, or NULL to fall back.
+router.put('/orgs/:id/talk', requirePlatformAdmin, (req, res) => {
+  const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+
+  const enabled = req.body?.talk_enabled ? 1 : 0;
+
+  // ice_servers: accept null/'' (clear -> fall back to sidecar), or a JSON array of ICE entries.
+  // Validate shape here so a malformed override can never reach a device's RTCPeerConnection.
+  let iceJson = null;
+  if (req.body?.ice_servers !== undefined && req.body.ice_servers !== null && req.body.ice_servers !== '') {
+    let arr = req.body.ice_servers;
+    if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch (_) { return res.status(400).json({ error: 'ice_servers must be valid JSON' }); } }
+    if (!Array.isArray(arr)) return res.status(400).json({ error: 'ice_servers must be a JSON array' });
+    for (const e of arr) {
+      if (!e || typeof e !== 'object') return res.status(400).json({ error: 'each ice_servers entry must be an object' });
+      const urls = e.urls;
+      const ok = typeof urls === 'string' || (Array.isArray(urls) && urls.length && urls.every(u => typeof u === 'string'));
+      if (!ok) return res.status(400).json({ error: 'each ice_servers entry needs a urls string or non-empty string[]' });
+    }
+    iceJson = JSON.stringify(arr);
+  }
+
+  db.prepare("UPDATE organizations SET talk_enabled = ?, ice_servers = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(enabled, iceJson, org.id);
+  logActivity(req.user.id, 'admin_org_talk', `org: ${org.name} (${org.id}) talk=${enabled} ice=${iceJson ? 'custom' : 'default'}`, null, getClientIp(req), null);
+  res.json({ id: org.id, talk_enabled: enabled, ice_servers: iceJson });
 });
 
 // DELETE /api/admin/workspaces/:id - cascade-delete a single workspace + its
@@ -288,6 +320,60 @@ router.put('/users/:id/workspace', requirePlatformAdmin, (req, res) => {
   logActivity(req.user.id, 'admin_set_user_workspace', `target: ${target.email}, workspace: ${ws.id}`, null, getClientIp(req), ws.id);
 
   res.json({ user_id: target.id, workspace_id: ws.id, workspace_name: ws.name, organization_name: org?.name || null, role: 'workspace_viewer' });
+});
+
+/*
+ * Turn a user's alert email on or off, as a platform admin.
+ *
+ * This existed only as a hand-written UPDATE against prod. Two problems with that, and the second is
+ * the one that bites: a raw UPDATE leaves NO activity_log row, so months later there is nothing
+ * distinguishing "the customer asked us to stop emailing them" from "the alert service is broken and
+ * nobody noticed a display went dark". The support answer and the incident response are opposite, and
+ * the only thing that tells them apart is a record of the decision.
+ *
+ * ⚠️ email_alerts is one switch over several senders — offline-device alerts, trial reminders, setup
+ * nudges and payment-failure notices. The response names them so an admin turning it off for a paying
+ * customer can see that dunning goes quiet too, rather than discovering it at renewal.
+ *
+ * requirePlatformAdmin, not requireAdmin: this reaches any account on the box regardless of org, and
+ * platform_operator has no user-management power (#13).
+ */
+router.put('/users/:id/email-alerts', requirePlatformAdmin, (req, res) => {
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') {
+    // Not coerced. `{"enabled":"false"}` is truthy in JavaScript, and silently enabling alerts for
+    // somebody who asked for silence is the exact failure this endpoint exists to prevent.
+    return res.status(400).json({ error: 'enabled must be true or false' });
+  }
+
+  const target = db.prepare('SELECT id, email, name, email_alerts FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  const next = enabled ? 1 : 0;
+  const was = target.email_alerts == null ? 1 : (target.email_alerts ? 1 : 0);   // nullable on old rows
+  const changed = was !== next;
+
+  if (changed) {
+    db.prepare("UPDATE users SET email_alerts = ?, updated_at = strftime('%s','now') WHERE id = ?")
+      .run(next, target.id);
+    logActivity(
+      req.user.id,
+      enabled ? 'admin_enabled_email_alerts' : 'admin_disabled_email_alerts',
+      `target: ${target.email}`,
+      null,
+      getClientIp(req),
+      null
+    );
+  }
+
+  res.json({
+    user_id: target.id,
+    email: target.email,
+    email_alerts: !!next,
+    changed,
+    // Named rather than implied, so the caller can see the blast radius of one boolean.
+    affects: ['device offline alerts', 'trial reminders', 'setup nudges', 'payment-failure notices'],
+  });
 });
 
 // ===================== Per-user workspace membership management =====================
@@ -500,17 +586,51 @@ router.post('/check-update', requireAdmin, async (req, res) => {
   }
 });
 
-// POST /api/admin/trigger-update — run docker compose pull && up -d,
-// or return manual instructions when docker is disabled.
+/*
+ * How this instance is actually installed, so "Update Now" can hand back a command that works.
+ *
+ * This used to build a `docker compose` line unconditionally, with composeFilePath defaulting to
+ * /opt/screentinker/docker-compose.yml whether or not that file existed. Self-hosters running the
+ * git + systemd install documented in docs/operations.md were therefore told to run a docker
+ * command against a compose file they do not have. One of them upgraded 1.9.39 to 2.0.8 only
+ * because he had written his own update script; the dashboard's advice was useless to him.
+ *
+ * /.dockerenv is the reliable in-container signal, and it matters because the compose file lives
+ * on the HOST, so testing for it from inside the container always fails. Outside a container, a
+ * checkout with scripts/upgrade.sh in it is the documented path and that script already does the
+ * right thing (backup, checkout the tag, npm ci --omit=dev, restart, report the running version).
+ */
+function detectInstall() {
+  const fs = require('fs');
+  const path = require('path');
+  const config = require('../config');
+  const appRoot = path.join(__dirname, '..', '..');
+  const exists = (p) => { try { return fs.existsSync(p); } catch (_) { return false; } };
+
+  if (exists('/.dockerenv') || exists(config.composeFilePath)) {
+    const f = config.composeFilePath;
+    return { kind: 'docker', command: `docker compose -f ${f} pull && docker compose -f ${f} up -d` };
+  }
+  if (exists(path.join(appRoot, '.git')) && exists(path.join(appRoot, 'scripts', 'upgrade.sh'))) {
+    return { kind: 'git', command: `cd ${appRoot} && scripts/upgrade.sh` };
+  }
+  // Say so rather than guessing. A confidently wrong command costs more than an honest shrug.
+  return { kind: 'unknown', command: null };
+}
+
+// POST /api/admin/trigger-update — run docker compose pull && up -d where this instance is
+// actually docker-managed, otherwise hand back the command that suits how it IS installed.
 router.post('/trigger-update', requirePlatformAdmin, async (req, res) => {
   const { exec } = require('child_process');
-  const composeFile = require('../config').composeFilePath;
-  const cmd = `docker compose -f ${composeFile} pull && docker compose -f ${composeFile} up -d`;
+  const install = detectInstall();
+  const cmd = install.command;
 
-  if (!require('../config').dockerUpdateEnabled) {
+  if (install.kind !== 'docker' || !require('../config').dockerUpdateEnabled) {
     return res.json({
       docker_enabled: false,
-      instructions: cmd,
+      install: install.kind,
+      instructions: cmd
+        || 'This instance was not installed in a way the server recognises, so there is no safe command to suggest. See docs/operations.md for the upgrade steps.',
     });
   }
 
@@ -541,7 +661,16 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
   const plans = db.prepare(`
     SELECT p.*,
            (SELECT COUNT(*) FROM users u WHERE u.plan_id = p.id) AS user_count,
-           (SELECT COUNT(*) FROM organizations o WHERE o.plan_id = p.id) AS org_count,
+           /*
+            * ⚠️ Resolved through the OWNER, like device_count below — not from organizations.plan_id.
+            * That column is written once when the org is created and never again: no Stripe webhook
+            * touches it, so every organization reads 'pro' for ever regardless of what its owner
+            * actually pays. Counting it told an operator that all 477 accounts were on Pro while one
+            * of them was paying for Home.
+            */
+           (SELECT COUNT(*) FROM organizations o
+              JOIN users u3 ON u3.id = o.owner_user_id
+             WHERE u3.plan_id = p.id) AS org_count,
            (SELECT COUNT(*) FROM devices d
               JOIN workspaces w ON w.id = d.workspace_id
               JOIN organizations o2 ON o2.id = w.organization_id
@@ -560,6 +689,220 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
   res.json({ plans, orphaned });
 });
 
+// ─── Sales / limited-time discounts (lib/promotions.js) ─────────────────────────
+// Platform admin only: a sale changes what every customer is charged.
+router.get('/promotions', requirePlatformAdmin, (req, res) => {
+  const promotions = require('../lib/promotions');
+  const cur = promotions.current();
+  res.json({
+    promotions: promotions.list(),
+    current_id: cur ? cur.id : null,
+    stripe_configured: !!require('../lib/stripe-client').get(),
+    // Why sales cannot run here, if they cannot (self-hosted, or no Stripe). One rule for every surface.
+    unavailable_reason: promotions.salesAvailable(require('../lib/stripe-client').get()).reason,
+  });
+});
+
+router.post('/promotions', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const promo = await promotions.create(req.body, require('../lib/stripe-client').get(), req.user.id);
+    res.status(201).json({ promotion: promo });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not create the sale' });
+  }
+});
+
+router.post('/promotions/:id/end', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const out = await promotions.end(req.params.id, require('../lib/stripe-client').get());
+    res.json({ promotion: out.promo, stripe_warning: out.stripeWarning });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not end the sale' });
+  }
+});
+
+router.put('/promotions/:id', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const out = await promotions.update(req.params.id, req.body, require('../lib/stripe-client').get());
+    res.json({ promotion: out.promo, stripe_warning: out.stripeWarning });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save the sale' });
+  }
+});
+
+router.delete('/promotions/:id', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const out = await promotions.remove(req.params.id, require('../lib/stripe-client').get());
+    res.json({ ok: true, stripe_warning: out.stripeWarning });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not delete the sale' });
+  }
+});
+
+// ─── Platform overview (frontend: views/admin.js, #/platform/overview) ─────────────
+// The numbers an operator checks first plus the things waiting on them. Counts only — no names,
+// no emails. Each count is independent and tolerant: a table an older install lacks reads as 0
+// instead of failing the whole page.
+router.get('/overview', requirePlatformAdmin, (req, res) => {
+  const n = (sql, ...args) => { try { return db.prepare(sql).get(...args).n || 0; } catch (_) { return 0; } };
+  const now = Math.floor(Date.now() / 1000);
+  const TRIAL_SECS = 14 * 86400; // middleware/subscription.js TRIAL_DAYS
+  const latest = require('../lib/ghcr-check').getLatestVersion();
+  const cmp = latest ? require('../lib/ghcr-check').compareVersions(latest, VERSION) : 0;
+  res.json({
+    version: VERSION,
+    latest_version: latest || null,
+    update_available: cmp > 0,
+    users: n('SELECT COUNT(*) AS n FROM users'),
+    platform_staff: n("SELECT COUNT(*) AS n FROM users WHERE role IN ('platform_admin','superadmin','platform_operator')"),
+    organizations: n('SELECT COUNT(*) AS n FROM organizations'),
+    workspaces: n('SELECT COUNT(*) AS n FROM workspaces'),
+    devices: n('SELECT COUNT(*) AS n FROM devices'),
+    devices_online: n("SELECT COUNT(*) AS n FROM devices WHERE status = 'online'"),
+    paying_accounts: n("SELECT COUNT(*) AS n FROM users WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id != '' AND COALESCE(subscription_status,'active') IN ('active','trialing','past_due')"),
+    trialing: n('SELECT COUNT(*) AS n FROM users WHERE trial_started IS NOT NULL AND trial_started + ? > ?', TRIAL_SECS, now),
+    sso_only_requests: n("SELECT COUNT(*) AS n FROM org_sso_only_requests WHERE status = 'pending'"),
+    // lib/plugins/submissions.js: a submission awaiting review is 'pending'. Only meaningful when
+    // plugins are on — with them off there is no page to review them on.
+    plugin_submissions: require('../config').pluginsEnabled ? n("SELECT COUNT(*) AS n FROM plugin_submissions WHERE status = 'pending'") : 0,
+    orphaned_plan_users: n('SELECT COUNT(*) AS n FROM users WHERE plan_id IS NOT NULL AND plan_id NOT IN (SELECT id FROM plans)'),
+    // Activity and health
+    new_users_7d: n('SELECT COUNT(*) AS n FROM users WHERE created_at > ?', now - 7 * 86400),
+    inactive_30d: n("SELECT COUNT(*) AS n FROM users WHERE COALESCE(last_login, created_at) < ?", now - 30 * 86400),
+    never_signed_in: n('SELECT COUNT(*) AS n FROM users WHERE last_login IS NULL'),
+    unverified_emails: n('SELECT COUNT(*) AS n FROM users WHERE email_verified = 0'),
+    trials_ending_7d: n('SELECT COUNT(*) AS n FROM users WHERE trial_started IS NOT NULL AND trial_started + ? BETWEEN ? AND ?', TRIAL_SECS, now, now + 7 * 86400),
+    // A customer account with no paired screen in any workspace it can reach.
+    accounts_no_screens: n(`
+      SELECT COUNT(*) AS n FROM users u
+       WHERE u.role = 'user' AND NOT EXISTS (
+         SELECT 1 FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+          WHERE w.id IN (SELECT workspace_id FROM workspace_members WHERE user_id = u.id)
+             OR w.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = u.id))`),
+    orgs_no_screens: n('SELECT COUNT(*) AS n FROM organizations o WHERE NOT EXISTS (SELECT 1 FROM devices d JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = o.id)'),
+    screens_offline_24h: n("SELECT COUNT(*) AS n FROM devices WHERE status != 'online' AND workspace_id IS NOT NULL AND COALESCE(last_heartbeat, 0) < ?", now - 86400),
+    storage_bytes: n('SELECT COALESCE(SUM(file_size), 0) AS n FROM content'),
+    stale_accounts_180d: require('../lib/account-cleanup').countStale(db, { inactiveDays: 180, now }),
+  });
+});
+
+// ─── Overview → "Needs your attention" details ───────────────────────────────────────
+// The overview itself returns counts only; the specifics (which orgs, which screens, which
+// accounts) load here when an item is expanded. Each list is capped: this is a briefing that
+// links to the page that fixes it, not a second copy of that page.
+const ATTENTION_LIMIT = 25;
+router.get('/overview/attention/:item', requirePlatformAdmin, (req, res) => {
+  const now = Math.floor(Date.now() / 1000);
+  const q = (sql, ...args) => { try { return db.prepare(sql).all(...args); } catch (_) { return []; } };
+  switch (req.params.item) {
+    case 'sso':
+      return res.json({ rows: q(`
+        SELECT o.name AS organization, u.email AS requested_by, r.reason, r.created_at
+          FROM org_sso_only_requests r
+          LEFT JOIN organizations o ON o.id = r.organization_id
+          LEFT JOIN users u ON u.id = r.requested_by
+         WHERE r.status = 'pending' ORDER BY r.created_at ASC LIMIT ?`, ATTENTION_LIMIT) });
+    case 'plugins':
+      return res.json({ rows: q(`
+        SELECT s.plugin_id, s.name, s.version, s.size_bytes, u.email AS submitted_by, s.submitted_at
+          FROM plugin_submissions s LEFT JOIN users u ON u.id = s.submitted_by
+         WHERE s.status = 'pending' ORDER BY s.submitted_at ASC LIMIT ?`, ATTENTION_LIMIT) });
+    case 'update': {
+      const latest = require('../lib/ghcr-check').getLatestVersion();
+      return res.json({ current: VERSION, latest: latest || null });
+    }
+    case 'orphans':
+      return res.json({ rows: q(`
+        SELECT u.plan_id, COUNT(*) AS accounts, GROUP_CONCAT(u.email, ', ') AS emails
+          FROM users u WHERE u.plan_id IS NOT NULL AND u.plan_id NOT IN (SELECT id FROM plans)
+         GROUP BY u.plan_id ORDER BY accounts DESC LIMIT ?`, ATTENTION_LIMIT)
+        .map((r) => ({ ...r, emails: String(r.emails || '').split(', ').slice(0, 5).join(', ') })) });
+    case 'offline':
+      return res.json({ rows: q(`
+        SELECT d.name AS screen, o.name AS organization, w.name AS workspace, d.last_heartbeat, d.app_version
+          FROM devices d
+          JOIN workspaces w ON w.id = d.workspace_id
+          JOIN organizations o ON o.id = w.organization_id
+         WHERE d.status != 'online' AND COALESCE(d.last_heartbeat, 0) < ?
+         ORDER BY COALESCE(d.last_heartbeat, 0) DESC LIMIT ?`, now - 86400, ATTENTION_LIMIT) });
+    case 'stale': {
+      const r = require('../lib/account-cleanup').findStale(db, { inactiveDays: 180, now });
+      return res.json({
+        counts: r.counts,
+        rows: r.accounts.slice(0, ATTENTION_LIMIT).map((a) => ({ email: a.email, last_activity: a.last_activity, notice: a.notice, content_bytes: a.content_bytes })),
+      });
+    }
+    default:
+      return res.status(404).json({ error: 'Unknown item' });
+  }
+});
+
+// ─── Stale-account cleanup (lib/account-cleanup.js; #/platform/cleanup) ─────────────
+// GET previews; POST deletes. The POST re-checks every account server-side, and must carry a
+// typed confirmation naming the count, so a stale page or a stray click cannot delete anybody.
+router.get('/cleanup/stale-accounts', requirePlatformAdmin, (req, res) => {
+  res.json({
+    ...require('../lib/account-cleanup').findStale(db, { inactiveDays: req.query.days }),
+    email_configured: require('../services/email').isConfigured(),
+  });
+});
+
+router.post('/cleanup/stale-accounts', requirePlatformAdmin, (req, res) => {
+  const cleanup = require('../lib/account-cleanup');
+  const { ids, days, confirm, skip_notice: skipNotice } = req.body || {};
+  const count = Array.isArray(ids) ? new Set(ids).size : 0;
+  // Deleting without the notice period is an override, and it has its own, longer phrase.
+  const phrase = skipNotice ? `DELETE ${count} WITHOUT NOTICE` : `DELETE ${count}`;
+  if (confirm !== phrase) {
+    return res.status(400).json({ error: `Type ${phrase} to confirm` });
+  }
+  const { unlinkIfUnreferenced } = require('../lib/content-files');
+  try {
+    const out = cleanup.purge(db, {
+      ids, inactiveDays: days, actingAdminId: req.user.id, skipNotice: !!skipNotice,
+      unlink: (rel, column) => unlinkIfUnreferenced(rel, '__deleted_account__', column),
+    });
+    logActivity(req.user.id, 'cleanup_stale_accounts',
+      `deleted=${out.deleted.length} skipped=${out.skipped.length} days=${out.inactive_days} files=${out.files_removed} notice=${skipNotice ? 'skipped' : 'required'} ` +
+      `emails=${out.deleted.map((d) => d.email).join(',').slice(0, 1500)}`, null, getClientIp(req));
+    res.json(out);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Cleanup failed' });
+  }
+});
+
+// Send the deletion notice ("will be deleted on <date> unless you sign in"). Outward-facing: it
+// emails customers, so it is platform-admin only and records only notices that were actually sent.
+router.post('/cleanup/stale-accounts/warn', requirePlatformAdmin, async (req, res) => {
+  const cleanup = require('../lib/account-cleanup');
+  const { sendEmail, isConfigured } = require('../services/email');
+  if (!isConfigured()) {
+    return res.status(503).json({ error: 'Email is not configured on this server, so no notice can be sent. Configure email, or delete without notice.' });
+  }
+  const appUrl = String(process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  const { ids, days, notice_days: noticeDays } = req.body || {};
+  try {
+    const out = await cleanup.warn(db, {
+      ids, inactiveDays: days, noticeDays,
+      send: async ({ user, deleteAfter }) => {
+        const mail = cleanup.noticeEmail({ user, deleteAfter, appUrl });
+        const r = await sendEmail({ to: user.email, subject: mail.subject, text: mail.text });
+        return !!(r && r.sent === true); // suppressed (dev allow-list) or failed = not warned
+      },
+    });
+    logActivity(req.user.id, 'cleanup_stale_accounts_warned',
+      `warned=${out.warned.length} skipped=${out.skipped.length} notice_days=${out.notice_days} ` +
+      `emails=${out.warned.map((w) => w.email).join(',').slice(0, 1500)}`, null, getClientIp(req));
+    res.json(out);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not send the notices' });
+  }
+});
+
 router.get('/limiter-rejections', requirePlatformAdmin, (req, res) => {
   const rows = require('../lib/limiter-telemetry').snapshot();
   res.json({
@@ -569,4 +912,10 @@ router.get('/limiter-rejections', requirePlatformAdmin, (req, res) => {
   });
 });
 
+// Plugin inventory. The sub-router 404s when PLUGINS_ENABLED is unset (P1). requirePlatformAdmin
+// runs first, so a non-admin probing this path gets the same 403 as every other /api/admin/* handler.
+router.use('/plugins', requirePlatformAdmin, require('./admin-plugins'));
+
 module.exports = router;
+module.exports.detectInstall = detectInstall;   // exported for admin-update-command.test.js
+

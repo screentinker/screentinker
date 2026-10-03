@@ -36,6 +36,54 @@ function adminIconsHtml(w) {
     </button>`;
 }
 
+/*
+ * May this person create a workspace?
+ *
+ * ⚠️ NOT `can_admin`. That flag is true for a workspace_admin too, and creating a SIBLING workspace
+ * is an organization-level act — a delegated admin handed one workspace must not be able to grow
+ * the tenant around it. The server enforces exactly this; the button only mirrors it, so that a
+ * button which is visible is a button that works.
+ */
+function canCreateWorkspace(me) {
+  if (!me) return false;
+  if (me.is_platform_admin) return true;
+  return me.current_org_role === 'org_owner' || me.current_org_role === 'org_admin';
+}
+
+/*
+ * The "New workspace" control, rendered UNDER the selector in both views.
+ *
+ * ⚠️ NOT INSIDE THE DROPDOWN. It lived there first and was wrong twice over: it is an action, not
+ * one of the things you are choosing between, so it read as a workspace you could switch to — and
+ * it was only reachable by opening a menu, which is no use at all in the single-workspace case
+ * where the menu does not exist. Under the selector it is in one predictable place whether you
+ * have one workspace or twenty.
+ *
+ * Returns '' when the caller may not create, so both views can call it unconditionally.
+ */
+function createButtonHtml(me) {
+  if (!canCreateWorkspace(me)) return '';
+  return `
+    <button class="workspace-switcher-create" type="button" data-create-workspace>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      <span>${t('switcher.create_title')}</span>
+    </button>`;
+}
+
+/** Wire every create affordance inside `scope`. Safe to call when there are none. */
+function wireCreateButtons(scope) {
+  scope.querySelectorAll('[data-create-workspace]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();          // never let it also trigger a row's switch handler
+      scope.classList.remove('open');
+      const { openWorkspaceCreateModal } = await import('./workspace-create-modal.js');
+      openWorkspaceCreateModal();
+    });
+  });
+}
+
 // Wire the manage-members + rename buttons within `scope`. `list` resolves a
 // workspace id to its object (for the rename modal). stopPropagation so a click
 // on an icon never triggers the row's switch handler.
@@ -144,8 +192,10 @@ export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
       <div class="workspace-switcher-single">
         <span class="workspace-switcher-static">${esc(only.name)}</span>
         ${adminIconsHtml(only)}
-      </div>`;
+      </div>
+      ${createButtonHtml(me)}`;
     wireAdminIcons(container, [only]);
+    wireCreateButtons(container);
     return;
   }
 
@@ -199,6 +249,7 @@ export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
       }).join('')}
       <div class="workspace-switcher-noresults" style="display:none">${t('switcher.no_matches')}</div>
     </div>
+    ${createButtonHtml(me)}
   `;
 
   const button = container.querySelector('.workspace-switcher-button');
@@ -254,6 +305,14 @@ export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
   }
 
   // ---- type-to-filter + keyboard navigation (only when the search box renders) ----
+  /*
+   * ⚠️ EVERY .workspace-switcher-item MUST CARRY data-search AND data-workspace-id. applyFilter
+   * reads `it.dataset.search` — an item without it makes `undefined.includes` THROW on the first
+   * keystroke in the search box, killing the filter for every real workspace — and the keyboard
+   * Enter path calls switchTo(dataset.workspaceId). That is why "New workspace" is a control under
+   * the selector rather than a row in here: it is an action, not one of the things being chosen
+   * between, and it belongs to neither list.
+   */
   const allItems = Array.from(container.querySelectorAll('.workspace-switcher-item'));
   const noResults = container.querySelector('.workspace-switcher-noresults');
   let highlightIdx = -1;
@@ -322,6 +381,7 @@ export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
       switchTo(item.dataset.workspaceId);
     });
   });
+  wireCreateButtons(container);
 
   // Click-outside closes the menu.
   document.addEventListener('click', (e) => {

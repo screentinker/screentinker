@@ -8,7 +8,8 @@
   <a href="https://screentinker.com">Live demo</a> ·
   <a href="https://screentinker.com/docs">API reference</a> ·
   <a href="https://screentinker.com/guides/self-hosted-digital-signage.html">Self-hosting guide</a> ·
-  <a href="https://discord.gg/utTdsrqq4Z">Discord</a>
+  <a href="https://discord.gg/utTdsrqq4Z">Discord</a> ·
+  <a href="https://youtu.be/FW8eVv8GHAw">What's new in 2.1 (video)</a>
 </p>
 
 ScreenTinker is a free, open-source **digital signage CMS** you can self-host on your own server — or run in our managed cloud. Manage TVs, video walls, and kiosks across multiple locations from one dashboard, with remote control, scheduling, playlists, and analytics. Built for retail, QSR menu boards, offices, lobbies, education, and any environment where you need centralized control over remote screens. Multi-tenant, MIT-licensed, single-developer maintained with direct contact access.
@@ -20,16 +21,25 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 **Hosted version:** [screentinker.com](https://screentinker.com) — free tier available, no credit card required.
 **Guides:** [What is digital signage?](https://screentinker.com/guides/what-is-digital-signage.html) · [Open-source digital signage](https://screentinker.com/guides/open-source-digital-signage.html) · [Self-hosting guide](https://screentinker.com/guides/self-hosted-digital-signage.html)
 **Community:** [Discord](https://discord.gg/utTdsrqq4Z)
+**What's new in 2.1:** [watch the release video](https://youtu.be/FW8eVv8GHAw) — every scene in it is a real ScreenTinker slide, played on a real ScreenTinker screen.
 
 ## Features
 
 - **Playlists** — first-class playlist objects: create, reorder, set per-item duration, share one playlist across multiple displays; draft/publish workflow with revert-to-published
+- **Slides** — a built-in slide editor: build decks of slides with templates, fields, and per-element entrance animations, an optional voiceover per slide and a music bed across the deck, then publish a deck straight to a playlist. (The 2.1 launch [video](https://youtu.be/FW8eVv8GHAw) is itself a ScreenTinker deck.)
 - **Device groups** — organize displays into groups, assign a playlist to an entire group, send bulk commands (reboot, screen on/off, launch, update, shutdown), schedule content group-wide
 - **Multi-zone layouts** — split screens into zones with drag-and-drop editor; 7 built-in templates (fullscreen, split, L-bar, PiP, grid)
 - **Video walls** — combine multiple displays into one screen with bezel compensation, device rotation, and leader-based sync
 - **Remote control** — live view, touch injection, key input, power on/off
+- **Live video & Talk** — optional WebRTC path via a [go2rtc](https://github.com/AlexxIT/go2rtc) sidecar: sub-second live video of what a screen is actually playing (one screen watched by many dashboards without re-encoding), plus **Talk** — one-way announce or two-way intercom to a single screen, and one-way PA broadcast to a whole group or workspace, with an optional operator webcam shown fullscreen. Off by default and enabled per organization; an org can bring its own TURN/STUN. See [`docs/live-video.md`](docs/live-video.md)
+- **Live TV / IPTV & camera feeds** — play a **live stream on a screen** as an ordinary playlist item: an IPTV/TV channel over **HLS** (`.m3u8`, every player type), or an **RTSP** camera/NVR on native Android (lowest latency). The screen opens the URL itself, so it can be a LAN address and the server never ingests or restreams it — a channel on 40 screens is 40 pulls from your source, not 40 through ScreenTinker. Capability-gated per transport, so a player only receives a stream it can decode. See [`docs/live-playback.md`](docs/live-playback.md)
 - **Scheduling** — visual weekly calendar with recurrence rules (daily/weekly/monthly), priority-based conflict resolution, both device-level and group-level schedules (device-level overrides win over group-level), timezone support
+- **Resumable uploads** — large files upload in 5 MiB chunks, one file at a time, so a dropped connection costs one chunk instead of the whole file and progress **survives a page reload**. This is what makes uploading workable on a slow or distant connection: a single-request upload has to finish inside the shortest timeout between browser and server (behind a CDN, roughly two minutes), and that ceiling does not scale with file size. Declaring the size up front also means a workspace near its storage limit is told before the upload rather than after
+- **Device-side REST** — make a **screen** perform an HTTP request from **its own network**, so a LAN target is reachable at all: a PLC, a sensor, a local Home Assistant on the shop's `192.168.x.x` that the ScreenTinker server has no route to. Nothing is proxied through the server. Up to 64 KiB of the response comes back for the dashboard to show. ⚠️ Only `http://`/`https://` — `file://` and `content://` are refused, because the boundary worth defending is not "which host" but "is this still an HTTP fetch or has it become a local file read". Cloud metadata addresses are refused too, a hostname that resolves to one is caught by re-checking and pinning the resolved address, and redirects are not followed. ⚠️ Deliberately **not** a mesh command: a hub must not be able to aim someone else's panel at addresses inside their private network. See [`docs/android-troubleshooting.md`](docs/android-troubleshooting.md#device-side-rest-http_request)
+- **Display power schedules** — blank the **screen** on a weekly clock ("off 22:00–06:00, Mon–Fri") to save backlight hours, per device or per group, with device-level overriding group-level as everywhere else. The panel keeps running the whole time — playlists, downloads, heartbeats and remote control all continue, and waking it is instant — so this is **not** the same as switching the device off, which ScreenTinker deliberately does not schedule (see [`docs/android-troubleshooting.md`](docs/android-troubleshooting.md#scheduled-screen-off-vs-device-off)). Windows are evaluated **on the player** against its own timezone, so a screen sleeps and wakes on time with the network down. Android today; other players accept and store the schedule and report it as unsupported until their local evaluator lands
 - **Widgets** — clocks, weather, RSS tickers, text/HTML, webpages, social feeds, and Directory Board (scrolling lobby tenant/room/staff directories with dark/light themes, category management, and anti-burn-in motion)
+- **Data sources** — bind live external data into a slide or widget with `{{ds:slug.field}}`: an iCal/Webcal calendar or any JSON-over-HTTP feed, refreshed on its own schedule. Secret fields in a source's config are encrypted at rest
+- **Meeting-room signs** — point a slide at a room's calendar to show Busy / Available, what's on now, and when the room frees up — in every dashboard language, defaulting to English
 - **Kiosk mode** — interactive touchscreen interfaces
 - **Proof-of-play** — per-content and per-device analytics, hourly/daily breakdowns, CSV export for ad verification
 - **Device telemetry** — battery, storage, RAM, CPU, Wi-Fi signal strength and uptime reported by the players, plus both of a display's addresses: its **local (LAN) IP** as the player sees itself, and the public/WAN address the server saw it connect from. Wi-Fi network name is included where the platform allows it (Android 10+ needs an opt-in location permission — see Device Setup)
@@ -37,9 +47,11 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 - **Mobile-responsive** — full management dashboard and landing page work on phones and tablets
 - **Workspaces** — multi-tenant data model: organizations contain workspaces, workspaces contain devices/content/playlists/schedules; users can be members of multiple workspaces and switch via a dropdown in the sidebar
 - **Member roles** — six-level hierarchy (platform_admin / org_owner / org_admin / workspace_admin / workspace_editor / workspace_viewer) gated at every API route
+- **Approval & version history** — optional per-workspace review before a change goes live, with retained past versions of content, playlists, and slides and one-click restore (restoring never changes what is currently playing until you publish)
 - **Alerts** — email notifications via Microsoft Graph when devices go offline; built-in spam protection (2h dedup, 24h long-offline cutoff, sequential send pattern); per-user opt-out via Settings → Account
 - **White-label** — custom branding, colors, logo, favicon, CSS, and domain
 - **Content management** — folder organization, remote URL content (no upload needed), YouTube embeds, video duration detection via ffprobe, automatic thumbnail generation, Unicode-safe filenames (NFC normalization + UTF-8 multipart decoding)
+- **PDF to playlist** — drop in a PDF and every page becomes a full-screen slide in a playlist, rendered in your browser (no server-side PDF dependency)
 - **Export/Import** — v2 format with playlists, device groups, schedules, and optional media bundling (ZIP); backward-compatible v1 import with automatic playlist migration
 - **Device authentication** — per-device tokens for secure WebSocket connections; devices authenticate on every reconnect
 - **Account management** — in-app password change, profile editing, email-based password reset
@@ -47,6 +59,9 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 - **Built-in billing** — Stripe integration for SaaS subscriptions (optional)
 - **Auto-update** — OTA updates pushed to devices automatically
 - **Public REST API** — scoped personal access tokens (`read` / `write` / `full`) over the same resources the dashboard uses, workspace-confined by construction. Documented as an OpenAPI 3.1 contract ([`docs/openapi.yaml`](docs/openapi.yaml)) and browsable on any instance at `/docs` (served locally, no CDN, so it works air-gapped)
+- **Node Mesh** — link ScreenTinker servers together so one dashboard can watch many. A site server reports upward to a hub over a consent-scoped link; a hub can relay content back down to a customer's server. Data flows up by default and nothing flows down uninvited: every write is a *request* the receiving server decides on against its own grant. See [Node Mesh](#node-mesh) below
+- **Triggers** — let an external system interrupt a playlist with different content, fired over the LAN by HTTP POST or a UDP datagram (`ST1 <secret> <token>`). Resolved entirely on the device, so an evacuation message still appears with the WAN down. Targets a published playlist whose items are all cached locally, checked when you save rather than when it fires
+- **Embedded & E-Paper Displays** — server-side renderer for low-power MCUs (ESP32-S3, Seeed Studio reTerminal Sticky, Waveshare e-paper, SPI TFTs). Delivers pre-dithered 1-bit bitstreams, RGB565, BMP, or PNG over HTTP with ETag/304 caching and deep sleep coordination. See [`docs/embedded-renderer.md`](docs/embedded-renderer.md)
 - **Activity log** — full audit trail of user and system actions
 
 ## Architecture
@@ -84,6 +99,48 @@ Users who are members of more than one workspace see a dropdown in the sidebar h
 
 Schema migrations run automatically the first time the server starts after a git pull. **Self-hosters never need to run a manual migration command.** On detecting a pre-multi-tenancy database, the server takes a timestamped snapshot (`server/db/remote_display.pre-migration-<timestamp>.db`), runs the Phase 1 migration (creates `organizations` / `workspaces` / `workspace_members` tables, backfills `workspace_id` on every resource, one auto-created Default workspace per existing user), then continues startup. If the migration fails the server prints the restore command and exits.
 
+### Node Mesh
+
+Two or more ScreenTinker servers can be linked, so an MSP, a franchise group or a multi-site estate
+can see everything from one place without merging anybody's data into one tenant.
+
+**It is off until you turn it on.** With `MESH_ACCEPT_ENROLLMENT` and `MESH_ALLOW_UPLINK` both unset
+— the default — there are no mesh routes at all. Not routes that return empty: no routes. An
+ordinary install cannot tell the feature exists.
+
+| Variable | Meaning |
+| --- | --- |
+| `MESH_ACCEPT_ENROLLMENT` | This server may host others (it can hand out pairing codes) |
+| `MESH_ALLOW_UPLINK` | This server may report to another one |
+| `MESH_MAX_DEPTH` | How deep a chain may be (default `2`) |
+
+**Pairing** is a one-time code, generated by the server that will *receive* the data, redeemed on
+the one that will send it. The side handing over the code chooses what is shared — screen health,
+identity, playback history, screenshots, diagnostics — because the grant belongs to whoever owns
+the data, never to whoever asked for it.
+
+**Data travels up. Nothing travels down uninvited.** A hub holds a mirror of what its children
+report, and it cannot change what plays on their screens. Where a hub *can* act — pushing content
+to a customer's server, or asking a screen to reboot — it is a request, and the receiving server
+applies its own grant, its own disk budget and its own rules before doing anything. It may refuse,
+and the hub is told so. A relay can pass content on to a server further down only when all three
+parties have agreed: the content's owner marked it relayable, the relay operator opted that client
+in, and the receiving server's own grant allows it.
+
+**Naming your servers.** Every server has a name that its peers display. It defaults to the
+machine's hostname, which is fine until you have three of them called `srv1` — so an instance owner
+can change it under **Servers → Rename**. The new name reaches every peer on the next report; it
+travels upward only, so nobody above can rename your server for you. Names are labels, never
+identifiers: routing and permissions key on the node id, which never changes.
+
+**A replica** is a server that holds a live copy of another server's workspaces and serves their
+dashboards, so operators far from the primary — or many of them — read locally while every change
+still goes to the one server that owns the data. It is the same pairing with one more grant; see
+[docs/scale-out.md](docs/scale-out.md).
+
+**Topology** shows the estate as a tree: which servers are direct neighbours, which are further
+away, how many hops a screen's data crosses to reach you, and which server relayed it.
+
 ### Data flow
 
 - **Android / web players** → device-namespace WebSocket → server. Authenticated per-device with a long-lived device token. Each device joins a room keyed on its `device_id`.
@@ -100,7 +157,12 @@ Anything with a reasonably modern browser can be a display without installing an
 `/player`. The native players add what a browser cannot: the **Android APK** gives you unattended boot,
 OTA self-update, remote power and touch injection, and a content cache that survives a reboot; the
 **Tizen `.wgt`** gives you an installed app that launches itself on the TV. Tizen does not
-self-update — new versions are installed the same way the first one was.
+self-update — new versions are installed the same way the first one was. The **webOS `.ipk`**
+is the same idea for LG signage panels, installed from USB or an SI server with no vendor
+signature, and it does self-update; see [docs/webos-player.md](docs/webos-player.md). The
+**Vega `.vpkg`** is the player for Fire TV Stick 4K Select and Fire TV Stick HD (2026), which are
+not Android — the APK will not install. It runs the web player inside Vega's WebView. It is not
+a kiosk and it has not been certified on hardware; see [docs/vega-player.md](docs/vega-player.md).
 
 > **BrightSign** runs the unmodified browser player (verified on Series 5 / Chromium 120) and needs
 > no separate build. One caveat worth knowing before you rely on it: BrightSign's HTML widget does
@@ -157,6 +219,16 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `MAX_FILE_SIZE` | Largest upload the server will accept. Bytes, or a suffix (`2GB`, `1500MB`). **A reverse proxy caps this independently** — see below. | `500MB` |
 | `COMMAND_QUEUE_TTL_MS` | How long the server holds commands and playlist-updates for a device that's offline at emit time (ms). Flushed in order on reconnect within this window; dropped past TTL. | `30000` |
 | `OTA_ALLOW_MANAGED_DEVICES` | Let Android players self-update even when an MDM/DPC owns the device. Off by default — see below before enabling. | `0` |
+| `MESH_ACCEPT_ENROLLMENT` | Let other ScreenTinker servers report to this one. Off means the hub API is not mounted at all — see [Node Mesh](#node-mesh). | `false` |
+| `MESH_ALLOW_UPLINK` | Let this server report to another one. | `false` |
+| `MESH_MAX_DEPTH` | Longest chain of linked servers. | `2` |
+| `MESH_MIN_NODE_VERSION` | Oldest peer version this server will pair with. | `2.0.0-0` |
+| `PRIMARY_URL` | On a replica: where writes for copied workspaces are forwarded. No default — unset, a replica is read-only. See [Scale-out](docs/scale-out.md). | unset |
+| `PRIMARY_REDIRECT` | Answer those writes with a `307` to `PRIMARY_URL` instead of proxying. Only behind one load balancer. | `false` |
+| `PLUGINS_ENABLED` | Load the plugin system (widget types, data-source resolvers, optional routes). Off by default and invisible — see [Plugins](docs/plugins.md). | unset |
+| `PLUGINS_DIR` | Operator-installed plugins. Survives `git pull`. | `$DATA_DIR/plugins` |
+| `PLUGIN_INBOX_DIR` | Quarantine for uploaded plugin zips. Not a plugin root. | `$DATA_DIR/plugin-inbox` |
+| `BUNDLED_PLUGINS_DIR` | Read-only sample plugins shipped with the app. | `plugins/` in the repo |
 
 #### Android players under an MDM
 
@@ -272,6 +344,15 @@ check the proxy first.
 
 All integrations are optional. The app works fully without any of them.
 
+#### Plugins (self-hosted)
+
+Off by default. Set `PLUGINS_ENABLED=true` to load trusted local plugins from `plugins/` (bundled
+samples) and `$DATA_DIR/plugins` (yours). Platform admin enables each plugin; a restart loads it.
+A widget plugin is an HTML renderer on the existing player path — no APK rebuild. Editors can
+upload a `.zip`; it sits in quarantine until platform admin approves that exact tree hash, then
+enable + restart still required. See **[docs/plugins.md](docs/plugins.md)**. Bundled samples:
+`plugins/countdown` (widget), `plugins/json-api` (data source), `plugins/webhook` (hooks).
+
 #### AI Content Design (local or cloud)
 
 The Content Designer can turn a prompt into a finished sign — layout + copy from
@@ -279,6 +360,45 @@ an LLM, and optional background/foreground imagery from an image model. Each
 workspace brings its own **OpenAI-compatible** endpoints (cloud, or fully local
 and free via Ollama + stable-diffusion.cpp). See
 **[docs/local-ai-setup.md](docs/local-ai-setup.md)**.
+
+#### Live Video & Talk (WebRTC via go2rtc)
+
+Off by default. With a [go2rtc](https://github.com/AlexxIT/go2rtc) sidecar and a
+publishing player, the dashboard shows **sub-second live video** of what a screen
+is playing (one screen can be watched by many dashboards without asking the device
+to encode a separate stream per viewer), and operators can **Talk** to screens:
+one-way announce or two-way intercom to a single display, one-way PA broadcast to a
+whole group or workspace, and an optional operator webcam shown fullscreen on the
+screen. Without go2rtc, nothing changes — live view stays the screenshot stream.
+
+Enable the sidecar and set `LIVE_VIDEO_ENABLED=true` + the `GO2RTC_*` environment
+(TURN/STUN as needed); Talk additionally needs the `TALK_ENABLED=true` master switch,
+after which a platform admin turns it on **per organization** under
+**Admin → Organizations**. An org can also set its **own ICE (STUN/TURN) servers**
+there, which override the sidecar's for that org's video and talk. Full setup,
+ports, and the WebRTC/TURN/Cloudflare gotchas are in
+**[docs/live-video.md](docs/live-video.md)**.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LIVE_VIDEO_ENABLED` | Master switch for live video. Also enable per workspace + per device. | `false` |
+| `TALK_ENABLED` | Master switch for Talk (voice intercom / PA). Then enable per organization under Admin → Organizations. | `false` |
+| `GO2RTC_URL` | The sidecar's API, reached over the compose network only (never exposed to the browser). | `http://go2rtc:1984` |
+| `GO2RTC_API_TOKEN` | Shared secret if you protect go2rtc's API; must match `go2rtc.yaml`. | _(none)_ |
+| `GO2RTC_STUN_URLS` | Comma-separated STUN servers; a public STUN helps most NATs. | `stun:stun.l.google.com:19302` |
+| `GO2RTC_TURN_URL` / `_USER` / `_PASS` | TURN relay, only needed when UDP 8555 and host candidates are both unreachable. | _(none)_ |
+
+Per-org ICE (STUN/TURN) set in the dashboard overrides `GO2RTC_STUN_URLS` / `GO2RTC_TURN_*` for that org.
+
+**Patched go2rtc for VP8/VP9 (emulator / no-H264 publishers).** Stock go2rtc accepts
+**only H264/H265** on WebRTC ingest, so a publisher with no H264 encoder gets its
+video rejected and no frames flow. Every browser and virtually every real phone
+offers H264, so this is invisible in practice — the one environment it bites is the
+**Android emulator** (its lone H264 codec is a software encoder libwebrtc excludes,
+so it offers VP8/VP9/AV1 only). If you need to publish from such a device, build the
+VP8/VP9-capable image in [`docker/go2rtc-vp8/`](docker/go2rtc-vp8/README.md) (a
+one-function patch adding VP8/VP9 to the receive set) and use it in place of
+`alexxit/go2rtc`. Real hardware does not need it.
 
 #### Stripe (Billing)
 
@@ -907,7 +1027,20 @@ and `--password-store=basic` stops it asking for a keyring password no kiosk has
 
 Blanking and cursor-hiding belong to the compositor on Wayland. The launcher calls `wlopm` when it
 is present; if your image does not ship it, set the equivalent in your compositor's config
-(`~/.config/wayfire.ini` `[idle]` for wayfire, or the labwc equivalent).
+(`~/.config/wayfire.ini` `[idle]` for wayfire).
+
+**labwc** (the compositor on newer Pi OS) has no hide-cursor setting, only a `HideCursor` *action* —
+so the installer binds it to Super+H in `~/.config/labwc/rc.xml` and the launcher presses that once
+at session start with `wtype`. Two things make this fiddlier than it looks:
+
+- ⚠️ **The root element must be `<labwc_config>`.** Pi OS ships an rc.xml that is a stub rooted at
+  `<openbox_config/>`, and labwc ignores *every* keybinding while that root is there
+  ([labwc#3190](https://github.com/labwc/labwc/discussions/3190)) — with no error to say so. The
+  installer replaces that stub (keeping a `.screentinker-bak`) and merges into a real
+  `<labwc_config>` rather than overwriting it.
+- **Changes need a reboot or `labwc --reconfigure`** — labwc re-reads rc.xml only on SIGHUP, so
+  writing the file while a session is running does nothing until one or the other happens. The
+  installer attempts `--reconfigure` and the reboot it asks for at the end covers the rest.
 
 **A white page on every boot but the first** was Chromium restoring a session it believed crashed —
 a kiosk is killed by shutdown and never exits cleanly, so it came back with a restore surface on
@@ -993,12 +1126,14 @@ server/           Node.js/Express backend
   services/       Background services (heartbeat, scheduler, alerts, activity logging)
   ws/             WebSocket handlers (device namespace + dashboard namespace)
   player/         Web-based display player
+plugins/          Bundled plugins (off unless PLUGINS_ENABLED=true)
 frontend/         Static SPA dashboard
   js/views/       View components (dashboard, playlists, groups, schedules, etc.)
   js/utils.js     Shared utilities (HTML escaping)
   css/            Stylesheets
   legal/          Terms, privacy, licenses
 android/          Android TV/tablet player app (Kotlin, ExoPlayer)
+vega/             Vega OS player for Fire TV Stick 4K Select and HD (2026)
 scripts/          Device setup scripts + admin recovery
 ```
 

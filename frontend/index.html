@@ -39,146 +39,271 @@
       </div>
       <!-- #38: apply cached white-label before first paint (no ScreenTinker flash) -->
       <script src="/js/brand-prime.js"></script>
+      <!-- Client-error reporter. Plain script, not a module: a module is deferred and would
+           install its handlers after js/app.js has already booted and thrown. -->
+      <script src="/js/error-reporter.js"></script>
       <div class="workspace-switcher" id="workspaceSwitcher"></div>
     </div>
     <ul class="nav-links">
-      <li><a href="#/" class="nav-link active" data-view="dashboard">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-          <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
-        </svg>
-        <span>Displays</span>
-      </a></li>
-      <li><a href="#/content" class="nav-link" data-view="content">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-          <polyline points="13 2 13 9 20 9"/>
-        </svg>
-        <span>Content</span>
-      </a></li>
-      <li><a href="#/playlists" class="nav-link" data-view="playlists">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
-          <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-        </svg>
-        <span>Playlists</span>
-      </a></li>
-      <li><a href="#/layouts" class="nav-link" data-view="layouts">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
-        </svg>
-        <span>Layouts</span>
-      </a></li>
-      <li><a href="#/widgets" class="nav-link" data-view="widgets">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/>
-          <rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/>
-        </svg>
-        <span>Widgets</span>
-      </a></li>
-      <li><a href="#/schedule" class="nav-link" data-view="schedule">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-        </svg>
-        <span>Schedule</span>
-      </a></li>
-      <li><a href="#/walls" class="nav-link" data-view="walls">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="9" height="8" rx="1"/><rect x="13" y="3" width="9" height="8" rx="1"/>
-          <rect x="2" y="13" width="9" height="8" rx="1"/><rect x="13" y="13" width="9" height="8" rx="1"/>
-        </svg>
-        <span>Video Walls</span>
-      </a></li>
-      <!-- ⚠️ A top-level section, NOT a workspace. Nodes are not screens and must not join
-           the Displays list; and remote workspaces deliberately never enter the workspace
-           switcher, which assumes a local writable workspace. -->
-      <li><a href="#/triggers" class="nav-link" data-view="triggers">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-        </svg>
-        <span data-i18n="nav.triggers">Triggers</span>
-      </a></li>
-      <li id="serversNavItem" style="display:none"><a href="#/servers" class="nav-link" data-view="servers">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="15" width="20" height="6" rx="1"/>
-          <line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
-        </svg>
-        <span data-i18n="nav.servers">Servers</span>
-      </a></li>
-      <li><a href="#/reports" class="nav-link" data-view="reports">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
-        </svg>
-        <span>Reports</span>
-      </a></li>
-      <li><a href="#/kiosk" class="nav-link" data-view="kiosk">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
-          <circle cx="12" cy="10" r="1"/>
-        </svg>
-        <span>Kiosk</span>
-      </a></li>
-      <li><a href="#/designer" class="nav-link" data-view="designer">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/>
-          <circle cx="11" cy="11" r="2"/>
-        </svg>
-        <span>Designer</span>
-      </a></li>
-      <li><a href="#/activity" class="nav-link" data-view="activity">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-        </svg>
-        <span>Activity</span>
-      </a></li>
-      <!-- Teams nav hidden while the feature is being redesigned as a user-grouping
-           primitive within Workspaces. Route + view kept in place so any existing
-           bookmark still loads (and shows the 503 from the API). -->
-      <li style="display:none"><a href="#/teams" class="nav-link" data-view="teams">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-        </svg>
-        <span>Teams</span>
-      </a></li>
-      <!-- Members: inviting a colleague is a core action, and the only route to it used to be
-           an unlabelled icon beside the workspace name. #/members resolves to the ACTIVE
-           workspace so this link can stay static. -->
-      <li><a href="#/members" class="nav-link" data-view="members">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-        </svg>
-        <span>Members</span>
-      </a></li>
-      <li><a href="#/help" class="nav-link" data-view="help">
+      <!-- Grouped by the job an operator is doing (components/nav-groups.js): the DEVICES they run,
+           PUBLISH the core loop (content -> playlists -> layouts -> schedule -> approval), CREATE new
+           things, AUTOMATE, INSIGHTS, and WORKSPACE admin. The <li>s keep their ids and data-view,
+           so app.js shows, hides and relabels them exactly as before. -->
+      <li class="nav-group" data-group="devices">
+        <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroup-devices">
+          <span class="nav-group-label" data-i18n="nav.group.devices">Devices</span>
+          <span class="nav-group-badge" hidden></span>
+          <svg class="nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="nav-group-items" id="navGroup-devices">
+          <li><a href="#/" class="nav-link active" data-view="dashboard">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+            </svg>
+            <span>Displays</span>
+          </a></li>
+          <li><a href="#/walls" class="nav-link" data-view="walls">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="9" height="8" rx="1"/><rect x="13" y="3" width="9" height="8" rx="1"/>
+              <rect x="2" y="13" width="9" height="8" rx="1"/><rect x="13" y="13" width="9" height="8" rx="1"/>
+            </svg>
+            <span>Video Walls</span>
+          </a></li>
+          <li id="serversNavItem" style="display:none"><a href="#/servers" class="nav-link" data-view="servers">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="15" width="20" height="6" rx="1"/>
+              <line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+            </svg>
+            <span data-i18n="nav.servers">Servers</span>
+          </a></li>
+          <li id="nocNavItem" style="display:none"><a href="#/noc" class="nav-link" data-view="noc">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>
+              <line x1="12" y1="7" x2="5" y2="17"/><line x1="12" y1="7" x2="19" y2="17"/>
+            </svg>
+            <span data-i18n="nav.noc">NOC</span>
+          </a></li>
+        </ul>
+      </li>
+      <li class="nav-group" data-group="publish">
+        <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroup-publish">
+          <span class="nav-group-label" data-i18n="nav.group.publish">Publish</span>
+          <span class="nav-group-badge" hidden></span>
+          <svg class="nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="nav-group-items" id="navGroup-publish">
+          <li><a href="#/content" class="nav-link" data-view="content">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+              <polyline points="13 2 13 9 20 9"/>
+            </svg>
+            <span>Content</span>
+          </a></li>
+          <li><a href="#/playlists" class="nav-link" data-view="playlists">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span>Playlists</span>
+          </a></li>
+          <li><a href="#/layouts" class="nav-link" data-view="layouts">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
+            </svg>
+            <span>Layouts</span>
+          </a></li>
+          <li><a href="#/schedule" class="nav-link" data-view="schedule">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span>Schedule</span>
+          </a></li>
+          <li><a href="#/reviews" class="nav-link" data-view="reviews">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 11l3 3L22 4"></path>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+            </svg>
+            <span>Reviews</span><span id="reviewsNavBadge" class="member-badge" style="display:none;margin-left:auto"></span>
+          </a></li>
+        </ul>
+      </li>
+      <li class="nav-group" data-group="create">
+        <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroup-create">
+          <span class="nav-group-label" data-i18n="nav.group.create">Create</span>
+          <span class="nav-group-badge" hidden></span>
+          <svg class="nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="nav-group-items" id="navGroup-create">
+          <li><a href="#/templates" class="nav-link" data-view="templates">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
+              <rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>
+            </svg>
+            <span>Templates</span><span class="nav-new-pill" data-new-key="templates" data-i18n="nav.new" hidden>New</span>
+          </a></li>
+          <li><a href="#/slides" class="nav-link" data-view="slides">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="4" width="14" height="10" rx="1"/><path d="M8 18h12"/><path d="M20 8v10"/>
+            </svg>
+            <span>Slides</span>
+          </a></li>
+          <li><a href="#/widgets" class="nav-link" data-view="widgets">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/>
+              <rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/>
+            </svg>
+            <span>Widgets</span>
+          </a></li>
+          <li><a href="#/kiosk" class="nav-link" data-view="kiosk">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
+              <circle cx="12" cy="10" r="1"/>
+            </svg>
+            <span>Kiosk</span>
+          </a></li>
+          <li class="nav-legacy"><a href="#/designer" class="nav-link" data-view="designer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/>
+              <circle cx="11" cy="11" r="2"/>
+            </svg>
+            <span>Designer</span>
+          </a></li>
+        </ul>
+      </li>
+      <li class="nav-group" data-group="automate">
+        <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroup-automate">
+          <span class="nav-group-label" data-i18n="nav.group.automate">Automate</span>
+          <span class="nav-group-badge" hidden></span>
+          <svg class="nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="nav-group-items" id="navGroup-automate">
+          <li><a href="#/triggers" class="nav-link" data-view="triggers">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span data-i18n="nav.triggers">Triggers</span>
+          </a></li>
+          <li><a href="#/data-sources" class="nav-link" data-view="data-sources">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+            </svg>
+            <span>Data Sources</span>
+          </a></li>
+        </ul>
+      </li>
+      <li class="nav-group" data-group="insights">
+        <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroup-insights">
+          <span class="nav-group-label" data-i18n="nav.group.insights">Insights</span>
+          <span class="nav-group-badge" hidden></span>
+          <svg class="nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="nav-group-items" id="navGroup-insights">
+          <li><a href="#/reports" class="nav-link" data-view="reports">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            <span>Reports</span>
+          </a></li>
+          <li><a href="#/activity" class="nav-link" data-view="activity">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            <span>Activity</span>
+          </a></li>
+        </ul>
+      </li>
+      <li class="nav-group" data-group="workspace">
+        <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroup-workspace">
+          <span class="nav-group-label" data-i18n="nav.group.workspace">Workspace</span>
+          <span class="nav-group-badge" hidden></span>
+          <svg class="nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="nav-group-items" id="navGroup-workspace">
+          <li><a href="#/members" class="nav-link" data-view="members">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span>Members</span>
+          </a></li>
+          <li style="display:none"><a href="#/teams" class="nav-link" data-view="teams">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span>Teams</span>
+          </a></li>
+          <li><a href="#/settings" class="nav-link" data-view="settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span>Settings</span>
+          </a></li>
+          <li id="billingNavItem"><a href="#/billing" class="nav-link" data-view="billing">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+              <line x1="1" y1="10" x2="23" y2="10"/>
+            </svg>
+            <span>Subscription</span>
+          </a></li>
+        </ul>
+      </li>
+      <!-- Platform: instance-wide administration, platform admins only (app.js shows .platform-nav).
+           Everything in the groups above is scoped to the current organization and workspace. -->
+      <li class="nav-group nav-group-platform" data-group="platform">
+        <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroup-platform">
+          <span class="nav-group-label" data-i18n="nav.group.platform">Platform</span>
+          <span class="nav-group-badge" hidden></span>
+          <svg class="nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="nav-group-items" id="navGroup-platform">
+          <li class="platform-nav" style="display:none"><a href="#/platform/overview" class="nav-link" data-view="platform-overview">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+            <span data-i18n="nav.platform.overview">Overview</span>
+          </a></li>
+          <li class="platform-nav" style="display:none"><a href="#/platform/users" class="nav-link" data-view="platform-users">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span data-i18n="nav.platform.users">Users</span>
+          </a></li>
+          <li class="platform-nav" style="display:none"><a href="#/platform/orgs" class="nav-link" data-view="platform-orgs">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1"/></svg>
+            <span data-i18n="nav.platform.orgs">Organizations</span>
+          </a></li>
+          <li class="platform-nav" style="display:none"><a href="#/platform/billing" class="nav-link" data-view="platform-billing">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.5"/></svg>
+            <span data-i18n="nav.platform.billing">Plans &amp; sales</span>
+          </a></li>
+          <li class="platform-nav" style="display:none"><a href="#/platform/branding" class="nav-link" data-view="platform-branding">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 1 0 0 20c.9 0 1.5-.7 1.5-1.5 0-.4-.1-.7-.4-1-.2-.3-.4-.6-.4-1 0-.8.7-1.5 1.5-1.5H16a6 6 0 0 0 6-6c0-4.4-4.5-8-10-8z"/></svg>
+            <span data-i18n="nav.platform.branding">Branding</span>
+          </a></li>
+          <li class="platform-nav" style="display:none"><a href="#/platform/system" class="nav-link" data-view="platform-system">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><path d="M6 6.5h.01M6 17.5h.01"/></svg>
+            <span data-i18n="nav.platform.system">System</span>
+          </a></li>
+          <li class="platform-nav" style="display:none"><a href="#/platform/cleanup" class="nav-link" data-view="platform-cleanup">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/></svg>
+            <span data-i18n="nav.platform.cleanup">Cleanup</span>
+          </a></li>
+          <li class="platform-nav" style="display:none"><a href="#/platform/plugins" class="nav-link" data-view="platform-plugins">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5"/></svg>
+            <span data-i18n="nav.platform.plugins">Plugins</span>
+          </a></li>
+        </ul>
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <a href="#/help" class="nav-link nav-link-utility" data-view="help">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
         </svg>
         <span>Help</span>
-      </a></li>
-      <li><a href="#/settings" class="nav-link" data-view="settings">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-        <span>Settings</span>
-      </a></li>
-      <li id="billingNavItem"><a href="#/billing" class="nav-link" data-view="billing">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
-          <line x1="1" y1="10" x2="23" y2="10"/>
-        </svg>
-        <span>Subscription</span>
-      </a></li>
-      <li id="adminNavItem" style="display:none"><a href="#/admin" class="nav-link" data-view="admin">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-        </svg>
-        <span>Admin</span>
-      </a></li>
-    </ul>
-    <div class="sidebar-footer">
+      </a>
+
       <div class="connection-status" id="connectionStatus">
         <span class="status-dot offline"></span>
         <span>Disconnected</span>
@@ -210,8 +335,22 @@
         </button>
       </div>
       <div class="modal-body">
-        <p class="modal-description" style="margin-bottom:16px" data-i18n="add_display.intro">Enter the 6-digit pairing code shown on the display.</p>
-        <div class="form-group">
+       <div id="addDeviceForm">
+        <p class="modal-description" style="margin-bottom:16px" id="addDeviceIntro" data-i18n="add_display.intro">Enter the 6-digit pairing code shown on the display.</p>
+        <!--
+          #313 — the escape hatch for a player that cannot remember it was paired. A vMix browser
+          input deletes its whole profile when vMix closes, so pairing it the ordinary way works
+          exactly once. Ticking this creates the display here and hands back a URL that carries its
+          identity, so there is no code to type and nothing for the player to forget.
+        -->
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:16px;cursor:pointer">
+          <input type="checkbox" id="addDeviceNoStorage" style="margin-top:3px">
+          <span>
+            <span style="font-size:13px" data-i18n="add_display.no_storage">This player can't stay paired (vMix browser input, resetting kiosk)</span>
+            <span style="display:block;font-size:11px;color:var(--text-muted,#64748b);margin-top:2px" data-i18n="add_display.no_storage_hint">Creates the display here and gives you a URL to paste into the player instead of a pairing code.</span>
+          </span>
+        </label>
+        <div class="form-group" id="pairingCodeGroup">
           <label data-i18n="add_display.pairing_code">Pairing Code</label>
           <input type="text" id="pairingCodeInput" maxlength="6" pattern="[0-9]{6}" placeholder="000000" class="pairing-input">
         </div>
@@ -240,7 +379,18 @@
               &#128187; <span data-i18n="add_display.windows">Windows</span>
             </a>
           </div>
-           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:8px;line-height:1.5"><span data-i18n="add_display.smart_tv_prefix">Smart TVs (LG/Samsung): open the built-in browser and navigate to</span> <code id="addDeviceSmartTvUrl" style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px;white-space:nowrap">/player</code></p>
+           <!--
+             Every player this instance can hand out, and a setup guide for each. The four buttons
+             above cover the common cases; a BrightSign, an LG panel or a Samsung panel needs a
+             different artifact, and an operator holding one of those used to have nowhere to go
+             from here but the marketing site or a GitHub release page. /download is built by this
+             server, so the BrightSign archive it serves already has THIS address inside it.
+           -->
+           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:10px;line-height:1.6">
+             <a href="/download/" target="_blank" style="color:var(--primary,#3b82f6);font-weight:600" data-i18n="add_display.all_downloads">All players &amp; downloads</a>
+             <span data-i18n="add_display.all_downloads_hint">&mdash; BrightSign, LG webOS, Samsung Tizen and more, each with a setup guide.</span>
+           </p>
+           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:6px;line-height:1.5"><span data-i18n="add_display.smart_tv_prefix">Smart TVs (LG/Samsung): open the built-in browser and navigate to</span> <code id="addDeviceSmartTvUrl" style="background:var(--bg-input,#0f172a);padding:1px 4px;border-radius:3px;white-space:nowrap">/player</code></p>
         </div>
         <div style="border-top:1px solid var(--border,#1e293b);margin-top:16px;padding-top:16px">
           <p style="font-size:12px;color:var(--text-muted,#64748b);margin-bottom:10px;font-weight:500" data-i18n="add_display.owner_prompt">Provisioning a fresh / factory-reset Android panel? Enroll it as device owner for silent updates, reboot &amp; kiosk:</p>
@@ -248,6 +398,22 @@
             &#128242; <span data-i18n="add_display.owner_qr_btn">Show device-owner QR</span>
           </button>
         </div>
+       </div>
+       <!--
+         #313 — the URL shown after creating a display for a player that cannot stay paired.
+         A SIBLING of the form, not a replacement for it: this markup is in the page once and the
+         dialog is reopened from it every time, so overwriting the body left the dialog permanently
+         stuck on this panel — and took normal pairing with it, because the open handler clears
+         inputs that were no longer there.
+       -->
+       <div id="addDeviceResult" style="display:none">
+         <p class="modal-description" style="margin-bottom:12px" data-i18n="add_display.created_intro">Display created.</p>
+         <input class="input" id="createdPlayerUrl" readonly style="width:100%;font-family:monospace;font-size:11px">
+         <div style="display:flex;gap:8px;margin-top:10px">
+           <button type="button" class="btn btn-secondary btn-sm" id="createdCopyBtn" data-i18n="device.enrol.copy">Copy</button>
+         </div>
+         <div style="font-size:11px;color:#fbbf24;margin-top:10px" data-i18n="device.enrol.warning"></div>
+       </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close-modal="addDeviceModal" data-i18n="common.cancel">Cancel</button>

@@ -167,6 +167,13 @@ jobs:
           # distribution is already present, so the download — and its flake — is skipped.
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          # ⚠️ The action's default is `tools platform-tools`. `tools` is the legacy Android SDK
+          # Tools package, retired in favour of cmdline-tools, and on 2026-09-15 it disappeared
+          # from Google's repository manifest — `sdkmanager tools` started failing on every run,
+          # before a single test executed. Gradle fetches the platform and build-tools it needs
+          # itself; platform-tools is the only thing worth asking the action for.
+          packages: platform-tools
       # ScheduleEvalTest reads the SHARED shared/schedule-vectors.json (wired via
       # the test task in app/build.gradle.kts), so a ScheduleEval.kt change that
       # breaks the contract fails here.
@@ -218,9 +225,15 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
 
-      - name: Install deps
+      # ⚠️ PRODUCTION-SHAPED, DELIBERATELY. This booted with `npm ci` for a long time, which
+      # installs devDependencies — so a module that required a devDependency at load time booted
+      # fine here and crashed for every self-hoster and every Docker user. That is not theoretical:
+      # #322 arrived requiring `puppeteer-core` (a devDependency) at the top of a router the server
+      # mounts at startup, and the whole suite was green. `scripts/upgrade.sh` and the Dockerfile
+      # both use --omit=dev, so this is what they actually run.
+      - name: Install production deps only (as upgrade.sh and the Dockerfile do)
         working-directory: server
-        run: npm ci
+        run: npm ci --omit=dev
 
       # Boot against a fresh SQLite db (clean checkout = no db yet). SELF_HOSTED
       # makes the first user an admin with no billing. No certs present, so the
@@ -236,6 +249,13 @@ jobs:
           # while every check was green. Code only one deployment runs is exactly the code
           # CI has to execute.
           TELEMETRY_COLLECTOR: '1'
+          # ⚠️ OUTSIDE THE CHECKOUT, AND THAT IS THE POINT. DATA_DIR defaults to `server/`
+          # (config.js), which is also where a module that invents its own uploads path would
+          # guess. With the default, a wrong guess and the right answer are the same directory and
+          # the mistake is invisible. The Docker image runs DATA_DIR=/data; #322 shipped a renderer
+          # reading `server/uploads` that answered 501 for every image there, and nothing here
+          # could see it. Pointing this somewhere else is what makes that class of bug fail.
+          DATA_DIR: ${{ runner.temp }}/st-data
         run: |
           node server.js > "$RUNNER_TEMP/server.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/server.pid"
@@ -257,6 +277,48 @@ jobs:
           test "$(echo "$STATUS" | jq -r .status)" = "ok"
           test "$REPORTED" = "$EXPECTED"
           echo "OK: status ok, version $REPORTED matches VERSION"
+
+      # The runtime reads this file at request time, so it has to be PRESENT in whatever the
+      # install produced. 2.0.1 shipped a Docker image without it and /api/release-notes answered
+      # `current: null` — the in-app "What's new" panel was simply empty, and no test noticed
+      # because the file is right there in a dev checkout.
+      - name: Assert /api/release-notes actually has this release
+        run: |
+          NOTES="$(curl -sf http://localhost:3001/api/release-notes)"
+          CURRENT="$(echo "$NOTES" | jq -r '.current.version // "null"')"
+          echo "release-notes current: $CURRENT (VERSION file: $(cat VERSION))"
+          test "$CURRENT" = "$(cat VERSION)"
+          test "$(echo "$NOTES" | jq -r '.current.notes | length')" -gt 0
+          echo "OK: release notes present and non-empty"
+
+      # Every router the server mounts must survive a production install. A 401 proves the route is
+      # mounted and reached; a 404 would mean it never mounted, and a dead server would mean a
+      # load-time require of something --omit=dev left out. This is the shape #322 failed in.
+      - name: Assert routers mounted under a production install
+        run: |
+          for path in /api/embedded/presets /api/devices /api/playlists; do
+            CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3001$path")"
+            echo "$path -> HTTP $CODE"
+            test "$CODE" = "401" || { echo "expected 401 (mounted, auth enforced), got $CODE"; exit 1; }
+          done
+          echo "OK: routers mounted and enforcing auth without devDependencies"
+
+      # Writable state must land under DATA_DIR, never in the checkout. If anything writes into
+      # server/ here it would also do so in the image, where the checkout is read-only-ish and the
+      # volume is elsewhere.
+      - name: Assert runtime state lives under DATA_DIR
+        run: |
+          echo "DATA_DIR contents:"; ls -la "$RUNNER_TEMP/st-data" || true
+          test -f "$RUNNER_TEMP/st-data/db/remote_display.db" \
+            || { echo "no database under DATA_DIR - state went somewhere else"; exit 1; }
+          # NOTE: server/db/ is SOURCE (database.js, schema.sql, the wal checkpointer), so it is
+          # never empty. The thing that must not happen is a *.db appearing anywhere in the
+          # checkout while DATA_DIR points elsewhere.
+          STRAY="$(find server -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' | head -5)"
+          if [ -n "$STRAY" ]; then
+            echo "database files were written into the checkout despite DATA_DIR:"; echo "$STRAY"; exit 1
+          fi
+          echo "OK: database under DATA_DIR, no stray db files in the checkout"
 
       # Booting is not enough on its own - the collector could be mounted and broken. Prove
       # the routes it adds actually answer, so a fault inside that block fails here rather

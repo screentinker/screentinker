@@ -7,6 +7,12 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --accent-dim: #1d4ed8;
+  /* The release palette (violet + green) that the gradients are built from. A white-label brand
+     colour overwrites all three accents (js/branding.js), so gradients fall back to that colour. */
+  --accent-2: #8b5cf6;
+  --accent-3: #22c55e;
+  --grad-accent: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --grad-bar: linear-gradient(90deg, var(--accent-2), var(--accent-3));
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;

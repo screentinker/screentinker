@@ -7,7 +7,7 @@
 // players use, exactly which items rotate at four moments. No server or browser
 // needed - this is the deterministic proof. Live web-player repro steps are printed
 // at the end (and in the feature report).
-const { isItemActiveNow } = require('../lib/schedule-eval');
+const { isItemActiveNow, windowOf } = require('../lib/schedule-eval');
 
 const TZ = 'Australia/Sydney'; // Bold Media's zone; set as the device timezone override
 
@@ -20,7 +20,7 @@ const playlist = [
 ];
 
 function rotationAt(utcIso) {
-  const active = playlist.filter(it => isItemActiveNow(it.schedules, utcIso, TZ));
+  const active = playlist.filter(it => isItemActiveNow(it.schedules, utcIso, TZ, windowOf(it)));
   return active.length ? active.map(it => it.id).join(' -> ') : '(idle: "Nothing scheduled right now")';
 }
 

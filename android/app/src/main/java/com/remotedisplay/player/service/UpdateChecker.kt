@@ -168,7 +168,11 @@ class UpdateChecker(private val context: Context) {
                 // per-device (not per-NAT-IP). Reuses the same id we register/socket with; omitted
                 // until provisioned (server then falls back to version-keyed).
                 val deviceParam = if (config.deviceId.isNotEmpty()) "&device_id=${config.deviceId}" else ""
-                val url = "${config.serverUrl}/api/update/check?version=$currentVersion$deviceParam"
+                // #ota-force: tell the server this is an operator-forced check, so it can override a
+                // server-side hold (rate-backoff, superseded-prerelease) that would otherwise make
+                // "force update" silently do nothing on a stranded diag/beta build.
+                val forcedParam = if (forced) "&forced=1" else ""
+                val url = "${config.serverUrl}/api/update/check?version=$currentVersion$deviceParam$forcedParam"
                 Log.i(TAG, "Checking for updates: $url")
 
                 val request = Request.Builder().url(url).build()
@@ -306,18 +310,43 @@ class UpdateChecker(private val context: Context) {
         }
     }
 
-    // #139: remove cached OTA APKs other than `keep` (null = remove all). Keeps the external
-    // files dir from accumulating one stale APK per superseded version.
+    /*
+     * #139: remove cached OTA APKs other than `keep` (null = remove all).
+     *
+     * ⚠️ SWEEPS EVERY DIRECTORY `apkStagingDir()` CAN CHOOSE, and must keep doing so.
+     *
+     * This used to look only in getExternalFilesDir(DIRECTORY_DOWNLOADS) while staging tries
+     * INTERNAL first (filesDir/Download) and only falls back to external. On the normal path —
+     * internal storage works, which is nearly always — the download landed somewhere cleanup never
+     * looked, so nothing was ever reclaimed: one whole APK stranded per superseded version, forever.
+     * Confirmed on-device 2026-09-12: after a clean 2.0.8 -> 2.0.9 OTA, the app logged "OTA
+     * complete ... clearing update state" and the 29.6MB ScreenTinker-2.0.9.apk was still sitting in
+     * filesDir/Download while the external dir it swept was empty. Invisible at 9MB, not at 29.6MB,
+     * and the leak lands in the same internal storage apkDirProblem() then refuses to stage into.
+     *
+     * The staging candidates are the single source of truth for "where could an APK be", so cleanup
+     * reads the same list rather than repeating one of its entries. A new staging location is then
+     * automatically swept, which is the property that was missing.
+     */
     private fun cleanupApks(keep: String?) {
-        try {
-            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return
-            val keepName = keep?.let { "ScreenTinker-$it.apk" }
-            dir.listFiles { f ->
-                f.name.startsWith("ScreenTinker-") && f.name.endsWith(".apk") && f.name != keepName
-            }?.forEach { it.delete() }
-        } catch (e: Exception) {
-            Log.w(TAG, "APK cleanup failed: ${e.message}")
+        val keepName = keep?.let { "ScreenTinker-$it.apk" }
+        var removed = 0
+        var freed = 0L
+        for ((where, dir) in apkStagingCandidates()) {
+            try {
+                dir.listFiles { f ->
+                    f.name.startsWith("ScreenTinker-") && f.name.endsWith(".apk") && f.name != keepName
+                }?.forEach {
+                    val size = it.length()
+                    if (it.delete()) { removed++; freed += size }
+                    else Log.w(TAG, "APK cleanup: could not delete ${it.absolutePath}")
+                }
+            } catch (e: Exception) {
+                // One unreadable/absent candidate must not stop the others being swept.
+                Log.w(TAG, "APK cleanup failed in $where: ${e.message}")
+            }
         }
+        if (removed > 0) Log.i(TAG, "APK cleanup: removed $removed cached APK(s), freed ${freed / 1024 / 1024}MB")
     }
 
     // Returns TRUE only when a verified APK is in hand and an install has been launched (the
@@ -360,12 +389,26 @@ class UpdateChecker(private val context: Context) {
      * Returns the directory, or null with every reason it could not find one, so the operator gets
      * the full picture instead of the first excuse.
      */
-    private fun apkStagingDir(needBytes: Long): Pair<File?, String> {
+    /*
+     * Every directory a staged APK could be in, best first. ONE definition, because two consumers
+     * disagreeing about it is precisely the bug documented on cleanupApks(): staging wrote to the
+     * internal dir and cleanup swept the external one. Ordering matters to apkStagingDir (first
+     * writable wins); cleanupApks ignores the order and sweeps them all.
+     *
+     * Listing a directory here does NOT create it — apkDirProblem() does that when staging picks it,
+     * and listFiles() on an absent directory simply yields null.
+     */
+    private fun apkStagingCandidates(): LinkedHashMap<String, File> {
         val candidates = LinkedHashMap<String, File>()
         candidates["internal"] = File(context.filesDir, "Download")
         context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { candidates["external"] = it }
         candidates["cache"] = File(context.cacheDir, "Download")
         candidates["files"] = context.filesDir          // last resort: no subdirectory to create
+        return candidates
+    }
+
+    private fun apkStagingDir(needBytes: Long): Pair<File?, String> {
+        val candidates = apkStagingCandidates()
 
         val reasons = StringBuilder()
         for ((name, dir) in candidates) {

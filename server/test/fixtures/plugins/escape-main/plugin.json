@@ -1,0 +1,7 @@
+{
+  "id": "escape-main",
+  "name": "Escape",
+  "version": "1.0.0",
+  "main": "../../ok-widget/index.js",
+  "capabilities": ["widget"]
+}

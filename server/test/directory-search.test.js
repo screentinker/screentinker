@@ -144,19 +144,85 @@ test('the on-screen keyboard scales with the viewport instead of using fixed pix
   const { status, html } = await fetchRender(sid);
   assert.equal(status, 200);
 
-  const keyRule = html.match(/\.key\s*\{[^}]*\}/s);
-  assert.ok(keyRule, '.key rule is present');
-  assert.match(keyRule[0], /height:clamp\(/, 'key height is clamped to the viewport');
-  assert.match(keyRule[0], /font-size:clamp\(/, 'key font-size is clamped to the viewport');
-  assert.ok(!/height:\s*56px/.test(keyRule[0]), 'no bare fixed height survives');
+  /*
+   * ⚠️ ASSERT THE RESOLVED SIZE, NOT `clamp()`.
+   *
+   * This used to require the literal `height:clamp(` in the .key rule. `clamp()` is Chromium 79,
+   * so a webOS 4 panel (Chromium 53) cannot parse it and the keyboard fell back to whatever the
+   * cascade left — which is the bug this test exists to prevent, on the panels least able to
+   * report it. The same bounded scaling now comes from a media-query ladder: a px ceiling in the
+   * base rule, a vh band in the middle, a px floor at the bottom.
+   *
+   * That ladder reproduces clamp(34px, 5.3vh, 56px) to within 0.45px anywhere between 200 and
+   * 2600px of viewport height, and EXACTLY at the two heights this test was written for.
+   * So the test resolves the cascade itself and checks the behaviour, which holds for clamp()
+   * and for the ladder. Re-pinning the function name would silently break webOS 4 again.
+   */
+  const css = html.match(/<style[\s\S]*?<\/style>/g).join('\n');
 
-  // vh terms must exceed their max at 1080 tall, so existing 1080 panels render unchanged.
-  const h = keyRule[0].match(/height:clamp\(([\d.]+)px,\s*([\d.]+)vh,\s*([\d.]+)px\)/);
-  assert.ok(h, 'height clamp is well-formed');
-  const [, hMin, hVh, hMax] = h.map(Number);
-  assert.ok(hVh * 1080 / 100 >= hMax, 'at a 1080-tall viewport the height clamps to its max (no visual change)');
-  assert.ok(hVh * 720 / 100 < hMax, 'at a 720-tall viewport the height actually scales down');
-  assert.ok(hMin >= 30, 'keys stay tappable on very short viewports');
+  // Effective `.key` px value at a given viewport height: base rule first, then every
+  // max-height block that still matches, in source order (later wins, as the cascade does).
+  const effective = (prop, viewportH) => {
+    const media = [...css.matchAll(/@media\s*\(max-height:\s*(\d+)px\)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)];
+    const mediaBodies = new Set(media.map((m) => m[2]));
+    const base = [...css.matchAll(/\.key\s*\{([^}]*)\}/g)]
+      .filter((m) => ![...mediaBodies].some((b) => b.includes(m[0])));
+    const decls = [];
+    for (const m of base) decls.push(m[1]);
+    for (const [, capStr, body] of media) {
+      if (viewportH > Number(capStr)) continue;
+      const inner = body.match(/\.key\s*\{([^}]*)\}/);
+      if (inner) decls.push(inner[1]);
+    }
+    let value = null;
+    for (const d of decls) {
+      const m = d.match(new RegExp(prop + ':\\s*([^;]+)'));
+      if (m) value = m[1].trim();
+    }
+    assert.ok(value, `${prop} is declared for .key`);
+    const clamp = value.match(/^clamp\(\s*([\d.]+)px\s*,\s*([\d.]+)vh\s*,\s*([\d.]+)px\s*\)$/);
+    if (clamp) {
+      const [, lo, vh, hi] = clamp.map(Number);
+      return Math.max(lo, Math.min(vh * viewportH / 100, hi));
+    }
+    if (/vh$/.test(value)) return parseFloat(value) * viewportH / 100;
+    if (/px$/.test(value)) return parseFloat(value);
+    assert.fail(`${prop} resolved to an unexpected unit: ${value}`);
+  };
+
+  // 1080-tall panels must be pixel-identical to before any of this existed.
+  assert.equal(effective('height', 1080), 56, 'a 1080-tall viewport still renders 56px keys');
+  assert.equal(effective('font-size', 1080), 24, 'a 1080-tall viewport still renders 24px key text');
+
+  // The bug: a 1280x720 CSS viewport (1080p at 240dpi) had the keyboard eating ~37% of the height.
+  assert.ok(effective('height', 720) < 56, 'a 720-tall viewport scales the keys down');
+  assert.ok(Math.abs(effective('height', 720) - 38.16) < 1, 'and scales them to about 38px, not to the floor');
+
+  // Bounded at both ends: tappable when very short, and it never grows past the ceiling.
+  assert.ok(effective('height', 400) >= 30, 'keys stay tappable on a very short viewport');
+  assert.equal(effective('height', 2160), 56, 'and never exceed the ceiling on a tall one');
+});
+
+test('a multi-column directory board keeps its gutters', async () => {
+  /*
+   * Regression guard. The Chrome 53 CSS sweep removed `gap:14px 36px` from `.entries` along with
+   * every other `gap:`, and reconstructed only the ROW half as `.entry { margin-bottom }`. The
+   * 36px COLUMN gutter had no replacement, so every 2/3/4-column and auto-fit board rendered with
+   * its columns touching — on modern panels, not just the old ones the sweep was for.
+   *
+   * The removal also bought nothing: `display:grid` is Chromium 57, so on a Chrome 53 panel this
+   * element is an inert block and the gap could never have applied there anyway.
+   */
+  const bid = 'cols-board', sid = 'cols-search';
+  seed(bid, 'directory-board', BOARD);
+  seed(sid, 'directory-search', { source_widget_id: bid });
+  // the grid lives in the BOARD renderer, not the search keyboard page
+  const { html } = await fetchRender(bid);
+  const entries = html.match(/\.entries\s*\{[^}]*\}/);
+  assert.ok(entries, '.entries rule is present');
+  assert.match(entries[0], /gap:\s*[\d.]+px\s+[\d.]+px/,
+    '.entries keeps a row AND column gutter — grid is Chromium 57, so this never reached a Chrome 53 panel');
+  assert.match(html, /\.entries\[data-cols="[234]"\]/, 'and multi-column layouts still exist to need it');
 });
 
 test('the narrow breakpoint no longer pins the key size back to fixed pixels', async () => {

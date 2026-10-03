@@ -240,6 +240,35 @@ async function unzip(zipPath, destDir, onProgress) {
  * every subsequent boot would then skip the install and fail somewhere deep in a missing module.
  */
 async function install(opts) {
+  /*
+   * ⚠️ EVERY FAILURE ENDS UP IN THE LOG ON DISK. This wrapper is the whole point of the change.
+   *
+   * The log already existed to work around the status listener being bound to localhost (#291,
+   * deliberately — it must not answer the LAN). But only the SUCCESS path wrote to it: every
+   * `throw` in here skipped note() entirely, so a failed install left a log that simply stopped,
+   * and the reason lived in `installState` and the on-screen ring buffer — one unreachable on a
+   * real player, the other gone at the next reboot.
+   *
+   * So the one artefact a technician can actually fetch, over DWS, from a box on a wall in another
+   * building, contained everything except why it broke. Diagnosing alpha5 meant guessing.
+   */
+  try {
+    return await installInner(opts);
+  } catch (e) {
+    try {
+      const logPath = path.join(opts.installDir, '.payload-install.log');
+      const msg = String((e && e.message) ? e.message : e);
+      const stack = (e && e.stack) ? '\n' + String(e.stack).split('\n').slice(1, 4).join('\n') : '';
+      // Appended, so it lands after whatever progress the run managed to record.
+      const prior = (() => { try { return fs.readFileSync(logPath, 'utf8'); } catch (_) { return ''; } })();
+      fs.writeFileSync(logPath,
+        prior + new Date().toISOString() + '  FAILED: ' + msg + stack + '\n');
+    } catch (_) { /* a diagnostic must never be the thing that breaks an install */ }
+    throw e;
+  }
+}
+
+async function installInner(opts) {
   const { url, installDir, onState, expectSha256 } = opts;
   const say = (phase, detail, pct) => { if (onState) onState({ phase, detail, pct }); };
 
@@ -256,11 +285,19 @@ async function install(opts) {
    * run, and best-effort: a diagnostic that could itself break an install would be worse than none.
    */
   const logPath = path.join(installDir, '.payload-install.log');
+  /*
+   * ⚠️ NOT INSIDE THE REPLACED TREE, EVEN THOUGH IT LIVES IN installDir. The replace loop
+   * iterates the payload's own top-level entries, and neither of these dotfiles is one of them —
+   * so they survive it. That is load-bearing: a log that vanished with the tree it was describing
+   * would be worthless at exactly the moment it is needed.
+   */
+  const incompleteMarker = path.join(installDir, '.payload-incomplete');
   const lines = [];
   const note = (msg) => {
     lines.push(new Date().toISOString() + '  ' + msg);
     try { fs.writeFileSync(logPath, lines.join('\n') + '\n'); } catch (e) { /* never fatal */ }
   };
+  const msgOf = (e) => String((e && e.message) ? e.message : e);
   note('install starting from ' + url + (expectSha256 ? ' (checksum supplied)' : ' (NO checksum supplied)'));
   const staging = path.join(installDir, '.payload-staging');
   const entry = path.join(installDir, 'server', 'server.js');
@@ -322,18 +359,51 @@ async function install(opts) {
   }
 
   say('installing', `${result.files} files`, null);
-  for (const name of fs.readdirSync(staging)) {
-    const from = path.join(staging, name);
-    const to = path.join(installDir, name);
-    fs.rmSync(to, { recursive: true, force: true });
-    fs.renameSync(from, to);
+  /*
+   * ⚠️ THIS LOOP IS NOT ATOMIC, AND A FAILURE PART WAY THROUGH LEAVES A TREE THAT BOOTS.
+   *
+   * Each top-level entry is removed and replaced in turn. Die on entry 40 of 60 and the tree is a
+   * mixture: VERSION may already say the new version while half the modules are still the old
+   * ones. The caller then sees a server/server.js on disk, decides a failed UPDATE is survivable
+   * (correctly — an unreachable update server must not be an outage) and starts it. So the box
+   * comes up, reports the new version, and is running something nobody built.
+   *
+   * That is what happened on the 2.0.0-alpha5 install: VERSION new, server running, install log
+   * stopped three lines in, and no digest recorded. It could not be diagnosed because the error
+   * existed only in a process that then rebooted.
+   *
+   * The marker below is what makes it detectable. It is written before the first entry is touched
+   * and removed only when the tree is whole, so its presence at boot means "this tree is a
+   * mixture" — see bs-server-boot.js, which reinstalls rather than trusting VERSION.
+   */
+  try { fs.writeFileSync(incompleteMarker, new Date().toISOString() + ' replacing tree\n'); }
+  catch (e) { note('could not write the incomplete marker: ' + msgOf(e)); }
+
+  let replacing = null;
+  try {
+    for (const name of fs.readdirSync(staging)) {
+      replacing = name;
+      const from = path.join(staging, name);
+      const to = path.join(installDir, name);
+      fs.rmSync(to, { recursive: true, force: true });
+      fs.renameSync(from, to);
+    }
+  } catch (e) {
+    // ⚠️ Named, because "the install failed" and "the install failed while replacing server/,
+    // so the tree is now a mixture" are different problems with different recoveries.
+    note('FAILED while replacing "' + replacing + '" — the tree is now a MIXTURE of versions: ' + msgOf(e));
+    throw e;
   }
+  replacing = null;
   fs.rmSync(staging, { recursive: true, force: true });
 
   // The archive is 71MB of duplicate on a device that will never need it again.
   try { fs.unlinkSync(zipPath); } catch (e) { /* not worth failing over */ }
 
   if (!fs.existsSync(entry)) throw new Error('install finished but ' + entry + ' is missing');
+  // The tree is whole from here, so the mixture marker comes off. Anything that fails after this
+  // point is extra credit (the digest, the launcher refresh) and leaves a usable install behind.
+  try { fs.unlinkSync(incompleteMarker); } catch (e) { /* absent is the state we wanted */ }
   note('tree replaced, ' + result.files + ' files, server/server.js present');
 
   /*

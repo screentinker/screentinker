@@ -278,6 +278,30 @@ test('the buffer is bounded and drops the OLDEST', async () => {
 test('an uplink refuses to exist without an operator-supplied address (I9)', () => {
   // ⚠️ There is no default parent and no fallback. This is how a peer architecture quietly becomes
   // hub-and-spoke, and it always arrives as a convenience.
+  /*
+   * ⚠️ AN UPLINK MUST SIMPLY CONSTRUCT — and this assertion exists because it once did not.
+   *
+   * Adding the write handler introduced `this.onWrite = opts.onWrite` into a constructor that
+   * DESTRUCTURES its parameter, so there was no `opts` binding and every `new Uplink(...)` threw a
+   * ReferenceError. services/mesh-uplink.js builds links inside a try/catch that logs one warn line
+   * per edge, so on any node with MESH_ALLOW_UPLINK the ENTIRE MESH would have been inert — no
+   * telemetry, no reads, no writes — behind `[mesh] uplink to <peer> not started`.
+   *
+   * The full suite stayed green. That is the config-gated-code-is-untested-code shape: the wiring
+   * line for a feature cannot be exercised by tests that never build the object in the shape the
+   * service builds it. So: build it plainly, both with and without the optional handlers.
+   */
+  const bare = new Uplink({ parentUrl: 'http://x', edgeToken: 't', nodeId: 'n', connect });
+  assert.equal(bare.onRead, null, 'no handler means the child refuses reads, which is the safe default');
+  assert.equal(bare.onWrite, null, 'and refuses writes, for the same reason');
+
+  const wired = new Uplink({
+    parentUrl: 'http://x', edgeToken: 't', nodeId: 'n', connect,
+    onRead: () => ({ ok: true }), onWrite: () => ({ ok: true }),
+  });
+  assert.equal(typeof wired.onRead, 'function');
+  assert.equal(typeof wired.onWrite, 'function', 'the write handler must actually be accepted');
+
   assert.throws(() => new Uplink({ edgeToken: 't', nodeId: 'n', connect }),
     /no default address/i);
   assert.throws(() => new Uplink({ parentUrl: 'http://x', nodeId: 'n', connect }), /edge token/i);
@@ -906,4 +930,104 @@ test('the screenshot path is not reachable by traversal', () => {
                      '/api/devices/d1/screenshot/../../etc']) {
     assert.equal(readProxy.authorize({}, bad, 'GET', ['display-capture']).ok, false, bad);
   }
+});
+
+/*
+ * ⚠️ A BATCHED ITEM MUST CARRY ITS OWN ANCESTRY, OR RELAYING IS IMPOSSIBLE.
+ *
+ * createBatch has always carried per-item ancestry — with a comment saying it exists precisely so a
+ * relayed item can be attested, and that without it such an item is refused. sendMany then copied
+ * items into the batch field by field and ancestry was not one of the fields, so the code written to
+ * carry the proof never received it.
+ *
+ * The receiver's refusal was CORRECT: an item claiming an origin it cannot prove a path to is
+ * exactly what that check exists to stop. The bug was that an honest relay could not prove it
+ * either, because the proof was dropped a layer below the code that sends it. Nothing caught it,
+ * because nothing had ever relayed anything: the field was written for a feature that did not exist
+ * yet, and was broken by the time it did.
+ *
+ * Found by watching a three-node mesh refuse a screen: B sent ancestry [C,B] and A logged
+ * `ancestry=undefined` for the same item.
+ */
+test('⚠️ sendMany preserves a relayed item\'s ancestry through batching', () => {
+  const sent = [];
+  /*
+   * ⚠️ The double provides timeout(), because the real emit path is `socket.timeout(ms).emit(...)`.
+   * Without it the call throws, _emit's try/catch swallows it, and the test simply sees nothing
+   * sent — a stub simpler than its collaborator, which is the trap this codebase keeps falling into.
+   */
+  const sock = {
+    on() {}, disconnect() {},
+    emit(ev, payload) { sent.push({ ev, payload }); },
+    timeout() { return { emit(ev, payload) { sent.push({ ev, payload }); } }; },
+  };
+  const link = new Uplink({
+    parentUrl: 'http://127.0.0.1:9', edgeToken: 't', nodeId: 'node-B',
+    connect: () => sock, logger: { log() {}, warn() {} },
+  });
+  link.socket = sock;
+  link.connected = true;
+  // Announce batching the way a parent's hello does, so sendMany takes the batch path.
+  link.parentCapabilities = { supports: ['batch-v1'], encodings: [], maxBatchItems: 100, maxBatchBytes: 512 * 1024 };
+
+  const own = envelope.createEnvelope({
+    originNodeId: 'node-B', type: 'device-summary', bodyVersion: 1,
+    ancestry: ['node-B'], originTs: Date.now(), body: { id: 'mine' },
+  });
+  const relayed = envelope.createEnvelope({
+    originNodeId: 'node-C', type: 'device-summary', bodyVersion: 1,
+    ancestry: ['node-C', 'node-B'], originTs: Date.now(), body: { id: 'theirs' },
+  });
+
+  link.sendMany([own, relayed], { nodeId: 'node-B', ancestry: ['node-B'] });
+
+  const batch = sent.map((x) => x.payload).find((p) => p && p.type === 'batch');
+  assert.ok(batch, 'the items should have gone out as a batch');
+  const items = envelope.batchItems(batch);
+  assert.equal(items.length, 2);
+
+  const theirs = items.find((i) => i.body && i.body.id === 'theirs');
+  assert.equal(theirs.origin_node_id, 'node-C');
+  assert.deepEqual(theirs.ancestry, ['node-C', 'node-B'],
+    'without this the receiver cannot attest the item and refuses it — correctly');
+
+  /*
+   * ⚠️ And the ordinary case stays cheap: an item whose origin matches the batch carries neither
+   * field. Repeating them 400 times is most of what batching was for.
+   */
+  const mine = items.find((i) => i.body && i.body.id === 'mine');
+  assert.equal(mine.origin_node_id, undefined);
+  assert.equal(mine.ancestry, undefined);
+});
+
+/*
+ * ⚠️ AN ITEM'S OWN CHAIN MUST SURVIVE BEING UNPACKED, or a relay looks like a direct link.
+ *
+ * The batch validator says it plainly — the batch's ancestry proves the BATCH's path, not the
+ * item's — and itemAsEnvelope then handed every item the batch's chain anyway. A payload that
+ * arrived having travelled A<-B<-C was stored as though it came straight from B, so everything
+ * downstream that reasons about distance saw one hop where there were two.
+ *
+ * Measured: the top hub reported a server two links away as being one link away.
+ */
+test('⚠️ itemAsEnvelope keeps a relayed item\'s own ancestry', () => {
+  const batch = {
+    envelope_version: 1, origin_node_id: 'node-B', ancestry: ['node-B'], receipts: [],
+  };
+  const relayed = {
+    type: 'node-health', body_version: 1, origin_ts: 1,
+    origin_node_id: 'node-C', ancestry: ['node-C', 'node-B'], body: { node_id: 'node-C' },
+  };
+  const own = { type: 'node-health', body_version: 1, origin_ts: 1, body: { node_id: 'node-B' } };
+
+  const asRelayed = envelope.itemAsEnvelope(relayed, batch);
+  assert.equal(asRelayed.origin_node_id, 'node-C');
+  assert.deepEqual(asRelayed.ancestry, ['node-C', 'node-B'],
+    'two links from here, and the chain is the only thing that says so');
+
+  // ⚠️ And an ordinary item still inherits the batch's chain — that omission is what makes
+  // batching cheap, and it is correct because such an item did travel the batch's path.
+  const asOwn = envelope.itemAsEnvelope(own, batch);
+  assert.equal(asOwn.origin_node_id, 'node-B');
+  assert.deepEqual(asOwn.ancestry, ['node-B']);
 });

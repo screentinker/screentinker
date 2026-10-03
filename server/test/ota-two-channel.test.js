@@ -126,3 +126,34 @@ test('a still-opted-in display on a newer prerelease is NOT dragged back to stab
 });
 
 test.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {} });
+
+/*
+ * #341 — the STABLE slot declares its version too.
+ *
+ * Reported from the field: a server on 2.0.7 with only an upstream-signed 2.0.0 APK mounted at
+ * /data offered 2.0.7 to displays running 2.0.0. Android accepts the download as a same-version
+ * reinstall, the display comes back on 2.0.0, and is offered again. Two displays, 493 downloads,
+ * five days, nothing failing anywhere. Point 1 in this file's header was only ever enforced for
+ * the beta slot; stable took the server's own VERSION on faith.
+ */
+test('stable advertises the version declared beside the APK, not the server build', () => {
+  writeStable();
+  try { fs.unlinkSync(STABLE + '.version'); } catch (_) {}
+  apkCache.refresh();
+  assert.equal(apkCache.get().version, null, 'no sidecar: the caller falls back to server VERSION, as before');
+
+  fs.writeFileSync(STABLE + '.version', '2.0.0\n');
+  apkCache.refresh();
+  assert.equal(apkCache.get().version, '2.0.0', 'the served bytes describe themselves');
+
+  // Garbage is treated as absent rather than advertised, same rule the beta slot uses.
+  fs.writeFileSync(STABLE + '.version', 'not-a-version\n');
+  apkCache.refresh();
+  assert.equal(apkCache.get().version, null);
+
+  fs.writeFileSync(STABLE + '.version', '2.0.0\n');
+  apkCache.refresh();
+  // The loop the report describes: with the declared version there is nothing to offer.
+  assert.equal(ask('2.0.0', apkCache.get().version, false).update_available, false,
+    'a 2.0.0 display offered a 2.0.0 APK is up to date, not a reinstall candidate');
+});

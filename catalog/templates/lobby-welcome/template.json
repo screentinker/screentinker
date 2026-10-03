@@ -1,0 +1,235 @@
+{
+ "template": {
+  "aspect": "16:9",
+  "background": "{{param:background}}",
+  "elements": [
+   {
+    "slot": "panel",
+    "kind": "box",
+    "box": {
+     "x": 68,
+     "y": 0,
+     "w": 32,
+     "h": 100
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.09
+    }
+   },
+   {
+    "slot": "panel_edge",
+    "kind": "rule",
+    "box": {
+     "x": 68,
+     "y": 0,
+     "w": 0.2,
+     "h": 100
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.55
+    }
+   },
+   {
+    "slot": "logo",
+    "kind": "image",
+    "fit": "contain",
+    "content_id": "{{param:logo}}",
+    "box": {
+     "x": 6,
+     "y": 8,
+     "w": 16,
+     "h": 13
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0,
+     "duration": 0.8,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "eyebrow",
+    "kind": "body",
+    "box": {
+     "x": 6,
+     "y": 33,
+     "w": 58
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.45,
+     "weight": 700,
+     "font": "archivo"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.15,
+     "duration": 0.6,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "headline",
+    "kind": "head",
+    "box": {
+     "x": 6,
+     "y": 38,
+     "w": 58
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 5.1,
+     "weight": 800,
+     "font": "archivo"
+    },
+    "motion": {
+     "animation": "slideU",
+     "delay": 0.25,
+     "duration": 0.9,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "rule",
+    "kind": "rule",
+    "box": {
+     "x": 6,
+     "y": 62.5,
+     "w": 6,
+     "h": 0.55
+    },
+    "style": {
+     "color": "{{param:accent}}"
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.7,
+     "duration": 0.6,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "subline",
+    "kind": "body",
+    "box": {
+     "x": 6,
+     "y": 66.5,
+     "w": 52
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.8,
+     "weight": 400,
+     "font": "inter",
+     "opacity": 0.8
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.8,
+     "duration": 1.0,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "footer",
+    "kind": "body",
+    "box": {
+     "x": 6,
+     "y": 89,
+     "w": 55
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.1,
+     "weight": 500,
+     "font": "inter",
+     "opacity": 0.55
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 1.1,
+     "duration": 1.0,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "clock",
+    "kind": "clock",
+    "box": {
+     "x": 68,
+     "y": 37,
+     "w": 32
+    },
+    "clock_format": "{{param:clock_format}}",
+    "tz": "{{param:timezone}}",
+    "locale": "{{param:locale}}",
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 6.4,
+     "weight": 500,
+     "font": "oswald",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.4,
+     "duration": 1,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "clock_rule",
+    "kind": "rule",
+    "box": {
+     "x": 80,
+     "y": 55.5,
+     "w": 8,
+     "h": 0.3
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.8
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.6,
+     "duration": 1,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "date",
+    "kind": "date",
+    "box": {
+     "x": 68,
+     "y": 58.5,
+     "w": 32
+    },
+    "date_format": "weekday",
+    "tz": "{{param:timezone}}",
+    "locale": "{{param:locale}}",
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.5,
+     "weight": 600,
+     "font": "archivo",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.6,
+     "duration": 1,
+     "easing": "soft"
+    }
+   }
+  ]
+ },
+ "fields": {
+  "eyebrow": "{{param:eyebrow}}",
+  "headline": "{{param:headline}}",
+  "subline": "{{param:subline}}",
+  "footer": "{{param:footer}}"
+ }
+}

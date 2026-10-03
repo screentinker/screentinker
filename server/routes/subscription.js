@@ -11,11 +11,55 @@ router.get('/plans', (req, res) => {
   res.json(plans);
 });
 
+// The sale running now, if any (lib/promotions.js). Public: the pricing page shows it to visitors.
+// Only the public fields — no internal name, no Stripe ids. Cached briefly at the edge.
+router.get('/promotion', (req, res) => {
+  const promotions = require('../lib/promotions');
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json({ promotion: promotions.publicCurrent() });
+});
+
 // Get current user's subscription info
 router.get('/me', requireAuth, (req, res) => {
   const plan = getUserPlan(req.user.id);
   const deviceCount = getUserDeviceCount(req.user.id);
   const storageMB = getUserStorageMB(req.user.id);
+
+  /*
+   * ⚠️ getUserPlan RETURNS NULL FOR A CALLER WITH NO `users` ROW, and this route used to
+   * dereference it one line later (`plan.plan_id`).
+   *
+   * That caller is not hypothetical: a support session authenticates as `support:<jti>` and has
+   * no users row by design (the same reason dashboardSocket refuses break-glass identities), and
+   * so does a session whose account was deleted mid-flight. getUserPlan's own comment states the
+   * contract — null means "unrestricted", and checkDeviceAccess honours it — but this reader did
+   * not, so opening Subscription threw a TypeError.
+   *
+   * An unhandled throw in an API route reaches Express's DEFAULT error handler, which answers
+   * with an HTML error page. The dashboard's `r.json()` then dies on `Unexpected token '<',
+   * "<!DOCTYPE "... is not valid JSON` and the page reads "Failed to load" — so a null
+   * dereference is reported as a broken Subscription page, pointing nowhere near the cause.
+   * Seen on a customer's self-hosted instance on 2026-09-28 while signed in with a support token.
+   *
+   * Answering with the unrestricted shape rather than 404/500 keeps the contract in one place
+   * and keeps the page renderable: the view reads plan.display_name, plan.max_devices and
+   * usage.devices unconditionally, so `plan: null` would only move the same crash client-side.
+   */
+  if (!plan) {
+    return res.json({
+      plan: {
+        id: null, name: 'unbilled', display_name: 'Not billed',
+        max_devices: -1, max_storage_mb: -1,
+        remote_control: true, remote_url: true, priority_support: false,
+        price_monthly: 0, price_yearly: 0,
+      },
+      usage: { devices: deviceCount, devices_limit: -1, storage_mb: storageMB, storage_limit_mb: -1 },
+      subscription: { status: null, ends: null, stripe_customer_id: null, stripe_subscription_id: null },
+      trial: { active: false, days_left: 0, end: null, plan: null, expired_at: null },
+      self_hosted: config.selfHosted,
+      unbilled: true,   // this session has no billable account; the page says so rather than inventing one
+    });
+  }
 
   res.json({
     plan: {
@@ -47,6 +91,9 @@ router.get('/me', requireAuth, (req, res) => {
       days_left: plan.trial_days_left || 0,
       end: plan.trial_end ? new Date(plan.trial_end * 1000).toISOString() : null,
       plan: plan.trial_plan || null,
+      // Set once the trial has lapsed and the account was moved to Free (null while active or
+      // for accounts that never trialed). Lets the Billing page say "ended on" instead of nothing.
+      expired_at: plan.trial_expired_at ? new Date(plan.trial_expired_at * 1000).toISOString() : null,
     },
     self_hosted: config.selfHosted,
   });

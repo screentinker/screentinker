@@ -165,12 +165,14 @@
      * Nothing outside these screens uses rem, so this cannot reach playback content — zones,
      * images and video are laid out in % and px by the layout engine and are untouched.
      */
-    html { font-size: clamp(7px, 0.926vmin, 56px); }
+    html { font-size: 7px; }
+    @media (min-width: 756px) and (min-height: 756px) { html { font-size: 0.926vmin; } }
+    @media (min-width: 6048px) and (min-height: 6048px) { html { font-size: 56px; } }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; }
 
     /* Setup Screen */
     #setupScreen {
-      position: fixed; inset: 0; background: #111827; display: flex; flex-direction: column;
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #111827; display: flex; flex-direction: column;
       align-items: center; justify-content: center; z-index: 1000; color: #f1f5f9;
     }
     #setupScreen h1 { font-size: 3.6rem; color: #3b82f6; margin-bottom: 0.8rem; }
@@ -195,7 +197,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Player */
-    #playerContainer { position: fixed; inset: 0; background: #000; }
+    #playerContainer { position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #000; }
     /* Fullscreen single-zone playback: YouTube's IFrame API measures the placeholder
        at construction time. If that happens before layout settles, YT bakes in a
        300x150 fallback as inline pixel dimensions on the iframe, which our %-based
@@ -232,11 +234,11 @@
        the playlist never touches. The same orientation transform is applied to it as to
        #playerContainer, so corner positions track the visible content in every orientation.
        Pointer-transparent and empty (invisible) until an overlay is shown. */
-    #pipContainer { position: fixed; inset: 0; pointer-events: none; z-index: 9000; }
+    #pipContainer { position: fixed; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 9000; }
     /* ⚠️ Two owners share this layer: the manual PiP path and the trigger engine. Without an
        explicit stack, DOM insertion order decides who paints on top — so a PiP pushed during an
        alarm would cover the alarm. A trigger always outranks a PiP. */
-    #pipContainer > .trigger-box { position: absolute; inset: 0; overflow: hidden; z-index: 2; }
+    #pipContainer > .trigger-box { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden; z-index: 2; }
     #pipContainer > .pip-box { position: absolute; overflow: hidden; box-sizing: border-box; box-shadow: 0 6px 28px rgba(0,0,0,0.55); z-index: 1; }
     #pipContainer > .pip-box > .pip-title { font: 600 16px sans-serif; padding: 6px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #pipContainer > .pip-box > img,
@@ -244,11 +246,32 @@
 
     /* Status overlay */
     #statusOverlay {
-      position: fixed; inset: 0; background: #000; display: flex; flex-direction: column;
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #000; display: flex; flex-direction: column;
       align-items: center; justify-content: center; color: #94a3b8; z-index: 500;
     }
     #statusOverlay h2 { color: #3b82f6; font-size: 2.8rem; margin-bottom: 0.8rem; }
     #statusOverlay p { font-size: 1.6rem; }
+
+    /* Unpair PIN prompt. Above everything, including the setup screen, because Esc has to be
+       answerable whatever the player is currently showing. */
+    #pinOverlay {
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(2, 6, 23, 0.92);
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      /* Above the cold-boot "Tap anywhere to start" overlay, which is 2000: Esc has to be
+         answerable whatever the player happens to be showing. */
+      color: #f1f5f9; z-index: 3000;
+    }
+    #pinOverlay h2 { font-size: 2.4rem; margin-bottom: 0.8rem; }
+    #pinOverlay .pin-hint { color: #94a3b8; font-size: 1.4rem; margin-bottom: 2.4rem; }
+    /* -webkit-text-security keeps the digits hidden from the room. A shop floor is not a desk. */
+    #pinOverlay input {
+      width: 24rem; max-width: 80vw; padding: 1.2rem; text-align: center; letter-spacing: 0.8rem;
+      background: #0f172a; border: 0.1rem solid #334155; border-radius: 0.8rem; color: #f1f5f9;
+      font-size: 2.4rem; font-family: monospace; outline: none; -webkit-text-security: disc;
+    }
+    #pinOverlay input:focus { border-color: #3b82f6; }
+    #pinOverlay .pin-error { color: #f87171; font-size: 1.4rem; margin-top: 1.6rem; min-height: 2rem; }
+    #pinOverlay .pin-keys { color: #64748b; font-size: 1.2rem; margin-top: 2.4rem; }
   </style>
 </head>
 <body>
@@ -276,6 +299,15 @@
   <!-- #109: PiP overlay layer (above the player; never touched by playlist render) -->
   <div id="pipContainer"></div>
 
+  <!-- Unpair PIN prompt. Esc opens it; nothing happens until the PIN is right. -->
+  <div id="pinOverlay">
+    <h2>Unpair this display</h2>
+    <p class="pin-hint">Enter the settings PIN for this screen</p>
+    <input type="text" id="pinInput" inputmode="numeric" autocomplete="off" maxlength="12" aria-label="Settings PIN">
+    <div class="pin-error" id="pinError"></div>
+    <div class="pin-keys">Enter to confirm &middot; Esc to cancel</div>
+  </div>
+
   <!-- Status Overlay -->
   <div id="statusOverlay" style="display:none">
     <div class="spinner"></div>
@@ -285,6 +317,12 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
+  <script src="/player/play-order.js"></script>
+  <script src="/player/unpair-gate.js"></script>
+  <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
+  <script src="/player/offline-play-queue.js"></script>
+  <script src="/player/live-publish.js"></script>
+  <script src="/player/talk.js"></script>
   <script src="/player/trigger-resolve.js"></script>
   <script src="/player/media-mute.js"></script>
   <script src="/player/orientation-style.js"></script>
@@ -375,6 +413,103 @@
     // player it decides what those keys are called.
     const BS = (typeof window !== 'undefined' && window.ScreenTinkerBS) || null;
     const ON_BRIGHTSIGN = !!(BS && BS.isBrightSign());
+    const IS_LEGACY_PLAYER = /^\/player\/legacy(?:\/|$)/.test(window.location.pathname);
+
+    /*
+     * ==================== Host bridge ====================
+     * A platform shell that does, on this page's behalf, what a browser tab cannot. The LG
+     * webOS app (webos/) embeds the page in an iframe and opens /player?host=webos. The Vega
+     * app (vega/) is the top window — Vega's WebView has no parent to postMessage — and opens
+     * /player?host=vega, talking through window.ReactNativeWebView. The protocol is the same
+     * either way. The shell announces what it can genuinely do, and ONLY those capabilities
+     * are declared to the server, so the dashboard never shows a button the panel cannot
+     * honour. The bridge does carry one secret: the pairing. host:ready includes deviceId and
+     * deviceToken, and set-identity sends them back so /data can outlive a WebView data clear.
+     * Nothing else on this channel is a credential. That is why buildDeviceInfo copies
+     * HOST.info.version, model and os by name instead of spreading HOST.info — a spread would
+     * put deviceToken on device:register, and into the debug log that streams to the dashboard.
+     * Do not log a bridge message whole.
+     *
+     * `?host=vega` with no ReactNativeWebView is a desktop tab that copied the stick's URL.
+     * It must stay a browser. onVega() is the check; the query string alone is not.
+     */
+    function onVega() {
+      try {
+        if (new URLSearchParams(window.location.search).get('host') !== 'vega') return false;
+        const b = window.ReactNativeWebView;
+        return !!(b && typeof b.postMessage === 'function');
+      } catch (e) { return false; }
+    }
+    const HOST = (() => {
+      let platform = null;
+      try { platform = new URLSearchParams(window.location.search).get('host'); } catch (e) {}
+      const vegaBridge = () => {
+        try {
+          const b = window.ReactNativeWebView;
+          return b && typeof b.postMessage === 'function' ? b : null;
+        } catch (e) { return null; }
+      };
+      const topLevelVega = platform === 'vega' && window.parent === window;
+      if (!platform || (window.parent === window && !topLevelVega)) return null;
+      const h = { platform, ready: false, caps: [], info: {}, topLevel: topLevelVega };
+      h.send = (msg) => {
+        const body = Object.assign({ source: 'screentinker-player' }, msg);
+        try {
+          if (h.topLevel) {
+            const b = vegaBridge();
+            if (b) b.postMessage(JSON.stringify(body));
+            return;
+          }
+          window.parent.postMessage(body, '*');
+        } catch (e) {}
+      };
+      h.can = (cap) => h.ready && h.caps.includes(cap);
+      h.command = (action, payload) => { if (!h.ready) return false; h.send({ type: 'host:command', action, payload: payload || null }); return true; };
+      const onHostMessage = (d) => {
+        if (!d || d.source !== 'screentinker-host') return;
+        if (d.type === 'host:ready') {
+          const wasReady = h.ready;
+          h.ready = true;
+          h.caps = Array.isArray(d.capabilities) ? d.capabilities.filter((c) => typeof c === 'string') : [];
+          h.info = (d.info && typeof d.info === 'object') ? d.info : {};
+          console.log(`[host] ${h.platform} ready: ${h.caps.join(', ') || 'no capabilities'}`);
+          // connect() often registers before the shell replies. Say it again so the model and
+          // the shell version land. setTimeout, not a direct call: this listener can run from
+          // the bridge before `let socket` initialises, and typeof is not safe on a lexical
+          // binding still in the temporal dead zone.
+          // resumeAfterVegaHost adopts a pairing kept in /data before that re-register, and
+          // returns true when it opened the socket itself — registering again here would race it.
+          if (!wasReady) setTimeout(() => {
+            let resumed = false;
+            try { resumed = typeof resumeAfterVegaHost === 'function' && resumeAfterVegaHost(); } catch (e) {}
+            try { if (!resumed && socket && socket.connected) register(); } catch (e) {}
+          }, 0);
+        } else if (d.type === 'host:result') {
+          console.log(`[host] ${d.action}: ${d.ok ? 'ok' : 'failed: ' + (d.error || 'unknown')}`);
+        }
+      };
+      window.addEventListener('message', (ev) => {
+        if (h.topLevel) {
+          if (ev.source && ev.source !== window) return;
+          let d = ev.data;
+          if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return; } }
+          onHostMessage(d);
+          return;
+        }
+        if (ev.source !== window.parent) return;
+        onHostMessage(ev.data);
+      });
+      const hello = () => {
+        if (h.topLevel && !vegaBridge()) return false;
+        h.send({ type: 'host:hello' });
+        return true;
+      };
+      if (!hello()) {
+        let n = 0;
+        const t = setInterval(() => { n += 1; if (hello() || n > 50) clearInterval(t); }, 100);
+      }
+      return h;
+    })();
 
     // Per-output storage namespace. A dual-output BrightSign runs TWO widgets against one origin
     // and one SD storage_path, so they share localStorage: without this the second output reads
@@ -402,13 +537,110 @@
     // Falls through to reload() whenever the host isn't there to take the request — a browser, or
     // a widget built without nodejs_enabled — so a caller is never left with nothing done.
     function restartPlayer(reason) {
+      // Log EVERY reload with its reason so a mystery "the player keeps resetting" is answerable
+      // from the player console: 'operator refresh', 'server code updated', 'service worker
+      // activated', 'operator reset', etc.
+      console.log('[player] restart requested — reason:', reason);
       try {
         if (BS && BS.hasHost() && BS.restart(reason)) {
           console.log('[bs] restart delegated to host:', reason);
           return;
         }
       } catch (e) { /* a broken bridge must not strand the player */ }
+      // Vega: the shell reloads the WebView. command() is false until host:ready, so a stick
+      // whose shell has not spoken yet still falls through to location.reload() — a WebView,
+      // unlike BrightSign's widget, does come back from one. Once the shell has answered we do
+      // not also reload here; its reload tears this document down.
+      try {
+        if (onVega() && HOST && HOST.command('restart')) {
+          console.log('[vega] restart delegated to shell:', reason);
+          return;
+        }
+      } catch (e) { /* a missing shell must not strand the refresh */ }
       location.reload();
+    }
+
+    /*
+     * #313 — the enrolment key from the URL, for players whose storage does not come back.
+     *
+     * A vMix browser input deletes its whole CEF profile when vMix closes, so localStorage,
+     * cookies and IndexedDB all vanish together and this player boots with nothing but its URL.
+     * Without an identity it would pair as a NEW display every restart, leaving the operator a
+     * dashboard full of dead screens. `?k=` is the identity that survives, because the URL is the
+     * one thing vMix does keep.
+     *
+     * Read once, here, so every caller of getConfig() sees it — including the boot path that
+     * decides whether we are paired.
+     */
+    function urlEnrolKey() {
+      try { return new URLSearchParams(location.search).get('k') || null; } catch (e) { return null; }
+    }
+
+    // Vega pairing kept by the shell in /data. localStorage is the page's copy; this is the one
+    // that survives a WebView data clear. vegaIdentityCleared is this document only: a ?reset=,
+    // an unpair, or repair mode must not be undone by the shell's next host:ready.
+    let vegaIdentityCleared = false;
+    let vegaConnectDeferred = false;
+    let vegaConnectWait = null;
+    let vegaConnectGaveUp = false;
+
+    function vegaShellIdentity() {
+      try {
+        if (vegaIdentityCleared) return null;
+        // typeof onVega: a missing predicate means "not Vega", never a throw. The query string
+        // alone is not enough — onVega() also requires the WebView bridge.
+        if (typeof onVega !== 'function' || !onVega()) return null;
+        if (typeof HOST === 'undefined' || !HOST || !HOST.ready || !HOST.info) return null;
+        const deviceId = HOST.info.deviceId ? String(HOST.info.deviceId) : '';
+        const deviceToken = HOST.info.deviceToken ? String(HOST.info.deviceToken) : '';
+        if (!deviceId || !deviceToken) return null;
+        return { deviceId, deviceToken };
+      } catch (e) { return null; }
+    }
+
+    function adoptVegaIdentity() {
+      try {
+        if (typeof config === 'undefined' || !config || config.deviceId) return false;
+        const known = vegaShellIdentity();
+        if (!known) return false;
+        config.deviceId = known.deviceId;
+        config.deviceToken = known.deviceToken;
+        config.paired = true;
+        console.log('[vega] adopted identity from shell');
+        try { saveConfig(config); } catch (e) { /* local save must not strand the adopt */ }
+        return true;
+      } catch (e) { return false; }
+    }
+
+    function clearVegaIdentity() {
+      vegaIdentityCleared = true;
+      try {
+        if (typeof onVega !== 'function' || !onVega()) return;
+        if (typeof HOST === 'undefined' || !HOST || typeof HOST.command !== 'function') return;
+        HOST.command('clear-identity');
+      } catch (e) { /* best effort: the local wipe still happened */ }
+    }
+
+    // Called from host:ready, after the script has finished initialising. Returns true when it
+    // opened the socket, so the caller does not also register() on a socket that does not exist yet.
+    function resumeAfterVegaHost() {
+      if (vegaConnectWait) { clearTimeout(vegaConnectWait); vegaConnectWait = null; }
+      const deferred = vegaConnectDeferred;
+      vegaConnectDeferred = false;
+      if (vegaIdentityCleared) {
+        try { clearVegaIdentity(); } catch (e) {}
+      } else if (adoptVegaIdentity()) {
+        try { cancelAutoContinue(); } catch (e) {}
+        if (config && config.serverUrl && !(socket && socket.connected)) {
+          connect(config.serverUrl);
+          return true;
+        }
+      }
+      if (deferred && config && config.serverUrl && !(socket && socket.connected)) {
+        connect(config.serverUrl);
+        return true;
+      }
+      return false;
     }
 
     function getConfig() {
@@ -431,6 +663,27 @@
           }
         } catch (e) { /* registry unavailable — carry on unpaired */ }
       }
+      // Vega is the same shape, one layer up: the shell keeps the pair in /data and reports it
+      // on host:ready. The query string alone is not an identity. A reset or an unpair this
+      // session sets vegaIdentityCleared so we do not adopt back the row we just dropped.
+      if (!cfg.deviceId) {
+        const known = vegaShellIdentity();
+        if (known) {
+          cfg.deviceId = known.deviceId;
+          cfg.deviceToken = known.deviceToken;
+          cfg.paired = true;
+        }
+      }
+      /*
+       * ⚠️ STORED CREDENTIALS ALWAYS WIN. The key is only carried when this player has no deviceId
+       * of its own, so a screen whose storage IS working is completely unaffected by a key sitting
+       * in its URL — it keeps using the identity it already has, and the server never sees the key.
+       * That also means a working display cannot be quietly re-pointed by editing its URL.
+       */
+      if (!cfg.deviceId) {
+        const k = urlEnrolKey();
+        if (k) { cfg.enrolKey = k; cfg.paired = true; }   // paired: we know who we are, so skip the code screen
+      }
       return cfg;
     }
     function saveConfig(cfg) {
@@ -440,6 +693,15 @@
       if (BS && cfg && cfg.deviceId) {
         try { BS.setIdentity(cfg.deviceId, cfg.serverUrl || null, cfg.deviceToken || null); } catch (e) { /* ignore */ }
       }
+      // Vega: same mirror, into /data via the shell. Both halves, or we would persist an id the
+      // server cannot authenticate. Clearing is explicit (unpair, repair, ?reset=) — a save that
+      // simply has no identity yet must not wipe a pairing the shell is about to hand us.
+      try {
+        if (cfg && cfg.deviceId && cfg.deviceToken && typeof onVega === 'function' && onVega()
+            && typeof HOST !== 'undefined' && HOST && typeof HOST.command === 'function') {
+          HOST.command('set-identity', { deviceId: String(cfg.deviceId), deviceToken: String(cfg.deviceToken) });
+        }
+      } catch (e) { /* a missing shell must not fail the local save */ }
     }
     const PLAYLIST_CACHE_KEY = 'rd_playlist_cache' + SCREEN_SUFFIX;
     function savePlaylistCache(items) {
@@ -493,7 +755,10 @@
       try {
         const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
         if (!sw) return;
-        const all = (items || []).concat(extraItems || []);
+        // Pin the device default image too, so it still shows during an off-hours WAN outage (the
+        // exact scenario it exists for). A local (filepath) default is cached; a remote_url default
+        // cannot be and simply will not show offline.
+        const all = (items || []).concat(extraItems || [], defaultContent ? [defaultContent] : []);
         const urls = all
           .filter((it) => it && it.filepath && !it.remote_url)
           .map((it) => mediaUrl(it));
@@ -502,6 +767,25 @@
         // a new randomly-named file, so the old copy is not merely a different revision of the same
         // URL — it is a different URL entirely, and nothing keyed on the asset path can find it.
         sw.postMessage({ type: 'st-cache-playlist', urls, prune: true });
+
+        /*
+         * ⚠️ AND WARM EACH BUNDLE'S RENDER, because the archive alone is not playable.
+         *
+         * The loop above pins /uploads/content/<file> — for a bundle that is the .zip, which
+         * nothing on this player can open. What actually renders is the server's flattened
+         * document at /api/content/:id/bundle, a different URL the worker only sees once something
+         * asks for it. Without this warm-up the first play of a bundle after an outage begins is a
+         * black frame, and the operator's assumption ("it downloaded, so it will play") is wrong in
+         * the one situation the cache exists for.
+         *
+         * Fire-and-forget: the worker's rev-pinned branch stores whatever comes back, and a failure
+         * here must never touch playback.
+         */
+        for (const it of all) {
+          if (!it || it.mime_type !== BUNDLE_MIME || !it.content_id) continue;
+          fetch(`${config.serverUrl}/api/content/${it.content_id}/bundle?rev=${it.content_rev || 0}`,
+            { credentials: 'omit' }).catch(() => {});
+        }
       } catch (e) { /* never let caching break playback */ }
     }
 
@@ -519,6 +803,12 @@
      * once by a `let` read above its declaration (1.9.32), which is why that sentence is here.
      */
     let triggers = loadTriggersCache();
+    // Device default/standby content (a fallback image), shown when the screen would otherwise be
+    // idle: no playlist, or a playlist whose every item is filtered out by its schedule (off times).
+    // Set from the payload's top-level default_content; null = none (keep the idle text). Declared
+    // with the top-level state because a cold-start idle path can read it before Boot finishes.
+    let defaultContent = null;
+    let _defaultShownRev = null;   // content_rev currently mounted as the default image, or null
     /*
      * Listener settings, cached for the same reason the definitions are: a player that has to reach
      * a server before it can accept a trigger has already failed the offline promise. Defaults are
@@ -613,12 +903,62 @@
         localStorage.removeItem('st_group_sync');
         localStorage.setItem('st_reset_applied', token);
         console.warn('[reset] identity cleared by ?reset=' + token + ' — this panel will pair as a new device');
+        // The shell's copy outlives localStorage. Without this, the next host:ready adopts the
+        // identity this reset just dropped. typeof: this IIFE is extracted and run on its own.
+        try { if (typeof clearVegaIdentity === 'function') clearVegaIdentity(); } catch (e) {}
       } catch (e) { /* storage unavailable: nothing to clear, and nothing to break */ }
     })();
 
     // ==================== State ====================
     let socket = null;
+    // #314: pending 'wait before reconnecting' hold from a server device:throttled.
+    let throttleHoldTimer = null;
     let config = getConfig();
+
+    /*
+     * #312 follow-up — move this player to a new server address.
+     *
+     * A browser tab's identity (device_token, cache, service worker) is localStorage scoped to the
+     * ORIGIN it was loaded from, so it cannot simply follow a redirect. The bridge is the enrol key
+     * (#313), the one identity that travels in a URL: verify the new address answers, mint a key
+     * over the authenticated socket, then redirect to `<newUrl>/player?k=<key>`. On the new origin
+     * the existing `?k=` path resolves the key back to this device — and because the key stays in
+     * the URL, a later reload/reboot re-enrolls, so the move survives a restart. If the new address
+     * is a genuinely different server the key is unknown there and the screen re-pairs, which is the
+     * right outcome. Verify-then-commit: a dead/typo address leaves the tab exactly where it is.
+     */
+    async function moveToServer(rawUrl, handoffKey) {
+      const emitLog = (m) => { console.log('[move]', m); try { socket && socket.emit('device:log', { tag: 'set_server_url', level: 'info', message: m }); } catch (_) {} };
+      const newUrl = String(rawUrl || '').trim().replace(/\/+$/, '');
+      const currentOrigin = window.location.origin.replace(/\/+$/, '');
+      if (!newUrl) { emitLog('set_server_url refused: no url'); return; }
+      if (!/^https?:\/\//i.test(newUrl)) { emitLog('set_server_url refused: not http(s): ' + newUrl); return; }
+      if (newUrl === currentOrigin) { emitLog('set_server_url: already served from ' + newUrl + ', no change'); return; }
+
+      // The enrol key the server minted for this move (or one we already carry). Without it a
+      // redirect would land on the new origin unpaired, so verify we have it before touching anything.
+      const key = handoffKey || config.enrolKey || null;
+      if (!key) { emitLog('set_server_url: no enrol key in payload (would land unpaired) — staying put'); return; }
+
+      /*
+       * No client-side reachability probe here, unlike the Android player.
+       *
+       * A browser tab cannot reliably test the new address before navigating: a cross-origin fetch
+       * is intercepted by our own service worker (and CORS makes the response opaque anyway), and an
+       * <img> probe cannot tell a live server that answers with non-image content from a dead port —
+       * onerror fires for both. So the check the Android app does over a raw socket has no honest
+       * equivalent here. Instead the OPERATOR is the verification: the dashboard's move dialog states
+       * the blast radius and requires typing the workspace name to confirm. If the address turns out
+       * wrong the enrol key stays valid on the old server, and the new origin shows the pairing screen
+       * (unknown key) rather than silently adopting the screen — a visible, recoverable outcome.
+       */
+      emitLog('set_server_url: switching to ' + newUrl);
+      let host = '';
+      try { host = new URLSearchParams(window.location.search).get('host') || ''; } catch (_) {}
+      const target = newUrl + (IS_LEGACY_PLAYER ? '/player/legacy' : '/player') + '?k=' + encodeURIComponent(key)
+        + (host ? '&host=' + encodeURIComponent(host) : '');
+      try { window.location.replace(target); } catch (_) { window.location.href = target; }
+    }
 
     /*
      * Does a <video> on this platform actually yield pixels to a canvas? Cached: it is a property
@@ -796,6 +1136,7 @@
       const bits = [];
       try { bits.push(`screen ${screen.width}x${screen.height}@${window.devicePixelRatio || 1}x`); } catch (e) {}
       try { if (BS && BS.isBrightSign && BS.isBrightSign()) bits.push('BrightSign'); } catch (e) {}
+      try { if (HOST) bits.push(HOST.platform + (HOST.info.model ? ' ' + HOST.info.model : '')); } catch (e) {}
       try { bits.push(navigator.userAgent); } catch (e) {}
       return bits.join(' — ');
     }
@@ -826,10 +1167,12 @@
       if (!on) {
         if (remoteDebug) debugEmitLine('debug', 'i', 'Remote debug logging OFF');
         remoteDebug = false;
+        try { window.__stTalkDebug = false; } catch (e) {}   // #talk: gate STTalk's console logs
         return;
       }
       const wasOn = remoteDebug;
       remoteDebug = true;
+      try { window.__stTalkDebug = true; } catch (e) {}   // #talk: STTalk logs now stream to the dashboard
       debugWindowAt = 0; debugWindowCount = 0; debugSuppressed = 0;
       if (!debugSubscribed) {
         debugSubscribed = true;
@@ -1006,9 +1349,46 @@
     // network hang must not leave a frozen/blank board). A solo/held widget re-fetches its
     // data every WIDGET_SOLO_REFRESH_MS — decoupled from duration_sec, because a static
     // board re-querying the DB + re-rendering every few seconds, fleet-wide, is pure waste.
+    /* How long a single-item playlist waits before retrying an item it cannot render. In a
+     * multi-item playlist an unknown type advances immediately; alone there is nothing to advance
+     * to, so it must not spin. */
+    const UNKNOWN_ITEM_HOLD_MS = 15000;
+    /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Deliberately matches no
+     * image/ or video/ prefix, so nothing routes it as media by accident. */
+    const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
+    const LIVE_MIME = 'video/hls';   // IPTV: a live stream item's mime (see renderLiveStream)
+    // A dwell-0 live channel never advances on its own; on this slow cadence we only re-check
+    // whether it is STILL eligible (window/enabled/play_when), and move on if not. Same interval
+    // as the widget solo re-check — a minute, never a busy-loop.
+    const LIVE_DWELL_RECHECK_MS = 60000;
     const WIDGET_SWAP_TIMEOUT_MS = 8000;
     const WIDGET_SOLO_REFRESH_MS = 60000;
     let pendingWidgetSwap = null;   // { iframe, timer } while a new widget iframe loads
+    /*
+     * ⚠️ PLAY-ORDER STATE LIVES UP HERE BECAUSE THE BOOT PATH REACHES IT.
+     *
+     * These were declared next to nextActiveIndex(), three thousand lines further down. That is
+     * fine for every call that happens after the script has finished — and fatal for the one that
+     * does not: the cold-start branch restores a cached playlist and calls startPlaybackAt(0)
+     * DURING the initial pass. With a widget as the first item, renderContent() calls
+     * peekNextIndex(), which touches playOrderState, and `let` had not initialised yet:
+     *
+     *     Uncaught ReferenceError: can't access lexical declaration
+     *                              'playOrderState' before initialization
+     *
+     * ⚠️ AND THE THROW COST THE CONNECTION, which is what made it a brick rather than a log line.
+     * startPlaybackAt(0) was unguarded, so the error escaped into the boot script and everything
+     * after it — including connect() — never ran. The screen sat on a stale cached playlist, 404ing
+     * for content the server no longer had, unreachable and unfixable until someone cleared its
+     * storage. Same shape as the 1.9.32 boot TDZ.
+     *
+     * Reported from a real player: a 12-item cached playlist whose first item was a widget.
+     * player-boot-tdz.test.js did not cover it because only the WIDGET branch of renderContent
+     * peeks ahead; an image or a video first item never reaches it.
+     */
+    let playbackOrder = 'sequential';
+    let playOrderState = {};
+    const zoneOrderState = {};
     // Per-zone rotation timers (multi-zone). Each zone advances independently on
     // its own interval, decoupled from the fullscreen advanceTimer/nextItem.
     let zoneTimers = {};
@@ -1075,6 +1455,9 @@
     }
     let lastWallSync = null;
     let currentVideoEl = null;
+    // IPTV/HLS note: the hls.js instance for a live <video> is stored ON the element (video._stHls),
+    // not a module global, so fullscreen teardown and each zone destroy exactly their own and several
+    // zone streams can run at once. See attachHlsTo / destroyHls.
     let currentItemStartedAt = 0;
     // Bumped on every renderContent dispatch; a buffered (async warm-play) render captures it at start
     // and bails if it changes. MUST be declared here with the other top-level state — the cold-start
@@ -1082,6 +1465,13 @@
     // is long before line ~2400 where the buffered-video code lives. A `let` down there left renderSeq in
     // the temporal dead zone on that early path → "can't access 'renderSeq' before initialization".
     let renderSeq = 0;
+    // The renderSeq value of the in-flight buffered-video warm-up, if any. While a warm-up is
+    // pending, currentVideoEl is null (after an image) or the old ended element (after a video),
+    // which the media-health check reads as "surface lost" → it re-renders the current item →
+    // duplicate play_start plus a restarted warm-up. Pending is a COMPARISON, not a flag, so no
+    // lifecycle can leak it: any renderContent dispatch or synchronous teardown moves renderSeq
+    // and the pending state clears itself. Declared here for the same TDZ reason as renderSeq.
+    let pendingVideoSeq = -1;
     // Followers in a video wall must stay silent — N copies of the same audio
     // slightly out of sync produce a flanged echo across the wall. Only the
     // leader is allowed to make sound. This helper is the single source of
@@ -1134,6 +1524,154 @@
       return window.MediaMute ? window.MediaMute.resolveMuted(muteState(item)) : true;
     }
 
+    /* =============== slide audio: a voiceover per item, a music bed across items ===============
+     *
+     * ⚠️ THE ELEMENTS LIVE HERE, IN THE SHELL, AND NOT IN THE SLIDE.
+     *
+     * A slide is a widget in an iframe, and an iframe is the wrong lifetime for both tracks. A deck
+     * publishes as one widget per slide plus a playlist, so every advance destroys it — a looping
+     * bed inside would restart on each slide, which is the one thing a bed must not do. And audio
+     * in there would be invisible to applyMute() below, which sweeps `video, audio` across this
+     * document: the wall-follower rule, the operator's remote mute, the per-item flag and the
+     * autoplay gesture would all stop applying. That is the same reason a slide's background video
+     * is unconditionally muted (see lib/slide-render.js).
+     *
+     * So both elements are created here, appended to this document, and left to applyMute() like
+     * every other piece of media. The ONLY difference between the two tracks is what happens on an
+     * advance: the voiceover is replaced, the bed is left alone while its id is unchanged.
+     */
+    let voEl = null;
+    let bedEl = null;
+    let bedTrackId = null;
+
+    function stopSlideVo() {
+      if (!voEl) return;
+      try { voEl.pause(); voEl.remove(); } catch (e) { /* already gone */ }
+      voEl = null;
+    }
+
+    function stopSlideBed() {
+      if (!bedEl) return;
+      try { bedEl.pause(); bedEl.remove(); } catch (e) { /* already gone */ }
+      bedEl = null;
+      bedTrackId = null;
+    }
+
+    /*
+     * Re-apply the mute decision and RESTART anything the autoplay policy refused.
+     *
+     * ⚠️ THE SECOND HALF IS THE ONE THAT MATTERS, and leaving it out is why a preview stayed silent
+     * even after being clicked. A browser refuses `play()` on unmuted audio without a gesture, so
+     * the elements created at item start are left both muted and PAUSED. The existing gesture
+     * handler only revisits <video> (tryUnmuteLeader) and the YouTube embed — nothing went back to
+     * an <audio> element to try again, so it sat at currentTime 0 for the rest of the deck.
+     *
+     * Unmuting alone is not enough: a paused element makes no sound however unmuted it is.
+     */
+    function resumeSlideAudio() {
+      const item = playlist[currentIndex];
+      for (const el of [voEl, bedEl]) {
+        if (!el) continue;
+        try { el.muted = applyMuteWanted(item); } catch (e) { /* torn down */ }
+        if (el.paused) el.play().catch(() => { /* still refused; a later gesture may succeed */ });
+      }
+    }
+
+    /*
+     * A click target for sound, because the slide's own iframe eats the one the player relies on.
+     *
+     * ⚠️ THE GESTURE NEVER ARRIVES OTHERWISE. Autoplay policy needs a user gesture, and the player
+     * listens for one on `document` — but a slide fills the screen with an iframe, and a click
+     * inside it never reaches the parent. So clicking the picture did nothing at all: the audio
+     * stayed muted with no indication why. The YouTube embed has had exactly this overlay for
+     * exactly this reason; a slide with audio is the same shape of problem.
+     *
+     * ⚠️ PREVIEW ONLY, DELIBERATELY. On a wall nobody is going to click, so the overlay would be a
+     * permanent "Click for sound" caption burnt into a signage screen — and a screen SHOULD stay
+     * silent. Preview is the case where a person is present, looking at it, and wants to hear it.
+     */
+    function offerSlideUnmute(item) {
+      const old = document.getElementById('slideAudioUnmute');
+      if (old) old.remove();
+      if (!PREVIEW_MODE) return;
+      const a = (item && item.audio) || {};
+      if (!a.vo_url && !a.music_url) return;
+      // Only when a gesture is the ONLY thing in the way — prompting on an item somebody muted on
+      // purpose trains people to click a button that undoes their decision.
+      const offer = window.MediaMute ? window.MediaMute.shouldOfferUnmute(muteState(item)) : !userHasInteracted;
+      if (!offer) return;
+
+      /*
+       * ⚠️ ON document.body, NOT IN #playerContainer — and position:fixed to match. applySlideAudio
+       * runs early in playCurrentItem, and renderContent REBUILDS that container immediately after,
+       * so an overlay parented there is appended and then wiped before anybody sees it. (The same
+       * note already exists further down for the element teardownCurrentMedia would remove.)
+       */
+      const ov = document.createElement('div');
+      ov.id = 'slideAudioUnmute';
+      ov.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:2147483000;cursor:pointer;display:flex;align-items:end;'
+        + 'justify-content:center;padding-bottom:40px';
+      ov.innerHTML = '<div style="background:rgba(0,0,0,0.7);color:#fff;padding:10px 24px;border-radius:8px;'
+        + 'font:14px sans-serif;pointer-events:none">🔊 Click for sound</div>';
+      ov.onclick = (e) => {
+        e.stopPropagation();
+        userHasInteracted = true;
+        try { unlockAudioContext(); } catch (err) { /* best effort */ }
+        resumeSlideAudio();
+        applyMute(playlist[currentIndex]);
+        ov.remove();
+      };
+      document.body.appendChild(ov);
+    }
+
+    function applySlideAudio(item) {
+      const a = (item && item.audio) || {};
+
+      // ---- voiceover: this item's, and only this item's.
+      stopSlideVo();
+      if (a.vo_url) {
+        voEl = document.createElement('audio');
+        voEl.src = a.vo_url;
+        try { voEl.volume = typeof a.vo_volume === 'number' ? a.vo_volume : 1; } catch (e) { /* */ }
+        // Muted through the same decision as everything else. On a signage panel there is no
+        // gesture, so this is normally true and the voice simply does not play — which is correct:
+        // a lobby screen must not start talking, and the capture-source case is the exception that
+        // has to be asked for.
+        voEl.muted = applyMuteWanted(item);
+        document.body.appendChild(voEl);
+        voEl.play().catch(() => { /* autoplay refused; the element stays for applyMute to revisit */ });
+      }
+
+      offerSlideUnmute(item);
+
+      // ---- bed: continuous for as long as consecutive items name the same track.
+      if (!a.music_id) { stopSlideBed(); return; }
+
+      if (a.music_id !== bedTrackId) {
+        /*
+         * A DIFFERENT track (or the first). Only here does the music restart — which is why publish
+         * stamps one id across a whole deck: every slide agrees, so this branch is taken once when
+         * the deck starts and not again until it ends.
+         *
+         * Compared by id rather than URL on purpose: /api/content/:id/replace keeps the id and
+         * writes a new filepath, so a URL comparison would restart the bed the first time somebody
+         * swapped the file.
+         */
+        stopSlideBed();
+        bedEl = document.createElement('audio');
+        bedEl.src = a.music_url;
+        bedEl.loop = true;
+        bedTrackId = a.music_id;
+        document.body.appendChild(bedEl);
+        bedEl.play().catch(() => { /* autoplay refused; applyMute revisits it after a gesture */ });
+      }
+      // Same track: deliberately NOT touched beyond volume and mute. Re-assigning src, or calling
+      // play() on an element that is already playing, is what a naive version does — and it is
+      // audible as a stutter at every slide change.
+      try { bedEl.volume = typeof a.music_volume === 'number' ? a.music_volume : 0.4; } catch (e) { /* */ }
+      bedEl.muted = applyMuteWanted(item);
+    }
+
     function applyMute(item) {
       if (item !== undefined) activeMuteItem = item;
       const want = window.MediaMute
@@ -1163,6 +1701,31 @@
           else { activeYtPlayer.unMute(); activeYtPlayer.setVolume(mediaVolume != null ? Math.round(mediaVolume * 100) : 100); }
         } catch (e) { /* player not ready yet; onReady applies it again */ }
       }
+
+      /*
+       * ⚠️ BRIGHTSIGN: THE DOM ABOVE DOES NOT REACH THE AUDIO PLANE. Measured on a live XT245 —
+       * every output read `mute:false, volumeLinear:1` while this function was setting el.muted on
+       * every element. So on that hardware mute has never muted, a video wall has played N
+       * overlapping soundtracks, and nothing here made a sound stop. The bridge drives
+       * @brightsign/audiooutput, which does.
+       *
+       * ⚠️ AND THE PLATFORM MUTE IS GLOBAL, NOT PER-ELEMENT — which is why this is NOT
+       * `want || baseAudioSuppressed`. Suppression means an ALARM OVERLAY is playing and must be
+       * the thing you hear; muting the whole output then would silence the alarm, turning a
+       * base-audio bug into an emergency-message bug. So the platform is silenced only when the
+       * base wants silence AND nothing is asserting audio over it.
+       *
+       * Selective suppression — overlay audible while the base underneath is silent — is still
+       * unsolved on this platform, because per-element control is exactly what it does not have.
+       * That is the pre-existing behaviour, not a regression introduced here.
+       */
+      try {
+        var bs = window.ScreenTinkerBS;
+        if (bs && typeof bs.setAudioMuted === 'function' && bs.isBrightSign && bs.isBrightSign()) {
+          bs.setAudioMuted(want && !baseAudioSuppressed);
+        }
+      } catch (e) { /* the DOM writes above still stand on every other platform */ }
+
       return want;
     }
 
@@ -1294,8 +1857,8 @@
       if (document.getElementById('enableAudioPrompt')) return;
       const ov = document.createElement('div');
       ov.id = 'enableAudioPrompt';
-      ov.style.cssText = 'position:fixed;bottom:2.4rem;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.88);color:#fff;padding:1.2rem 2.2rem;border-radius:0.8rem;cursor:pointer;z-index:10000;font-size:1.4rem;display:flex;gap:1rem;align-items:center;box-shadow:0 0.4rem 1.6rem rgba(0,0,0,0.4)';
-      ov.innerHTML = '<span style="font-size:2rem">&#128263;</span><span>Tap to enable audio</span>';
+      ov.style.cssText = 'position:fixed;bottom:2.4rem;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.88);color:#fff;padding:1.2rem 2.2rem;border-radius:0.8rem;cursor:pointer;z-index:10000;font-size:1.4rem;display:flex;align-items:center;box-shadow:0 0.4rem 1.6rem rgba(0,0,0,0.4)';
+      ov.innerHTML = '<span style="font-size:2rem">&#128263;</span><span style="margin-left:1rem">Tap to enable audio</span>';
       ov.addEventListener('click', () => {
         unlockAudioContext();
         tryUnmuteLeader();
@@ -1320,6 +1883,10 @@
         if (isWallFollower()) return;
         if (wasFirst) console.log('[wall/audio] first user gesture detected — attempting unmute');
         tryUnmuteLeader();
+        // Slide voiceover and music bed. Sits with tryUnmuteLeader because it is the same job for a
+        // different element type — and below the wall-follower return above, so tapping a follower
+        // still cannot make it talk.
+        resumeSlideAudio();
         // Unmute YouTube player if active. Guarded like the identical block in unlockAudio: a tap
         // on a touch panel during an alarm must not restore the BASE playlist's audio underneath it.
         if (activeYtPlayer && typeof activeYtPlayer.unMute === 'function' && !baseAudioSuppressed) {
@@ -1386,11 +1953,80 @@
         if (!salt) {
           const buf = new Uint8Array(16);
           (window.crypto || window.msCrypto).getRandomValues(buf);
-          salt = Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
+          salt = Array.from(buf, (b) => ('0' + b.toString(16)).slice(-2)).join('');
           localStorage.setItem('st_install_id' + SCREEN_SUFFIX, salt);
         }
       } catch (e) { salt = null; }
       return salt ? hw + '-' + salt.slice(0, 16) : hw;
+    }
+
+    /* ============================ #299 offline proof-of-play ============================
+     * Shared player scope, initialized before cached playback can run. connect() must not
+     * own this state: playback runs before it connects and while its socket is down.
+     * Playback is offline-native; reporting was not. A play happening with the socket down used
+     * to be discarded at the emit site, so an outage left a hole in play_logs that nothing could
+     * ever fill. These keep it, and replay it with its REAL times once the socket is back.
+     */
+    let offlinePlayOpen = null;
+    let offlinePlayFlushing = false;
+    const OFFLINE_PLAY_KEY = 'st_offline_plays';
+    /*
+     * ⚠️ GUARDED, BECAUSE THIS NOW RUNS AS THE PAGE LOADS (#460), not inside connect(). If
+     * offline-play-queue.js ever failed to load — and a missing script on this server answers 200
+     * with index.html, not a 404 — an unguarded `new` here would stop the WHOLE player at boot,
+     * not just offline reporting. Proof-of-play is the expendable half; playback is not.
+     */
+    const offlineQueueAvailable = typeof OfflinePlayQueue === 'function';
+    const offlinePlays = offlineQueueAvailable ? new OfflinePlayQueue() : {
+      restore() {}, size() { return 0; }, serialize() { return '[]'; }, add() {}, peekBatch() { return []; }, ack() {},
+    };
+    if (!offlineQueueAvailable) console.log('[play] offline-play-queue.js unavailable — offline proof-of-play disabled, playback unaffected');
+    try { offlinePlays.restore(localStorage.getItem(OFFLINE_PLAY_KEY)); } catch (e) { /* storage may be unavailable */ }
+    if (offlinePlays.size()) console.log('[play] offline backlog restored:', offlinePlays.size());
+
+    function persistOfflinePlays() {
+      // ⚠️ A private-mode or quota-full localStorage must not take the player down; the backlog
+      // is the expendable half here, playback is not.
+      try { localStorage.setItem(OFFLINE_PLAY_KEY, offlinePlays.serialize()); } catch (e) { /* ignore */ }
+    }
+
+    function queueOfflinePlay(open, completed) {
+      if (!offlineQueueAvailable) return;
+      offlinePlays.add(OfflinePlayQueue.makePlay({
+        client_event_id: OfflinePlayQueue.newId(),
+        content_id: open.content_id,
+        widget_id: open.widget_id,
+        content_name: open.content_name,
+        started_at: open.started_at,
+        ended_at: Math.floor(Date.now() / 1000),
+        completed: completed,
+      }));
+      persistOfflinePlays();
+    }
+
+    function flushOfflinePlays() {
+      if (offlinePlayFlushing || !offlinePlays.size() || !socket?.connected) return;
+      const batch = offlinePlays.peekBatch();
+      if (!batch.length) return;
+      offlinePlayFlushing = true;
+      socket.emit('device:play-event', {
+        device_id: config.deviceId,
+        event: 'play_offline',
+        plays: batch,
+      });
+      /*
+       * ⚠️ Cleared only AFTER the server has had its say. Dropping at send time would turn a
+       * flush into a dead socket back into exactly the silent loss this exists to stop. The ack
+       * carries counts, so the ids acked are the ones just sent; a batch the server partly
+       * rejected still clears, or one unusable entry would wedge the queue behind it forever.
+       */
+      setTimeout(() => {
+        offlinePlays.ack(batch.map(p => p.client_event_id));
+        persistOfflinePlays();
+        offlinePlayFlushing = false;
+        if (offlinePlays.size()) flushOfflinePlays();
+      }, 4000);
+      console.log('[play] flushed', batch.length, 'offline plays,', offlinePlays.size(), 'queued');
     }
 
     // ==================== Boot ====================
@@ -1455,7 +2091,10 @@
       saveConfig(config);
     }
 
-    if (config.serverUrl && config.deviceId && config.paired) {
+    // #313: `config.enrolKey` is an identity too — a player whose storage did not survive knows who
+    // it is from its URL, so it takes the same path as one that read its id out of localStorage
+    // rather than falling through to the pairing-code screen.
+    if (config.serverUrl && (config.deviceId || config.enrolKey) && config.paired) {
       // Restore cached playlist immediately so content plays even if offline —
       // but ONLY if we also know the layout, else we'd guess fullscreen and flash
       // before the payload arrives. Key presence (not value) is the test: an absent
@@ -1470,7 +2109,20 @@
         playlist = cachedPlaylist;
         layout = loadLayoutCache();
         document.getElementById('setupScreen').style.display = 'none';
-        startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
+        /*
+         * ⚠️ GUARDED, AND THE GUARD IS THE POINT. Everything after this line in the boot script —
+         * the tap overlay, and connect() — is what gets the player talking to the server. An
+         * uncaught throw here skipped all of it, so a screen that failed to render one cached item
+         * never connected, never received a corrected playlist, and could not be recovered
+         * remotely. Rendering from cache is an OPTIMISATION; it must never be able to cost the
+         * connection that makes the player fixable. Whatever goes wrong in here, we still boot.
+         */
+        try {
+          startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
+        } catch (e) {
+          console.error('[boot] cached playlist failed to render — continuing to connect:', e && (e.stack || e.message || e));
+          try { savePlaylistCache([]); } catch (e2) {}   // a cache that cannot render is worse than none
+        }
         // #group-sync: if this device was in a sync group, resume the schedule immediately from the
         // cached clock offset — so a reboot mid-outage comes back aligned WITHOUT waiting for a server.
         try { const cg = localStorage.getItem('st_group_sync'); if (cg) applyGroupSync(JSON.parse(cg)); } catch (e) {}
@@ -1482,7 +2134,7 @@
       // connects muted, so unattended kiosks still recover without a human tap.
       {
         const tapOverlay = document.createElement('div');
-        tapOverlay.style.cssText = 'position:fixed;inset:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
+        tapOverlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer';
         tapOverlay.innerHTML = `
           <h1 style="color:#3b82f6;font-size:3.6rem;font-family:sans-serif;margin-bottom:1.2rem">ScreenTinker</h1>
           <p style="color:#94a3b8;font-size:1.8rem;font-family:sans-serif">Tap anywhere to start</p>
@@ -1628,7 +2280,7 @@
       const msg = (status === 401 || status === 403) ? 'Not authorized to preview this playlist'
         : status ? ('Preview failed (' + status + ')') : 'Preview failed to load';
       const div = document.createElement('div');
-      div.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#e5e7eb;background:#111827;font:18px sans-serif;z-index:3000;text-align:center;padding:24px';
+      div.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;display:flex;align-items:center;justify-content:center;color:#e5e7eb;background:#111827;font:18px sans-serif;z-index:3000;text-align:center;padding:24px';
       div.textContent = msg;
       document.body.appendChild(div);
     }
@@ -1857,6 +2509,29 @@
         return;
       }
 
+      // Vega's /data identity arrives on host:ready, which is after this script. Opening the
+      // socket first would register with a fresh pairing code and leave a second dashboard row.
+      // The cap is the same idea as BrightSign's onReady: a shell that never speaks must still
+      // be able to pair. vegaConnectGaveUp stops the cap from deferring itself forever.
+      try {
+        if (!vegaConnectGaveUp && !vegaIdentityCleared && typeof onVega === 'function' && onVega()
+            && typeof HOST !== 'undefined' && HOST && !HOST.ready) {
+          vegaConnectDeferred = true;
+          if (!vegaConnectWait) {
+            vegaConnectWait = setTimeout(() => {
+              vegaConnectWait = null;
+              vegaConnectGaveUp = true;
+              vegaConnectDeferred = false;
+              connect(serverUrl);
+            }, 4000);
+          }
+          return;
+        }
+      } catch (e) { /* a missing predicate means "not Vega" — connect as a browser */ }
+      if (vegaConnectWait) { clearTimeout(vegaConnectWait); vegaConnectWait = null; }
+      vegaConnectDeferred = false;
+      try { adoptVegaIdentity(); } catch (e) {}
+
       if (socket) { socket.disconnect(); socket = null; }
 
       socket = io(serverUrl + '/device', {
@@ -1884,6 +2559,37 @@
       livenessWindowMs = v4ThresholdMs(Math.random());
       socket.onAny(markAlive);
       socket.io.on('ping', markAlive);
+
+      /*
+       * ⚠️ HONOUR device:throttled INSTEAD OF RECONNECTING INTO IT (#314).
+       *
+       * Three separate gates in ws/deviceSocket.js can refuse a register — the burst throttle, the
+       * flap limiter and the session-settle hold — and all three refuse BEFORE the playlist is sent
+       * and then drop the socket. Until now no player implemented this event at all: the server was
+       * asking for a pause and the client came straight back on its 1s reconnect timer, so the
+       * screen sat on "Waiting for content" with every byte of its content already cached, while
+       * each retry re-tripped the rate window it was waiting out. Reported from a fleet after an
+       * OTA, where the post-update relaunch cascade supplies the initial burst.
+       *
+       * So: take the server's own number, hold the reconnector off for that long, then come back
+       * once. Clamped at both ends — a missing or absurd value must not strand a screen for hours,
+       * and a zero must not turn this into a busy loop.
+       */
+      socket.on('device:throttled', (d) => {
+        const asked = Number(d && d.retry_after_ms);
+        const waitMs = Math.min(Math.max(Number.isFinite(asked) ? asked : 0, 1000), 5 * 60 * 1000);
+        console.warn('[throttle] server asked us to wait ' + waitMs + 'ms (' + ((d && d.reason) || 'unspecified') + ')');
+        try { socket.io.reconnection(false); } catch (e) { /* older client build */ }
+        if (throttleHoldTimer) clearTimeout(throttleHoldTimer);
+        throttleHoldTimer = setTimeout(() => {
+          throttleHoldTimer = null;
+          try {
+            socket.io.reconnection(true);
+            // The refusal came with a disconnect, so nothing is going to retry unless we ask.
+            if (!socket.connected) socket.connect();
+          } catch (e) { console.warn('[throttle] resume failed: ' + e.message); }
+        }, waitMs);
+      });
       // v4 degrade-safe ARM: the watchdog arms ONLY after the first app-level device:heartbeat-ack.
       socket.on('device:heartbeat-ack', (data) => { livenessConfirmed = true; if (data) ingestClockSample(data.server_ms, data.client_ms); });
 
@@ -1920,11 +2626,37 @@
         document.getElementById('connectBtn').disabled = false;
       });
 
+      socket.on('device:play-offline-ack', (d) => {
+        console.log('[play] backfill ack:', JSON.stringify(d));
+      });
+
+      /*
+       * #trigger-ingress: a fire the SERVER accepted on our behalf.
+       *
+       * ⚠️ FOR PLAYERS THAT CANNOT OPEN THEIR OWN DOOR. BrightSign's server-on-a-player widget has
+       * no Node, so `require('dgram')` and `require('http')` both throw here and the listeners
+       * never bind — enabling triggers on such a device did nothing at all. The server on that same
+       * board holds the door and hands the wire text over this socket instead.
+       *
+       * ⚠️ IT IS RE-EVALUATED HERE, NOT TRUSTED. The server resolved only WHICH device the payload
+       * was addressed to; whether it may fire is decided by the same resolver a datagram would have
+       * gone through, with this device's own secret. One decision, now three doors.
+       */
+      socket.on('device:trigger-wire', (d) => {
+        try {
+          if (!d || typeof d.text !== 'string') return;
+          handleTrigger({ text: wireClean(d.text), source: d.source || 'server', sourceIp: d.sourceIp || 'server' });
+        } catch (e) {
+          triggerLog('warn', 'server-delivered trigger failed: ' + ((e && e.message) || e));
+        }
+      });
+
       socket.on('device:registered', (data) => {
         config.deviceId = data.device_id;
         if (data.device_token) config.deviceToken = data.device_token;
         saveConfig(config);
         console.log('Registered:', data.device_id);
+        flushOfflinePlays();   // #299: authenticated, so any offline backlog can be replayed
 
         // feat/offline-cause-log: reconnected after an in-session disconnect -> report the gap length
         // + whether the local link dropped. cold_start:false because the page SURVIVED the gap (a
@@ -1962,6 +2694,17 @@
       socket.on('device:paired', (data) => {
         config.paired = true;
         config.deviceName = data.name;
+        /*
+         * The settings PIN, which is what gates Esc (see the keydown handler).
+         *
+         * ⚠️ ONLY WHEN THE FIELD IS PRESENT. The server omits settings_pin on some register paths
+         * (the replica branch sends device:paired without it), and there is no "remove the PIN"
+         * feature — so an absent field means "this sender did not include it", never "this screen
+         * has no PIN". Assigning it unconditionally would erase a known-good PIN on the next
+         * reconnect and silently turn Esc into a permanent no-op, which looks exactly like the
+         * feature being broken.
+         */
+        if (data && data.settings_pin) config.settingsPin = String(data.settings_pin);
         saveConfig(config);
         console.log('Paired as:', data.name);
         document.getElementById('setupScreen').style.display = 'none';
@@ -1993,6 +2736,9 @@
         delete config.deviceId;
         delete config.deviceToken;
         config.paired = false;
+        // Before saveConfig. The shell would otherwise hand this identity back on the next load
+        // and repair mode would repair nothing.
+        try { if (typeof clearVegaIdentity === 'function') clearVegaIdentity(); } catch (e) {}
         saveConfig(config);
         document.getElementById('setupScreen').style.display = 'flex';
         document.getElementById('urlForm').style.display = 'block';   // still editable
@@ -2003,13 +2749,47 @@
         startAutoContinue(10);
       }
 
+      // The dashboard rotated the PIN. Same event the Android player already receives; the web
+      // player ignored it, so a rotated PIN never reached the screen that Esc is gated on.
+      socket.on('device:settings-pin', (data) => {
+        if (data && data.settings_pin) {
+          config.settingsPin = String(data.settings_pin);
+          saveConfig(config);
+          console.log('[settings] PIN updated from the dashboard');
+        }
+      });
+
       socket.on('device:unpaired', () => {
         console.warn('Device not found on server — clearing credentials');
         savePlaylistCache([]);
         enterRepairMode('Device was removed from the server. Re-pairing…');
       });
 
+
+
       socket.on('device:auth-error', (data) => {
+        /*
+         * ⚠️ A DEAD ENROLMENT KEY HAS TO BE DROPPED, OR THE DISPLAY LOOPS FOREVER.
+         *
+         * The key is re-derived from location.search on every load, and carrying one sets
+         * paired=true — so a player whose key was rolled, revoked, or whose display row was deleted
+         * keeps presenting the same dead credential, never asks for a pairing code, and never shows
+         * one. Repair mode does not help by itself: it clears deviceId and deviceToken and leaves
+         * the key exactly where it was. Without this the only recovery is editing the URL on the
+         * machine — which, for the vMix case this feature exists to serve, means editing the vMix
+         * input by hand.
+         *
+         * The server names this case (reason: 'enrol_key_unknown'), so forget the key for this
+         * session and go back to being unpaired: the next register asks for a pairing code and puts
+         * it on the screen. The URL is left alone, because the operator may roll a NEW key onto this
+         * same display and that URL should keep working.
+         */
+        if (data && data.reason === 'enrol_key_unknown') {
+          console.warn('[enrol] this player URL key is no longer valid — falling back to pairing');
+          config.enrolKey = null;
+          config.paired = false;
+        }
+
         console.warn('Device auth rejected:', data?.error || 'unknown');
         enterRepairMode('This device needs to be re-paired. Getting a new code…');
       });
@@ -2148,7 +2928,17 @@
         // dashboard button did nothing on it. A BrightSign can, through the host script.
         if (data.type === 'reboot') {
           if (BS && BS.reboot()) console.log('[bs] reboot requested via host');
+          else if (HOST && HOST.can('system.reboot') && HOST.command('reboot')) console.log('[host] reboot requested');
           else console.log('reboot: not supported on this player');
+        }
+        if (data.type === 'shutdown') {
+          if (HOST && HOST.can('system.reboot') && HOST.command('shutdown')) console.log('[host] shutdown requested');
+          else console.log('shutdown: not supported on this player');
+        }
+        // Self-update: the shell knows where its own package lives; it only needs the nudge.
+        if (data.type === 'update') {
+          if (HOST && HOST.can('system.self_update') && HOST.command('update')) console.log('[host] update requested');
+          else console.log('update: not supported on this player');
         }
         // Media volume. Applies to whatever is playing now and is remembered for items mounted
         // later (see setMediaVolume). The wire parsing is volumeLevelFromCommand().
@@ -2161,6 +2951,9 @@
         // relay wraps it in `payload`, but the queued-command replay path and the public API have
         // both been seen to deliver it flat.
         if (data.type === 'set_debug') setRemoteDebug(!!(data.payload?.enabled ?? data.enabled));
+        // #312 follow-up: move this player to a new server address. The server hands us an enrol key
+        // in the payload (only an operator's move mints one) so our identity can cross the origin.
+        if (data.type === 'set_server_url') moveToServer((data.payload && data.payload.url) || data.url, data.payload && data.payload.enrol_key);
       });
 
       // #129: real-time mute. Apply immediately if the toggled item is the one playing now;
@@ -2180,6 +2973,155 @@
 
       // #109: PiP overlay — a pushed floating layer above the playlist. The player
       // fetches uri itself (same trust model as remote_url content).
+      // #go2rtc live publish. The dashboard requests a screen; the player pushes it into go2rtc.
+      // A browser only grants getDisplayMedia from a user gesture, so start on an active activation
+      // now, else arm the next tap/key. Publishing is best-effort: if the player cannot (no
+      // support, no credentials, denied) it simply keeps rendering. Never blocks content.
+      // #go2rtc self-capture: publish the player's OWN rendered content, NO getDisplayMedia and NO
+      // gesture. A page can capture its own pixels freely, so we mirror the stage into a canvas and
+      // captureStream() it. This covers the player's video and image content (same-origin, so the
+      // canvas is not tainted). It CANNOT capture cross-origin web-page/widget iframes (browser
+      // security taints the canvas) - those frames simply hold the last drawable frame. The real
+      // signage answer for those is the deferred Android MediaProjection publisher.
+      let liveCaptureStop = null;
+      // Direct capture of the playing <video> element: RFP-safe (no canvas readback) and cheap.
+      // Firefox uses mozCaptureStream(). Returns a MediaStream or null if there is no usable video.
+      function captureVideoDirect() {
+        const container = document.getElementById('playerContainer') || document.body;
+        const isVis = (el) => { if (!el || el.offsetParent === null) return false; try { const st = getComputedStyle(el); if (st.visibility === 'hidden' || parseFloat(st.opacity || '1') < 0.05) return false; } catch (_) {} return (el.offsetWidth || 0) > 0; };
+        const v = Array.from(container.querySelectorAll('video')).filter((x) => x.readyState >= 2 && (x.videoWidth || 0) > 0 && !x.paused && !x.ended && isVis(x)).pop();
+        if (!v) return null;
+        try {
+          const s = v.captureStream ? v.captureStream() : (v.mozCaptureStream ? v.mozCaptureStream() : null);
+          if (s && s.getVideoTracks && s.getVideoTracks().length) { console.log('[live] capture: direct video element'); return s; }
+        } catch (e) { console.log('[live] direct video capture failed:', e && e.name); }
+        return null;
+      }
+      // Canvas mirror: the fallback for image/mixed content (drawImage of same-origin images).
+      // NOTE: under Firefox privacy.resistFingerprinting this may be blanked/black - that is a
+      // browser anti-fingerprinting measure, not our bug; direct video capture above avoids it.
+      function startStageCapture(fps) {
+        const container = document.getElementById('playerContainer') || document.body;
+        const canvas = document.createElement('canvas');
+        canvas.width = container.clientWidth || window.innerWidth || 1280;
+        canvas.height = container.clientHeight || window.innerHeight || 720;
+        const ctx = canvas.getContext('2d');
+        let stopped = false;
+        const visible = (el) => {
+          if (!el || el.offsetParent === null) return false;   // display:none / detached
+          try { const st = getComputedStyle(el); if (st.visibility === 'hidden' || parseFloat(st.opacity || '1') < 0.05) return false; } catch (_) {}
+          return (el.offsetWidth || 0) > 0 && (el.offsetHeight || 0) > 0;
+        };
+        const pickSource = () => {
+          // The ACTUAL on-screen content, not a hidden double-buffer. The player keeps a paused,
+          // often-offscreen preload <video> (see preloadVideo/#187); drawing that gives a black
+          // frame. So require a video that is visible AND actually playing; fall back to a visible
+          // loaded image (image content), then last-resort any ready video.
+          const allV = Array.from(container.querySelectorAll('video')).filter((v) => v.readyState >= 2 && (v.videoWidth || 0) > 0);
+          const playing = allV.filter((v) => !v.paused && !v.ended && visible(v));
+          if (playing.length) return playing[playing.length - 1];
+          const imgs = Array.from(container.querySelectorAll('img')).filter((i) => i.complete && (i.naturalWidth || 0) > 0 && visible(i));
+          if (imgs.length) return imgs[imgs.length - 1];
+          const visV = allV.filter((v) => visible(v));
+          if (visV.length) return visV[visV.length - 1];
+          return null;
+        };
+        const tick = () => {
+          if (stopped) return;
+          const src = pickSource();
+          if (src) {
+            const sw = src.videoWidth || src.naturalWidth, sh = src.videoHeight || src.naturalHeight;
+            if (sw && sh) {
+              try {
+                ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                const scale = Math.min(canvas.width / sw, canvas.height / sh);
+                const dw = sw * scale, dh = sh * scale;
+                ctx.drawImage(src, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+              } catch (_) { /* cross-origin taint: keep the last frame rather than throw */ }
+            }
+          }
+        };
+        tick();
+        const timer = setInterval(tick, Math.round(1000 / (fps || 15)));
+        const stream = canvas.captureStream(fps || 15);
+        liveCaptureStop = () => { stopped = true; clearInterval(timer); };
+        return stream;
+      }
+
+      socket.on('device:live-publish', (data) => {
+        const LP = window.STLivePublish;
+        if (!LP) return;
+        const action = data && data.action;
+        if (action === 'stop') {
+          try { LP.stop(); } catch (_) {}
+          if (liveCaptureStop) { try { liveCaptureStop(); } catch (_) {} liveCaptureStop = null; }
+          return;
+        }
+        if (action !== 'start') return;
+        if (!config || !config.deviceId || !config.deviceToken || !LP.isSupported()) {
+          console.log('[live] publish requested but not available on this player'); return;
+        }
+        // Self-capture needs no user gesture, so start immediately when the dashboard asks.
+        try {
+          LP.start({
+            deviceId: config.deviceId,
+            deviceToken: config.deviceToken,
+            serverUrl: config.serverUrl || '',
+            iceServers: (data && data.iceServers) || undefined,
+            getStream: () => captureVideoDirect() || startStageCapture(15),   // direct video (RFP-safe) else canvas mirror
+            onState: (st, reason) => {
+              console.log('[live] publish', st, reason || '');
+              if (st === 'stopped' && liveCaptureStop) { try { liveCaptureStop(); } catch (_) {} liveCaptureStop = null; }
+            },
+          });
+        } catch (_) { /* publishing is best-effort; never break playback */ }
+      });
+
+      // #talk: two-way intercom / one-way PA. Mirror of the live-publish handler — STTalk speaks the
+      // device-authenticated WS proxy with this player's device_token. Listen (broadcast) needs no
+      // mic; duplex requests the mic and falls back to listen-only if denied.
+      socket.on('device:talk-start', (data) => {
+        const TK = window.STTalk;
+        if (!TK || !TK.isSupported()) { console.log('[talk] requested but not available on this player'); return; }
+        if (!config || !config.deviceId || !config.deviceToken) return;
+        try {
+          setTalkDucking(true);   // duck the playlist so the announcement is heard
+          TK.start({
+            deviceId: config.deviceId,
+            deviceToken: config.deviceToken,
+            serverUrl: config.serverUrl || '',
+            mode: (data && data.mode) === 'listen' ? 'listen' : 'device',
+            duplex: !!(data && data.duplex),   // 2-way: also send this device's mic
+            scope: data && data.scope,
+            iceServers: (data && data.iceServers) || undefined,
+            onState: (st, reason) => {
+              if (window.__stTalkDebug) console.log('[talk]', st, reason || '');
+              /*
+               * ⚠️ TELL THE OPERATOR WHEN THERE IS NO MICROPHONE.
+               *
+               * The duplex path asks for the mic and falls back to `listen_only_no_mic` when the
+               * browser refuses or the box has none. That fallback is correct, and it used to be
+               * SILENT: an operator clicked "2-way", got a one-way session, and had no way to tell
+               * the difference from a screen that simply was not talking back. The capability is
+               * proven by using it, so the result of using it has to come back.
+               */
+              try {
+                socket.emit('device:talk-state', {
+                  device_id: config.deviceId,
+                  device_token: config.deviceToken,
+                  state: st,
+                  reason: reason || null,
+                });
+              } catch (_) { /* reporting is best-effort; never break the session */ }
+            },
+          });
+        } catch (_) { /* intercom is best-effort; never break playback */ }
+      });
+      socket.on('device:talk-stop', () => {
+        try { window.STTalk && window.STTalk.stop(); } catch (_) {}
+        try { setTalkDucking(false); } catch (_) {}   // restore playlist audio + resume video
+      });
+
       socket.on('device:pip-show', (data) => pipShow(data));
       socket.on('device:pip-clear', (data) => pipClear(data && data.pip_id));
     }
@@ -2363,7 +3305,22 @@
      */
     function triggerSyncAudio() {
       if (typeof setBaseAudioSuppressed !== 'function') return;
-      try { setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase)); } catch (e) {}
+      // Base audio is ducked when a trigger covers the screen OR a voice call/PA is active
+      // (talkDucking) — combined here so neither source clobbers the other.
+      try { setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase) || talkDucking); } catch (e) {}
+    }
+
+    // #talk: while a voice call / PA announcement is active on this device, duck the playlist so the
+    // announcement is heard — mute the base audio AND pause the current video (frozen, silent). The
+    // announcement's own <audio> is __stOverlay, so setBaseAudioSuppressed leaves it alone.
+    let talkDucking = false;
+    function setTalkDucking(on) {
+      talkDucking = !!on;
+      triggerSyncAudio();   // re-evaluate the combined base-audio suppression
+      try {
+        if (on) { if (currentVideoEl) currentVideoEl.pause(); }
+        else if (currentVideoEl && !currentVideoEl.__stOverlay) { const p = currentVideoEl.play(); if (p && p.catch) p.catch(() => {}); }
+      } catch (e) { /* torn down */ }
     }
 
     /*
@@ -2412,7 +3369,7 @@
 
       const box = document.createElement('div');
       box.className = 'trigger-box';
-      box.style.cssText = 'position:absolute;inset:0;background:#000;overflow:hidden;';
+      box.style.cssText = 'position:absolute;top:0;right:0;bottom:0;left:0;background:#000;overflow:hidden;';
       // Latched so media inside is recognised as overlay even when DETACHED — the transition path
       // warm-plays a <video> before appending it, and #146 left detached elements still decoding.
       box.__stOverlay = true;
@@ -2423,7 +3380,7 @@
         /*
          * ⚠️ Whether the overlay COVERS the screen — computed here, beside the line that decides
          * the box's shape, so the two can never drift. Today it is unconditionally true because
-         * the box is hardcoded inset:0 opaque; geometry is reserved at the API for exactly that
+         * the box is hardcoded opaque across its full area; geometry is reserved at the API for exactly that
          * reason. If a banner/partial mode is ever added, this expression changes on the same
          * line as the style and the audio rule follows automatically.
          *
@@ -3146,15 +4103,35 @@
         // Render paths that exist in this file unconditionally.
         'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
         'playback.zones', 'playback.pip',
+        // IPTV: this player plays a live HLS stream — natively on Safari/BrightSign/webOS/Tizen,
+        // and via the lazily-loaded vendored hls.js on Chrome. See renderLiveStream.
+        'playback.hls',
+        /* Mounting a server-flattened bundle needs nothing this player does not already have — it
+         * is the widget iframe with a different URL. Claimed unconditionally for that reason, and
+         * deliberately NOT taken to mean the bundle is available offline: nothing here unpacks an
+         * archive yet, so offline.cache still answers only for media. */
+        'playback.bundle',
         // #129 per-item mute plus the operator volume added alongside it.
         'audio.mute', 'audio.volume',
+        /* Slide voiceover + deck music bed. This player owns those elements itself (see
+         * applySlideAudio), which is what the capability asserts — a player that only renders the
+         * widget iframe would make no sound, because the tracks are metadata on the item. */
+        'playback.slide_audio',
         // CSS transform in a browser; the host rotates the output on BrightSign. Both real.
         'display.rotation',
         'remote.input',
         'remote.stream',
+        // #talk: this browser player is a full WebRTC audio peer (window.STTalk), so it does the
+        // two-way intercom and the one-way PA listen just like the native player.
+        'remote.talk',
         // restartPlayer() always resolves to something: the host rebuilds the widget, or the page
         // reloads. It is the one lifecycle action a browser tab can genuinely perform.
         'system.restart_player',
+        // #312 follow-up: this player can be MOVED to a new server address. A browser tab's storage
+        // is origin-scoped, so it carries its identity across via an enrol key in the URL (#313):
+        // it verifies the new address is reachable, mints its key, and redirects to
+        // `<newUrl>/player?k=<key>` — see the set_server_url handler in device:command.
+        'remote.set_server_url',
         'sync.clock',
       ];
 
@@ -3163,6 +4140,11 @@
        * and a port that never bound are different facts, and the operator picking screens for an
        * integrator needs the second one. Same rule as offline.cache: claim what was verified.
        */
+      // #talk: only claim a microphone (unlocks the dashboard's 2-way control) when this browser
+      // actually has an audio input. ⚠️ NOTHING SETS THIS FLAG AT PRESENT — the probe that did
+      // (detectMic) put a media-permission prompt on top of the pairing code on a fresh Pi, so it is
+      // not called. See register(). Until it is restored, every screen reports one-way Talk / PA.
+      if (window.__stHasMic) caps.push('remote.mic');
       if (typeof triggerStats === 'object' && triggerStats.listeners && triggerStats.listeners.http) {
         caps.push('trigger.http');
       }
@@ -3177,6 +4159,12 @@
       // An earlier draft here tested window.STTransitions, which does not exist: the capability
       // would simply never have been declared, hiding the transitions UI for every display, and
       // nothing would have failed loudly enough to notice.
+      //
+      // Vega is included. Image→image wipes run; video boundaries hard-cut in
+      // videoCompositingAvailable, because drawing a <video> traps slatium. The
+      // name stays: withholding it hid a control the stick has for stills. This
+      // function is extracted by the capability tests, which have no shell; it
+      // must not call onVega (a missing predicate would throw out of register).
       try {
         if (typeof transitionRuntimeReady === 'function' && transitionRuntimeReady()) {
           caps.push('playback.transitions');
@@ -3231,6 +4219,12 @@
         if (window.ScreenTinkerBSSync && window.ScreenTinkerBSSync.available()) caps.push('sync.native');
       } catch (e) { /* not on BrightSign */ }
 
+      // What the embedding shell announced it can do (webOS today). Claimed from its
+      // host:ready message and nothing else; before it arrives, or with no shell, nothing extra.
+      // typeof-guarded: the declared-capabilities tests extract this function on its own.
+      if (typeof HOST !== 'undefined' && HOST && HOST.ready) {
+        for (const c of HOST.caps) if (!caps.includes(c)) caps.push(c);
+      }
       return caps;
     }
 
@@ -3255,17 +4249,32 @@
     // android_version and the screen dimensions and resets ota_status/tier/the flag columns.
     // device:register and device:info both land there, so both must send the full thing.
     function buildDeviceInfo() {
-      return {
+      const info = {
         android_version: 'Web/' + navigator.userAgent.split(' ').pop(),
         // On a BrightSign, app_version is the ON-DEVICE host package — the artifact OTA replaces
         // and the only one here that can be stale. PLAYER_VERSION describes this page, which the
         // server serves fresh every load, and it already travels as client_version. Reporting the
         // page version in both columns is what made an XT245 read as 1.1.0-web forever, with no
         // way to tell a freshly-provisioned host from a year-old one.
+        // Vega is the same shape: HOST.info.version is the installed .vpkg, not this page.
         app_version: hostPackageVersion() || PLAYER_VERSION,
         screen_width: screen.width,
         screen_height: screen.height,
       };
+      // Additive. applyDeviceInfo ignores unknown keys; applyHardwareIdentity reads these and
+      // leaves a column alone when the key is absent, so a browser register does not wipe a
+      // model that a previous Vega register stored... it can't, a browser has a different row.
+      // Sending them only when the shell has actually spoken is what keeps a half-booted page
+      // from writing empty strings over a good model (COALESCE treats a value, even "", as news
+      // only when the trimmed string is non-empty — empty is skipped — but we still omit).
+      try {
+        if (typeof HOST !== 'undefined' && HOST && HOST.info) {
+          if (HOST.info.version) info.app_version = String(HOST.info.version);
+          if (HOST.info.model) info.hardware_model = String(HOST.info.model);
+          if (HOST.info.os) info.hardware_os_version = String(HOST.info.os);
+        }
+      } catch (e) {}
+      return info;
     }
 
     // What we last told the server, so a change is detectable. register() re-seeds this with
@@ -3300,7 +4309,41 @@
       socket.emit('device:info', { device_id: config.deviceId, device_info: buildDeviceInfo() });
     }
 
+    // #talk: does this browser have a microphone? enumerateDevices exposes the PRESENCE of an
+    // audioinput even without permission. Sets window.__stHasMic and re-registers once, so the
+    // dashboard's 2-way control appears only where a mic actually exists.
+    let __micDetected = false;
+    function detectMic() {
+      if (__micDetected || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      __micDetected = true;
+      navigator.mediaDevices.enumerateDevices().then(function (devs) {
+        if (devs.some(function (d) { return d.kind === 'audioinput'; }) && !window.__stHasMic) {
+          window.__stHasMic = true;
+          try { register(); } catch (_) {}
+        }
+      }).catch(function () {});
+    }
+
     function register() {
+      /*
+       * ⚠️ detectMic() IS DELIBERATELY NOT CALLED.
+       *
+       * It calls navigator.mediaDevices.enumerateDevices(), and register() runs BEFORE pairing — so on
+       * a fresh Raspberry Pi kiosk the browser's media-permission prompt appeared on top of the pairing
+       * code. That is the first screen a new customer ever sees, and a permission dialog over it reads
+       * as "this thing wants my camera", which is the worst possible first impression for a product
+       * whose whole pitch is that it is the honest one. Reported from a production install by Watterott
+       * electronic, September 2026.
+       *
+       * ⚠️ WHAT THIS COSTS: nothing sets window.__stHasMic, so `remote.mic` is never declared and the
+       * dashboard's 2-way Talk control does not appear for any screen. Talk one-way / PA is unaffected.
+       * That is a deliberate trade until the probe can be deferred to a point where a prompt is
+       * expected — after pairing, or when a talk session is actually requested, where the operator has
+       * asked for the microphone and a dialog makes sense.
+       *
+       * The function is left defined, and the capability check that reads the flag is left in place, so
+       * restoring this is one line rather than an archaeology exercise.
+       */
       const data = {};
       // #163: always send device identity when we have it, regardless of paired
       // status. Before this fix, a reconnect before pairing would omit device_id
@@ -3333,7 +4376,10 @@
       // A BrightSign must say so rather than registering as "Chrome 120", because the sync
       // resolver (server/lib/sync-backend.js) decides native-vs-ours from exactly this field —
       // and a wall that reports itself as a browser can never be offered BrightWall.
-      data.platform = ON_BRIGHTSIGN ? 'brightsign' : browserPlatform();
+      // Vega must not register as "Chrome 120". platformFamily() keys off this string, and a
+      // stick that says Chrome is a browser row: no model, and no CMA capture cap. onVega()
+      // is false until ReactNativeWebView exists, so the query string alone does not flip it.
+      data.platform = ON_BRIGHTSIGN ? 'brightsign' : (onVega() ? 'vega' : browserPlatform());
       if (ON_BRIGHTSIGN) {
         try {
           data.bs_model = BS.model() || null;
@@ -3359,7 +4405,14 @@
       // was wiped can still be rematched to its row — but only when that value is unambiguous.
       data.fingerprint = generateBrowserFingerprint();
       data.hw_fingerprint = generateHardwareFingerprint();
-      console.log(`[register] device_id=${data.device_id || 'none'}, has_token=${!!data.device_token}, token_len=${data.device_token?.length || 0}, paired=${config.paired}, pairing_code=${data.pairing_code || 'none'}`);
+      /*
+       * #313: the enrolment key from ?k=, sent ONLY when we have no device_id of our own. The
+       * server exchanges it for this display's id and token at the top of its register handler, so
+       * everything after that is an ordinary reconnect. A player with working storage never sends
+       * it, because getConfig() only carries it when there is no stored identity to prefer.
+       */
+      if (!data.device_id && config.enrolKey) data.enrol_key = config.enrolKey;
+      console.log(`[register] device_id=${data.device_id || 'none'}, has_token=${!!data.device_token}, token_len=${data.device_token?.length || 0}, paired=${config.paired}, pairing_code=${data.pairing_code || 'none'}, enrol_key=${data.enrol_key ? 'yes' : 'no'}`);
       socket.emit('device:register', data);
     }
 
@@ -3434,22 +4487,66 @@
     // ==================== Auto-reload on code update ====================
     let knownServerHash = null;
     let versionCheckTimer = null;
+    // Keep the baseline for this loaded page across registrations/reconnects. Replacing it
+    // with a new server hash would hide a same-version deployment from the next poll.
+    /*
+     * THE deploy path — the reload that darkened a BrightSign panel on 2026-07-28, when every
+     * connected player self-reloaded and that one never returned. restartPlayer() now hands a
+     * BrightSign or Vega reload to its host rather than reloading the page itself.
+     *
+     * ⚠️ SPREAD, DON'T STAMPEDE. A deploy restarts the server; every screen reconnects within the same
+     * few seconds, and since #461 each one then notices the new code at once. Reloading them all
+     * together would add a second burst — page, assets and another reconnect per screen — on top of
+     * the reconnect burst (#146), against a server that has only just booted. A random delay of up
+     * to CODE_RELOAD_SPREAD_MS spreads them out; the old code keeps playing in the meantime.
+     */
+    const CODE_RELOAD_SPREAD_MS = 30000;
+    let codeReloadTimer = null;
+    function observeServerHash(data) {
+      if (!data || typeof data.hash !== 'string' || !data.hash) return false;
+      if (knownServerHash && data.hash !== knownServerHash) {
+        if (!codeReloadTimer) {
+          const delay = Math.floor(Math.random() * CODE_RELOAD_SPREAD_MS);
+          console.log('[player] /api/version hash changed', knownServerHash, '->', data.hash, '- reloading in', delay, 'ms (a code change on the server, NOT a dashboard action)');
+          codeReloadTimer = setTimeout(() => restartPlayer('server code updated'), delay);
+        }
+        return true;
+      }
+      if (!knownServerHash) knownServerHash = data.hash;
+      return false;
+    }
+
     function startVersionCheck() {
       if (versionCheckTimer) clearInterval(versionCheckTimer);
-      // Initial fetch to learn current hash
+      // Learn the initial hash, or check the existing baseline immediately after reconnect.
       fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
-        knownServerHash = data.hash;
+        if (observeServerHash(data)) return;
         console.log('Server version:', data.version, 'hash:', data.hash);
+        // Self-heal a stale shell. The player page is network-first (sw.js), so a reload that lands
+        // during a deploy's brief server blip falls back to the CACHED shell and then records the new
+        // hash here without ever fetching the new code — leaving the panel stranded on old code with
+        // no trigger to reload (the hash-change path below only fires on a CHANGE, and it already
+        // matches). If the running PLAYER_VERSION lags the version the server now serves, force ONE
+        // cache-busting reload so the panel recovers on its own. Guarded via localStorage so a
+        // pathological mismatch (e.g. server briefly unreachable on the reload) cannot loop; skip the
+        // un-stamped '1.1.0-web' literal, which means server-side stamping failed, not a stale shell.
+        try {
+          if (data.version && PLAYER_VERSION && PLAYER_VERSION !== '1.1.0-web' && data.version !== PLAYER_VERSION) {
+            var lastHeal = 0; try { lastHeal = +(localStorage.getItem('st_selfheal_at') || 0); } catch (e) {}
+            if (Date.now() - lastHeal > 5 * 60 * 1000) {
+              try { localStorage.setItem('st_selfheal_at', String(Date.now())); } catch (e) {}
+              console.log('[player] running', PLAYER_VERSION, 'but server serves', data.version, '- self-heal reload (stale cached shell)');
+              restartPlayer('version mismatch self-heal');
+            } else {
+              console.warn('[player] version still', PLAYER_VERSION, 'vs server', data.version, 'after a recent self-heal - not looping');
+            }
+          }
+        } catch (e) { /* never let the self-heal check break the version poll */ }
       }).catch(() => {});
       // Poll every 30s
       versionCheckTimer = setInterval(() => {
         fetch(config.serverUrl + '/api/version').then(r => r.json()).then(data => {
-          if (knownServerHash && data.hash !== knownServerHash) {
-            console.log('Server code updated, reloading...', knownServerHash, '->', data.hash);
-            // THE deploy path — this is the exact line that darkened a BrightSign panel on
-            // 2026-07-28, when every connected player self-reloaded and that one never returned.
-            restartPlayer('server code updated');
-          }
+          observeServerHash(data);
         }).catch(() => {});
       }, 30000);
     }
@@ -3568,6 +4665,11 @@
       const slots = []; let acc = 0;
       for (let i = 0; i < playlist.length; i++) {
         if (!scheduleAllows(playlist[i])) continue;                       // same daypart filter as solo playback
+        // P6: a dwell-0 live channel has an INFINITE slot, which the clock scheduler cannot lay on a
+        // period. Skip it here (fail closed for sync) so a synced group never desyncs on it — the
+        // whole group agrees to leave it out rather than one screen guessing a length. A live channel
+        // with a real dwell (>0) is a finite slot and schedules normally.
+        if (playlist[i].mime_type === LIVE_MIME && !(Number(playlist[i].duration_sec) > 0)) continue;
         const dur = Math.max(1, Number(playlist[i].duration_sec) || 10) * 1000;
         slots.push({ index: i, start: acc, dur }); acc += dur;
       }
@@ -3657,6 +4759,12 @@
     function groupPreloadNext(idx) {
       const item = playlist[idx];
       if (!item) return;
+      // Vega sticks (Fire TV Stick 4K Select, Fire TV Stick HD 2026). A second <video> is a
+      // second decoder, and a decoder allocates from CMA — about 236 MB on an AFTCA002.
+      // One run drained that pool to ~1 MB. That is a separate problem from the slatium
+      // trap, which has also fired with the pool mostly free. Group sync still plays;
+      // the boundary does not warm the next clip. A browser is unchanged.
+      if (onVega()) { groupPreloadIdx = idx; groupPreloadEl = null; return; }
       const isVid = item.mime_type && item.mime_type.indexOf('video/') === 0 && item.mime_type !== 'video/youtube';
       if (!isVid) { groupPreloadIdx = idx; groupPreloadEl = null; return; }   // mark handled, nothing to warm
       const url = mediaUrl(item);
@@ -3815,6 +4923,12 @@
       }
 
       const newItems = data.assignments || [];
+      if (data.playback_order && data.playback_order !== playbackOrder) {
+        playOrderState = {};
+        clearLookahead();
+        for (const k of Object.keys(zoneOrderState)) delete zoneOrderState[k];
+      }
+      if (data.playback_order) playbackOrder = data.playback_order;
       // Build fingerprint from id + url + filename to detect any content change.
       // #74/#75: include schedules so a schedule edit (same content) is detected too.
       // transition-engine: include the per-item transition too, or a transition config change (effects,
@@ -3831,7 +4945,7 @@
       // widget_rev is in here for the same reason as schedules and transition: a widget's IDENTITY
       // does not change when it is EDITED, so a content edit produced an identical fingerprint, the
       // update was treated as "unchanged", and the screen kept the old render until a reload.
-      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${JSON.stringify(a.transition || null)}`).join(',');
+      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${a.play_from || ''}|${a.play_until || ''}|${a.enabled === 0 ? 0 : 1}|${a.log_play === 0 ? 0 : 1}|${a.fit_mode || ''}|${JSON.stringify(a.play_when || null)}|${JSON.stringify(a.tags || [])}|${JSON.stringify(a.meta || {})}|${JSON.stringify(a.transition || null)}`).join(',');
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
 
@@ -3843,6 +4957,28 @@
       const effectiveOrientation = window.WallGeometry
         ? window.WallGeometry.orientationForWallMember(data.orientation, data.wall_config?.rotation)
         : data.orientation;
+      // #320: an operator's uploaded shaders arrive with the playlist, keyed by the same ids the
+      // items reference. The renderer resolves a shader by looking one up in this object, so
+      // merging is the entire integration — no fetch, no cache, no new failure mode. An id that
+      // never arrives simply is not found, and the player hard-cuts exactly as it always has.
+      if (data.custom_shaders && typeof data.custom_shaders === 'object' && window.__TRANSITION_SHADERS) {
+        for (const id in data.custom_shaders) {
+          if (typeof data.custom_shaders[id] === 'string') window.__TRANSITION_SHADERS[id] = data.custom_shaders[id];
+        }
+      }
+      // #325: the letterbox colour behind content that does not fill the frame. Applied before
+      // orientation so a rotation reflow does not flash the old colour. An absent value leaves the
+      // stylesheet's black exactly as it was.
+      if (data.background_color && /^#[0-9a-fA-F]{3,8}$/.test(data.background_color)) {
+        const stage = document.getElementById('playerContainer');
+        if (stage) stage.style.background = data.background_color;
+        document.body.style.background = data.background_color;
+      }
+      // Device default/standby content (top-level, like background_color). If the currently-shown
+      // idle default changed, drop the marker so the idle path re-mounts the new one.
+      const prevDefault = defaultContent && defaultContent.content_rev;
+      defaultContent = (data.default_content && typeof data.default_content === 'object') ? data.default_content : null;
+      if ((defaultContent && defaultContent.content_rev) !== prevDefault) _defaultShownRev = null;
       if (data.orientation) {
         // On BrightSign, rotate the OUTPUT first. Video decodes onto a hardware plane the DOM
         // cannot transform, so the CSS rotation below turns the images and widgets and leaves the
@@ -4032,7 +5168,7 @@
               : null,
             surfaceAttached: !!(container && container.querySelector('video,img,iframe,.wall-stage')),
           };
-          if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === 'function' && PlayerMediaHealth.needsReattach(state)) {
+          if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === 'function' && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {
             console.log('[refresh] media surface lost on no-change refresh — re-attaching current item');
             playCurrentItem();
           } else if (isPlaying) {
@@ -4073,7 +5209,15 @@
 
       playlist = newItems;
       imgPreloadCache = {}; // playlist changed — drop stale one-ahead preloads (feat/player-image-preload)
-      savePlaylistCache(playlist);
+      /*
+       * ⚠️ ONLY CACHE A PAYLOAD WORTH RESTORING. This wrote unconditionally, fourteen lines before
+       * the `playlist.length === 0` check below — so one empty or degraded push replaced a good
+       * offline copy and left the screen with nothing to fall back to. It is why rebooting a stuck
+       * panel made things worse: the reboot faithfully restored the emptiness. An empty payload is a
+       * statement about right now; it is not a better answer than the last thing we could play when
+       * the network is gone. Playback still honours it immediately — that is the check below.
+       */
+      if (playlist.length > 0) savePlaylistCache(playlist);
       // The RAW assignments, not the split `playlist`: multi-zone items live in their own lists,
       // and a keep-set that omitted them would have the worker prune assets a zone is still
       // playing. This is also what makes the prune safe — it is the whole truth about what this
@@ -4088,8 +5232,8 @@
       deferredSuccessorId = null;
 
       if (playlist.length === 0) {
-        teardownCurrentMedia();
-        showStatus('Waiting for content...');
+        // No playlist assigned / empty: the device default image if set, else the idle text.
+        if (!renderDefaultContent()) { teardownCurrentMedia(); showStatus('Waiting for content...'); }
         isPlaying = false;
         return;
       }
@@ -4174,11 +5318,26 @@
     // device's effective timezone via the shared evaluator. Never let a scheduling
     // hiccup stop playback.
     function scheduleAllows(item) {
-      if (!item || !item.schedules || !item.schedules.length) return true;
-      try { return window.ScheduleEval ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), playerTimezone) : true; }
+      try { return window.ScheduleEval ? ScheduleEval.itemShouldPlay(item, Date.now(), playerTimezone) : true; }
       catch (e) { return true; }
     }
+    function itemFit(item, zone) {
+      const m = (item && item.fit_mode) || (zone && zone.fit_mode) || 'contain';
+      return (m === 'cover' || m === 'fill' || m === 'contain') ? m : 'contain';
+    }
+    function shouldLogPlay(item) { return !item || item.log_play !== 0; }
+    /*
+     * ⚠️ playbackOrder / playOrderState / zoneOrderState ARE DECLARED WITH THE REST OF THE PLAYER
+     * STATE, near the top. They used to sit here, three thousand lines below the cold-start branch
+     * that reaches them, and `let` in that position is a temporal dead zone — see the comment at
+     * the declaration.
+     */
     function nextActiveIndex(from) {
+      try {
+        if (window.PlayOrder && !(wallConfig && wallConfig.is_leader === false) && !groupSync) {
+          return PlayOrder.nextIndex(playlist, from, function (it) { return scheduleAllows(it); }, playbackOrder, playOrderState);
+        }
+      } catch (e) {}
       if (!playlist.length) return -1;
       for (let i = 1; i <= playlist.length; i++) {
         const idx = (from + i) % playlist.length;
@@ -4186,11 +5345,56 @@
       }
       return -1;
     }
-    // Every item filtered out: show the idle screen and re-check shortly (a daypart
-    // may begin). Re-evaluated at item boundaries otherwise, per the locked design.
-    function showNothingScheduled() {
+    // Peek without consuming the shuffle bag (preload / "is this the only item" probes).
+    function peekNextIndex(from) {
+      const saved = playOrderState;
+      playOrderState = { bag: (saved.bag || []).slice(), bagKey: saved.bagKey };
+      try { return nextActiveIndex(from); }
+      finally { playOrderState = saved; }
+    }
+    // Committed lookahead: the index the NEXT advance will actually use. A plain
+    // peek re-draws for weighted mode (stateless) and at a shuffle bag boundary
+    // (empty bag rebuilt with fresh Math.random), so preloading off a peek warms
+    // the WRONG image. commitNextIndex draws ONCE, caches it, and nextItem replays
+    // the cached draw — so the warmed frame is the one that plays. Revalidated
+    // against schedule/bounds so a daypart flip or list change forces a re-draw.
+    let lookaheadFrom = null;
+    let lookaheadIdx = -1;
+    function commitNextIndex(from) {
+      if (lookaheadFrom === from && lookaheadIdx >= 0 && lookaheadIdx < playlist.length
+          && scheduleAllows(playlist[lookaheadIdx])) {
+        return lookaheadIdx;
+      }
+      const idx = nextActiveIndex(from); // consumes the shuffle bag / draws weighted
+      lookaheadFrom = from;
+      lookaheadIdx = idx;
+      return idx;
+    }
+    function clearLookahead() { lookaheadFrom = null; lookaheadIdx = -1; }
+    // The device default/standby image, mounted when the screen would otherwise be idle. Returns
+    // true if it rendered it (so the caller skips the idle text). IDEMPOTENT: if the same default is
+    // already on screen it leaves it in place, so the 30s idle re-check does not re-mount / flicker.
+    // Only an image is a valid standby; anything else (or none) falls back to the idle text.
+    function renderDefaultContent() {
+      const dc = defaultContent;
+      if (!dc || typeof dc.mime_type !== 'string' || !dc.mime_type.startsWith('image/')) return false;
+      const container = document.getElementById('playerContainer');
+      const key = dc.content_rev || dc.content_id || dc.remote_url || dc.filepath;
+      if (_defaultShownRev === key && container && container.querySelector('img[data-st-default]')) return true;
       teardownCurrentMedia();
-      showStatus(_t('nothing_scheduled'));
+      const img = document.createElement('img');
+      img.setAttribute('data-st-default', '1');
+      img.style.cssText = 'width:100%;height:100%;object-fit:contain';   // letterbox on the device background
+      img.onerror = () => { _defaultShownRev = null; };   // a broken default falls back to idle text next re-check
+      img.src = mediaUrl(dc);
+      if (container) { container.style.display = 'block'; container.appendChild(img); }
+      _defaultShownRev = key;
+      return true;
+    }
+    // Every item filtered out: show the device default image (LED-wall off-times) or the idle screen,
+    // and re-check shortly (a daypart may begin). Re-evaluated at item boundaries otherwise.
+    function showNothingScheduled() {
+      if (!renderDefaultContent()) { teardownCurrentMedia(); showStatus(_t('nothing_scheduled')); }
       isPlaying = false;
       clearTimeout(scheduleRetryTimer);
       scheduleRetryTimer = setTimeout(() => {
@@ -4210,7 +5414,12 @@
     function playCurrentItem() {
       if (!playlist.length || !Number.isFinite(currentIndex)) {
         teardownCurrentMedia();
-        showStatus('Waiting for content...');
+        // The bed survives an ADVANCE, not the playlist going away — otherwise a screen with
+        // nothing to show would sit there playing music to an empty stage.
+        stopSlideVo();
+        stopSlideBed();
+        // No playlist / empty playlist: show the device default image if set, else the idle text.
+        if (!renderDefaultContent()) showStatus('Waiting for content...');
         isPlaying = false;
         return;
       }
@@ -4220,10 +5429,25 @@
       const item = playlist[currentIndex];
       console.log('Playing:', item.filename, `(${currentIndex + 1}/${playlist.length})`);
       currentItemStartedAt = Date.now();
+      // Slide audio, if this item carries any. Runs on every advance: the voiceover is replaced,
+      // the bed is left playing when the next slide names the same track.
+      applySlideAudio(item);
 
       // Only the leader (or single, non-walled players) records a play_start —
       // followers would just spam duplicate proof-of-play rows for the same item.
-      if (socket?.connected && (!wallConfig || wallConfig.is_leader)) {
+      // #299: offline, the same leader test decides who QUEUES, so a follower cannot
+      // backfill duplicates of what the leader already recorded.
+      // Preview never records proof-of-play. The shared offline queue also serves cached
+      // startup playback before connect() has run, and playback during a network outage.
+      if (!PREVIEW_MODE && !socket?.connected && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
+        offlinePlayOpen = {
+          content_id: item.content_id || null,
+          widget_id: item.widget_id || null,
+          content_name: item.filename || item.widget_name || item.title || null,
+          started_at: Math.floor(Date.now() / 1000),
+        };
+      }
+      if (socket?.connected && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
         // A widget item carries its id in widget_id and has NO content_id, so sending only
         // content_id logged widget plays with nothing attached — the row existed but named
         // neither what played nor which widget, and Reports read empty for any screen showing
@@ -4262,6 +5486,17 @@
         startPlaybackAt(idx);
         return;
       }
+      /*
+       * #299: offline, close the play we opened and queue it WHOLE. Without a matching start we
+       * do not know when it began, and inventing a time would put fabricated data into a report,
+       * so an unmatched end is dropped rather than guessed at.
+       */
+      // Keep preview out of reporting while allowing real playback to close its offline
+      // record from the shared queue, whether or not connect() has run yet.
+      if (!PREVIEW_MODE && playlist[currentIndex] && !socket?.connected && offlinePlayOpen) {
+        const open = offlinePlayOpen; offlinePlayOpen = null;
+        queueOfflinePlay(open, true);
+      }
       // Send play_end for current
       if (playlist[currentIndex] && socket?.connected) {
         socket.emit('device:play-event', {
@@ -4276,8 +5511,10 @@
       }
 
       // #74/#75: advance to the next item whose schedule allows it now (skip
-      // filtered items); idle if none are active.
-      const idx = nextActiveIndex(currentIndex);
+      // filtered items); idle if none are active. Reuse the draw preload already
+      // committed for this position so shuffle/weighted play the warmed frame.
+      const idx = commitNextIndex(currentIndex);
+      clearLookahead();
       if (idx === -1) { showNothingScheduled(); return; }
       currentIndex = idx;
       playCurrentItem();
@@ -4341,7 +5578,7 @@
         const wrap = document.createElement('div');
         wrap.style.cssText = 'width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center';
         const inner = document.createElement('div');
-        inner.style.cssText = 'height:100%;aspect-ratio:9/16;max-width:100%';
+        inner.style.cssText = 'width:56.25vh;height:100%;max-width:100%';
         inner.appendChild(playerDiv);
         wrap.appendChild(inner);
         mountEl = wrap;
@@ -4353,7 +5590,7 @@
       // deliberately muted trains viewers to click a button that undoes that.
       if (window.MediaMute ? window.MediaMute.shouldOfferUnmute(muteState(item)) : !userHasInteracted) {
         const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:absolute;inset:0;z-index:10;cursor:pointer;display:flex;align-items:end;justify-content:center;padding-bottom:40px;';
+        overlay.style.cssText = 'position:absolute;top:0;right:0;bottom:0;left:0;z-index:10;cursor:pointer;display:flex;align-items:end;justify-content:center;padding-bottom:40px;';
         overlay.innerHTML = '<div style="background:rgba(0,0,0,0.7);color:#fff;padding:10px 24px;border-radius:8px;font:14px sans-serif;pointer-events:none">Click to unmute</div>';
         overlay.onclick = (e) => {
           e.stopPropagation();
@@ -4485,6 +5722,12 @@
     }
 
     function teardownCurrentMedia(keep) {
+      // Every synchronous teardown invalidates an in-flight buffered-video warm-up. renderContent's
+      // renderSeq++ is the only other invalidation, and the playlist-emptied / idle-card / group
+      // out-of-hours / wall-flip paths all bypass renderContent — without this a warm-up dispatched
+      // just before one of them mounts its ghost clip over the idle card up to 800ms later (a
+      // single-video playlist unassigned while warming loops forever under "Waiting for content").
+      renderSeq++;
       // On a buffered widget reveal (keep set) the widget's advance/refresh timer was just
       // armed by renderContent and must survive; only a real teardown cancels it.
       if (!keep && advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
@@ -4502,6 +5745,10 @@
       if (container) {
         container.querySelectorAll('video').forEach(v => {
           try {
+            // IPTV: destroy the element's hls.js FIRST so it detaches before we strip the src —
+            // otherwise the loader keeps fetching segments off a detached element (a leak that also
+            // keeps pulling the stream over the LAN). Element-scoped, so a zone stream is covered too.
+            destroyHls(v);
             v.onended = null; v.onerror = null; v.onloadeddata = null;
             v.pause();
             v.removeAttribute('src');
@@ -4521,6 +5768,7 @@
       // (scoped to the container) can't find it. This is what kills the "ghost audio".
       if (currentVideoEl) {
         try {
+          destroyHls(currentVideoEl);   // a detached live element's hls.js would keep pulling the stream
           currentVideoEl.onended = null; currentVideoEl.onerror = null; currentVideoEl.onloadeddata = null;
           currentVideoEl.pause();
           currentVideoEl.removeAttribute('src');
@@ -4574,7 +5822,18 @@
         clearTimeout(pendingWidgetSwap.timer);
         pendingWidgetSwap = null;
         iframe.style.visibility = 'visible';
+        /*
+         * An interactive widget (a game, a kiosk form) has keyboard focus because somebody clicked
+         * it. When the SAME widget is re-rendered under them — an edit bumped its rev — the new
+         * frame would otherwise start unfocused and every key would land on the player instead
+         * (Esc opening the PIN prompt mid-game). Carry focus across a swap of the same widget
+         * only: an advance to a different item never inherits someone's keyboard.
+         */
+        const ae = document.activeElement;
+        const keepFocus = !!(ae && ae !== iframe && ae.tagName === 'IFRAME' && container.contains(ae)
+          && String(ae.src || '').includes(`/api/widgets/${item.widget_id}/render`));
         teardownCurrentMedia(iframe);   // remove the outgoing content, keep this iframe
+        if (keepFocus) { try { iframe.focus(); } catch (e) { /* best effort */ } }
         if (PREVIEW_MODE && item.widget_type === 'webpage') addWebpageNote(container); // #104
       };
       iframe.addEventListener('load', reveal);
@@ -4586,13 +5845,88 @@
       pendingWidgetSwap = { iframe, timer: setTimeout(discardPendingSwap, WIDGET_SWAP_TIMEOUT_MS) };
     }
 
+    /*
+     * An HTML bundle, mounted the same way a widget is.
+     *
+     * ⚠️ IT GOES THROUGH THE SAME BUFFERED SWAP ON PURPOSE. The naive version — clear the stage,
+     * then append an iframe — shows black for as long as the document takes to parse, and a
+     * flattened bundle is a big document full of data: URIs, so that gap is far longer than a
+     * widget's. Building hidden on top and revealing on load is what the widget path already
+     * learned; a second, simpler copy here would re-introduce the flash it exists to prevent.
+     *
+     * ⚠️ AND THE SANDBOX IS THE WHOLE ISOLATION STORY. This is operator-uploaded HTML that runs its
+     * own scripts. widgetSandboxAttr gives `allow-scripts` with no `allow-same-origin`, so the frame
+     * is an opaque origin that cannot read this player's localStorage — which holds the device
+     * token. The org-level opt-out that relaxes this for widgets exists so a player can embed an
+     * origin-strict third-party SITE; a bundle is code the operator uploaded to us, so it must
+     * never take that path. It is passed an item with no widget_allow_same_origin for that reason.
+     */
+    function renderBundleBuffered(item) {
+      const container = document.getElementById('playerContainer');
+      container.style.display = 'block';
+      discardPendingSwap();
+
+      const iframe = document.createElement('iframe');
+      iframe.style.background = '#000';
+      iframe.style.visibility = 'hidden';
+      iframe.allow = 'autoplay; fullscreen';
+      iframe.setAttribute('sandbox', 'allow-scripts');
+
+      const reveal = () => {
+        if (!pendingWidgetSwap || pendingWidgetSwap.iframe !== iframe) return;
+        clearTimeout(pendingWidgetSwap.timer);
+        pendingWidgetSwap = null;
+        iframe.style.visibility = 'visible';
+        teardownCurrentMedia(iframe);
+      };
+      iframe.addEventListener('load', reveal);
+      container.appendChild(iframe);
+      pendingWidgetSwap = { iframe, timer: setTimeout(discardPendingSwap, WIDGET_SWAP_TIMEOUT_MS) };
+
+      /*
+       * ⚠️ FETCHED HERE AND MOUNTED AS srcdoc, RATHER THAN POINTING iframe.src AT IT — and that one
+       * difference is the entire offline story.
+       *
+       * A widget is mounted by URL into a sandboxed frame, which is an OPAQUE-ORIGIN client, and a
+       * service worker does not control those: sw.js records the measurement (a clock widget
+       * mounted five times, zero entries in the cache). So widgets survive an outage only on the
+       * HTTP cache, which BrightSign does not guarantee across a reboot.
+       *
+       * This fetch is issued by the PLAYER PAGE — same-origin, controlled by the worker — so it
+       * DOES reach the worker's rev-pinned branch and DOES land in the Cache API, one of the three
+       * stores BrightSign documents as persistent. Same bytes, same sandbox, same isolation; the
+       * only thing that changed is who asked for them.
+       *
+       * The URL is rev-pinned (content_rev), so the cached copy can never be a stale bundle: new
+       * bytes mean a new rev mean a new cache key.
+       *
+       * ⚠️ AND srcdoc WORKS HERE ONLY BECAUSE /player IS CSP-EXEMPT (server.js skips dashboardCsp
+       * for this path). A srcdoc frame INHERITS ITS PARENT'S CSP, and a flattened bundle is nothing
+       * but data: URIs — so under the dashboard's `script-src 'self'` every script in it is
+       * silently blocked and the frame renders a styled, dead page. Measured, both ways. That is
+       * why the dashboard's own preview navigates to an ephemeral URL instead of reusing this
+       * trick, and why moving this mount to any page that has a CSP would break it invisibly.
+       */
+      const url = `${config.serverUrl}/api/content/${item.content_id}/bundle?rev=${item.content_rev || 0}`;
+      fetch(url, { credentials: 'omit' })
+        .then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))))
+        .then((html) => { iframe.srcdoc = html; })
+        .catch((e) => {
+          // Fall back to a plain navigation. Loses the Cache API benefit, but a bundle that renders
+          // from the HTTP cache beats a black rectangle, and this is also the path on any player
+          // whose worker never registered.
+          console.log('[player] bundle fetch failed, falling back to src:', e && e.message);
+          iframe.src = url;
+        });
+    }
+
     // A held widget/board is left mounted (it self-refreshes its own data in place — no iframe
     // reload, so its scroll is never reset). This just re-checks the schedule on the slow cadence:
     // if it's still the sole active item, leave the live iframe alone and re-arm; if its daypart
     // closed or a sibling opened, hand off to nextItem (idle or a genuine buffered transition —
     // schedule-awareness / Fix A preserved).
     function reevaluateHeldWidget() {
-      if (nextActiveIndex(currentIndex) === currentIndex) {
+      if (peekNextIndex(currentIndex) === currentIndex) {
         scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
         return;
       }
@@ -4636,7 +5970,9 @@
       while (keys.length > 4) delete imgPreloadCache[keys.shift()];
     }
     function preloadNextImage() {
-      const nextIdx = nextActiveIndex(currentIndex);
+      // Commit the draw here (not a peek) so the actual advance replays the same
+      // index — otherwise weighted/shuffle-boundary redraws warm the wrong image.
+      const nextIdx = commitNextIndex(currentIndex);
       if (nextIdx < 0 || nextIdx === currentIndex) return;
       const it = playlist[nextIdx];
       if (!it || typeof it.mime_type !== 'string' || !it.mime_type.startsWith('image/')) return;
@@ -4680,6 +6016,22 @@
     // `let` read before its declaration executes is a TemporalDeadZone throw, not a `null`.)
     function videoCompositingAvailable(v) {
       if (_videoCompositingOk !== null) return _videoCompositingOk;
+      // Vega's 16×16 probe PASSES. Pixels come back. The full-size drawImage of
+      // that <video> then SIGTRAPs in libkepler_slatium.so, called from
+      // libkepler_webview.so. Three crashes, byte-identical stack, both
+      // directions of a video↔image boundary. One died with 72 MB of CMA free
+      // and no memory stall, so this is not the capture cap. A probe cannot see
+      // "the compositor will trap". Do not call it. Image→image never draws a
+      // video, so those wipes stay. Both capture sites (the outgoing frame and
+      // the incoming warm-play snapshot) go through here. typeof onVega: the
+      // transition tests extract this function and have no shell. A missing
+      // predicate is "not Vega", and must not be "simplified" back to the probe.
+      if (typeof onVega === 'function' && onVega()) {
+        _videoCompositingOk = false;
+        console.log('[transition] video frames are not composited on Vega (the compositor traps) — ' +
+                    'transitions involving video will hard-cut; image-to-image still wipes');
+        return false;
+      }
       if (!v || v.readyState < 2 || !v.videoWidth) return true;   // undecided — don't cache a guess
       _videoCompositingOk = videoFrameIsCapturable(v);
       if (!_videoCompositingOk) {
@@ -4698,22 +6050,68 @@
       if (v && !videoCompositingAvailable(v)) return null;   // hardware plane -> no from-frame -> hard cut
       if (v && v.readyState >= 2 && v.videoWidth > 0 && isMediaReadable(v)) {
         try {
-          const r = c.getBoundingClientRect();
-          return fitToCanvas(v, Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
+          const g = stageGeometry();
+          return g ? fitToCanvas(v, g.w, g.h) : null;
         } catch (e) { return null; } // snapshot threw (taint slipped through) -> no from-frame -> hard cut
       }
       return null;
     }
+    // The stage's own box and placement, which a wipe must reproduce exactly. A portrait panel rotates
+    // #playerContainer with a CSS transform (server/lib/orientation-style.js), and a transform does not
+    // move the layout box: clientWidth/clientHeight are the box the <img> is fitted into, while
+    // getBoundingClientRect() is the rotated, axis-aligned envelope. On a portrait panel those two are
+    // each other's transposes, so fitting to the rect and painting an unrotated fixed overlay drew every
+    // wipe in landscape framing over a portrait frame: the picture jumped to 1.8x at the start of each
+    // transition and back at the end, on every effect. The canvas therefore takes the container's own
+    // size and its COMPUTED left/top/transform/transform-origin, which is the landscape case unchanged
+    // (0px, 0px, none) and the rotated case turned exactly as the stage is. Computed rather than inline
+    // so the wipe follows whatever placed the stage (the orientation rule, the stylesheet, a host that
+    // rotated the output and cleared the inline transform) instead of re-deriving any of it here.
+    // A stage with no box (display:none, e.g. suspended) yields null and the caller hard-cuts; the old
+    // code fabricated a 2x2 wipe from a 0x0 rect and ran it.
+    function stageGeometry() {
+      const c = document.getElementById('playerContainer');
+      if (!c || !c.clientWidth || !c.clientHeight) return null;
+      const cs = getComputedStyle(c);
+      return {
+        w: Math.round(c.clientWidth), h: Math.round(c.clientHeight),
+        left: cs.left, top: cs.top, transform: cs.transform, transformOrigin: cs.transformOrigin,
+      };
+    }
     // draw a source (img | video | canvas) onto a container-sized canvas with object-fit:contain framing,
     // so the transition matches the static letterboxing exactly (stays CORS-clean iff the source is). A
     // <video> exposes its intrinsic size as videoWidth/Height, not naturalWidth/width — check both.
+    //
+    // CMA mitigation for image wipes, not the crash fix. texImage2D of a 1920×1080
+    // frame is ~8 MB, and the GL framebuffer is another, both out of the same
+    // ~236 MB CMA pool the decoder uses. One AFTCA002 run drove CmaFree to ~1 MB
+    // (MemFree stayed large). Two later crashes died on the same slatium stack
+    // with 72–124 MB of that pool free, so the cap does not explain the trap.
+    // It stays, because image→image wipes still upload into that pool. The CSS
+    // box of the wipe canvas stays the stage; only this backing store shrinks.
+    // The page cannot read CmaFree, so it does not try to skip only when low.
+    function vegaWipeSize(w, h) {
+      if (!(typeof onVega === 'function' && onVega())) return { w: w, h: h };
+      const longEdge = 960;
+      const long = Math.max(w, h);
+      if (!(long > longEdge) || !w || !h) return { w: w, h: h };
+      const s = longEdge / long;
+      return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
+    }
+    // texImage2D copies the pixels. A canvas allocated for that upload can drop its bitmap at
+    // once. A live <img> or <video> is the sign, not a scratch buffer — leave it alone.
+    function releaseWipeBitmap(src) {
+      if (!src || src.nodeName !== 'CANVAS') return;
+      try { src.width = 1; src.height = 1; } catch (e) {}
+    }
     function fitToCanvas(src, w, h) {
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const cap = vegaWipeSize(w, h);
+      const c = document.createElement('canvas'); c.width = cap.w; c.height = cap.h;
       const cx = c.getContext('2d');
       const iw = src.naturalWidth || src.videoWidth || src.width;
       const ih = src.naturalHeight || src.videoHeight || src.height;
-      const s = Math.min(w / iw, h / ih);
-      cx.drawImage(src, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s);
+      const s = Math.min(cap.w / iw, cap.h / ih);
+      cx.drawImage(src, (cap.w - iw * s) / 2, (cap.h - ih * s) / 2, iw * s, ih * s);
       return c;
     }
     // ONE persistent WebGL renderer, reused for EVERY transition. The canvas is attached to <body> ONCE
@@ -4753,8 +6151,10 @@
       if (!gl) { hardCut(); return; }
       const canvas = gl.canvas, renderer = gl.renderer;
       const container = document.getElementById('playerContainer');
-      const rect = container.getBoundingClientRect();
-      const w = Math.max(2, Math.round(rect.width)), h = Math.max(2, Math.round(rect.height));
+      const geo = stageGeometry();
+      if (!geo) { hardCut(); return; }                  // no stage box to draw in -> hard cut
+      const w = geo.w, h = geo.h;
+      const cap = vegaWipeSize(w, h);
       let raf = 0, startTs = 0, done = false, deadline = 0;
       const finish = () => { // end the wipe; mount the incoming element, KEEP the renderer/context alive
         if (done) return; done = true;
@@ -4763,16 +6163,38 @@
         if (glTxAbort === finish) glTxAbort = null;
         mount();                                        // insert incoming + own its teardown/dwell/play
         canvas.style.display = 'none';                  // HIDE after the incoming frame is mounted (no flash); NEVER detach
+        // The textures and the framebuffer outlive the wipe. On Vega that is CMA the decoder
+        // needs back. A 1×1 upload replaces the storage; the next wipe resizes and re-uploads.
+        // typeof onVega: a missing predicate means "not Vega".
+        if (typeof onVega === 'function' && onVega()) {
+          try {
+            const blank = document.createElement('canvas');
+            blank.width = 1; blank.height = 1;
+            renderer.setFrom(blank);
+            renderer.setTo(blank);
+            canvas.width = 1; canvas.height = 1;
+          } catch (e) {}
+        }
       };
+      let fromTex = null, toCanvas = null;
       try {
-        canvas.style.left = rect.left + 'px'; canvas.style.top = rect.top + 'px';
+        canvas.style.left = geo.left; canvas.style.top = geo.top;
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
-        renderer.resize(w, h);                          // size the persistent canvas to the stage
-        renderer.setFrom(fitToCanvas(fromFrame, w, h));
-        renderer.setTo(fitToCanvas(toTex, w, h));
+        canvas.style.transform = geo.transform;         // turned exactly as the stage is (portrait), 'none' otherwise
+        canvas.style.transformOrigin = geo.transformOrigin;
+        renderer.resize(cap.w, cap.h);                  // backing store only. CSS stays the stage box (portrait transform)
+        fromTex = fitToCanvas(fromFrame, geo.w, geo.h);
+        toCanvas = fitToCanvas(toTex, geo.w, geo.h);
+        renderer.setFrom(fromTex);
+        renderer.setTo(toCanvas);
         renderer.setShader(src);                        // throws on a bad shader
         renderer.render(0, effect.params);
       } catch (e) { canvas.style.display = 'none'; hardCut(); return; }
+      finally {
+        releaseWipeBitmap(fromTex);
+        releaseWipeBitmap(toCanvas);
+        releaseWipeBitmap(fromFrame);                   // outgoing snapshot, when it was a canvas we allocated
+      }
       glTxAbort = finish;                               // context lost / tab hidden mid-wipe -> finish (hard cut)
       canvas.style.display = 'block';                   // SHOW over the current frame (fixed overlay)
       container.style.display = 'block';
@@ -4855,96 +6277,306 @@
     // render captures the value at start and bails if it changes — the warm-play is async (first-frame wait
     // + the wipe), and a playlist push mid-window must not let a stale clip tear down the newer content that
     // already took over.
+    // One place wires a video element for playback. The buffered solo hold (mountVideo) and the
+    // legacy wall/group branch below BOTH load-bear this setup, and the copies had already drifted
+    // (subtitles only buffered, [wall/audio] diagnostics only legacy). opts: { forceMuted,
+    // mayAdvance, loop, role } — the follower policy is re-read at mount because a wall role flip
+    // mid-warm-up must not mount unmuted + self-advancing.
+    function wireSoloVideoPlayback(video, item, src, opts) {
+      const o = opts || {};
+      video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted); // autoplay policy + per-item mute (#129)
+      // Explicit max volume when audio is allowed so it's at full level when
+      // unmute happens (default is 1.0 but make it visible in logs).
+      if (!o.forceMuted) video.volume = 1.0;
+      video.loop = !!o.loop;
+      video.onended = () => { if (!video.loop && o.mayAdvance) nextItem(); };
+      video.onerror = () => mediaFailureSkip(video, 'video', src, o.mayAdvance);
+      video.onloadeddata = () => {
+        console.log('[wall/audio] video loaded file=' + item.filename + ' role=' + (o.role || 'solo') + ' muted=' + video.muted + ' volume=' + video.volume);
+      };
+      // A force-muted follower snaps back any stray unmute (the wall echo safety net).
+      if (o.forceMuted) {
+        video.addEventListener('volumechange', () => { if (!video.muted) { video.muted = true; } });
+      }
+      // Try playing as mounted above. If the browser blocks unmuted autoplay, retry muted — with
+      // the rejection LOGGED: swallowing it made autoplay policy and decode failure
+      // indistinguishable in remote debug on solo screens.
+      video.play().then(() => {
+        console.log('[wall/audio] play() ok muted=' + video.muted + ' volume=' + video.volume);
+      }).catch((err) => {
+        console.warn('[wall/audio] play() rejected, falling back to muted: ' + (err?.name || err?.message || err));
+        video.muted = true;
+        video.play()
+          .then(() => console.log('[wall/audio] muted-fallback play() ok'))
+          .catch((e2) => console.error('[wall/audio] muted-fallback play() also failed: ' + (e2?.name || e2?.message || e2)));
+      });
+      // Fallback: force play if not started after 2s
+      setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000);
+    }
+
+    // ==================== IPTV / live HLS ====================
+    // A live channel is a <video> whose src is an m3u8 the PLAYER opens on the LAN (the server never
+    // fetches it). NATIVE FIRST: Safari / BrightSign / webOS / Tizen decode HLS on the element, so
+    // hls.js never loads on those boxes (keeping it off the BrightSign stick). Chrome/Firefox cannot,
+    // so the element errors SRC_NOT_SUPPORTED (or stalls) and we lazily load the VENDORED hls.js
+    // (server/player/hls.light.min.js — no CDN, works on an air-gapped LAN) and attach it. Every
+    // failure path skips the item (P4), never a stuck decoder.
+    function renderLiveStream(item, src, mount, opts) {
+      const o = opts || {};
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted);
+      if (!o.forceMuted) video.volume = 1.0;
+      video.playsInline = true;
+      video.loop = false;   // a live stream has no end — looping is meaningless
+      video.style.cssText = wallConfig
+        ? 'width:100%;height:100%;object-fit:fill;background:#000'
+        : 'width:100%;height:100%;object-fit:contain;background:transparent';   // #336: letterbox shows the device colour
+      mount.appendChild(video);
+      currentVideoEl = video;
+      const seq = renderSeq;
+      attachHlsTo(video, src, {
+        stale: () => renderSeq !== seq || video !== currentVideoEl,
+        onFatal: () => mediaFailureSkip(video, 'hls', src, o.mayAdvance !== false),
+      });
+      // DWELL, not clip length. A solo/leader arms it; a follower/group member is schedule-driven
+      // (its tick/leader drives the index) and arms nothing.
+      if (o.mayAdvance !== false) armLiveDwell(item);
+    }
+
+    // Attach an HLS source to a <video>: native FIRST (Safari / BrightSign / webOS / Tizen decode an
+    // m3u8 on the element), then the vendored hls.js on an engine that cannot (Chrome). ELEMENT-SCOPED
+    // on purpose — the hls.js instance is stored on `video._stHls` so both the fullscreen teardown and
+    // each zone can destroy exactly their own, and multiple zone streams can run at once with no shared
+    // global. opts.stale() bails a superseded attach; opts.onFatal() handles an unrecoverable error.
+    function attachHlsTo(video, src, opts) {
+      const o = opts || {};
+      const stale = typeof o.stale === 'function' ? o.stale : () => false;
+      let settled = false;
+      const fail = () => { if (settled) return; settled = true; if (o.onFatal) o.onFatal(); };
+      const play = () => video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+
+      const useHlsJs = () => {
+        if (stale()) return;
+        loadHlsLib((Hls) => {
+          if (stale()) return;
+          if (!Hls || !Hls.isSupported()) { fail(); return; }
+          try {
+            const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+            video._stHls = hls;
+            hls.on(Hls.Events.ERROR, (evt, data) => { if (data && data.fatal) fail(); });
+            hls.loadSource(src);
+            hls.attachMedia(video);
+            play();
+          } catch (e) { fail(); }
+        }, fail);
+      };
+
+      // Watchdog: some engines neither error nor start on an m3u8 they cannot handle. If nothing has
+      // buffered in a few seconds and we have not gone to hls.js yet, do so.
+      const stall = setTimeout(() => {
+        if (settled || stale() || video._stHls) return;
+        if (video.readyState < 2 /* HAVE_CURRENT_DATA */) { video.onerror = null; useHlsJs(); }
+      }, 6000);
+
+      video.onerror = () => {
+        if (settled || stale()) return;
+        clearTimeout(stall);
+        const code = video.error && video.error.code;
+        // SRC_NOT_SUPPORTED (4) or a decode failure (3) on the NATIVE attempt -> try hls.js once.
+        if (!video._stHls && (code === 4 || code === 3 || code === undefined)) { video.onerror = null; useHlsJs(); }
+        else fail();
+      };
+
+      // Try native. On a box that decodes HLS this just works and hls.js is never fetched.
+      try { video.src = src; play(); } catch (e) { clearTimeout(stall); useHlsJs(); }
+    }
+
+    // Destroy any hls.js instance attached to a <video> (element-scoped; safe on any video element).
+    function destroyHls(video) {
+      if (video && video._stHls) { try { video._stHls.destroy(); } catch (e) { /* already gone */ } video._stHls = null; }
+    }
+
+    // Lazily fetch the vendored hls.js exactly once, shared across items. State lives on the function
+    // object (not a module `let`) so a cold-start cached live item cannot read it in a temporal dead
+    // zone — see player-boot-tdz.test.js.
+    function loadHlsLib(onReady, onFail) {
+      if (window.Hls) { onReady(window.Hls); return; }
+      loadHlsLib.waiters = loadHlsLib.waiters || [];
+      if (loadHlsLib.state === 'failed') { if (onFail) onFail(); return; }
+      loadHlsLib.waiters.push({ onReady: onReady, onFail: onFail });
+      if (loadHlsLib.state === 'loading') return;
+      loadHlsLib.state = 'loading';
+      const s = document.createElement('script');
+      s.src = (config.serverUrl || '') + '/player/hls.light.min.js';
+      s.async = true;
+      const flush = () => {
+        const Hls = window.Hls || null;
+        loadHlsLib.state = Hls ? 'ready' : 'failed';
+        const ws = loadHlsLib.waiters; loadHlsLib.waiters = [];
+        ws.forEach((w) => { if (Hls) w.onReady(Hls); else if (w.onFail) w.onFail(); });
+      };
+      s.onload = flush;
+      s.onerror = flush;   // no window.Hls after load -> treated as failed -> item skips
+      document.head.appendChild(s);
+    }
+
+    // DWELL timer for a live channel. duration_sec > 0 = advance after that many seconds. 0/absent =
+    // stay on the channel; only leave when the schedule makes it ineligible (checked on a slow cadence).
+    function armLiveDwell(item) {
+      const dwell = Number(item && item.duration_sec) || 0;
+      if (dwell > 0) { scheduleAdvance(nextItem, dwell * 1000); return; }
+      scheduleAdvance(reevaluateLiveDwell, LIVE_DWELL_RECHECK_MS);
+    }
+
+    function reevaluateLiveDwell() {
+      if (!isPlaying) return;
+      const item = playlist[currentIndex];
+      if (item && item.mime_type === LIVE_MIME && scheduleAllows(item)) {
+        scheduleAdvance(reevaluateLiveDwell, LIVE_DWELL_RECHECK_MS);   // still eligible -> stay on air
+      } else {
+        nextItem();   // window/enabled/play_when closed (or the list changed) -> move on / idle
+      }
+    }
+
+    // #216: a WebVTT subtitle track when the content carries one (uploaded videos only;
+    // remote/proxied clips are skipped). Served same-origin, so CORS-clean like the video.
+    // Shared: the buffered copy had it, the legacy branch did not. Called at element creation
+    // (before src is set), when the track can still engage with the load.
+    function attachSubtitleTrack(video, item) {
+      if (!item.subtitle_url || item.remote_url) return;
+      const track = document.createElement('track');
+      track.kind = 'subtitles';
+      track.srclang = item.subtitle_lang || 'en';
+      track.label = item.subtitle_lang || 'Subtitles';
+      track.default = true;
+      track.src = `${config.serverUrl}/uploads/content/${item.subtitle_url}`;
+      video.appendChild(track);
+      // The `default` attribute alone doesn't always engage without controls; force it on
+      // once the track has loaded its cues. Old players ignore an absent subtitle_url.
+      track.addEventListener('load', () => { try { track.track.mode = 'showing'; } catch (e) {} });
+    }
+
     function renderVideoBuffered(item) {
       const src = mediaUrl(item);
-      const from = currentTexturableFrame();            // capture the outgoing frame NOW, before any teardown
       const t = item.transition;
+      // Decided ONCE: snapshots exist only to feed a wipe. Every plain boundary used to pay two
+      // full-stage canvas readbacks (~8MB at 1080p, ~33MB at 4K) on the main thread at the exact
+      // moment the new clip decodes, then discard them — with `from` pinned in the closure for the
+      // clip's whole duration.
+      // Video boundaries hard-cut on Vega. videoCompositingAvailable() is false
+      // before any drawImage of a <video>, so `from`/`to` come back null and the
+      // hold below mounts without a wipe. Image→image does not come through here.
+      // The outgoing decoder is still paused when a wipe was wanted: the incoming
+      // warm-play is already one decoder, and a second one is the CMA claim
+      // groupPreloadNext also refuses. A browser keeps the outgoing clip playing
+      // behind the overlay. typeof onVega: this function is extracted by the
+      // transition tests, which have no shell. A missing predicate means "not Vega".
+      const wantsWipe = !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
+      const from = wantsWipe ? currentTexturableFrame() : null;  // capture the outgoing frame NOW, before any teardown
       const mySeq = renderSeq;
-      const stale = () => renderSeq !== mySeq;          // a newer renderContent superseded this one
+      pendingVideoSeq = mySeq;                        // a warm-up is pending (see the media-health check)
+      const stale = () => renderSeq !== mySeq;        // a newer dispatch or teardown superseded this one
       const abandon = () => { try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {} };
+      // The outgoing element's handlers belong to the item being left: a natural 'ended' inside the
+      // warm-up window would nextItem() PAST the incoming clip (the legacy branch nulled these
+      // synchronously at teardown). When no wipe needs its frame, pause it too — a single-decoder
+      // box must not decode both at once. Mounted-but-paused keeps showing its last frame.
+      // On Vega, pause even when the wipe wants the frame. The snapshot is already a canvas, and
+      // leaving the outgoing decoder up next to the incoming warm-play is a second CMA claim.
+      const outgoing = currentVideoEl;
+      if (outgoing) {
+        try {
+          outgoing.onended = null; outgoing.onerror = null; outgoing.onloadeddata = null;
+          if (!wantsWipe || (typeof onVega === 'function' && onVega())) outgoing.pause();
+        } catch (e) {}
+      }
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';                  // texturable (CORS-clean) + matches the legacy branch
       video.playsInline = true;
       video.preload = 'auto';
-      // #216: attach a WebVTT subtitle track when the content carries one (uploaded videos
-      // only; remote/proxied clips are skipped). Served same-origin from /uploads/content,
-      // so it's CORS-clean like the video. `default` + mode='showing' makes it visible with
-      // no player controls. Old players ignore an absent subtitle_url.
-      if (item.subtitle_url && !item.remote_url) {
-        const track = document.createElement('track');
-        track.kind = 'subtitles';
-        track.srclang = item.subtitle_lang || 'en';
-        track.label = item.subtitle_lang || 'Subtitles';
-        track.default = true;
-        track.src = `${config.serverUrl}/uploads/content/${item.subtitle_url}`;
-        video.appendChild(track);
-        // The `default` attribute alone doesn't always engage without controls; force it on
-        // once the track has loaded its cues.
-        track.addEventListener('load', () => { try { track.track.mode = 'showing'; } catch (e) {} });
-      }
+      attachSubtitleTrack(video, item);
       video.muted = true;                               // warm-play MUST be muted (autoplay policy); real mute set at mount
       video.loop = (playlist.length === 1);             // single-item playlist holds by looping
-      video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';
+      // #336: transparent, not #000 — with object-fit:contain the element paints its own letterbox,
+      // and an opaque black here sat on top of the device background colour (#325) for every video.
+      video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:transparent';
       let done = false, watchdog = null;
       // Full teardown + append + resume. The incoming <video> is detached until now, so teardown's
       // container-wide video cleanup can't touch it; we claim currentVideoEl only AFTER teardown (which
       // unconditionally releases the old currentVideoEl). Sets the REAL mute state here (warm-play was
-      // muted) and resumes from the snapshot frame, so there's no forward jump on reveal.
+      // muted) and resumes, so there's no forward jump on reveal.
       const mountVideo = () => {
         if (stale()) { abandon(); return; }             // a newer item took over during the wipe — don't clobber it
+        // Pause-then-play so the document-level 'play' hook runs (screen-off hold,
+        // baseAudioSuppressed alarm mute, mediaVolume): mounting an already-playing element fires
+        // no 'play' event, and the mount forces volume — a slow clip would otherwise light the
+        // plane while the screen is "off". pause() on an already-paused element is a no-op.
+        try { video.pause(); } catch (e) {}
         const c = document.getElementById('playerContainer');
         teardownCurrentMedia();                         // drop the outgoing frame (new video still detached)
         c.style.display = 'block';
         c.appendChild(video);
         currentVideoEl = video;
-        video.muted = (!userHasInteracted || !!item.muted); // autoplay policy + per-item mute (#129)
-        if (!video.muted) video.volume = 1.0;
-        video.onended = () => { if (!video.loop) nextItem(); };
-        video.onerror = () => mediaFailureSkip(video, 'video', src);
-        video.play().catch(() => { video.muted = true; video.play().catch(() => {}); }); // autoplay-policy fallback
-        setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000); // last-resort kick
+        // A wall/group role flip mid-warm-up must not mount unmuted + self-advancing: re-read the
+        // follower policy here (the gate excluded wall/group at dispatch, but that was then).
+        const followerNow = !!((wallConfig && !wallConfig.is_leader) || groupSync);
+        wireSoloVideoPlayback(video, item, src, {
+          forceMuted: followerNow,
+          mayAdvance: !followerNow,
+          loop: (playlist.length === 1) || followerNow,
+          role: wallConfig ? (wallConfig.is_leader ? 'leader' : 'follower') : (groupSync ? 'group' : 'solo'),
+        });
       };
-      // First PRESENTED frame reached (or watchdog): freeze it, snapshot, wipe if we have from+to+runtime.
+      // First PRESENTED frame reached (or fallback/watchdog): wipe if we have from+to, else hard-cut.
       const onFirstFrame = () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
         if (stale()) { abandon(); return; }             // superseded before the wipe even started
-        try { video.pause(); } catch (e) {}             // hold at the snapshot frame; mountVideo resumes from here
-        const canTexture = video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video);
+        // The plane probe protects ONLY the wipe's `to` texture — and the warm-played incoming
+        // video is precisely the playing element it needs, so a hardware plane settles the verdict
+        // one boundary earlier than the outgoing frame could. The hold below runs regardless.
         let to = null;
-        if (canTexture) {
+        if (wantsWipe && video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video)
+            && videoCompositingAvailable(video)) {
           try {
-            const r = document.getElementById('playerContainer').getBoundingClientRect();
-            to = fitToCanvas(video, Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
+            const g = stageGeometry();
+            to = g ? fitToCanvas(video, g.w, g.h) : null;
           } catch (e) { to = null; }                    // snapshot tainted/threw -> hard cut below
         }
-        if (from && to && t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady()) {
-          runGlWipe(from, to, t, t.durationMs + 200,     // video has no image-dwell; bound only keeps the full duration
+        if (from && to) {
+          try { video.pause(); } catch (e) {}           // hold at the snapshot frame; mountVideo resumes from here
+          runGlWipe(from, to, t, t.durationMs + 200,    // video has no image-dwell; bound only keeps the full duration
             () => {},                                    // onStart: video advance is driven by 'ended', not a dwell timer
             mountVideo, mountVideo);                      // mount AND hardCut both mount+resume the real video
         } else {
-          mountVideo();                                  // no from-frame / un-texturable / no runtime -> hard cut
+          mountVideo();                                  // no transition / un-texturable / no runtime -> hard cut
         }
       };
-      // Warm-play until the first frame is PRESENTED. rVFC is the precise "a frame just painted" signal;
-      // without it, fall back to a short beat after playback starts. If play() is somehow rejected we still
-      // arm the frame wait (the watchdog is the final backstop).
+      // Warm-play until the first frame is PRESENTED. rVFC is the precise "a frame just painted"
+      // signal — but a DETACHED element may never present (no compositor layer), in which case rVFC
+      // never fires and every boundary would wait out the full watchdog. The short timer guarantees
+      // the hold still releases promptly; onFirstFrame's done-guard makes it once-only.
+      // If play() is somehow rejected we still arm the frame wait (the watchdog is the final backstop).
       const armFrame = () => {
         if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(() => onFirstFrame());
-        else setTimeout(onFirstFrame, 150);
+        setTimeout(() => onFirstFrame(), 150);
       };
       video.addEventListener('loadeddata', () => { video.play().then(armFrame).catch(armFrame); }, { once: true });
-      // A decode failure or a hung load must never stall the playlist.
+      // A decode failure or a hung load must never stall the playlist — but a SUPERSEDED,
+      // never-mounted clip failing must not cut the NEW item's dwell short either (the legacy
+      // branch could not do this: teardown nulled onerror on the element it removed).
       video.addEventListener('error', () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
+        if (stale()) { abandon(); return; }
         mediaFailureSkip(video, 'video(buffered)', src);   // skip broken clip; hold prior frame
       });
-      // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary hanging
-      // (mirrors renderImageBuffered's watchdog).
+      // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary
+      // hanging. 800ms — deliberately shorter than renderImageBuffered's 3s: a video either
+      // presents fast or will never present detached.
       watchdog = setTimeout(() => { if (done) return; done = true; if (stale()) { abandon(); return; } mountVideo(); }, 800);
       video.src = src;
-      video.load();
     }
 
     function renderContent(item) {
@@ -4971,7 +6603,7 @@
           // selection changed (daypart opened/closed). A rotating playlist advances normally on
           // its duration; the first mount + every genuine transition still go through the
           // buffered swap.
-          const held = nextActiveIndex(currentIndex) === currentIndex;
+          const held = peekNextIndex(currentIndex) === currentIndex;
           if (held) scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
           else scheduleAdvance(nextItem, (item.duration_sec || 30) * 1000);
         }
@@ -4988,20 +6620,26 @@
         renderImageBuffered(item);
         return;
       }
-      // Same buffered path for a SOLO video that has a transition: wipe the outgoing frame into it
-      // (image→video / video→video). Only when a runtime + transition are actually present — a plain
-      // solo video falls through to the legacy branch, which keeps its preload/mute/loop handling. Wall/
-      // zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube) too.
+      // Buffered SOLO-video render: hold the outgoing frame while the incoming clip warms
+      // up offscreen, then mount on its first PRESENTED frame — wiping into it when the item
+      // carries a transition, hard-cutting otherwise (image→video / video→video). Plain videos
+      // used to fall through to the legacy branch below, which tears down the stage BEFORE the
+      // clip has loaded — a short black blink on every boundary. Android avoids the same gap by
+      // holding a freeze-frame until onRenderedFirstFrame; the old DOM here is that freeze-frame.
+      // Wall/zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube)
+      // too.
+      // NOTE: video/hls (a live stream) is EXCLUDED — the buffered warm-up waits for a first
+      // presented frame and treats the clip as finite. A live stream has no end and, on Chrome,
+      // native <video> cannot even open the m3u8; renderLiveStream owns that path instead.
       const isVideoBufferable = item && typeof item.mime_type === 'string'
-        && item.mime_type.startsWith('video/') && item.mime_type !== 'video/youtube'
-        && !item.widget_id && !wallConfig && !isZones && !groupSync
-        && item.transition && Array.isArray(item.transition.effects) && item.transition.effects.length
-        && transitionRuntimeReady()
-        // A platform whose video sits on a hardware plane cannot supply the incoming frame either:
-        // the warm-play snapshot comes back transparent, so the wipe would fade in from nothing.
-        // `null` means "not yet determined" and is treated as available — the probe needs a
-        // playing video, and the first one on a fresh player has not run yet.
-        && _videoCompositingOk !== false;
+        && item.mime_type.startsWith('video/') && item.mime_type !== 'video/youtube' && item.mime_type !== 'video/hls'
+        && !item.widget_id && !wallConfig && !isZones && !groupSync;
+      // NOTE: no hardware-plane probe here on purpose. The probe protects only the wipe's
+      // `to` texture (a transparent snapshot would fade in from nothing), so it lives in
+      // renderVideoBuffered's onFirstFrame — while the first-frame HOLD runs everywhere,
+      // including BrightSign/Tizen, which are the platforms that blink most. `null`
+      // (not yet determined) is treated as available: the probe needs a playing video,
+      // and the first one on a fresh player has not run yet.
       if (isVideoBufferable) {
         renderVideoBuffered(item);
         return;
@@ -5024,12 +6662,38 @@
       // than fall through every branch and leave a blank container.
       const hasRenderableType = item && (
         item.widget_id ||
+        item.mime_type === BUNDLE_MIME ||
         item.mime_type === 'video/youtube' ||
         (typeof item.mime_type === 'string' && (item.mime_type.startsWith('video/') || item.mime_type.startsWith('image/')))
       );
       if (!hasRenderableType) {
+        /*
+         * ⚠️ THIS USED TO RETURN WITHOUT ARMING ANYTHING, AND THAT STOPPED THE PLAYLIST DEAD.
+         *
+         * There is no media element here, so no `error` event fires and mediaFailureSkip is
+         * unreachable; there is no advance timer, and neither watchdog in this file re-arms the
+         * rotation. So ONE item with a mime nobody recognises blanked the screen and froze the loop
+         * on "Waiting for content..." until a socket push or a restart — and it is reachable in a
+         * single call, because POST /api/content/remote stores mime_type verbatim from the request
+         * body with no validation. An unknown type must be a SKIPPED ITEM, never a stopped playlist.
+         *
+         * A single-item playlist still holds (there is nothing to advance to), so it retries slowly
+         * rather than spinning.
+         */
         showStatus('Waiting for content...');
         isPlaying = false;
+        const onlyItem = !playlist || playlist.length <= 1;
+        console.log('[player] skipping item with unrecognised type:', item && item.mime_type);
+        scheduleAdvance(nextItem, onlyItem ? UNKNOWN_ITEM_HOLD_MS : 0);
+        return;
+      }
+
+      // An HTML bundle: the server flattens the archive into one self-contained document and this
+      // mounts it exactly like a widget — same buffered swap, same sandbox, same rev-pinned
+      // immutable caching. `rev` is content_rev, so replacing the archive replaces what is framed.
+      if (item.mime_type === BUNDLE_MIME) {
+        renderBundleBuffered(item);
+        if (!groupSync) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1000);
         return;
       }
 
@@ -5057,7 +6721,8 @@
       const isFollower      = scheduleDriven;   // keep the old name for the branches below (advance gating)
 
       const isYoutube = item.mime_type === 'video/youtube';
-      const isVideo = !isYoutube && item.mime_type?.startsWith('video/');
+      const isHls = item.mime_type === LIVE_MIME;
+      const isVideo = !isYoutube && !isHls && item.mime_type?.startsWith('video/');
       const isImage = item.mime_type?.startsWith('image/');
       const remoteUrl = item.remote_url;
       const serverUrl = config.serverUrl;
@@ -5069,6 +6734,8 @@
         // Fullscreen / wall-tile
         if (isYoutube) {
           createYoutubeEmbed(src, item, mount);
+        } else if (isHls) {
+          renderLiveStream(item, src, mount, { forceMuted: forceMuted, mayAdvance: !isFollower, scheduleDriven: scheduleDriven });
         } else if (isVideo) {
           // Double buffer: reuse the pre-buffered element for this index if we warmed it (no black
           // hold). Its src is already set + buffered; a fresh element otherwise.
@@ -5079,10 +6746,7 @@
           // Followers stay muted unconditionally (leader-only audio); leaders
           // start muted only if the user hasn't gestured yet (autoplay policy).
           // #129: a per-item mute (set in the admin console) also forces muted.
-          video.muted = forceMuted ? true : (!userHasInteracted || !!item.muted);
-          // Explicit max volume when audio is allowed so it's at full level when
-          // unmute happens (default is 1.0 but make it visible in logs).
-          if (!forceMuted) video.volume = 1.0;
+          attachSubtitleTrack(video, item);
           video.playsInline = true;
           video.crossOrigin = 'anonymous';
           // Wall mode uses object-fit:fill so the source stretches to the
@@ -5093,39 +6757,17 @@
           // height. Solo (non-wall) keeps contain to preserve aspect.
           video.style.cssText = wallConfig
             ? 'width:100%;height:100%;object-fit:fill;background:#000'
-            : 'width:100%;height:100%;object-fit:contain;background:#000';
+            : 'width:100%;height:100%;object-fit:contain;background:transparent';   // #336: letterbox shows the device colour
           // Group members loop so a clip shorter than its schedule slot holds until the schedule
           // advances the index (and the tick seeks position % duration to stay aligned).
-          video.loop = (playlist.length === 1) || !!groupSync;
-          video.onended = () => { if (!video.loop && !isFollower) nextItem(); };
-          video.onerror = () => mediaFailureSkip(video, 'video', src, !isFollower);
-          video.onloadeddata = () => {
-            console.log('[wall/audio] video loaded file=' + item.filename + ' role=' + (wallConfig ? (wallConfig.is_leader ? 'leader' : 'follower') : 'solo') + ' muted=' + video.muted + ' volume=' + video.volume);
-          };
-          // If anything (browser, scripts, the user) tries to unmute a WALL
-          // follower, snap it back. This is the safety net for the audio
-          // bug — without it, a single stray unmute call causes echo. Group
-          // members are NOT force-muted (per-item mute governs them).
-          if (forceMuted) {
-            video.addEventListener('volumechange', () => {
-              if (!video.muted) { video.muted = true; }
-            });
-          }
           mount.appendChild(video);
           currentVideoEl = video;
-          // Try playing as we set muted above. If the browser blocks
-          // unmuted autoplay (e.g. no user gesture yet), retry muted.
-          video.play().then(() => {
-            console.log('[wall/audio] play() ok muted=' + video.muted + ' volume=' + video.volume);
-          }).catch((err) => {
-            console.warn('[wall/audio] play() rejected, falling back to muted: ' + (err?.name || err?.message || err));
-            video.muted = true;
-            video.play()
-              .then(() => console.log('[wall/audio] muted-fallback play() ok'))
-              .catch((e2) => console.error('[wall/audio] muted-fallback play() also failed: ' + (e2?.name || e2?.message || e2)));
+          wireSoloVideoPlayback(video, item, src, {
+            forceMuted: forceMuted,
+            mayAdvance: !isFollower,
+            loop: (playlist.length === 1) || !!groupSync,
+            role: wallConfig ? (wallConfig.is_leader ? 'leader' : 'follower') : (groupSync ? 'group' : 'solo'),
           });
-          // Fallback: force play if not started after 2s
-          setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000);
         } else if (isImage) {
           const img = document.createElement('img');
           img.src = src;
@@ -5139,7 +6781,7 @@
         } else if (item.widget_id) {
           const iframe = document.createElement('iframe');
           iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${item.widget_rev||0}`;
-          iframe.style.cssText = 'width:100%;height:100%;border:none;background:#000';
+          iframe.style.cssText = 'width:100%;height:100%;border:none;background:transparent';   // #336: a widget paints its own background
           iframe.allow = 'autoplay; fullscreen';
           // Sandbox into a unique origin so widget scripts can't read window.parent
           // state (localStorage / JWT). allow-scripts keeps inline widget code running.
@@ -5152,7 +6794,13 @@
     }
 
     // #74/#75 zone-level schedule helpers.
-    function zoneNextActive(items, from) {
+    function zoneNextActive(items, from, zoneId) {
+      try {
+        if (window.PlayOrder) {
+          if (!zoneOrderState[zoneId]) zoneOrderState[zoneId] = {};
+          return PlayOrder.nextIndex(items, from - 1, function (it) { return scheduleAllows(it); }, playbackOrder, zoneOrderState[zoneId]);
+        }
+      } catch (e) {}
       for (let i = 0; i < items.length; i++) {
         const idx = (from + i) % items.length;
         if (scheduleAllows(items[idx])) return idx;
@@ -5238,20 +6886,21 @@
     function showZoneItem(zone, div, items, index, timers = zoneTimers) {
       if (timers[zone.id]) { clearTimeout(timers[zone.id]); delete timers[zone.id]; }
       // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
-      const activeIdx = zoneNextActive(items, index);
+      const activeIdx = zoneNextActive(items, index, zone.id);
       if (activeIdx === -1) { showZoneEmpty(zone, div, items, timers); return; }
       index = activeIdx;
       const a = items[index % items.length];
       // Scheduled zones must cycle (even a lone active item) so windows re-evaluate
       // at each transition rather than a loop ignoring the window end.
-      const multi = items.length > 1 || items.some(it => it.schedules && it.schedules.length);
+      const multi = items.length > 1 || items.some(it => (it.schedules && it.schedules.length) || it.play_from || it.play_until || it.play_when);
       const advance = () => showZoneItem(zone, div, items, index + 1, timers);
       // Tear down any prior media in this zone before swapping.
-      div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
+      div.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
       div.innerHTML = '';
 
       const isYoutube = a.mime_type === 'video/youtube';
-      const isVideo = !isYoutube && a.mime_type?.startsWith('video/');
+      const isHls = a.mime_type === 'video/hls';   // literal: showZoneItem is extracted + eval'd in isolation by a test
+      const isVideo = !isYoutube && !isHls && a.mime_type?.startsWith('video/');
       const src = mediaUrl(a);
       const dur = (a.duration_sec || 10) * 1000;
 
@@ -5271,6 +6920,35 @@
       } else if (isYoutube) {
         createYoutubeEmbed(src, a, div);
         if (multi) timers[zone.id] = setTimeout(advance, dur);
+      } else if (isHls) {
+        // IPTV in a zone: a live stream, native-HLS first with the vendored hls.js fallback (same as
+        // the fullscreen path), per-zone so several zones can each run one. Duration is DWELL: a
+        // rotating zone advances after duration_sec (>0); a dwell-0 (or sole-item) zone stays, and on
+        // the slow re-check cadence only advances if this stops being the active pick (windows still
+        // re-evaluate, without remounting the stream every minute).
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.__stOverlay = !!div.__stOverlay;
+        video.muted = div.__stOverlay ? false : (zone.sort_order > 0);
+        video.playsInline = true;
+        video.loop = false;   // a live stream has no end
+        video.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;
+        div.appendChild(video);
+        attachHlsTo(video, src, { onFatal: () => { if (multi) { if (timers[zone.id]) clearTimeout(timers[zone.id]); timers[zone.id] = setTimeout(advance, 3000); } } });
+        if (multi) {
+          const dwell = Number(a.duration_sec) || 0;
+          if (dwell > 0) {
+            timers[zone.id] = setTimeout(advance, dwell * 1000);
+          } else {
+            const recheckMs = 60000;   // literal: showZoneItem is extracted + eval'd in isolation by a test
+            const recheck = () => {
+              // Still the active pick for this zone? stay (no remount); otherwise rotate on.
+              if (zoneNextActive(items, index, zone.id) === index) timers[zone.id] = setTimeout(recheck, recheckMs);
+              else advance();
+            };
+            timers[zone.id] = setTimeout(recheck, recheckMs);
+          }
+        }
       } else if (isVideo) {
         const video = document.createElement('video');
         video.src = src;
@@ -5290,7 +6968,7 @@
         video.muted = div.__stOverlay ? false : (zone.sort_order > 0); // Only first zone has audio
         video.loop = !multi; // single-item zone loops; multi advances on end
         video.playsInline = true;
-        video.style.cssText = `width:100%;height:100%;object-fit:${zone.fit_mode || 'cover'}`;
+        video.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;
         if (multi) {
           video.onended = advance;
           // A zone video advanced ONLY on `ended`, with no error handler and — alone among the zone
@@ -5323,7 +7001,7 @@
       } else {
         const img = document.createElement('img');
         img.src = src;
-        img.style.cssText = `width:100%;height:100%;object-fit:${zone.fit_mode || 'cover'}`;
+        img.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;
         div.appendChild(img);
         if (multi) timers[zone.id] = setTimeout(advance, dur);
       }
@@ -5378,6 +7056,10 @@
     // fade-to-black still reads as captured, while "nothing arrived" reads as not captured.
     function videoFrameIsCapturable(video) {
       if (!video) return false;
+      // Screenshot and zone capture call this, then draw the whole frame if it
+      // passes. On Vega the probe passes and that full draw is the same slatium
+      // trap videoCompositingAvailable refuses. Stop before either canvas write.
+      if (typeof onVega === 'function' && onVega()) return false;
       let pctx;
       try {
         const probe = document.createElement('canvas');
@@ -5657,6 +7339,7 @@
     // display itself to sleep over CEC. Best effort — some displays ignore broadcast CEC — so the
     // overlay is applied regardless and something visible always happens.
     function setDisplayPower(on) {
+      if (HOST && HOST.can('display.power')) return HOST.command(on ? 'screen_on' : 'screen_off');
       if (!BS) return false;
       try { return BS.displayPower(on); } catch (e) { return false; }
     }
@@ -5808,7 +7491,7 @@
       setDisplayPower(false);
       overlay = document.createElement('div');
       overlay.id = 'screenOffOverlay';
-      overlay.style.cssText = 'position:fixed;inset:0;background:#000;z-index:9999;cursor:pointer';
+      overlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:#000;z-index:9999;cursor:pointer';
       overlay.onclick = () => overlay.remove();
       document.body.appendChild(overlay);
     }
@@ -5816,7 +7499,7 @@
     // Create info overlay (toggled by Back button)
     const infoDiv = document.createElement('div');
     infoDiv.id = 'infoOverlay';
-    infoDiv.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:800;display:none;flex-direction:column;align-items:center;justify-content:center;color:#f1f5f9;font-family:-apple-system,sans-serif';
+    infoDiv.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.85);z-index:800;display:none;flex-direction:column;align-items:center;justify-content:center;color:#f1f5f9;font-family:-apple-system,sans-serif';
     infoDiv.innerHTML = `
       <h2 style="color:#3b82f6;margin-bottom:16px">${_t('info_title')}</h2>
       <div style="font-size:14px;line-height:2;text-align:center;color:#94a3b8" id="infoContent"></div>
@@ -5913,7 +7596,8 @@
       // header reaching the browser — which Cloudflare withheld from a cached response across a
       // deploy, so registration failed and the player ran with no worker at all. A rejected
       // registration is worse than a narrow one, and nothing about it is visible from here.
-      navigator.serviceWorker.register('/sw.js').then(reg => {
+      const serviceWorkerUrl = IS_LEGACY_PLAYER ? '/sw-legacy.js' : '/sw.js';
+      navigator.serviceWorker.register(serviceWorkerUrl).then(reg => {
         console.log('Service Worker registered');
         /*
          * ⚠️ PIN ONCE AT BOOT. requestOfflineCache had only two call sites, both inside
@@ -5933,17 +7617,35 @@
             }
           } catch (e) { console.warn('[cache] boot pin failed: ' + ((e && e.message) || e)); }
         }).catch(() => { /* no controller yet; the next playlist update pins */ });
-        // When a new SW activates, reload so the fresh code takes effect immediately
+        // When a new version of OUR OWN worker activates, reload so the fresh code takes effect.
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
-          if (newWorker) {
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-                console.log('New Service Worker activated — reloading for fresh code');
-                restartPlayer('service worker activated');
+          if (!newWorker) return;
+          const url = newWorker.scriptURL || '';
+          console.log('[sw] updatefound; installing worker =', url);
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+              /*
+               * ⚠️ ONLY reload for OUR OWN /sw.js. The player registers /sw.js at ROOT scope (it must,
+               * to cache /uploads + /api/content for offline). The dashboard registers /sw-admin.js
+               * at the SAME root scope. Two root workers share one registration, so when the
+               * dashboard is opened or refreshed in the same browser, sw-admin registers INTO this
+               * registration and surfaces here as a new installing worker — and reloading for it made
+               * the player reset every time the operator touched the dashboard. Ignore any worker
+               * that is not our own sw.js. (In production the player and dashboard are different
+               * origins and never share a scope; this only bites a single-origin/single-browser setup
+               * such as a server-on-a-player or local testing.)
+               */
+              var ownWorker = false;
+              try { ownWorker = new URL(url, window.location.href).pathname === serviceWorkerUrl; } catch (_) {}
+              if (!ownWorker) {
+                console.log('[sw] a FOREIGN worker took the scope (' + url + ') — NOT reloading the player');
+                return;
               }
-            });
-          }
+              console.log('New Service Worker activated — reloading for fresh code');
+              restartPlayer('service worker activated');
+            }
+          });
         });
       }, (err) => {
         // A registration that fails has to be VISIBLE. This one went to console.warn on a display
@@ -5961,20 +7663,166 @@
       });
     }
 
+    /* ==================== Unpairing at the panel ====================
+     *
+     * ⚠️ ESC USED TO BE A PUBLIC RESET BUTTON. It called confirm('Reset player and return to
+     * setup?') and, on OK, wiped the identity and reloaded — so anyone who could reach a keyboard
+     * on a kiosk could unpair the display, and the operator's first sign of it was a screen asking
+     * for a pairing code. A confirm() dialog is not a permission check; it only establishes that
+     * somebody meant to press the button, which is precisely what was wrong.
+     *
+     * The gate is now the settings PIN the dashboard already provisions for this screen — the same
+     * value the Android player uses for its hidden settings menu. Reusing it rather than inventing a
+     * second credential matters: an operator has one number per screen, rotating it in one place
+     * rotates it everywhere, and a second PIN is a second thing to be out of date.
+     *
+     * ⚠️ NO PIN MEANS NO UNPAIRING. Not "no PIN means ask for confirmation" — a screen whose PIN
+     * this player has never been told stays paired, and the message says so. Any other fail-safe
+     * direction puts the old behaviour back for exactly the fleet least likely to notice.
+     *
+     * ⚠️ AND THE PIN IS IN localStorage, which anyone with developer tools can read. That is
+     * acceptable here, and only here, because the same developer tools can clear the identity
+     * outright without ever pressing Esc — so hiding the PIN from them would protect nothing. The
+     * threat this gate exists for is the person with a keyboard and no console.
+     */
+    let pinPromptOpen = false;
+
+    let pinIdleTimer = null;
+
+    function closePinPrompt() {
+      pinPromptOpen = false;
+      if (pinIdleTimer) { clearTimeout(pinIdleTimer); pinIdleTimer = null; }
+      document.getElementById('pinOverlay').style.display = 'none';
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinError').textContent = '';
+    }
+
+    /*
+     * ⚠️ THE PROMPT CLOSES ITSELF. Without this, somebody who presses Esc and walks away leaves a
+     * PIN box covering a running sign until the next reload — which turns "Esc is harmless" into
+     * "Esc blanks the screen", the same class of problem as the reset it replaces. Playback is never
+     * paused while it is open, so closing it simply reveals what was always still playing.
+     */
+    function armPinIdleClose() {
+      if (pinIdleTimer) clearTimeout(pinIdleTimer);
+      pinIdleTimer = setTimeout(() => {
+        if (pinPromptOpen) { console.log('[unpair] PIN prompt timed out'); closePinPrompt(); }
+      }, 30000);
+    }
+
+    function openPinPrompt() {
+      const known = config.settingsPin ? String(config.settingsPin) : '';
+      if (!known) {
+        /*
+         * ⚠️ NOTHING VISIBLE HAPPENS. Not even an explanation — showStatus() paints a full-screen
+         * overlay, so telling the room "unpair from the dashboard" would blank a playing sign for
+         * anyone who leaned on Esc. A no-op has to be invisible to be a no-op. The console line is
+         * for whoever is actually debugging it.
+         */
+        console.warn('[unpair] Esc ignored — this player has no settings PIN for this screen');
+        return;
+      }
+      pinPromptOpen = true;
+      document.getElementById('pinError').textContent = '';
+      const overlay = document.getElementById('pinOverlay');
+      overlay.style.display = 'flex';
+      const input = document.getElementById('pinInput');
+      input.value = '';
+      try { input.focus(); } catch (e) { /* a kiosk without focus still accepts keydown */ }
+      armPinIdleClose();
+    }
+
+    function submitPin() {
+      const given = document.getElementById('pinInput').value;
+      const known = config.settingsPin ? String(config.settingsPin) : '';
+      // ⚠️ The decision lives in /player/unpair-gate.js, which the Node tests exercise directly. A
+      // guard that can only be reached through a real browser and a real PIN is a guard nobody
+      // checks. If the module failed to load, refuse — never fall back to an inline compare, which
+      // is how two versions of a permission check start disagreeing.
+      const verdict = (window.UnpairGate && window.UnpairGate.decide)
+        ? window.UnpairGate.decide(given, known)
+        : { allow: false, reason: 'no_gate' };
+      if (!verdict.allow) {
+        // ⚠️ One inline error and we stay exactly where we are. No lockout counter, no repair mode,
+        // no reload: a wrong PIN must leave a playing screen playing, because the overwhelmingly
+        // likely wrong-PIN case is the operator misremembering, not an attack.
+        // 'no_gate' says something true and different: the check could not run, so nothing was
+        // judged. Calling that "Incorrect PIN" would send an operator to look up a PIN that was
+        // never the problem.
+        document.getElementById('pinError').textContent =
+          verdict.reason === 'empty' ? 'Enter the PIN'
+            : verdict.reason === 'no_gate' ? 'Unavailable — reload the player' : 'Incorrect PIN';
+        const input = document.getElementById('pinInput');
+        input.value = '';
+        try { input.focus(); } catch (e) {}
+        armPinIdleClose();
+        return;
+      }
+      closePinPrompt();
+      unpairThisPlayer();
+    }
+
+    /* Clear this browser's identity. Called ONLY after a correct PIN. */
+    function unpairThisPlayer() {
+      /*
+       * ⚠️ TELL THE SERVER FIRST, while the token is still in memory — afterwards we have thrown
+       * away the only credential that could prove we are allowed to. The wipe does NOT wait for the
+       * answer, because the operator asked for this screen to be unpaired and a screen that is
+       * offline is exactly when they are most likely to be standing in front of it. What the ack
+       * changes is what we TELL them: "unpaired" and "unpaired here, but the server never heard"
+       * are different situations, and only one of them needs a trip to the dashboard.
+       */
+      let acked = false;
+      try {
+        if (socket && socket.connected && config.deviceId && config.deviceToken) {
+          socket.once('device:self-unpair-ok', () => { acked = true; });
+          socket.emit('device:self-unpair', { device_id: config.deviceId });
+        }
+      } catch (e) { /* the local wipe is the part the operator asked for */ }
+
+      // Give the round trip a moment, then wipe regardless.
+      setTimeout(() => {
+        try {
+          // The list is in the module (UnpairGate.storageKeys) with the reasoning for each entry —
+          // above all for st_install_id, without which the next register is reclaimed onto the row
+          // we just unpaired and the whole wipe is theatre.
+          UnpairGate.storageKeys(SCREEN_SUFFIX).forEach((k) => {
+            try { localStorage.removeItem(k); } catch (e) { /* keep going: one failure is not all */ }
+          });
+        } catch (e) { /* storage gone: nothing to clear, nothing to break */ }
+
+        // The BrightSign registry outlives localStorage, and getConfig() re-adopts whatever it
+        // finds there — so without this the panel comes straight back as the same display.
+        if (BS) { try { BS.clearIdentity(); } catch (e) { /* best effort */ } }
+        // Vega's /data copy is the same trap. The shell forgets before the reload, or host:ready
+        // on the next document adopts the identity this unpair just cleared.
+        try { if (typeof clearVegaIdentity === 'function') clearVegaIdentity(); } catch (e) {}
+
+        // ?k= is an identity too, re-read from the URL on every load. Leaving it means the reload
+        // pairs straight back as the same display and never shows a code (#313).
+        config.enrolKey = null;
+        const next = UnpairGate.urlWithoutEnrolKey(location.href);
+
+        console.warn('[unpair] identity cleared at the panel' + (acked ? '' : ' — the server did not acknowledge; the old screen may still need removing from the dashboard'));
+        if (next) { try { location.replace(next); return; } catch (e) { /* fall through to a plain restart */ } }
+        restartPlayer('operator unpaired at the panel');
+      }, 1200);
+    }
+
     // ==================== Keyboard shortcuts ====================
     document.addEventListener('keydown', (e) => {
+      if (pinPromptOpen) {
+        // While the prompt is up it owns the keyboard: Esc cancels it rather than reopening it, and
+        // 'f' must not throw the panel into fullscreen mid-PIN.
+        if (e.key === 'Escape') { e.preventDefault(); closePinPrompt(); }
+        else if (e.key === 'Enter') { e.preventDefault(); submitPin(); }
+        else armPinIdleClose();        // someone is typing: do not close under them
+        return;
+      }
       if (e.key === 'Escape') {
-        // Reset config and go back to setup
-        if (confirm('Reset player and return to setup?')) {
-          localStorage.removeItem(STORAGE_KEY);
-          localStorage.removeItem(PLAYLIST_CACHE_KEY);
-          localStorage.removeItem(LAYOUT_CACHE_KEY);
-          // The registry outlives localStorage, and getConfig() re-adopts the identity it finds
-          // there. Without this the reset would appear to work and the panel would come straight
-          // back paired as the same display — a reset that resets nothing.
-          if (BS) { try { BS.clearIdentity(); } catch (e) { /* best effort */ } }
-          restartPlayer('operator reset');
-        }
+        e.preventDefault();
+        openPinPrompt();
+        return;
       }
       if (e.key === 'f' || e.key === 'F11') {
         e.preventDefault();

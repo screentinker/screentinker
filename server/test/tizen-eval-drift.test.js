@@ -21,7 +21,7 @@ test('tizen evaluator is byte-identical to the canonical evaluator', () => {
 test('bundled tizen evaluator passes every shared vector', () => {
   const { isItemActiveNow } = require(tizenCopy);
   const data = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'shared', 'schedule-vectors.json'), 'utf8'));
-  const failures = data.vectors.filter(v => isItemActiveNow(v.blocks, v.utc_now, v.timezone) !== v.expected);
+  const failures = data.vectors.filter(v => isItemActiveNow(v.blocks, v.utc_now, v.timezone, v.window || null) !== v.expected);
   assert.strictEqual(failures.length, 0, `${failures.length} vector(s) failed in the tizen copy`);
 });
 

@@ -18,7 +18,11 @@ const MIN_MS = 150, MAX_MS = 3000, DEFAULT_MS = 800;
 // picks one at random per advance (variety). Returns { effects:[{shader,params}], durationMs, scope }
 // or null (unknown/empty -> no transition -> the player hard-cuts). Params live in a by-shader-id map;
 // a single flat params object is also accepted (single-effect shape).
-function resolveTransitionConfig(configJsonOrObj) {
+function resolveTransitionConfig(configJsonOrObj, extra) {
+  // #320: `extra` is a Map of the workspace's uploaded shaders, id -> { id, params }. It is
+  // consulted AFTER the shipped manifest, so an uploaded shader can never shadow a built-in
+  // even if the prefix guard in routes/custom-shaders.js were relaxed. Absent means the shipped
+  // set only, which is what every caller outside the device payload wants.
   let cfg;
   if (typeof configJsonOrObj === 'string') { try { cfg = JSON.parse(configJsonOrObj); } catch (e) { return null; } }
   else cfg = configJsonOrObj || {};
@@ -27,7 +31,7 @@ function resolveTransitionConfig(configJsonOrObj) {
   const effects = [];
   const seen = new Set();
   for (const id of ids) {
-    const entry = BY_ID.get(String(id));
+    const entry = BY_ID.get(String(id)) || (extra && extra.get(String(id))) || null;
     if (!entry || seen.has(entry.id)) continue; // unknown/removed or dup -> skip
     seen.add(entry.id);
     // per-shader params from the map, else (single-effect shape) a flat params object, else defaults
@@ -49,12 +53,12 @@ function resolveTransitionConfig(configJsonOrObj) {
 // item each applies to (the one you transition INTO). scope:'all' sets a playlist-wide default;
 // scope:'next' overrides the immediately-following visible item. A trailing scope:'next' with no
 // following item wraps onto the first item (playlists loop, so last->first is a real advance).
-function normalizeTransitions(items) {
+function normalizeTransitions(items, extra) {
   const visible = [];
   let pendingNext = null, playlistDefault = null;
   for (const it of items) {
     if (it && it.widget_type === 'transition') {
-      const cfg = resolveTransitionConfig(it.widget_config);
+      const cfg = resolveTransitionConfig(it.widget_config, extra);
       if (cfg) { if (cfg.scope === 'all') playlistDefault = cfg; else pendingNext = cfg; }
       continue; // normalized out — never a visible item
     }

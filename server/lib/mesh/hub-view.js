@@ -109,6 +109,12 @@ function nodeRollup({ node, edge, devices, openAlerts }, nowSec) {
 
   return {
     nodeId: node ? node.origin_node_id : (edge ? edge.peer_node_id : null),
+    /*
+     * ⚠️ MIRROR FIRST, EDGE SECOND. Both carry the name for a DIRECT peer and both are kept fresh,
+     * but only the mirror row has one for a node reached through a relay, and only the edge has one
+     * for a peer that has enrolled and not yet reported. Neither alone covers the view.
+     */
+    name: (node && node.node_name) || (edge && edge.peer_name) || null,
     version: node ? node.node_version : null,
     linkFreshness: link,
     devicesTotal: total,
@@ -192,8 +198,10 @@ function deviceQuery({ search = null, nodeIds = null, status = null,
 function deepLink(edge, kind, id) {
   if (!edge || !edge.peer_url) return null;
   const base = String(edge.peer_url).replace(/\/+$/, '');
-  const path = kind === 'device' ? `/#/devices/${encodeURIComponent(id)}`
-             : kind === 'alert' ? '/#/activity'
+  // ⚠️ /app, not /: the dashboard lives at /app and `/` is the marketing page, which ignores the
+  // hash. A deep link without it drops the operator on that node's front door.
+  const path = kind === 'device' ? `/app#/devices/${encodeURIComponent(id)}`
+             : kind === 'alert' ? '/app#/activity'
              : '/';
   return `${base}${path}`;
 }

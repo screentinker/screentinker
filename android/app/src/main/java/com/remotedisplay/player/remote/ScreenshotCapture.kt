@@ -100,17 +100,33 @@ class ScreenshotCapture {
     private fun encodeBitmap(bitmap: Bitmap, quality: Int): String = encode(bitmap, quality)
 
     companion object {
-        // Downscale to max width 960 + JPEG + base64. Shared by the view-capture path and the #161
-        // accessibility full-screen path (PowerAccessibilityService.takeScreenshot). Recycles inputs.
+        /**
+         * Degrees every outgoing screenshot is turned so the dashboard sees the native-landscape
+         * framebuffer it models (TransitionGeometry.screenshotUprightDeg). 0 on every landscape
+         * panel. MainActivity.applyOrientation owns it; the three capture paths (view-draw,
+         * MediaProjection, accessibility) all encode through [encode], so it is applied once, here.
+         */
+        @Volatile var uprightDeg: Int = 0
+
+        // Downscale to max width 960 + JPEG + base64. Shared by the view-capture path, the
+        // MediaProjection path (ScreenCaptureService) and the #161 accessibility full-screen path
+        // (PowerAccessibilityService.takeScreenshot). Recycles inputs.
         fun encode(bitmap: Bitmap, quality: Int): String {
-            val toEncode = if (bitmap.width > 960) {
-                val scale = 960f / bitmap.width
-                val h = (bitmap.height * scale).toInt()
-                val scaled = Bitmap.createScaledBitmap(bitmap, 960, h, true)
-                if (scaled !== bitmap) bitmap.recycle()
+            val deg = uprightDeg
+            val upright = if (deg == 0) bitmap else {
+                val m = android.graphics.Matrix().apply { postRotate(deg.toFloat()) }
+                val r = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
+                if (r !== bitmap) bitmap.recycle()
+                r
+            }
+            val toEncode = if (upright.width > 960) {
+                val scale = 960f / upright.width
+                val h = (upright.height * scale).toInt()
+                val scaled = Bitmap.createScaledBitmap(upright, 960, h, true)
+                if (scaled !== upright) upright.recycle()
                 scaled
             } else {
-                bitmap
+                upright
             }
             val stream = ByteArrayOutputStream()
             toEncode.compress(Bitmap.CompressFormat.JPEG, quality, stream)

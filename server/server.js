@@ -17,6 +17,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const config = require('./config');
+const replicaProxy = require('./lib/replica-proxy');
 const VERSION = require('./version');
 const ghcrCheck = require('./lib/ghcr-check');
 
@@ -85,6 +86,15 @@ const io = new Server(server, {
   pingTimeout: config.pingTimeout,
 });
 
+// #go2rtc — WebSocket signaling proxy for native (Android) live-video publishers. Attaches its own
+// handler to server 'upgrade' for /api/devices/:id/live/publish/ws only; every other upgrade (all of
+// socket.io's) is left untouched. See lib/live-publish-ws.js for why WS+trickle beats HTTP WHIP here.
+try {
+  require('./lib/live-publish-ws').attach(server);
+} catch (e) {
+  console.warn('[go2rtc] live-publish WS proxy not attached:', e && e.message);
+}
+
 // Middleware
 const helmet = require('helmet');
 
@@ -105,7 +115,11 @@ const dashboardCsp = helmet.contentSecurityPolicy({
     // Cloudflare Web Analytics: the beacon SCRIPT (static.cloudflareinsights.com) must be allowed to
     // load, AND the beacon must be allowed to POST its data back (connect-src -> cloudflareinsights.com).
     // Both are required — with only the script entry the beacon loads but silently can't report.
-    scriptSrc: ["'self'", 'https://static.cloudflareinsights.com'],
+    // 'wasm-unsafe-eval' lets the vendored pdf.js compile its image codecs (JPEG 2000, JBIG2,
+    // ICC) for the in-browser PDF → pages import. It permits WebAssembly compilation ONLY; it is
+    // not 'unsafe-eval' and does not admit eval()/new Function(). The worker and the .wasm files
+    // are same-origin under /vendor/pdfjs/, so 'self' already covers loading them.
+    scriptSrc: ["'self'", "'wasm-unsafe-eval'", 'https://static.cloudflareinsights.com'],
     scriptSrcAttr: ["'unsafe-inline'"],
     styleSrc: ["'self'", "'unsafe-inline'"],
     styleSrcAttr: ["'unsafe-inline'"],
@@ -143,7 +157,23 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return next();
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return next();
   if (req.path.startsWith('/api/widgets/preview-session/')) return next();
+  // Template previews carry their own sandboxing CSP (lib/templates/render.js).
+  if (req.path.startsWith('/api/templates/preview/')) return next();
+  if (req.path.startsWith('/api/templates/asset/')) return next();   // sets its own `sandbox` CSP
   if (req.path.startsWith('/api/kiosk/') && req.path.endsWith('/render')) return next();
+  /*
+   * ⚠️ AN HTML BUNDLE IS THE SAME CASE AS A WIDGET RENDER, and it fails the same way without this.
+   * The document is flattened to data: URIs, so the dashboard's `script-src 'self'` blocks every
+   * script in it, and `frame-ancestors 'self'` refuses the null-origin frame a player mounts it in
+   * — a blank rectangle with nothing in any log. What contains a bundle is the frame's sandbox
+   * attribute (allow-scripts, no allow-same-origin), not this policy.
+   */
+  if (req.path.startsWith('/api/content/') && req.path.endsWith('/bundle')) return next();
+  if (/^\/api\/content\/[^/]+\/bundle-preview\//.test(req.path)) return next();
+  // Plugin static files are operator HTML/JS, same CSP case as a widget render. Only skip
+  // the dashboard policy when the loader is actually on — otherwise /plugins/* is just 404
+  // and must not look different from any other unknown path.
+  if (config.pluginsEnabled && req.path.startsWith('/plugins/')) return next();
   return dashboardCsp(req, res, next);
 });
 // CORS policy.
@@ -252,9 +282,207 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '12mb' }));
+/*
+ * The templates import takes a RAW body (a .sttemplate is JSON, but it must reach the route as the
+ * exact bytes that were signed, and a bundle is a zip). The route parses it itself, after auth and
+ * with a size decided per upload kind — so the global JSON parser leaves that one path alone.
+ */
+const jsonBody = express.json({ limit: '12mb' });
+app.use((req, res, next) => (req.path === '/api/templates/import' ? next() : jsonBody(req, res, next)));
 const { sanitizeBody } = require('./middleware/sanitize');
 app.use(sanitizeBody);
+
+/*
+ * ───────────────────────── the machine-readable front door ─────────────────────────
+ *
+ * Discovery documents and a Markdown rendition of our own pages, for automated clients. Everything
+ * here describes what this deployment ACTUALLY serves: a discovery document is a promise an agent
+ * acts on, so advertising a capability we do not have does not read as capable, it produces agents
+ * that fail in ways they cannot diagnose. Where we do not have the thing, there is no file.
+ */
+const mcpProtocol = require('./lib/mcp/protocol');
+const agentSkills = require('./lib/agent-skills');
+const aiSurface = require('./lib/ai-surface');
+const mdRendition = require('./lib/markdown-rendition');
+
+// RFC 9727. One API, described by the OpenAPI document CI already lints — so the catalogue cannot
+// point at a description that has drifted without the build failing first.
+/*
+ * The API's own identity document. The catalogue's linkset ANCHORS on this URL, and an anchor an
+ * agent cannot dereference is a dead end — it will try it. Small on purpose: it says what this is and
+ * points at the two documents that actually describe it.
+ *
+ * Exact path only; every real endpoint lives under /api/<resource> and is unaffected.
+ */
+app.get('/api', (req, res) => {
+  const base = aiSurface.origin(req);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Link', aiSurface.linkHeader(base));
+  res.json({
+    name: 'ScreenTinker Public API',
+    description: 'Token-scoped REST API for digital signage: displays, content, playlists, layouts, schedules and reports.',
+    openapi: `${base}/openapi.yaml`,
+    documentation: `${base}/docs`,
+    authentication: `${base}/auth.md`,
+    catalog: `${base}/.well-known/api-catalog`,
+    source: 'https://github.com/screentinker/screentinker',
+  });
+});
+
+app.get('/.well-known/api-catalog', (req, res) => {
+  res.type('application/linkset+json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(aiSurface.apiCatalog(aiSurface.origin(req)));
+});
+
+// How an agent authenticates, in the format an agent reads. Scoped bearer tokens, minted by a human:
+// there is no flow by which a bot obtains one, and saying so plainly is more useful than silence.
+//
+// ⚠️ SERVED AT BOTH `/auth.md` AND `/.well-known/auth.md`. The convention puts it at the service
+// root; we published only the well-known copy, so a scanner asking for `/auth.md` got the SPA shell
+// — 200, text/html, 21 KB — and recorded the instance as not supporting the standard. A soft-404 is
+// indistinguishable from a wrong answer to anything that is not a browser.
+const serveAuthMarkdown = (req, res) => {
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(aiSurface.authMarkdown(aiSurface.origin(req)));
+};
+/*
+ * The MCP server card (SEP-1649): what this server is, before a client has connected to it.
+ *
+ * ⚠️ BUILT FROM THE SAME `identity()` THE HANDSHAKE USES. A card that disagrees with `initialize`
+ * is worse than no card — a client picks tools and an auth strategy from it, then discovers the
+ * mismatch only after connecting.
+ *
+ * ⚠️ IT DESCRIBES, IT DOES NOT GRANT. The endpoint still refuses everything without a token, and
+ * the card says so and points at /auth.md, because the one thing an agent must learn early here is
+ * that a human has to issue it a credential.
+ */
+/*
+ * OAuth 2.0 Protected Resource Metadata (RFC 9728). We are a protected resource that takes bearer
+ * tokens, so this document is true and useful — even though we delegate to no authorization server
+ * and therefore publish no `authorization_servers`. See ai-surface.protectedResourceMetadata.
+ */
+app.get('/.well-known/oauth-protected-resource', (req, res) => {
+  res.type('application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(aiSurface.protectedResourceMetadata(aiSurface.origin(req)));
+});
+
+app.get('/.well-known/mcp/server-card.json', (req, res) => {
+  const base = aiSurface.origin(req);
+  const id = mcpProtocol.identity({ version: config.version || require('./package.json').version });
+  res.type('application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({
+    ...id,
+    protocolVersion: mcpProtocol.LATEST,
+    transport: { type: 'streamable-http', endpoint: `${base}/mcp` },
+    endpoint: `${base}/mcp`,
+    authentication: {
+      type: 'bearer',
+      description: 'A scoped ScreenTinker API token, issued by a human in the dashboard. '
+        + 'There is no programmatic registration.',
+      documentation: `${base}/auth.md`,
+    },
+    documentation: `${base}/guides/mcp-digital-signage.html`,
+  });
+});
+
+/*
+ * ARD capability manifest. ⚠️ CORS is part of the spec here, not an afterthought: this is read by
+ * browser-side agents, and without the header the document exists and is unreadable by half the
+ * clients it is published for.
+ */
+app.get('/.well-known/ai-catalog.json', (req, res) => {
+  res.type('application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(aiSurface.aiCatalog(aiSurface.origin(req)));
+});
+
+/*
+ * Agent Skills Discovery. The index carries a sha256 of each artifact, computed from the same bytes
+ * the SKILL.md route returns — see lib/agent-skills.js. A digest that does not describe the artifact
+ * reads to a verifying agent as tampering, not as staleness.
+ */
+app.get('/.well-known/agent-skills/index.json', (req, res) => {
+  res.type('application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(agentSkills.skillsIndex(aiSurface.origin(req)));
+});
+
+app.get('/.well-known/agent-skills/:name/SKILL.md', (req, res) => {
+  const skill = agentSkills.byName(req.params.name);
+  if (!skill) return res.status(404).type('text/plain; charset=utf-8').send('No such skill.\n');
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  return res.send(agentSkills.skillMarkdown(skill, aiSurface.origin(req)));
+});
+
+app.get('/auth.md', serveAuthMarkdown);
+app.get('/.well-known/auth.md', serveAuthMarkdown);
+
+
+/*
+ * A Markdown rendition of any page we publish, two ways: `Accept: text/markdown` on the HTML URL, or
+ * the same path with `.md` appended.
+ *
+ * ⚠️ MOUNTED HERE: ABOVE app.get('/'), the static middleware AND the SPA catch-all. Below the
+ * landing route the homepage could never negotiate, because Express matches in order and that
+ * route answers first — it returned HTML to `Accept: text/markdown` and looked like the feature
+ * simply not working. Below static or the catch-all, `.md` falls through to index.html with a
+ * 200, which is this deployment's documented trap.
+ *
+ * Generated from the HTML on request rather than kept as files beside it: two copies of the same
+ * prose drift, and the copy nobody looks at is the one that goes stale.
+ */
+function sendMarkdown(req, res, file, canonicalPath) {
+  const base = aiSurface.origin(req);
+  try {
+    const html = fs.readFileSync(file, 'utf8');
+    res.type('text/markdown; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=900');
+    // Content negotiation happened, so caches must key on it or a browser gets a markdown copy.
+    res.setHeader('Vary', 'Accept');
+    res.setHeader('Link', aiSurface.linkHeader(base));
+    return res.send(mdRendition.toMarkdown(html, { url: base + canonicalPath, origin: base }));
+  } catch (e) {
+    return res.status(404).type('text/plain').send('not found');
+  }
+}
+
+app.get(/\.md$/, (req, res, next) => {
+  const file = aiSurface.markdownSource(config.frontendDir, req.path);
+  if (!file) return next();
+  return sendMarkdown(req, res, file, req.path.replace(/\.md$/, '') || '/');
+});
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  // Only our published pages. /api, /app and /player are not documents an agent should be reading a
+  // prose rendition of, and robots.txt already tells crawlers to stay out of them.
+  if (/^\/(api|app|player|uploads|scripts|vendor|assets|js|css)(\/|$)/.test(req.path)) return next();
+
+  const base = aiSurface.origin(req);
+  const file = aiSurface.markdownSource(config.frontendDir, req.path);
+  if (file) {
+    // Advertise the rendition on the HTML response whether or not this request wanted it: a client
+    // that fetched the page learns the plain-text form exists without having to guess the URL.
+    res.setHeader('Link', aiSurface.linkHeader(base, {
+      markdownOf: (req.path === '/' ? '/index' : req.path.replace(/\.html$/, '')) + '.md',
+    }));
+    res.setHeader('Vary', 'Accept');
+    if (aiSurface.prefersMarkdown(req.headers.accept)) {
+      return sendMarkdown(req, res, file, req.path);
+    }
+  } else {
+    res.setHeader('Link', aiSurface.linkHeader(base));
+  }
+  return next();
+});
 
 // Landing page BEFORE static middleware (so / doesn't serve index.html).
 // When DISABLE_HOMEPAGE is set, redirect to the app instead - for self-hosted
@@ -278,8 +506,13 @@ app.get('/app', (req, res) => {
     const brand = publicBranding(resolveBranding(db, { domain: (req.hostname || '').toString() }));
     const attr = JSON.stringify(brand)
       .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Same kill switch as the player (PLAYER_DEBUG_REPORTING), delivered the same way branding is:
+    // the dashboard CSP has no 'unsafe-inline', so a flag cannot ride in an inline <script> the way
+    // it does on the player, whose render paths run without CSP. Absent meta = on.
+    const errorReporting = String(process.env.PLAYER_DEBUG_REPORTING || 'on').toLowerCase() !== 'off';
     const html = fs.readFileSync(file, 'utf8')
-      .replace('</head>', '  <meta name="ssr-brand" content="' + attr + '">\n</head>');
+      .replace('</head>', '  <meta name="ssr-brand" content="' + attr + '">\n'
+        + '  <meta name="st-error-reporting" content="' + (errorReporting ? 'on' : 'off') + '">\n</head>');
     res.type('html').send(html);
   } catch (e) {
     res.sendFile(file);
@@ -311,6 +544,23 @@ app.get('/openapi.yaml', (req, res) => {
 app.get('/docs', (req, res) => {
   res.sendFile(path.join(config.frontendDir, 'api-docs.html'));
 });
+// Certified Hardware. ⚠️ EXTENSION-LESS ON PURPOSE: reseller agreements name this URL, so it must
+// not encode how the page happens to be built today. ByteTinker's own entries come from the
+// committed certified-hardware.json; approved community reports are merged in from the database.
+// The router falls back to the committed static page if that merge fails, because a URL named in a
+// contract should degrade to "our entries only" rather than to an error.
+app.use('/certified-hardware', require('./routes/certified-hardware'));
+app.get('/certified-hardware/submit', (req, res) => {
+  res.sendFile(path.join(config.frontendDir, 'certified-hardware-submit.html'));
+});
+// Public and unauthenticated by design: the page asks people to report what runs, and requiring an
+// account would mean only customers could answer. Nothing posted here can publish as certified.
+// A plain <form> posts urlencoded, so that parser is mounted here rather than globally.
+app.use('/api/hardware-submissions', rateLimit(3600000, 5)); // 5 reports per hour per IP
+app.use('/api/hardware-submissions', express.urlencoded({ extended: false, limit: '32kb' }),
+  require('./routes/hardware-submissions'));
+app.use('/hardware-submissions', require('./routes/hardware-submissions'));
+
 // #73: the standalone agency portal (token-auth, NOT the JWT dashboard SPA). Served as its
 // own page so the agency never touches the dashboard login.
 app.get('/agency', (req, res) => {
@@ -343,8 +593,8 @@ app.use(express.static(config.frontendDir, { index: false, etag: true, lastModif
 // server-side endpoint defends in depth, but the kill switch saves network
 // traffic on the device too). Other player assets (JS, sw.js, etc) are still
 // served by the static middleware below; only index.html is dynamic.
-app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
-  const playerHtmlPath = path.join(__dirname, 'player', 'index.html');
+function sendPlayer(res, file) {
+  const playerHtmlPath = path.join(__dirname, 'player', file);
   fs.readFile(playerHtmlPath, 'utf8', (err, html) => {
     if (err) return res.status(500).type('text/plain').send('player HTML unavailable');
     const reportingEnabled = String(process.env.PLAYER_DEBUG_REPORTING || 'on').toLowerCase() !== 'off';
@@ -367,7 +617,7 @@ app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
     // say so loudly, because the failure is otherwise invisible: every panel just keeps reporting
     // a stale version and looks fine.
     const stamped = modified.replace(
-      /(const PLAYER_VERSION = )'[^']*'/,
+      /(const PLAYER_VERSION\s*=\s*)['"][^'"]*['"]/,
       `$1'${String(VERSION).replace(/'/g, '')}'`
     );
     if (stamped === modified) {
@@ -377,6 +627,14 @@ app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
     res.type('html').setHeader('Cache-Control', 'no-cache');
     res.send(modified);
   });
+}
+
+app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
+  sendPlayer(res, 'index.html');
+});
+
+app.get(['/player/legacy', '/player/legacy/', '/player/legacy/index.html', '/player/legacy.html'], (req, res) => {
+  sendPlayer(res, 'legacy.html');
 });
 
 // #74/#75: serve the canonical schedule evaluator to the web player from the
@@ -385,6 +643,48 @@ app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
 app.get('/player/schedule-eval.js', (req, res) => {
   res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'lib', 'schedule-eval.js'));
+});
+app.get('/player/play-order.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'play-order.js'));
+});
+// The Esc-unpair gate, from the same single source the Node tests require — so who may unpair a
+// screen at the panel cannot drift between what is tested and what is served.
+app.get('/player/unpair-gate.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'unpair-gate.js'));
+});
+
+// #299: the offline proof-of-play queue, served to the web player from the same single source the
+// Tizen .wgt copies and the Node tests require — so the wire shape cannot drift between them.
+app.get('/player/offline-play-queue.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'offline-play-queue.js'));
+});
+
+// #go2rtc: the web-player live PUBLISHER, from its single source (lib/live-publish.js) that the
+// Node tests also require — same anti-drift rule as the queue above. Loading it is harmless when
+// live video is off: it only does anything when start() is called from a user gesture.
+app.get('/player/live-publish.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'live-publish.js'));
+});
+
+app.get('/player/live-publish-legacy.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'player', 'live-publish-legacy.js'));
+});
+
+// #talk: the web-player voice-intercom module (lib/talk-web.js), same serving pattern. Harmless
+// when talk is unused — it only acts on a device:talk-start.
+app.get('/player/talk.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'talk-web.js'));
+});
+
+app.get('/player/talk-legacy.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'player', 'talk-legacy.js'));
 });
 
 // Offline content-cache policy, imported by the service worker via importScripts and by the Node
@@ -411,6 +711,12 @@ app.get('/sw.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Service-Worker-Allowed', '/');   // belt: harmless, and correct where it survives
   res.sendFile(path.join(__dirname, 'player', 'sw.js'));
+});
+
+app.get('/sw-legacy.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'player', 'sw-legacy.js'));
 });
 
 app.get('/player/cache-policy.js', (req, res) => {
@@ -527,6 +833,46 @@ app.post('/api/brightsign/snapshot', express.text({ type: '*/*', limit: '4mb' })
   res.json({ ok: true, bytes: b64.length });
 });
 
+// ---------------------------------------------------------------------------------------------
+// Live video PUBLISH (#go2rtc): a web player offers its own screen INTO go2rtc so the dashboard
+// can watch it live. Mounted here at app level, and DEVICE-authenticated with the same
+// device_id + device_token pair the socket and the BrightSign snapshot use — because a player
+// holds device credentials, not a user session, and routes/devices.js sits behind the user/token
+// front door a device cannot pass. The WATCH side (dashboard) is the opposite: user-authenticated,
+// and lives in routes/devices.js.
+//
+// Fail-soft, exactly like the watch side: if live video is not enabled at all three levels
+// (server master switch, workspace flag, device flag) or go2rtc is absent, this refuses with 409
+// and the player simply keeps rendering — publishing is best-effort telemetry, never load-bearing.
+app.post('/api/devices/:id/live/publish',
+  express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }),
+  async (req, res) => {
+    const deviceId = req.params.id;
+    const token = req.query.token || req.get('X-Device-Token');
+    if (!bsDeviceSocket.validateDeviceToken(deviceId, token)) {
+      return res.status(401).json({ error: 'device authentication failed' });
+    }
+    const { db: ldb } = require('./db/database');
+    const go2rtc = require('./lib/go2rtc');
+    const liveCfg = require('./config');
+    const device = ldb.prepare('SELECT id, workspace_id, live_video_enabled FROM devices WHERE id = ?').get(deviceId);
+    if (!device || !device.workspace_id) return res.status(404).json({ error: 'device not found' });
+    const ws = ldb.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(device.workspace_id);
+    const on = !!(liveCfg.liveVideoEnabled && ws && ws.live_video_enabled && device.live_video_enabled);
+    if (!on || !go2rtc.enabled()) return res.status(409).json({ error: 'live video not enabled for this device' });
+    const offer = typeof req.body === 'string' ? req.body : '';
+    if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+    // The stream name is derived server-side from workspace+device: a player cannot publish into
+    // another device's stream even with valid credentials for its own.
+    const name = go2rtc.streamName(device.workspace_id, deviceId);
+    // go2rtc's dst= publish 404s on a stream that does not exist yet, so create the inert
+    // placeholder stream first (idempotent). Best-effort: if it fails the exchange below will 502.
+    await go2rtc.ensureStream(name);
+    const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+    if (!answer) return res.status(502).json({ error: 'go2rtc did not accept the publish' });
+    res.type('application/sdp').send(answer.sdp);
+  });
+
 // BrightSign bridge, served from its single source (brightsign/st-bridge.js) so the copy the
 // player loads can never drift from the one sitting on the SD card next to autorun.brs — the two
 // are halves of one messageport contract, and a skew between them is exactly what would leave a
@@ -573,6 +919,112 @@ app.get('/player/trigger-resolve.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'lib', 'trigger-resolve.js'));
 });
 
+/*
+ * #trigger-ingress: the SERVER-side LAN trigger door.
+ *
+ * ⚠️ THIS EXISTS BECAUSE SOME PLAYERS CANNOT OPEN ONE. BrightSign's server-on-a-player build creates
+ * its widget without nodejs_enabled (deliberately — see brightsign/server/autorun.brs), so the
+ * player has no `require`, `dgram` and raw `http` both throw, and the trigger listeners never bind.
+ * Measured on an XT245: every trigger port closed, so enabling triggers did precisely nothing. The
+ * server on that same board is real Node and can hold the door instead.
+ *
+ * ⚠️ THE PLAYER STILL DECIDES. This resolves only WHICH device the payload is addressed to (by its
+ * secret) and forwards the wire text verbatim, so accept/reject stays in the single shared resolver
+ * rather than being reimplemented here and drifting.
+ *
+ * Unauthenticated by design, exactly like the player's own door: the wire carries no URL, no
+ * duration and no position, so the worst an attacker with a guessed token can do is show content an
+ * operator already configured for that screen. It is off unless TRIGGER_INGRESS is set.
+ */
+if (config.triggerIngress) {
+  const triggerIngress = require('./lib/trigger-ingress');
+  const TRcore = require('./lib/trigger-resolve');
+  // ⚠️ Required here, not assumed. server.js has no module-level `db`; every other consumer pulls
+  // it in locally, and referencing a bare `db` threw a ReferenceError inside the UDP message
+  // handler — where an uncaught throw takes the process with it.
+  const { db: triggerDb } = require('./db/database');
+  // Same shape as the player's: per source IP, so one noisy controller cannot drown the others.
+  const ingressLimiter = TRcore.createRateLimiter ? TRcore.createRateLimiter() : null;
+
+  const handleIngress = (req, res, source) => {
+    const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+    if (ingressLimiter && !ingressLimiter.allow(ip, Date.now())) {
+      // Newline-terminated: Extron reads until a known suffix and otherwise blocks until timeout.
+      return res.status(429).type('text/plain').send('rate_limited\n');
+    }
+    const text = triggerIngress.extractWire(req);
+    const devices = triggerDb.prepare(
+      'SELECT id, trigger_secret, triggers_accept_http, triggers_accept_udp FROM devices WHERE trigger_secret IS NOT NULL'
+    ).all();
+    const target = triggerIngress.resolveTarget(text, devices, source);
+    if (!target.ok) {
+      return res.status(403).type('text/plain').send(target.reason + '\n');
+    }
+    const deviceNs = app.get('io') && app.get('io').of('/device');
+    const room = deviceNs && deviceNs.adapter.rooms.get(target.deviceId);
+    if (!room || room.size === 0) {
+      return res.status(503).type('text/plain').send('device_offline\n');
+    }
+    deviceNs.to(target.deviceId).emit('device:trigger-wire', { text, source, sourceIp: ip });
+    return res.type('text/plain').send('ok\n');
+  };
+
+  // The same four shapes the player's door accepts (docs/triggers-design.md §11) — a control system
+  // should not have to know which kind of box is behind the address.
+  app.post('/api/trigger', express.text({ type: '*/*', limit: '2kb' }), (req, res) => handleIngress(req, res, 'http'));
+  app.get('/api/trigger', (req, res) => handleIngress(req, res, 'http'));
+
+  /*
+   * The UDP half. A datagram is what most AV control systems actually emit — Extron's ControlScript
+   * truncates at 1024 bytes and delivers at most that per receive event, which is where the cap
+   * below comes from (it is their limit, not ours).
+   *
+   * ⚠️ A FAILURE TO BIND MUST NOT TAKE THE SERVER DOWN. This runs at boot on a signage box whose
+   * only job is showing content; a port already in use is a reason for triggers not to work, never
+   * a reason for the screens to go dark.
+   */
+  try {
+    const dgram = require('dgram');
+    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    sock.on('error', (err) => {
+      console.warn('[trigger-ingress] UDP listener error:', err.message);
+      try { sock.close(); } catch (e) { /* already gone */ }
+    });
+    sock.on('message', (buf, rinfo) => {
+     /*
+      * ⚠️ WRAPPED. This is a socket callback: an uncaught throw here is an uncaughtException that
+      * takes the whole server down, and a signage server dying means every screen it feeds stops.
+      * A malformed datagram from the LAN must never be able to do that.
+      */
+     try {
+      const ip = (rinfo && rinfo.address) || 'unknown';
+      if (ingressLimiter && !ingressLimiter.allow(ip, Date.now())) return;
+      const text = buf.toString('utf8', 0, Math.min(buf.length, 1024));
+      const devices = triggerDb.prepare(
+        'SELECT id, trigger_secret, triggers_accept_http, triggers_accept_udp FROM devices WHERE trigger_secret IS NOT NULL'
+      ).all();
+      const target = triggerIngress.resolveTarget(text, devices, 'udp');
+      // ⚠️ Silent on rejection. A datagram door on a LAN sees every stray broadcast; answering
+      // would both amplify traffic and tell a prober which guesses were closer.
+      if (!target.ok) return;
+      const deviceNs = app.get('io') && app.get('io').of('/device');
+      const room = deviceNs && deviceNs.adapter.rooms.get(target.deviceId);
+      if (!room || room.size === 0) return;
+      deviceNs.to(target.deviceId).emit('device:trigger-wire', { text, source: 'udp', sourceIp: ip });
+      console.log('[trigger-ingress] udp fire -> ' + target.deviceId + ' from ' + ip);
+     } catch (e) {
+      console.warn('[trigger-ingress] udp handler:', e.message);
+     }
+    });
+    sock.bind(config.triggerIngressUdpPort, () => {
+      console.log('[trigger-ingress] UDP door on :' + config.triggerIngressUdpPort);
+      try { sock.unref(); } catch (e) { /* keep going */ }
+    });
+  } catch (e) {
+    console.warn('[trigger-ingress] UDP unavailable:', e.message);
+  }
+}
+
 app.get('/player/media-mute.js', (req, res) => {
   res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'lib', 'media-mute.js'));
@@ -612,8 +1064,46 @@ app.use('/player', express.static(path.join(__dirname, 'player'), { etag: true, 
   }
 }}));
 
-// Serve setup scripts
-app.use('/scripts', express.static(path.join(__dirname, '..', 'scripts')));
+// Serve setup scripts — an ALLOWLIST, not the directory.
+//
+// This was `express.static(scripts/)`, which published all of it: reset-admin.js,
+// mint-billing-token.js, support-keygen.js, migrate-multitenancy.js, upgrade.sh, backup.sh. None of
+// those holds a secret (the repository is public), so nothing leaked — but they are operational
+// tooling being handed to anonymous callers, and the directory is where a self-hoster's own script
+// naturally lands. The next person to drop `restore-from-prod.sh` with a connection string in it
+// next to these would publish it without ever touching a route, which is the failure worth closing.
+// Only the three that are linked as URLs are served; adding a fourth is a deliberate edit here.
+//
+// ⚠️ THE BRIGHTSIGN ARCHIVES LIVE HERE TOO, and they are not in the repository. A deployment
+// bind-mounts them into this same directory (`./brightsign/autorun.zip` -> `/app/scripts/autorun.zip`
+// and friends), and `brightsign/server/bs-server-boot.js` fetches
+// `<server>/scripts/server-payload.zip` by URL. Leaving them off this list does not fail anywhere
+// visible: the SPA fallback answers 200 with HTML, a provisioning player writes that to its storage
+// root as its autorun, and it fails with nothing anywhere saying why. Public for the same reason
+// /download/apk is: a player fetches them before it has any identity.
+const PUBLIC_SCRIPTS = new Set([
+  // Setup scripts, tracked in the repository and linked as URLs.
+  'raspberry-pi-setup.sh', 'windows-setup.bat', 'debian-13-setup.sh',
+  // BrightSign provisioning payloads, supplied by the deployment rather than the repository.
+  'autorun.zip', 'autorun-server.zip', 'server-payload.zip', 'server-payload.json',
+]);
+//
+// ⚠️ The TYPE comes from the extension, because half this list is binary. Declaring a 93 MB
+// server-payload.zip as `text/plain; charset=utf-8` is what the first version of this route did:
+// the bytes arrive intact, so it boot-tested clean, but it tells every proxy and CDN in front of
+// the instance that a zip is text they may transform — and it was express.static inferring the
+// type correctly that made the old behaviour work.
+const SCRIPT_TYPES = { '.zip': 'application/zip', '.json': 'application/json' };
+app.get('/scripts/:name', (req, res) => {
+  // Membership in the set is the whole check: an exact match against a fixed list of basenames
+  // cannot be traversed out of, so there is no path to sanitise.
+  if (!PUBLIC_SCRIPTS.has(req.params.name)) return res.status(404).type('text/plain').send('not found');
+  const ext = path.extname(req.params.name);
+  // Default to text/plain: a .sh or .bat is meant to be read in a browser before it is run, which
+  // is the whole reason someone clicks one of these links rather than piping it to a shell.
+  res.setHeader('Content-Type', SCRIPT_TYPES[ext] || 'text/plain; charset=utf-8');
+  res.sendFile(path.join(__dirname, '..', 'scripts', req.params.name));
+});
 
 // Serve socket.io client
 app.use('/socket.io-client', express.static(
@@ -638,38 +1128,7 @@ const rateLimits = new Map();
  * exhausted the limit for `/sso-only` — trading a bypass for a denial of service. Known shapes get
  * their own keys; everything else shares one, separate from all of them.
  */
-const LIMIT_PATH_SHAPES = [
-  [/^\/api\/auth\/oidc\/[^/]+\/(start|callback)$/, (m) => `/api/auth/oidc/:slug/${m[1]}`],
-  [/^\/api\/organizations\/sso-only\/removal-requests\/[^/]+\/[^/]+$/, () => '/api/organizations/sso-only/removal-requests/:id/:decision'],
-  [/^\/api\/organizations\/sso-only\/removal-requests$/, () => '/api/organizations/sso-only/removal-requests'],
-  [/^\/api\/organizations\/[^/]+\/sso-only\/removal-request\/[^/]+$/, () => '/api/organizations/:id/sso-only/removal-request/:id'],
-  [/^\/api\/organizations\/[^/]+\/sso-only\/removal-request$/, () => '/api/organizations/:id/sso-only/removal-request'],
-  [/^\/api\/organizations\/[^/]+\/sso-only$/, () => '/api/organizations/:id/sso-only'],
-  // The reset/target routes mint a bucket per TARGET without this, which is the same
-  // caller-chosen-segment defect, at the mount next door.
-  [/^\/api\/auth\/users\/[^/]+\/(.+)$/, (m) => `/api/auth/users/:id/${m[1]}`],
-  [/^\/api\/content\/[^/]+$/, () => '/api/content/:id'],
-  [/^\/api\/organizations\/[^/]+\/sso\/[^/]+\/domains\/[^/]+\/verify$/, () => '/api/organizations/:id/sso/:id/domains/:domain/verify'],
-  [/^\/api\/organizations\/[^/]+\/sso\/[^/]+\/test$/, () => '/api/organizations/:id/sso/:id/test'],
-  [/^\/api\/organizations\/[^/]+\/sso\/[^/]+$/, () => '/api/organizations/:id/sso/:id'],
-  [/^\/api\/organizations\/[^/]+\/sso$/, () => '/api/organizations/:id/sso'],
-];
-
-function canonicalLimitPath(rawPath) {
-  const p = rawPath
-    .replace(/\/{2,}/g, '/')      // collapse doubled separators
-    .replace(/\/+$/, '')          // a trailing slash is the same endpoint
-    .toLowerCase()
-    || '/';
-  for (const [re, to] of LIMIT_PATH_SHAPES) {
-    const m = p.match(re);
-    if (m) return to(m);
-  }
-  // Unrecognised, but still under a mount whose ids are caller-chosen: one shared bucket, kept
-  // apart from every real endpoint so flooding it cannot starve them.
-  if (p.startsWith('/api/organizations/')) return '/api/organizations/:unmatched';
-  return p;
-}
+const { canonicalLimitPath } = require('./lib/limit-paths');
 
 function rateLimit(windowMs, maxRequests) {
   return (req, res, next) => {
@@ -727,6 +1186,13 @@ function rateLimit(windowMs, maxRequests) {
 // Auth routes (public, rate limited)
 app.use('/api/auth/login', rateLimit(60000, 10)); // 10 attempts per minute
 app.use('/api/auth/register', rateLimit(60000, 5)); // 5 registrations per minute
+// Support-token redemption (lib/support-access) is unauthenticated by nature: the token IS the
+// credential. Guessing one means forging an Ed25519 signature, so this limiter is about noise,
+// not brute force — but it is the one auth surface a stranger can hit without an account, so it
+// gets the tightest cap here. Mounted on the exact path: /api/auth/support/request etc. are
+// authenticated admin routes and must not share this bucket.
+const supportRedeemLimit = rateLimit(60000, 5);
+app.use('/api/auth/support', (req, res, next) => (req.path === '/' ? supportRedeemLimit(req, res, next) : next()));
 // #100 (tightening #2): the TOTP verify endpoint is the brute-force surface for a
 // 6-digit code. Cap attempts/min here; the per-user lockout (lib/totp-lockout) sits
 // on top in the handler.
@@ -751,6 +1217,37 @@ app.use('/api/auth/reset-password', rateLimit(60000, 10));
 // cap the blast radius to 20 resets/min/IP. Express matches the longest
 // path prefix first, so this fires before /api/auth catches the request.
 app.use('/api/auth/users', rateLimit(60000, 20));
+/*
+ * Unsubscribe. Mounted at the ROOT, not under /api, because the URL goes in an email: people read it,
+ * forward it and occasionally retype it, and `/unsubscribe` is legible where `/api/unsubscribe/v1` is
+ * not. It needs no auth by design — the HMAC in the link is the authorisation — and it never acts on
+ * GET, so a mail scanner prefetching the link cannot unsubscribe anyone. See routes/unsubscribe.js.
+ *
+ * Rate-limited even though the token is unguessable: it is an unauthenticated POST that writes, and a
+ * limit costs nothing on a path a human hits once.
+ */
+// ⚠️ urlencoded, not json: both callers post a FORM body. The page's own button is a plain <form>,
+// and an RFC 8058 one-click client posts `List-Unsubscribe=One-Click` urlencoded. That parser is not
+// global (see /api/hardware-submissions above for the same reason), so without it req.body is
+// undefined here and the token silently never arrives. Small limit — the body is two short fields.
+app.use('/unsubscribe',
+  rateLimit(60000, 20),
+  express.urlencoded({ extended: false, limit: '4kb' }),
+  require('./routes/unsubscribe'));
+
+/*
+ * Model Context Protocol. Mounted at the root because the URL is pasted into an AI client's config by
+ * a human, and https://host/mcp is what every one of them expects.
+ *
+ * ⚠️ NOT in config/api-surface.js, deliberately: it is not another API router. It authenticates
+ * nothing itself and reaches the database only to read a token's scope so it can decide which tools
+ * to LIST. Every tool call goes back through this server's own public API over loopback with the
+ * caller's token, so the real gate stays exactly where it already is.
+ *
+ * Rate-limited per IP: a model in a loop is the normal failure mode here, not an attacker.
+ */
+app.use('/mcp', rateLimit(60000, 120), require('./routes/mcp'));
+
 app.use('/api/auth', require('./routes/auth'));
 // Per-organization SSO configuration. Mounted under /api/organizations so the org id is the
 // route's own subject, which is what the org_owner/org_admin check keys on.
@@ -769,7 +1266,27 @@ app.use('/api/provision', rateLimit(60000, 5));
 // Rate limit expensive operations
 app.use('/api/status/export', rateLimit(60000, 5)); // 5 exports per minute
 app.use('/api/status/import', rateLimit(60000, 3)); // 3 imports per minute
-app.use('/api/content', rateLimit(60000, 30)); // 30 content operations per minute
+/*
+ * ⚠️ A CHUNKED UPLOAD IS MANY REQUESTS BY CONSTRUCTION, so it cannot share the general content
+ * budget. At the 1 MiB chunk size (lib/upload-session) a 500 MB file is ~500 PATCHes, and on a
+ * fast uplink those arrive well inside a minute — 30/min would refuse the upload partway through
+ * and the operator would see a transfer die for no visible reason.
+ *
+ * Raising it is not a hole: the bytes an IP can push are bounded by the session's declared size
+ * (the server refuses anything past it) and by express.raw's per-request cap, not by how many
+ * requests it takes to get there. What must stay tight is SESSION CREATION, which is the thing
+ * that actually allocates disk, and that keeps the 30/min budget below.
+ */
+const contentLimiter = rateLimit(60000, 30);           // 30 content operations per minute
+const uploadSessionLimiter = rateLimit(60000, 1200);   // chunk traffic for an already-open session
+app.use('/api/content', (req, res, next) => {
+  // Operations on an OPEN session (chunk PATCH, offset GET, DELETE, finalize) — never creation,
+  // which has no id segment and stays on the general budget.
+  const p = (req.originalUrl || req.url || '').split('?')[0].replace(/\/+$/, '');
+  return /^\/api\/content\/uploads\/[^/]+(\/finalize)?$/.test(p)
+    ? uploadSessionLimiter(req, res, next)
+    : contentLimiter(req, res, next);
+});
 
 // Subscription routes (mixed auth)
 app.use('/api/subscription', require('./routes/subscription'));
@@ -893,6 +1410,21 @@ app.get('/api/content/:id/file', (req, res) => {
   if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  // Scale-out (docs/scale-out.md): the row was copied, the bytes were not — fetch through, or (C3,
+  // under a caches-content edge) store them here first and then serve the local file.
+  if (config.primaryUrl && content.workspace_id && !fs.existsSync(safePath) &&
+      replicaProxy.isCopiedWorkspace(db.prepare('SELECT origin_node_id FROM workspaces WHERE id = ?').get(content.workspace_id))) {
+    const contentCache = require('./lib/mesh/content-cache');
+    if (!contentCache.edgeForContent(db, content)) return replicaProxy.proxyToPrimary(req, res, config);
+    return contentCache.ensure(db, config, content).then((r) => {
+      if (!(r.ok && fs.existsSync(safePath))) return replicaProxy.proxyToPrimary(req, res, config);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      hardenUploadResponse(res, content.filepath);
+      res.setHeader('x-st-replica-cache', 'stored');
+      res.sendFile(safePath);
+    });
+  }
   // Widget boards (logo / background images) render inside the player's sandboxed
   // (opaque-origin) widget iframe, so these image loads are cross-origin. The helmet
   // default CORP: same-origin blocks them (NS_ERROR_DOM_CORP_FAILED, 0 bytes). Allow
@@ -902,6 +1434,87 @@ app.get('/api/content/:id/file', (req, res) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   hardenUploadResponse(res, content.filepath);
   res.sendFile(safePath);
+});
+
+/*
+ * Previewing a bundle from the dashboard, before it is assigned to anything.
+ *
+ * ⚠️ THIS EXISTS BECAUSE THE PUBLIC ROUTE CANNOT ANSWER IT. /bundle is gated on the content being
+ * referenced by a playlist or a widget, because a player's frame carries no credentials — so a
+ * freshly uploaded bundle, which is exactly the one an operator wants to look at, is a 403 there.
+ * Relaxing that gate to allow previewing would make every uploaded archive world-readable by uuid.
+ *
+ * Same shape as the widget preview session (routes/widgets.js): an authenticated POST mints an
+ * ephemeral id, and that id — not a token, not a session — is what the iframe loads. The mint lives
+ * in routes/content.js behind auth; only the read is here, with the other public content routes.
+ */
+app.get('/api/content/:id/bundle-preview/:token', (req, res) => {
+  const html = require('./lib/bundle-preview-store').get(req.params.token, req.params.id);
+  if (html == null) return res.status(410).send('Preview expired');
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+/*
+ * An HTML bundle, flattened into one self-contained document.
+ *
+ * ⚠️ GATED EXACTLY LIKE /file AND /thumbnail, and for the same unavoidable reason: the frame that
+ * loads this is a player's sandboxed iframe, which carries no credentials and cannot be made to.
+ * So the rule is the same one those two use — the content must be referenced by a playlist, or by a
+ * widget in its own workspace, or the caller must hold a session for that workspace.
+ *
+ * ⚠️ AND IT MUST NOT GET `Content-Security-Policy: sandbox`. Every other response from the upload
+ * paths does, via hardenUploadResponse, because uploaded bytes must never execute. A bundle is the
+ * one exception in the product: it is HTML whose whole purpose is to run its own scripts. What
+ * keeps it contained is the frame's sandbox attribute — allow-scripts with NO allow-same-origin, so
+ * an opaque origin with no access to the player's storage — chosen by the player, not by us.
+ *
+ * The bytes are never extracted to disk; lib/bundle-inline.js reads entries out of the stored
+ * archive in memory. Rate limiting comes from the /api/content mount above, which matters here
+ * because inlining is the one memory-hungry thing on this route.
+ */
+app.get('/api/content/:id/bundle', async (req, res) => {
+  const { db } = require('./db/database');
+  const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
+  if (!content) return res.status(404).json({ error: 'Content not found' });
+  const htmlBundle = require('./lib/html-bundle');
+  if (content.mime_type !== htmlBundle.BUNDLE_MIME || !content.filepath) {
+    return res.status(404).json({ error: 'Not an HTML bundle' });
+  }
+  const inPlaylist = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
+  const inWidget = inPlaylist ? null : db.prepare('SELECT id FROM widgets WHERE workspace_id = ? AND config LIKE ? LIMIT 1').get(content.workspace_id, `%/api/content/${req.params.id}/%`);
+  if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) {
+    return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
+  }
+
+  const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
+  if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+
+  try {
+    const { inlineBundle } = require('./lib/bundle-inline');
+    const entry = content.bundle_entry || 'index.html';
+    const out = await inlineBundle(safePath, entry);
+    // Framed by a player at a null origin, so SAMEORIGIN would refuse it — the same reason the
+    // widget render route drops this header.
+    res.removeHeader('X-Frame-Options');
+    // A rev-pinned URL is content-addressed and may be cached hard; an unpinned one may not.
+    // Identical rule to routes/widgets.js, and the players' offline story depends on it.
+    if (req.query.rev) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    else res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    if (out.skipped.length) res.setHeader('X-Bundle-Skipped', String(out.skipped.length));
+    return res.send(out.html);
+  } catch (err) {
+    if (err && err.status === 413) return res.status(413).json({ error: err.message });
+    console.error('[bundle] inline failed for', req.params.id, err && err.message);
+    return res.status(500).json({ error: 'Bundle could not be rendered' });
+  }
 });
 
 // Proxy a remote thumbnail (e.g. YouTube's img.youtube.com/.../hqdefault.jpg, which
@@ -967,10 +1580,50 @@ const { requireAuth } = require('./middleware/auth');
  * routes. Same reasoning as the /mesh socket namespace: "a user who never sets the flag cannot tell
  * the mesh exists" is only true if there is nothing to discover.
  *
- * It is READ-ONLY by construction. There is no write route here because 2.0 has no downward channel
- * to write over (I2) — the absence of a mechanism, not restraint being exercised.
+ * ⚠️ It is no longer read-only. There IS a downward channel now, and I2 was amended openly from
+ * "upward only" to "the child is the last word": this hub may ASK a child to change something, and
+ * the child grants, enforces and revokes. The comment here used to say the absence of a write route
+ * was the absence of a mechanism rather than restraint — true when written, and left uncorrected
+ * for a commit longer than it should have been.
  */
-if (require('./config').meshAcceptEnrollment) {
+/*
+ * activityLogger wraps res.json on every SUBSEQUENT route to auto-log successful POST/PUT/DELETE
+ * mutations. Auth / subscription / stripe stay opt-out — they are mounted above (login has its own
+ * inline writers; payment webhooks do not belong in activity_log).
+ *
+ * ⚠️ MOVED ABOVE THE MESH ROUTERS, AND THAT IS THE WHOLE FIX. It already carried a note saying it
+ * had once been mounted after the workspace routes and silently never fired — and then the mesh
+ * routers were mounted above the corrected position and inherited exactly the same bug. Nothing
+ * mesh-related was ever written to activity_log: not granting another server write access to your
+ * screens, not revoking it, not minting a pairing code, not severing a link. The single most
+ * consequential thing an operator can do on this page left no trace, on either side.
+ *
+ * "Mount it before the routes you want logged" is evidently a rule that does not survive somebody
+ * adding a router later, so mesh-servers-view.test.js now asserts the ordering rather than trusting
+ * this comment to be read.
+ */
+const { activityLogger } = require('./services/activity');
+app.use(activityLogger);
+
+/*
+ * #329: whether either half of the mesh is mounted is decided HERE, once, at boot — so it is also
+ * recorded here for /api/auth/me to hand to the dashboard. The client used to discover it by
+ * probing (GET /mesh/capabilities, then /mesh/nodes, then /mesh/orgs on every /me refresh), which
+ * on an install with no mesh — very nearly all of them — is a handful of 404s in the console every
+ * time the sidebar renders. Asking the network a question the server already knows the answer to.
+ *
+ * ⚠️ These mirror the mount conditions immediately below and must move with them. They are the
+ * BOOT decision, deliberately, not a live recompute: hasUpEdges() can become true after boot, but
+ * the routes are not mounted retroactively, so a live answer would advertise routes that 404.
+ */
+const meshHubMounted = !!require('./config').meshAcceptEnrollment;
+const meshEnrollMounted = (() => {
+  const c = require('./config');
+  return !!(c.meshAcceptEnrollment || c.meshAllowUplink || hasUpEdges());
+})();
+app.locals.mesh = { hub: meshHubMounted, enroll: meshEnrollMounted };
+
+if (meshHubMounted) {
   try {
     app.use('/api/mesh',
       require('./routes/mesh')(require('./db/database').db, { requireAuth }));
@@ -992,7 +1645,7 @@ if (require('./config').meshAcceptEnrollment) {
  */
 {
   const meshCfg = require('./config');
-  if (meshCfg.meshAcceptEnrollment || meshCfg.meshAllowUplink || hasUpEdges()) {
+  if (meshEnrollMounted) {
     try {
       app.use('/api/mesh', require('./routes/mesh-enroll')(require('./db/database').db, {
         requireAuth,
@@ -1020,14 +1673,6 @@ const { resolveTenancy, accessContext } = require('./lib/tenancy');
 // Public API token front door (Phase 1). Attached ONLY to the public routers below.
 const { bearerAuth, tokenScopeGate, agencyGate } = require('./middleware/apiToken');
 
-// activityLogger wraps res.json on every subsequent route to auto-log
-// successful POST/PUT/DELETE mutations. Mount it BEFORE the workspace routes
-// (this fix corrects a pre-existing bug where it was mounted after them and
-// silently never fired). Auth / subscription / stripe routes are already
-// mounted above and stay opt-out from the auto-logger (login has its own
-// inline writers; payment webhooks don't belong in activity_log).
-const { activityLogger } = require('./services/activity');
-app.use(activityLogger);
 
 // #public-api Phase 1: the router partition is data-driven from config/api-surface.js
 // so server.js and the partition firewall test (test/api.test.js) read the SAME list
@@ -1045,10 +1690,46 @@ app.get('/api/widgets/:id/data.json', (req, res, next) => { req._skipAuth = true
 app.post('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); }); // diag widget reports frame stats (null-origin iframe)
 app.get('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth = true; next(); });
+/*
+ * ⚠️ AI GENERATION IS HEAVIER THAN THE PREVIEW ROUTES BELOW AND WAS THE ONLY ONE UNLIMITED.
+ *
+ * Each call makes an OUTBOUND fetch with a 180-second budget to an operator-configured endpoint and
+ * buffers the whole reply. Nothing serialises them, so an editor with several tabs — or a held
+ * Enter key in the generate box — holds that many sockets open and that many response bodies in
+ * heap, on a host shared with every other tenant. Ten a minute is generous for a person describing
+ * a slide and ruinous for a loop.
+ */
+app.use('/api/ai/generate-slide', rateLimit(60000, 10));
+app.use('/api/ai/generate-design', rateLimit(60000, 10));
+/*
+ * ⚠️ TIGHTER THAN THE OTHERS, BECAUSE ONE PRESS IS UP TO FIVE GENERATIONS. Layered generation makes
+ * a background plus one call per object, each on the operator's own metered image endpoint, and
+ * each followed by a full-frame key on the image worker. At the rate above that is fifty paid
+ * generations a minute from a held Enter key.
+ */
+app.use('/api/ai/generate-layered', rateLimit(60000, 3));
 app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
 app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview session creation retains rendered HTML in memory for 5min
+// `/test` triggers an outbound fetch of an arbitrary calendar feed; cap it so a single
+// workspace cannot fan out unbounded requests to third-party URLs.
+app.use('/api/data-sources/test', rateLimit(60000, 10));
+app.post('/api/plugin-submissions', rateLimit(3600000, 10)); // 10 plugin zips per hour per IP
+app.post('/api/admin/plugins/submissions', rateLimit(3600000, 20));
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 
+/*
+ * Templates: the two public reads (a preview token and a thumbnail by package hash) are served by
+ * a tiny router mounted BEFORE the JWT-only /api/templates mount, because requireAuth has no
+ * _skipAuth bypass and an <iframe>/<img> cannot send the dashboard's bearer token.
+ */
+{
+  const tplPublic = require('express').Router();
+  const tplRoutes = require('./routes/templates');
+  tplPublic.get('/preview/:token', (req, res, next) => tplRoutes.handle(req, res, next));
+  tplPublic.get('/thumb/:sha', (req, res, next) => tplRoutes.handle(req, res, next));
+  tplPublic.get(/^\/asset\/[0-9a-f]{64}\/.+$/, (req, res, next) => tplRoutes.handle(req, res, next));
+  app.use('/api/templates', rateLimit(60000, 120), tplPublic);
+}
 for (const r of PUBLIC_ROUTERS) {
   // renderBypass routers let the public /:id/render through (req._skipAuth) before bearerAuth.
   const front = r.renderBypass
@@ -1069,33 +1750,141 @@ for (const r of AGENCY_ROUTERS) {
   app.use(r.path, bearerAuth, resolveTenancy, agencyGate, require(r.mod));
 }
 
-// Frontend version hash (changes when files are modified, triggers soft reload)
+/*
+ * Plugins (P1). Off unless PLUGINS_ENABLED is set: boot() returns without scanning or
+ * require() of plugin code. Must run after migrations (db was required at the top of
+ * this file) and after the JWT_ONLY mount so /api/admin/plugins is already behind
+ * requireAuth. Plugin-contributed routers mount at /api/plugins/:id with the same
+ * requireAuth + resolveTenancy as workspace routes.
+ */
+try {
+  require('./lib/plugins/load').boot(app, { requireAuth, resolveTenancy });
+} catch (e) {
+  console.warn('[plugins] loader failed:', e.message);
+}
+
+// One-time (idempotent) encryption of any legacy plaintext secret fields at rest. Runs after the
+// plugin loader so plugin data-source / settings fields are known; iCal's authorization is covered
+// regardless of PLUGINS_ENABLED. New writes already encrypt on save.
+try {
+  require('./lib/plugins/migrate-secrets').migrateSecretsAtRest(require('./db/database').db);
+} catch (e) {
+  console.warn('[plugins] secret-at-rest migration skipped:', e.message);
+}
+
+/*
+ * Frontend version hash — changes when any served asset changes, which is what makes an open
+ * dashboard offer a soft reload.
+ *
+ * ⚠️ THIS USED TO BE A HARDCODED LIST OF TWENTY FILES, and the list is why it failed silently.
+ * `js/views/playlists.js` was never in it, nor anything under `js/lib/` or `js/i18n/`. So a
+ * frontend fix shipped to those paths reached ZERO open dashboards: nothing prompted a reload, and
+ * an operator sitting on the page saw no change and reasonably concluded it had not been fixed.
+ * That happened for real with the folder-tree picker (#419). Every new view since the list was
+ * written has had the same hole, and nothing about adding one tells you to update an array in
+ * server.js.
+ *
+ * So there is no list any more: it walks what is actually served.
+ *
+ * ⚠️ AND IT HASHES METADATA, NOT CONTENT, DELIBERATELY. The old version read ~20 files
+ * SYNCHRONOUSLY every 30 seconds on the same event loop that answers every device heartbeat, and
+ * this server has an open loop-spike problem already. Covering the whole frontend that way would
+ * mean reading 4.1 MB across 112 files ON the loop, twice a minute, forever.
+ *
+ * Measured, so the trade is on the record rather than assumed: the walk takes ~4.8ms of WALL time
+ * against the old ~1.0ms — it is SLOWER end to end, for 6x the coverage. What changes is that the
+ * 4.8ms is asynchronous and yields between every stat, so the loop is blocked for microseconds at
+ * a time instead of 1ms in one lump. On a server whose p99 spikes are the open complaint, trading
+ * wall time for the absence of a block is the right direction; claiming it is simply "cheaper"
+ * would not have been true.
+ *
+ * The trade-off, stated rather than hidden: a change that preserves BOTH size and mtime is
+ * invisible. No real write path does that — an editor, `git checkout`, rsync and scp all stamp
+ * mtime — and the failure mode is the one we already had, not a new one. The reverse (mtime moving
+ * without content changing, e.g. re-checking-out identical bytes) costs one spurious soft reload,
+ * which is cheap and self-correcting.
+ */
 const crypto = require('crypto');
 let frontendHash = '';
-function updateFrontendHash() {
+
+const HASHED_EXT = new Set(['.js', '.css', '.html', '.json', '.svg']);
+
+async function walkAssets(dir, out, depth = 0) {
+  // Bounded: a symlink loop under a served directory must not spin the server.
+  if (depth > 8) return;
+  let entries;
+  try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      await walkAssets(full, out, depth + 1);
+    } else if (HASHED_EXT.has(path.extname(e.name).toLowerCase())) {
+      try {
+        const st = await fs.promises.stat(full);
+        out.push(`${full}:${st.size}:${Math.floor(st.mtimeMs)}`);
+      } catch { /* vanished mid-walk; the next pass will see it */ }
+    }
+  }
+}
+
+let _hashing = false;
+async function updateFrontendHash() {
+  if (_hashing) return;          // a slow disk must not stack passes
+  _hashing = true;
   try {
-    const files = ['index.html', 'js/app.js', 'js/api.js', 'js/socket.js', 'css/main.css',
-      'js/views/dashboard.js', 'js/views/device-detail.js', 'js/views/content-library.js',
-      'js/views/settings.js', 'js/views/login.js', 'js/views/billing.js',
-      'js/views/layout-editor.js', 'js/views/schedule.js', 'js/views/widgets.js',
-      'js/views/video-wall.js', 'js/views/reports.js', 'js/views/designer.js',
-      'js/views/activity.js', 'js/views/kiosk.js'].map(f => {
-      try { return fs.readFileSync(path.join(config.frontendDir, f)); } catch { return ''; }
-    });
-    // Include player files in hash so web players detect code updates
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'index.html'))); } catch {}
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'sw.js'))); } catch {}
-    try { files.push(fs.readFileSync(path.join(__dirname, 'player', 'debug-overlay.js'))); } catch {}
-    frontendHash = crypto.createHash('md5').update(Buffer.concat(files.map(f => Buffer.from(f)))).digest('hex').slice(0, 8);
-  } catch { frontendHash = Date.now().toString(36); }
+    const parts = [];
+    await walkAssets(config.frontendDir, parts);
+    // Player assets too, so a web player notices its own code changing.
+    await walkAssets(path.join(__dirname, 'player'), parts);
+    parts.sort();                // readdir order is not guaranteed stable across platforms
+    frontendHash = crypto.createHash('md5').update(parts.join('|')).digest('hex').slice(0, 8);
+  } catch {
+    // Never leave it empty: an empty hash reads as "no version" to the client, and the client
+    // treats the FIRST value it sees as the baseline — so '' followed by a real hash is
+    // indistinguishable from a deploy.
+    if (!frontendHash) frontendHash = Date.now().toString(36);
+  } finally {
+    _hashing = false;
+  }
 }
 updateFrontendHash();
 // Recheck every 30 seconds
-setInterval(updateFrontendHash, 30000);
-app.get('/api/version', (req, res) => {
+setInterval(() => { updateFrontendHash().catch(() => {}); }, 30000);
+app.get('/api/version', async (req, res) => {
+  /*
+   * ⚠️ NEVER ANSWER WITH AN EMPTY HASH. The first pass is asynchronous, so between boot and its
+   * completion this endpoint could reply `hash: ''`. The dashboard stores whatever it first sees
+   * (`if (knownHash === null) knownHash = data.hash`) and compares later polls against it — so one
+   * request landing in that window makes the NEXT poll look like a new version and pops "Dashboard
+   * updated. Reload now" at someone who has just loaded the page.
+   *
+   * The old synchronous version could not do this: the hash was set before anything could ask.
+   * Awaiting here restores that guarantee at the cost of ~5ms on one request, once per boot.
+   */
+  if (!frontendHash) { try { await updateFrontendHash(); } catch { /* fall through to the seed */ } }
   const latest = ghcrCheck.getLatestVersion();
   const updateAvailable = latest ? ghcrCheck.compareVersions(latest, VERSION) > 0 : false;
-  res.json({ hash: frontendHash, version: VERSION, latest_version: latest, update_available: updateAvailable });
+  // #467: the Android player version this server would hand out (the same answer /api/update/check
+  // advertises, without logging an OTA check), so the Displays page can mark screens behind it.
+  // null when no APK is staged here. Public, like /download, which already shows it.
+  let apkVersion = null;
+  try { const apk = apkCache.get(); apkVersion = apk && apk.exists ? (apk.version || VERSION) : null; } catch { /* not resolved yet */ }
+  res.json({ hash: frontendHash, version: VERSION, latest_version: latest, update_available: updateAvailable, apk_version: apkVersion });
+});
+
+/*
+ * User-facing release notes for the "What's new" panel and the Settings -> About list.
+ *
+ * ⚠️ DELIBERATELY NOT PART OF /api/version, which the frontend polls every 30 seconds for the
+ * build hash. The notes are static for the life of the process and are read at most once per
+ * sign-in; bolting them onto the hot poll would ship the same payload 2,880 times a day per tab.
+ *
+ * Public, like /api/version and /api/status beside it: the same text is on the GitHub release,
+ * and the running version is already readable from /api/status.
+ */
+app.get('/api/release-notes', (req, res) => {
+  res.json(require('./lib/release-notes').payload());
 });
 
 // Public status page
@@ -1124,6 +1913,12 @@ if (process.env.TELEMETRY_COLLECTOR === '1') {
 // No tenancy — billing is platform-global.
 app.use('/api/billing', bearerAuth, require('./routes/billing'));
 
+// Embedded renderer — pre-renders playlist content as device-native images (1-bit e-paper,
+// RGB565, etc.) for MCUs that call HTTP instead of running a browser. Handles its own dual
+// auth (device token OR API token) so it cannot use the PUBLIC_ROUTERS bearerAuth loop.
+app.use('/api/embedded', require('./routes/embedded'));
+
+
 // Activity logging middleware now mounted earlier (just before the workspace
 // route block) - leaving this comment here as a breadcrumb for the move.
 
@@ -1132,17 +1927,46 @@ const otaBreaker = require('./lib/ota-breaker');
 otaBreaker.startSweep();   // #144: periodically evict idle breaker buckets so keyed state stays bounded
 require('./lib/reconnect-throttle').startSweep();   // #146: same, for the reconnect throttle's per-device buckets
 require('./lib/flap-limiter').startSweep();          // #146 Item B: evict idle flap-limiter buckets
+/*
+ * Abandoned resumable uploads. A browser tab closed mid-upload leaves a part file, and without this
+ * they accumulate for ever — on a disk whose free space has already been an incident twice.
+ * ⚠️ Collects by ROW, never by glob: see lib/upload-session.sweep.
+ */
+require('./lib/upload-session').startSweep();
 require('./lib/session-settle').startSweep();        // #148 patch2: evict idle session-settle entries
 require('./lib/content-ack-limiter').startSweep();   // #146 Item E: evict idle content-ack buckets
 const apkCache = require('./lib/apk-cache');
 apkCache.start();                                    // #146 Item C: resolve APK path/size/mtime once + refresh on interval (no per-request fs)
 const wgtCache = require('./lib/wgt-cache');
+const ipkCache = require('./lib/ipk-cache');
 wgtCache.start();                                    // Tizen SSSP URL-Launcher: resolve .wgt path/size/mtime once + refresh on interval
+ipkCache.start();                                    // LG webOS Signage: same for the .ipk
+const debCache = require('./lib/deb-cache');
+debCache.start();                                    // native Raspberry Pi player: newest screentinker-pi_<ver>_all.deb + its sha256
+// /api/pi/update/check + /download/pi. Same kill switches, breaker and download guard as the APK
+// path below — see the header of routes/pi-update.js for why they are shared rather than copied.
+require('./routes/pi-update')(app);
+const winCache = require('./lib/win-cache');
+winCache.start();                                    // native Windows player: newest ScreenTinker-Setup-<ver>.exe + its sha256
+// /api/win/update/check + /download/win — the same factory as the Pi route (routes/native-update.js),
+// plus the device-less sha256 lookup the SYSTEM helper service makes before running an installer.
+require('./routes/win-update')(app);
+require('./lib/revision-retention').start(require('./db/database').db);   // version history: bounded retention, daily
 const { getBand } = require('./services/loop-lag');  // #146 Item C: critical-band download shed
 app.get('/api/update/check', (req, res) => {
   const currentVersion = req.query.version;
   const deviceId = req.query.device_id || null;   // #144: optional; beta4+ clients send it for per-device keying
-  let latestVersion = VERSION;   // replaced by the beta build's declared version for opted-in displays
+  // An operator pressed "force update" on this one device; the client passes it through so the
+  // server-side holds (backoff / superseded-prerelease) can be overridden for a genuine upgrade.
+  // Absent on older clients, so the default (unforced) is unchanged for the whole existing fleet.
+  const forced = req.query.forced === '1' || req.query.forced === 'true';
+  /*
+   * #341: the version we ADVERTISE must describe the bytes we would SERVE, never the server's own
+   * build. Where the stable APK declares its version in a sidecar, that wins; otherwise fall back
+   * to VERSION, which is correct whenever server and APK shipped together and is what every
+   * deployment did before the sidecar existed.
+   */
+  let latestVersion = apkCache.get().version || VERSION;   // replaced by the beta build's declared version for opted-in displays
   let betaChannel = false;   // per-display pre-release opt-in, set from the device row below
   let wasOnBeta = false;     // whether we have actually served this display the beta channel
 
@@ -1185,7 +2009,7 @@ app.get('/api/update/check', (req, res) => {
 
   // The hold-my-prerelease guard only applies when we are NOT actively serving a beta: on the beta
   // channel the beta build is the target, so normal comparison does the right thing.
-  const verdict = otaBreaker.decide(currentVersion, latestVersion, deviceId, Date.now(), betaChannel && !onBeta, wasOnBeta);
+  const verdict = otaBreaker.decide(currentVersion, latestVersion, deviceId, Date.now(), betaChannel && !onBeta, wasOnBeta, forced);
 
   // Record that this display is being served beta, so switching it back later is distinguishable
   // from a display that has always run its own build. Written only on a change, not per check.
@@ -1284,11 +2108,88 @@ function hardenUploadResponse(res, filename) {
   return true;
 }
 
+/*
+ * Bundled slide fonts. ⚠️ ITS OWN MOUNT, NOT /uploads/content, AND THE REASON IS NOT TIDINESS.
+ *
+ * A slide renders inside an iframe sandboxed to allow-scripts with NO allow-same-origin, so the
+ * frame is an OPAQUE origin and every subresource fetch from it is cross-origin. An <img> does not
+ * care; @font-face does — a font fetch is CORS-restricted, so without Access-Control-Allow-Origin
+ * the face silently never loads and the slide falls back, on every panel, with nothing in any log.
+ *
+ * And the content mount cannot be reused: hardenUploadResponse forces Content-Type
+ * application/octet-stream plus Content-Disposition: attachment on anything outside
+ * INLINE_SAFE_EXTS, and under X-Content-Type-Options: nosniff a browser refuses to use that as a
+ * font. Adding .woff2 to INLINE_SAFE_EXTS would have been the smaller diff and the wrong one — that
+ * set exists to stop UPLOADED files being served inline, and these are not uploads.
+ *
+ * Immutable and long-lived because the filenames ship with the release: the bytes behind
+ * /fonts/inter.woff2 cannot change without a deploy, which is exactly the promise `immutable` makes.
+ */
+/*
+ * Uploaded fonts. Same headers as the bundled set and for the same reasons — a slide's iframe is an
+ * opaque origin, so @font-face is CORS-restricted where an <img> is not.
+ *
+ * ⚠️ MOUNTED BEFORE /fonts, because express matches in order and /fonts/u would otherwise be looked
+ * for as a file called "u" in the bundled directory.
+ *
+ * ⚠️ PUBLIC BY URL, like /uploads/content and for the same unavoidable reason: the frame that needs
+ * the font carries no credentials, so the URL cannot be authenticated. The id is a uuid, so this is
+ * unguessable rather than secret — the same property images already rely on. Worth knowing before
+ * uploading a font whose licence forbids public serving.
+ */
+app.use('/fonts/u', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  next();
+}, express.static(config.fontsDir, {
+  index: false,
+  setHeaders: (res, filePath) => {
+    const t = { '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.otf': 'font/otf' }[path.extname(filePath).toLowerCase()];
+    if (t) res.setHeader('Content-Type', t);
+  },
+}), (req, res) => {
+  // A miss ends here — see the bundled mount below for why 200-with-the-dashboard is the worst
+  // possible answer under an `immutable` header.
+  res.removeHeader('Cache-Control');
+  res.status(404).type('text/plain').send('Not found');
+});
+
+app.use('/fonts', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  next();
+}, express.static(path.join(__dirname, 'fonts'), {
+  index: false,
+  setHeaders: (res, filePath) => {
+    // Set explicitly rather than trusting express's lookup: getting this wrong means the browser
+    // refuses the face under nosniff, which looks exactly like a missing font.
+    if (filePath.endsWith('.woff2')) res.setHeader('Content-Type', 'font/woff2');
+    // ⚠️ The OFL text is part of what the licence requires us to distribute WITH the fonts, so it
+    // is served rather than merely sitting in the tarball.
+    else if (filePath.endsWith('.txt')) res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  },
+}), (req, res) => {
+  /*
+   * ⚠️ A MISS ENDS HERE. express.static calls next() on a miss and the only thing downstream is the
+   * SPA catch-all, which answers 200 with 15KB of dashboard HTML — under the `immutable` header set
+   * above. A browser would cache that as the font for a year and every slide would render in the
+   * fallback with no error anywhere. Same trap as /uploads/content, documented there.
+   */
+  res.removeHeader('Cache-Control');
+  res.status(404).type('text/plain').send('Not found');
+});
+
 app.use('/uploads/content', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Cache-Control', 'public, max-age=2592000, immutable'); // 30 days
   hardenUploadResponse(res, req.path);
+  // Scale-out C3: a cached copy read counts as recently used (LRU); a no-op on a stock install.
+  if (config.primaryUrl) { try { require('./lib/mesh/content-cache').touch(require('./db/database').db, path.basename(req.path)); } catch (e) { /* */ } }
   next();
 }, express.static(config.contentDir, {
   setHeaders: (res, filePath) => {
@@ -1316,6 +2217,30 @@ app.use('/uploads/content', (req, res, next) => {
    */
   res.removeHeader('Cache-Control');
   res.removeHeader('Content-Disposition');
+  // Scale-out (docs/scale-out.md): a copied workspace's file lives on the primary. Only a name that
+  // belongs to a copied content row is fetched through; anything else stays the miss above.
+  // C3: under a caches-content edge the fetch-through STORES the file first, then serves it
+  // locally; if the fetch fails (primary down, disk full) it serves through exactly as before.
+  if (config.primaryUrl && replicaProxy.isCopiedUploadName(require('./db/database').db, path.basename(req.path))) {
+    const db = require('./db/database').db;
+    const contentCache = require('./lib/mesh/content-cache');
+    const content = contentCache.contentForName(db, path.basename(req.path));
+    if (content && contentCache.edgeForContent(db, content)) {
+      return contentCache.ensure(db, config, content).then((r) => {
+        const local = path.resolve(config.contentDir, path.basename(req.path));
+        if (r.ok && fs.existsSync(local)) {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+          res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+          hardenUploadResponse(res, local);
+          res.setHeader('x-st-replica-cache', 'stored');
+          return res.sendFile(local);
+        }
+        return replicaProxy.proxyToPrimary(req, res, config);
+      });
+    }
+    return replicaProxy.proxyToPrimary(req, res, config);
+  }
   res.type('application/json').status(404).json({ error: 'Not found' });
 });
 
@@ -1354,6 +2279,28 @@ startContentExpiry(io);
 const { startAlertService } = require('./services/alerts');
 startAlertService(io);
 
+// Start universal data sources background poller
+const { startDataSourcesPoller } = require('./lib/data-sources/service');
+startDataSourcesPoller(io);
+
+// Templates library: panels re-render a template's widgets when the template is updated or
+// revoked, and the catalog poller runs only once an admin has switched the library on.
+try {
+  require('./lib/templates/store').setWidgetsChangedHook((ids) => {
+    const { buildPlaylistPayload } = require('./ws/deviceSocket');
+    const commandQueue = require('./lib/command-queue');
+    const { devicesPlayingWidget } = require('./lib/devices-playing');
+    const seen = new Set();
+    for (const id of ids) for (const d of devicesPlayingWidget(id)) seen.add(d);
+    for (const d of seen) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), d, buildPlaylistPayload);
+  });
+  const tplCatalog = require('./lib/templates/catalog');
+  tplCatalog.ensureOfficial();
+  if (tplCatalog.networkEnabled()) tplCatalog.startPoller();
+} catch (e) {
+  console.warn('[templates] startup failed:', e.message);
+}
+
 /*
  * A2 — threshold alerts. Safe to start unconditionally: with no rules configured the sweep reads an
  * empty table and returns immediately, so an install that never creates one pays a query a minute
@@ -1368,8 +2315,59 @@ startAlertService(io);
 try {
   const { startMeshUplinks } = require('./services/mesh-uplink');
   meshUplinks = startMeshUplinks(require('./db/database').db, { config: require('./config') });
+  // Scale-out C2: deliverCommand reaches a replica-attached screen through this (lib/mesh/command-relay.js).
+  global.__meshUplinks = meshUplinks;
+  /*
+   * Scale-out: the change-log triggers exist only while an up edge carries workspace-replication,
+   * and the uplink service maintains them. With the flag OFF that service never runs, so a set left
+   * behind by an operator who turned the flag off is dropped here — a stock install must have none,
+   * and `test_change_log_triggers_absent_without_replication_grant` checks exactly that.
+   */
+  if (!require('./config').meshAllowUplink) {
+    try { require('./lib/mesh/replication').ensureTriggers(require('./db/database').db, { wanted: false }); } catch (e) { /* best effort */ }
+  }
 } catch (e) {
   console.warn(`[mesh] uplinks not started: ${e && e.message}`);
+}
+
+/*
+ * Housekeeping for the mesh tables. Separate from the uplink service and started unconditionally on
+ * any node with mesh tables, because a node that has STOPPED reporting still holds everything it
+ * mirrored — and that is exactly the node whose retention nobody is watching.
+ */
+try {
+  const { startMeshMaintenance } = require('./services/mesh-maintenance');
+  startMeshMaintenance(require('./db/database').db);
+} catch (e) {
+  console.warn(`[mesh] housekeeping not started: ${e && e.message}`);
+}
+
+/*
+ * ⚠️ ACTIVITY RETENTION, WHICH WAS WRITTEN AND NEVER SCHEDULED.
+ *
+ * pruneActivityLog() has existed for a long time with a comment saying "keep 90 days", and nothing
+ * anywhere called it — no route, no timer, no startup path. So the table grew for the life of every
+ * install while the code described a retention policy it never applied. On a busy estate that is
+ * the single fastest-growing table there is: every mutation writes a row.
+ *
+ * Daily rather than hourly, because a 90-day horizon does not need finer resolution and a delete
+ * across the largest table on the box is not something to do more often than it earns. Not at boot,
+ * for the same reason the mesh sweep is not: startup is the busiest moment a signage server has.
+ * unref'd so it can never hold the process open.
+ */
+try {
+  const { pruneActivityLog } = require('./services/activity');
+  const activityPrune = setInterval(() => {
+    try {
+      const removed = pruneActivityLog();
+      if (removed > 0) console.log(`[audit] pruned ${removed} activity row(s) past retention`);
+    } catch (e) {
+      console.warn(`[audit] retention sweep failed: ${e && e.message}`);
+    }
+  }, 24 * 60 * 60 * 1000);
+  if (typeof activityPrune.unref === 'function') activityPrune.unref();
+} catch (e) {
+  console.warn(`[audit] retention not scheduled: ${e && e.message}`);
 }
 
 const { startThresholdAlerts } = require('./services/threshold-alerts');
@@ -1383,6 +2381,13 @@ startThresholdAlerts(require('./db/database').db);
 const { startActivationNudge } = require('./services/activationNudge');
 startActivationNudge();
 
+// Nightly trial-expiry sweep: lapsed trials -> Free, T-3 + expiry emails (gated on !selfHosted;
+// emails additionally on HOSTED_INSTANCE). `io` so a just-blocked screen is told right away.
+const { startTrialExpiry } = require('./services/trialExpiry');
+const { startDunning } = require('./services/dunning');
+startTrialExpiry(io);
+
+startDunning(io);
 // #73: agency-upload digest flush (batched draft/published notifications to admins + owner)
 const { startAgencyDigest } = require('./services/agency-digest');
 startAgencyDigest();
@@ -1478,6 +2483,74 @@ app.get('/api/provision/device-owner-qr', requireAuth, async (req, res) => {
 // Override provision to also notify device via WS
 const { checkDeviceLimit } = require('./middleware/subscription');
 const pairLockout = require('./lib/pair-lockout');
+/*
+ * #313 — create a display that has no player yet, and hand back the URL that will become one.
+ *
+ * ⚠️ WHY THIS EXISTS ALONGSIDE PAIRING RATHER THAN REPLACING ANY OF IT. Ordinary pairing starts at
+ * the screen: the player shows a code, the operator types it. That is the right way round when the
+ * player can remember what it learned. A vMix browser input cannot — it deletes its whole profile
+ * when vMix closes — so pairing it the normal way works exactly once, and every restart afterwards
+ * asks for a new code. The operator needs the URL BEFORE the player first runs, which means the
+ * display has to exist before the player does.
+ *
+ * So this is the inversion, and only for that case: the dashboard creates the row and mints the
+ * enrolment key, and the player adopts that identity when it starts. Nothing about the existing
+ * pairing path changes; a display made this way is an ordinary display in every other respect.
+ *
+ * Same guards as pairing: authenticated, tenanted, and counted against the plan's device limit.
+ */
+app.post('/api/devices/web-player', requireAuth, resolveTenancy, checkDeviceLimit, (req, res) => {
+  const { name } = req.body || {};
+  if (!req.workspaceId) return res.status(400).json({ error: 'No active workspace' });
+
+  const { v4: uuidv4 } = require('uuid');
+  const enrolKey = require('./lib/enrol-key');
+  const id = uuidv4();
+  const deviceName = (typeof name === 'string' && name.trim())
+    ? name.trim()
+    : 'Display ' + (db.prepare('SELECT COUNT(*) as count FROM devices WHERE user_id = ?').get(req.user.id).count + 1);
+
+  /*
+   * `offline`, not `provisioning`: a provisioning row is an unclaimed screen waiting to be
+   * adopted, and the sweep deletes those after 24h (pruneProvisioningDevices). This one is
+   * claimed the moment it is made — it is simply a display that has not connected yet, which is
+   * indistinguishable from one that is switched off.
+   *
+   * A device_token is issued now so the row is complete rather than relying on the enrolment path
+   * to fill it in, and the settings PIN is minted the same way pairing mints it.
+   */
+  db.prepare(`INSERT INTO devices (id, name, user_id, workspace_id, status, device_token, settings_pin, created_at, updated_at)
+              VALUES (?, ?, ?, ?, 'offline', ?, ?, strftime('%s','now'), strftime('%s','now'))`)
+    .run(id, deviceName, req.user.id, req.workspaceId, crypto.randomBytes(32).toString('hex'), sixDigitCode());
+
+  const key = enrolKey.setEnrolKey(db, id);
+  console.log(`[enrol] created web-player display ${id} with an enrolment key (user ${req.user.id})`);
+
+  const created = db.prepare('SELECT * FROM devices WHERE id = ?').get(id);
+  /*
+   * ⚠️ THE LIST SANITISER, NOT THE DETAIL ONE. This is a broadcast to the whole workspace room —
+   * every member with a dashboard open, whatever their role — so it must carry what a LIST carries.
+   * stripDeviceSecrets removes only device_token, so the raw row went out still holding the
+   * settings PIN, the trigger secret and (since 2.0.1) the enrolment key: a credential that lets its
+   * holder become that screen, pushed unasked to every viewer-seat member the moment a web player
+   * display is created. The detail page fetches the device when it needs those.
+   */
+  const createdForBroadcast = require('./lib/device-sanitize').stripDeviceSecretsForList({ ...created });
+  require('./lib/device-sanitize').stripDeviceSecrets(created);
+  try {
+    // Required here rather than at module scope, the same way the pairing route below does it.
+    const { workspaceRoom: wsRoom, emitToWorkspace: emitWs } = require('./lib/socket-rooms');
+    emitWs(io.of('/dashboard'), wsRoom(req.workspaceId), 'dashboard:device-added', createdForBroadcast);
+  } catch (e) { /* the dashboard refreshes anyway; never fail the create over a notification */ }
+
+  res.status(201).json({
+    success: true,
+    device: created,
+    enrol_key: key,
+    player_url: enrolKey.playerUrl(`${req.protocol}://${req.get('host')}`, key),
+  });
+});
+
 app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (req, res) => {
   // #87: lock out an IP after repeated failed pairing-code guesses (brute-force defense
   // beyond the 5/min rate-limit on /api/provision).
@@ -1541,8 +2614,11 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   db.prepare("UPDATE device_fingerprints SET user_id = ?, device_id = ? WHERE device_id = ?")
     .run(req.user.id, device.id, device.id);
 
-  // Notify the device via WebSocket
-  deviceNs.to(device.id).emit('device:paired', { device_id: device.id, name: deviceName, settings_pin: settingsPin });
+  // Notify the device via WebSocket — or, scale-out C2, through the replica it is attached to.
+  const pairedMsg = { device_id: device.id, name: deviceName, settings_pin: settingsPin };
+  const pairedRoom = deviceNs.adapter.rooms.get(device.id);
+  if (pairedRoom && pairedRoom.size > 0) deviceNs.to(device.id).emit('device:paired', pairedMsg);
+  else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
   require('./lib/device-sanitize').stripDeviceSecrets(updated); // never leak device_token to clients
@@ -1594,6 +2670,45 @@ function apkDownloadName(req) {
   } catch (e) { /* branding is best-effort; the download matters more */ }
   return require('./lib/brand-filename').brandToFilenameStem(brand) + '.apk';
 }
+
+// ---- /download -------------------------------------------------------------------------------
+// The human-facing index of every player THIS instance can hand out. The guides link here instead
+// of at the GitHub releases page: an operator has no reason to have a GitHub account, and the
+// BrightSign archive has the server URL stamped into its bytes, so a release asset would point a
+// freshly imaged player at screentinker.com instead of at the instance the operator runs.
+//
+// Deliberately noindex (lib/download-index.js sets the meta tag): the marketing guides are the
+// pages that should rank, and a self-hosted instance's download index has no business in a search
+// result. The page is public because a player is installed before anyone signs in.
+const downloadIndex = require('./lib/download-index');
+
+app.get(['/download', '/download/'], (req, res) => {
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(downloadIndex.renderPage({
+    apk: apkCache.get(),
+    ipk: ipkCache.get(),
+    wgt: wgtCache.get(),
+    brightsign: { exists: bsPackage.available(), version: bsPackage.version() },
+    deb: debCache.get(),
+    exe: winCache.get(),
+  }, base));
+});
+
+// A name an operator can read out over the phone, for the archive the BrightSign guide names.
+// Same helper as /api/brightsign/package/download, so the bytes and the checksum cannot diverge
+// between the two URLs — the one mistake that turns a package update into a download loop.
+app.get('/download/autorun.zip', async (req, res) => {
+  const pkg = await bsPackage.getPackage(bsPackage.packageServerUrl(req));
+  if (!pkg) return res.status(404).type('text/plain').send('package unavailable');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Length', String(pkg.size));
+  res.setHeader('Content-Disposition', 'attachment; filename="autorun.zip"');
+  res.setHeader('X-Package-Sha256', pkg.sha256);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(pkg.buffer);
+});
 
 app.get('/download/apk', (req, res) => {
   // Serve the slot the check advertised. If these disagree the client is handed bytes whose
@@ -1656,6 +2771,49 @@ app.get('/tizen/ScreenTinker.wgt', (req, res) => {
   res.sendFile(wgt.path);
 });
 
+// ---- LG webOS Signage ------------------------------------------------------------------------
+// The shell app (webos/) is installed from USB or an SI server and then keeps itself current
+// against these two routes: version.json says what is published, the .ipk is what it installs.
+// No signature is involved, so the CI-built artifact is normally the one served.
+function webosNotAvailable(res) {
+  return res.status(404).send('<!DOCTYPE html><html><head><title>webOS Player Not Available</title>'
+    + '<style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:520px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head>'
+    + '<body><div><h1>webOS App Not Available</h1><p>No <code>ScreenTinker.ipk</code> is hosted on this instance. Mount one at <code>/data/ScreenTinker.ipk</code> or build it with <code>webos/build-ipk.sh</code>. The panel\u2019s browser can run the web player meanwhile: <a href="/player" style="color:#3b82f6">/player</a>.</p></div></body></html>');
+}
+
+app.get('/webos/version.json', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.json(ipkCache.versionJson());
+});
+
+app.get('/webos/ScreenTinker.ipk', (req, res) => {
+  const ipk = ipkCache.get();
+  if (!ipk.exists) return webosNotAvailable(res);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'attachment; filename="ScreenTinker.ipk"');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(ipk.path);
+});
+
+app.get(['/webos', '/webos/'], (req, res) => {
+  const ipk = ipkCache.get();
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send('<!DOCTYPE html><html><head><meta charset="utf-8"><title>ScreenTinker on LG webOS Signage</title>'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<style>body{font-family:-apple-system,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:40px 20px;line-height:1.6}'
+    + '.w{max-width:640px;margin:0 auto}h1{color:#34d399}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}'
+    + 'ol{padding-left:20px}li{margin:8px 0}.mut{color:#94a3b8;font-size:14px}.pill{display:inline-block;background:#1e293b;border-radius:20px;padding:4px 12px;font-size:13px;color:#94a3b8}a{color:#3b82f6}</style></head>'
+    + '<body><div class="w"><h1>ScreenTinker \u2014 LG webOS Signage</h1>'
+    + (ipk.exists ? `<p class="pill">Ready \u00b7 v${ipk.version} \u00b7 ${(ipk.size / 1024 / 1024).toFixed(2)} MB</p>` : '<p class="pill">No .ipk hosted yet</p>')
+    + `<p>Download <a href="${base}/webos/ScreenTinker.ipk">ScreenTinker.ipk</a> and install it on the panel:</p>`
+    + '<ol><li><b>USB:</b> copy the file to a USB stick, plug it into the panel, open <b>Settings \u2192 General \u2192 Install App</b> (the exact path varies by webOS version), and pick it.</li>'
+    + '<li><b>SI server:</b> host the file and point the panel\u2019s SI Server setting at it.</li>'
+    + `<li>Launch ScreenTinker, enter <code>${base}</code>, and claim the pairing code in your dashboard.</li></ol>`
+    + `<p class="mut">The app checks <code>${base}/webos/version.json</code> and installs a newer build itself when the panel\u2019s SCAP library is present. Without it (or from a browser) the web player runs at <a href="${base}/player">${base}/player</a>.</p>`
+    + '</div></body></html>');
+});
+
 // Human-facing landing (a panel appends /sssp_config.xml itself, so it never lands here).
 app.get(['/tizen', '/tizen/'], (req, res) => {
   const wgt = wgtCache.get();
@@ -1677,17 +2835,113 @@ app.get(['/tizen', '/tizen/'], (req, res) => {
     + '</div></body></html>');
 });
 
+/*
+ * Prefixes that hold REAL FILES on disk (express.static serves them above), so a miss under one is
+ * a genuine 404 rather than an app route.
+ *
+ * The dashboard is hash-routed: every app route is `/#/something`, and the path is always `/`.
+ * Nothing legitimate lives under these. Before this, an unknown /guides/* fell through to the SPA
+ * and answered 200 with 60KB of dashboard HTML, which is a textbook soft-404. That is worse than a
+ * missing page: sitemap.xml lists six guide URLs, and a crawler that finds a typo'd or retired one
+ * answering 200 with unrelated markup learns to distrust the whole directory. Flagged in
+ * docs/seo-directory-listings.md and unfixed until now.
+ */
+const CONTENT_PREFIXES = ['/guides/', '/integrations/'];
+
+const NOT_FOUND_PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+  + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+  + '<meta name="robots" content="noindex">'
+  + '<title>Page not found | ScreenTinker</title>'
+  + '<style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;'
+  + 'align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}'
+  + 'div{text-align:center;max-width:460px;padding:32px 24px}h1{font-size:22px;margin:0 0 8px}'
+  + 'p{line-height:1.6;color:#94a3b8;font-size:14px}a{color:#3b82f6;text-decoration:none}'
+  + 'a:hover{text-decoration:underline}</style></head><body><div>'
+  + '<h1>Page not found</h1>'
+  + '<p>That page does not exist. Try the <a href="/">home page</a>, or the '
+  + '<a href="/guides/what-is-digital-signage.html">guides</a>.</p>'
+  + '</div></body></html>';
+
 // SPA fallback for app routes. Unmatched /api/ paths return 404 so misrouted
 // clients fail fast instead of hanging until Cloudflare's 15s upstream timeout.
+/*
+ * ⚠️ AN UNKNOWN /.well-known PATH MUST 404, NOT FALL THROUGH TO THE APP SHELL.
+ *
+ * Everything under /.well-known is machine-read, and the SPA catch-all below answers any unmatched
+ * path with index.html and a 200. So `/.well-known/oauth-protected-resource` — which this instance
+ * deliberately does not publish, having no authorization server — replied with 21 KB of HTML and a
+ * success code. A client cannot tell that from a malformed document, and "we do not do OAuth" is a
+ * useful, honest answer that only a 404 conveys.
+ *
+ * ⚠️ MOUNTED HERE, BELOW express.static AND IMMEDIATELY ABOVE THE SPA CATCH-ALL, NOT UP WITH THE
+ * OTHER /.well-known ROUTES. Above the static middleware it would have swallowed
+ * `/.well-known/acme-challenge/...`, which is how certbot's webroot mode proves domain control — so
+ * a self-hoster's TLS renewal would start failing silently and the certificate would expire sixty
+ * days later, a long way from this change. Anything genuinely served by an earlier route or by
+ * static has already answered by the time we get here.
+ */
+app.all('/.well-known/*', (req, res) => {
+  /*
+   * ⚠️ THE LIST IS DERIVED FROM THE ROUTES, NOT TYPED OUT. The first version named auth.md and
+   * api-catalog by hand and was already wrong the same day, once the protected-resource metadata and
+   * the MCP server card were added — a 404 that misdescribes what the server publishes is worse than
+   * a bare one, because it is the document a client reads when it is already lost.
+   */
+  const published = app._router.stack
+    .map((l) => l.route && l.route.path)
+    // …excluding this catch-all itself, which is a guard and not a document.
+    .filter((path) => typeof path === 'string' && path.startsWith('/.well-known/') && !path.endsWith('*'))
+    .sort();
+  res.status(404).type('text/plain; charset=utf-8').send(
+    `Not found.\n\nThis instance publishes:\n${published.map((x) => `  ${x}\n`).join('')}`
+    + '\nIt is not an OAuth authorization server and not an A2A agent, so there is no\n'
+    + 'authorization-server metadata and no agent card here. Authentication is documented\n'
+    + 'at /auth.md: a human issues a scoped token, and there is no programmatic registration.\n');
+});
+
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Not found' });
+  }
+  if (CONTENT_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
+    return res.status(404).type('html').send(NOT_FOUND_PAGE);
   }
   res.sendFile(path.join(config.frontendDir, 'index.html'));
 });
 
 const listenPort = hasSsl ? config.httpsPort : config.port;
 const protocol = hasSsl ? 'https' : 'http';
+
+/*
+ * ⚠️ WHERE THIS SERVER'S OWN API ACTUALLY ANSWERS, for code that needs to call it.
+ *
+ * A mesh write is applied by re-entering this server's HTTP API over loopback, so that it passes
+ * exactly the guards a local request passes rather than growing a second implementation that
+ * drifts. That executor dialled `config.port` — which is correct only WITHOUT TLS. With certs
+ * present the API moves to httpsPort and config.port becomes a 301-redirect app, and fetch follows
+ * redirects by default while rewriting POST to GET and dropping the body. The call would report
+ * 200 for a request the API never saw: an invented success, recorded as applied and replayed for
+ * ever by idempotency. That is the unawaited-promise bug again, arriving through a different door.
+ *
+ * https://127.0.0.1 is not the answer either — the certificate names a hostname, not the loopback
+ * address, so verification fails, and switching it off to work around that is a worse trade than
+ * the problem. Instead, when TLS is on, the same app also answers plain HTTP on an ephemeral
+ * LOOPBACK-ONLY port. It is bound to 127.0.0.1, so it is reachable only from this machine, and it
+ * still requires a token like every other caller.
+ */
+global.__localApiOrigin = `http://127.0.0.1:${config.port}`;
+
+if (hasSsl) {
+  const loopbackApi = http.createServer(app);
+  loopbackApi.listen(0, '127.0.0.1', () => {
+    global.__localApiOrigin = `http://127.0.0.1:${loopbackApi.address().port}`;
+    console.log(`[mesh] internal loopback API on ${global.__localApiOrigin} (127.0.0.1 only)`);
+  });
+  loopbackApi.on('error', (e) => {
+    // Non-fatal: without it a mesh write cannot be applied, but nothing else on this node cares.
+    console.warn(`[mesh] internal loopback API not started: ${e && e.message}`);
+  });
+}
 
 server.listen(listenPort, '0.0.0.0', () => {
   console.log(`
@@ -1740,28 +2994,32 @@ server.listen(listenPort, '0.0.0.0', () => {
   // every video uploads fine and silently gets no thumbnail: exactly the kind of
   // misconfiguration that deserves a loud line, like the email block above.
   // (The probe is async so a hung binary can't block serving on the bound port.)
-  require('./lib/media-tools').mediaToolStatus()
-    .then((mt) => {
-      if (!mt.ffmpeg || !mt.ffprobe) {
-        const missing = [!mt.ffmpeg && 'ffmpeg', !mt.ffprobe && 'ffprobe'].filter(Boolean).join(', ');
-        console.error(`[MEDIA] ${missing} not found on PATH — video thumbnails and durations are DISABLED until installed (e.g. apt-get install ffmpeg). Image thumbnails are unaffected.`);
-      } else {
-        console.log('[MEDIA] ffmpeg/ffprobe found — video thumbnails enabled');
-      }
-    })
-    .catch((e) => console.error(`[MEDIA] tooling check failed: ${e.message}`));
-
+  //
   // Heal rows that missed ingest-time thumbnail generation (uploads from before the
   // feature, or videos uploaded while ffmpeg was missing). Delayed past boot so it
   // never competes with startup work; paced internally so it never competes with
   // serving. Timer unref'd: it must not hold the process open on shutdown.
-  setTimeout(() => {
+  //
+  // ⚠️ #466: a probe that only TIMED OUT on a busy boot is re-checked on a backoff, and when a
+  // re-check finds the tools the backfill runs again — it skipped every video the first time.
+  // One run at a time; a request that arrives mid-run is folded into one more pass after it.
+  let thumbBackfillRunning = false, thumbBackfillAgain = false;
+  const runThumbnailBackfill = () => {
+    if (thumbBackfillRunning) { thumbBackfillAgain = true; return; }
+    thumbBackfillRunning = true;
     require('./lib/thumbnail-backfill').backfillMissingThumbnails()
       .then((s) => {
         if (s.scanned > 0) console.log(`[MEDIA] thumbnail backfill: ${s.generated} generated, ${s.skipped} skipped, ${s.failed} failed (of ${s.scanned} without thumbnails)`);
       })
-      .catch((e) => console.error(`[MEDIA] thumbnail backfill failed: ${e.message}`));
-  }, 15000).unref();
+      .catch((e) => console.error(`[MEDIA] thumbnail backfill failed: ${e.message}`))
+      .finally(() => {
+        thumbBackfillRunning = false;
+        if (thumbBackfillAgain) { thumbBackfillAgain = false; runThumbnailBackfill(); }
+      });
+  };
+  require('./lib/media-tools').startupCheck({ onRecovered: runThumbnailBackfill })
+    .catch((e) => console.error(`[MEDIA] tooling check failed: ${e.message}`));
+  setTimeout(runThumbnailBackfill, 15000).unref();
 });
 
 // If SSL is enabled, also start an HTTP server that redirects to HTTPS

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Samsung TV Digital Signage Without MagicINFO | ScreenTinker</title>
+  <meta name="description" content="Turn a Samsung TV or SSSP signage display into a managed digital sign using only the built-in URL Launcher. No box, no app to install.">
+  <meta name="keywords" content="samsung tv digital signage, samsung signage without magicinfo, sssp url launcher signage, tizen digital signage, samsung business tv signage, free samsung digital signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/samsung-tv-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/samsung-tv-digital-signage.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/samsung-tv-digital-signage.html">
+  <meta property="og:title" content="Samsung TV Digital Signage Without MagicINFO">
+  <meta property="og:description" content="Turn a Samsung TV or SSSP signage display into a managed digital sign using only the built-in URL Launcher. No box, no app to install.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Samsung TV Digital Signage Without MagicINFO">
+  <meta name="twitter:description" content="Turn a Samsung TV or SSSP signage display into a managed digital sign using only the built-in URL Launcher. No box, no app to install.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#features">Guides</a>
+      <span>/</span>
+      <span>Samsung TV Signage</span>
+    </nav>
+
+    <h1>Digital Signage on a Samsung TV — No App, No MagicINFO</h1>
+    <p class="lead">Samsung displays already ship with everything they need to run signage: a web browser. Point it at one address and the screen becomes a fully managed sign — no streaming stick, no app to sideload, no MagicINFO licence, and no per-screen fees.</p>
+
+    <div style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:10px;margin:28px 0">
+      <iframe style="position:absolute;top:0;left:0;width:100%;height:100%;border:0"
+        src="https://www.youtube-nocookie.com/embed/1ZhYKj5iVtY"
+        title="Free Digital Signage on a Samsung TV (No App, No Box, No Monthly Fees)"
+        loading="lazy" allowfullscreen
+        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>
+    </div>
+
+    <h2>What works</h2>
+    <ul>
+      <li><strong>Samsung signage displays (SSSP / Tizen)</strong> — the QM, QB, BE and OM series and similar, using the built-in <strong>URL Launcher</strong></li>
+      <li><strong>Samsung smart TVs</strong> from roughly the 2022 model year onward, using the built-in web browser (see <a href="#which-tvs">which Samsung TVs work</a> below)</li>
+      <li><strong>Any Samsung panel already wired to a small PC or Pi</strong> — but the whole point of this guide is that you usually don't need one</li>
+    </ul>
+    <p>You do not need MagicINFO, a MagicINFO server licence, or a Samsung partner agreement for any of this.</p>
+
+    <h2 id="which-tvs">Which Samsung TVs work</h2>
+    <p>This is worth checking before you spend an evening on it, because the answer is not "any Samsung with a browser".</p>
+    <ul>
+      <li><strong>2022 model year and newer: yes.</strong> The built-in browser on these sets is current enough to run the player, and the URL Launcher path below works as written.</li>
+      <li><strong>Samsung signage displays (SSSP / Tizen)</strong> in the QM, QB, BE and OM series: yes, via the URL Launcher.</li>
+      <li><strong>Older consumer sets: usually not.</strong> The browser shipped on pre-2022 TVs is too old to run a modern web app — below roughly Chromium 80, several things the player relies on are simply missing.</li>
+    </ul>
+    <p><strong>The symptom to look for.</strong> On a set that is too old, the page often loads and looks correct, and then the <strong>Connect</strong> button does nothing at all when you press it. No error, no message. If that is what you are seeing, the TV's browser is the problem and no amount of retrying the URL will change it.</p>
+    <p>To check what you have, open <strong>Menu &rarr; Support &rarr; About This TV</strong> and look at the model year. If you are on the edge, the fastest test is simply to try it: it either pairs within a few seconds or the button is dead.</p>
+    <p><strong>If your TV is too old, you have not wasted the screen.</strong> Plug any cheap Android TV box, Fire TV Stick or Raspberry Pi into an HDMI port and drive the panel from that instead. The TV becomes a monitor and the box runs the player, which also gets you sound, since the browser path is muted either way:</p>
+    <ul>
+      <li><a href="/guides/digital-signage-android-tv.html">Free digital signage for Android TV and Fire TV</a></li>
+      <li><a href="/guides/raspberry-pi-digital-signage.html">How to set up digital signage on a Raspberry Pi</a></li>
+    </ul>
+
+    <h2>Why there's no app to install</h2>
+    <p>The ScreenTinker player is a web page. Your server hosts it at <code>/player</code>, so a display that can open a URL can run it. That is the entire trick — the TV opens a web address, the page pairs itself, and from then on it behaves like any other display in your dashboard.</p>
+
+    <h2>Step 1: Have a server to point at</h2>
+    <p>The TV needs a ScreenTinker instance to talk to. Either works:</p>
+    <ul>
+      <li><strong>Hosted</strong> — sign up at <a href="/app#/login">screentinker.com</a>. The free plan runs one display, so it's enough to try this end to end.</li>
+      <li><strong>Self-hosted</strong> — run it yourself and it's free for any number of screens. See the <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a>.</li>
+    </ul>
+    <p>Note the address you'll use. For hosted that's <code>https://screentinker.com/player</code>; self-hosted it's your own domain or LAN address followed by <code>/player</code>.</p>
+
+    <h2>Step 2: Point the URL Launcher at it</h2>
+    <h3>On a Samsung signage display (SSSP)</h3>
+    <ol>
+      <li>Press <strong>Home</strong> on the remote and open <strong>URL Launcher</strong>.</li>
+      <li>Enter your player address — for example <code>https://screentinker.com/player</code>.</li>
+      <li>Save it, then set <strong>URL Launcher</strong> as the input source the display boots into (Settings &gt; System &gt; Auto Source Switching, or the URL Launcher Settings entry, depending on firmware).</li>
+    </ol>
+    <h3>On a regular Samsung smart TV</h3>
+    <p>Open the built-in <strong>Internet</strong> browser, go to the same address, and set it as the homepage if the firmware allows. This works, but a consumer TV is more likely to interrupt with its own overlays than an SSSP panel is.</p>
+
+    <h2>Step 3: Pair the screen</h2>
+    <p>The player loads full screen and shows a <strong>6-digit pairing code</strong>. In your dashboard, click <strong>+ Add Display</strong> and enter it. The Samsung screen appears in your device list immediately, online and under your control.</p>
+
+    <h2>Step 4: Push content</h2>
+    <ol>
+      <li>Upload media in the <strong>Content Library</strong></li>
+      <li>Build a <strong>Playlist</strong></li>
+      <li>Publish it and assign it to the display</li>
+    </ol>
+    <p>Updates land within seconds. You can schedule by time of day, split the screen into zones, add widgets like clocks and menu boards, and span a video wall across several panels — the browser player supports the same layouts as every other platform.</p>
+
+    <h2>Booting straight into the sign</h2>
+    <ul>
+      <li><strong>Set URL Launcher as the boot source</strong> so a power cut brings the sign back on its own.</li>
+      <li><strong>Turn off the screensaver and any auto-standby</strong> in the display's settings — these are the usual cause of a sign that "goes blank overnight".</li>
+      <li><strong>Use the panel's on/off schedule</strong> rather than pulling power, so the display comes back cleanly.</li>
+      <li><strong>Content keeps playing if the network drops.</strong> The player caches its playlist and carries on, then catches up when the connection returns.</li>
+    </ul>
+
+    <h2>Honest limitations</h2>
+    <p>Two things this path genuinely doesn't do, so you can decide before you deploy:</p>
+    <ul>
+      <li><strong>Video plays muted.</strong> Browsers only allow autoplay without sound unless someone physically interacts with the page, and a signage display never does. If you need audio, use an Android TV box or a Raspberry Pi instead.</li>
+      <li><strong>There's a native Tizen app, but it isn't the easy route.</strong> ScreenTinker builds a signed <code>.wgt</code>, and Samsung's one-URL native install requires a Samsung <em>partner distributor certificate</em> tied to your account. Developer mode does not get you around that — it only enables a manual SDB install. The URL Launcher path above needs none of it, which is why it's the one we recommend.</li>
+    </ul>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-android-tv.html">Digital signage on Android TV and Fire TV</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">How to set up digital signage on a Raspberry Pi</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage: complete guide</a></li>
+        <li><a href="/compare/screencloud-alternative.html">Compare: ScreenTinker vs ScreenCloud</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Ready to deploy?</h2>
+      <p>Free plan supports 1 device. Self-hosting is free for any number of screens.</p>
+      <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free</a>
+      <a href="/guides/self-hosted-digital-signage.html" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">Self-host it</a>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://screentinker.com/" },
+      { "@type": "ListItem", "position": 3, "name": "Samsung TV Signage", "item": "https://screentinker.com/guides/samsung-tv-digital-signage.html" }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "VideoObject",
+    "name": "Free Digital Signage on a Samsung TV (No App, No Box, No Monthly Fees)",
+    "description": "Turn a Samsung TV or SSSP signage display into a managed digital sign using the built-in URL Launcher. No extra box, no app to install, no monthly fees.",
+    "thumbnailUrl": "https://i.ytimg.com/vi/1ZhYKj5iVtY/maxresdefault.jpg",
+    "uploadDate": "2026-08-24",
+    "duration": "PT2M14S",
+    "embedUrl": "https://www.youtube-nocookie.com/embed/1ZhYKj5iVtY",
+    "publisher": {
+      "@type": "Organization",
+      "name": "ScreenTinker",
+      "logo": { "@type": "ImageObject", "url": "https://screentinker.com/assets/icon-192.png" }
+    }
+  }
+  </script>
+</body>
+</html>

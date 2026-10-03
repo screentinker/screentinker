@@ -41,9 +41,22 @@ COPY frontend/ /app/frontend/
 # without it). Small, and keeps the .glsl files the single source across server + player + Tizen.
 COPY shared/ /app/shared/
 COPY VERSION /app/VERSION
+# ⚠️ AND THE RELEASE NOTES, which the server reads from the repo ROOT at runtime
+# (server/lib/release-notes.js). Missing here, the API answers `current: null` and the "what's new"
+# panel is empty on every containerised install — while the unit tests pass, because they read the
+# file out of the source tree. Found on alpha, on the release that introduced the panel.
+COPY release-notes.json /app/release-notes.json
 # the /openapi.yaml route serves ../docs/openapi.yaml (the spec Redoc on /docs fetches);
 # without this it 404s in the image even though it serves fine from a dev checkout.
 COPY docs/openapi.yaml /app/docs/openapi.yaml
+# ⚠️ AND THE CERTIFIED HARDWARE DATA, read from the repo ROOT at runtime by lib/certified-hardware.js.
+# The SAME bug as release-notes.json above, missed when this file was added — and worse, because it
+# fails INVISIBLY: routes/certified-hardware.js catches the ENOENT and serves the committed static
+# page, which looks completely correct. What it silently drops is every approved community submission,
+# since those are merged in at render time. So on every containerised install — which is the
+# documented self-hosting path — the approve link in the email worked, the row went to 'approved',
+# and the report never appeared. Found by submitting one on alpha and watching it not show up.
+COPY certified-hardware.json /app/certified-hardware.json
 # database.js requires scripts/migrate-multitenancy at boot
 COPY scripts/ /app/scripts/
 # The BrightSign bridge and sync modules are served to the player from ../brightsign so the copy
@@ -52,6 +65,9 @@ COPY scripts/ /app/scripts/
 # while working perfectly from a dev checkout — and a missing player asset fails silently, because
 # the SPA fallback answers 200 with HTML where JavaScript was expected.
 COPY brightsign/ /app/brightsign/
+# Bundled plugins (countdown sample, etc.). Loaded only when PLUGINS_ENABLED=true;
+# operator-installed copies live on the /data volume at $DATA_DIR/plugins.
+COPY plugins/ /app/plugins/
 VOLUME ["/data"]
 EXPOSE 3001
 CMD ["node", "server.js"]

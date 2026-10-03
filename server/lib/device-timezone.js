@@ -24,4 +24,14 @@ function effectiveDeviceTz(device) {
   return override || device.reported_timezone || null;
 }
 
-module.exports = { effectiveDeviceTz };
+function isRealTimezone(tz) {
+  if (typeof tz !== 'string' || !tz) return false;
+  // Reject anything that could break out of the single-quoted string it is inlined into, before
+  // handing it to Intl — this value is interpolated into generated widget JS.
+  if (/['"\\\r\n]/.test(tz)) return false;
+  try { new Intl.DateTimeFormat(undefined, { timeZone: tz }); return true; }
+  catch { return false; }
+}
+
+module.exports = { effectiveDeviceTz, isRealTimezone };
+

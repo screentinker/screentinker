@@ -93,6 +93,7 @@ db.exec(`
     ip_address TEXT,
     workspace_id TEXT,
     organization_id TEXT,
+    status_code INTEGER,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
 `);

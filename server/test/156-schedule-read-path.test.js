@@ -193,3 +193,51 @@ test('unchanged editor save does NOT wipe an existing schedule', async () => {
   assert.equal(after.schedules[0].start, '00:00');
   assert.equal(after.schedules[0].end, '24:00');
 });
+
+// ---------------------------------------------------------------------------
+// 4. ZERO-LENGTH GUARD — a block whose start == end evaluates as NEVER active
+// (blockMatches returns false for every instant), so the item silently vanishes
+// instead of playing in the intended window. That is the mirror-image of the
+// customer's "schedule ignored" report, and just as confusing. The route must
+// reject it (400) rather than store a window that can never fire. An overnight
+// window (start > end) stays valid; use end=24:00 for "until midnight".
+// ---------------------------------------------------------------------------
+test('PUT /schedules rejects a zero-length window (start == end)', async () => {
+  const itemId = await addItem();
+
+  const bad = await putSchedules(itemId, [{ days: [1, 2, 3], start: '09:00', end: '09:00', start_date: null, end_date: null }]);
+  assert.equal(bad.status, 400, 'start == end must be rejected: ' + JSON.stringify(bad.body));
+  assert.match(String(bad.body && bad.body.error), /differ|never plays/i, 'error explains why');
+
+  // nothing was written
+  const it = await loadItem(itemId);
+  assert.equal((it.schedules || []).length, 0, 'a rejected block must not be stored');
+
+  // overnight window (start > end) is still accepted
+  const ok = await putSchedules(itemId, [{ days: [1], start: '22:00', end: '06:00', start_date: null, end_date: null }]);
+  assert.equal(ok.status, 200, 'overnight window stays valid: ' + JSON.stringify(ok.body));
+});
+
+// A discard used to DELETE the draft items and re-insert them WITHOUT their schedule blocks (neither
+// the structure capture nor the re-insert carried them), so discarding an unrelated edit silently
+// stripped dayparting from every item estate-wide. Both ends are fixed: publish captures schedules
+// into published_structure, and discard restores them.
+test('discard restores a per-item schedule that was published (was silently stripped)', async () => {
+  const post = (obj) => ({ method: 'POST', ...auth(), body: JSON.stringify(obj) });
+  const put = (obj) => ({ method: 'PUT', ...auth(), body: JSON.stringify(obj) });
+  const pl = (await jfetch('/api/playlists', post({ name: 'PL156-discard' }))).body.id;
+  const add = async () => (await jfetch(`/api/playlists/${pl}/items`, post({ widget_id: S.widgetId }))).body.id;
+
+  const item1 = await add();
+  await jfetch(`/api/playlists/${pl}/items/${item1}/schedules`,
+    put({ blocks: [{ days: [1, 2, 3], start: '08:00', end: '18:00', start_date: null, end_date: null }] }));
+  assert.equal((await jfetch(`/api/playlists/${pl}/publish`, post({}))).status, 200);
+
+  await add();  // an unrelated draft edit
+  assert.equal((await jfetch(`/api/playlists/${pl}/discard`, post({}))).status, 200);
+
+  const items = (await jfetch(`/api/playlists/${pl}`, auth())).body.items;
+  assert.equal(items.length, 1, 'only the published item survives the discard');
+  assert.ok(items[0].schedules && items[0].schedules.length === 1, 'the per-item schedule survived the discard');
+  assert.deepEqual(items[0].schedules[0].days, [1, 2, 3], 'and with the same days');
+});

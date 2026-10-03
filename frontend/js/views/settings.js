@@ -1,8 +1,9 @@
 import { api } from '../api.js';
+import * as whatsNew from '../components/whats-new.js';
 import { showToast } from '../components/toast.js';
-import { getLanguage, setLanguage, getAvailableLanguages, t, tn } from '../i18n.js';
+import { getLanguage, setLanguage, getAvailableLanguages, t } from '../i18n.js';
 import { esc, isPlatformAdmin } from '../utils.js';
-import { resetBranding } from '../branding.js';
+import { resetBranding, applyAccent } from '../branding.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
@@ -176,11 +177,59 @@ export async function render(container) {
     </div>
     ` : ''}
 
-    ${isSuperAdmin ? `<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${t('settings.platform_admin_link')} <a href="#/admin" style="color:var(--accent)">${t('nav.admin')}</a> ${t('settings.platform_admin_page_suffix')}</p>` : ''}
+    <div class="settings-section" id="supportAccessSection">
+      <h3>${t('support.title')}</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('support.desc')}</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn btn-primary btn-sm" id="supportRequestBtn">${t('support.request_btn')}</button>
+        <span style="font-size:12px;color:var(--text-muted)">${t('support.request_hint')}</span>
+      </div>
+      <div id="supportRequestResult" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-secondary)">
+        <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">${t('support.request_code_label')}</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <code id="supportRequestCodeOut" style="font-size:20px;letter-spacing:2px;user-select:all"></code>
+          <button class="btn btn-secondary btn-sm" id="supportRequestCopyBtn">${t('support.copy')}</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);margin:8px 0 0" id="supportRequestExpiry"></p>
+      </div>
+      <div id="supportStatus"><p style="color:var(--text-muted);font-size:13px">${t('settings.loading_users')}</p></div>
+      <div id="supportIssuer" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+        <h4 style="margin:0 0 4px">${t('support.issue_title')}</h4>
+        <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('support.issue_desc')}</p>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+          <div class="form-group" style="margin-bottom:0;min-width:220px">
+            <label>${t('support.issue_code')}</label>
+            <input type="text" id="supportRequestCode" class="input" placeholder="XXXX-XXXX-XXXX-XXXX" style="font-family:monospace;text-transform:uppercase">
+          </div>
+          <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
+            <label>${t('support.issue_org')}</label>
+            <input type="text" id="supportOrg" class="input" placeholder="${esc(t('support.issue_org_placeholder'))}">
+          </div>
+          <div class="form-group" style="margin-bottom:0;width:90px">
+            <label>${t('support.issue_hours')}</label>
+            <input type="number" id="supportHours" class="input" value="4" min="1" max="72">
+          </div>
+          <div class="form-group" style="margin-bottom:0;flex:2;min-width:180px">
+            <label>${t('support.issue_reason')}</label>
+            <input type="text" id="supportReason" class="input" placeholder="${esc(t('support.issue_reason_placeholder'))}">
+          </div>
+          <button class="btn btn-primary btn-sm" id="generateSupportBtn">${t('support.issue_btn')}</button>
+        </div>
+        <div id="supportTokenResult" style="display:none">
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">${t('support.issue_result')}</p>
+          <textarea id="supportTokenOutput" class="input" readonly rows="3" style="width:100%;font-family:monospace;font-size:11px" onclick="this.select()"></textarea>
+        </div>
+      </div>
+    </div>
 
+    <!-- Every account on the server used to be listed and edited HERE as well as on the admin page:
+         two copies of the same table (and of its escaping bugs). Instance-wide user management now
+         lives only in the Platform area; Settings is about you and your organization. -->
     <div class="settings-section">
-      <h3>${t('settings.user_management')}</h3>
-      <div id="userManagement"><p style="color:var(--text-muted)">${t('settings.loading_users')}</p></div>
+      <h3>${t('settings.platform_moved_title')}</h3>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px">${t('settings.platform_moved_desc')}</p>
+      <a class="btn btn-secondary btn-sm" href="#/platform/users">${t('settings.platform_moved_users')} &rarr;</a>
+      <a class="btn btn-secondary btn-sm" href="#/platform/overview" style="margin-left:6px">${t('settings.platform_moved_overview')} &rarr;</a>
     </div>
 
     <div class="settings-section" id="whiteLabelSection">
@@ -268,6 +317,9 @@ export async function render(container) {
       <div style="color:var(--text-secondary);font-size:13px">
         <p><strong>${esc(window.__ST_BRAND_NAME || 'ScreenTinker')}</strong>${appVersion ? ` v${esc(appVersion)}` : ''}</p>
         <p style="margin-top:4px">${t('settings.about_tagline')}</p>
+        <!-- The permanent home for the release notes the dashboard panel links to. Populated
+             after render because it is a fetch, and About must not wait on one. -->
+        <div id="whatsNewHistory"></div>
         <p style="margin-top:12px">
           <a href="/legal/terms.html" target="_blank" style="color:var(--accent);font-size:12px">${t('auth.terms')}</a>
           &nbsp;&middot;&nbsp;
@@ -279,31 +331,96 @@ export async function render(container) {
     </div>
   `;
 
+  // What's new, in the place someone goes looking for it. Every version, not just the current
+  // one, so an install catching up across several upgrades can read the lot.
+  whatsNew.fetchNotes()
+    .then((notes) => { if (notes) whatsNew.renderHistory(document.getElementById('whatsNewHistory'), notes); })
+    .catch(() => { /* About must render with or without it */ });
+
   if (isAdmin) {
-    loadUsers();
     loadWhiteLabel();
     loadTelemetry();
 
-    // Support token generator
-    document.getElementById('generateSupportBtn')?.addEventListener('click', async () => {
-      const org = document.getElementById('supportOrg').value.trim() || 'Customer';
-      const hours = parseInt(document.getElementById('supportHours').value) || 4;
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/auth/support/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ org, hours, reason: 'Support session' })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          document.getElementById('supportTokenOutput').value = data.token;
-          document.getElementById('supportTokenResult').style.display = 'block';
-          showToast(t('settings.toast.support_token_generated', { hours }), 'success');
-        } else showToast(data.error, 'error');
-      } catch (err) { showToast(err.message, 'error'); }
-    });
+    loadSupportAccess();
   }
+
+  // Support access (server/lib/support-access). The customer half — request code, open requests,
+  // live sessions with a Revoke — renders for every admin. The issuer half (the token generator)
+  // only appears when the server says can_issue, i.e. it holds the signing key: a self-hosted
+  // install never sees it.
+  async function loadSupportAccess() {
+    const box = document.getElementById('supportStatus');
+    if (!box) return;
+    const fmt = (s) => (s ? new Date(s * 1000).toLocaleString() : '—');
+    let st;
+    try { st = await api.get('/auth/support/status'); } catch (err) { box.innerHTML = `<p style="color:var(--danger);font-size:13px">${esc(err.message)}</p>`; return; }
+
+    const grants = st.grants.map((g) => `
+      <tr>
+        <td>${esc(g.org || '')}${g.issued_by ? `<div style="font-size:11px;color:var(--text-muted)">${esc(g.issued_by)}</div>` : ''}</td>
+        <td style="font-size:12px">${esc(g.reason || '')}</td>
+        <td style="font-size:12px">${g.first_used_at ? fmt(g.first_used_at) : `<span style="color:var(--text-muted)">${t('support.not_yet_used')}</span>`}${g.source_ip ? `<div style="font-size:11px;color:var(--text-muted)">${esc(g.source_ip)}</div>` : ''}</td>
+        <td style="font-size:12px">${fmt(g.expires_at)}</td>
+        <td><button class="btn btn-danger btn-sm" data-revoke="${esc(g.jti)}">${t('support.revoke')}</button></td>
+      </tr>`).join('');
+    const requests = st.requests.map((r) => `
+      <tr>
+        <td><code>${esc(r.code)}</code></td>
+        <td style="font-size:12px">${esc(r.requested_by || '')}${r.note ? `<div style="font-size:11px;color:var(--text-muted)">${esc(r.note)}</div>` : ''}</td>
+        <td style="font-size:12px">${fmt(r.expires_at)}</td>
+        <td><button class="btn btn-secondary btn-sm" data-cancel="${esc(r.code)}">${t('support.cancel_request')}</button></td>
+      </tr>`).join('');
+
+    box.innerHTML = `
+      <p style="font-weight:500;margin:12px 0 6px">${t('support.sessions_title')}</p>
+      ${st.grants.length ? `<table class="table" style="width:100%"><thead><tr><th>${t('support.col_org')}</th><th>${t('support.col_reason')}</th><th>${t('support.col_first_used')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${grants}</tbody></table>`
+        : `<p style="color:var(--text-muted);font-size:13px">${t('support.no_sessions')}</p>`}
+      ${st.requests.length ? `<p style="font-weight:500;margin:16px 0 6px">${t('support.requests_title')}</p>
+        <table class="table" style="width:100%"><thead><tr><th>${t('support.col_code')}</th><th>${t('support.col_requested_by')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${requests}</tbody></table>` : ''}`;
+
+    box.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => {
+      try { await api.delete(`/auth/support/grant/${encodeURIComponent(b.dataset.revoke)}`); showToast(t('support.toast_revoked'), 'success'); loadSupportAccess(); }
+      catch (err) { showToast(err.message, 'error'); }
+    }));
+    box.querySelectorAll('[data-cancel]').forEach((b) => b.addEventListener('click', async () => {
+      try { await api.delete(`/auth/support/request/${encodeURIComponent(b.dataset.cancel)}`); loadSupportAccess(); }
+      catch (err) { showToast(err.message, 'error'); }
+    }));
+
+    const issuer = document.getElementById('supportIssuer');
+    if (issuer) issuer.style.display = st.can_issue ? 'block' : 'none';
+    const hours = document.getElementById('supportHours');
+    if (hours && st.max_hours) hours.max = st.max_hours;
+  }
+
+  document.getElementById('supportRequestBtn')?.addEventListener('click', async () => {
+    try {
+      const r = await api.post('/auth/support/request', {});
+      document.getElementById('supportRequestCodeOut').textContent = r.code;
+      document.getElementById('supportRequestExpiry').textContent = t('support.request_expires', { hours: r.ttl_hours });
+      document.getElementById('supportRequestResult').style.display = 'block';
+      loadSupportAccess();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+  document.getElementById('supportRequestCopyBtn')?.addEventListener('click', async () => {
+    const code = document.getElementById('supportRequestCodeOut').textContent;
+    try { await navigator.clipboard.writeText(code); showToast(t('support.toast_copied'), 'success'); } catch { /* selection fallback: the code is user-select:all */ }
+  });
+
+  // Issuer side (only rendered when the server holds the signing key).
+  document.getElementById('generateSupportBtn')?.addEventListener('click', async () => {
+    const request_code = document.getElementById('supportRequestCode').value.trim();
+    const org = document.getElementById('supportOrg').value.trim() || 'Customer';
+    const hours = parseInt(document.getElementById('supportHours').value, 10) || 4;
+    const reason = document.getElementById('supportReason').value.trim();
+    if (!request_code) { showToast(t('support.issue_code_required'), 'error'); return; }
+    try {
+      const data = await api.post('/auth/support/generate', { request_code, org, hours, reason });
+      document.getElementById('supportTokenOutput').value = data.token;
+      document.getElementById('supportTokenResult').style.display = 'block';
+      showToast(t('settings.toast.support_token_generated', { hours }), 'success');
+    } catch (err) { showToast(err.message, 'error'); }
+  });
 
   // Export data handler
   document.getElementById('exportDataBtn')?.addEventListener('click', () => {
@@ -829,7 +946,7 @@ export async function render(container) {
       box.innerHTML = `
         <p style="${muted};margin-bottom:6px">${prompt}</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input type="text" id="twoFactorActionCode" class="input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="${t('settings.2fa_code_placeholder')}" maxlength="12" style="max-width:170px;letter-spacing:3px;text-align:center;font-family:monospace">
+          <input type="text" id="twoFactorActionCode" class="input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="${t('settings.2fa_code_placeholder')}" maxlength="40" style="max-width:170px;letter-spacing:3px;text-align:center;font-family:monospace">
           <button class="btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}" id="twoFactorActionConfirm">${confirm}</button>
           <button class="btn btn-secondary btn-sm" id="twoFactorActionCancel">${t('settings.2fa_cancel')}</button>
         </div>`;
@@ -1555,132 +1672,10 @@ async function loadWhiteLabel() {
   document.getElementById('previewWhiteLabelBtn')?.addEventListener('click', () => {
     const primary = document.getElementById('wlPrimaryColor').value;
     const bg = document.getElementById('wlBgColor').value;
-    document.documentElement.style.setProperty('--accent', primary);
+    applyAccent(document.documentElement, primary);
     document.documentElement.style.setProperty('--bg-primary', bg);
     showToast(t('settings.toast.preview_applied'), 'info');
   });
-}
-
-async function loadUsers() {
-  const el = document.getElementById('userManagement');
-  if (!el) return;
-
-  try {
-    const [users, plans] = await Promise.all([
-      api.getUsers(),
-      fetch('/api/subscription/plans').then(r => r.json())
-    ]);
-
-    const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
-
-    el.innerHTML = `
-      <div class="table-wrap">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">
-        <thead>
-          <tr style="border-bottom:1px solid var(--border);text-align:left">
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_user')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_auth')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_role')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_plan')}</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">${t('settings.user.col_actions')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${users.map(u => `
-            <!-- ESCAPED. A SECOND copy of the platform users table lives here, rendered from the
-                 same endpoint as the one in views/admin.js. Escaping only that one left this whole
-                 table wide open, including a raw text node for the email - and an org or workspace
-                 admin can choose an email, so this executed in the platform admin's session. When
-                 you touch one of these tables, touch both. -->
-            <tr style="border-bottom:1px solid var(--border)" data-user-id="${esc(u.id)}">
-              <td style="padding:10px 12px">
-                <div style="font-weight:500">${esc(u.name || u.email)}</div>
-                <div style="font-size:11px;color:var(--text-muted)">${esc(u.email)}</div>
-              </td>
-              <td style="padding:10px 12px">
-                <span style="background:var(--bg-primary);padding:2px 8px;border-radius:10px;font-size:11px">${esc(u.auth_provider)}</span>
-              </td>
-              <td style="padding:10px 12px">
-                <span style="color:${isPlatformAdmin(u) ? 'var(--accent)' : 'var(--text-secondary)'}">${esc(u.role)}</span>
-              </td>
-              <td style="padding:10px 12px">
-                <select class="input plan-select" data-user-id="${esc(u.id)}" style="padding:4px 8px;font-size:12px;width:auto">
-                  ${plans.map(p => `<option value="${esc(p.id)}" ${u.plan_id === p.id ? 'selected' : ''}>${esc(p.display_name)}</option>`).join('')}
-                </select>
-              </td>
-              <td style="padding:10px 12px;white-space:nowrap">
-                ${u.auth_provider === 'local' && u.id !== currentUser.id ? `<button class="btn btn-secondary btn-sm reset-user-pw-btn" data-user-id="${esc(u.id)}" data-user-email="${esc(u.email)}" style="margin-right:4px">${t('settings.user.reset_password')}</button>` : ''}
-                ${u.id !== currentUser.id ? `<button class="btn btn-danger btn-sm delete-user-btn" data-user-id="${esc(u.id)}">${t('settings.user.remove')}</button>` : `<span style="color:var(--text-muted);font-size:11px">${t('settings.user.you')}</span>`}
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-      </div>
-      <p style="color:var(--text-muted);font-size:11px;margin-top:12px">${tn('settings.user.count', users.length)}</p>
-    `;
-
-    // Plan change handlers
-    el.querySelectorAll('.plan-select').forEach(select => {
-      select.addEventListener('change', async () => {
-        const userId = select.dataset.userId;
-        const planId = select.value;
-        try {
-          await api.assignPlan(userId, planId);
-          showToast(t('settings.toast.plan_updated'), 'success');
-        } catch (err) {
-          showToast(err.message, 'error');
-          loadUsers(); // Revert
-        }
-      });
-    });
-
-    // Reset password handlers
-    el.querySelectorAll('.reset-user-pw-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const email = btn.dataset.userEmail;
-        const pw = prompt(t('settings.user.prompt_reset_password', { email }));
-        if (pw === null) return;
-        if (pw.length < 8) { showToast(t('settings.toast.new_password_min_8'), 'error'); return; }
-        try {
-          await api.resetUserPassword(btn.dataset.userId, pw);
-          showToast(t('settings.toast.password_reset_for_user'), 'success');
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-      });
-    });
-
-    // Delete user handlers
-    el.querySelectorAll('.delete-user-btn').forEach(btn => {
-      let confirming = false;
-      btn.addEventListener('click', async () => {
-        if (confirming) {
-          try {
-            await api.deleteUser(btn.dataset.userId);
-            showToast(t('settings.toast.user_removed'), 'success');
-            loadUsers();
-          } catch (err) {
-            showToast(err.message, 'error');
-          }
-          return;
-        }
-        confirming = true;
-        btn.textContent = t('settings.user.confirm');
-        btn.style.background = 'var(--danger)';
-        btn.style.color = 'white';
-        setTimeout(() => {
-          confirming = false;
-          btn.textContent = t('settings.user.remove');
-          btn.style.background = '';
-          btn.style.color = '';
-        }, 3000);
-      });
-    });
-
-  } catch (err) {
-    el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`;
-  }
 }
 
 export function cleanup() {}

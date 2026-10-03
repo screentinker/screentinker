@@ -52,6 +52,15 @@ test('(a) phantom version (superseded old-core prerelease) -> instant no-offer o
   assert.equal(r.reason, 'superseded-prerelease');
 });
 
+test('forced=1 overrides the superseded-prerelease hold over HTTP (force update stops being a no-op)', async () => {
+  // A stranded diag/beta build (held above) is rescuable when the operator forces it: the client
+  // passes forced=1 through to this endpoint, and it offers the current release instead of the
+  // silent "already latest". Unforced it stays held (the test above); forced it updates.
+  const r = await (await fetch(`${BASE}/api/update/check?version=${encodeURIComponent('1.9.1-beta4')}&forced=1`)).json();
+  assert.equal(r.update_available, true, 'forced offers the update the auto-check withholds');
+  assert.equal(r.reason, 'forced-override');
+});
+
 test('(b/f) legacy client (no device_id) looping the same version trips the version-keyed breaker', async () => {
   const v = '1.6.0';                       // fresh offerable older version, no device_id
   const results = [];

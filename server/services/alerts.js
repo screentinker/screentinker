@@ -1,4 +1,6 @@
 const { db } = require('../db/database');
+// Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
+const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 const { sendEmail } = require('./email');
 
 // Per-(alert_type, target_id) rate limit. In-memory Map; restarts reset it. For
@@ -35,6 +37,7 @@ async function checkOfflineDevices(io) {
     FROM devices d
     LEFT JOIN users u ON d.user_id = u.id
     WHERE d.status = 'offline' AND d.last_heartbeat IS NOT NULL
+    AND ${LOCAL_ROWS_SQL('d')}
     AND (? - d.last_heartbeat) > ?
     AND (d.offline_alert_heartbeat IS NULL OR d.offline_alert_heartbeat != d.last_heartbeat)
   `).all(now, threshold);
@@ -79,6 +82,10 @@ async function checkOfflineDevices(io) {
         subject,
         text: body,
         html: buildAlertHtml(device.owner_name, subject, body),
+        // The offline alert is the email people actually want to stop, so it is the one that most
+        // needs a link rather than a support request. email_alerts already gates this send, so the
+        // link and the gate are the same switch.
+        unsubscribeUserId: device.user_id,
       }).catch(e => console.error('[ALERT] sendEmail rejected unexpectedly:', e.message));
 
       // Log activity. Phase 2.2 writer-leak fix: stamp workspace_id from the
@@ -94,7 +101,7 @@ async function checkOfflineDevices(io) {
   // Recovery: drop the flap window so a device that genuinely comes back and later fails
   // again alerts immediately. The durable per-outage marker needs no clearing here - a
   // reconnect advances last_heartbeat, which invalidates it by construction.
-  const onlineDevices = db.prepare("SELECT id FROM devices WHERE status = 'online'").all();
+  const onlineDevices = db.prepare(`SELECT id FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
   for (const device of onlineDevices) {
     alertLastSent.delete(`device_offline:${device.id}`);
   }

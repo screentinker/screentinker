@@ -16,6 +16,7 @@
 
 const { db } = require('../db/database');
 const { sendEmail } = require('./email');
+const { LOCAL_USERS_SQL } = require('../lib/replica-proxy');
 
 const NUDGE_HOUR_UTC = 15; // 15:00 UTC daily
 
@@ -95,6 +96,7 @@ const ELIGIBLE_SQL = `
       SELECT 1 FROM workspace_members wm
       JOIN devices d2 ON d2.workspace_id = wm.workspace_id
       WHERE wm.user_id = u.id)
+    AND ${LOCAL_USERS_SQL('u')}
 `;
 
 function isHosted() {
@@ -117,6 +119,7 @@ async function runActivationNudgeSweep() {
       subject: "Quick check-in - how's ScreenTinker going?",
       text: nudgeText(name),
       html: nudgeHtml(name),
+      unsubscribeUserId: u.id,
     });
     console.log(`[NUDGE] nudge -> ${u.email}: ${JSON.stringify(r)}`);
     // Stamp after the send (no retry, same discipline as the welcome email).

@@ -1,0 +1,15 @@
+{
+  "id": "ok-widget",
+  "name": "OK Widget",
+  "version": "1.0.0",
+  "main": "index.js",
+  "capabilities": ["widget"],
+  "widget": {
+    "type": "ok-widget",
+    "label": "OK Widget",
+    "icon": "ok",
+    "fields": [
+      { "name": "headline", "type": "text", "label": "Headline", "default": "Hello" }
+    ]
+  }
+}

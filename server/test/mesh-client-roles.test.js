@@ -35,11 +35,40 @@ test('a viewer sees the client and cannot touch the connection', () => {
   }
 });
 
-test('a manager sees the client and may change the connection', () => {
-  for (const action of roles.ACTIONS) {
+test('a manager sees the client and may change the connection — but not their screens', () => {
+  /*
+   * ⚠️ This used to loop over EVERY action and assert manager could do all of them, which was true
+   * while manager was the top role and became a false claim the moment a higher one existed. The
+   * distinction is the interesting part: managing the CONNECTION (retention, TLS, severing) is a
+   * different conversation with a client from changing what their screens SHOW.
+   */
+  for (const action of ['view-mirrored-data', 'manage-edge', 'disenroll', 'assign-nodes']) {
     assert.equal(roles.userMay(rowFor('manager'), tech, action), true,
       `a manager should be able to ${action}`);
   }
+  for (const action of ['push-content', 'command-devices']) {
+    assert.equal(roles.userMay(rowFor('manager'), tech, action), false,
+      `a manager must NOT be able to ${action} — that is the publisher role`);
+  }
+});
+
+test('⚠️ publisher outranks manager, because a wall is more visible than a severed link', () => {
+  assert.ok(roles.ROLES.publisher.rank > roles.ROLES.manager.rank,
+    'severing an edge is disruptive and reversible; putting the wrong thing on a hospital wall is ' +
+    'neither, and nobody at the MSP may notice');
+  for (const action of roles.ACTIONS) {
+    assert.equal(roles.userMay(rowFor('publisher'), tech, action), true,
+      `a publisher should be able to ${action}`);
+  }
+});
+
+test('⚠️ the two write actions are SEPARATE — one does not confer the other', () => {
+  // A tech reloading a stuck screen is not the same permission as changing what it shows.
+  assert.ok(roles.ACTIONS.includes('push-content'));
+  assert.ok(roles.ACTIONS.includes('command-devices'));
+  assert.notEqual('push-content', 'command-devices');
+  assert.equal(roles.roleAllows('viewer', 'push-content'), false);
+  assert.equal(roles.roleAllows('viewer', 'command-devices'), false);
 });
 
 test('THE POINT: access to one client says nothing about another', () => {
@@ -90,19 +119,29 @@ test('platform_admin is not contained, and that is deliberate', () => {
   assert.equal(roles.userMay(null, admin, 'disenroll'), true);
 });
 
-test('no role promises write access to a client\'s screens (I2)', () => {
+test('⚠️ a write action is never held by INHERITANCE, only by a direct row', () => {
   /*
-   * ⚠️ A "full access" role would grant a capability that does not exist in 2.0 — the hub has no
-   * downward command handler to authorise. Naming one would read as a promise the product does not
-   * keep, and an operator would reasonably assume their tech can act on a screen when they cannot.
-   * A third role arrives with Phase 5; until then no role may imply one.
+   * ⚠️ REPLACES "no role promises write access". That guard asserted an ABSENCE that was correct
+   * while there was no write channel, and deleting it to add one would have removed the only thing
+   * watching this file. The property that has to survive is narrower and more useful: a role may
+   * now name a write action, but holding it through the client TREE must not be enough.
+   *
+   * Read access inherits on purpose — naming somebody on every client is toil nobody keeps up with,
+   * and whoGainsAccess exists so inheritance is never silent. Write is a different magnitude:
+   * dragging a client under "West Region" would otherwise hand the ability to change a hospital's
+   * screens to everyone holding that region, in one drag, with nobody named.
    */
   for (const name of roles.ROLE_NAMES) {
     for (const action of roles.ROLES[name].can) {
       assert.ok(roles.ACTIONS.includes(action), `${name} claims unknown action ${action}`);
-      assert.doesNotMatch(action, /push|command|reboot|write|control/i,
-        `role "${name}" implies downward control, which 2.0 does not have`);
     }
+  }
+  assert.deepEqual([...roles.DIRECT_ONLY_ACTIONS].sort(), ['command-devices', 'push-content'],
+    'every write action must be direct-only; a new one added without this is inheritable by default');
+  for (const a of roles.ACTIONS) {
+    const isWrite = /^(push-content|command-devices)$/.test(a);
+    assert.equal(roles.requiresDirectAccess(a), isWrite,
+      `${a}: write actions require a direct row, read actions may inherit`);
   }
 });
 

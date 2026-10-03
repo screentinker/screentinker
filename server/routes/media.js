@@ -17,14 +17,12 @@
 //  * Single-flight per cache key: 50 panels advancing to the same cold asset => 1 upstream fetch.
 
 const express = require('express');
-const http = require('http');
-const https = require('https');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { db } = require('../db/database');
 const config = require('../config');
-const { assertSafeUrl, pinnedLookup, SsrfError } = require('../lib/ssrf-guard');
+const { SsrfError, guardedRequest } = require('../lib/ssrf-guard');
 
 const router = express.Router();
 
@@ -76,35 +74,22 @@ const ALLOWED_PREFIX = /^(image|video)\//;
 // ---- outbound fetch: vet URL, pin socket to vetted IP, re-vet each redirect hop.
 // Resolves { res } for a 200 stream, or { notModified:true } for a 304 (conditional revalidation).
 function resolveWithRedirects(rawUrl, redirectsLeft, validators) {
-  return new Promise((resolve, reject) => {
-    assertSafeUrl(rawUrl).then(({ url, addresses }) => {
-      const mod = url.protocol === 'https:' ? https : http;
-      const headers = { 'user-agent': 'ScreenTinker-media-proxy', accept: 'image/*,video/*' };
-      if (validators && validators.etag) headers['if-none-match'] = validators.etag;
-      if (validators && validators.lastModified) headers['if-modified-since'] = validators.lastModified;
-      const req = mod.request(url, {
-        method: 'GET',
-        lookup: pinnedLookup(addresses),   // connect to the vetted IP only (defeats DNS rebinding)
-        servername: url.hostname,          // SNI + cert validation stay against the hostname, not the IP
-        headers,
-      }, (res) => {
-        const sc = res.statusCode;
-        if (sc === 304) { res.resume(); return resolve({ notModified: true }); } // still current upstream
-        if (sc >= 300 && sc < 400 && res.headers.location) {
-          res.resume(); // drain the redirect body
-          if (redirectsLeft <= 0) return reject(new MediaError('too-many-redirects'));
-          let next;
-          try { next = new URL(res.headers.location, url).toString(); }
-          catch (e) { return reject(new MediaError('bad-redirect')); }
-          return resolveWithRedirects(next, redirectsLeft - 1, validators).then(resolve, reject);
-        }
-        if (sc !== 200) { res.resume(); return reject(new MediaError('upstream-status-' + sc)); }
-        resolve({ res });
-      });
-      req.setTimeout(IDLE_TIMEOUT_MS, () => req.destroy(new MediaError('timeout')));
-      req.on('error', reject);
-      req.end();
-    }, reject);
+  return guardedRequest(rawUrl, {
+    maxRedirects: redirectsLeft,
+    validators,
+    headers: { 'user-agent': 'ScreenTinker-media-proxy', accept: 'image/*,video/*' },
+    idleTimeoutMs: IDLE_TIMEOUT_MS,
+    timeoutMs: IDLE_TIMEOUT_MS,
+  }).then((r) => {
+    if (r.notModified) return { notModified: true };
+    return { res: r.res };
+  }).catch((err) => {
+    if (err instanceof SsrfError) throw err;
+    if (err.code === 'too-many-redirects') throw new MediaError('too-many-redirects');
+    if (err.code === 'bad-redirect') throw new MediaError('bad-redirect');
+    if (err.code === 'upstream-status') throw new MediaError('upstream-status-' + err.statusCode);
+    if (err.code === 'timeout') throw new MediaError('timeout');
+    throw new MediaError(err.message || 'fetch-failed');
   });
 }
 

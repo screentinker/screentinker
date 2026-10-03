@@ -1,0 +1,11 @@
+News ticker — third-party material bundled in this template
+
+fonts/inter.woff2
+  Inter (latin subset), Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)
+  SIL Open Font License 1.1 — full text in fonts/OFL-inter.txt
+
+fonts/oswald.woff2
+  Oswald (latin subset), Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)
+  SIL Open Font License 1.1 — full text in fonts/OFL-oswald.txt
+
+Everything else in this folder is original work under the MIT licence in LICENSE.

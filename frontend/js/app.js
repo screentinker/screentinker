@@ -8,9 +8,14 @@ import * as billing from './views/billing.js';
 import * as layoutEditor from './views/layout-editor.js';
 import * as schedule from './views/schedule.js';
 import * as widgets from './views/widgets.js';
+import * as slides from './views/slides.js';
+import * as templates from './views/templates.js';
+import * as dataSources from './views/data-sources.js';
+import * as reviews from './views/reviews.js';
 import * as videoWall from './views/video-wall.js';
 import * as reports from './views/reports.js';
 import * as servers from './views/servers.js';
+import * as noc from './views/noc.js';
 import * as triggers from './views/triggers.js';
 import * as activity from './views/activity.js';
 import * as kiosk from './views/kiosk.js';
@@ -27,6 +32,7 @@ import * as noWorkspace from './views/no-workspace.js';
 import { applyBranding } from './branding.js';
 import { t } from './i18n.js';
 import { isPlatformAdmin } from './utils.js';
+import { initNavGroups } from './components/nav-groups.js';
 import { renderWorkspaceSwitcher, selectedRemoteOrg, clearRemoteOrg } from './components/workspace-switcher.js';
 
 /*
@@ -66,18 +72,31 @@ function renderRemoteOrgBanner() {
   el.innerHTML = `
     <span>Viewing <strong>${name}</strong> on another server${
       org.stale ? ' — not currently reachable, showing last known state' : ''}.</span>
-    <span style="color:var(--text-muted)">Read-only for now.</span>
+    <!-- ⚠️ Says what this operator may actually do, rather than a fixed "read-only for now" that
+         stayed on the screen after write shipped. The flag is what the CHILD announced, so a
+         customer who has granted nothing still reads as read-only — which is both true and the
+         safe way for this to be wrong. Playlists only, and it says so: an operator who reads
+         "you can make changes" and then cannot upload has been misled by a half-truth. -->
+    <span style="color:var(--text-muted)">${org.writable
+      ? 'You may change playlists here. Content and settings stay read-only.'
+      : 'Read-only — this customer has not granted changes from here.'}</span>
     <button id="leaveRemoteOrg" class="btn btn-secondary btn-sm" style="margin-left:auto">
       Back to this server</button>`;
   if (!existing) host.appendChild(el);
   el.querySelector('#leaveRemoteOrg').onclick = () => { clearRemoteOrg(); window.location.reload(); };
 }
 import { showToast } from './components/toast.js';
-import { api } from './api.js';
+import { api, meshCapability } from './api.js';
 import { esc } from './utils.js';
 
 const app = document.getElementById('app');
 const sidebar = document.querySelector('.sidebar');
+// The sidebar offset lives on .main-wrapper (margin-left: var(--sidebar-width)), NOT on
+// #app. The sidebar-hidden routes (login, onboarding, no-workspace, change-password) must
+// zero THIS margin, or the content stays pushed right by the sidebar width and reads as
+// off-centre. Toggling #app's own margin (as this used to) did nothing once #app was
+// wrapped. #login-centre
+const mainWrapper = document.querySelector('.main-wrapper');
 let currentView = null;
 
 // ==================== Slice 2C: accept-invite plumbing ====================
@@ -210,6 +229,10 @@ const NAV_LABEL_KEYS = {
   playlists: 'nav.playlists',
   layouts: 'nav.layouts',
   widgets: 'nav.widgets',
+  slides: 'nav.slides',
+  templates: 'nav.templates',
+  'data-sources': 'nav.data_sources',
+  reviews: 'nav.reviews',
   schedule: 'nav.schedule',
   walls: 'nav.walls',
   reports: 'nav.reports',
@@ -291,11 +314,16 @@ async function refreshCurrentUser() {
     //
     // ⚠️ Remote orgs are fetched separately and FAIL SILENTLY. A server with no mesh has no such
     // endpoint, and an install that has never heard of the feature must not see an error about it.
+    // #329: /orgs is a HUB route. On a server that is not a hub it 404s, and this runs on every
+    // /me refresh, so the console filled up with them. `null` means the server did not say, and
+    // the old ask-and-shrug path stands.
     let remoteOrgs = [];
-    try {
-      const r = await fetch('/api/mesh/orgs', { headers: { Authorization: `Bearer ${token}` } });
-      if (r.ok) remoteOrgs = (await r.json()).orgs || [];
-    } catch (e) { remoteOrgs = []; }
+    if (meshCapability('hub') !== false) {
+      try {
+        const r = await fetch('/api/mesh/orgs', { headers: { Authorization: `Bearer ${token}` } });
+        if (r.ok) remoteOrgs = (await r.json()).orgs || [];
+      } catch (e) { remoteOrgs = []; }
+    }
     renderWorkspaceSwitcher(fresh, remoteOrgs);
     renderRemoteOrgBanner();
     window.dispatchEvent(new CustomEvent('user-refreshed', { detail: fresh }));
@@ -372,7 +400,13 @@ function route() {
   // Cleanup previous view
   if (currentView && currentView.cleanup) currentView.cleanup();
 
-  const hash = window.location.hash || '#/';
+  let hash = window.location.hash || '#/';
+  // The admin page became the Platform area (#/platform/<section>). Old links, bookmarks and the
+  // SSO-removal notification emails say #/admin: send them to the overview without a history entry.
+  if (hash === '#/admin' || hash === '#/platform' || hash === '#/platform/') {
+    history.replaceState(null, '', window.location.pathname + '#/platform/overview');
+    hash = '#/platform/overview';
+  }
 
   // Slice 2C - direct hits on #/accept-invite/{id}. Handle BEFORE the
   // auth-redirect-to-login because an unauthed visit needs to stash the
@@ -454,7 +488,7 @@ function route() {
         return;
       }
       sidebar.style.display = 'none';
-      app.style.marginLeft = '0';
+      if (mainWrapper) mainWrapper.style.marginLeft = '0';
       const mb = document.getElementById('mobileMenuBtn');
       if (mb) mb.style.display = 'none';
       currentView = forcePasswordChange;
@@ -477,7 +511,7 @@ function route() {
     if (hash === '#/no-workspace') {
       if (!hasNoAccessibleWorkspace(u)) { window.location.hash = '#/'; return; }
       sidebar.style.display = 'none';
-      app.style.marginLeft = '0';
+      if (mainWrapper) mainWrapper.style.marginLeft = '0';
       const mb = document.getElementById('mobileMenuBtn');
       if (mb) mb.style.display = 'none';
       currentView = noWorkspace;
@@ -489,7 +523,7 @@ function route() {
   // Onboarding for new users
   if (hash === '#/onboarding' && isAuthenticated()) {
     sidebar.style.display = 'none';
-    app.style.marginLeft = '0';
+    if (mainWrapper) mainWrapper.style.marginLeft = '0';
     currentView = onboarding;
     onboarding.render(app);
     return;
@@ -500,7 +534,7 @@ function route() {
   // and an exact comparison meant the login view was never rendered for either.
   if (isLoginRoute || isResetRoute) {
     sidebar.style.display = 'none';
-    app.style.marginLeft = '0';
+    if (mainWrapper) mainWrapper.style.marginLeft = '0';
     const mb = document.getElementById('mobileMenuBtn');
     if (mb) mb.style.display = 'none';
     currentView = login;
@@ -510,7 +544,7 @@ function route() {
 
   // Show sidebar for authenticated views
   sidebar.style.display = '';
-  app.style.marginLeft = '';
+  if (mainWrapper) mainWrapper.style.marginLeft = '';
   const mb = document.getElementById('mobileMenuBtn');
   if (mb) mb.style.display = '';
 
@@ -528,6 +562,9 @@ function route() {
     else if ((hash === '#/playlists' || hash.startsWith('#/playlists/')) && link.dataset.view === 'playlists') link.classList.add('active');
     else if (hash === '#/schedule' && link.dataset.view === 'schedule') link.classList.add('active');
     else if (hash === '#/widgets' && link.dataset.view === 'widgets') link.classList.add('active');
+    else if (hash === '#/slides' && link.dataset.view === 'slides') link.classList.add('active');
+    else if (hash === '#/templates' && link.dataset.view === 'templates') link.classList.add('active');
+    else if ((hash === '#/data-sources' || hash.startsWith('#/data-sources/')) && link.dataset.view === 'data-sources') link.classList.add('active');
     else if ((hash.startsWith('#/wall') || hash === '#/walls') && link.dataset.view === 'walls') link.classList.add('active');
     else if (hash === '#/reports' && link.dataset.view === 'reports') link.classList.add('active');
     else if (hash === '#/activity' && link.dataset.view === 'activity') link.classList.add('active');
@@ -535,6 +572,9 @@ function route() {
     else if ((hash === '#/kiosk' || hash.startsWith('#/kiosk/')) && link.dataset.view === 'kiosk') link.classList.add('active');
     else if (hash === '#/help' && link.dataset.view === 'help') link.classList.add('active');
     else if (hash.startsWith('#/device/') && link.dataset.view === 'dashboard') link.classList.add('active');
+    else if (hash.startsWith('#/platform/') && link.dataset.view === 'platform-' + hash.slice(11).split(/[/?]/)[0]) link.classList.add('active');
+    else if (hash.startsWith('#/admin/player-debug') && link.dataset.view === 'platform-system') link.classList.add('active');
+    else if ((hash === '#/members' || (hash.startsWith('#/workspace/') && hash.includes('/members'))) && link.dataset.view === 'members') link.classList.add('active');
   });
 
   // Route to view
@@ -557,6 +597,18 @@ function route() {
   } else if (hash === '#/schedule') {
     currentView = schedule;
     schedule.render(app);
+  } else if (hash === '#/slides') {
+    currentView = slides;
+    slides.render(app);
+  } else if (hash === '#/templates') {
+    currentView = templates;
+    templates.render(app);
+  } else if (hash === '#/data-sources' || hash.startsWith('#/data-sources/')) {
+    currentView = dataSources;
+    dataSources.render(app);
+  } else if (hash === '#/reviews') {
+    currentView = reviews;
+    reviews.render(app);
   } else if (hash === '#/widgets') {
     currentView = widgets;
     widgets.render(app);
@@ -576,6 +628,11 @@ function route() {
      */
     currentView = servers;
     servers.render(app);
+  } else if (hash === '#/noc') {
+    // The live graph of THIS server's mesh (docs/scale-out.md "NOC on this server"). Same gate as
+    // Servers: only shown where the mesh is on, and the route behind it is instance-owner only.
+    currentView = noc;
+    noc.render(app);
   } else if (hash === '#/reports') {
     currentView = reports;
     reports.render(app);
@@ -616,13 +673,16 @@ function route() {
     // Match prefix so query params (?page=2&ua=Tizen) route correctly.
     currentView = adminPlayerDebug;
     adminPlayerDebug.render(app);
-  } else if (hash === '#/admin') {
+  } else if (hash.startsWith('#/platform/')) {
     currentView = admin;
-    admin.render(app);
+    admin.render(app, hash.slice(11).split(/[/?]/)[0]);
   } else if (hash === '#/settings') {
     currentView = settings;
     settings.render(app);
-  } else if (hash === '#/billing') {
+  } else if (hash.startsWith('#/billing')) {
+    // Prefix, not equality: Stripe returns to `#/billing?payment=success`, and `hash === '#/billing'`
+    // sent every one of those to the default view — a customer who had just paid saw the Displays
+    // list and no confirmation. Same reasoning as the admin/player-debug route above.
     // #116: when HIDE_BILLING is set, a direct #/billing navigation is bounced to the
     // dashboard. replaceState (not a hash assignment) so it doesn't add a history entry
     // — the back button skips over it instead of looping back into the guard.
@@ -644,11 +704,13 @@ function updateSidebarUser() {
   const user = getCurrentUser();
   if (!user) return;
   updateVerifyBanner(user);
+  updateBillingBanner(user);
   updateWidgetSandboxWarningBanner(user);
 
-  // Show admin nav only for platform admins (legacy 'superadmin' or Phase 1 renamed 'platform_admin')
-  const adminNav = document.getElementById('adminNavItem');
-  if (adminNav) adminNav.style.display = isPlatformAdmin(user) ? '' : 'none';
+  // The Platform nav group is for platform admins only (legacy 'superadmin' or 'platform_admin').
+  // nav-groups.js hides a group whose every link is hidden, so hiding the items hides the group.
+  const platformAdmin = isPlatformAdmin(user);
+  document.querySelectorAll('.platform-nav').forEach((li) => { li.style.display = platformAdmin ? '' : 'none'; });
 
   // #116: hide the Subscription nav item when HIDE_BILLING is set (surfaced on /me).
   // Runs at boot from the cached user (no flash on warm loads) and again after /me.
@@ -683,11 +745,34 @@ function updateSidebarUser() {
      * /mesh/capabilities is mounted when EITHER flag is on, or when an uplink already exists, so it
      * is the honest question to ask: "is this node part of a mesh in any way?"
      */
-    api.get('/mesh/capabilities')
-      .then(() => { serversNav.style.display = ''; })
-      .catch(() => api.get('/mesh/nodes')
-        .then(() => { serversNav.style.display = ''; })
-        .catch(() => { serversNav.style.display = 'none'; }));
+    /*
+     * #329: /me answers this now, so the common case costs no requests at all. The probe below is
+     * kept for when it does NOT answer — a server older than this field, or a cached user from
+     * before it — because a silent `false` there would hide the section on a real mesh node.
+     */
+    const meshEnroll = meshCapability('enroll');
+    if (meshEnroll !== null) {
+      serversNav.style.display = meshEnroll ? '' : 'none';
+      syncNocNav();
+    } else {
+      api.get('/mesh/capabilities')
+        .then(() => { serversNav.style.display = ''; syncNocNav(); })
+        .catch(() => api.get('/mesh/nodes')
+          .then(() => { serversNav.style.display = ''; syncNocNav(); })
+          .catch(() => { serversNav.style.display = 'none'; syncNocNav(); }));
+    }
+  }
+
+  /*
+   * The NOC follows the Servers gate exactly (it is that section's live graph) and is additionally
+   * owner-only, because the route behind it refuses everyone else. Derived, never asked separately:
+   * one gate, so the two items can never disagree about whether this node is in a mesh.
+   */
+  function syncNocNav() {
+    const nocNav = document.getElementById('nocNavItem');
+    if (!nocNav || !serversNav) return;
+    const role = (() => { try { return JSON.parse(localStorage.getItem('user') || '{}').role; } catch (_) { return null; } })();
+    nocNav.style.display = serversNav.style.display !== 'none' && role === 'platform_admin' ? '' : 'none';
   }
 
   let userEl = document.getElementById('sidebarUser');
@@ -750,6 +835,39 @@ function updateVerifyBanner(user) {
   bannersEl.appendChild(b);
 }
 
+/*
+ * A payment that failed, said out loud. Until this existed the only signal a customer got was
+ * their screens quietly hitting the Free limit a week later — `subscription_status` was written by
+ * the Stripe webhook and read by nothing.
+ *
+ * Two states, deliberately worded differently: `past_due` is "this is fixable and nothing has
+ * happened yet", `unpaid` is "the grace ran out and you are on Free now". An undefined status —
+ * a user object cached before this shipped — stays hidden rather than guessing, the same rule the
+ * verify banner uses.
+ */
+function updateBillingBanner(user) {
+  const existing = document.getElementById('billingBanner');
+  const state = user && user.subscription_status;
+  if (state !== 'past_due' && state !== 'unpaid') { if (existing) existing.remove(); return; }
+  if (existing && existing.dataset.state === state) return;
+  if (existing) existing.remove();
+  const bannersEl = document.getElementById('banners');
+  if (!bannersEl) return;
+  const lapsed = state === 'unpaid';
+  const b = document.createElement('div');
+  b.id = 'billingBanner';
+  b.dataset.state = state;
+  b.style.cssText = `background:${lapsed ? 'var(--danger,#ef4444)' : 'var(--warning,#f59e0b)'};color:${lapsed ? '#fff' : '#1a1200'};padding:9px 16px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap`;
+  b.innerHTML = `<span>${lapsed ? '⚠️' : '💳'} ${esc(t(lapsed ? 'billing.banner.lapsed' : 'billing.banner.past_due'))}</span>`;
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm';
+  btn.style.cssText = `background:${lapsed ? '#7f1d1d' : '#1a1200'};color:#fff;padding:4px 12px`;
+  btn.textContent = t('billing.banner.update_card');
+  btn.addEventListener('click', () => { window.location.hash = '#/billing'; });
+  b.appendChild(btn);
+  bannersEl.appendChild(b);
+}
+
 function updateWidgetSandboxWarningBanner(user) {
   const existing = document.getElementById('widgetSandboxWarningBanner');
   const disabled = !!user?.current_organization?.widget_sandbox_isolation_disabled;
@@ -772,9 +890,25 @@ function updateWidgetSandboxWarningBanner(user) {
   bannersEl.appendChild(b);
 }
 
+// Reviews nav badge: how many submissions are waiting on the signed-in user. Silent when approval
+// is off for the workspace (the endpoint returns an empty queue), so nothing lights up unasked.
+async function refreshReviewsBadge() {
+  const badge = document.getElementById('reviewsNavBadge');
+  if (!badge || !isAuthenticated()) return;
+  try {
+    const s = await api.getApprovalSettings();
+    const n = s && s.require_approval ? Number(s.pending_submissions || 0) : 0;
+    badge.textContent = String(n);
+    badge.style.display = n > 0 ? '' : 'none';
+  } catch { badge.style.display = 'none'; }
+}
+window.addEventListener('hashchange', () => { if (location.hash === '#/reviews' || location.hash === '#/members') refreshReviewsBadge(); });
+setTimeout(refreshReviewsBadge, 1500);
+
 // Initialize
 renderNavLabels();
 translateStaticDom();
+initNavGroups();
 window.addEventListener('language-changed', () => {
   renderNavLabels();
   translateStaticDom();
@@ -819,6 +953,10 @@ window.addEventListener('keydown', (e) => {
 // Auto-reload on frontend update (no more hard refresh needed)
 let knownHash = null;
 export function updateVersionIndicator({ version, latest_version, update_available }) {
+  // Published like window.__ST_BRAND_NAME, and for the same reason: things that need the running
+  // version should not each fetch it. components/whats-new.js reads this to decide whether it has
+  // anything to fetch at all, so a dashboard load on an unchanged build costs no extra request.
+  try { if (version) window.__ST_VERSION = version; } catch (_) { /* non-fatal */ }
   const label = document.getElementById('versionLabel');
   const badge = document.getElementById('versionBadge');
   if (label) label.textContent = version ? 'v' + version : '-';

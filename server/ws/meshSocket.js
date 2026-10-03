@@ -29,6 +29,7 @@ const pairing = require('../lib/mesh/pairing');
  * @param {() => boolean} deps.acceptEnrollment   the MESH_ACCEPT_ENROLLMENT flag
  * @param {(tokenHash: string) => object|null} deps.findEdgeByTokenHash
  * @param {(edge, env) => void} deps.onEnvelope   persist an accepted payload
+ * @param {(edge) => void}      [deps.onConnect]  optional; called once per accepted connection
  * @param {() => number} [deps.now]
  * @param {object} [deps.logger]
  */
@@ -91,6 +92,8 @@ function setupMeshSocket(io, deps) {
     let edge = socket.data.edge;
     const childId = socket.data.childNodeId;
     log.log(`[mesh] node ${childId} connected on edge ${edge.id}`);
+    // Optional: a replica pull loop wants to know the moment its primary is back, not at the next poll.
+    if (typeof deps.onConnect === 'function') { try { deps.onConnect(edge); } catch (e) { log.warn(`[mesh] onConnect: ${e && e.message}`); } }
 
     /*
      * ⚠️ WHAT THIS PARENT UNDERSTANDS, STATED — never assumed by the child.
@@ -336,7 +339,134 @@ function setupMeshSocket(io, deps) {
     };
   }
 
-  return { meshNs, backpressure, readFrom };
+  /*
+   * ⚠️ The PARENT side of a write, and it is deliberately as thin as readFrom. This file does not
+   * know what a playlist is and must not learn: it finds the child's socket and asks. Every
+   * decision — is this path writable, is the grant held, does the target belong to a workspace this
+   * edge may touch, has this op already been applied — is made on the CHILD, by the child, against
+   * its own rows. A conduit that started making judgements would be a conduit the child had to
+   * trust, and the whole point is that it does not.
+   *
+   * Depth 1 only, and that falls out of the implementation rather than being asserted: this scans
+   * directly-connected sockets, so a write can only ever reach a node this one is actually joined
+   * to. A relayed write would arrive on the relay's edge token, which would authenticate the relay
+   * rather than the grantee — and nothing signs payloads yet. Keeping it to one hop means that gap
+   * cannot be reached.
+   */
+  async function writeTo(childNodeId, request, timeoutMs = 15_000) {
+    for (const sock of meshNs.sockets.values()) {
+      if (sock.data && sock.data.childNodeId === childNodeId) {
+        return new Promise((resolve) => {
+          sock.timeout(timeoutMs).emit('mesh:write', request, (err, res) => {
+            /*
+             * ⚠️ A TIMEOUT IS NOT A FAILURE — it is an unknown, and saying so matters here in a way
+             * it does not for a read. The write may well have been applied; the acknowledgement is
+             * what went missing. The caller must retry with the SAME opId rather than re-issuing,
+             * which is exactly what the child's idempotency record is for.
+             */
+            if (err) {
+              return resolve({
+                ok: false,
+                indeterminate: true,
+                reason: 'That server did not acknowledge in time. The change may or may not have ' +
+                        'been applied — retrying the same request is safe and will tell you which.',
+              });
+            }
+            resolve(res || { ok: false, reason: 'That server returned nothing.' });
+          });
+        });
+      }
+    }
+    return {
+      ok: false,
+      offline: true,
+      reason: 'That server is not connected right now, so nothing was changed on it.',
+    };
+  }
+
+  /*
+   * ⚠️ THE SAME CONDUIT AS writeTo, WITH A LONGER FUSE. A content offer makes the child fetch files
+   * over a link that may be slow by nature, and the ack does not come back until it has finished —
+   * so the 15s a write allows would time out on any real transfer and report indeterminate for
+   * something that is merely working.
+   *
+   * It still decides nothing. The child evaluates what it needs, whether it may accept it, and
+   * whether there is room, then pulls the bytes itself using the address IT already had.
+   */
+  /*
+   * ⚠️ THE OWNER WITHDRAWING A COPY — the only downward verb that DELETES anything, and the
+   * narrowest one here by some distance.
+   *
+   * It names origin content ids, and the child matches them against what THIS peer sent it. A
+   * parent can ask a child to forget what it sent and can reach nothing else: not what the child
+   * uploaded, not what another parent sent. And the child refuses anything a playlist still uses,
+   * because a file yanked out from under a published playlist is a blank slot on a wall, decided by
+   * a server nobody at that site controls.
+   */
+  async function contentPurgeTo(childNodeId, request, timeoutMs = 30_000) {
+    for (const sock of meshNs.sockets.values()) {
+      if (sock.data && sock.data.childNodeId === childNodeId) {
+        return new Promise((resolve) => {
+          sock.timeout(timeoutMs).emit('mesh:content-purge', request, (err, res) => {
+            if (err) {
+              return resolve({
+                ok: false, indeterminate: true,
+                reason: 'That server did not answer. Some copies may already have been removed — ' +
+                        'asking again is safe.',
+              });
+            }
+            resolve(res || { ok: false, reason: 'That server returned nothing.' });
+          });
+        });
+      }
+    }
+    return { ok: false, offline: true, reason: 'That server is not connected right now.' };
+  }
+
+  async function contentOfferTo(childNodeId, request, timeoutMs = 30 * 60 * 1000) {
+    for (const sock of meshNs.sockets.values()) {
+      if (sock.data && sock.data.childNodeId === childNodeId) {
+        return new Promise((resolve) => {
+          sock.timeout(timeoutMs).emit('mesh:content-offer', request, (err, res) => {
+            if (err) {
+              return resolve({
+                ok: false,
+                indeterminate: true,
+                reason: 'That server did not report back in time. Some files may have arrived — ' +
+                        'sending the same content again is safe and will tell you which.',
+              });
+            }
+            resolve(res || { ok: false, reason: 'That server returned nothing.' });
+          });
+        });
+      }
+    }
+    return {
+      ok: false,
+      offline: true,
+      reason: 'That server is not connected right now, so nothing was sent to it.',
+    };
+  }
+
+  /** Is one child's socket live right now? The NOC and the replica loop ask this instead of waiting
+   *  for their next read to fail — a killed primary showed "connected" for up to 30 s otherwise. */
+  function isConnected(childNodeId) {
+    for (const sock of meshNs.sockets.values()) {
+      if (sock.data && sock.data.childNodeId === childNodeId && sock.connected) return true;
+    }
+    return false;
+  }
+
+  /** Disconnect every live socket of one child: the parent ended the edge, and the door is now shut. */
+  function dropChild(childNodeId) {
+    let n = 0;
+    for (const sock of meshNs.sockets.values()) {
+      if (sock.data && sock.data.childNodeId === childNodeId) { try { sock.disconnect(true); n++; } catch (e) { /* */ } }
+    }
+    return n;
+  }
+
+  return { meshNs, backpressure, readFrom, writeTo, contentOfferTo, contentPurgeTo, dropChild, isConnected };
 }
 
 module.exports = setupMeshSocket;

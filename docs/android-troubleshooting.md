@@ -146,3 +146,162 @@ the pairing port only exists while the pairing dialog is open.
 | Cleartext allowed | `AndroidManifest.xml` → `usesCleartextTraffic="true"` |
 | Build a signed APK | `KEYSTORE_PASSWORD=… KEY_PASSWORD=… ./gradlew assembleRelease` |
 | APK output | `android/app/build/outputs/apk/release/app-release.apk` |
+
+---
+
+## Scheduled screen off vs device off
+
+These are different things and the difference is the whole design. A **display power schedule** blanks
+the **panel** on a weekly clock. It does **not** power the device down, and ScreenTinker deliberately
+offers no way to schedule that — see "Why there is no scheduled device power-off" below.
+
+During a scheduled-off window the player is still running:
+
+| Still happening | Not happening |
+|---|---|
+| Socket.IO connection, heartbeats, telemetry | The backlight |
+| Playlist sync and content downloads | |
+| OTA update checks and installs | |
+| `screen_on` from the dashboard (wakes instantly) | |
+
+So a screen that is dark on schedule is **still a healthy screen** in the dashboard, which is the point:
+it reports `display_power: scheduled_off` on every heartbeat, so a deliberately dark panel is
+distinguishable from a dead one. Without that they look identical from the office, and the operator
+drives out to check.
+
+### What "off" actually is, precisely
+
+⚠️ **It is the existing `screen_off` path — a device LOCK — not a backlight or HDMI control, and
+not a shutdown.** The player asks device owner / device admin (`FORCE_LOCK`) or its accessibility
+service to lock the device, and on a panel that is its own display the screen goes dark as a
+consequence of locking. That is the same mechanism the dashboard's "screen off" button uses, which
+is deliberate: a second way to make a panel dark would drift from the one operators already press.
+
+What it needs is therefore what `screen_off` needs: **device owner, device admin with `FORCE_LOCK`,
+or the ScreenTinker accessibility service**. It does **not** use `WRITE_SETTINGS` — that one is for
+system brightness and the screen-off timeout, which are separate controls — and it never calls
+shutdown or reboot.
+
+⚠️ **Verify the result on your actual hardware before relying on it.** On an integrated panel
+(tablet, commercial display running Android) locking blanks the screen, which is what you want. On
+a **consumer HDMI stick or set-top box** the lock may simply show a keyguard rather than cut the
+video signal, so the attached TV keeps its backlight on and displays a lock screen instead of your
+content. That is a property of the box, not of the schedule — ScreenTinker has no way to cut HDMI
+from an app. If a stick behaves that way, drive the TV itself instead (its own on/off timer, or
+CEC), and leave this schedule off for those screens.
+
+### What the player actually does at the edges
+
+- **Going off** — releases `FLAG_KEEP_SCREEN_ON`, then locks via device owner / device admin
+  (`FORCE_LOCK`) or the accessibility service, exactly as a remote `screen_off` does.
+  ⚠️ Releasing the flag is the part that is easy to miss: `MainActivity` holds it unconditionally so a
+  kiosk never sleeps mid-playback, and if it is still held, the first person who touches the panel at
+  23:00 relights it **for the rest of the night** — the OS will not sleep a window asking to stay awake.
+- **Coming on** — re-adds the flag, takes a wake lock and asks for the keyguard to be dismissed, exactly
+  as a remote `screen_on` does.
+- **A manual `screen_on` inside a window** wins until the window **ends**, then the schedule resumes on
+  its own. Not permanent (the operator would silently lose the schedule) and not ignored (the panel
+  would fight them, going dark again within 60 seconds).
+- **Evaluation is local**, once a minute, against the device's own timezone. The schedule survives
+  reboots in `SharedPreferences` and is re-applied before any socket exists, so a panel that restarts at
+  02:00 with no network comes back dark and stays dark until its window ends.
+
+### Requirements
+
+As above, the panel needs a way to lock itself — the same requirement `screen_off` has:
+
+- **device owner** (see the provisioning notes above), **or**
+- **device admin** with `FORCE_LOCK`, **or**
+- the ScreenTinker **accessibility service** enabled.
+
+With none of those the player declares neither `display.power` nor `display.power_schedule`, the server
+refuses `set_power_schedule` for that device, and the dashboard says so instead of saving a schedule
+that would never run. `WRITE_SETTINGS` is **not** required — that one is for system brightness and the
+screen-off timeout, which are separate controls.
+
+### Why there is no scheduled device power-off
+
+Turning an Android device fully off on a timer is OEM-specific and unreliable, and — more to the point —
+a device that is off cannot be told to come back on. A schedule that can only run in one direction is a
+schedule that strands screens, and recovering one means someone walking to it. Blanking the panel gets
+essentially the same backlight saving and is reversible from the dashboard at any moment.
+
+### If a screen does not sleep when it should
+
+1. Check the dashboard shows `Scheduled off` for it. If it shows `Screen on`, the player has not been
+   given the schedule — confirm the device reports `display.power_schedule` (device page → capabilities).
+2. Confirm the **timezone**. Windows are local wall-clock in the device's zone, not the server's.
+   A screen in another country sleeps on its own clock, which is nearly always what you want and
+   occasionally a surprise.
+3. Check nobody pressed **screen on** during the window — that is an intentional exemption and it lasts
+   until the window ends.
+4. `adb logcat -s PowerSchedule:I` shows the restore, every state change, and whether an override is active.
+
+---
+
+## Device-side REST (`http_request`)
+
+The **panel** performs the HTTP request, from its own network. That is the whole point: the
+ScreenTinker server is frequently in another country and has no route to the shop's `192.168.x.x`,
+so a LAN target — a PLC, a sensor, a local Home Assistant — is only reachable from the screen
+standing next to it. Nothing is proxied through the server.
+
+### What is allowed, and what is not
+
+⚠️ **Only `http://` and `https://`.** This is the whole security boundary and it is not a
+formality. The operator sending the command already holds a `full` token and, on a device-owner
+panel, can already run `shell` — so reaching a LAN host is not an escalation for them, it is what
+they asked for. What the guard stops is a change of *kind*: turning "fetch a URL and return 64 KiB
+of the answer" into "read a file off this device and return 64 KiB of it". On Android that means
+`file://` and, worse, `content://`, which reads through content providers — the mechanism by which
+one app's private data is exposed to another.
+
+| Target | Allowed | Why |
+|---|---|---|
+| `http://192.168.1.50/api` | ✅ | RFC1918 is the **feature**, not a risk to be blocked |
+| `https://api.example.com` | ✅ | ordinary public API |
+| `http://127.0.0.1:1880` | ✅ | a service running on the panel itself |
+| `file://…`, `content://…` | ❌ | would turn a fetch into a local file read |
+| `http://169.254.169.254` | ❌ | cloud metadata; link-local only exists when DHCP has failed |
+| `ws://`, `ftp://`, `data:` | ❌ | not in the scheme allowlist |
+
+A **hostname** that resolves to a refused address is caught too: the player resolves, re-checks
+every address, and then **pins** the vetted address into the connection, so the address it approved
+is the address it connects to. Without that pin a hostile resolver could answer differently between
+the check and the socket, and the vetting would be decorative.
+
+**Redirects are not followed.** A 302 is a second target the guard never saw. The operator gets the
+302 and its `Location` header in the snippet and can decide for themselves.
+
+### Limits
+
+- **64 KiB** of the response comes back, as `snippet`, with a `truncated` flag. It is a **read
+  limit, not a Content-Length check** — a broken or hostile endpoint can declare 10 bytes and send
+  gigabytes. A panel must spend 64 KiB on that, not an OOM in the middle of playback.
+- The request runs on a **worker thread**. A request to an unreachable PLC blocks for the full
+  timeout, and doing that on the main looper would freeze playback, the heartbeat and the display
+  power tick with it.
+- Default timeout **15 s**, maximum 120 s.
+- Methods are allowlisted: `GET POST PUT PATCH DELETE HEAD`. `TRACE` would reflect request headers
+  (including any `Authorization`) into a body we store and display; `CONNECT` asks the panel to open
+  a tunnel. Neither has a signage use.
+
+### ⚠️ It is not a mesh command
+
+A hub in a Node Mesh **cannot** send `http_request` to a peer's screens, and that is deliberate.
+The mesh consent sentence is "Reboot, reload, change settings on screens." Making someone else's
+panel issue arbitrary requests from inside their LAN is not a setting — it is using their screen as
+a foothold on a network the hub cannot otherwise reach. The panel is by design the one thing on the
+private side of the customer's firewall, which is exactly why a third party must not get to aim it.
+
+### Reading the result
+
+Every request answers, including the failures — silence would be indistinguishable from a command
+that never arrived.
+
+- `ok` is the **HTTP verdict**, not "did the call happen". A 500 is a completed request that failed,
+  and that is different from a timeout: a timeout reports `status: 0` with an `error`.
+- `error` carries the exception *message* ("connect timed out"), not the class name — the former
+  tells an installer to check the cable.
+
+`adb logcat -s DeviceHttp:I` shows each request, its status and its duration.

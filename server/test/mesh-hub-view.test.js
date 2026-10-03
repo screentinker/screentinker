@@ -194,7 +194,9 @@ test('a deep link points back at the node that owns the object', () => {
    * observer becomes a control plane by accident.
    */
   const link = hv.deepLink({ peer_url: 'https://acme.example.com/' }, 'device', 'dev 1');
-  assert.equal(link, 'https://acme.example.com/#/devices/dev%201', 'and the id is encoded');
+  // /app is part of the path: `/` is the marketing page and never sees the hash, so a deep link
+  // without it dropped the operator on that node's front door.
+  assert.equal(link, 'https://acme.example.com/app#/devices/dev%201', 'and the id is encoded');
 });
 
 test('an unknown address yields NO link rather than a guessed one (I9)', () => {

@@ -8,6 +8,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import android.view.TextureView
@@ -31,6 +32,13 @@ class MediaPlayerManager(
     private val imageView: ImageView,
     private val youtubeWebView: WebView? = null,
     private val onVideoComplete: () -> Unit,
+    /*
+     * #333: a video that FAILED (playback error, wedged decoder), as opposed to one that finished.
+     * Kept apart from onVideoComplete because the two are gated differently downstream: a
+     * follower / group member ignores a completion (the sync owns the index) but must recover
+     * from a fault. Defaults to onVideoComplete for callers that never sync (zones).
+     */
+    private val onVideoFault: () -> Unit = onVideoComplete,
     private val onImageError: (() -> Unit)? = null,
     // feat/transition-engine: the full-screen GL overlay that plays a from->to wipe. Null = no
     // transitions (every render hard-cuts, exactly as before).
@@ -61,7 +69,8 @@ class MediaPlayerManager(
     // engaged when preloadVideo() is called ahead of a boundary (group sync); the wall/solo paths are
     // untouched (they never preload, so playVideo takes the normal cold path).
     private var preloadPlayer: ExoPlayer? = null
-    private var preloadedFile: File? = null
+    // #333: which clip is parked, and whether the parked player may be promoted. See PreloadSlot.
+    private val preloadSlot = PreloadSlot()
     // Throwaway offscreen surface for the preload player: it forces the preload clip to decode frame 0
     // and populate its video size BEFORE the swap, so PlayerView doesn't reset the aspect to "fill"
     // (a one-frame landscape stretch) while it waits for the new player's first video-size report.
@@ -85,20 +94,200 @@ class MediaPlayerManager(
             }
             // Root-2: a corrupt/undecodable video used to freeze the playlist forever — only
             // STATE_ENDED advanced, and an error goes to STATE_IDLE, so onVideoComplete never
-            // fired. Treat a playback error like a completion so the loop moves on instead of
-            // wedging on the broken item (mirrors the web/.wgt onerror -> advance).
+            // fired. A playback error is a FAULT (#333): the solo path still advances past it
+            // (mirrors the web/.wgt onerror -> advance), a follower re-mounts instead.
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Log.e("MediaPlayerManager", "Playback error (${error.errorCodeName}) — advancing: ${error.message}")
-                if (player === exoPlayer) onVideoComplete()
+                if (player === exoPlayer) {
+                    Log.e("MediaPlayerManager", "Playback error (${error.errorCodeName}) — recovering: ${error.message}")
+                    onVideoFault()
+                    return
+                }
+                /*
+                 * #333: the PARKED player failed — typically DECODER_INIT_FAILED / resources
+                 * reclaimed, because the preload is the one moment this app asks a TV SoC for a
+                 * second hardware decoder. This used to be dropped on the floor, and the boundary
+                 * then promoted the dead player (see PreloadSlot). Forget the file so the
+                 * boundary takes the cold path, and let go of whatever the failed prepare holds.
+                 */
+                Log.w("MediaPlayerManager", "Preload failed (${error.errorCodeName}) — next boundary takes the cold path: ${error.message}")
+                preloadSlot.fail()
+                try { player.clearMediaItems() } catch (_: Throwable) {}
+            }
+
+            /*
+             * #298: the ONLY trustworthy signal that the decoder is putting real pixels on the
+             * surface. Everything before this point can be an uninitialised buffer, so the still
+             * frame stays over the top until this fires.
+             */
+            override fun onRenderedFirstFrame() {
+                if (player === exoPlayer) clearSwitchCover()
             }
         })
     }
 
     private fun setupExoPlayer() {
-        // Hold the last frame instead of flashing black during a reset/prepare — turns any residual
-        // switch gap into a brief freeze-frame rather than a black hold.
+        /*
+         * ⚠️ #298, THE GREEN SCREEN. This line used to be the whole story, with the comment "hold
+         * the last frame instead of flashing black during a reset/prepare". Turning the shutter off
+         * does stop the black flash — but it does NOT hold the last frame. It uncovers the video
+         * surface, and with surface_type=texture_view the buffer behind it during a decoder
+         * reconfiguration is whatever the SoC left there: on several TV chipsets that is
+         * uninitialised YUV, which paints SOLID GREEN. That is exactly the report — TVs only, at
+         * the switch to the next video, unaffected by re-encoding the file, gone on a loop restart
+         * (no reconfiguration). The freeze-frame is now painted explicitly by coverSwitchGap()
+         * into the ImageView above this surface, so the promise in the old comment is actually
+         * kept, and the shutter is re-armed for the case where no frame could be captured.
+         */
         try { playerView.setKeepContentOnPlayerReset(true) } catch (e: Throwable) {}
         exoPlayer = buildPlayer().also { playerView.player = it }
+    }
+
+    // ---------------------------------------------------------------- #298: cover the switch gap
+
+    /** Generation that owns the cover, so a mount of something else cannot have it pulled away. */
+    private var coverGeneration: Long = -1L
+
+    private val clearCoverTimeout = Runnable { clearSwitchCover() }
+
+    /**
+     * Paint the frame that is on screen NOW into the ImageView (which the layout stacks above the
+     * PlayerView) and leave it there until the decoder renders its first real frame.
+     *
+     * Must be called before currentType is changed, since captureCurrentFrame() reads it to decide
+     * where the pixels come from.
+     */
+    /*
+     * ⚠️ ONE REUSED, HALF-SIZE BITMAP. The obvious implementation calls captureCurrentFrame(), which
+     * allocates a fresh full-resolution bitmap — ~8MB on a 1080p panel and ~33MB on a 4K one, every
+     * single video switch. Transitions can afford that because they are opt-in and occasional; this
+     * runs on every mount, on the memory-constrained TV sticks that are already the ones failing.
+     * Half resolution is invisible behind a ~200ms gap, and reusing the buffer means the steady
+     * state allocates nothing at all.
+     */
+    private var coverBitmap: Bitmap? = null
+
+    private fun captureCoverFrame(): Bitmap? = try {
+        val tv = playerView.videoSurfaceView as? TextureView
+        if (tv == null || !tv.isAvailable || tv.width <= 0 || tv.height <= 0) null
+        else {
+            val w = (tv.width / 2).coerceAtLeast(1)
+            val h = (tv.height / 2).coerceAtLeast(1)
+            val reuse = coverBitmap
+            val target = if (reuse != null && !reuse.isRecycled && reuse.width == w && reuse.height == h) reuse
+                else Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { coverBitmap = it }
+            tv.getBitmap(target)
+        }
+    } catch (e: Throwable) { null }
+
+    private fun coverSwitchGap(generation: Long) {
+        /*
+         * Coming from an IMAGE there is nothing to capture: the ImageView is already showing the
+         * right pixels. Leaving it visible is both the correct still and free.
+         */
+        if (currentType == MediaType.IMAGE && imageView.drawable != null) {
+            coverGeneration = generation
+            mainHandler.removeCallbacks(clearCoverTimeout)
+            mainHandler.postDelayed(clearCoverTimeout, COVER_MAX_MS)
+            return
+        }
+        val frame = if (currentType == MediaType.VIDEO) captureCoverFrame() else null
+        if (frame == null) {
+            /*
+             * ⚠️ NOTHING TO HOLD, SO GO BACK TO BLACK. With no still to cover it, leaving the
+             * shutter off is what shows the green buffer. A brief black hold is the lesser fault,
+             * and it is what every build before the shutter was disabled did.
+             */
+            try { playerView.setKeepContentOnPlayerReset(false) } catch (e: Throwable) {}
+            return
+        }
+        coverGeneration = generation
+        imageView.setImageBitmap(frame)
+        imageView.visibility = android.view.View.VISIBLE
+        try { playerView.setKeepContentOnPlayerReset(true) } catch (e: Throwable) {}
+        /*
+         * A decoder that never renders would otherwise leave the still up forever, so the video
+         * plays inaudibly behind a photo. The stall watchdog below eventually advances, but the
+         * cover must not outlive a couple of seconds of gap regardless.
+         */
+        mainHandler.removeCallbacks(clearCoverTimeout)
+        mainHandler.postDelayed(clearCoverTimeout, COVER_MAX_MS)
+    }
+
+    private fun clearSwitchCover() {
+        if (coverGeneration != mountGeneration) return   // something else owns the ImageView now
+        coverGeneration = -1L
+        mainHandler.removeCallbacks(clearCoverTimeout)
+        if (currentType != MediaType.VIDEO) return       // an image mount already took it over
+        imageView.visibility = android.view.View.GONE
+        /*
+         * Deliberately NOT setImageBitmap(null): the drawable may be the reused cover buffer, and
+         * it may equally be the bitmap an image mount still owns. Hiding the view is enough, and
+         * dropping the reference is what would force the next capture to allocate again.
+         */
+    }
+
+    // -------------------------------------------------------------- #297: the wedged-decoder poll
+
+    /*
+     * ⚠️ THE FREEZE HAS NO EVENT. A video advances on STATE_ENDED or on a playback error; a decoder
+     * that wedges reports neither, so "playback freezes, only restarting the app helps". The same
+     * shape as the stranded-decode freeze documented at mountGeneration below — the difference is
+     * that one had a signal to guard and this one has to be observed.
+     */
+    private val stall = PlaybackStall()
+
+    private val stallTick = object : Runnable {
+        override fun run() {
+            val p = exoPlayer
+            if (p != null && currentType == MediaType.VIDEO) {
+                val wedged = try {
+                    stall.tick(SystemClock.elapsedRealtime(), p.playbackState, p.playWhenReady, p.currentPosition)
+                } catch (e: Throwable) { false }
+                if (wedged) {
+                    Log.w("MediaPlayerManager", "Playback stalled with no error or end — recovering")
+                    resetPlayersAfterWedge()
+                    onVideoFault()
+                }
+            } else {
+                stall.reset()
+            }
+            mainHandler.postDelayed(this, STALL_POLL_MS)
+        }
+    }
+
+    private companion object {
+        const val STALL_POLL_MS = 2_000L
+        const val COVER_MAX_MS = 2_500L
+    }
+
+    /*
+     * #333: a wedged decoder is in an unknown state, and on the Xiaomi P1s the wedge was CAUSED by
+     * the second decoder the double buffer asked for. "Restart the app" is what recovered it in the
+     * field, and the part of a restart that matters is fresh players — so build one. Both players
+     * go: the parked one because it is the extra decoder, the active one because reusing a wedged
+     * codec is what a plain re-prepare would do. The preload slot is cleared with it, so the
+     * re-mount that follows (onVideoFault -> replay) takes the cold path on a player that owns the
+     * decoder outright.
+     */
+    private fun resetPlayersAfterWedge() {
+        preloadPlayer?.let { p -> try { p.release() } catch (_: Throwable) {} }
+        preloadPlayer = null
+        preloadSlot.clear()
+        exoPlayer?.let { p -> try { p.release() } catch (_: Throwable) {} }
+        exoPlayer = buildPlayer().also { playerView.player = it }
+        stall.reset()
+    }
+
+    /*
+     * ⚠️ STARTED HERE, NOT FROM setupExoPlayer(). setupExoPlayer() runs from the init block at the
+     * top of the class, and Kotlin initialises properties in declaration order — stallTick is
+     * declared above but assigned after that init runs, so posting it from there hands the Handler
+     * a null Runnable and the player crashes on construction. That is the same shape as the boot
+     * TDZ that shipped in 1.9.32 and threw on every start, so it gets its own init block, below
+     * everything it touches.
+     */
+    init {
+        mainHandler.postDelayed(stallTick, STALL_POLL_MS)
     }
 
     // #129: remembered so the live device:mute-changed toggle knows YouTube's current
@@ -109,6 +298,42 @@ class MediaPlayerManager(
     // hard-cuts (never a blank frame). Solo fullscreen only — suppressed for wall followers and group/
     // loop sync (they own their own frame timing). ----
     private fun transitionsActive(): Boolean = transitionView != null && !wallMute && !videoLooping
+
+    /*
+     * #344 — the stage/screen geometry a wipe is fitted to, pushed from MainActivity.applyOrientation.
+     *
+     * The overlay draws onto an UNROTATED, screen-sized surface, so the fit must be done in stage
+     * space and rotated into screen space here (see fitTransitionBitmapRotated). We take these numbers
+     * from the orientation code rather than the overlay's own measured size, because the overlay is
+     * GONE until play() and a GONE view measures 0 — reading it was what hard-cut every wipe (#344).
+     * Zero until the first orientation is applied, so a wipe hard-cuts rather than fitting to nothing.
+     */
+    @Volatile private var stageW = 0
+    @Volatile private var stageH = 0
+    @Volatile private var screenW = 0
+    @Volatile private var screenH = 0
+    @Volatile private var stageRotation = 0f
+    private var geomWarned = false
+
+    /*
+     * #477: the box a still is DECODED against is the stage, not displayMetrics. On a rotated
+     * (portrait) mount the stage is the transpose of the panel - 600x1024 on a 1024x600 screen - while
+     * displayMetrics keeps reporting 1024x600, so a portrait photo was subsampled to fit a landscape
+     * box and then enlarged ~2x onto the stage (1080x1920 -> 270x480). Before the first orientation
+     * pass there is no stage yet, and the screen is the best guess.
+     */
+    private fun decodeBox(): Pair<Int, Int> {
+        val w = stageW; val h = stageH
+        return if (w > 0 && h > 0) w to h
+        else ImageLoader.screenWidth(context) to ImageLoader.screenHeight(context)
+    }
+
+    fun setTransitionStage(stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotationDeg: Float) {
+        this.stageW = stageW; this.stageH = stageH
+        this.screenW = screenW; this.screenH = screenH
+        this.stageRotation = rotationDeg
+        geomWarned = false   // a real geometry change resets the one-shot diagnostic
+    }
 
     // The frame on screen now, as a bitmap, for the wipe's `from`. Image -> the ImageView bitmap; video
     // -> the ExoPlayer TextureView's current frame. Null (youtube/widget/none/unavailable) -> hard cut.
@@ -138,11 +363,36 @@ class MediaPlayerManager(
         val view = transitionView
         if (view == null || spec == null || from == null || !transitionsActive()) return false
         val picked = pickEffect(spec) ?: return false
-        val w = ImageLoader.screenWidth(context); val h = ImageLoader.screenHeight(context)
-        if (w <= 0 || h <= 0) return false
+        /*
+         * #344 — fit to the KNOWN stage/screen geometry, NOT the overlay's measured size.
+         *
+         * #326 changed this to read view.width/height, meaning to use "the stage's own box". But the
+         * overlay is GONE until play() and a GONE view measures 0, so the old `w<=0` guard fired on
+         * EVERY wipe and hard-cut before play() was ever reached — transitions silently stopped
+         * working in all orientations. And even once shown, its size went stale after a rotation
+         * because a GONE view is skipped by later layout passes. So we take the geometry from the
+         * orientation code (setTransitionStage) instead, and fit in stage space + rotate into the
+         * screen box, which the overlay (on the unrotated content root) then draws 1:1.
+         */
+        val sw = stageW; val sh = stageH; val cw = screenW; val ch = screenH; val rot = stageRotation
+        if (sw <= 0 || sh <= 0 || cw <= 0 || ch <= 0) return false   // geometry not applied yet -> hard cut
+        // The invariant #344 asked for: the rotated stage box MUST equal the screen box we draw onto.
+        // If it does not, we would fit to the wrong thing (the exact silent fault) -> hard-cut and log once.
+        if (!TransitionGeometry.rotatedStageMatchesScreen(sw, sh, cw, ch, rot.toInt())) {
+            if (!geomWarned) { geomWarned = true; Log.w("MediaPlayerManager", "wipe geometry mismatch: stage ${sw}x${sh} rot ${rot} vs screen ${cw}x${ch} — hard-cutting") }
+            return false
+        }
+        // Diagnostic cross-check against the overlay's own surface once it is laid out. Never blocks
+        // the wipe (the surface is 0 while GONE); just surfaces drift this whole class of bug hides.
+        val vw = view.width; val vh = view.height
+        if (vw > 0 && vh > 0 && (vw != cw || vh != ch) && !geomWarned) {
+            geomWarned = true; Log.w("MediaPlayerManager", "wipe surface ${vw}x${vh} != screen box ${cw}x${ch}")
+        }
         val fromFit: Bitmap; val toFit: Bitmap
-        try { fromFit = fitTransitionBitmap(from, w, h); toFit = fitTransitionBitmap(toBitmap, w, h) }
-        catch (e: Throwable) { Log.w("MediaPlayerManager", "wipe fit failed: ${e.message}"); return false }
+        try {
+            fromFit = fitTransitionBitmapRotated(from, sw, sh, cw, ch, rot)
+            toFit = fitTransitionBitmapRotated(toBitmap, sw, sh, cw, ch, rot)
+        } catch (e: Throwable) { Log.w("MediaPlayerManager", "wipe fit failed: ${e.message}"); return false }
         view.play(fromFit, toFit, picked.first, picked.second, spec.durationMs) { swap() }
         return true
     }
@@ -287,6 +537,43 @@ class MediaPlayerManager(
         }
     }
 
+    /**
+     * Show a flattened HTML bundle from a string rather than a URL.
+     *
+     * ⚠️ loadDataWithBaseURL WITH A NULL BASE URL, DELIBERATELY. A null base gives the document an
+     * OPAQUE origin, so operator-uploaded bundle scripts cannot reach this app's WebView storage or
+     * issue same-origin requests against the ScreenTinker server — the same isolation the web
+     * player gets from `sandbox="allow-scripts"`. Passing the server URL as the base would be the
+     * obvious way to "make relative paths work" and would hand a bundle the server's origin; there
+     * are no relative paths left to fix, because the server already inlined everything.
+     *
+     * Idempotent on [key] for the reason showWidget is idempotent on its URL: a solo-item playlist
+     * re-shows the same item every duration_sec, and re-loading a running document restarts any
+     * animation or state it was holding.
+     */
+    fun showBundle(html: String, key: String) {
+        if (currentType == MediaType.WIDGET && key == currentWidgetUrl && youtubeWebView != null) {
+            Log.i("MediaPlayerManager", "Bundle already showing, not reloading: $key")
+            youtubeWebView?.visibility = android.view.View.VISIBLE
+            return
+        }
+        Log.i("MediaPlayerManager", "Showing HTML bundle: $key (${html.length} chars)")
+        mountGeneration++
+        currentType = MediaType.WIDGET
+        currentWidgetUrl = key
+
+        playerView.visibility = android.view.View.GONE
+        imageView.visibility = android.view.View.GONE
+        youtubeWebView?.visibility = android.view.View.VISIBLE
+
+        exoPlayer?.stop()
+
+        youtubeWebView?.apply {
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "Bundle")
+            loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+        }
+    }
+
     fun playVideoFromUrl(url: String, muted: Boolean = false) {
         Log.i("MediaPlayerManager", "Streaming video from URL: $url (muted=$muted)")
         mountGeneration++
@@ -300,7 +587,20 @@ class MediaPlayerManager(
 
         exoPlayer?.apply {
             volume = if (muted || wallMute || triggerMute) 0f else 1f
-            setMediaItem(MediaItem.fromUri(Uri.parse(url)))
+            val item = MediaItem.fromUri(Uri.parse(url))
+            if (url.startsWith("rtsp://", ignoreCase = true)) {
+                // RTSP camera/stream: force TCP (interleaved) so it works through NAT/firewalls and on
+                // cameras that refuse UDP. ExoPlayer plays it via the media3-exoplayer-hls sibling
+                // media3-exoplayer-rtsp module; a dead camera lands in a player error -> onVideoComplete
+                // skips it, same as HLS.
+                setMediaSource(
+                    androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory()
+                        .setForceUseRtpTcp(true)
+                        .createMediaSource(item)
+                )
+            } else {
+                setMediaItem(item)   // ExoPlayer infers HLS/DASH/progressive from the URL/content
+            }
             prepare()
             playWhenReady = true
         }
@@ -327,7 +627,7 @@ class MediaPlayerManager(
         val from = if (transition != null) captureCurrentFrame() else null
         val myGeneration = ++mountGeneration
         Thread {
-            val bitmap = ImageLoader.decodeUrl(url, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
+            val bitmap = decodeBox().let { (w, h) -> ImageLoader.decodeUrl(url, w, h) }
             mainHandler.post {
                 // Something else has been asked for since this decode started — including the
                 // error branch, whose onImageError posts next() and would otherwise cut short
@@ -351,7 +651,7 @@ class MediaPlayerManager(
      * Cheap to call every tick — it no-ops if this file is already the preloaded one. Main thread only.
      */
     fun preloadVideo(file: File) {
-        if (preloadedFile?.absolutePath == file.absolutePath) return
+        if (preloadSlot.isParked(file.absolutePath)) return
         val p = preloadPlayer ?: buildPlayer().also { preloadPlayer = it }
         if (warmSurface == null) { warmTexture = SurfaceTexture(0).apply { setDefaultBufferSize(16, 16) }; warmSurface = Surface(warmTexture) }
         p.apply {
@@ -362,7 +662,7 @@ class MediaPlayerManager(
             playWhenReady = false                         // buffer/parse/decode-frame-0 now, don't start
             prepare()
         }
-        preloadedFile = file
+        preloadSlot.park(file.absolutePath)
         Log.i("MediaPlayerManager", "Preloaded next video: ${file.name}")
     }
 
@@ -388,28 +688,36 @@ class MediaPlayerManager(
     }
 
     private fun mountVideo(file: File, muted: Boolean = false) {
-        mountGeneration++
+        val myGeneration = ++mountGeneration
+        // #298: grab the outgoing frame BEFORE currentType moves — captureCurrentFrame() reads it.
+        coverSwitchGap(myGeneration)
+        stall.reset()             // a new item starts its own stall clock
         stopYoutubeIfPlaying()
         currentType = MediaType.VIDEO
         currentWidgetUrl = null   // surface reused - a later widget show must reload
 
-        // Show player, hide image
+        // Show player. The ImageView stays up as the freeze-frame if coverSwitchGap took it, and is
+        // hidden again by onRenderedFirstFrame.
         playerView.visibility = android.view.View.VISIBLE
-        imageView.visibility = android.view.View.GONE
+        if (coverGeneration != myGeneration) imageView.visibility = android.view.View.GONE
         youtubeWebView?.visibility = android.view.View.GONE
 
         // Warm swap: if this exact file was preloaded, promote the parked player instead of a cold
         // prepare — the container is already open/buffered so the first frame renders near-instantly.
         val pp = preloadPlayer
-        if (pp != null && preloadedFile?.absolutePath == file.absolutePath) {
-            Log.i("MediaPlayerManager", "Playing video (warm swap): ${file.name}")
+        val claim = if (pp == null) PreloadSlot.Claim.COLD
+                    else preloadSlot.claim(file.absolutePath, playerIsIdle = pp.playbackState == Player.STATE_IDLE)
+        if (pp != null && claim != PreloadSlot.Claim.COLD) {
+            Log.i("MediaPlayerManager", "Playing video (warm swap${if (claim == PreloadSlot.Claim.WARM_NEEDS_PREPARE) ", re-preparing" else ""}): ${file.name}")
             val old = exoPlayer
             exoPlayer = pp
             preloadPlayer = old
-            preloadedFile = null
             pp.apply {
                 volume = if (muted || wallMute || triggerMute) 0f else 1f
                 repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                // #333: a parked player that is still IDLE was never prepared (or lost its
+                // prepare); playWhenReady alone would leave it sitting on 0:00 forever.
+                if (claim == PreloadSlot.Claim.WARM_NEEDS_PREPARE) prepare()
                 playWhenReady = true
             }
             playerView.player = pp
@@ -429,7 +737,7 @@ class MediaPlayerManager(
 
     fun showImage(file: File, transition: TransitionSpec? = null) {
         Log.i("MediaPlayerManager", "Showing image: ${file.absolutePath}")
-        val bitmap = ImageLoader.decodeFile(file, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
+        val bitmap = decodeBox().let { (w, h) -> ImageLoader.decodeFile(file, w, h) }
         if (bitmap == null) {
             Log.w("MediaPlayerManager", "Skipping unloadable image: ${file.name}")
             onImageError?.invoke()
@@ -442,6 +750,7 @@ class MediaPlayerManager(
     }
 
     fun stop() {
+        stall.reset()
         exoPlayer?.stop()
         imageView.setImageBitmap(null)
         youtubeWebView?.loadUrl("about:blank")
@@ -451,11 +760,14 @@ class MediaPlayerManager(
     }
 
     fun release() {
+        coverBitmap = null
+        mainHandler.removeCallbacks(stallTick)
+        mainHandler.removeCallbacks(clearCoverTimeout)
         exoPlayer?.release()
         exoPlayer = null
         preloadPlayer?.release()
         preloadPlayer = null
-        preloadedFile = null
+        preloadSlot.clear()
         warmSurface?.release(); warmSurface = null
         warmTexture?.release(); warmTexture = null
     }
@@ -518,8 +830,30 @@ class MediaPlayerManager(
     fun setTriggerMute(mute: Boolean) {
         if (triggerMute == mute) return
         triggerMute = mute
-        exoPlayer?.volume = if (mute || wallMute) 0f else 1f
-        setYoutubeMuted(youtubeMuted || mute)
+        exoPlayer?.volume = if (triggerMute || talkMute || wallMute) 0f else 1f
+        setYoutubeMuted(youtubeMuted || triggerMute || talkMute)
+    }
+
+    /**
+     * #talk: duck the content while a voice call / PA announcement is active on this device, so the
+     * announcement is heard. Mutes the base video + YouTube (and pauses the video for a visible cue),
+     * restoring on clear. A separate flag from triggerMute so the two never clobber each other. The
+     * talk audio itself plays through the WebRTC AudioTrack (a different stream), untouched by this.
+     */
+    private var talkMute = false
+    private var talkPausedByUs = false
+    fun setTalkMute(mute: Boolean) {
+        if (talkMute == mute) return
+        talkMute = mute
+        exoPlayer?.volume = if (triggerMute || talkMute || wallMute) 0f else 1f
+        setYoutubeMuted(youtubeMuted || triggerMute || talkMute)
+        // Pause the video for a clear "announcement in progress" cue; only resume what WE paused, so
+        // a player parked for another reason (group-sync buffering) is left alone.
+        try {
+            val p = exoPlayer ?: return
+            if (mute) { if (p.playWhenReady) { p.playWhenReady = false; talkPausedByUs = true } }
+            else if (talkPausedByUs) { p.playWhenReady = true; talkPausedByUs = false }
+        } catch (_: Throwable) {}
     }
 
     /**

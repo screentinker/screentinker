@@ -1,0 +1,138 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: ScreenTinker 2.0 — Slides, Triggers, Node Mesh
+File:  screentinker-2p0.mp4  (~5:10 · 1080p30)
+========================================================================
+
+
+------------------------------- TITLE ----------------------------------
+(pick one — the first leads with the release, the second with the feature)
+
+ScreenTinker 2.0 — Design Slides, Fire Triggers, Federate Servers
+
+ScreenTinker 2.0: A Real Slide Editor for Open-Source Digital Signage
+
+
+---------------------------- DESCRIPTION -------------------------------
+
+ScreenTinker 2.0 is out — the biggest release the project has had. Most of
+it is one thing: you can finally design a slide, properly, inside the
+product.
+
+▶ What's new
+
+SLIDES — a real authoring surface. Headlines, body text, big numbers,
+photos, rules and panels, plus clock, date, countdown and QR elements. QR
+codes are drawn server-side, so a code needs no network at the panel and no
+third-party image service.
+
+The part that matters: a slide is two separate things. The template is the
+view — geometry, style, motion, a slot name per element. The fields are the
+record — just the words. They meet at render time and nowhere else, so
+editing a headline three months later writes one string and leaves the
+layout untouched. Fifteen signage products were surveyed before this was
+designed, and not one of them makes the changeable text part of the
+template.
+
+Also in Slides: picture and video backgrounds with a scrim, bundled fonts
+served with the slide so a deck renders the same on Android, Tizen,
+BrightSign or a browser, per-element motion that warns you when an
+animation outlives its slide's dwell, portrait authoring, and generated
+then layered slides with real transparency.
+
+TRIGGERS — an external system (a Crestron or Extron panel, a PLC, a button)
+can put a playlist over whatever a screen is showing. Fired over HTTP or
+UDP in four wire formats, and resolved on the screen itself, so an alarm
+still works with the WAN down.
+
+NODE MESH — servers can federate. A hub can see a customer's screens, send
+content, request a reboot and read diagnostics, each under its own grant,
+with the customer deciding what it accepts. Deliberately conservative for a
+first release: opt-in, capped at two tiers.
+
+RUNNING THE SERVER ON THE PLAYER — a BrightSign can now run ScreenTinker
+itself, with the player in the widget beside it.
+
+PROOF OF PLAY THAT SURVIVES AN OUTAGE — players queue what they played
+offline and flush it on reconnect, de-duplicated by a player-minted id so a
+re-flush cannot double-count.
+
+PLUS — a second workspace per account, per-organisation SSO/OIDC with
+DNS-verified domains, HTML bundles (.wgt/.zip) as a playlist item, bulk
+selection and group actions, playlist inheritance that forks instead of
+overwriting, Japanese localisation, and an SBOM published with every
+release.
+
+⚠️ The Designer is marked deprecating. Widgets made with it still play and
+are still editable there — it is not removed — but new work belongs in
+Slides.
+
+▶ Upgrading from 1.9.x
+Nothing to do by hand. Migrations run on first boot. Content, playlists,
+schedules and pairings all keep their meaning, and the mesh stays off until
+you turn it on.
+
+▶ Chapters
+0:00  ScreenTinker 2.0 is here
+0:12  Slides — a real authoring surface
+0:32  Template and fields are separate
+0:49  Edit the words, not the layout
+1:02  Picture and video backgrounds
+1:17  Generated and layered slides
+1:36  Fonts, motion and portrait
+1:59  The designer is deprecating
+2:10  Triggers — external control
+2:31  Triggers resolve on the screen
+2:52  Node mesh — servers federate
+3:16  Running the server on the player
+3:35  Proof of play survives an outage
+3:52  Faster on big fleets
+4:15  Workspaces, SSO and the rest
+4:38  Upgrading from 1.9
+4:57  Get it
+
+🔗 Links
+• Source (MIT licensed) — a star helps! https://github.com/screentinker/screentinker
+• Try it free (hosted): https://screentinker.com
+• Self-hosting guide: https://screentinker.com/guides/self-hosted-digital-signage.html
+• Full 2.0 changelog: https://github.com/screentinker/screentinker/blob/main/CHANGELOG.md
+• Community & support (Discord): https://discord.gg/utTdsrqq4Z
+
+ScreenTinker is free and open source. Self-host it on any number of screens —
+you only pay for the server. A hosted plan exists at a flat $99/mo for 15
+devices if you would rather not run one.
+
+Open source · Self-hostable · No per-screen fees · Your data on your hardware
+
+#DigitalSignage #OpenSource #SelfHosted #ScreenTinker #BrightSign
+
+
+------------------------------- TAGS -----------------------------------
+screentinker, screentinker 2.0, digital signage software, open source digital
+signage, self hosted digital signage, digital signage slide editor, signage
+templates, digital signage triggers, crestron digital signage, extron trigger,
+brightsign, brightsign signage, proof of play, digital signage analytics,
+signage federation, multi tenant digital signage, msp digital signage,
+digital signage sso, free digital signage, signage release notes, yodeck
+alternative, screencloud alternative, optisigns alternative
+
+
+------------------------------- NOTES ----------------------------------
+• Category: Science & Technology
+• Every claim traces to CHANGELOG.md 2.0.0. If a number changes there, change
+  it in render_vo.py AND here — they are the same claim in two places.
+• Chapters are COMPUTED, not typed: work/chapters.txt is regenerated from the
+  real VO durations. Re-render any scene's VO and the chapters shift — the
+  alternative video shipped with stale chapters exactly this way.
+• No burned-in captions — enable YouTube auto-captions.
+• All UI is real, captured from a real 2.0 server (see rebuild.sh + capture.py)
+  against invented demo data: a fictional "Fairview Medical Center", five
+  invented screens, generated media. No customer data, no third-party media.
+• 4 of 17 scenes are branded diagrams rather than captures, because they have
+  no capturable surface: 03/04 (template vs fields is a concept), 11 (mesh
+  needs a second enrolled instance), 12 (BrightSign is hardware).
+• Honest scope: the mesh scene says out loud that it is opt-in, two tiers, and
+  that content/schedules are not mirrored yet. Keep that — it is the same
+  fairness rule as the competitor video.
+• THUMBNAIL: not made yet. Reuse make_thumb.py; suggest the slide editor with a
+  large "2.0" and the green accent.

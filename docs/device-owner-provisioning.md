@@ -110,22 +110,38 @@ device-owner APIs, all no-ops off-owner) so a fresh panel **skips the manual fir
 - **Kiosk lock-task** package pre-whitelisted; **notifications** permission granted; server URL seeded.
 - Unknown-sources is moot (owner silent-installs).
 
-**Accessibility is the lone exception — and cannot be automated.** It powers the Tier-2 remote
-screen-view + tap/swipe only (not playback/OTA/kiosk). Android exposes **no** API — not even to a
-device owner — to enable an accessibility service; it always needs a human toggle or ADB. On
-Android 13+ a provisioning-installed app is also gated by **Enhanced Confirmation Mode ("restricted
-settings")**, which a true device owner *should* be exempt from but some OEM builds (e.g. KB1001)
-don't honor. Two ways to enable it:
+**Accessibility powers more than it looks.** It is the **durable** whole-screen capture path for the
+remote view (survives every OTA, unlike MediaProjection consent) **and** the working remote **D-pad**
+(arrow keys ride accessibility focus navigation, because a normal app cannot inject key events). It
+does **not** touch playback / OTA / kiosk. So on a panel used for remote support, enabling it fixes
+both "the live view only shows the playlist after an update" and "the arrow keys do nothing".
 
-- **Manual (once per panel):** Settings → Apps → ScreenTinker → **⋮ → Allow restricted settings**,
-  then Settings → Accessibility → ScreenTinker → **On**. Persists across reboots/OTA.
-- **ADB during staging (zero-UI):**
+There is **no pure device-owner / DPM API** to enable an accessibility service; Android blocks that
+deliberately. The one supported way for the app to enable **its own** service is to hold
+`WRITE_SECURE_SETTINGS`, which is signature-level and cannot be self-granted, so it is granted **once
+at provisioning**. Three ways to get the service on, best first:
+
+- **Self-enable via a one-time grant (recommended, zero-UI, survives OTA):**
+  ```bash
+  adb shell pm grant com.remotedisplay.player android.permission.WRITE_SECURE_SETTINGS
+  ```
+  With this grant the app enables its own accessibility service on every boot
+  (`AccessibilityEnabler.ensureEnabled`), so a reprovision / factory-reset / OTA never leaves a panel
+  on playlist-only capture again. On Android 13+ some OEM builds (e.g. KB1001) also gate it behind
+  **Enhanced Confirmation Mode ("restricted settings")**, which a true device owner *should* be exempt
+  from but some don't honor, so clear it in the same staging step if the self-enable does not take:
+  ```bash
+  adb shell appops set com.remotedisplay.player ACCESS_RESTRICTED_SETTINGS allow
+  ```
+- **Manual (once per panel, no ADB):** Settings → Apps → ScreenTinker → **⋮ → Allow restricted
+  settings**, then Settings → Accessibility → ScreenTinker → **On**. Persists across reboots/OTA.
+- **ADB direct write (zero-UI, but must be redone if the service is ever cleared):**
   ```bash
   adb shell appops set com.remotedisplay.player ACCESS_RESTRICTED_SETTINGS allow   # clears the ECM gate
   adb shell settings put secure enabled_accessibility_services com.remotedisplay.player/.service.PowerAccessibilityService
   adb shell settings put secure accessibility_enabled 1
   ```
-  (Shell holds `WRITE_SECURE_SETTINGS`; the app can't, by design.)
+  (Shell holds `WRITE_SECURE_SETTINGS`; without the grant above, the app itself cannot.)
 
 ## Option C — Zero-touch
 

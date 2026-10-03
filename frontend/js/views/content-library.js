@@ -1,7 +1,17 @@
-import { api } from '../api.js';
+import { api, assertLocalCallAllowed } from '../api.js';
+import { uploadFilesResumable } from '../lib/chunked-upload.js';
+import * as gettingStarted from '../components/getting-started.js';
 import { showToast } from '../components/toast.js';
 import { esc, hydrateAuthImages } from '../utils.js';
 import { t } from '../i18n.js';
+import { openHistoryModal } from '../components/history-modal.js';
+import { renderApprovalBar } from '../components/approval-actions.js';
+import { isPdf, renderPdfToPages, baseName } from '../components/pdf-pages.js';
+
+/* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Kept as a constant rather than
+ * spelled out at each site: it is compared in three places here, and a typo in one of them is a
+ * card that renders an <img> pointed at a zip. */
+const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
 
 // #216: languages offered in the caption/subtitle pickers. Codes are BCP-47 primary tags —
 // enough for signage; extend as needed.
@@ -42,6 +52,11 @@ function toLocalDatetimeInput(epochSec) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+function metaToLines(meta) {
+  if (!meta || typeof meta !== 'object') return '';
+  return Object.entries(meta).map(([k, v]) => `${k}=${v}`).join('\n');
+}
+
 export function render(container) {
   container.innerHTML = `
     <div class="page-header">
@@ -50,6 +65,10 @@ export function render(container) {
         <div class="subtitle">${t('content.subtitle')}</div>
       </div>
     </div>
+
+    <!-- The checklist follows the user here. Arriving from its "Add content" step and finding
+         nothing that mentions it is how someone loses the thread. -->
+    <div id="gettingStarted"></div>
 
     <div class="content-toolbar" style="display:flex;gap:16px;margin-bottom:24px">
       <div class="upload-area" id="uploadArea" style="flex:1;margin-bottom:0">
@@ -60,7 +79,7 @@ export function render(container) {
         </svg>
         <p>${t('content.drop')}</p>
         <p class="upload-hint">${t('content.upload_hint')}</p>
-        <input type="file" id="fileInput" style="display:none" multiple accept="video/*,image/*">
+        <input type="file" id="fileInput" style="display:none" multiple accept="video/*,image/*,audio/*,.zip,.wgt,.pdf,application/pdf">
         <div class="upload-progress" id="uploadProgress" style="display:none">
           <div class="upload-progress-bar">
             <div class="upload-progress-fill" id="uploadProgressFill" style="width:0%"></div>
@@ -84,6 +103,8 @@ export function render(container) {
           <option value="video/webm">${t('content.mime.video_webm')}</option>
           <option value="image/jpeg">${t('content.mime.image_jpeg')}</option>
           <option value="image/png">${t('content.mime.image_png')}</option>
+          <option value="audio/mpeg">${t('content.mime.audio_mpeg')}</option>
+          <option value="audio/wav">${t('content.mime.audio_wav')}</option>
         </select>
         <button class="btn btn-primary" id="addRemoteBtn">${t('content.remote_add_btn')}</button>
       </div>
@@ -100,6 +121,19 @@ export function render(container) {
         <input type="text" id="youtubeNameInput" class="input" placeholder="${t('content.youtube_name_placeholder')}">
         <button class="btn btn-primary" id="addYoutubeBtn">${t('content.youtube_add_btn')}</button>
       </div>
+      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="23 7 16 12 23 17 23 7"/>
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+          </svg>
+          ${t('content.hls')}
+        </div>
+        <p style="font-size:12px;color:var(--text-muted)">${t('content.hls_desc')}</p>
+        <input type="text" id="hlsUrlInput" class="input" placeholder="${t('content.hls_url_placeholder')}">
+        <input type="text" id="hlsNameInput" class="input" placeholder="${t('content.hls_name_placeholder')}">
+        <button class="btn btn-primary" id="addHlsBtn">${t('content.hls_add_btn')}</button>
+      </div>
     </div>
     </div>
 
@@ -110,7 +144,9 @@ export function render(container) {
         <option value="video" ${state.type === 'video' ? 'selected' : ''}>${t('content.filter_type_video')}</option>
         <option value="image" ${state.type === 'image' ? 'selected' : ''}>${t('content.filter_type_image')}</option>
         <option value="youtube" ${state.type === 'youtube' ? 'selected' : ''}>${t('content.filter_type_youtube')}</option>
+        <option value="live" ${state.type === 'live' ? 'selected' : ''}>${t('content.filter_type_live')}</option>
         <option value="web" ${state.type === 'web' ? 'selected' : ''}>${t('content.filter_type_web')}</option>
+        <option value="bundle" ${state.type === 'bundle' ? 'selected' : ''}>${t('content.filter_type_bundle')}</option>
       </select>
       <select id="contentSort" class="input btn-sm" style="width:auto;background:var(--bg-input)">
         <option value="date_desc" ${state.sort === 'date_desc' ? 'selected' : ''}>${t('content.sort_newest')}</option>
@@ -135,6 +171,21 @@ export function render(container) {
   // File upload handling
   const uploadArea = document.getElementById('uploadArea');
   const fileInput = document.getElementById('fileInput');
+
+  /*
+   * The checklist, if this account still has one. Fire-and-forget: it fetches devices and
+   * playlists (never content — the caller has none to give here and getContent is this page's own
+   * expensive call), and hides itself when there is nothing left to do.
+   */
+  gettingStarted.mount(document.getElementById('gettingStarted'), {
+    // Step 2 points at this page, so its button must DO something here rather than re-navigate to
+    // the page it is already on. Clicking the upload area is the page's own path to the file
+    // picker — and it stays inside the user's click, which is what the browser requires to open one.
+    onAction: (a) => {
+      if (a === 'add-content') { document.getElementById('uploadArea')?.click(); return true; }
+      return false;
+    },
+  }).catch(() => {});
 
   uploadArea.addEventListener('click', () => fileInput.click());
 
@@ -197,6 +248,27 @@ export function render(container) {
     }
   });
 
+  // IPTV: add a live HLS stream. The screen opens the URL itself (it may be a LAN
+  // address); ScreenTinker never pulls the video, so the private-URL error from the
+  // server-fetched remote path never applies here.
+  document.getElementById('addHlsBtn').addEventListener('click', async () => {
+    const url = document.getElementById('hlsUrlInput').value.trim();
+    const name = document.getElementById('hlsNameInput').value.trim();
+    if (!url) {
+      showToast(t('content.error_enter_hls_url'), 'error');
+      return;
+    }
+    try {
+      await api.addHlsContent(url, name);
+      showToast(t('content.toast.hls_added'), 'success');
+      document.getElementById('hlsUrlInput').value = '';
+      document.getElementById('hlsNameInput').value = '';
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
   // #214: search/type/sort now query the server so results span the whole workspace,
   // not just the items already rendered on the current page. Search is debounced to
   // avoid a request per keystroke.
@@ -244,36 +316,109 @@ const state = {
 };
 
 async function handleFiles(files) {
-  const list = Array.from(files);
-  if (list.length === 0) return;
+  const all = Array.from(files);
+  if (all.length === 0) return;
   const progress = document.getElementById('uploadProgress');
   const progressFill = document.getElementById('uploadProgressFill');
   const progressText = document.getElementById('uploadProgressText');
+
+  // A PDF is not uploaded as a PDF. It is rendered to one PNG per page in this browser and those
+  // go up as ordinary images, into a folder and a playlist named after the document. The server
+  // never sees the PDF and does not accept one — see components/pdf-pages.js for why.
+  const pdfs = all.filter(isPdf);
+  const list = all.filter((f) => !isPdf(f));
 
   // #212: send all selected files in a single request with aggregate progress, instead
   // of one sequential XHR per file.
   progress.style.display = 'block';
   progressFill.style.width = '0%';
-  const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
-  progressText.textContent = label;
 
   try {
-    await api.uploadContent(list, (pct) => {
-      progressFill.style.width = pct + '%';
-      progressText.textContent = `${label} — ${pct}%`;
-    }, state.currentFolderId);
-    showToast(
-      list.length === 1
-        ? t('content.toast.uploaded_named', { name: list[0].name })
-        : t('content.toast.uploaded_count', { count: list.length }),
-      'success'
-    );
+    for (const pdf of pdfs) await importPdf(pdf, progressFill, progressText);
+    if (list.length) {
+      const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
+      progressText.textContent = label;
+      /*
+       * ⚠️ RESUMABLE, ONE FILE AT A TIME — this replaces #212's single all-or-nothing request.
+       *
+       * That request had to finish inside the shortest timeout between the browser and the server,
+       * which on prod is Cloudflare's 125 seconds. Measured: seven consecutive failures from one
+       * customer at 125.008-125.012s while his successful uploads peaked at 114.2s. Selecting
+       * several files made it certain, because the bytes scaled and the 125 seconds did not — and
+       * the aggregate bar sat near 1% the whole time, which is exactly how he reported it.
+       *
+       * The bar still aggregates across the whole selection; it is now fed by bytes rather than by
+       * one XHR's progress, so it means the same thing without betting everything on one request.
+       */
+      await uploadFilesResumable(list, {
+        folderId: state.currentFolderId,
+        onProgress: (sent, total, file) => {
+          const pct = total ? Math.round((sent / total) * 100) : 0;
+          progressFill.style.width = pct + '%';
+          progressText.textContent = list.length === 1
+            ? `${label} — ${pct}%`
+            : `${label} — ${pct}% (${file ? file.name : ''})`;
+        },
+        // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
+        onResumeOffer: ({ offset, total }) => window.confirm(
+          t('content.upload_resume_prompt', {
+            name: list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length }),
+            done: Math.round((offset / total) * 100),
+          })
+        ),
+      });
+      showToast(
+        list.length === 1
+          ? t('content.toast.uploaded_named', { name: list[0].name })
+          : t('content.toast.uploaded_count', { count: list.length }),
+        'success'
+      );
+    }
   } catch (err) {
+    const label = all.length === 1 ? all[0].name : t('content.upload_progress_count', { count: all.length });
     showToast(t('content.toast.upload_failed_named', { name: label, error: err.message }), 'error');
   }
 
   progress.style.display = 'none';
   loadContent();
+}
+
+/**
+ * One PDF → a folder of page images + a playlist that plays them in order.
+ *
+ * Rendering is the first half of the progress bar, uploading the second. The folder is a
+ * nicety and the playlist is the feature, so a folder that cannot be created (no workspace, or
+ * the per-workspace folder cap) falls back to the current folder rather than failing the import,
+ * and a playlist that cannot be created after the pages are up reports THAT rather than pretending
+ * the upload failed — the images exist and the user should know it.
+ */
+async function importPdf(file, progressFill, progressText) {
+  const base = baseName(file.name).slice(0, 100);
+  progressText.textContent = t('content.pdf.rendering', { name: base, done: 0, total: '…' });
+  const pages = await renderPdfToPages(file, (done, total) => {
+    progressFill.style.width = Math.round((done / total) * 50) + '%';
+    progressText.textContent = t('content.pdf.rendering', { name: base, done, total });
+  });
+
+  let folderId = state.currentFolderId;
+  try {
+    folderId = (await api.createFolder(base, state.currentFolderId)).id;
+  } catch (_) { /* fall through: pages land in the current folder instead */ }
+
+  const uploaded = await api.uploadContent(pages, (pct) => {
+    progressFill.style.width = (50 + Math.round(pct / 2)) + '%';
+    progressText.textContent = t('content.pdf.uploading', { name: base, pct });
+  }, folderId);
+  const items = Array.isArray(uploaded) ? uploaded : [uploaded];
+
+  try {
+    const playlist = await api.createPlaylist(base,
+      t('content.pdf.playlist_description', { name: file.name, count: items.length }));
+    await api.addPlaylistItemsBulk(playlist.id, items.map((c) => c.id));
+    showToast(t('content.toast.pdf_imported', { name: base, count: items.length }), 'success');
+  } catch (err) {
+    showToast(t('content.toast.pdf_playlist_failed', { name: base, count: items.length, error: err.message }), 'error');
+  }
 }
 
 async function loadContent() {
@@ -445,6 +590,14 @@ async function loadContent() {
                   </svg>
                 </div>
               </div>`
+          : c.mime_type === BUNDLE_MIME
+            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+                <span style="font-size:10px;color:var(--text-muted)">${t('content.type_bundle_short')}</span>
+              </div>`
           : c.remote_url
             ? `<div class="video-icon" style="flex-direction:column;gap:4px">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -466,8 +619,9 @@ async function loadContent() {
         </div>
         <div class="content-item-body">
           <div class="content-item-name" title="${esc(c.filename)}">${esc(c.filename)}</div>
+          ${Array.isArray(c.tags) && c.tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${c.tags.map((tg) => `<span data-tag="${esc(tg)}" style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);cursor:pointer">#${esc(tg)}</span>`).join('')}</div>` : ''}
           <div class="content-item-size">
-            ${c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
+            ${c.mime_type === 'video/hls' || c.mime_type === 'video/rtsp' ? t('content.type_live') : c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
             ${c.duration_sec ? ` &middot; ${Math.floor(c.duration_sec / 60)}:${String(Math.floor(c.duration_sec % 60)).padStart(2, '0')}` : ''}
             ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
             ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}
@@ -477,6 +631,7 @@ async function loadContent() {
             : (exp.dateLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_label', { date: exp.dateLabel })}</div>` : '')}
         </div>
         <div class="content-item-actions">
+          <button class="btn btn-secondary btn-sm" data-history-content="${c.id}" title="${t('history.button')}">${t('history.button')}</button>
           <button class="btn btn-secondary btn-sm" data-edit-content="${c.id}" title="${t('content.btn_edit')}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -531,6 +686,12 @@ async function loadContent() {
 
     // Delete handler via event delegation
     grid.onclick = async (e) => {
+      const histBtn = e.target.closest('[data-history-content]');
+      if (histBtn) {
+        const c = content.find(x => x.id === histBtn.dataset.historyContent);
+        openHistoryModal('content', histBtn.dataset.historyContent, { name: c?.name || c?.filename, onChanged: () => loadContent() });
+        return;
+      }
       // #213: ignore clicks originating on a selection checkbox (handled above).
       if (e.target.closest('.content-select-wrap')) return;
       // Preview on click (not on delete button)
@@ -546,6 +707,14 @@ async function loadContent() {
       }
 
       // Edit button
+      const tagEl = e.target.closest('[data-tag]');
+      if (tagEl) {
+        state.search = '#' + tagEl.dataset.tag;
+        const box = document.getElementById('contentSearch');
+        if (box) box.value = state.search;
+        loadContent();
+        return;
+      }
       const editBtn = e.target.closest('[data-edit-content]');
       if (editBtn) {
         const id = editBtn.dataset.editContent;
@@ -598,6 +767,10 @@ async function loadContent() {
   } catch (err) {
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>${t('content.failed_to_load')}</h3><p>${esc(err.message)}</p></div>`;
   }
+
+  // #313/checklist: adding content ticks a step, and this is the one path every add
+  // (file, remote URL, YouTube) already goes through.
+  gettingStarted.refresh().catch(() => {});
 }
 
 // #213: the batch toolbar — shown only when something is selected. `visible` is the current
@@ -699,6 +872,15 @@ function showEditModal(contentItem, onSave) {
           <label>${t('content.label_filename')}</label>
           <input type="text" id="editFilename" class="input" value="${esc(contentItem.filename)}">
         </div>
+        <div class="form-group">
+          <label>${t('content.label_tags')}</label>
+          <input type="text" id="editTags" class="input" value="${esc((Array.isArray(contentItem.tags) ? contentItem.tags : []).join(', '))}" placeholder="${esc(t('content.tags_placeholder'))}">
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('content.tags_hint')}</div>
+        </div>
+        <div class="form-group">
+          <label>${t('content.label_meta')}</label>
+          <textarea id="editMeta" class="input" rows="3" placeholder="${esc(t('content.meta_placeholder'))}" style="width:100%;font-family:monospace;font-size:12px">${esc(metaToLines(contentItem.meta))}</textarea>
+        </div>
         ${isRemote ? `
         <div class="form-group">
           <label>${t('content.label_remote_url_field')}</label>
@@ -775,7 +957,7 @@ function showEditModal(contentItem, onSave) {
         ${!isRemote ? `
         <div class="form-group">
           <label>${t('content.label_replace_file')}</label>
-          <input type="file" id="editFileReplace" accept="video/*,image/*" style="font-size:13px;color:var(--text-secondary)">
+          <input type="file" id="editFileReplace" accept="video/*,image/*,audio/*,.zip,.wgt" style="font-size:13px;color:var(--text-secondary)">
           <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.replace_file_hint')}</p>
         </div>
         ` : ''}
@@ -806,6 +988,16 @@ function showEditModal(contentItem, onSave) {
       const folderId = overlay.querySelector('#editFolderId')?.value || '';
       const updateData = {};
       if (filename !== contentItem.filename) updateData.filename = filename;
+      const tagsRaw = overlay.querySelector('#editTags')?.value || '';
+      const newTags = tagsRaw.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+      const curTags = Array.isArray(contentItem.tags) ? contentItem.tags : [];
+      if (newTags.join('\0') !== curTags.join('\0')) updateData.tags = newTags;
+      const metaRaw = overlay.querySelector('#editMeta')?.value || '';
+      // Only send meta when it actually changed. metaToLines() renders the
+      // current meta the same way the textarea is seeded, so an untouched
+      // modal produces an identical string and no-op Saves don't fire a PUT
+      // (which would bump a revision and re-flag approval-gated assets).
+      if (metaRaw !== metaToLines(contentItem.meta)) updateData.meta = metaRaw;
       if (mimeType !== contentItem.mime_type) updateData.mime_type = mimeType;
       if (remoteUrl !== undefined && remoteUrl !== contentItem.remote_url) updateData.remote_url = remoteUrl;
       if ((contentItem.folder_id || '') !== folderId) updateData.folder_id = folderId || null;
@@ -841,18 +1033,24 @@ function showEditModal(contentItem, onSave) {
         if (contentItem.subtitle_url && subLang !== (contentItem.subtitle_lang || 'en')) updateData.subtitle_lang = subLang;
       }
 
+      let pendingReview = false;
       if (Object.keys(updateData).length > 0) {
-        await fetch('/api/content/' + contentItem.id, {
+        assertLocalCallAllowed('/content', 'PUT');
+        const r = await fetch('/api/content/' + contentItem.id, {
           method: 'PUT',
           headers: { ...headers, 'Content-Type': 'application/json' },
           body: JSON.stringify(updateData)
         });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || 'Update failed');
+        pendingReview = !!body.pending_review;
       }
 
       // Replace file if provided
       if (replaceFile) {
         const formData = new FormData();
         formData.append('file', replaceFile);
+        assertLocalCallAllowed('/content', 'POST');
         await fetch('/api/content/' + contentItem.id + '/replace', {
           method: 'PUT',
           headers,
@@ -865,6 +1063,7 @@ function showEditModal(contentItem, onSave) {
         const subForm = new FormData();
         subForm.append('subtitle', subtitleFile);
         if (subLangEl?.value) subForm.append('subtitle_lang', subLangEl.value);
+        assertLocalCallAllowed('/content', 'POST');
         await fetch('/api/content/' + contentItem.id + '/subtitle', {
           method: 'POST',
           headers,
@@ -873,7 +1072,7 @@ function showEditModal(contentItem, onSave) {
       }
 
       overlay.remove();
-      showToast(t('content.toast.updated'), 'success');
+      showToast(pendingReview ? t('review.toast.saved_as_draft') : t('content.toast.updated'), 'success');
       if (onSave) onSave();
     } catch (err) {
       showToast(err.message || t('content.error_update_failed'), 'error');
@@ -881,7 +1080,52 @@ function showEditModal(contentItem, onSave) {
   };
 }
 
-function showPreview(content) {
+async function showPreview(content) {
+  /*
+   * ⚠️ A BUNDLE IS PREVIEWED THROUGH AN EPHEMERAL SESSION, NOT ITS PUBLIC URL. /api/content/:id/
+   * bundle is gated on the content being referenced by a playlist — which a just-uploaded bundle is
+   * not — so pointing an iframe at it here would 403 and show an empty box. That is the same
+   * "preview shows nothing" trap the directory-board backgrounds had.
+   *
+   * The frame is sandboxed to allow-scripts with NO allow-same-origin, exactly as a player mounts
+   * it. This is the dashboard origin, where the session JWT lives in localStorage, so that is not
+   * a detail: an operator-uploaded bundle must never run with access to it.
+   *
+   * ⚠️ AND IT MUST BE src=, NOT srcdoc, even though the player uses srcdoc for the same bytes. A
+   * srcdoc frame inherits ITS PARENT'S CSP; this page has one (`script-src 'self'`) and a flattened
+   * bundle is entirely data: URIs, so every script in it would be blocked and the preview would
+   * render a styled, dead page with nothing in any log. The player gets away with srcdoc only
+   * because /player is CSP-exempt. Measured both ways — do not "simplify" this to srcdoc.
+   */
+  if (content.mime_type === BUNDLE_MIME) {
+    let session;
+    try {
+      session = await api.post(`/content/${content.id}/bundle-preview`);
+    } catch (err) {
+      showToast(err.message || t('content.bundle_preview_failed'), 'error');
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.style.display = 'flex';
+    overlay.innerHTML = `
+      <div style="background:var(--bg-secondary);border-radius:var(--radius-lg);max-width:90vw;max-height:90vh;overflow:hidden;position:relative">
+        <button style="position:absolute;top:8px;right:8px;z-index:1;background:rgba(0,0,0,0.7);border:none;color:white;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer" id="closePreview">&times;</button>
+        <iframe sandbox="allow-scripts" src="${esc(session.url)}" style="width:80vw;height:45vw;max-height:80vh;display:block;border:none;background:#000"></iframe>
+        <div style="padding:12px 16px;border-top:1px solid var(--border)">
+          <div style="font-weight:500">${esc(content.filename)}</div>
+          <div style="font-size:12px;color:var(--text-muted)">${t('content.type_bundle')} — ${t('content.bundle_entry', { entry: esc(content.bundle_entry || 'index.html') })}</div>
+          ${(session.skipped && session.skipped.length)
+            ? `<div style="font-size:12px;color:#f59e0b;margin-top:6px">${t('content.bundle_skipped', { n: session.skipped.length })}</div>`
+            : ''}
+        </div>
+      </div>`;
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.querySelector('#closePreview').onclick = () => overlay.remove();
+    document.body.appendChild(overlay);
+    return;
+  }
+
   const isYoutube = content.mime_type === 'video/youtube';
   const isVideo = !isYoutube && content.mime_type?.startsWith('video/');
   const src = content.remote_url || `/uploads/content/${content.filepath}`;

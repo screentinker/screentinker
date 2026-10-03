@@ -1,13 +1,17 @@
-import { api } from '../api.js';
+import { api, assertLocalCallAllowed } from '../api.js';
 import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge } from '../utils.js';
 import { t } from '../i18n.js';
 
-const API = (url, opts = {}) => fetch('/api' + url, {
+const API = (url, opts = {}) => {
+  // ⚠️ This helper bypasses api.js's routing, so it must ask the same question itself.
+  assertLocalCallAllowed(url, opts.method);
+  return fetch('/api' + url, {
   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers },
   ...opts,
 }).then(r => r.json());
+};
 
 // Default dimensions for the canvas coordinate space (pixels). Screens added
 // fresh start at 320x180 (16:9). The editor canvas itself renders at this

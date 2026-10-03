@@ -61,7 +61,7 @@ trap 'rm -rf "$STAGE"' EXIT
 # after a 73MB download and a two-minute extraction. The specific guard below for sqlite-compat.js
 # was written after the first one; this is the general form, so there is no third.
 UNTRACKED="$(git ls-files --others --exclude-standard -- server frontend scripts docs shared brightsign \
-             | grep -E '\.(js|json|html|brs|css|sql)$' || true)"
+             | grep -E '\.(js|json|html|brs|css|sql|glsl)$' || true)"
 if [ -n "$UNTRACKED" ]; then
   echo "ERROR: these source files are not tracked by git and would NOT be packaged:" >&2
   echo "$UNTRACKED" | sed 's/^/    /' >&2

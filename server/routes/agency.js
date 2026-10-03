@@ -137,8 +137,18 @@ router.post('/playlists/:playlistId/items', (req, res) => {
   // 0 -> draft for admin re-publish. 1 -> the SHARED publishPlaylist path (snapshot + push).
   let published = false;
   if (req.apiToken.auto_publish) {
-    publishPlaylist(req.params.playlistId, req);
-    published = true;
+    // Through the release gate like every other publish. When the workspace requires approval
+    // the upload lands in the review queue instead, and the agency's own notification says draft.
+    try {
+      require('../lib/releases').releasePlaylist(db, req.params.playlistId, req, { actor: { userId: req.user && req.user.id || null, kind: 'api_token', label: req.apiToken.name || 'agency token' }, source: 'agency' });
+      published = true;
+    } catch (e) {
+      if (!e || e.name !== 'ReleaseError') throw e;
+      db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(req.params.playlistId);
+      try {
+        require('../lib/approvals').submit(db, { type: 'playlist', id: req.params.playlistId, workspaceId: req.workspaceId, actor: { userId: req.user && req.user.id || null, kind: 'api_token', label: req.apiToken.name || 'agency token' }, note: 'Agency upload (auto-publish held for review)', ip: req.ip });
+      } catch (_) { /* already queued for this state */ }
+    }
   } else {
     db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(req.params.playlistId);
   }

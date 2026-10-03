@@ -17,6 +17,8 @@
  */
 
 const crypto = require('crypto');
+// Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
+const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 const thresholds = require('../lib/alerts/thresholds');
 
 const TICK_MS = 60_000;
@@ -111,7 +113,7 @@ function sweep(db, { now = Math.floor(Date.now() / 1000), logger = console } = {
 
   let rules = [];
   try {
-    rules = db.prepare('SELECT * FROM alert_rules WHERE enabled = 1').all();
+    rules = db.prepare(`SELECT * FROM alert_rules WHERE enabled = 1 AND ${LOCAL_ROWS_SQL('alert_rules')}`).all();
   } catch (e) {
     // No table yet — nothing to do, and certainly not a reason to make noise every minute.
     return summary;
@@ -136,7 +138,7 @@ function sweep(db, { now = Math.floor(Date.now() / 1000), logger = console } = {
         ) latest ON latest.device_id = d.id
         LEFT JOIN device_telemetry t
                ON t.device_id = d.id AND t.reported_at = latest.reported_at
-       WHERE d.blocked IS NULL OR d.blocked = 0
+       WHERE (d.blocked IS NULL OR d.blocked = 0) AND ${LOCAL_ROWS_SQL('d')}
     `).all();
   } catch (e) {
     logger.warn(`[alerts] could not read devices for threshold sweep: ${e && e.message}`);

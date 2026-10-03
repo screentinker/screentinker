@@ -13,6 +13,11 @@ class RemoteDisplayApp : Application() {
         // Separate HIGH-importance channel for the boot full-screen-intent launch.
         // A full-screen intent is only honored from a high-importance channel.
         const val BOOT_CHANNEL_ID = "remote_display_boot"
+        // LOW-importance channel for the transient "ScreenTinker updated" prompt when the display is
+        // already relaunching itself — quiet, no heads-up banner over signage. (Channel importance,
+        // not per-notification priority, decides heads-up on Android 8+.) The loud BOOT channel is
+        // used only for the genuine fail-loud "tap to resume" case.
+        const val RELAUNCH_QUIET_CHANNEL_ID = "remote_display_relaunch_quiet"
     }
 
     override fun onCreate() {
@@ -49,6 +54,12 @@ class RemoteDisplayApp : Application() {
             manager.createNotificationChannel(
                 NotificationChannel(BOOT_CHANNEL_ID, "ScreenTinker Startup", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "Launches the display on boot"
+                    setShowBadge(false)
+                }
+            )
+            manager.createNotificationChannel(
+                NotificationChannel(RELAUNCH_QUIET_CHANNEL_ID, "ScreenTinker Update", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Brief notice while the display resumes after an update"
                     setShowBadge(false)
                 }
             )

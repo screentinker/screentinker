@@ -1,5 +1,25 @@
 [
   {
+    "id": "Crossfade",
+    "name": "Crossfade",
+    "blurb": "The plain dissolve. One frame melts evenly into the next; raise dipToBlack to pass through black on the way.",
+    "file": "Crossfade.glsl",
+    "params": [
+      {
+        "name": "ease",
+        "default": 1,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "dipToBlack",
+        "default": 0,
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
     "id": "CRTCollapse",
     "name": "CRT Collapse",
     "blurb": "Frame crushes to a line, then a dot, then the next image blooms back out. Power-cycle drama.",

@@ -1,4 +1,6 @@
 const { db } = require('../db/database');
+// Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
+const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 const { _localParts } = require('../lib/schedule-eval');
 const playerCapabilities = require('../lib/player-capabilities');
 
@@ -22,7 +24,7 @@ function evaluateSchedules(ioOverride) {
   if (!deviceNs) return;
 
   const now = new Date();
-  const onlineDevices = db.prepare("SELECT * FROM devices WHERE status = 'online'").all();
+  const onlineDevices = db.prepare(`SELECT * FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
   for (const device of onlineDevices) {
     // #12 scheduled reboot — evaluated independently of playlist/layout overrides.
@@ -171,6 +173,13 @@ function isScheduleActiveNow(schedule, now, tz) {
 
   // Day-of-week in the device's local zone.
   if (rule.byDay && !rule.byDay.includes(L.dow)) return false;
+
+  // Day-of-month, for FREQ=MONTHLY. This function never branched on FREQ, so a monthly rule had
+  // no filter at all and played EVERY day, while the calendar (routes/schedules.js expandSchedule,
+  // which does check the day-of-month) drew it once a month. The dashboard now offers Monthly, so
+  // the two have to agree; this is the same comparison the calendar makes. BYDAY-less on purpose:
+  // an nth-weekday form ("1MO") is dropped by both parsers and is not offered anywhere.
+  if (rule.freq === 'MONTHLY' && L.day !== Number(startStamp.slice(8, 10))) return false;
 
   // Time-of-day window in the device's local zone (HH:MM string compare).
   const nowHM = nowStamp.slice(11), startHM = startStamp.slice(11), endHM = endStamp.slice(11);

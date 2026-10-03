@@ -1,0 +1,22 @@
+{
+  "id": "webhook",
+  "name": "Webhook",
+  "version": "1.2.0",
+  "description": "POST device, playlist, content, and plugin-review events to an HTTPS URL.",
+  "screentinker": ">=2.0.0",
+  "main": "index.js",
+  "capabilities": ["hooks"],
+  "settings": {
+    "fields": [
+      { "name": "url", "type": "url", "label": "POST URL", "required": true, "placeholder": "https://example.com/hooks/screentinker" },
+      { "name": "secret", "type": "password", "label": "Bearer token (optional)" },
+      { "name": "on_offline", "type": "checkbox", "label": "When a display goes offline", "default": true },
+      { "name": "on_online", "type": "checkbox", "label": "When a display comes online", "default": false },
+      { "name": "on_publish", "type": "checkbox", "label": "When a playlist is published", "default": true },
+      { "name": "on_upload", "type": "checkbox", "label": "When content is uploaded", "default": false },
+      { "name": "on_plugin_submit", "type": "checkbox", "label": "When someone submits a plugin zip", "default": false },
+      { "name": "on_plugin_approve", "type": "checkbox", "label": "When a plugin zip is approved", "default": false },
+      { "name": "on_plugin_reject", "type": "checkbox", "label": "When a plugin zip is rejected", "default": false }
+    ]
+  }
+}

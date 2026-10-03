@@ -1,0 +1,9 @@
+{
+  "id": "too-new",
+  "name": "Too New",
+  "version": "1.0.0",
+  "screentinker": ">=99.0.0",
+  "main": "index.js",
+  "capabilities": ["widget"],
+  "widget": { "type": "too-new", "label": "Too New" }
+}

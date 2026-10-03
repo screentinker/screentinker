@@ -1,0 +1,85 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: ScreenTinker 2.3 - Live Data, Templates & a Real Game
+File:  screentinker-2p3.mp4  (4:13 - 1080p30)
+Thumb: thumbnail.jpg  (thumbnail.png is the 2560x1440 master, 2.0 MB - at the limit)
+========================================================================
+
+------------------------------- TITLE ----------------------------------
+RECOMMENDED:
+ScreenTinker 2.3: Live Data, Templates & a Real Game (Open-Source Digital Signage)
+
+Alternates:
+Your Digital Signage Can Now Read a Google Sheet (and Run a Game) - ScreenTinker 2.3
+What's New in ScreenTinker 2.3: Live Data Sources, a Signed Template Library & Native Players
+
+---------------------------- DESCRIPTION -------------------------------
+
+Start your 14-day free trial: https://screentinker.com
+Prefer to run it yourself? It's open source and free to self-host:
+https://github.com/screentinker/screentinker
+
+ScreenTinker 2.3 lets your screens read live data. Change a price in a
+table, a Google Sheet or a CSV, and the menu board on the wall changes with
+it - no re-publishing, no new slide.
+
+In this release:
+- Live data sources, built in on every workspace: REST API, Google Sheets,
+  CSV, RSS/Atom and a manual table, alongside Calendar and Weather.
+- Key columns: point at the latte's price by name, so a sorted sheet never
+  puts the wrong price on screen.
+- Careful by default: API credentials encrypted and never read back, an
+  unshared Sheet explained instead of cached, every source scoped to its
+  workspace.
+- A template library: menu boards, leaderboards, KPI dashboards, meeting
+  room signs, world clocks, guest Wi-Fi, event countdowns and more - fill in
+  the fields or bind them to live data.
+- A signed catalog: every template and the index are Ed25519-signed, with a
+  serial number and revocation. Code templates run sandboxed.
+- UPTIME 3036: a real first-person arcade game shipped as a template. It
+  plays itself in attract mode until someone picks up the keyboard. MIT
+  licensed, generated entirely in code - a starting point for your own.
+- Native players for Raspberry Pi and Windows, served by your own server and
+  updated only when the checksum matches.
+- A Platform area for server operators: an overview with expandable
+  "needs your attention" items, user and organization search, whole-
+  organization members, stale-account cleanup that sends a notice first, and
+  limited-time sales backed by real Stripe coupons.
+- A new look with the sidebar grouped by job, 1 MiB upload chunks for slow
+  links, add-content folders fixed, honest proof-of-play, and four security
+  fixes.
+
+Every screen in this video is a real ScreenTinker 2.3 server with invented
+demo data. The price change at the start is real: one edit to the table,
+then the same template rendered again.
+
+Free trial: https://screentinker.com
+Source (self-host free): https://github.com/screentinker/screentinker
+Templates catalog: https://github.com/screentinker/templates
+Discord: https://discord.gg/utTdsrqq4Z
+
+------------------------------ CHAPTERS --------------------------------
+0:00 Change the table, the wall changes
+0:11 What's new in ScreenTinker 2.3
+0:27 Built-in data sources: REST, Sheets, CSV, RSS, Table
+0:43 Key columns survive a sorted sheet
+0:58 Careful by default
+1:14 The template library
+1:29 A signed catalog
+1:47 The templates, rendered
+1:58 UPTIME 3036: a real game on your screens
+2:24 Native Raspberry Pi and Windows players
+2:41 Platform overview
+2:56 Attention items, search and org members
+3:12 Stale-account cleanup, notice first
+3:29 Limited-time sales
+3:45 New look, fixes and security
+4:03 Get ScreenTinker 2.3
+
+-------------------------------- TAGS ----------------------------------
+digital signage, open source digital signage, digital signage software,
+self hosted digital signage, google sheets digital signage, live data signage,
+digital menu board, menu board software, signage templates, screentinker,
+yodeck alternative, optisigns alternative, raspberry pi digital signage,
+windows digital signage player, kpi dashboard display, meeting room sign,
+free digital signage trial, UPTIME 3036

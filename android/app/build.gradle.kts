@@ -7,14 +7,47 @@ android {
     namespace = "com.remotedisplay.player"
     compileSdk = 34
 
+    /*
+     * Compress the native libraries in the APK; Android unpacks the one matching ABI at INSTALL
+     * time. AGP's default since minSdk 23 is `useLegacyPackaging = false`, which stores the .so
+     * entries uncompressed so they can be mmap'd straight out of the APK — the right default when
+     * Play delivers a per-ABI split and the APK therefore carries exactly ONE .so.
+     *
+     * We are the other case. ScreenTinker sideloads a universal APK over its own OTA, so every
+     * device carries all four ABIs and executes exactly one. #340's WebRTC publisher made that
+     * costly: libjingle_peerconnection_so.so is ~43MB of the APK across arm64-v8a, armeabi-v7a,
+     * x86 and x86_64, stored at 0% compression.
+     *
+     * Measured on the 2.0.9 build:
+     *                     download      installed
+     *   stored (default)  52,724,535    ~52.7MB
+     *   compressed        29,557,559    ~41MB   (29.5MB APK + ~11.5MB extracted arm64)
+     *
+     * Smaller on BOTH axes, which only looks paradoxical until you notice that just one ABI is
+     * ever extracted: the three nobody runs go from stored to deflated (~45%) and stay packed.
+     * Download size is what actually matters here — the OTA path has no Range/resume, so a shorter
+     * transfer is a transfer more likely to finish on a weak link.
+     *
+     * ⚠️ Do NOT reach for `splits { abi }` to solve the same problem. It renames the output to
+     * app-<abi>-release.apk, and `resignReleaseV1` below is pinned to a single hardcoded path
+     * behind `onlyIf { apk.exists() }` — it would silently stop running and ship v2-only APKs,
+     * which #81 documents MDM signage uninstalls on reboot. Compression changes no filename, so
+     * that task is untouched (verified: jarsigner reports "jar verified." on this build).
+     */
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     defaultConfig {
         applicationId = "com.remotedisplay.player"
-        minSdk = 24
+        minSdk = 23
         targetSdk = 34
         // Env-overridable so device-owner reinstalls (which require an ever-increasing
         // versionCode — downgrades are blocked) don't churn this file each build.
-        versionCode = (System.getenv("VERSION_CODE") ?: findProperty("VERSION_CODE") as String? ?: "132").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: findProperty("VERSION_NAME") as String? ?: "2.0.0-alpha4"
+        versionCode = (System.getenv("VERSION_CODE") ?: findProperty("VERSION_CODE") as String? ?: "169").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: findProperty("VERSION_NAME") as String? ?: "2.3.2"
     }
 
     signingConfigs {
@@ -86,6 +119,12 @@ dependencies {
     // ExoPlayer / Media3
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
+    // HLS live-channel playback (mime_type video/hls, .m3u8 remote_url). DefaultMediaSourceFactory
+    // locates HlsMediaSource.Factory by reflection, so an .m3u8 MediaItem only plays when this
+    // module is on the classpath — without it ExoPlayer rejects the stream. This is what backs the
+    // playback.hls capability.
+    implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.2.1")   // native RTSP camera/stream playback
 
     // Socket.IO client.
     //
@@ -118,6 +157,11 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // #go2rtc — WebRTC for the Android live-video publisher (MediaProjection -> WebRTC sender).
+    // stream-webrtc-android is the maintained successor to the abandoned org.webrtc:google-webrtc,
+    // and ships the same org.webrtc.* API (PeerConnectionFactory, ScreenCapturerAndroid, ...).
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
+
     // #74/#75: unit tests for the Kotlin schedule evaluator (vector drift guard)
     testImplementation("junit:junit:4.13.2")
     // feat/transition-engine: real org.json on the unit-test classpath (the stubbed android.jar one
@@ -145,6 +189,15 @@ tasks.withType<Test> {
     // packet changes what is on a screen, and it has two implementations in two languages — so the
     // shared vectors are the contract and TriggerResolveTest holds this one to it.
     systemProperty("triggerVectors", File(rootProject.projectDir.parentFile, "shared/trigger-vectors.json").absolutePath)
+    // Display power windows. ⚠️ This one decides whether a panel goes DARK unattended, and it fails
+    // in the opposite direction from ScheduleEval above (to ON, never to off) — a difference that
+    // only the shared vectors can keep honest across two languages. PowerWindowTest holds it.
+    systemProperty("powerWindowVectors", File(rootProject.projectDir.parentFile, "shared/power-window-vectors.json").absolutePath)
+    // Device-side REST targets. ⚠️ This one decides whether an operator command can be turned into
+    // a LOCAL FILE READ on the panel (file:// / content://), so the allowlist must mean the same
+    // thing in both languages — the server refuses a bad URL when it is saved, this player refuses
+    // it again when the request is made. HttpTargetGuardTest holds it.
+    systemProperty("httpTargetVectors", File(rootProject.projectDir.parentFile, "shared/http-target-vectors.json").absolutePath)
 }
 
 // #81: AGP ignores enableV1Signing at minSdk>=24, so `assembleRelease` produces a

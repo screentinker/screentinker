@@ -145,6 +145,30 @@
             .then(function (r) { return result({ ok: true, action: 'screen_on', note: 'panel backlight on via ' + r.method }); })
             .catch(function (e) { return panelUnsupportedOr(e, 'screen_on'); });
 
+        /*
+         * The weekly backlight schedule. ANDROID-FIRST: this panel accepts and stores the schedule
+         * but does not yet run a local evaluator for it, and says so with supported:false rather
+         * than silently swallowing it.
+         *
+         * ⚠️ Accepting-and-storing is not busywork. The server sends this field on every payload,
+         * so a panel that 400s or drops it would look like a delivery failure in the logs for a
+         * feature nobody had enabled here. Storing it also means the day the evaluator lands
+         * (shared/power-window-vectors.json + a port of power-window.js, which is dependency-free
+         * UMD precisely so this player can load it) the schedule is already on the device.
+         *
+         * ⚠️ This panel CAN blank itself — screen_off above works — so the gap is the local clock,
+         * not the hardware. Until then the server never sends it one: the capability
+         * display.power_schedule is not declared, and set_power_schedule is gated on it.
+         */
+        case 'set_power_schedule':
+          try {
+            var sched = payload && payload.schedule ? JSON.stringify(payload.schedule) : '';
+            if (sched) { localStorage.setItem('st_power_schedule', sched); }
+            else { localStorage.removeItem('st_power_schedule'); }
+          } catch (e) { log('set_power_schedule store failed: ' + errMsg(e)); }
+          return Promise.resolve(result({ ok: true, supported: false, action: 'set_power_schedule',
+            note: 'stored; this player does not evaluate power windows locally yet (Android-first)' }));
+
         case 'shutdown':
           // SSSP/Tizen web APIs have no true power-off; the closest honest action is
           // muting the panel (backlight off). Report that it's not a real shutdown.

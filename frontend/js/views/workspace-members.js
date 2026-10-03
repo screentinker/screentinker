@@ -9,10 +9,12 @@
 // Server enforces all three boundaries; UI must match.
 
 import { api } from '../api.js';
-import { t } from '../i18n.js';
+import { t, tn } from '../i18n.js';
 import { showToast } from '../components/toast.js';
 import { openInviteMemberModal } from '../components/workspace-members-invite-modal.js';
 import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
+import { renderApprovalSettings } from '../components/approval-settings.js';
+import { renderLiveVideoSettings } from '../components/live-video-settings.js';
 
 export async function render(container, workspaceId) {
   container.innerHTML = `
@@ -20,7 +22,9 @@ export async function render(container, workspaceId) {
       <h1>${t('members.title')}</h1>
       <div id="membersHeaderActions"></div>
     </div>
+    <div class="members-tabs" id="membersTabs" role="tablist" hidden></div>
     <div id="workspaceMembersContent" style="color:var(--text-muted)">${t('members.loading')}</div>
+    <div id="orgMembersContent" hidden></div>
   `;
   const content = document.getElementById('workspaceMembersContent');
   const headerActions = document.getElementById('membersHeaderActions');
@@ -48,6 +52,7 @@ export async function render(container, workspaceId) {
 
   const canAdmin = !!(meWorkspace && meWorkspace.can_admin);
   const workspaceName = meWorkspace?.name || '';
+  mountOrgTab(workspaceId, meWorkspace, headerActions);
 
   // /invites is admin-only. Non-admins get 403; suppress silently. We could
   // skip the call entirely when !canAdmin to save a request, but defending
@@ -115,9 +120,13 @@ export async function render(container, workspaceId) {
       emptyKey: 'members.empty.invites',
       rows: invites.map(inv => renderInviteRow(inv, { canAdmin })).join(''),
     }) : ''}
+    <div id="approvalSettingsCard"></div>
+    <div id="liveVideoSettingsCard"></div>
   `;
 
   if (canAdmin) attachMutationHandlers(container, workspaceId);
+  if (canAdmin) renderApprovalSettings(content.querySelector('#approvalSettingsCard'));
+  if (canAdmin) renderLiveVideoSettings(content.querySelector('#liveVideoSettingsCard'), { workspaceId, workspace: meWorkspace });
 }
 
 function renderSection({ titleKey, count, emptyKey, rows }) {
@@ -303,3 +312,69 @@ function esc(s) {
 
 const WORKSPACE_ROLES = ['workspace_admin', 'workspace_editor', 'workspace_viewer'];
 const REMOVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+
+/*
+ * "This workspace" | "Whole organization".
+ *
+ * The workspace tab is the list above (direct members + the org's owners/admins). The organization
+ * tab is everyone in the organization — across all of its workspaces — with where each person has
+ * access. Shown to org owners/admins and platform staff only; the server enforces the same rule
+ * (GET /workspaces/:id/organization-members), so the tab is a convenience, not the gate.
+ */
+function mountOrgTab(workspaceId, meWorkspace, headerActions) {
+  // Computed by /me with the same rule the endpoint enforces (org owner/admin, or platform staff).
+  if (!meWorkspace || !meWorkspace.can_view_org_members) return;
+  const tabs = document.getElementById('membersTabs');
+  const wsPane = document.getElementById('workspaceMembersContent');
+  const orgPane = document.getElementById('orgMembersContent');
+  if (!tabs || !wsPane || !orgPane) return;
+  const orgName = meWorkspace?.organization_name || '';
+  tabs.hidden = false;
+  tabs.innerHTML = `
+    <button type="button" role="tab" class="members-tab active" aria-selected="true" data-pane="ws">${esc(t('members.tab.workspace', { name: meWorkspace?.name || '' }))}</button>
+    <button type="button" role="tab" class="members-tab" aria-selected="false" data-pane="org">${esc(t('members.tab.org', { name: orgName }))}</button>`;
+  let loaded = false;
+  tabs.querySelectorAll('.members-tab').forEach((b) => {
+    b.onclick = async () => {
+      const org = b.dataset.pane === 'org';
+      tabs.querySelectorAll('.members-tab').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-selected', String(x === b)); });
+      wsPane.hidden = org;
+      orgPane.hidden = !org;
+      // The invite / add-user buttons act on THIS workspace; hide them on the org view so it is
+      // never ambiguous which workspace a new person would land in.
+      if (headerActions) headerActions.style.visibility = org ? 'hidden' : '';
+      if (org && !loaded) { loaded = true; await renderOrgMembers(orgPane, workspaceId); }
+    };
+  });
+}
+
+async function renderOrgMembers(el, workspaceId) {
+  el.innerHTML = `<p style="color:var(--text-muted)">${esc(t('members.loading'))}</p>`;
+  let data;
+  try {
+    data = await api.getOrganizationMembers(workspaceId);
+  } catch (err) {
+    el.innerHTML = renderError(t('members.load_error', { error: esc(err.message || '') }));
+    return;
+  }
+  const roleLabel = (r) => esc(t('members.role.' + String(r || '')));
+  const rows = data.members.map((m) => `
+    <tr data-filter-text="${esc([m.name, m.email, ...m.workspaces.map((w) => w.name)].filter(Boolean).join(' ').toLowerCase())}">
+      <td><div style="font-weight:500">${esc(m.name || m.email)}</div><div style="font-size:11px;color:var(--text-muted)">${esc(m.email)}</div></td>
+      <td>${m.org_role ? `<span class="org-role-pill">${roleLabel(m.org_role)}</span>` : `<span style="color:var(--text-muted);font-size:12px">${esc(t('members.org.no_org_role'))}</span>`}</td>
+      <td>${m.org_role === 'org_owner' || m.org_role === 'org_admin'
+        ? `<span style="color:var(--text-secondary);font-size:12px">${esc(tn('members.org.all_workspaces', data.workspaces.length))}</span>`
+        : m.workspaces.map((w) => `<span class="ws-chip">${esc(w.name)} <em>${roleLabel(w.role)}</em></span>`).join(' ') || `<span style="color:var(--text-muted);font-size:12px">—</span>`}</td>
+    </tr>`).join('');
+  el.innerHTML = `
+    <p class="org-members-intro">${esc(tn('members.org.people', data.members.length, { org: data.organization.name }))} ${esc(tn('members.org.across', data.workspaces.length))} ${esc(t('members.org.intro_rule'))}</p>
+    <div class="platform-filters"><input type="search" class="input" id="orgMemberSearch" placeholder="${esc(t('members.org.search'))}" aria-label="${esc(t('members.org.search'))}"></div>
+    <div class="table-wrap"><table class="org-members-table">
+      <thead><tr><th>${esc(t('members.org.col_person'))}</th><th>${esc(t('members.org.col_org_role'))}</th><th>${esc(t('members.org.col_access'))}</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  const search = el.querySelector('#orgMemberSearch');
+  const trs = [...el.querySelectorAll('tr[data-filter-text]')];
+  search.oninput = () => { const q = search.value.trim().toLowerCase(); trs.forEach((r) => { r.hidden = !!q && !r.dataset.filterText.includes(q); }); };
+}

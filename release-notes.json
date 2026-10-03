@@ -1,0 +1,277 @@
+{
+  "_comment": [
+    "USER-FACING release notes, shown in the app: a 'What's new' panel on the dashboard the first",
+    "time someone signs in after the running version changes, and the full list under Settings -> About.",
+    "",
+    "THIS IS NOT CHANGELOG.md, AND IT MUST NOT BECOME IT. The changelog is written for whoever",
+    "touches the code next and is full of issue numbers, SQL and event-loop arguments. This file is",
+    "read by an operator who just wants to know whether anything they do changed. Three to five",
+    "bullets, plain language, no issue numbers, no internals, no marketing.",
+    "",
+    "Every released version needs an entry: test/release-notes.test.js fails the build if the",
+    "version in VERSION has none, which is what stops this file quietly rotting. Newest first.",
+    "'date' is the release date in YYYY-MM-DD."
+  ],
+  "releases": [
+    {
+      "version": "2.3.2",
+      "date": "2026-10-01",
+      "notes": [
+        "The Edit button is back on every widget card. Adding Duplicate made the row of buttons too wide for narrow cards, which hid Edit; the buttons now wrap onto a second line instead.",
+        "The download page now says the native Raspberry Pi player needs Raspberry Pi OS 13 (Trixie) or newer, and points older Pi OS at the kiosk install."
+      ]
+    },
+    {
+      "version": "2.3.1",
+      "date": "2026-10-01",
+      "notes": [
+        "Duplicate any widget from the Widgets page: an independent copy opens straight in its editor, so three screens can show three menus without typing the first one in again. Templates also show how many widgets use them.",
+        "The Displays page shows each player's app version, marks Android players that are behind the version this server provides, and can filter by version. Choose which details the cards show under Card details.",
+        "Web and Raspberry Pi players no longer stop on one slide when the connection drops, and they pick up new player code after a server update without a manual reload.",
+        "After a slow first start, the server now waits and checks again for its video tools instead of turning video thumbnails off until the next restart."
+      ]
+    },
+    {
+      "version": "2.3.0",
+      "date": "2026-09-30",
+      "notes": [
+        "Connect live data without code: paste a Google Sheets link, point at any REST API, or use a CSV file, an RSS feed or a table you type in. Put a value on a slide and your screens update whenever the data changes.",
+        "A template library: install ready-made slide and code templates from a signed catalog, or import your own, and fill their fields from live data.",
+        "Native players for Raspberry Pi and Windows, downloaded from your own server. They start with the device, recover on their own and keep themselves up to date.",
+        "The sidebar is grouped by task and each group folds away. The add-content picker shows your folders again, and displays can be reordered by dragging. The dashboard also has a refreshed look.",
+        "Organization owners and admins can see everyone in the organization from Members, across all of its workspaces.",
+        "Server administrators get a Platform section: an overview of the whole server and what needs attention, user and organization search, and a cleanup tool that warns inactive accounts by email before removing them.",
+        "Uploads move in smaller steps, so the progress bar keeps moving and slow connections can finish. Proof-of-play no longer counts failed playback as completed."
+      ]
+    },
+    {
+      "version": "2.2.3",
+      "date": "2026-09-26",
+      "notes": [
+        "Two short guides written for AI assistants are now published by the server: how to inspect and control your screens, and how to choose hardware and get a player onto it. Each is listed with a checksum so a client can verify it got the real thing.",
+        "There is also a machine-readable index of what this server offers an automated client, so an assistant can find the assistant endpoint, the API description and the authentication guide without being told where they are.",
+        "Nothing changed for people using the dashboard, and no screen needs updating."
+      ]
+    },
+    {
+      "version": "2.2.2",
+      "date": "2026-09-26",
+      "notes": [
+        "Upgrading is safer. The database backup taken before an upgrade could never finish on a busy server, because a single write from the running system made it start over. It now completes in under a minute, and the upgrade checks the backup and stops if it is not readable.",
+        "Automated clients can now find their way around on their own. The authentication guide is served where the standard expects it, there is a card describing the AI assistant endpoint, and every page names its plain-text version in the page itself.",
+        "A request refused for want of a token now says where to read about getting one, instead of leaving a client to guess.",
+        "Asking this server for something it does not publish now returns a proper not-found with a list of what it does publish, rather than quietly returning the web app."
+      ]
+    },
+    {
+      "version": "2.2.1",
+      "date": "2026-09-26",
+      "notes": [
+        "Fixes for the new AI assistant support, all found by pointing an assistant at a real server and reading what came back. Nothing else changed, and no screen needs updating.",
+        "Asking an assistant about your media library returned items with no names, and searching it never matched anything. Both looked like an empty library rather than a fault, so the assistant would tell you there was nothing there.",
+        "Renaming a screen through an assistant sent back the screen's whole record, including its settings PIN. Nothing sensitive is sent to an assistant now, on any request.",
+        "Asking about a playlist sent back the playlist twice over, including an older published copy of it. An assistant could describe the last published version while you were asking about your unpublished changes."
+      ]
+    },
+    {
+      "version": "2.2.0",
+      "date": "2026-09-26",
+      "notes": [
+        "You can now manage your screens by asking an AI assistant. Point Claude, or any app that speaks the Model Context Protocol, at your server with an API token and ask things like “which screens are offline?” A read-only token lets it look without changing anything.",
+        "Every platform now has a setup guide, including Windows, ChromeOS, LG webOS, BrightSign, e-paper signs and LED video walls. A new downloads page lists every player your own server can give you, already pointed at it.",
+        "Reports could return nothing for a date range that definitely had plays in it, and say so with a normal-looking response rather than an error. If you were told nothing played, that is why. Fixed — and if your server is not on UTC, every report window was shifted by your time zone too.",
+        "A player showing a widget as the first item in its playlist could fail to start, and rebooting did not help because the playlist was cached. Fixed.",
+        "Setting up a Raspberry Pi no longer shows a camera-permission popup over the pairing code. Two-way intercom asks for the microphone when you press the button instead, and tells you when a screen has not got one.",
+        "Alert emails now carry an unsubscribe link, and turning a customer’s alerts off leaves a record of who did it and when.",
+        "Fire TV Stick 4K Select and Fire TV Stick HD run Amazon’s Vega OS and cannot install the Android app. There is a player for them now, though those sticks are still listed as not supported — read the guide before buying one for a sign.",
+        "Approved community hardware reports never appeared on the Certified Hardware page on Docker installs. Fixed. If you submitted one and it vanished, it is in the database and will show up now."
+      ]
+    },
+    {
+      "version": "2.1.6",
+      "date": "2026-09-23",
+      "notes": [
+        "Big uploads no longer fail part way. Files now upload in small pieces, one file at a time, so a slow or distant connection does not hit a hidden time limit — and if the upload is interrupted, or you close the tab, it picks up where it left off instead of starting again.",
+        "Adding content to a playlist now shows your WHOLE library, not just the hundred most recent files, and you can filter the list by folder. The same hundred-file limit was also quietly affecting the schedule editor, a screen's standby content and the zone assignment window.",
+        "You are now told BEFORE a large upload if it would take you past your storage allowance, rather than after it finishes.",
+        "New: a weekly schedule for switching a screen's display off — \"off 22:00-06:00, Mon-Fri\" — per screen or per group, to save backlight hours. The player keeps running, so content and remote control continue and waking a screen is instant.",
+        "Raspberry Pi: on a newer Pi OS desktop the mouse pointer is hidden properly now, including on images that already had a desktop configuration of their own.",
+        "The display-off schedule needs a matching player update, so it will show as unsupported on your screens until one is installed."
+      ]
+    },
+    {
+      "version": "2.1.5",
+      "date": "2026-09-22",
+      "notes": [
+        "Signing in is more reliable: a password filled in by your browser, or typed after you correct the email address, is no longer rejected as wrong.",
+        "After paying, you are returned to your billing page instead of the public website — and if a payment ever fails you now get an email, a notice in the dashboard, and seven days before the account moves to the Free plan. Nothing is deleted.",
+        "Clock widgets can show or hide the date, in four formats, above, below or beside the time, with their own size and colour — and the timezone is now a searchable list.",
+        "A kiosk page assigned from a dashboard opened on the same machine as the server now loads on the display instead of showing nothing.",
+        "Player fixes: panels that are portrait by nature (such as the ThinkSmart View) run the right way up, the Android TV setup screen no longer closes the app, and Android players no longer stall for a moment twice a minute.",
+        "Raspberry Pi: on the newer Pi OS desktop the mouse pointer is now hidden on the screen, instead of sitting in the corner of your content."
+      ]
+    },
+    {
+      "version": "2.1.4",
+      "date": "2026-09-17",
+      "notes": [
+        "Fixes a brief \"Connecting\" message that could appear over a multi-zone panel's zones for a few seconds right after a reboot (a follow-up to the 2.1.3 cold-start fix)."
+      ]
+    },
+    {
+      "version": "2.1.3",
+      "date": "2026-09-17",
+      "notes": [
+        "Remote control works fully again on Android panels: the Remote tab mirrors the whole screen (Settings and other apps, not just the playlist), and the arrow keys move a highlight you can select. Needs the ScreenTinker accessibility service enabled on the panel.",
+        "A panel provisioned for it can now turn that accessibility service on by itself, instead of someone enabling it by hand at the screen.",
+        "The remote view is steadier and keeps up: no more flicker between the real screen and the playlist, and a fresh picture right after each tap or key press.",
+        "A device rebooted from the dashboard shows as online within seconds of coming back, instead of appearing offline for several minutes while it is actually playing.",
+        "Multi-zone and video-wall panels come back up straight into their zones after a reboot or power cut, instead of briefly showing one fullscreen item first.",
+        "A stranded display can be force-updated to a stable build even when it is stuck on a one-off test version."
+      ]
+    },
+    {
+      "version": "2.1.2",
+      "date": "2026-09-17",
+      "notes": [
+        "Add a live TV / IPTV channel to a playlist by pasting an HLS (.m3u8) URL. The stream goes straight from your source to the screen, so it works with in-house and hotel IPTV on your local network. On the native Android player you can also add an RTSP camera or NVR feed directly.",
+        "Tag files in your library and set a playlist to play in order, shuffle, or weighted random. Shuffle never repeats an item until the whole list has played, and weighting lets some items come up more often.",
+        "A device's Default / standard image now actually shows when there is nothing to play, instead of the screen going black. Set it under Device settings and it also appears offline.",
+        "The slide editor no longer replays the entrance animation every time you switch slides, so you can grab and arrange elements right away. The entrance still plays when you click Play entrance.",
+        "Security hardening across custom widgets, embedded web pages, API token permissions, read-only members, and two-factor recovery codes."
+      ]
+    },
+    {
+      "version": "2.1.1",
+      "date": "2026-09-16",
+      "notes": [
+        "Playlist items can now have a start/end time window and days-and-hours, so an item only appears in that time range. Empty means it always plays, and it is checked on the screen so it works offline.",
+        "New checkbox multi-select on a playlist: shift-click a range or Select all, then copy, cut, paste, duplicate, delete, or bulk-edit duration, timing, and more.",
+        "New tablet screen shapes (3:2, 2:3, 16:10, 10:16). A room-sign slide can now fill tablet panels such as the Lenovo ThinkSmart exactly, instead of showing black bars."
+      ]
+    },
+    {
+      "version": "2.1.0",
+      "date": "2026-09-15",
+      "notes": [
+        "Plugins: a self-hosted node can now add custom widget types, data connectors and event hooks by dropping in a folder and enabling it. It is off by default, and an uploaded plugin does not run until an admin approves that exact copy.",
+        "Upload a PDF and it becomes a playlist automatically, one full-screen slide per page.",
+        "Meeting-room and calendar signs now show Busy, Available, agendas and dates in whatever language you use, and default to English instead of German.",
+        "Dutch is now a full dashboard language.",
+        "Smoother video on the web player, with no brief black flash between clips, and portrait panels driven in landscape now fill the screen instead of showing bars."
+      ]
+    },
+    {
+      "version": "2.0.10",
+      "date": "2026-09-14",
+      "notes": [
+        "A published list of hardware that works, at screentinker.com/certified-hardware. It says which devices have been tested, what resolution each one really runs at, and which ones to avoid. You can report hardware you are running and it will be listed once it is reviewed.",
+        "Screens stopped losing full-screen capture after an update. The remote view used to fall back to showing only the playlist, going blank over Settings, with nothing to explain it. The screen page now tells you which kind of capture a panel is using and how to make it stick.",
+        "The Android app download is 44% smaller, which matters most on slow or metered connections.",
+        "LG webOS 4, 5 and 6 panels can now run the player. Older panels that loaded nothing before will work, and anything too old to run it now says so instead of showing a black screen.",
+        "The activity log now records failed changes as well as successful ones, so a change that did not work is no longer indistinguishable from one that never happened."
+      ]
+    },
+    {
+      "version": "2.0.9",
+      "date": "2026-09-12",
+      "notes": [
+        "You can now watch live, sub-second video of what a screen is playing, next to the screenshot you already had. It needs the optional go2rtc sidecar and is off at every level until you turn it on, so nothing starts streaming by itself.",
+        "Talk to a screen. Operators can open a voice intercom to one screen or broadcast a PA announcement to many. Off by default, switched on per organization, and an organization can bring its own TURN and STUN servers.",
+        "Free trials now end when they are supposed to. A nightly check moves lapsed trials to the Free plan, and you get an email three days before the trial ends and another when it does, saying which screens will stop and how to keep them.",
+        "A screen that had been blocked by the plan limit could be quietly switched back on just by assigning it content from the dashboard. It cannot any more.",
+        "Screens stopped by an expired trial now say the trial expired, not that a device limit was hit, so it is clear what to do."
+      ]
+    },
+    {
+      "version": "2.0.8",
+      "date": "2026-09-09",
+      "notes": [
+        "You can now require approval before anything goes live. An admin turns it on, picks who reviews, and changes are then submitted, reviewed and published. It is off unless you switch it on, and switching it on leaves everything already playing alone. Nobody can approve their own work.",
+        "Everything you edit now keeps a history. Content, playlists, layouts, slide decks and widgets all record who changed what and when, and you can look at an older version, compare it with the current one and restore it. Restoring makes a new draft, so nothing on screen changes until you publish it.",
+        "Signs can pull in live information from outside. Point a workspace at a calendar feed and a widget or slide can show whether a room is free, what is booked next and when it frees up. Built by René Gern.",
+        "E-paper and microcontroller screens can now show a full multi-zone layout, not just one item, and no longer show unpublished changes before you press Publish. Built by René Gern.",
+        "Samsung panels running the 2.0 app showed a black screen. That is fixed, and it needs the panel to be reinstalled with the new build. Screens on some Android TV boxes could also freeze part way through a playlist when screens were synced together, which is fixed too.",
+        "Screen background colour works again, LG webOS panels are now supported, and Android displays that were reinstalling the same update over and over will stop."
+      ]
+    },
+    {
+      "version": "2.0.7",
+      "date": "2026-09-04",
+      "notes": [
+        "Fixes a bug in 2.0.6 that left the dashboard blank and showing \"Disconnected\". Your screens were never affected — they kept playing normally throughout — but the dashboard itself would not load. Please update.",
+        "The dashboard no longer makes pointless background requests for the multi-server features on installs that do not use them, which were showing up as errors in the browser console."
+      ]
+    },
+    {
+      "version": "2.0.6",
+      "date": "2026-09-03",
+      "notes": [
+        "E-paper and microcontroller screens are now supported. The server can render what a screen should show as a device-ready image, so a cheap battery panel with no browser on it can be a display. It sleeps between updates and only wakes when something has actually changed.",
+        "You can upload your own transition effect. Add a shader file in the transition settings and it appears alongside the built-in effects, on your screens only. The built-in set is unchanged.",
+        "The Android app now installs on Android 6.0, so older boxes and tablets can run the full player instead of only a browser page.",
+        "Schedules can repeat on specific days of the week, and a repeat can now be given an end date. Both were possible behind the scenes but there was no way to ask for them.",
+        "Screens can have their own background colour instead of always black, the weather widget now scales properly in small areas, and the clock can hide its seconds and show dates in your own language."
+      ]
+    },
+    {
+      "version": "2.0.5",
+      "date": "2026-09-02",
+      "notes": [
+        "Transitions on portrait screens are fixed. Every effect was being drawn in landscape shape over a portrait picture, so the image jumped larger at the start of each transition and back at the end. Thanks to Emanuel Mairoll for finding and fixing it.",
+        "A clock widget now tells you if the time zone you typed is not a real one, instead of quietly showing UTC or drawing nothing at all. The field also offers a proper list to pick from.",
+        "Squares in the layout editor can be dragged properly again. They were only moving to their new position after you clicked a second time.",
+        "You can upload far more photos at once, and add many of them to a playlist in one go instead of one at a time. Playlists can also be sorted by name, date or length in a single action.",
+        "Self-hosted servers will now correctly see that a newer version is available. The update check could only see older releases, so it kept reporting an out-of-date version as the latest one."
+      ]
+    },
+    {
+      "version": "2.0.4",
+      "date": "2026-09-02",
+      "notes": [
+        "Screens that were refused by the server now come back on their own. A display could get stuck showing “Waiting for content” with everything already downloaded, and only start again if you changed its playlist by hand. That is fixed, on every kind of screen.",
+        "Upgrading a busy server no longer leaves browser and Samsung screens stuck on a maintenance message until somebody power-cycles them.",
+        "Large installs should feel noticeably lighter. A repair job that ran every time any screen changed item now runs once when a screen reconnects, which is the only time it can find anything to repair.",
+        "An Android screen with a full offline cache will now play it after an update, instead of waiting for content it already had. Screens also keep their offline copy when the server sends an empty playlist, so a reboot no longer leaves them with nothing.",
+        "Platform admins get a new Diagnostics panel: how the server has been performing day by day, how big the installation is, and a one-click CPU profile to send to support. No shell access needed."
+      ]
+    },
+    {
+      "version": "2.0.3",
+      "date": "2026-09-01",
+      "notes": [
+        "Tightens who can read a display’s web player key. It was already hidden from the display list, and is now also withheld from API tokens — so an integration with read access cannot pick up a key that would let it act as that screen. Your own dashboard still shows it."
+      ]
+    },
+    {
+      "version": "2.0.2",
+      "date": "2026-09-01",
+      "notes": [
+        "Fixes the What’s New panel, which was blank after upgrading to 2.0.1. The notes it reads were missing from the packaged install, so there was nothing to show. Nothing else changed."
+      ]
+    },
+    {
+      "version": "2.0.1",
+      "date": "2026-09-01",
+      "notes": [
+        "Slides can talk. A slide can carry a voiceover and a deck can carry background music that plays underneath the whole thing, on every kind of screen — and audio files can now be uploaded, which the content library used to refuse. Screens stay silent unless you ask for sound.",
+        "Slides keep the shape you designed them in. A deck laid out as widescreen no longer stretches to fit a taller or wider screen, which used to crop the background and push headlines off the edge. It is centred at its own shape instead, and text on older Android screens is finally the size you set.",
+        "Setup now leaves a screen actually playing. The last step asks what the display should play and offers the playlists you already have, and content uploaded during setup is published rather than left as a draft on a blank screen. The checklist follows you through it.",
+        "A first start no longer gets overwhelmed by its own screens. On large installs the server finishes its upgrade work before letting displays reconnect, and says what it is doing while it works — so a slow disk looks slow rather than broken.",
+        "Displays can be given a web player URL, for players that lose their storage when they restart — a browser input in vMix, for instance, which used to come back as a brand new display every time it was reopened. It is off unless you ask for it."
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "date": "2026-08-28",
+      "notes": [
+        "Slides: a proper editor for text, numbers, photos, clocks and QR codes, where the wording and the layout are separate — so changing a headline months later does not disturb the design.",
+        "Triggers: a screen can switch to different content on a signal, and switch back afterwards.",
+        "Playlists can contain other playlists, and a screen can inherit its playlist from its group or video wall.",
+        "Multi-site: link separate servers so one dashboard can see screens at other locations.",
+        "Play reporting survives an outage — a player records what it showed while offline and sends it once it reconnects.",
+        "Workspaces and single sign-on, for teams that need separate spaces or a company login."
+      ]
+    }
+  ]
+}

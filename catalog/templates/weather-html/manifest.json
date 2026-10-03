@@ -1,0 +1,32 @@
+{
+  "id": "weather-html",
+  "name": "Weather — animated",
+  "version": "1.0.0",
+  "kind": "html",
+  "description": "A full-screen animated weather scene: the sky, rain, snow or sun follow the current conditions, with a five-day forecast and temperature ranges. Reads one of your Weather data sources; your server fetches the weather, so this template needs no network access at all.",
+  "author": "ScreenTinker",
+  "homepage": "https://github.com/screentinker/templates/tree/main/templates/weather-html",
+  "license": "MIT",
+  "tags": ["weather", "forecast", "data-source", "animated"],
+  "orientation": ["landscape"],
+  "min_server": "2.2.0",
+  "entry": "index.html",
+  "thumbnail": "thumbnail.png",
+  "network": [],
+  "params": [
+    { "name": "weather", "type": "data_source", "label": "Weather data source", "required": true,
+      "help": "A data source of type Weather (Data Sources → New → Weather). Its location, units and language are set there." },
+    { "name": "location", "type": "text", "label": "Location name", "max": 60, "default": "",
+      "help": "Leave empty to use the data source's own place name." },
+    { "name": "theme", "type": "select", "label": "Background", "default": "sky",
+      "options": [ { "value": "sky", "label": "Follows the weather" }, { "value": "solid", "label": "Solid colour" } ] },
+    { "name": "background", "type": "color", "label": "Solid background colour", "default": "#0E1A2B",
+      "help": "Used when Background is set to Solid colour." },
+    { "name": "accent", "type": "color", "label": "Accent colour", "default": "#FFD166" },
+    { "name": "animate", "type": "checkbox", "label": "Animate the scene", "default": true,
+      "help": "Turn off for very low-powered players." },
+    { "name": "show_clock", "type": "checkbox", "label": "Show the clock", "default": true },
+    { "name": "timezone", "type": "timezone", "label": "Clock timezone", "help": "Leave empty to use the screen's own clock.", "default": "" },
+    { "name": "locale", "type": "locale", "label": "Clock and date language", "help": "For example en-GB. Leave empty for the screen's language.", "default": "" }
+  ]
+}

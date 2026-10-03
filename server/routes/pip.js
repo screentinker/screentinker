@@ -94,7 +94,7 @@ function emitToTargets(req, devices, event, payload) {
 }
 
 function summarize(results) {
-  const sent = results.filter(r => r.status === 'sent').length;
+  const sent = results.filter(r => r.status === 'sent' || r.status === 'relayed').length;
   const offline = results.filter(r => r.status === 'offline').length;
   return { sent, offline, total: results.length, results };
 }

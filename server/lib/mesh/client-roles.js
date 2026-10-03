@@ -21,15 +21,25 @@
  * different risk from one who can sever Acme's edge or shorten what is retained about them — and the
  * second is exactly the sort of thing a client asks about when they ask who at the MSP can do what.
  *
- * ⚠️ A THIRD ROLE ARRIVES WITH PHASE 5 and is deliberately NOT modelled here.
+ * ⚠️ THE THIRD ROLE ARRIVED WITH PHASE 5, and the note that used to sit here — "deliberately not
+ * modelled, because a role is local and adding one later is purely additive" — turned out to be
+ * exactly right. `publisher` was added when its semantics could be pinned to something real, and
+ * nothing stored before it needed changing.
  *
- * That is a considered asymmetry with grants.js, which DOES model its write categories and refuse
- * them. The difference is where the value is negotiated. A grant is agreed between two nodes across a
- * version boundary, so the vocabulary has to be stable or an edge stored today becomes unreadable
- * later. A role is local to this hub's database and is never sent anywhere, so adding an enum value
- * later is purely additive and invalidates nothing. Pre-modelling a role whose semantics cannot yet
- * be pinned down would mean guessing at them, and the guess would be load-bearing by the time anyone
- * checked.
+ * ⚠️ ROLE AND GRANT ARE A CONJUNCTION, AND NEITHER SUBSTITUTES FOR THE OTHER.
+ *
+ *   the CHILD's grant is the ceiling  — what may be done to that node at all (lib/mesh/grants.js,
+ *                                       set by the child's own operator, enforced on the child)
+ *   the HUB's role is who may spend it — which of OUR people may ask (this file)
+ *
+ * The child cannot see hub roles and must never be told to trust them (I10), so the role check is a
+ * hub-side pre-filter that stops a request leaving; the child re-checks its own grant regardless. A
+ * hub that skipped the role check would merely be rude to its own staff. A child that skipped the
+ * grant check would have handed control of its screens to whoever asked.
+ *
+ * ⚠️ TWO WRITE ACTIONS, NOT ONE. `push-content` and `command-devices` are separate so a tech can
+ * reload a stuck screen without also being able to change what it shows. They are different
+ * conversations with a client and they should be different permissions.
  */
 
 const ROLES = Object.freeze({
@@ -48,6 +58,29 @@ const ROLES = Object.freeze({
       'assign-nodes',       // move a node into or out of this client
     ]),
   },
+  /*
+   * ⚠️ RANKED ABOVE manager, and that ordering is a claim worth defending.
+   *
+   * A manager can sever an edge — disruptive, visible immediately, and undone by re-pairing. A
+   * publisher changes what is on a client's screens, which is the thing their customers actually
+   * see, and which nobody at the MSP may notice is wrong. "Can break the connection" is a smaller
+   * power than "can put anything on a hospital wall".
+   *
+   * It still cannot do anything the client has not granted: without content-push on the child's
+   * edge, holding this role changes nothing at all.
+   */
+  publisher: {
+    rank: 3,
+    summary: 'See this client, manage the connection, and change what plays on their screens',
+    can: Object.freeze([
+      'view-mirrored-data',
+      'manage-edge',
+      'disenroll',
+      'assign-nodes',
+      'push-content',       // playlists and the content they reference
+      'command-devices',    // reload / screen power — NOT the same conversation as content
+    ]),
+  },
 });
 
 const ROLE_NAMES = Object.freeze(Object.keys(ROLES));
@@ -56,7 +89,28 @@ const DEFAULT_ROLE = 'viewer';
 /** Every action a client role can gate. Named so a caller cannot invent one silently. */
 const ACTIONS = Object.freeze([
   'view-mirrored-data', 'manage-edge', 'disenroll', 'assign-nodes',
+  // Phase 5. Separate on purpose — see the note on `publisher`.
+  'push-content', 'command-devices',
 ]);
+
+/*
+ * ⚠️ Actions that may NOT be held through inheritance — see lib/mesh/client-tree.js.
+ *
+ * Read access inherits down the client tree on purpose: naming somebody on every client is toil
+ * nobody keeps up with, and `whoGainsAccess` exists so that inheritance is never silent. Write is a
+ * different magnitude. Dragging a client under "West Region" would otherwise hand the ability to
+ * change a hospital's screens to everyone holding that region, in one drag, with no one named.
+ *
+ * So a write action requires a row ON THIS CLIENT. It reintroduces exactly the toil inheritance was
+ * built to remove — for the one pair of permissions where the toil is worth paying, and where the
+ * failure is at least in the recoverable direction.
+ */
+const DIRECT_ONLY_ACTIONS = Object.freeze(['push-content', 'command-devices']);
+
+/** Is this an action that may only be exercised through a DIRECT grant on the client? */
+function requiresDirectAccess(action) {
+  return DIRECT_ONLY_ACTIONS.includes(action);
+}
 
 function isKnownRole(role) {
   return Object.prototype.hasOwnProperty.call(ROLES, role);
@@ -96,9 +150,26 @@ function roleAllows(role, action) {
  * @returns {string|null} effective role, or null for no access
  */
 function effectiveRole(accessRow, user) {
-  if (user && user.role === 'platform_admin') return 'manager';
-  if (!accessRow || !isKnownRole(accessRow.role)) return null;
-  return accessRow.role;
+  const named = (accessRow && isKnownRole(accessRow.role)) ? accessRow.role : null;
+
+  /*
+   * ⚠️ manager is the platform_admin FLOOR, not a ceiling — it used to be a ceiling, and that made
+   * the feature unusable by anyone.
+   *
+   * The short-circuit returned 'manager' and stopped, so an explicit publisher row on a
+   * platform_admin was read and discarded. manager.can does not include push-content, so the
+   * instance owner — the one person who cannot be locked out of anything here, per the note above —
+   * was the one person who could never push content to a client. Every user on every stock install
+   * was refused, and not by policy: by an early return.
+   *
+   * Taking the higher of the two keeps what the floor was for (an owner never loses sight of a
+   * client nobody named them on) without capping what an operator deliberately granted.
+   */
+  if (user && user.role === 'platform_admin') {
+    if (named && (ROLES[named].rank > ROLES.manager.rank)) return named;
+    return 'manager';
+  }
+  return named;
 }
 
 /** Convenience: the whole question in one call. */
@@ -118,6 +189,8 @@ function validateRole(role) {
 }
 
 module.exports = {
+  DIRECT_ONLY_ACTIONS,
+  requiresDirectAccess,
   ROLES, ROLE_NAMES, DEFAULT_ROLE, ACTIONS,
   isKnownRole, roleAllows, effectiveRole, userMay, validateRole,
 };

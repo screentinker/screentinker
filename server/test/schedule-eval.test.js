@@ -14,7 +14,7 @@ const data = JSON.parse(fs.readFileSync(vectorsPath, 'utf8'));
 test('schedule evaluator conforms to every shared vector', () => {
   const failures = [];
   for (const v of data.vectors) {
-    const got = isItemActiveNow(v.blocks, v.utc_now, v.timezone);
+    const got = isItemActiveNow(v.blocks, v.utc_now, v.timezone, v.window || null);
     if (got !== v.expected) failures.push(`  [${v.utc_now} ${v.timezone}] expected ${v.expected} got ${got} :: ${v.description}`);
   }
   if (failures.length) console.error('\n' + failures.join('\n'));

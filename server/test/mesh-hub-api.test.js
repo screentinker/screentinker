@@ -36,10 +36,14 @@ function freshDb() {
       transport_direction TEXT, retention_days INTEGER, tombstone_purge_days INTEGER,
       tls_verify INTEGER DEFAULT 1, peer_version TEXT, peer_min_version TEXT,
       token_hash TEXT, token_expires_at INTEGER, client_id TEXT,
-      created_at INTEGER, last_sync_at INTEGER, revoked_at INTEGER, peer_url TEXT);
+      created_at INTEGER, last_sync_at INTEGER, revoked_at INTEGER, peer_url TEXT,
+      peer_name TEXT);
     CREATE TABLE mesh_mirror_nodes (origin_node_id TEXT PRIMARY KEY, via_edge_id TEXT,
-      node_version TEXT, device_count INTEGER, devices_online INTEGER, origin_ts INTEGER,
-      received_at INTEGER, stale_since INTEGER);
+      node_version TEXT, node_name TEXT, device_count INTEGER, devices_online INTEGER,
+      origin_ts INTEGER, received_at INTEGER, stale_since INTEGER);
+    CREATE TABLE mesh_node (singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      node_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, self_device_id TEXT,
+      node_name TEXT, chose_name INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE mesh_mirror_devices (origin_node_id TEXT, device_id TEXT, name TEXT, status TEXT,
       last_heartbeat INTEGER, body TEXT DEFAULT '{}', origin_ts INTEGER, received_at INTEGER,
       deleted_at INTEGER, first_seen_at INTEGER, workspace_id TEXT,
@@ -62,6 +66,9 @@ const cleanup = (db) => { try { db.close(); } catch {} fs.rmSync(db._dir, { recu
 /** Stand the router up with a fixed user. */
 async function serve(db, user) {
   const app = express();
+  // The real server parses JSON globally before any router sees a request; without it here a PUT
+  // with a body arrives as `undefined` and every write route answers 400 for the wrong reason.
+  app.use(express.json());
   app.use('/api/mesh', meshRoutes(db, {
     requireAuth: (req, _res, next) => { req.user = user; next(); },
   }));
@@ -90,7 +97,7 @@ const seed = (db) => {
 const tech = { id: 'u-tech', role: 'user' };
 const admin = { id: 'u-admin', role: 'platform_admin' };
 
-test('⚠️ SCOPING: a tech named on Acme sees Acme and NOT Contoso', () => {
+test('⚠️ SCOPING: a tech named on Acme sees Acme and NOT Contoso', async () => {
   /*
    * The property a client's security review actually asks about. Note this is enforced by never
    * SELECTING the other client's rows — a route that fetched everything and filtered afterwards
@@ -101,16 +108,19 @@ test('⚠️ SCOPING: a tech named on Acme sees Acme and NOT Contoso', () => {
   try {
     seed(db);
     db.prepare("INSERT INTO mesh_client_access VALUES ('acme','u-tech','viewer',?,NULL)").run(NOW);
-    return serve(db, tech).then(async ({ base, close }) => {
-      try {
-        const r = await fetch(`${base}/api/mesh/devices`).then((x) => x.json());
-        assert.equal(r.total, 1, 'exactly one client\'s screens');
-        assert.equal(r.devices[0].originNodeId, 'node-acme');
-        assert.ok(!JSON.stringify(r).includes('Contoso'),
-          'no trace of the other client anywhere in the response, including counts');
-      } finally { await close(); }
-    });
-  } finally { setTimeout(() => cleanup(db), 100); }
+    const { base, close } = await serve(db, tech);
+    try {
+      const r = await fetch(`${base}/api/mesh/devices`).then((x) => x.json());
+      assert.equal(r.total, 1, 'exactly one client\'s screens');
+      assert.equal(r.devices[0].originNodeId, 'node-acme');
+      assert.ok(!JSON.stringify(r).includes('Contoso'),
+        'no trace of the other client anywhere in the response, including counts');
+    } finally {
+      await close();
+    }
+  } finally {
+    cleanup(db);
+  }
 });
 
 test('⚠️ an UNFILED edge is visible to platform_admin only', async () => {
@@ -155,7 +165,7 @@ test('⚠️ every device row carries its tri-state status and as-of age', async
       // and search for every row at once, and is very hard to undo once customers read it that way.
       assert.equal(d.originNodeId, 'node-acme');
       assert.equal(d.name, 'Acme Lobby', 'the name is unmodified');
-      assert.equal(d.deepLink, 'https://acme.example/#/devices/d1');
+      assert.equal(d.deepLink, 'https://acme.example/app#/devices/d1');  // /app, or it lands on the marketing page
     } finally { await close(); }
   } finally { cleanup(db); }
 });
@@ -226,16 +236,122 @@ test('the node rollup hides the online count when the link is stale', async () =
   } finally { cleanup(db); }
 });
 
-test('⚠️ THERE IS NO WRITE ROUTE (I2)', () => {
+test('⚠️ THE HUB API HAS EXACTLY ONE WRITE ROUTE, AND IT ONLY ASKS (I2)', () => {
   /*
-   * Asserted against the SOURCE, because the value here is absence. A behavioural test can only show
-   * that the routes somebody thought to try did not write; this shows there is nothing to call.
+   * ⚠️ REPLACES "there is no write route". That test asserted ABSENCE, which was the right guard
+   * while there was no write channel and the wrong one to keep afterwards: deleting it to add the
+   * feature would have removed the only thing watching this file. What replaces it is the property
+   * that has to survive — the hub may ASK, and every decision is made on the child.
+   *
+   * Still asserted against the source, because the value is still about what exists rather than
+   * what a caller happened to try.
    */
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'mesh.js'), 'utf8');
-  for (const verb of ['router.post', 'router.put', 'router.patch', 'router.delete']) {
-    assert.ok(!src.includes(verb),
-      `${verb} exists in the hub API — 2.0 has no downward channel to write over`);
+  const mutating = [...src.matchAll(/router\.(post|put|patch|delete)\(\s*'([^']+)'/g)]
+    .map((m) => `${m[1].toUpperCase()} ${m[2]}`);
+
+  /*
+   * ⚠️ WIDENED ONCE, ON PURPOSE, AND THE PROPERTY IS UNCHANGED.
+   *
+   * This used to read `deepEqual(mutating, ['POST /write/:nodeId'])`. The property it exists to
+   * protect is that the hub may ASK a child to change and never decides for it — not that this
+   * file contains exactly one mutating route. Those coincided until client administration landed.
+   *
+   * The routes below mutate only THIS hub's own bookkeeping: which customers exist, which of this
+   * hub's staff may act on them, and which client a linked server belongs to. None of them reach a
+   * child, none can change a screen, and every one was needed because canWriteToNode resolves a
+   * role through mesh_clients / mesh_client_access and NOTHING in the codebase could create a row
+   * in either — the permission model had no way to grant permission, so the write path was
+   * unreachable by every user on every install.
+   *
+   * It stays an explicit list rather than a pattern: a new mutating route here must still be
+   * argued for, and the one that proxies to the child is still the only one that leaves this node.
+   */
+  const HUB_LOCAL_ADMIN = [
+    /*
+     * ⚠️ THE PARENT ENDING AN EDGE — the mount of lib/mesh/edge-status disenroll(by:'parent') that
+     * was missing for three phases. Local: it revokes THIS node's own edge row and drops its own
+     * cached media; nothing is sent to the child, which learns at its next connection when the door
+     * is shut (the same way a child-side revoke is learned from below). The node holding a copy
+     * must be able to stop holding it; a 365-day token expiry is not a control.
+     *
+     * ⚠️ /links, NOT /nodes — do not "fix" this back. mesh-servers-view's guard forbids writes to
+     * /mesh/nodes on purpose: a URL that reads "write to a node" is one somebody later extends
+     * into writing to a node. This route modifies this hub's LINK and nothing on the other server.
+     */
+    'DELETE /links/:nodeId',
+    'POST /clients',                  // create a customer record
+    'PUT /clients/:id/nodes/:nodeId', // file a linked server under one
+    /*
+     * ⚠️ Whether content this node RECEIVES is passed on to that client without being asked each
+     * time. Local because the decision is this operator's: the servers below granted content-push
+     * to THIS node, not to whoever is above it, so a grandparent must not be able to set it. It
+     * changes only a column on this hub's own edge — what reaches the client afterwards still goes
+     * through the ordinary offer, and the client still applies its own grant on arrival.
+     */
+    'PUT /clients/:id/nodes/:nodeId/auto-forward',
+    'PUT /clients/:id/access',        // name one of THIS hub's staff on it
+  ];
+  /*
+   * ⚠️ TWO ROUTES REACH A CHILD NOW, AND BOTH ONLY ASK.
+   *
+   * /write proxies one change and the child decides whether to apply it. /content offers a
+   * description of some files plus a one-time ticket for each, and the child decides what it needs,
+   * whether it may accept it, and whether there is room — the bytes are then PULLED by the child
+   * over HTTP, so they never traverse this route at all.
+   *
+   * The property is unchanged and is what this list defends: a hub may ask; every decision is made
+   * on the machine that owns the screens. Adding a third entry here should require the same
+   * argument, which is why it stays an explicit list rather than a pattern.
+   */
+  /*
+   * ⚠️ /content (no :nodeId) sends the SAME content to several clients in one action. It is not a
+   * new power: the content belongs to this operator, every target has already granted them
+   * content-push individually, and the route re-checks visibility and role PER NODE rather than
+   * once for the batch — a convenience must never become a way to reach a client you could not
+   * reach one at a time. Each child still fetches from this node; nothing is cached in between.
+   */
+  const ASKS_THE_CHILD = ['POST /write/:nodeId', 'POST /content/:nodeId', 'POST /content', 'POST /content/:nodeId/purge'];
+  assert.deepEqual(mutating, [...HUB_LOCAL_ADMIN, ...ASKS_THE_CHILD],
+    'the hub API grew a mutating route. Only the ones that ask a child may leave this node, the ' +
+    'child decides, and the rest may touch nothing but this hub\'s own records.');
+
+  /*
+   * And the local ones must stay local: none may reach the child transport. If one ever needs to,
+   * it belongs behind the write route with the child's grant checked, not here.
+   */
+  for (const route of HUB_LOCAL_ADMIN) {
+    const name = route.split(' ')[1];
+    const body = src.slice(src.indexOf(`'${name}'`));
+    const end = body.indexOf('\n  router.');
+    assert.ok(!/__meshWriteTo|__meshReadFrom/.test(end === -1 ? body : body.slice(0, end)),
+      `${route} must not touch the mesh transport — it is hub-local bookkeeping`);
   }
+
+  /*
+   * ...and it must not do its own allowlisting. A second copy of the child's list would drift, and
+   * the copy that matters is the one on the machine that owns the screens.
+   *
+   * Checked by IMPORT rather than by the word "WRITABLE", which appears in an unrelated comment in
+   * this file — a substring match here would fail on prose and teach the next person to weaken it.
+   */
+  assert.ok(!/require\([^)]*write-proxy[^)]*\)/.test(src),
+    'routes/mesh.js must not import the write allowlist — that list lives on the child');
+  assert.ok(src.includes('__meshWriteTo'),
+    'the write route must go through the socket layer to the child, never act locally');
+  assert.ok(src.includes('__meshContentOfferTo'),
+    'the content route must do the same — an offer that acted locally would be this hub writing ' +
+    'to itself while telling an operator it had sent something to a customer');
+
+  /*
+   * ⚠️ And the bytes must not be served by anything that trusts a session. GET /pull/:token is
+   * answered to a CHILD SERVER holding a ticket, not to a person holding a cookie — requireAuth on
+   * it would break every transfer, and a ticket route that ALSO accepted a session would let any
+   * logged-in user of this hub enumerate files by guessing tickets.
+   */
+  const pull = src.slice(src.indexOf("router.get('/pull/:token'"));
+  assert.ok(pull.startsWith("router.get('/pull/:token', (req, res)"),
+    'the pull route takes no auth middleware — the ticket IS the credential');
 });
 
 test('the uptime report is bucketed in the ORIGIN zone and says so', async () => {

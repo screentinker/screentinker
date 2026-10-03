@@ -1,10 +1,14 @@
 import { api } from '../api.js';
-import { on, off, requestScreenshot } from '../socket.js';
+import { on, off, requestScreenshot, startGroupTalk, stopGroupTalk } from '../socket.js';
+import { BroadcastTalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
-import { esc, livenessBadge, isPlatformAdmin, screenshotUrl } from '../utils.js';
+import { esc, livenessBadge, isPlatformAdmin, screenshotUrl, compareVersions } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import * as gettingStarted from '../components/getting-started.js';
+import * as whatsNew from '../components/whats-new.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
+import { openMoveServerModal } from '../components/move-server-modal.js';
+import { openGroupPowerScheduleModal } from '../components/group-power-schedule-modal.js';
 import { frameDeviceOutput } from '../lib/device-frame.js';
 import { selectedRemoteOrg } from '../components/workspace-switcher.js';
 
@@ -17,6 +21,10 @@ const GROUP_COMMANDS = [
   { type: 'update' },
   { type: 'reboot', destructive: true },
   { type: 'shutdown', destructive: true },
+  // #312 follow-up: point every device in the group at a new server URL. Not in DESTRUCTIVE_COMMANDS
+  // because each panel verifies-then-commits and rolls back an unreachable address, but it takes a
+  // URL, so the handler prompts for one instead of firing on select.
+  { type: 'set_server_url' },
 ];
 const CMD_LABEL_KEY = {
   screen_on: 'dashboard.cmd.screen_on',
@@ -25,6 +33,7 @@ const CMD_LABEL_KEY = {
   update: 'dashboard.cmd.check_update',
   reboot: 'dashboard.cmd.reboot',
   shutdown: 'dashboard.cmd.shutdown',
+  set_server_url: 'dashboard.cmd.set_server_url',
 };
 
 let statusHandler = null;
@@ -33,11 +42,26 @@ let refreshInterval = null;
 let playbackHandler = null;
 let progressTickInterval = null;
 let wallChangedHandler = null;
+let connectedHandler = null;
+/*
+ * ⚠️ DELEGATED DOM LISTENERS ARE TRACKED LIKE THE SOCKET ONES, AND FOR THE SAME REASON.
+ *
+ * render() is handed `#app`, which is the SAME element on every navigation — only its innerHTML is
+ * replaced. A listener attached to a child is discarded with that innerHTML; one attached to the
+ * container itself survives, so every visit to the dashboard added another copy.
+ *
+ * That is not a leak in the abstract. With two copies, "Create group and add" prompts twice and
+ * calls api.createGroup twice — two identically named groups, the devices in the second — and
+ * "Create Video Wall" builds two walls. Three visits, three of each.
+ */
+let selectChangeHandler = null;
+let selectionActionHandler = null;
+let selectionGroupHandler = null;
 // device_id -> { content_name, duration_sec, started_at }
 const playbackByDevice = new Map();
-// Multi-select state for the "Create Video Wall" gesture. Holds device_ids
-// the user has ticked via checkboxes on the dashboard cards.
+// Multi-select state for actions on the dashboard cards.
 const selectedDeviceIds = new Set();
+let selectableGroups = [];
 
 function formatTimeAgo(timestamp) {
   if (!timestamp) return t('common.never');
@@ -96,6 +120,70 @@ function frameCardScreenshots(root) {
   (root || document).querySelectorAll('.device-card-preview[data-orientation]').forEach(frameCard);
 }
 
+/*
+ * #467 — the app version on every card, and which screens are behind.
+ *
+ * A fleet with OTA turned off (an MDM owns updates) has no other way to find a straggler than
+ * opening each display. "Behind" compares an ANDROID player against the APK this server serves
+ * (/api/version apk_version) — the only player that APK applies to; a web, Tizen, BrightSign or
+ * native player's version is shown but never marked, because nothing here would update it.
+ */
+let servedApkVersion = null;
+let servedApkFetched = false;
+async function loadServedApkVersion() {
+  if (servedApkFetched) return servedApkVersion;
+  servedApkFetched = true;
+  try {
+    const r = await fetch('/api/version');
+    servedApkVersion = (await r.json()).apk_version || null;
+  } catch (_) { servedApkVersion = null; }
+  return servedApkVersion;
+}
+/** The "App version" section of the status filter: behind-the-served-APK, then every version in use. */
+function fillVersionFilter(devices) {
+  const group = document.getElementById('versionFilterGroup');
+  if (!group) return;
+  const sel = document.getElementById('deviceFilter');
+  const keep = sel ? sel.value : '';
+  const counts = new Map();
+  for (const d of devices) if (d.app_version) counts.set(d.app_version, (counts.get(d.app_version) || 0) + 1);
+  const versions = [...counts.keys()].sort((x, y) => {
+    const c = compareVersions(y, x);
+    return c === null ? String(y).localeCompare(String(x)) : c;
+  });
+  const behind = devices.filter(isBehindServedApk).length;
+  group.innerHTML = (servedApkVersion && behind
+    ? `<option value="version:behind">${esc(t('dashboard.filter.version_behind', { version: servedApkVersion, n: behind }))}</option>`
+    : '') + versions.map((v) => `<option value="version:=${esc(v)}">v${esc(String(v).replace(/^v/, ''))} (${counts.get(v)})</option>`).join('');
+  group.hidden = !group.children.length;
+  if (sel && keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+}
+
+function isBehindServedApk(device) {
+  if (device.platform_family !== 'android' || !servedApkVersion || !device.app_version) return false;
+  const c = compareVersions(device.app_version, servedApkVersion);
+  return c !== null && c < 0;
+}
+
+/*
+ * #467 — which details a card shows, per browser. Battery and Wi-Fi mean little on wall-mounted,
+ * mains-powered signage, and a panel that reports a fixed or zero battery reads as a fault to
+ * staff. Hidden with a class on the grid (CSS), so toggling never re-renders or re-fetches.
+ */
+const CARD_FIELDS = ['version', 'battery', 'wifi', 'storage'];
+const CARD_FIELDS_KEY = 'st_card_fields_hidden';
+function hiddenCardFields() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CARD_FIELDS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((f) => CARD_FIELDS.includes(f)) : [];
+  } catch (_) { return []; }
+}
+function applyCardFields(root) {
+  if (!root) return;
+  const hidden = hiddenCardFields();
+  for (const f of CARD_FIELDS) root.classList.toggle(`hide-card-${f}`, hidden.includes(f));
+}
+
 function renderDeviceCard(device) {
   const token = localStorage.getItem('token');
   // ⚠️ NOT named screenshotUrl: that is the imported helper, and a const of the same name shadows
@@ -110,8 +198,14 @@ function renderDeviceCard(device) {
   // list now carries the RESOLVED capability set (routes/devices.js), so a device that declares
   // nothing still reads as its platform baseline and keeps being polled exactly as today.
   const canShot = !Array.isArray(device.capabilities) || device.capabilities.includes('remote.screenshot');
+  const behind = isBehindServedApk(device);
+  // A 0% battery that is not charging, on a screen that is running, is no battery at all: a
+  // mains-powered panel reporting the field it has no hardware for. Shown, it reads as a fault.
+  const realBattery = device.battery_level !== null && device.battery_level !== undefined
+    && !(Number(device.battery_level) === 0 && !device.battery_charging);
   return `
-    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" onclick="window.location.hash='/device/${device.id}'">
+    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" data-app-version="${esc(device.app_version || '')}" data-behind="${behind ? '1' : '0'}" onclick="window.location.hash='/device/${device.id}'">
+      <span class="device-card-drag" title="${esc(t('dashboard.drag_to_reorder'))}" onclick="event.stopPropagation()">⠿</span>
       <label class="device-card-select" title="${t('dashboard.select_for_wall')}" onclick="event.stopPropagation()">
         <input type="checkbox" class="device-select-cb" data-device-id="${device.id}"${checked ? ' checked' : ''}>
       </label>
@@ -160,15 +254,24 @@ function renderDeviceCard(device) {
             </svg>
             ${formatTimeAgo(device.last_heartbeat)}
           </div>
-          ${device.battery_level !== null && device.battery_level !== undefined ? `
-          <div class="meta-item">
+          ${device.app_version ? `
+          <div class="meta-item meta-version${behind ? ' is-behind' : ''}" data-card-field="version" title="${esc(behind
+            ? t('dashboard.app_behind_tip', { version: servedApkVersion })
+            : t('dashboard.app_version_tip'))}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+            </svg>
+            v${esc(String(device.app_version).replace(/^v/, ''))}${behind ? ' ↓' : ''}
+          </div>` : ''}
+          ${realBattery ? `
+          <div class="meta-item" data-card-field="battery">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="1" y="6" width="18" height="12" rx="2" ry="2"/><line x1="23" y1="13" x2="23" y2="11"/>
             </svg>
             ${device.battery_level}%
           </div>` : ''}
           ${device.wifi_rssi ? `
-          <div class="meta-item">
+          <div class="meta-item" data-card-field="wifi">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/>
               <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
@@ -176,7 +279,7 @@ function renderDeviceCard(device) {
             ${device.wifi_rssi} dBm
           </div>` : ''}
           ${device.storage_free_mb ? `
-          <div class="meta-item">
+          <div class="meta-item" data-card-field="storage">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
               <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
@@ -269,6 +372,12 @@ function renderGroupSection(group, devices, playlists) {
           </select>
           ` : ''}
           ${devices.length > 0 ? `
+          <!-- The weekly backlight schedule for every member that does not have its own. Opens the
+               SAME editor the device page uses; see components/group-power-schedule-modal.js. -->
+          <button class="btn btn-secondary btn-sm group-power-btn" data-group-id="${group.id}" data-group-name="${esc(group.name)}"
+                  style="padding:4px 8px;font-size:12px;white-space:nowrap" title="${esc(t('power.section_title'))}">
+            ${t('power.group_button')}
+          </button>
           <label class="group-sync-label" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);cursor:pointer;white-space:nowrap" title="${esc(t('dashboard.group_sync.hint'))}">
             <input type="checkbox" class="group-sync-cb" data-group-id="${group.id}" ${group.sync_enabled ? 'checked' : ''}> ${t('dashboard.group_sync.label')}
           </label>
@@ -283,13 +392,75 @@ function renderGroupSection(group, devices, playlists) {
                 title="${esc(group.sync_reason || '')}">${group.sync_downgraded ? '&#9888; ' : ''}${esc(group.sync_effective)}${group.sync_reason ? ' — ' + esc(group.sync_reason) : ''}</span>` : ''}
           <button class="btn group-resync-btn" data-group-id="${group.id}" style="padding:4px 10px;font-size:12px" title="${esc(t('dashboard.group_sync.resync_hint'))}">${t('dashboard.group_sync.resync')}</button>` : ''}
           ` : ''}
-          <button class="btn" data-group-manage="${group.id}" style="padding:4px 10px;font-size:12px" title="${t('dashboard.manage_tooltip')}">${t('dashboard.manage')}</button>
+          <!-- #talk broadcast: PA to every device in this group. Hidden until live video is confirmed. -->
+          <button class="btn talk-scope-btn" data-scope-kind="group" data-group-id="${group.id}" style="display:none;padding:4px 10px;font-size:12px">🎙️ ${t('dashboard.talk_group')}</button>
           <button class="btn" data-group-delete="${group.id}" style="padding:4px 8px;font-size:12px;color:var(--danger)" title="${t('dashboard.delete_group_tooltip')}">&#x2715;</button>
         </div>
       </div>
+      ${renderSelectionBar(group.id, group.id)}
       <div class="device-grid">
         ${devices.length > 0 ? devices.map(renderDeviceCard).join('') : `<div style="color:var(--text-muted);font-size:13px;padding:8px 12px">${t('dashboard.no_devices_in_group')}</div>`}
       </div>
+    </div>
+  `;
+}
+
+
+/*
+ * ⚠️ A BULK ACTION THAT PART-SUCCEEDS MUST SAY SO.
+ *
+ * These were `Promise.all`, which rejects on the FIRST failure — so one screen refusing left the
+ * others already moved, showed a single error toast, and told the operator nothing about which had
+ * gone through. They then either repeat the whole action or assume none of it worked; both are
+ * wrong, and "mostly worked" reported as "failed" is the version that gets a wall rebuilt from a
+ * half-changed estate.
+ *
+ * ⚠️ Also serialised in small batches rather than fired all at once. "Select all" on a large site
+ * is several hundred devices, and several hundred simultaneous requests is a burst this product has
+ * been bitten by before (#142, #146) — from its own reconnect storms rather than from the UI, but
+ * the server on the receiving end does not care which end it came from.
+ */
+async function runBulk(ids, fn, { batchSize = 8 } = {}) {
+  const done = []; const failed = [];
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const slice = ids.slice(i, i + batchSize);
+    const results = await Promise.allSettled(slice.map((id) => fn(id)));
+    results.forEach((r, n) => {
+      if (r.status === 'fulfilled') done.push(slice[n]);
+      else failed.push({ id: slice[n], reason: (r.reason && r.reason.message) || 'failed' });
+    });
+  }
+  return { done, failed };
+}
+
+/** One sentence covering both outcomes, so a partial result is never reported as a total one. */
+function reportBulk(done, failed, successKey) {
+  if (!failed.length) { showToast(tn(successKey, done.length), 'success'); return; }
+  const first = failed[0].reason;
+  showToast(done.length
+    ? `${done.length} done, ${failed.length} could not be changed — ${first}`
+    : first, done.length ? 'warning' : 'error');
+}
+
+function renderSelectionBar(scope, groupId = null) {
+  return `
+    <div class="selection-bar" data-selection-scope="${esc(scope)}"${groupId ? ` data-group-id="${esc(groupId)}"` : ''} style="display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;margin:0 0 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px">
+      <span class="selection-count" style="font-weight:500;font-size:13px;margin-right:4px"></span>
+      <button class="btn btn-primary btn-sm" data-selection-action="all">${t('dashboard.select_all')}</button>
+      <button class="btn btn-primary btn-sm" data-selection-action="invert">${t('dashboard.invert_selection')}</button>
+      <button class="btn btn-primary btn-sm" data-selection-action="cancel">${t('dashboard.cancel_selection')}</button>
+      <span class="selection-bar-divider" aria-hidden="true"></span>
+      ${groupId
+        ? `<button class="btn btn-primary btn-sm" data-selection-action="remove"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"></line></svg>${t('dashboard.remove_from_group')}</button>`
+        : `<details class="selection-group-menu">
+            <summary class="btn btn-primary btn-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>${t('dashboard.add_to_group')} <span aria-hidden="true">&#x25BE;</span></summary>
+            <div class="selection-group-menu-panel">
+              ${selectableGroups.map(g => `<button type="button" data-selection-group-id="${esc(g.id)}">${esc(g.name)}</button>`).join('')}
+              <div class="selection-group-menu-divider"></div>
+              <button type="button" class="selection-group-menu-create" data-selection-create-group>${t('dashboard.create_group_and_add')}</button>
+            </div>
+          </details>`}
+      <button class="btn btn-primary btn-sm" data-selection-action="wall">${t('dashboard.create_wall')}</button>
     </div>
   `;
 }
@@ -343,7 +514,13 @@ export function render(container) {
         <div class="subtitle">${t('dashboard.subtitle')}</div>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn" id="createGroupBtn">${t('dashboard.create_group')}</button>
+        <!-- #talk broadcast: PA to every device in the workspace. Hidden until we confirm live video
+             is available (see wireTalkScopeButtons). -->
+        <button class="btn btn-secondary talk-scope-btn" data-scope-kind="workspace" style="display:none">🎙️ ${t('dashboard.talk_all')}</button>
+        <!-- #312 follow-up: move EVERY device in the workspace to a new server address. Shown only to
+             a workspace admin (server also enforces it); opens a warning + type-to-commit modal.
+             Each panel verifies-then-commits and rolls back an unreachable address. -->
+        ${currentWorkspaceCanAdmin() ? `<button class="btn btn-secondary" id="wsSetServerUrlBtn" title="${t('dashboard.ws_set_server_url_tip')}">🔗 ${t('dashboard.ws_set_server_url')}</button>` : ''}
         <button class="btn btn-primary" id="addDeviceBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -352,16 +529,7 @@ export function render(container) {
         </button>
       </div>
     </div>
-    <div id="selectionBar" style="display:none;align-items:center;gap:10px;padding:8px 12px;margin-bottom:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px">
-      <span id="selectionCount" style="font-weight:500;font-size:13px"></span>
-      <button class="btn btn-primary btn-sm" id="createWallBtn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px">
-          <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/>
-        </svg>
-        Create Video Wall
-      </button>
-      <button class="btn btn-sm" id="clearSelectionBtn">Clear</button>
-    </div>
+    <div id="whatsNew"></div>
     <div id="gettingStarted"></div>
       <div id="dashStats" class="dash-stats-row" style="display:flex;gap:12px;margin-bottom:16px"></div>
     <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
@@ -376,14 +544,45 @@ export function render(container) {
           <option value="offline:crashed">${t('dashboard.filter.offline_crashed')}</option>
           <option value="offline:clean_exit">${t('dashboard.filter.offline_clean')}</option>
         </optgroup>
+        <optgroup id="versionFilterGroup" label="${t('dashboard.filter.by_version')}" hidden></optgroup>
       </select>
+      <details class="card-fields-menu" id="cardFieldsMenu">
+        <summary class="btn btn-secondary btn-sm">${t('dashboard.card_fields')}</summary>
+        <div class="card-fields-pop">
+          ${['version', 'battery', 'wifi', 'storage'].map((f) => `
+            <label><input type="checkbox" data-card-field-toggle="${f}"> ${t('dashboard.field.' + f)}</label>`).join('')}
+        </div>
+      </details>
+      <!-- #106 reordering has existed since 2.1, and a customer still asked "is it possible to
+           reorder the screens?". A feature nobody can see is a feature nobody has. -->
+      <span style="font-size:12px;color:var(--text-muted);margin-left:auto">${t('dashboard.drag_hint')}</span>
     </div>
     <div id="groupedDevices"></div>
   `;
 
+  // #312 follow-up: move every device in the workspace to a new server address (server relocation).
+  // The button only renders for a workspace admin; the /command route enforces admin too. The modal
+  // is a warning + type-the-workspace-name commit, because this is a whole-workspace blast radius.
+  container.querySelector('#wsSetServerUrlBtn')?.addEventListener('click', () => {
+    const ws = currentWorkspaceInfo();
+    if (!ws?.id) { showToast(t('dashboard.ws_set_server_url_no_ws'), 'error'); return; }
+    openMoveServerModal({
+      workspaceName: ws.name || '',
+      deviceCount: ws.device_count || 0,
+      suggestedUrl: window.location.origin,
+      onConfirm: async (url) => {
+        const r = await api.sendWorkspaceCommand(ws.id, 'set_server_url', { url });
+        let msg = t('dashboard.toast.command_sent', { cmd: t('dashboard.cmd.set_server_url'), sent: r.sent, total: r.total });
+        if (r.unsupported > 0) msg += ' ' + t('dashboard.toast.command_unsupported_n', { n: r.unsupported });
+        showToast(msg, r.unsupported > 0 || r.offline > 0 ? 'warning' : 'success');
+      },
+    });
+  });
+
   const addBtn = container.querySelector('#addDeviceBtn');
   addBtn.addEventListener('click', () => {
     document.getElementById('addDeviceModal').style.display = 'flex';
+    resetAddDeviceDialog();   // #313: a previous create must not leave the dialog on its result panel
     document.getElementById('pairingCodeInput').value = '';
     document.getElementById('deviceNameInput').value = '';
     document.getElementById('pairingCodeInput').focus();
@@ -401,6 +600,20 @@ export function render(container) {
   // Search and filter
   document.getElementById('deviceSearch').oninput = () => filterDevices();
   document.getElementById('deviceFilter').onchange = () => filterDevices();
+  // #467: card details, remembered per browser.
+  {
+    const hidden = hiddenCardFields();
+    document.querySelectorAll('[data-card-field-toggle]').forEach((cb) => {
+      cb.checked = !hidden.includes(cb.dataset.cardFieldToggle);
+      cb.onchange = () => {
+        const now = [...document.querySelectorAll('[data-card-field-toggle]')]
+          .filter((x) => !x.checked).map((x) => x.dataset.cardFieldToggle);
+        try { localStorage.setItem(CARD_FIELDS_KEY, JSON.stringify(now)); } catch (_) { /* private mode: this view only */ }
+        applyCardFields(document.getElementById('groupedDevices'));
+      };
+    });
+    applyCardFields(document.getElementById('groupedDevices'));
+  }
 
   function filterDevices() {
     const search = document.getElementById('deviceSearch').value.toLowerCase();
@@ -409,24 +622,73 @@ export function render(container) {
     // matched nothing and emptied the list. data-liveness carries the state for a robust match.
     const filter = document.getElementById('deviceFilter').value;    // '' | healthy | degraded | offline | offline:<reason>
     const reasonDrill = filter.startsWith('offline:') ? filter.slice(8) : null; // drill into a manner-of-death
+    const versionDrill = filter.startsWith('version:') ? filter.slice(8) : null;  // #467: 'behind' | '=<version>' 
     document.querySelectorAll('.device-card').forEach(card => {
       const name = card.querySelector('.device-card-name')?.textContent.toLowerCase() || '';
       const el = card.querySelector('.device-card-status [data-liveness]');
       const cardState = el?.dataset.liveness || '';
       const cardReason = el?.dataset.offlineReason || '';
       const matchSearch = !search || name.includes(search);
-      const matchState = reasonDrill
+      const matchState = versionDrill
+        ? (versionDrill === 'behind' ? card.dataset.behind === '1' : card.dataset.appVersion === versionDrill.slice(1))
+        : reasonDrill
         ? (cardState === 'offline' && cardReason === reasonDrill)     // Offline drill-in: liveness AND reason (e.g. silent = MDM-killed set)
         : (!filter || cardState === filter);                         // existing three-state filter — unchanged
       card.style.display = (matchSearch && matchState) ? '' : 'none';
     });
+    refreshSelectionBar();
   }
 
   // Setup pairing
   const pairBtn = document.getElementById('pairDeviceBtn');
+
+  /*
+   * #313 — two ways to add a display, one dialog.
+   *
+   * Ticking "this player can't stay paired" swaps the pairing code for nothing at all: the display
+   * is created here and given a URL that carries its identity. That inversion exists because a
+   * vMix browser input deletes its whole profile when vMix closes, so the ordinary flow — player
+   * shows a code, operator types it — works exactly once and asks for a new code on every restart.
+   *
+   * The code field is HIDDEN rather than made optional. A form with two meanings for one input is
+   * how an operator ends up typing a code into a box that is ignoring it.
+   */
+  document.getElementById('createdCopyBtn')?.addEventListener('click', () => {
+    const input = document.getElementById('createdPlayerUrl');
+    input.select();
+    // execCommand, not navigator.clipboard: plenty of self-hosted dashboards are plain HTTP on a
+    // LAN, where the async clipboard API does not exist.
+    try { document.execCommand('copy'); showToast(t('device.enrol.copied')); }
+    catch { showToast(t('device.enrol.copy_failed'), 'error'); }
+  });
+
+  const noStorageBox = document.getElementById('addDeviceNoStorage');
+  const codeGroup = document.getElementById('pairingCodeGroup');
+  const introEl = document.getElementById('addDeviceIntro');
+  const syncMode = () => {
+    const noStorage = !!noStorageBox?.checked;
+    if (codeGroup) codeGroup.style.display = noStorage ? 'none' : '';
+    if (introEl) introEl.textContent = noStorage ? t('add_display.intro_no_storage') : t('add_display.intro');
+    pairBtn.textContent = noStorage ? t('add_display.create_btn') : t('add_display.pair_btn');
+  };
+  noStorageBox?.addEventListener('change', syncMode);
+  syncMode();
+
   pairBtn.onclick = async () => {
-    const code = document.getElementById('pairingCodeInput').value.trim();
     const name = document.getElementById('deviceNameInput').value.trim();
+
+    if (noStorageBox?.checked) {
+      try {
+        const r = await api.createWebPlayerDisplay(name || undefined);
+        showWebPlayerUrl(r.player_url);
+        loadDashboard();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      return;
+    }
+
+    const code = document.getElementById('pairingCodeInput').value.trim();
     if (!code || code.length !== 6) {
       showToast(t('dashboard.error_pairing_code'), 'error');
       return;
@@ -441,38 +703,132 @@ export function render(container) {
     }
   };
 
-  // Create group
-  container.querySelector('#createGroupBtn').addEventListener('click', async () => {
-    const name = prompt(t('dashboard.prompt_group_name'));
-    if (!name) return;
-    try {
-      await api.createGroup(name);
-      showToast(t('dashboard.toast.group_created'), 'success');
-      loadDashboard();
-    } catch (e) { showToast(e.message, 'error'); }
-  });
+  /*
+   * #313 — show the URL in place of the form once the display exists.
+   *
+   * ⚠️ NOT A TOAST. This URL is the entire product of the flow and the operator has to move it into
+   * another application; a message that fades after four seconds is the wrong container for the one
+   * thing they came here to get. It stays until they close the dialog, and it is also on the
+   * display's own Web player tab, so closing too early costs nothing.
+   */
+  function showWebPlayerUrl(url) {
+    const form = document.getElementById('addDeviceForm');
+    const result = document.getElementById('addDeviceResult');
+    const input = document.getElementById('createdPlayerUrl');
+    if (!form || !result || !input) { showToast(url, 'success'); return; }
+
+    // Swap visibility. The form is NEVER removed: this dialog's markup lives in index.html and is
+    // reused for every open, so destroying it broke the next Add Display — normal pairing included.
+    form.style.display = 'none';
+    result.style.display = '';
+    input.value = url;
+    input.select();
+    document.getElementById('pairDeviceBtn').style.display = 'none';
+  }
+
+  /* Put the dialog back to the form. Called on every open, so one create cannot strand the next. */
+  function resetAddDeviceDialog() {
+    const form = document.getElementById('addDeviceForm');
+    const result = document.getElementById('addDeviceResult');
+    if (form) form.style.display = '';
+    if (result) result.style.display = 'none';
+    const pairBtnEl = document.getElementById('pairDeviceBtn');
+    if (pairBtnEl) pairBtnEl.style.display = '';
+    const box = document.getElementById('addDeviceNoStorage');
+    if (box) {
+      box.checked = false;
+      // Fire the change listener rather than calling syncMode directly, so the intro text, the
+      // code field and the button label all revert through the one path that owns them.
+      box.dispatchEvent(new Event('change'));
+    }
+  }
 
   // Multi-select: a checkbox on each device card adds to selectedDeviceIds.
   // The selection bar shows when 1+ are selected; "Create Video Wall" is the
   // primary action — it creates the wall, removes devices from any group,
   // assigns them, and navigates to the editor.
-  container.addEventListener('change', (ev) => {
+  /*
+   * Detach whatever a previous mount attached, before attaching again. Idempotent:
+   * removeEventListener with a handler that was never added is a no-op.
+   */
+  if (selectChangeHandler) container.removeEventListener('change', selectChangeHandler);
+  if (selectionActionHandler) container.removeEventListener('click', selectionActionHandler);
+  if (selectionGroupHandler) container.removeEventListener('click', selectionGroupHandler);
+
+  selectChangeHandler = (ev) => {
     const cb = ev.target.closest?.('.device-select-cb');
     if (!cb) return;
     const id = cb.dataset.deviceId;
     if (cb.checked) selectedDeviceIds.add(id); else selectedDeviceIds.delete(id);
     cb.closest('.device-card')?.classList.toggle('selected', cb.checked);
     refreshSelectionBar();
-  });
+  };
+  container.addEventListener('change', selectChangeHandler);
 
-  document.getElementById('clearSelectionBtn').addEventListener('click', () => {
-    selectedDeviceIds.clear();
-    document.querySelectorAll('.device-select-cb').forEach(cb => { cb.checked = false; });
-    document.querySelectorAll('.device-card.selected').forEach(c => c.classList.remove('selected'));
+  const visibleDeviceCards = (bar) => [...bar.parentElement.querySelectorAll('.device-card[data-device-id]')]
+    .filter(card => card.style.display !== 'none');
+  const syncVisibleSelection = () => {
+    document.querySelectorAll('.device-select-cb').forEach(cb => {
+      const selected = selectedDeviceIds.has(cb.dataset.deviceId);
+      cb.checked = selected;
+      cb.closest('.device-card')?.classList.toggle('selected', selected);
+    });
     refreshSelectionBar();
-  });
+  };
+  selectionActionHandler = async (e) => {
+    const action = e.target.closest('[data-selection-action]');
+    if (!action) return;
+    const bar = action.closest('.selection-bar');
+    const visible = visibleDeviceCards(bar);
+    if (action.dataset.selectionAction === 'all') {
+      visible.forEach(card => selectedDeviceIds.add(card.dataset.deviceId));
+      syncVisibleSelection();
+    } else if (action.dataset.selectionAction === 'invert') {
+      visible.forEach(card => {
+        const id = card.dataset.deviceId;
+        if (selectedDeviceIds.has(id)) selectedDeviceIds.delete(id); else selectedDeviceIds.add(id);
+      });
+      syncVisibleSelection();
+    } else if (action.dataset.selectionAction === 'cancel') {
+      visible.forEach(card => selectedDeviceIds.delete(card.dataset.deviceId));
+      syncVisibleSelection();
+    } else if (action.dataset.selectionAction === 'remove') {
+      const ids = visible.map(card => card.dataset.deviceId).filter(id => selectedDeviceIds.has(id));
+      const { done, failed } = await runBulk(ids, (deviceId) =>
+        api.removeDeviceFromGroup(bar.dataset.groupId, deviceId));
+      reportBulk(done, failed, 'dashboard.toast.removed_from_group');
+      loadDashboard();
+    } else if (action.dataset.selectionAction === 'wall') {
+      createWallFromSelection();
+    }
+  };
+  container.addEventListener('click', selectionActionHandler);
 
-  document.getElementById('createWallBtn').addEventListener('click', () => createWallFromSelection());
+  selectionGroupHandler = async (e) => {
+    const groupItem = e.target.closest('[data-selection-group-id], [data-selection-create-group]');
+    if (!groupItem) return;
+    const menu = groupItem.closest('.selection-group-menu');
+    const bar = menu.closest('.selection-bar');
+    let groupId = groupItem.dataset.selectionGroupId;
+    const ids = visibleDeviceCards(bar)
+      .map(card => card.dataset.deviceId).filter(id => selectedDeviceIds.has(id));
+    try {
+      if (groupItem.hasAttribute('data-selection-create-group')) {
+        const name = prompt(t('dashboard.prompt_group_name'))?.trim();
+        if (!name) { menu.removeAttribute('open'); return; }
+        const group = await api.createGroup(name);
+        groupId = group.id;
+      }
+      const { done, failed } = await runBulk(ids, (deviceId) => api.addDeviceToGroup(groupId, deviceId));
+      reportBulk(done, failed, 'dashboard.toast.added_to_group');
+      loadDashboard();
+    } catch (err) {
+      // Only reaches here if creating the GROUP failed — the per-device results are handled above.
+      showToast(err.message, 'error');
+    }
+    menu.removeAttribute('open');
+  };
+  container.addEventListener('click', selectionGroupHandler);
 
   // Load everything
   loadDashboard();
@@ -528,12 +884,24 @@ export function render(container) {
 
   wallChangedHandler = () => loadDashboard();
 
+  // Re-sync the whole dashboard when our OWN socket (re)connects. Online status is pushed to the
+  // panel only at device:register time; if this panel's socket was down when a device came back
+  // (e.g. after a reboot) it never saw that broadcast and the card stays OFFLINE until the device's
+  // next periodic re-register (up to 5 min). Re-fetching on reconnect closes that gap. Skip the very
+  // first connect - the initial load already ran - so this only fires on genuine reconnects.
+  let sawFirstConnect = false;
+  connectedHandler = () => {
+    if (!sawFirstConnect) { sawFirstConnect = true; return; }
+    loadDashboard();
+  };
+
   on('device-status', statusHandler);
   on('screenshot-ready', screenshotHandler);
   on('device-added', deviceAddedHandler);
   on('device-removed', deviceRemovedHandler);
   on('playback-progress', playbackHandler);
   on('wall-changed', wallChangedHandler);
+  on('connected', connectedHandler);
 
   progressTickInterval = setInterval(() => {
     for (const id of playbackByDevice.keys()) renderProgressFor(id);
@@ -550,20 +918,18 @@ export function render(container) {
 }
 
 function refreshSelectionBar() {
-  const bar = document.getElementById('selectionBar');
-  const count = document.getElementById('selectionCount');
-  if (!bar || !count) return;
-  const n = selectedDeviceIds.size;
-  if (n === 0) { bar.style.display = 'none'; return; }
-  bar.style.display = 'flex';
-  // Need at least 2 to make a wall - surface the constraint inline so the
-  // greyed-out button isn't just silently unresponsive.
-  count.textContent = n < 2
-    ? `${n} display selected - pick 1 more to create a wall`
-    : `${n} displays selected`;
-  const btn = document.getElementById('createWallBtn');
-  btn.disabled = n < 2;
-  btn.title = n < 2 ? 'Select at least 2 displays to create a video wall' : '';
+  document.querySelectorAll('.selection-bar').forEach(bar => {
+    const visible = [...bar.parentElement.querySelectorAll('.device-card[data-device-id]')]
+      .filter(card => card.style.display !== 'none');
+    const n = visible.filter(card => selectedDeviceIds.has(card.dataset.deviceId)).length;
+    bar.style.display = n > 0 ? 'flex' : 'none';
+    const count = bar.querySelector('.selection-count');
+    if (count) count.textContent = t('dashboard.selection_count_other', { n });
+    const wall = bar.querySelector('[data-selection-action="wall"]');
+    if (wall) {
+      wall.style.display = n >= 2 ? '' : 'none';
+    }
+  });
 }
 
 // Pick a sensible default grid for n devices: prefer near-square layouts,
@@ -694,6 +1060,7 @@ async function loadRemoteDashboard(org) {
      */
     card.removeAttribute('draggable');
     card.querySelector('.device-card-select')?.remove();
+    card.querySelector('.device-card-drag')?.remove();
   });
 
   const stat = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
@@ -724,29 +1091,53 @@ async function loadDashboard() {
     const [rawDevices, groups, playlists, walls] = await Promise.all([
       api.getDevices(), api.getGroups(), api.getPlaylists(), api.getWalls(),
     ]);
+    selectableGroups = groups || [];
 
     // Deduplicate devices by id — a stale reconnect race can briefly cause the same
     // device to appear twice in the list. Last-write-wins keeps the freshest state.
     const seen = new Map();
     for (const d of rawDevices) seen.set(d.id, d);
     const devices = Array.from(seen.values());
+    await loadServedApkVersion();   // #467: before any card renders, so "behind" is decided once
+    fillVersionFilter(devices);
 
-    // Getting started. Skipped entirely once put away or finished, so the extra content
-    // lookup only ever happens for an account that still has something left to do.
-    const gsHost = document.getElementById('gettingStarted');
-    if (gsHost && !gettingStarted.isDismissed()) {
-      try {
-        const content = await api.getContent();
-        const state = gettingStarted.computeSteps({ devices, content: content || [], playlists: playlists || [] });
-        if (state.complete) gettingStarted.dismiss();   // finished: never costs a fetch again
-        gettingStarted.render(gsHost, state, {
-          onAction: (a) => {
-            if (a === 'add-device') { document.getElementById('addDeviceBtn')?.click(); return true; }
-            return false;
-          },
-        });
-      } catch (_) { /* guidance must never break the dashboard */ }
+    /*
+     * What's new. shouldFetch() is a localStorage read against the version app.js already knows,
+     * so an unchanged build makes no request at all; the one request happens on the first
+     * dashboard load after an upgrade, which is the one the panel exists for.
+     */
+    const wnHost = document.getElementById('whatsNew');
+    if (wnHost) {
+      wnHost.style.display = 'none';
+      if (whatsNew.shouldFetch()) {
+        try {
+          const notes = await whatsNew.fetchNotes();
+          if (notes) whatsNew.render(wnHost, notes);
+        } catch (_) { /* a release note must never break the dashboard */ }
+      }
     }
+
+    // Getting started. devices and playlists are already in hand from the load above, so this
+    // still costs exactly the one content request it always did — and it is skipped entirely
+    // once put away or finished.
+    await gettingStarted.mount(document.getElementById('gettingStarted'), {
+      devices,
+      playlists: playlists || [],
+      onAction: (a) => {
+        if (a === 'add-device') { document.getElementById('addDeviceBtn')?.click(); return true; }
+        /*
+         * Step 4 points back at this page, so it needs an in-page answer too or its button is
+         * dead the same way step 3's was. Assigning happens on a display's own page, and step 4
+         * is only ever the next step once a display exists — so open the first one rather than
+         * leaving the operator to work out that "the screen" means clicking a card.
+         */
+        if (a === 'assign') {
+          const first = devices && devices[0];
+          if (first) { window.location.hash = `#/device/${first.id}`; return true; }
+        }
+        return false;
+      },
+    });
 
     // Stats
     const online = devices.filter(d => d.status === 'online').length;
@@ -850,6 +1241,7 @@ async function loadDashboard() {
             <strong style="font-size:15px;color:var(--text-muted)">${t('dashboard.ungrouped')}</strong>
             <span style="color:var(--text-muted);font-size:12px;margin-left:10px">${tn('dashboard.devices_count', ungrouped.length)}</span>
           </div>` : ''}
+          ${renderSelectionBar('ungrouped')}
           <div class="device-grid">
             ${ungrouped.map(renderDeviceCard).join('')}
           </div>
@@ -859,7 +1251,7 @@ async function loadDashboard() {
 
     main.innerHTML = html;
     frameCardScreenshots();
-    attachGroupHandlers(groupsWithDevices, dashboardDevices);
+    attachGroupHandlers(groupsWithDevices);
 
     // Drop any selections for devices that have since been absorbed into a
     // wall, and update the toolbar.
@@ -873,11 +1265,29 @@ async function loadDashboard() {
   }
 }
 
-function attachGroupHandlers(groupsWithDevices, allDevices) {
+function attachGroupHandlers(groupsWithDevices) {
   // Drag-and-drop: device cards are draggable; group sections + the Ungrouped
   // wrapper are drop targets. Drop on a group adds membership (mirrors the
   // Manage modal). Drop on Ungrouped removes the device from every group it's
   // currently a member of.
+  // The weekly backlight schedule for the group. The member list is passed through so the modal
+  // can say how many panels cannot honour one, and how many override it with their own — neither
+  // of which is visible from a group row.
+  document.querySelectorAll('.group-power-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-group-id');
+      const g = groupsWithDevices.find((x) => x.id === id);
+      /*
+       * ⚠️ memberIds, NOT g.devices. The render pass above filters g.devices so each screen is
+       * drawn exactly once ("the first group it belongs to wins"), so a device in two groups is
+       * missing from the second group's list — and it is precisely the multi-group screens whose
+       * power schedule is ambiguous. memberIds is preserved unfiltered for this kind of question.
+       */
+      if (g) openGroupPowerScheduleModal({ id: g.id, name: g.name }, [...(g.memberIds || [])].map((mid) => ({ id: mid })));
+    });
+  });
+
   const groupsByDeviceId = new Map();
   for (const g of groupsWithDevices) {
     g.memberIds.forEach(id => {
@@ -906,8 +1316,9 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
       e.dataTransfer.effectAllowed = 'move';
       dragDeviceId = card.dataset.deviceId;   // #106
       dragSectionKey = sectionKeyOf(card);    // #106
+      card.classList.add('dragging');
     });
-    card.addEventListener('dragend', () => { dragDeviceId = null; dragSectionKey = null; clearDropIndicators(); });
+    card.addEventListener('dragend', () => { card.classList.remove('dragging'); dragDeviceId = null; dragSectionKey = null; clearDropIndicators(); });
 
     // #106 within-section reorder. Engages ONLY when the target is another card in the
     // SAME section; otherwise it no-ops and the event bubbles to the section handler
@@ -1125,8 +1536,20 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
         }
       }
 
+      // #312 follow-up: set_server_url carries a payload, so prompt for the address (and confirm the
+      // group-wide move) before sending. Panels that cannot honour it are skipped and reported.
+      let payload;
+      if (type === 'set_server_url') {
+        const url = (prompt(t('dashboard.set_server_url_prompt', { n: count, group: groupName }), window.location.origin) || '').trim().replace(/\/+$/, '');
+        e.target.value = '';
+        if (!url) return;
+        if (!/^https?:\/\//i.test(url)) { showToast(t('device.ctl.set_server_url_bad'), 'error'); return; }
+        if (!confirm(t('dashboard.set_server_url_confirm', { url, n: count, group: groupName }))) return;
+        payload = { url };
+      }
+
       try {
-        const result = await api.sendGroupCommand(groupId, type);
+        const result = await api.sendGroupCommand(groupId, type, payload);
         // A group is routinely mixed-platform, so these buttons stay visible — "reboot" is
         // meaningful for the Android panels in the group even when the web players in it can
         // never honour it. What must not happen is the toast counting those as sent: the
@@ -1159,78 +1582,128 @@ function attachGroupHandlers(groupsWithDevices, allDevices) {
     });
   });
 
-  // Manage group (add/remove devices)
-  document.querySelectorAll('[data-group-manage]').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const groupId = btn.dataset.groupManage;
-      const group = groupsWithDevices.find(g => g.id === groupId);
-      const memberIds = new Set(group.devices.map(d => d.id));
+  wireTalkScopeButtons();
+}
 
-      // Get all groups for multi-group warning
-      const otherGroups = groupsWithDevices.filter(g => g.id !== groupId);
+// #talk broadcast (one-way PA). One active broadcast at a time across the whole dashboard.
+let activeBroadcast = null;   // { key, client, btn, label, scope }
+let dashTalkChecked = false;
+let dashTalk = false;   // #talk master switch (features.talk); per-org flag enforced server-side
 
-      const modal = document.createElement('div');
-      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
-      modal.innerHTML = `
-        <div style="background:var(--bg-card);border-radius:12px;padding:24px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto">
-          <h3 style="margin:0 0 4px">${esc(group.name)}</h3>
-          <p style="margin:0 0 16px;font-size:12px;color:var(--text-muted)">${t('dashboard.manage_group_subtitle')}</p>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            ${allDevices.filter(d => d.status !== 'provisioning').map(d => {
-              const inOther = otherGroups.filter(g => g.memberIds.has(d.id)).map(g => g.name);
-              return `
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:var(--bg-secondary)">
-                  <input type="checkbox" data-device-id="${d.id}" data-in-groups="${inOther.join(',')}" ${memberIds.has(d.id) ? 'checked' : ''}>
-                  <span class="status-dot ${d.status}" style="width:8px;height:8px"></span>
-                  <span style="font-size:13px;flex:1">${esc(d.name)}</span>
-                  ${inOther.length > 0 ? `<span style="font-size:10px;color:var(--text-muted);background:var(--bg-primary);padding:1px 6px;border-radius:8px">${esc(inOther.join(', '))}</span>` : ''}
-                </label>
-              `;
-            }).join('')}
-          </div>
-          <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-            <button class="btn" id="manageGroupClose">${t('common.done')}</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-
-      modal.querySelector('#manageGroupClose').onclick = () => { modal.remove(); loadDashboard(); };
-      modal.addEventListener('click', (ev) => { if (ev.target === modal) { modal.remove(); loadDashboard(); } });
-
-      modal.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        cb.addEventListener('change', async () => {
-          const deviceId = cb.dataset.deviceId;
-          const existingGroups = cb.dataset.inGroups;
-          const cbName = cb.closest('label')?.querySelector('span:not(.status-dot)')?.textContent || '';
-          try {
-            if (cb.checked && existingGroups) {
-              if (!confirm(t('dashboard.confirm_add_to_group', { name: cbName, groups: existingGroups, target: group.name }))) {
-                cb.checked = false;
-                return;
-              }
-            }
-            if (cb.checked) {
-              await api.addDeviceToGroup(groupId, deviceId);
-            } else {
-              await api.removeDeviceFromGroup(groupId, deviceId);
-            }
-          } catch (err) {
-            showToast(err.message, 'error');
-            cb.checked = !cb.checked;
-          }
-        });
-      });
+// Reveal + wire the group/workspace Talk buttons, but only once we've confirmed talk is enabled on
+// the server (the TALK_ENABLED master switch). The per-org talk flag is enforced server-side on
+// every publish/listen, so an org that has it off gets a 'talk_unavailable' reason if it tries.
+function wireTalkScopeButtons() {
+  const reveal = () => {
+    document.querySelectorAll('.talk-scope-btn').forEach((btn) => {
+      if (!dashTalk) { btn.style.display = 'none'; return; }
+      btn.style.display = '';
+      if (btn._talkWired) return;
+      btn._talkWired = true;
+      btn.addEventListener('click', () => toggleBroadcast(btn));
     });
-  });
+  };
+  if (dashTalkChecked) { reveal(); return; }
+  api.getServerStatus()
+    .then((s) => { dashTalk = !!(s && s.features && s.features.talk); })
+    .catch(() => { dashTalk = false; })
+    .finally(() => { dashTalkChecked = true; reveal(); });
+}
+
+// #312 follow-up: the current workspace row from the cached /me (accessible_workspaces carries
+// name, device_count and can_admin). Returns null if not loaded or no workspace selected.
+function currentWorkspaceInfo() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user'));
+    const id = u?.current_workspace_id;
+    if (!id || !Array.isArray(u.accessible_workspaces)) return null;
+    const ws = u.accessible_workspaces.find(w => w.id === id);
+    return ws ? { ...ws, id } : { id };
+  } catch (_) { return null; }
+}
+
+// Only a workspace admin may move the whole workspace to a new server. The server enforces this on
+// the /command route regardless; this just keeps the button from rendering for everyone else.
+function currentWorkspaceCanAdmin() {
+  return !!currentWorkspaceInfo()?.can_admin;
+}
+
+function scopeForButton(btn) {
+  const kind = btn.dataset.scopeKind;
+  if (kind === 'group') return { kind, id: btn.dataset.groupId };
+  if (kind === 'workspace') {
+    let id = null;
+    try { id = JSON.parse(localStorage.getItem('user'))?.current_workspace_id || null; } catch (_) {}
+    return { kind, id };
+  }
+  return null;
+}
+
+async function toggleBroadcast(btn) {
+  const scope = scopeForButton(btn);
+  if (!scope || !scope.id) { showToast(t('dashboard.talk.failed'), 'error'); return; }
+  const key = scope.kind + ':' + scope.id;
+
+  // Toggle off if this exact scope is live.
+  if (activeBroadcast && activeBroadcast.key === key) { endBroadcast(); return; }
+  // Only one PA at a time — end any other before starting this one.
+  if (activeBroadcast) endBroadcast();
+
+  const descriptorPath = scope.kind === 'group'
+    ? `/api/device-groups/${scope.id}/talk`
+    : `/api/workspaces/${scope.id}/talk`;
+  const label = btn.textContent;
+  btn.disabled = true;
+  try {
+    startGroupTalk(scope, (afterAck) => {
+      if (afterAck && afterAck.delivered === false) showToast(t('dashboard.talk.no_devices'), 'warning');
+    });
+    const client = new BroadcastTalkClient(descriptorPath, {});
+    await client.start();
+    activeBroadcast = { key, client, btn, label, scope };
+    btn.textContent = '⏹ ' + t('dashboard.talk.end');
+    btn.classList.add('btn-danger');
+    showToast(t('dashboard.talk.on_air'), 'info');
+  } catch (e) {
+    try { stopGroupTalk(scope); } catch (_) {}
+    showToast(t('dashboard.talk.failed') + (e && e.message ? ': ' + e.message : ''), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function endBroadcast() {
+  const b = activeBroadcast;
+  if (!b) return;
+  activeBroadcast = null;
+  try { b.client.stop(); } catch (_) {}
+  try { stopGroupTalk(b.scope); } catch (_) {}
+  try { b.btn.textContent = b.label; b.btn.classList.remove('btn-danger'); } catch (_) {}
 }
 
 export function cleanup() {
+  // #talk: leaving the dashboard ends any live PA (and tells the devices to stop listening).
+  endBroadcast();
+  /*
+   * ⚠️ The delegated DOM listeners go too. They live on #app, which outlives this view — so
+   * "the view was torn down" is only true if they are removed here. render() also detaches before
+   * re-attaching, which covers the case where cleanup was never called at all.
+   */
+  const host = document.getElementById('app');
+  if (host) {
+    if (selectChangeHandler) host.removeEventListener('change', selectChangeHandler);
+    if (selectionActionHandler) host.removeEventListener('click', selectionActionHandler);
+    if (selectionGroupHandler) host.removeEventListener('click', selectionGroupHandler);
+  }
+  selectChangeHandler = null;
+  selectionActionHandler = null;
+  selectionGroupHandler = null;
+
   if (statusHandler) off('device-status', statusHandler);
   if (screenshotHandler) off('screenshot-ready', screenshotHandler);
   if (playbackHandler) off('playback-progress', playbackHandler);
   if (wallChangedHandler) off('wall-changed', wallChangedHandler);
+  if (connectedHandler) off('connected', connectedHandler);
   off('device-added', () => {});
   off('device-removed', () => {});
   if (refreshInterval) clearInterval(refreshInterval);
@@ -1239,6 +1712,7 @@ export function cleanup() {
   screenshotHandler = null;
   playbackHandler = null;
   wallChangedHandler = null;
+  connectedHandler = null;
   refreshInterval = null;
   progressTickInterval = null;
   playbackByDevice.clear();

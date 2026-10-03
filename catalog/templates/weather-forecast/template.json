@@ -1,0 +1,789 @@
+{
+ "template": {
+  "aspect": "16:9",
+  "background": "{{param:background}}",
+  "elements": [
+   {
+    "slot": "location",
+    "kind": "head",
+    "box": {
+     "x": 5,
+     "y": 7,
+     "w": 60
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 3.4,
+     "weight": 800,
+     "font": "archivo"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0,
+     "duration": 0.8,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "date",
+    "kind": "date",
+    "date_format": "weekday",
+    "tz": "{{param:timezone}}",
+    "locale": "{{param:locale}}",
+    "box": {
+     "x": 5,
+     "y": 15,
+     "w": 45
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.35,
+     "weight": 600,
+     "font": "archivo"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.1,
+     "duration": 0.8,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "clock",
+    "kind": "clock",
+    "clock_format": "{{param:clock_format}}",
+    "tz": "{{param:timezone}}",
+    "locale": "{{param:locale}}",
+    "box": {
+     "x": 60,
+     "y": 6.5,
+     "w": 35
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 3.6,
+     "weight": 500,
+     "font": "oswald",
+     "align": "right"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.1,
+     "duration": 0.8,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "now_icon",
+    "kind": "stat",
+    "box": {
+     "x": 5,
+     "y": 24.5,
+     "w": 14
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 8.5,
+     "align": "center"
+    },
+    "motion": {
+     "animation": "zoom",
+     "delay": 0.2,
+     "duration": 0.9,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "now_temp",
+    "kind": "stat",
+    "box": {
+     "x": 20.5,
+     "y": 21.5,
+     "w": 24
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 11,
+     "weight": 600,
+     "font": "oswald"
+    },
+    "motion": {
+     "animation": "slideU",
+     "delay": 0.25,
+     "duration": 0.9,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "now_condition",
+    "kind": "head",
+    "box": {
+     "x": 46,
+     "y": 26,
+     "w": 49
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 3,
+     "weight": 700,
+     "font": "archivo"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.35,
+     "duration": 0.8,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "now_detail",
+    "kind": "body",
+    "box": {
+     "x": 46,
+     "y": 35,
+     "w": 49
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.45,
+     "weight": 500,
+     "font": "inter",
+     "opacity": 0.78
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.45,
+     "duration": 0.9,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "now_today",
+    "kind": "body",
+    "box": {
+     "x": 46,
+     "y": 40.5,
+     "w": 49
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.45,
+     "weight": 600,
+     "font": "inter"
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.55,
+     "duration": 0.9,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "divider",
+    "kind": "rule",
+    "box": {
+     "x": 5,
+     "y": 55.5,
+     "w": 90,
+     "h": 0.2
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.45
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.5,
+     "duration": 0.8,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day1_card",
+    "kind": "box",
+    "box": {
+     "x": 5,
+     "y": 60,
+     "w": 16.7,
+     "h": 32
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.1,
+     "radius_cqw": 0.8
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.6,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day1_name",
+    "kind": "body",
+    "box": {
+     "x": 5,
+     "y": 63.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.55,
+     "weight": 700,
+     "font": "archivo",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.7,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day1_icon",
+    "kind": "stat",
+    "box": {
+     "x": 5,
+     "y": 69,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 4,
+     "align": "center"
+    },
+    "motion": {
+     "animation": "zoom",
+     "delay": 0.75,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day1_high",
+    "kind": "stat",
+    "box": {
+     "x": 5,
+     "y": 78.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 2.7,
+     "weight": 600,
+     "font": "oswald",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.8,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day1_low",
+    "kind": "body",
+    "box": {
+     "x": 5,
+     "y": 85.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.45,
+     "weight": 500,
+     "font": "inter",
+     "align": "center",
+     "opacity": 0.6
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.8,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day2_card",
+    "kind": "box",
+    "box": {
+     "x": 23.3,
+     "y": 60,
+     "w": 16.7,
+     "h": 32
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.1,
+     "radius_cqw": 0.8
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.6799999999999999,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day2_name",
+    "kind": "body",
+    "box": {
+     "x": 23.3,
+     "y": 63.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.55,
+     "weight": 700,
+     "font": "archivo",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.7799999999999999,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day2_icon",
+    "kind": "stat",
+    "box": {
+     "x": 23.3,
+     "y": 69,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 4,
+     "align": "center"
+    },
+    "motion": {
+     "animation": "zoom",
+     "delay": 0.83,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day2_high",
+    "kind": "stat",
+    "box": {
+     "x": 23.3,
+     "y": 78.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 2.7,
+     "weight": 600,
+     "font": "oswald",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.8799999999999999,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day2_low",
+    "kind": "body",
+    "box": {
+     "x": 23.3,
+     "y": 85.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.45,
+     "weight": 500,
+     "font": "inter",
+     "align": "center",
+     "opacity": 0.6
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.8799999999999999,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day3_card",
+    "kind": "box",
+    "box": {
+     "x": 41.6,
+     "y": 60,
+     "w": 16.7,
+     "h": 32
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.1,
+     "radius_cqw": 0.8
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.76,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day3_name",
+    "kind": "body",
+    "box": {
+     "x": 41.6,
+     "y": 63.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.55,
+     "weight": 700,
+     "font": "archivo",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.86,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day3_icon",
+    "kind": "stat",
+    "box": {
+     "x": 41.6,
+     "y": 69,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 4,
+     "align": "center"
+    },
+    "motion": {
+     "animation": "zoom",
+     "delay": 0.91,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day3_high",
+    "kind": "stat",
+    "box": {
+     "x": 41.6,
+     "y": 78.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 2.7,
+     "weight": 600,
+     "font": "oswald",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.96,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day3_low",
+    "kind": "body",
+    "box": {
+     "x": 41.6,
+     "y": 85.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.45,
+     "weight": 500,
+     "font": "inter",
+     "align": "center",
+     "opacity": 0.6
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.96,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day4_card",
+    "kind": "box",
+    "box": {
+     "x": 59.9,
+     "y": 60,
+     "w": 16.7,
+     "h": 32
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.1,
+     "radius_cqw": 0.8
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.84,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day4_name",
+    "kind": "body",
+    "box": {
+     "x": 59.9,
+     "y": 63.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.55,
+     "weight": 700,
+     "font": "archivo",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 0.94,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day4_icon",
+    "kind": "stat",
+    "box": {
+     "x": 59.9,
+     "y": 69,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 4,
+     "align": "center"
+    },
+    "motion": {
+     "animation": "zoom",
+     "delay": 0.99,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day4_high",
+    "kind": "stat",
+    "box": {
+     "x": 59.9,
+     "y": 78.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 2.7,
+     "weight": 600,
+     "font": "oswald",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 1.04,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day4_low",
+    "kind": "body",
+    "box": {
+     "x": 59.9,
+     "y": 85.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.45,
+     "weight": 500,
+     "font": "inter",
+     "align": "center",
+     "opacity": 0.6
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 1.04,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day5_card",
+    "kind": "box",
+    "box": {
+     "x": 78.2,
+     "y": 60,
+     "w": 16.7,
+     "h": 32
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "opacity": 0.1,
+     "radius_cqw": 0.8
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 0.9199999999999999,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day5_name",
+    "kind": "body",
+    "box": {
+     "x": 78.2,
+     "y": 63.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:accent}}",
+     "size_cqw": 1.55,
+     "weight": 700,
+     "font": "archivo",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 1.02,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day5_icon",
+    "kind": "stat",
+    "box": {
+     "x": 78.2,
+     "y": 69,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 4,
+     "align": "center"
+    },
+    "motion": {
+     "animation": "zoom",
+     "delay": 1.0699999999999998,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day5_high",
+    "kind": "stat",
+    "box": {
+     "x": 78.2,
+     "y": 78.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 2.7,
+     "weight": 600,
+     "font": "oswald",
+     "align": "center"
+    },
+    "motion": {
+     "animation": "fade",
+     "delay": 1.1199999999999999,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "day5_low",
+    "kind": "body",
+    "box": {
+     "x": 78.2,
+     "y": 85.5,
+     "w": 16.7
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 1.45,
+     "weight": 500,
+     "font": "inter",
+     "align": "center",
+     "opacity": 0.6
+    },
+    "motion": {
+     "animation": "wipe",
+     "delay": 1.1199999999999999,
+     "duration": 0.7,
+     "easing": "soft"
+    }
+   },
+   {
+    "slot": "updated",
+    "kind": "body",
+    "box": {
+     "x": 5,
+     "y": 95,
+     "w": 90
+    },
+    "style": {
+     "color": "{{param:text_color}}",
+     "size_cqw": 0.8,
+     "weight": 400,
+     "font": "inter",
+     "align": "right",
+     "opacity": 0.45
+    }
+   }
+  ]
+ },
+ "fields": {
+  "location": "{{param:location}}",
+  "now_icon": "{{ds:{{param:weather}}.icon}}",
+  "now_temp": "{{ds:{{param:weather}}.temperature}}{{param:units_label}}",
+  "now_condition": "{{ds:{{param:weather}}.condition}}",
+  "now_detail": "Feels like {{ds:{{param:weather}}.apparent_temperature}}{{param:units_label}}   ·   Humidity {{ds:{{param:weather}}.humidity}}%",
+  "now_today": "Today {{ds:{{param:weather}}.day0_high}}{{param:units_label}} / {{ds:{{param:weather}}.day0_low}}{{param:units_label}}   ·   {{ds:{{param:weather}}.day0_precip_prob}}% chance of precipitation",
+  "day1_name": "{{ds:{{param:weather}}.day1_name}}",
+  "day1_icon": "{{ds:{{param:weather}}.day1_icon}}",
+  "day1_high": "{{ds:{{param:weather}}.day1_high}}{{param:units_label}}",
+  "day1_low": "{{ds:{{param:weather}}.day1_low}}{{param:units_label}}",
+  "day2_name": "{{ds:{{param:weather}}.day2_name}}",
+  "day2_icon": "{{ds:{{param:weather}}.day2_icon}}",
+  "day2_high": "{{ds:{{param:weather}}.day2_high}}{{param:units_label}}",
+  "day2_low": "{{ds:{{param:weather}}.day2_low}}{{param:units_label}}",
+  "day3_name": "{{ds:{{param:weather}}.day3_name}}",
+  "day3_icon": "{{ds:{{param:weather}}.day3_icon}}",
+  "day3_high": "{{ds:{{param:weather}}.day3_high}}{{param:units_label}}",
+  "day3_low": "{{ds:{{param:weather}}.day3_low}}{{param:units_label}}",
+  "day4_name": "{{ds:{{param:weather}}.day4_name}}",
+  "day4_icon": "{{ds:{{param:weather}}.day4_icon}}",
+  "day4_high": "{{ds:{{param:weather}}.day4_high}}{{param:units_label}}",
+  "day4_low": "{{ds:{{param:weather}}.day4_low}}{{param:units_label}}",
+  "day5_name": "{{ds:{{param:weather}}.day5_name}}",
+  "day5_icon": "{{ds:{{param:weather}}.day5_icon}}",
+  "day5_high": "{{ds:{{param:weather}}.day5_high}}{{param:units_label}}",
+  "day5_low": "{{ds:{{param:weather}}.day5_low}}{{param:units_label}}",
+  "updated": "Updated {{ds:{{param:weather}}.updated}}"
+ }
+}

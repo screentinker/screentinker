@@ -1,0 +1,74 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: Free Digital Signage on Android TV & Fire TV
+File:  screentinker-androidtv.mp4  (2:21 · 1080p30)
+========================================================================
+
+
+------------------------------- TITLE ----------------------------------
+(pick one — both lead with the key phrase for SEO)
+
+Free Digital Signage on Android TV & Fire TV (Open Source, Self-Hosted)
+
+Free Digital Signage on Android TV & Fire TV Stick — Open Source, No Monthly Fees
+
+
+---------------------------- DESCRIPTION -------------------------------
+
+Turn any Fire TV Stick or Android TV box into a fully managed digital
+signage display — for free. ScreenTinker is open source and self-hostable,
+so there are no per-screen fees and your content stays on your own server.
+
+In under three minutes: grab the app, sideload it, pair the screen, and push
+content from the dashboard — menu boards, promos, dashboards, video walls.
+
+Works great on Amazon Fire TV (4K, 4K Max, Cube) and Android TV boxes
+(Onn, NVIDIA Shield, and generic Android TV / Google TV devices).
+
+▶ Chapters
+0:00  Turn any Fire TV Stick into digital signage
+0:16  What you need
+0:36  Get the app (the APK)
+0:48  Sideload it — Fire TV / Android TV
+1:04  Launch & grant permissions
+1:14  The pairing code
+1:26  Add the display in your dashboard
+1:36  Push content — updates live
+1:52  Built to run: self-healing, offline cache, live telemetry
+2:05  Get started
+
+🔗 Links
+• Try it free (hosted): https://screentinker.com
+• Android TV / Fire TV setup guide: https://screentinker.com/guides/digital-signage-android-tv.html
+• Self-hosting guide: https://screentinker.com/guides/self-hosted-digital-signage.html
+• Source (MIT licensed) — a star helps! https://github.com/screentinker/screentinker
+• Community & support (Discord): https://discord.gg/utTdsrqq4Z
+
+Free plan supports 1 device. Pro trial unlocks 15 devices for 14 days — no
+credit card. Or self-host on a $5 VPS and run hundreds of screens.
+
+Open source · Self-hostable · No per-screen fees · Your data on your hardware
+
+#DigitalSignage #AndroidTV #FireTV #OpenSource #SelfHosted
+
+
+------------------------------- TAGS -----------------------------------
+(comma-separated; paste into the Tags field)
+
+digital signage, android tv, fire tv, fire tv stick, fire stick, amazon fire tv,
+free digital signage, open source digital signage, self hosted digital signage,
+digital signage software, android tv signage, fire tv signage, screentinker,
+yodeck alternative, screencloud alternative, optisigns alternative, xibo alternative,
+menu board software, kiosk software, digital menu board, retail signage,
+android digital signage, self hosted, open source, nvidia shield signage,
+sideload apk android tv, downloader app fire tv, digital signage player,
+signage on a budget, no monthly fee signage
+
+
+------------------------------- NOTES ----------------------------------
+• Category: Science & Technology  (matches the Pi video)
+• Visibility on captions: no burned-in subtitles — enable YouTube auto-captions.
+• Thumbnail: reuse the Pi video's thumb template (make_thumb.py in the Pi folder),
+  swap the artwork for a Fire TV Stick + the green "FREE" treatment.
+• Honest scope: claims cover Android TV + Fire TV (4K/Max/Cube) only. Do NOT tag
+  or claim Samsung Tizen or low-RAM Vega/streaming-stick support.

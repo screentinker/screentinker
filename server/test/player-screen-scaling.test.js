@@ -29,7 +29,17 @@ const SURFACES = [
 for (const { name, file } of SURFACES) {
   test(`${name}: the root font size is viewport-proportional and clamped at both ends`, () => {
     const src = read(file);
-    const m = src.match(/html\s*\{\s*font-size:\s*clamp\(\s*([\d.]+)px\s*,\s*([\d.]+)vmin\s*,\s*([\d.]+)px\s*\)/);
+    if (file === 'server/player/index.html') {
+      assert.match(src, /html \{ font-size: 7px; \}/, 'the legacy fallback has a readable floor');
+      assert.match(src, /@media \(min-width: 756px\) and \(min-height: 756px\) \{ html \{ font-size: 0\.926vmin; \} \}/,
+        'medium and large panels use the viewport-proportional size');
+      assert.match(src, /@media \(min-width: 6048px\) and \(min-height: 6048px\) \{ html \{ font-size: 56px; \} \}/,
+        'very large panels retain the former ceiling without CSS clamp');
+      return;
+    }
+    const start = src.indexOf('html {');
+    const rule = src.slice(start, src.indexOf('}', start));
+    const m = rule.match(/font-size:\s*clamp\(\s*([\d.]+)px\s*,\s*([\d.]+)vmin\s*,\s*([\d.]+)px\s*\)/);
     assert.ok(m, `${file} must set a clamped, vmin-based root font size`);
     const [, min, vmin, max] = m.map(Number);
 

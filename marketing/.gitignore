@@ -1,0 +1,28 @@
+# Everything a video pipeline GENERATES stays out of git — only the sources are tracked.
+# A release video is ~1-2 GB of frames, captures and audio; the finished MP4 goes to YouTube.
+videos/*/instance/
+videos/*/caps/
+videos/*/scenes_anim/
+videos/*/work/
+videos/*/audio/
+videos/*/pkgs/
+videos/*/frames/
+videos/*/imgcaps/
+videos/*/scenes/
+videos/*/vcheck/
+videos/*/__pycache__/
+videos/*/*.mp4
+videos/*/*.wav
+videos/*/*.mp3
+videos/*/*.jpg
+videos/*/*.png
+videos/*/*.log
+videos/*/_render.html
+videos/*/thumb.html
+videos/*/fleet.json
+videos/*/seed23.json
+videos/*/timings.json
+# Credentials for the throwaway capture instance — never commit, even though they are throwaway.
+videos/*/.token
+videos/*/.apitoken*
+videos/*/auth.json

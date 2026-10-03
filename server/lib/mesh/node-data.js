@@ -56,7 +56,144 @@ function deviceProjections(db, grantCategories, edge) {
              ON t.device_id = latest.device_id AND t.reported_at = latest.reported_at
     ${scope.sql}
   `).all(...scope.params);
-  return rows.map((r) => mirror.projectDevice(r, grantCategories));
+  /*
+   * ⚠️ COMPUTED, not selected — `capabilities` is not a column. It is derived from the platform and
+   * what the panel declared, by the same function the local API uses, so a hub sees exactly the
+   * list the child would show its own operator rather than a second opinion.
+   */
+  const playerCapabilities = require('../player-capabilities');
+  const own = rows.map((r) => mirror.projectDevice(
+    { ...r, capabilities: playerCapabilities.capabilitiesFor(r) }, grantCategories));
+
+  return own.concat(relayedDeviceProjections(db, grantCategories));
+}
+
+/*
+ * ⚠️ SCREENS BELONGING TO NODES BELOW THIS ONE — the upward half of relaying.
+ *
+ * (Worded to avoid the literal token a relay ADDRESS would use: the I9 guard greps lib/mesh for
+ * hostname shapes, and a sentence ending in that word reads the same to a regex as a compiled-in
+ * relay host. The guard is right to be blunt — this is prose bending around it, not the reverse.)
+ *
+ * Everything else about the mesh moved one hop. A node reported its OWN devices, and anything it
+ * mirrored from below stopped there — so in a three-tier estate the top hub saw the middle node's
+ * workspaces and not a single screen, and the middle node was a wall rather than a relaying tier. Content
+ * learned to travel two hops before telemetry did, which is the wrong way round: the whole reason
+ * an MSP wants a middle tier is to see everything beneath it.
+ *
+ * ⚠️ ONLY FOR CHILDREN THAT AGREED, and that agreement is the child's alone. A node two hops up has
+ * no relationship with the site at the bottom: "my MSP may see my screens" is not the same
+ * agreement as "and so may whoever my MSP reports to". The child sets share_upward on its own
+ * uplink, announces it, and this reads what was announced (peer_shares_upward) rather than
+ * assuming. Absent means no, so every relationship formed before relaying existed stays one hop.
+ *
+ * ⚠️ THE ORIGIN IS PRESERVED. A relayed screen is reported with the node it actually belongs to,
+ * never as this node's own — a hub that could not tell whose screen it was looking at would file a
+ * customer's estate under the wrong company, which is the worst available bug here.
+ */
+/*
+ * ⚠️ THE NODES THEMSELVES, not only their screens — otherwise a site with nothing plugged in yet is
+ * invisible however clearly it consented.
+ *
+ * The shape was learned only from relayed payloads, so a customer's brand-new server appeared
+ * nowhere upstream until somebody hung a screen on it. That is the wrong dependency: whether a
+ * relationship exists and whether it currently has hardware are different questions, and an
+ * operator setting up a site wants to see the site appear before the screens do.
+ *
+ * Node health is the payload the child already sends about ITSELF every cycle, so relaying it
+ * carries both the node's existence and the ancestry that proves the route.
+ */
+function relayedNodeProjections(db) {
+  try {
+    return db.prepare(`
+      SELECT m.origin_node_id, m.node_name, m.node_version, m.device_count, m.devices_online, m.origin_ts
+        FROM mesh_mirror_nodes m
+        JOIN mesh_edges e ON e.peer_node_id = m.origin_node_id
+                         AND e.direction = 'down' AND e.revoked_at IS NULL
+       WHERE e.peer_shares_upward = 1`).all().map((r) => ({
+      node_id: r.origin_node_id,
+      // Carried onward so a grandparent sees "Kenosha North", not eight hex characters. A relay
+      // repeats the child's own word for itself; it does not get to substitute its own.
+      name: r.node_name || null,
+      version: r.node_version || null,
+      device_count: r.device_count ?? null,
+      devices_online: r.devices_online ?? null,
+      origin_node_id: r.origin_node_id,
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+/*
+ * ⚠️ AND THE WORKSPACES THOSE SCREENS BELONG TO. Relaying devices without them left a screen
+ * arriving upstream carrying a workspace_id the receiving node had never heard of — so it could not
+ * be filed under a customer, did not appear in the switcher, and showed as belonging to nothing.
+ * A screen is only meaningful as somebody's screen.
+ */
+function relayedWorkspaceProjections(db) {
+  try {
+    return db.prepare(`
+      SELECT w.origin_node_id, w.workspace_id, w.name, w.organization_name, w.device_count
+        FROM mesh_mirror_workspaces w
+        JOIN mesh_edges e ON e.peer_node_id = w.origin_node_id
+                         AND e.direction = 'down' AND e.revoked_at IS NULL
+       WHERE e.peer_shares_upward = 1
+         AND w.deleted_at IS NULL`).all().map((r) => ({
+      id: r.workspace_id,
+      name: r.name || null,
+      organization_name: r.organization_name || null,
+      device_count: r.device_count ?? null,
+      origin_node_id: r.origin_node_id,
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+function relayedDeviceProjections(db, grantCategories) {
+  let rows = [];
+  try {
+    rows = db.prepare(`
+      SELECT m.*, e.peer_node_id AS via_node_id
+        FROM mesh_mirror_devices m
+        JOIN mesh_edges e ON e.peer_node_id = m.origin_node_id
+                         AND e.direction = 'down' AND e.revoked_at IS NULL
+       WHERE e.peer_shares_upward = 1
+         AND m.deleted_at IS NULL`).all();
+  } catch (e) {
+    // A node with no mirror tables relays nothing; that is not an error worth failing a report over.
+    return [];
+  }
+
+  return rows.map((r) => {
+    /*
+     * ⚠️ THE FIELDS LIVE IN `body`, not in columns. A mirror row promotes only what the hub queries
+     * on — name, status, heartbeat, workspace — and keeps the rest as the JSON the child sent.
+     * Projecting the ROW would have relayed four fields and dropped everything else, which reads as
+     * a screen that reports almost nothing rather than as a bug.
+     *
+     * Re-projected against THIS edge's grant rather than passed through: the child below may have
+     * shared more with us than we are permitted to share upward, and the narrower of the two must
+     * win. A relay is not a hole in whatever grant sits above it.
+     */
+    let body = {};
+    try { body = r.body ? JSON.parse(r.body) : {}; } catch (e) { body = {}; }
+    const projected = mirror.projectDevice(
+      { ...body, name: r.name, status: r.status, last_heartbeat: r.last_heartbeat,
+        workspace_id: r.workspace_id }, grantCategories);
+    return {
+      ...projected,
+      id: r.device_id,
+      /*
+       * Carried explicitly so the node above can attribute it. Without these two fields a relayed
+       * screen is indistinguishable from one of this node's own, which is precisely the confusion
+       * that makes a multi-tier view worse than no view.
+       */
+      origin_node_id: r.origin_node_id,
+      relayed_via: r.via_node_id,
+    };
+  });
 }
 
 /**
@@ -132,13 +269,15 @@ function deviceDetail(db, grants, deviceId, summary) {
   out.active_layout_zones = [];
   if (has('content-metadata') && row && row.playlist_id) {
     out.assignments = safe(() => db.prepare(`
-      SELECT pi.id, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec,
-             pi.muted, pi.created_at, pi.updated_at,
-             COALESCE(c.filename, w.name) AS filename, c.mime_type, c.duration_sec AS content_duration,
-             w.name AS widget_name, w.widget_type
+      SELECT pi.id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order,
+             pi.duration_sec, pi.muted, pi.created_at, pi.updated_at,
+             COALESCE(c.filename, w.name, cp.name) AS filename, c.mime_type,
+             c.duration_sec AS content_duration,
+             w.name AS widget_name, w.widget_type, cp.name AS child_playlist_name
         FROM playlist_items pi
         LEFT JOIN content c ON pi.content_id = c.id
         LEFT JOIN widgets w ON pi.widget_id = w.id
+        LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
        WHERE pi.playlist_id = ? ORDER BY pi.sort_order ASC`).all(row.playlist_id), []);
     const pl = safe(() => db.prepare(
       'SELECT status, published_snapshot FROM playlists WHERE id = ?').get(row.playlist_id), null);
@@ -171,6 +310,9 @@ function nodeHealth(db, nodeId) {
     .get();
   return mirror.projectNodeHealth({
     node_id: nodeId,
+    // What this box calls itself. Sent on EVERY report, not just at enrollment, so a rename
+    // reaches everyone who is listening instead of only everyone who pairs after it.
+    name: store.nodeName(db),
     /*
      * ⚠️ '../../' — this file moved from services/ to lib/mesh/ and the relative path did not move
      * with it. The throw was caught by the reporting loop's own try/catch and logged as "could not
@@ -224,6 +366,45 @@ function openAlerts(db, grantCategories, edge) {
  * screens rather than a reduced summary of them. That is the whole point: an operator looking at a
  * customer's estate should see what the customer sees, minus the ability to change it.
  */
+
+/*
+ * ⚠️ A MESSAGE, NOT A PAYLOAD. error_data is whatever the player serialised — it can contain a
+ * widget's response body, a signed URL, or text an operator typed into a slide. Sending it upward
+ * because it is "diagnostics" would hand a third party the contents of a customer's screen under a
+ * grant that says "why something went wrong".
+ */
+function summariseError(raw) {
+  if (!raw) return null;
+  let msg = null;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    msg = parsed && (parsed.message || parsed.error || parsed.name);
+  } catch (e) {
+    msg = typeof raw === 'string' ? raw : null;
+  }
+  if (typeof msg !== 'string') return null;
+  return msg.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200) || null;
+}
+
+/*
+ * Origin and path, never the query. "Which widget is failing" is the useful half; the query string
+ * is where tokens and identifiers live, and it is not needed to answer that question.
+ */
+/** The query string of a proxied read, as URLSearchParams (empty when there is none). */
+function queryOf(url) {
+  try { return new URL(String(url || ''), 'http://127.0.0.1').searchParams; } catch (e) { return new URLSearchParams(); }
+}
+
+function stripQuery(url) {
+  if (typeof url !== 'string' || !url) return null;
+  try {
+    const u = new URL(url, 'http://127.0.0.1');
+    return `${u.origin === 'http://127.0.0.1' ? '' : u.origin}${u.pathname}`.slice(0, 200) || null;
+  } catch (e) {
+    return url.split('?')[0].slice(0, 200);
+  }
+}
+
 function answerRead(db, edge, req) {
   const grants = store.safeParseArray(edge.grant_categories);
   const check = readProxy.authorize(edge, req && req.path, req && req.method, grants);
@@ -329,6 +510,38 @@ function answerRead(db, edge, req) {
     } catch (e) { return { ok: true, rows: [], asOf: nowSec() }; }
   }
 
+  /*
+   * ⚠️ WHY A SCREEN IS MISBEHAVING — the question support actually needs answered, and the one an
+   * MSP could not ask about a customer's site. They could see a screen was unhealthy and had no way
+   * to find out why, which is the difference between fixing it from a desk and driving to it.
+   *
+   * ⚠️ THE ERROR PAYLOAD IS NOT SENT WHOLESALE. `error_data` and `context` are captured by the
+   * player and can carry anything the page had — a URL with a token in it, a widget's fetched
+   * content, an operator's own text. What travels is the fingerprint (which groups repeats), the
+   * message, the URL's ORIGIN AND PATH without its query, and the timestamp. That is enough to say
+   * "this screen is failing to load that widget, forty times an hour" and not enough to hand over
+   * whatever happened to be in a query string.
+   */
+  if (seg.length === 5 && seg[2] === 'devices' && seg[4] === 'debug') {
+    const owns = visible.some((d) => d.id === seg[3]);
+    if (!owns) return { ok: false, reason: 'No such screen on this server.' };
+    try {
+      const rows = db.prepare(
+        `SELECT error_fingerprint, error_data, url, created_at
+           FROM player_debug_logs WHERE device_id = ? ORDER BY created_at DESC LIMIT 50`).all(seg[3]);
+      return {
+        ok: true,
+        rows: rows.map((r) => ({
+          fingerprint: r.error_fingerprint || null,
+          message: summariseError(r.error_data),
+          where: stripQuery(r.url),
+          at: r.created_at,
+        })),
+        asOf: nowSec(),
+      };
+    } catch (e) { return { ok: true, rows: [], asOf: nowSec() }; }
+  }
+
   if (seg.length === 5 && seg[2] === 'assignments' && seg[3] === 'device') {
     const owns = visible.some((d) => d.id === seg[4]);
     if (!owns) return { ok: false, reason: 'No such screen on this server.' };
@@ -348,6 +561,57 @@ function answerRead(db, edge, req) {
     } catch (e) { return { ok: true, rows: [], asOf: nowSec() }; }
   }
 
+  /*
+   * Scale-out (docs/scale-out-design.md §4): the two reads a replica's copy is built from. The
+   * workspace set is THIS edge's shared list, decided here — a replica names no workspace and is
+   * answered for exactly what was granted. "Share all" (an empty list, owner-only) means every
+   * workspace this node owns; a workspace that is itself a copy (origin_node_id set) is never
+   * re-shared, so a replica of a replica cannot be assembled by accident.
+   */
+  if (path === '/api/mesh/snapshot' || path === '/api/mesh/changes') {
+    const replication = require('./replication');
+    const q = queryOf(req.path);
+    const wsIds = shared && shared.length
+      ? shared
+      : db.prepare('SELECT id FROM workspaces WHERE origin_node_id IS NULL').all().map((w) => w.id);
+    if (path === '/api/mesh/changes') {
+      const r = replication.changesSince(db, wsIds, Number(q.get('since')) || 0, Number(q.get('limit')) || 500);
+      return { ok: true, ...r, workspaces: wsIds, asOf: nowSec() };
+    }
+    const r = replication.snapshotPage(db, String(q.get('table') || ''), wsIds, q.get('after'), Number(q.get('limit')) || 500);
+    return r.ok ? { ...r, asOf: nowSec() } : r;
+  }
+
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6): a replica that terminates players asks, once per
+   * socket, whether a device + token HASH is one of ours. The stored token is hashed here and the
+   * two hashes compared in constant time; the answer is yes/no plus what the replica needs to
+   * serve the screen from its mirror. The token itself is never in the answer — see
+   * test_verify_device_does_not_return_the_token. A device is verifiable through this edge when
+   * its workspace is one the edge shares, or when it is an unclaimed row this same replica
+   * provisioned (workspace_id NULL, attached_node_id = the asking node).
+   */
+  if (path === '/api/mesh/verify-device') {
+    const q = queryOf(req.path);
+    const deviceId = String(q.get('device_id') || '');
+    const tokenHash = String(q.get('token_hash') || '').toLowerCase();
+    const no = { ok: true, verified: false, asOf: nowSec() };
+    if (!deviceId || !/^[0-9a-f]{64}$/.test(tokenHash)) return no;
+    let row = null;
+    try {
+      row = db.prepare('SELECT id, device_token, workspace_id, user_id, name, blocked, attached_node_id FROM devices WHERE id = ?').get(deviceId);
+    } catch (e) { return no; }
+    if (!row || !row.device_token || row.blocked) return no;
+    const ours = row.workspace_id ? inScope(row.workspace_id) : row.attached_node_id === edge.peer_node_id;
+    if (!ours) return no;
+    const expected = require('crypto').createHash('sha256').update(String(row.device_token)).digest('hex');
+    let same = false;
+    try { same = require('crypto').timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(tokenHash, 'hex')); } catch (e) { same = false; }
+    if (!same) return no;
+    return { ok: true, verified: true, device_id: row.id, workspace_id: row.workspace_id || null,
+             paired: !!row.user_id, name: row.name || null, asOf: nowSec() };
+  }
+
   if (path === '/api/playlists') {
     try {
       const rows = db.prepare(
@@ -362,10 +626,28 @@ function answerRead(db, edge, req) {
       if (!row || !inScope(row.workspace_id)) {
         return { ok: false, reason: 'No such playlist on this server.' };
       }
+      /*
+       * ⚠️ Three column names here were wrong and none of them existed: `i.position` (it is
+       * `sort_order`), `c.name` and `c.type` (they are `filename` and `mime_type`). SQLite reports
+       * `c.name` first, so fixing only the one we knew about changed nothing — every playlist
+       * detail read on every node failed, and the catch below rendered it as HTTP 403, whose own
+       * comment says it means "this will never work until somebody changes a grant". No grant
+       * would ever have helped.
+       *
+       * Also enumerated rather than `i.*`: a SELECT * here means any column later added to
+       * playlist_items crosses the wire with no review, which is the opposite of the
+       * add-what-the-grant-allows discipline every other projection in this file follows.
+       */
       const items = db.prepare(
-        `SELECT i.*, c.name AS content_name, c.type AS content_type
-           FROM playlist_items i LEFT JOIN content c ON c.id = i.content_id
-          WHERE i.playlist_id = ? ORDER BY i.position`).all(seg[3]);
+        `SELECT i.id, i.content_id, i.widget_id, i.child_playlist_id, i.zone_id, i.sort_order,
+                i.duration_sec, i.muted,
+                COALESCE(c.filename, w.name, cp.name) AS content_name, c.mime_type AS content_type,
+                w.widget_type, cp.name AS child_playlist_name
+           FROM playlist_items i
+           LEFT JOIN content c ON c.id = i.content_id
+           LEFT JOIN widgets w ON w.id = i.widget_id
+           LEFT JOIN playlists cp ON cp.id = i.child_playlist_id
+          WHERE i.playlist_id = ? ORDER BY i.sort_order ASC`).all(seg[3]);
       return { ok: true, row: { ...row, items }, asOf: nowSec() };
     } catch (e) { return { ok: false, reason: 'Could not read that playlist.' }; }
   }
@@ -374,6 +656,8 @@ function answerRead(db, edge, req) {
 }
 
 module.exports = {
-  scopeClause, deviceProjections, workspaceProjections, deviceDetail,
+  scopeClause, deviceProjections, relayedDeviceProjections, relayedNodeProjections,
+  relayedWorkspaceProjections,
+  workspaceProjections, deviceDetail,
   nodeHealth, openAlerts, answerRead,
 };

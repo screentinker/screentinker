@@ -35,6 +35,9 @@ object Relauncher {
     private const val TAG = "Relauncher"
     const val UPDATE = "update"
     const val BOOT = "boot"
+    // The relaunch/"ScreenTinker updated" notification id. MainActivity cancels it in onResume so it
+    // auto-dismisses the moment the display is actually back on screen (it exists only to get us there).
+    const val RELAUNCH_NOTIFICATION_ID = 999
 
     fun relaunch(context: Context, reason: String) {
         // Keep the WS foreground service alive (it drives playback + reconnect).
@@ -76,21 +79,32 @@ object Relauncher {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val isUpdate = reason == UPDATE
-            val builder = NotificationCompat.Builder(context, RemoteDisplayApp.BOOT_CHANNEL_ID)
+            // Fail-loud ONLY when we could not bring the display back ourselves (14+, no overlay):
+            // then it must be a loud, sticky, tappable "tap to resume" prompt. When the display IS
+            // already relaunching (overlay path worked, or a boot relaunch), the prompt is just a
+            // transient safety net — keep it quiet (no heads-up banner over signage, no full-screen
+            // intent), let MainActivity cancel it on resume, and self-timeout it so it never lingers.
+            val failLoud = isUpdate && !alreadyLaunched
+            // The loud HIGH-importance channel (heads-up + full-screen intent) only for the fail-loud
+            // case; otherwise a LOW-importance channel so the transient notice never heads-up over content.
+            val channel = if (failLoud) RemoteDisplayApp.BOOT_CHANNEL_ID else RemoteDisplayApp.RELAUNCH_QUIET_CHANNEL_ID
+            val builder = NotificationCompat.Builder(context, channel)
                 .setContentTitle(if (isUpdate) "ScreenTinker updated" else "ScreenTinker")
                 .setContentText(if (isUpdate) "Tap to resume the display" else "Starting display...")
                 .setSmallIcon(android.R.drawable.ic_media_play)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setPriority(if (failLoud) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
                 .setContentIntent(pi)              // tap -> launch (the path on 14+ where FSI is revoked)
-                .setFullScreenIntent(pi, true)     // <14: auto-launch
                 .setAutoCancel(true)
-            // Fail-loud: if we could not auto-launch (14+, no overlay), keep the prompt
-            // sticky until the operator taps it to resume.
-            if (isUpdate && !alreadyLaunched) builder.setOngoing(true)
+            if (failLoud) {
+                builder.setCategory(NotificationCompat.CATEGORY_ALARM)
+                    .setFullScreenIntent(pi, true)     // <14: auto-launch; 14+: revoked -> tappable prompt
+                    .setOngoing(true)                  // sticky until the operator taps to resume
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                builder.setTimeoutAfter(8_000)         // self-clears; MainActivity.onResume clears it sooner
+            }
 
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(999, builder.build())
+            nm.notify(RELAUNCH_NOTIFICATION_ID, builder.build())
             Log.i(TAG, "[$reason] Relaunch notification posted (fullScreenIntent + tappable, ongoing=${isUpdate && !alreadyLaunched})")
         } catch (e: Exception) {
             Log.e(TAG, "[$reason] Notification failed: ${e.message}")

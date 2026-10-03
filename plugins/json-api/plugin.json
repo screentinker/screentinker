@@ -1,0 +1,20 @@
+{
+  "id": "json-api",
+  "name": "JSON API",
+  "version": "1.0.0",
+  "description": "Poll a JSON HTTP endpoint and expose fields as {{ds:slug.key}}.",
+  "screentinker": ">=2.0.0",
+  "main": "index.js",
+  "capabilities": ["data-source"],
+  "dataSource": {
+    "type": "json-api",
+    "label": "JSON API",
+    "icon": "🔗",
+    "fields": [
+      { "name": "url", "type": "url", "label": "URL", "required": true, "placeholder": "https://example.com/status.json" },
+      { "name": "json_path", "type": "text", "label": "JSON path (optional)", "placeholder": "data" },
+      { "name": "authorization", "type": "password", "label": "Authorization header (optional)", "placeholder": "Bearer …" },
+      { "name": "interval_min", "type": "number", "label": "Poll every (minutes)", "default": 15 }
+    ]
+  }
+}

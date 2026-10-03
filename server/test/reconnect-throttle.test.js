@@ -37,10 +37,41 @@ test('a per-device storm IS throttled and the backoff GROWS (tighten fast)', () 
   assert.equal(v.observed, 6);
   assert.equal(v.allowed, 5);
   const b1 = v.retryAfterMs;
-  // keep hammering while blocked -> escalate, longer backoff each time
-  const b2 = throttle.check('B', POST + 6, 'normal').retryAfterMs;
-  const b3 = throttle.check('B', POST + 7, 'normal').retryAfterMs;
-  assert.ok(b2 > b1 && b3 > b2, `backoff must grow: ${b1} < ${b2} < ${b3}`);
+  /*
+   * ⚠️ ESCALATION IS MEASURED ACROSS WINDOWS, NOT WITHIN ONE (#314).
+   *
+   * This used to hammer while blocked and assert the backoff grew on every attempt. That WAS the
+   * behaviour, and it was the bug: each retry inside the window recomputed blockedUntil from now, so
+   * a player reconnecting on its own timer pushed its own release away and never got back in — and
+   * since a throttled register returns before the playlist push, "never got back in" is a screen
+   * stuck on "Waiting for content" with all of its content already cached.
+   *
+   * Escalation still happens, and still tightens fast, against the device this defence is aimed at:
+   * one that waits out the window and immediately storms again.
+   */
+  const stormAgain = (at) => {
+    let last = null;
+    for (let i = 0; i <= 6; i++) last = throttle.check('B', at + i, 'normal');
+    return last;
+  };
+  const s2 = stormAgain(POST + 5 + b1 + 20_000);
+  const s3 = stormAgain(POST + 5 + b1 + 20_000 + s2.retryAfterMs + 20_000);
+  const b2 = s2.retryAfterMs;
+  const b3 = s3.retryAfterMs;
+  assert.ok(b2 > b1 && b3 > b2, `backoff must grow across windows: ${b1} < ${b2} < ${b3}`);
+
+  /*
+   * ...and within one window it counts DOWN, so the device can actually reach the far side of it.
+   * On its own device id: 'B' has since been escalated by the storms above, and probing it at an
+   * earlier instant would measure that later, larger window instead of the one under test.
+   */
+  let c = null;
+  for (let i = 0; i <= 5; i++) c = throttle.check('C', POST + i, 'normal');
+  assert.equal(c.allow, false, 'precondition: C is inside a window');
+  const inside = throttle.check('C', POST + 6, 'normal');
+  assert.equal(inside.reason, 'in-backoff');
+  assert.ok(inside.retryAfterMs < c.retryAfterMs,
+    `a retry inside the window must not extend it (${c.retryAfterMs} -> ${inside.retryAfterMs})`);
 });
 
 test('lag band multiplies an already-flagged device\'s backoff (critical > normal)', () => {

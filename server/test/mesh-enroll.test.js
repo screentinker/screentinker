@@ -27,14 +27,33 @@ function freshDb() {
   db.exec(`
     CREATE TABLE mesh_node (singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       node_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, self_device_id TEXT,
-      node_name TEXT);
+      node_name TEXT,
+      -- Whether an operator picked the name or inherited the hostname. Fixture drift here would
+      -- silently turn every "did they choose it?" answer into false, so it is a real column.
+      chose_name INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE mesh_edges (id TEXT PRIMARY KEY, peer_node_id TEXT NOT NULL, direction TEXT NOT NULL,
       role_capabilities TEXT DEFAULT '[]', grant_categories TEXT DEFAULT '[]',
       transport_direction TEXT, retention_days INTEGER, tombstone_purge_days INTEGER,
       tls_verify INTEGER DEFAULT 1, peer_version TEXT, peer_min_version TEXT, token_hash TEXT,
       token_expires_at INTEGER, client_id TEXT, created_at INTEGER, last_sync_at INTEGER,
       revoked_at INTEGER, peer_url TEXT, up_token TEXT, peer_name TEXT,
-      shared_workspaces TEXT, UNIQUE (peer_node_id, direction));
+      shared_workspaces TEXT,
+      -- ⚠️ The write-consent columns. Absent from this fixture, severing an uplink threw (it clears
+      -- the grant so a later re-pair cannot resurrect it) and the route answered the SPA's HTML
+      -- error page — which surfaced as "Unexpected token '<'". Third fixture drift of this kind in
+      -- one sweep, hence the schema guard at the end of this file.
+      write_grant TEXT, write_scope TEXT,
+      write_bytes_budget INTEGER, write_bytes_used INTEGER NOT NULL DEFAULT 0,
+      -- What a child announced this hub may do to it (mirror-store.recordWriteOffer). Advisory.
+      peer_write_offer TEXT,
+      -- Whether the peer agreed its data may travel a second hop, and whether we agreed ours may.
+      share_upward INTEGER NOT NULL DEFAULT 0,
+      peer_shares_upward INTEGER NOT NULL DEFAULT 0,
+      -- Whether this operator passes received content on to that client without being asked.
+      auto_forward INTEGER NOT NULL DEFAULT 0,
+      -- Scale-out: the change-log position a replica has acknowledged (lib/mesh/replication.js).
+      acked_rev INTEGER,
+      UNIQUE (peer_node_id, direction));
     CREATE TABLE workspaces (id TEXT PRIMARY KEY, organization_id TEXT, name TEXT);
     CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE workspace_members (id TEXT PRIMARY KEY, workspace_id TEXT, user_id TEXT, role TEXT);
@@ -358,4 +377,136 @@ test('sharing nothing at all is refused rather than treated as everything', asyn
     assert.equal(r.status, 400);
     assert.match((await r.json()).error, /at least one workspace/);
   } finally { await close(); cleanup(db); }
+});
+
+/*
+ * ⚠️ THE FIXTURE SCHEMA MATCHES THE REAL ONE.
+ *
+ * This file builds mesh_edges by hand, and a hand-built table silently diverges from the migrations
+ * every time a column is added — the route then throws, Express serves the SPA's HTML error page,
+ * and the failure reads as "Unexpected token '<'" rather than "your fixture is out of date". That
+ * has now happened three times in one sweep, in three different files, so it is worth a guard
+ * rather than a habit.
+ *
+ * mesh-mirror-store.test.js has carried this check for a while and it caught the write columns in
+ * one run. This is the same guard, on the table this file owns.
+ */
+test('⚠️ the hand-built mesh_edges matches the real schema', () => {
+  const os = require('node:os');
+  const nodePath = require('node:path');
+  const cryptoMod = require('node:crypto');
+
+  // A real database, built by the migrations, in a throwaway directory.
+  const dir = nodePath.join(os.tmpdir(), 'st-enroll-schema-' + cryptoMod.randomBytes(4).toString('hex'));
+  const prev = process.env.DATA_DIR;
+  process.env.DATA_DIR = dir;
+  for (const k of Object.keys(require.cache)) {
+    if (k.includes('/db/database') || k.endsWith('/server/config.js')) delete require.cache[k];
+  }
+  let real;
+  try {
+    const { db: realDb } = require('../db/database');
+    real = realDb.prepare('PRAGMA table_info(mesh_edges)').all().map((c) => c.name).sort();
+  } finally {
+    process.env.DATA_DIR = prev;
+    for (const k of Object.keys(require.cache)) {
+      if (k.includes('/db/database') || k.endsWith('/server/config.js')) delete require.cache[k];
+    }
+  }
+
+  const fixture = freshDb().prepare('PRAGMA table_info(mesh_edges)').all().map((c) => c.name).sort();
+  const missing = real.filter((c) => !fixture.includes(c));
+  assert.deepEqual(missing, [],
+    `this file's mesh_edges is missing ${missing.join(', ')} — add them to the CREATE TABLE above, ` +
+    'or every route touching those columns will throw here and pass in production');
+});
+
+// ===== naming this server =====
+
+/*
+ * ⚠️ THE HALF THAT WAS NEVER BUILT.
+ *
+ * store.setNodeName() existed and was correct and had ZERO callers anywhere in the tree, so the
+ * name every peer displayed for a box was permanently os.hostname() as it read on first boot.
+ *
+ * ⚠️ AND IT IS TESTED HERE, NOT AGAINST THE HUB ROUTER, WHICH IS THE POINT OF THE FIX. This
+ * router mounts wherever a node takes part in a mesh; routes/mesh.js mounts only on a hub. A leaf's
+ * name is what its MSP's dashboard shows, so putting the setter on the hub router would have built
+ * a rename button that appears only for the operators who least need one.
+ */
+
+const put = (base, p, body) => fetch(`${base}${p}`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+});
+
+test('an operator can name this server, and every peer learns it from the report', async () => {
+  const db = freshDb();
+  const { base, close } = await serve(db, owner);
+  try {
+    const before = await fetch(`${base}/api/mesh/capabilities`).then((x) => x.json());
+    assert.ok(before.nodeName, 'a name is always present - it defaults to the hostname');
+    assert.equal(before.nodeNameIsDefault, true,
+      'a name nobody chose must not be presented back as a decision');
+
+    const r = await put(base, '/api/mesh/identity', { name: 'Kenosha North' });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).name, 'Kenosha North');
+
+    const after = await fetch(`${base}/api/mesh/capabilities`).then((x) => x.json());
+    assert.equal(after.nodeName, 'Kenosha North');
+    assert.equal(after.nodeNameIsDefault, false, 'once chosen, it is a decision');
+
+    /*
+     * The property that makes the rename worth anything: it is what this node now SAYS it is, on
+     * the handshake and on every self-report. (That the report then lands on the parent's edge is
+     * mesh-mirror-store.test.js — this half is "does the new name leave the building".)
+     */
+    const store = require('../lib/mesh/store');
+    assert.equal(store.nodeName(db), 'Kenosha North',
+      'a rename that never reaches what the node declares reaches nobody');
+  } finally { await close(); }
+});
+
+test('⚠️ naming the instance is an instance-owner action', async () => {
+  // This name is displayed by every PEER, including another organisation's dashboard. It is not a
+  // per-workspace preference, and an ordinary user must not be able to relabel the whole server.
+  const db = freshDb();
+  const { base, close } = await serve(db, tech);
+  try {
+    const r = await put(base, '/api/mesh/identity', { name: 'not yours to name' });
+    assert.equal(r.status, 403);
+    assert.notEqual(db.prepare('SELECT node_name n FROM mesh_node').get()?.n, 'not yours to name');
+  } finally { await close(); }
+});
+
+test('⚠️ an empty name is refused rather than quietly absorbed', async () => {
+  /*
+   * setNodeName() returns false for a blank name and leaves the old one standing. Answering 200 to
+   * that would report a rename that did not happen, while every peer still shows the old name - and
+   * the operator would have no reason to look again.
+   */
+  const db = freshDb();
+  const { base, close } = await serve(db, owner);
+  try {
+    await put(base, '/api/mesh/identity', { name: 'Kenosha North' });
+    for (const body of [{ name: '' }, { name: '   ' }, {}]) {
+      const r = await put(base, '/api/mesh/identity', body);
+      assert.equal(r.status, 400, `${JSON.stringify(body)} must be refused`);
+      assert.equal(db.prepare('SELECT node_name n FROM mesh_node').get().n, 'Kenosha North',
+        'and the standing name is untouched');
+    }
+  } finally { await close(); }
+});
+
+test('⚠️ the name a node introduces itself with is the one it was given', async () => {
+  // The enrollment handshake sends nodeName. If a rename did not reach that field, a freshly
+  // renamed server would still introduce itself by its hostname on the next pairing - the original
+  // bug, surviving in the one place an operator is most likely to notice it.
+  const db = freshDb();
+  const { base, close } = await serve(db, owner);
+  try {
+    await put(base, '/api/mesh/identity', { name: 'Kenosha North' });
+    const store = require('../lib/mesh/store');
+    assert.equal(store.nodeName(db), 'Kenosha North');
+  } finally { await close(); }
 });

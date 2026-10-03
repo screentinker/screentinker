@@ -40,10 +40,38 @@ const READABLE = Object.freeze([
    */
   { pattern: '/api/devices/:id/screenshot',   grant: 'display-capture',  scope: 'workspace',
     binary: true },
+  /*
+   * ⚠️ WHY A SCREEN IS MISBEHAVING, and it needs its own grant for the same reason a screenshot
+   * does. A player's debug log carries the URLs it was loading and the errors it hit — useful to
+   * whoever is supporting the site, and more than "is it alive". `diagnostics` exists precisely so
+   * a customer can share health without sharing that, and this must never fall back to `health`.
+   *
+   * Without it an MSP could see that a screen at a customer site was unhealthy and had no way to
+   * find out why — the one question support actually needs answered, and the reason someone drives
+   * to a site.
+   */
+  { pattern: '/api/devices/:id/debug',        grant: 'diagnostics',      scope: 'workspace' },
   { pattern: '/api/assignments/device/:id',   grant: 'content-metadata', scope: 'workspace' },
   { pattern: '/api/groups',                   grant: 'identity',         scope: 'workspace' },
   { pattern: '/api/playlists',                grant: 'content-metadata', scope: 'workspace' },
   { pattern: '/api/playlists/:id',            grant: 'content-metadata', scope: 'workspace' },
+  /*
+   * Scale-out (docs/scale-out-design.md §1.4). The replica's copy is built from these two and
+   * nothing else: a bounded page of one table for the initial copy, and the change log after a
+   * revision for everything since. Both are answered on the read worker's readonly handle like
+   * every other row here. Content BYTES are not on this list: a replica fetches them from
+   * PRIMARY_URL over plain HTTP with the requesting user's own token (lib/replica-proxy.js), so the
+   * primary's ordinary content authorisation answers, not a mesh grant.
+   */
+  { pattern: '/api/mesh/snapshot',            grant: 'workspace-replication', scope: 'workspace' },
+  { pattern: '/api/mesh/changes',             grant: 'workspace-replication', scope: 'workspace' },
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6): "is this device + token hash one of mine?" The
+   * ONE read keyed to a WRITE grant, because it exists solely so a replica may terminate players
+   * whose events it is permitted to write back: `player-events`, set by THIS node's operator. The
+   * answer is yes/no and the device's workspace; the token itself never leaves this node.
+   */
+  { pattern: '/api/mesh/verify-device',       writeGrant: 'player-events',  scope: 'workspace' },
 ]);
 
 /*
@@ -100,6 +128,18 @@ function authorize(edge, path, method, grants) {
     return { ok: false, reason: 'That is not something this connection may read.' };
   }
   const rule = matchPath(path);
+  if (rule.writeGrant) {
+    // Keyed to a WRITE grant: the one this node's operator set, read from this node's own row.
+    let wg = [];
+    try { wg = JSON.parse((edge && edge.write_grant) || '[]'); } catch (e) { wg = []; }
+    if (!Array.isArray(wg) || !wg.includes(rule.writeGrant)) {
+      return {
+        ok: false,
+        reason: `This connection was not granted "${rule.writeGrant}" by this server's operator, so it cannot read that.`,
+      };
+    }
+    return { ok: true, rule };
+  }
   if (!grants.includes(rule.grant)) {
     return {
       ok: false,

@@ -1,0 +1,115 @@
+{
+  "id": "uptime-3036",
+  "name": "UPTIME 3036",
+  "version": "1.0.1",
+  "kind": "html",
+  "description": "An original first-person arcade shooter about the worst on-call shift of the year 3036: every server is down and the datacenter is crawling with bugs. Nobody playing? It plays itself in autopilot demo mode. Click or press a key to take over; walk away and the demo takes back over.",
+  "author": "ScreenTinker",
+  "homepage": "https://github.com/screentinker/templates/tree/main/templates/uptime-3036",
+  "license": "MIT",
+  "tags": [
+    "game",
+    "interactive",
+    "arcade",
+    "it",
+    "retro"
+  ],
+  "orientation": [
+    "landscape"
+  ],
+  "min_server": "2.2.0",
+  "entry": "index.html",
+  "thumbnail": "thumbnail.png",
+  "network": [],
+  "params": [
+    {
+      "name": "title",
+      "type": "text",
+      "label": "Title",
+      "max": 24,
+      "default": "UPTIME 3036"
+    },
+    {
+      "name": "tagline",
+      "type": "text",
+      "label": "Tagline",
+      "max": 60,
+      "default": "THE SERVERS ARE DOWN. YOU'RE ON CALL."
+    },
+    {
+      "name": "accent",
+      "type": "color",
+      "label": "Neon colour",
+      "default": "#00E5FF"
+    },
+    {
+      "name": "accent2",
+      "type": "color",
+      "label": "Second neon colour",
+      "default": "#FF2BD6"
+    },
+    {
+      "name": "difficulty",
+      "type": "select",
+      "label": "Difficulty",
+      "default": "normal",
+      "options": [
+        {
+          "value": "easy",
+          "label": "Easy"
+        },
+        {
+          "value": "normal",
+          "label": "Normal"
+        },
+        {
+          "value": "hard",
+          "label": "Hard"
+        }
+      ]
+    },
+    {
+      "name": "playable",
+      "type": "checkbox",
+      "label": "Playable (click / keyboard)",
+      "default": true,
+      "help": "Off: the bot plays forever, a pure attract loop."
+    },
+    {
+      "name": "idle_sec",
+      "type": "number",
+      "label": "Back to attract mode after (seconds idle)",
+      "min": 10,
+      "max": 3600,
+      "step": 5,
+      "default": 45
+    },
+    {
+      "name": "resolution",
+      "type": "select",
+      "label": "Render resolution",
+      "default": "400",
+      "help": "Lower is faster on small players; the look is deliberately pixelated.",
+      "options": [
+        {
+          "value": "320",
+          "label": "Retro (320)"
+        },
+        {
+          "value": "400",
+          "label": "Standard (400)"
+        },
+        {
+          "value": "560",
+          "label": "Sharp (560)"
+        }
+      ]
+    },
+    {
+      "name": "crt",
+      "type": "checkbox",
+      "label": "CRT scanlines",
+      "default": true
+    }
+  ]
+}

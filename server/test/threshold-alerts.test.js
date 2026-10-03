@@ -39,6 +39,8 @@ function freshDb() {
     CREATE TABLE alert_rule_state (
       rule_id TEXT NOT NULL, device_id TEXT NOT NULL, breaching_since INTEGER,
       open_event_id TEXT, last_value REAL, updated_at INTEGER, PRIMARY KEY (rule_id, device_id));
+    -- The sweep scopes to local rows (scale-out: a copied workspace is the primary's to sweep).
+    CREATE TABLE workspaces (id TEXT PRIMARY KEY, origin_node_id TEXT);
   `);
   db._dir = dir;
   return db;
@@ -294,6 +296,28 @@ test('one bad rule does not stop the others being evaluated (I6, one tier down)'
     assert.equal(s.rules, 2);
     assert.equal(s.opened, 1, 'the good rule still fired');
     assert.equal(s.errors, 0, 'and the broken one was inert, not an exception');
+  } finally { cleanup(db); }
+});
+
+test('a rule in a COPIED workspace is the primary\'s to evaluate, not this replica\'s', () => {
+  const db = freshDb();
+  try {
+    db.prepare("INSERT INTO workspaces (id, origin_node_id) VALUES ('ws-copy', 'some-primary')").run();
+    db.prepare(`INSERT INTO alert_rules (id,workspace_id,name,metric,threshold,sustain_seconds,severity,enabled,created_at)
+                VALUES ('copied','ws-copy','CPU','cpu_usage',80,0,'warn',1,?)`).run(NOW);
+    db.prepare(`INSERT INTO alert_rules (id,workspace_id,name,metric,threshold,sustain_seconds,severity,enabled,created_at)
+                VALUES ('mine','ws-1','CPU','cpu_usage',80,0,'warn',1,?)`).run(NOW);
+    db.exec(`CREATE TABLE devices (id TEXT PRIMARY KEY, workspace_id TEXT, last_heartbeat INTEGER, status TEXT, blocked INTEGER);
+             CREATE TABLE device_telemetry (device_id TEXT, reported_at INTEGER, battery_level REAL,
+               storage_free_mb REAL, storage_total_mb REAL, ram_free_mb REAL, ram_total_mb REAL,
+               cpu_usage REAL, wifi_rssi REAL);`);
+    db.prepare(`INSERT INTO devices VALUES ('d1','ws-1',?, 'online', 0)`).run(NOW);
+    db.prepare(`INSERT INTO devices VALUES ('d2','ws-copy',?, 'online', 0)`).run(NOW);
+    db.prepare(`INSERT INTO device_telemetry (device_id,reported_at,cpu_usage) VALUES ('d1',?,95),('d2',?,95)`).run(NOW, NOW);
+    const s = svc.sweep(db, { now: NOW });
+    assert.equal(s.rules, 1, 'the copied rule was not even selected');
+    assert.equal(s.opened, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM alert_events WHERE rule_id = 'copied'").get().n, 0);
   } finally { cleanup(db); }
 });
 

@@ -15,7 +15,7 @@
   // packaged config.xml via the Tizen application API; fall back to a constant that
   // build-wgt.sh stamps from config.xml's version="" so the dashboard always shows the
   // version that is actually installed (never the old hardcoded '1.0.0').
-  var APP_VERSION_FALLBACK = '1.9.29'; // st:app-version — stamped by build-wgt.sh
+  var APP_VERSION_FALLBACK = '2.3.2'; // st:app-version — stamped by build-wgt.sh
   var APP_VERSION = (function () {
     try {
       var v = tizen.application.getCurrentApplication().appInfo.version;
@@ -83,7 +83,9 @@
 
   // Keep the screen awake (best effort across Tizen APIs)
   function keepAwake() {
-    try { if (window.tizen && tizen.power) tizen.power.request('SCREEN', 'SCREEN_NORMAL'); } catch (e) {}
+    // appcommon.setScreenSaver is the keep-awake on a Samsung TV (public level, no privilege).
+    // tizen.power.request used to sit beside it; the Power API is not part of the TV web profile
+    // and its privilege was never declared, so it only ever threw into the catch. Removed.
     try { if (window.webapis && webapis.appcommon) webapis.appcommon.setScreenSaver(webapis.appcommon.AppCommonScreenSaverState.SCREEN_SAVER_OFF); } catch (e) {}
   }
 
@@ -132,9 +134,27 @@
     if (!socketConnected) return 'defer';
     return (hiddenMs >= SUSPEND_HIDE_MS) ? 'reconnect' : 'noop';
   }
+  // Samsung CO-MT-01: media must come back in the same state after Smart Hub / another app. The
+  // platform pauses <video> and AVPlay on hide and nothing restarted them, so a looping video
+  // resumed as a frozen frame. suspend()/resume() live in the player (they walk the shared #stage,
+  // so zones are covered too); a media element that cannot simply play() again is re-mounted by
+  // whichever renderer owns the stage.
+  function replayCurrent() {
+    if (stageOwner === 'zones') {
+      var cp = get(LS.payload);
+      if (cp) { try { onPlaylist(JSON.parse(cp)); } catch (e) {} }
+    } else if (stageOwner === 'player') {
+      player.playCurrent();
+    }
+  }
   function onVisibility() {
-    if (document.visibilityState === 'hidden' || document.hidden) { hiddenAtMs = mono(); return; } // A5: monotonic
+    if (document.visibilityState === 'hidden' || document.hidden) {
+      hiddenAtMs = mono(); // A5: monotonic
+      try { player.suspend(); } catch (e) {}
+      return;
+    }
     keepAwake(); // re-assert immediately on resume
+    try { player.resume(replayCurrent); } catch (e) { replayCurrent(); }
     var hiddenMs = hiddenAtMs ? (mono() - hiddenAtMs) : 0; // A5: monotonic hidden-duration
     hiddenAtMs = 0;
     var action = resumeDecision(!!socket, !!(socket && socket.connected), hiddenMs);
@@ -315,6 +335,7 @@
       set(LS.id, deviceId); set(LS.token, deviceToken);
       authenticated = true; // #118: this socket may now send post-register events
       clearToast();         // #118: drop any stale "Not authenticated…" banner
+      flushOfflinePlays();  // #299: authenticated, so any offline backlog can be replayed
       // feat/offline-cause-log: reconnected after an in-session disconnect -> report the gap length +
       // whether the local link dropped. cold_start:false because the app SURVIVED the gap (a reboot
       // would have lost this in-process state). Browser has no SSID/RSSI to add.
@@ -755,9 +776,77 @@
 
   // ---- playback ----
   var player = new PlaylistPlayer(elStage, function () { return serverUrl.replace(/\/+$/, ''); }, function () { return deviceId || ''; });
+  /* ===================== #299 offline proof-of-play =====================
+   * Playback here is offline-native; reporting was not. A play that happened while the socket was
+   * down was dropped at this hook and could never be recovered, so an outage left a permanent hole
+   * in play_logs. Now it is kept and replayed with its REAL times once the socket returns.
+   */
+  var OFFLINE_PLAY_KEY = 'st_offline_plays';
+  var offlinePlays = new OfflinePlayQueue();
+  var offlinePlayOpen = null;
+  var offlinePlayFlushing = false;
+  try { offlinePlays.restore(get(OFFLINE_PLAY_KEY)); } catch (e) {}
+  if (offlinePlays.size()) console.log('[play] offline backlog restored: ' + offlinePlays.size());
+
+  function persistOfflinePlays() {
+    // Storage failure must cost the backlog, never playback.
+    try { set(OFFLINE_PLAY_KEY, offlinePlays.serialize()); } catch (e) {}
+  }
+
+  function flushOfflinePlays() {
+    if (offlinePlayFlushing || !offlinePlays.size()) return;
+    if (!socket || !socket.connected || !deviceId) return;
+    var batch = offlinePlays.peekBatch();
+    if (!batch.length) return;
+    offlinePlayFlushing = true;
+    try {
+      socket.emit('device:play-event', { device_id: deviceId, event: 'play_offline', plays: batch });
+    } catch (e) { offlinePlayFlushing = false; return; }
+    /*
+     * Cleared only after the server has had its say — dropping at send time would turn a flush
+     * into a dead socket back into the same silent loss. A partly-rejected batch still clears, or
+     * one unusable entry would wedge everything behind it.
+     */
+    setTimeout(function () {
+      offlinePlays.ack(batch.map(function (p) { return p.client_event_id; }));
+      persistOfflinePlays();
+      offlinePlayFlushing = false;
+      if (offlinePlays.size()) flushOfflinePlays();
+    }, 4000);
+    console.log('[play] flushed ' + batch.length + ' offline plays, ' + offlinePlays.size() + ' queued');
+  }
+
   // Proof-of-play: forward the player's device:play-event to the server (populates play_logs / Reports).
   player.onPlayEvent = function (payload) {
-    try { if (socket && socket.connected && deviceId) socket.emit('device:play-event', payload); } catch (e) {}
+    try {
+      if (socket && socket.connected && deviceId) { socket.emit('device:play-event', payload); return; }
+      /*
+       * Offline. Remember the start; complete and queue it when the item is left. An end with no
+       * matching start is discarded rather than given an invented start time — a fabricated
+       * timestamp in a report is worse than a missing row.
+       */
+      if (!payload) return;
+      if (payload.event === 'play_start') {
+        offlinePlayOpen = {
+          content_id: payload.content_id || null,
+          widget_id: payload.widget_id || null,
+          content_name: payload.content_name || null,
+          started_at: Math.floor(Date.now() / 1000)
+        };
+      } else if (payload.event === 'play_end' && offlinePlayOpen) {
+        var open = offlinePlayOpen; offlinePlayOpen = null;
+        offlinePlays.add(OfflinePlayQueue.makePlay({
+          client_event_id: OfflinePlayQueue.newId(),
+          content_id: open.content_id,
+          widget_id: open.widget_id,
+          content_name: open.content_name,
+          started_at: open.started_at,
+          ended_at: Math.floor(Date.now() / 1000),
+          completed: !!payload.completed
+        }));
+        persistOfflinePlays();
+      }
+    } catch (e) {}
   };
   // Multi-zone layout renderer (matches the Android player). app.js picks the renderer
   // per playlist-update from payload.layout; the two never run at once.
@@ -785,6 +874,14 @@
   // Rotate the playback stage in software for portrait / flipped signage. Tizen TVs
   // are fixed-landscape, so we rotate the CONTENT (not the panel). Values mirror the
   // dashboard: landscape / portrait / landscape-flipped / portrait-flipped.
+  function mergeCustomShaders(map) {
+    if (!map || typeof map !== 'object' || !window.__TRANSITION_SHADERS) return;
+    for (var id in map) {
+      if (Object.prototype.hasOwnProperty.call(map, id) && typeof map[id] === 'string') {
+        window.__TRANSITION_SHADERS[id] = map[id];
+      }
+    }
+  }
   function applyOrientation(o) {
     // #109: apply the SAME transform to #stage AND #pip so the overlay's corner
     // positions track the visible CONTENT, not the physical panel, in every orientation.
@@ -817,6 +914,10 @@
       player.stop();
       zoneRenderer.clear();
       wallController.exit();
+      // #320: an operator's uploaded shaders ride in with the playlist, keyed by the ids the items
+      // reference. Tizen resolves a shader from the same global the web player does, so merging is
+      // the whole integration and the packaged .wgt needs no rebuild. Missing id -> hard cut, as before.
+      mergeCustomShaders(payload.custom_shaders);
       applyOrientation(payload.orientation || 'landscape');
       elStage.innerHTML = '<div class="card" style="position:relative"><h1>' +
         esc(payload.message || 'Display suspended') + '</h1><p class="sub">' +
@@ -852,6 +953,12 @@
     if (elPairing.classList.contains('hidden') === false) show(elStage);
     else if (elStage.classList.contains('hidden')) show(elStage);
 
+    // default/standby content: the server resolves the device's fallback image and sends it top-level
+    // (null/absent when unset). Stash it on the player so the idle sinks (idle/nothingScheduled) can show
+    // it INSTEAD of the "nothing scheduled" card. It is NOT a playlist item — it never enters assignments
+    // or the sig, so it can't restart playback.
+    player.defaultContent = payload.default_content || null;
+
     if (payload.wall_config) {
       // Video wall: fullscreen content mapped into this screen's slice. No multi-zone,
       // and no orientation transform — the wall geometry owns the stage. Wall renders via
@@ -863,7 +970,7 @@
       player.setScheduleDriven(false);  // #157: wall gates on wallFollower, not scheduleDriven
       wallController.apply(payload.wall_config);
       player.setTimezone(payload.timezone || null);
-      player.load(payload.assignments || []);
+      player.load(payload.assignments || [], payload.playback_order);
       stageOwner = 'player';
       return;
     }
@@ -876,6 +983,10 @@
     else groupSync.exit();
     // #157: group-sync advances via its own tick, so suppress the solo deferred-rotation there.
     player.setScheduleDriven(!!payload.group_sync);
+    // #320: an operator's uploaded shaders ride in with the playlist, keyed by the ids the items
+    // reference. Tizen resolves a shader from the same global the web player does, so merging is
+    // the whole integration and the packaged .wgt needs no rebuild. Missing id -> hard cut, as before.
+    mergeCustomShaders(payload.custom_shaders);
     applyOrientation(payload.orientation || 'landscape');
     var layout = payload.layout;
     if (layout && Array.isArray(layout.zones) && layout.zones.length) { // B3: non-array zones would throw in zoneRenderer
@@ -884,6 +995,7 @@
       // zone renderer's unchanged-sig guard then declines to repaint (#162).
       if (stageOwner !== 'zones') { player.stop(); zoneRenderer.invalidate(); }
       zoneRenderer.setTimezone(payload.timezone || null); // #74/#75: effective tz
+      zoneRenderer.setPlaybackOrder(payload.playback_order || 'sequential');
       zoneRenderer.render(layout, payload.assignments || []);
       stageOwner = 'zones';
     } else {
@@ -894,7 +1006,7 @@
       // away from it, and invalidate the player's sig so it repaints on the switch.
       if (stageOwner !== 'player') { zoneRenderer.clear(); player.invalidate(); }
       player.setTimezone(payload.timezone || null); // #74/#75: effective tz for schedule eval
-      player.load(payload.assignments || []);
+      player.load(payload.assignments || [], payload.playback_order);
       stageOwner = 'player';
     }
   }
@@ -922,23 +1034,61 @@
     show(elSetup);
   });
 
-  // TV remote BACK key (10009): from the stage/pairing screen, return to the
-  // server prompt so the operator can always change the server; from setup, exit.
-  document.addEventListener('keydown', function (e) {
-    if (e.keyCode === 10009) { // Samsung RETURN / BACK
-      if (!elSetup.classList.contains('hidden')) {
-        stopKeepAwake(); stopWatchdog(); // FIX A/B: clear timers cleanly before the app exits
-        sendExitSignal('clean_exit', 'back_key'); // exit-signal: operator BACK-key exit = confident clean_exit
-        try { tizen.application.getCurrentApplication().exit(); } catch (x) {}
-      } else {
-        if (socket) { try { socket.disconnect(); } catch (x) {} }
-        teardownSession(); // H4: same clean teardown when BACK returns to setup
-        elUrl.value = serverUrl || '';
-        elSetupStatus.textContent = ''; elSetupStatus.className = 'status';
-        show(elSetup); elUrl.focus();
-      }
-    }
+  // TV remote RETURN key (10009).
+  //
+  // Samsung certification (CO-US-05, "Terminating Applications"): on the application's home page,
+  // Return must exit — ideally after a confirmation popup. For a paired TV the playback stage IS
+  // the home page (boot lands on it), and Return used to drop the operator onto the Server URL
+  // form instead, which a QA tester reads as "Return does not exit". So: on the stage and the
+  // pairing screen, Return opens a three-way popup (Exit / Change server / Cancel) that the D-pad
+  // can drive; "Change server" is the old behaviour. On the setup screen — the first thing an
+  // unpaired TV shows — Return exits directly, as before. The Exit key (10182) is deliberately
+  // not handled anywhere: Samsung asks that it stay with the platform.
+  function exitApp(reason) {
+    stopKeepAwake(); stopWatchdog(); // FIX A/B: clear timers cleanly before the app exits
+    sendExitSignal('clean_exit', reason); // exit-signal: operator-initiated exit = confident clean_exit
+    try { tizen.application.getCurrentApplication().exit(); } catch (x) {}
+  }
+  function backToServerPrompt() {
+    if (socket) { try { socket.disconnect(); } catch (x) {} }
+    teardownSession(); // H4: same clean teardown when BACK returns to setup
+    elUrl.value = serverUrl || '';
+    elSetupStatus.textContent = ''; elSetupStatus.className = 'status';
+    show(elSetup); elUrl.focus();
+  }
+  var elExitDialog = document.getElementById('exitDialog');
+  var exitButtons = Array.prototype.slice.call(elExitDialog.querySelectorAll('button'));
+  var exitFocus = 0;
+  function exitDialogOpen() { return !elExitDialog.classList.contains('hidden'); }
+  function focusExitButton(i) {
+    exitFocus = (i + exitButtons.length) % exitButtons.length;
+    try { exitButtons[exitFocus].focus(); } catch (x) {}
+  }
+  function openExitDialog() { elExitDialog.classList.remove('hidden'); focusExitButton(0); }
+  function closeExitDialog() { elExitDialog.classList.add('hidden'); }
+  function exitDialogAction(action) {
+    closeExitDialog();
+    if (action === 'exit') exitApp('back_key');
+    else if (action === 'server') backToServerPrompt();
+  }
+  exitButtons.forEach(function (b) {
+    b.addEventListener('click', function () { exitDialogAction(b.getAttribute('data-action')); });
   });
+  document.addEventListener('keydown', function (e) {
+    if (exitDialogOpen()) {
+      // The popup owns every key while it is up; nothing leaks to the stage or the URL field.
+      if (e.keyCode === 10009) { closeExitDialog(); }
+      else if (e.keyCode === 37 || e.keyCode === 38) { focusExitButton(exitFocus - 1); }
+      else if (e.keyCode === 39 || e.keyCode === 40) { focusExitButton(exitFocus + 1); }
+      else if (e.keyCode === 13) { exitDialogAction(exitButtons[exitFocus].getAttribute('data-action')); }
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
+    if (e.keyCode === 10009) { // Samsung RETURN / BACK
+      if (!elSetup.classList.contains('hidden')) exitApp('back_key');
+      else openExitDialog();
+    }
+  }, true);
 
   // ---- boot ----
   // Always reach the server prompt until the display is actually paired. Only a

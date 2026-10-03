@@ -34,7 +34,7 @@ export async function applyBranding() {
   try { localStorage.setItem('rd_branding_' + currentWorkspaceId(), JSON.stringify(wl)); } catch {}
 
   const root = document.documentElement;
-  if (wl.primary_color) root.style.setProperty('--accent', wl.primary_color);
+  applyAccent(root, wl.primary_color);
   if (wl.bg_color) {
     root.style.setProperty('--bg-primary', wl.bg_color);
     const meta = document.querySelector('meta[name="theme-color"]');
@@ -70,4 +70,20 @@ export async function applyBranding() {
 export function resetBranding() {
   applied = false;
   return applyBranding();
+}
+
+/*
+ * Apply a brand's primary colour. The server returns the DEFAULT colour (#3B82F6) for every account
+ * that never customised anything, so only a colour that differs from it counts as a brand: then all
+ * three accents take it and the gradients go solid in the customer's colour. Otherwise the release
+ * palette (--accent-2 violet, --accent-3 green, css/variables.css) stays, and any override left by a
+ * previous brand is cleared.
+ */
+export function applyAccent(root, color) {
+  if (!color) return;
+  root.style.setProperty('--accent', color);
+  const custom = String(color).trim().toLowerCase() !== '#3b82f6';
+  for (const v of ['--accent-2', '--accent-3']) {
+    if (custom) root.style.setProperty(v, color); else root.style.removeProperty(v);
+  }
 }

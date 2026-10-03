@@ -1,0 +1,15 @@
+{
+  "id": "com.screentinker.player",
+  "version": "2.3.2",
+  "vendor": "ScreenTinker",
+  "type": "web",
+  "main": "index.html",
+  "title": "ScreenTinker",
+  "appDescription": "ScreenTinker digital signage player for LG webOS Signage displays.",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#0f172a",
+  "bgColor": "#0f172a",
+  "disableBackHistoryAPI": true,
+  "handlesRelaunch": true
+}

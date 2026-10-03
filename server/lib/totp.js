@@ -40,12 +40,26 @@ function verifyCode(token, secret, lastStep = 0, now = Date.now()) {
 }
 
 // 10 single-use recovery codes. Returns plaintext (shown ONCE) + SHA-256 hashes (stored).
+//
+// ⚠️ 128-BIT NOW (was 40-bit / 5 bytes). An unsalted SHA-256 of a 40-bit code is brute-forceable
+// offline if totp_recovery_codes ever leaks, so the entropy is the whole defence and 40 bits is not
+// enough. 16 bytes = 128 bits = 32 hex chars.
+//
+// ⚠️ OLDER ACCOUNTS ARE NOT LOCKED OUT. Their 40-bit codes are already stored as SHA-256 hashes, and
+// verification (hashRecoveryCode -> hash lookup) is LENGTH-AGNOSTIC: it just hashes whatever the user
+// types and looks the hash up, so a 10-hex code keeps matching its stored hash. Only newly-minted
+// codes (at TOTP setup or a manual regenerate) are 128-bit; nothing forces an upgrade, so no printed
+// code is invalidated.
+//
+// The plaintext is DISPLAYED grouped in fours for legibility, but the stored hash is of the RAW hex.
+// hashRecoveryCode strips every non-hex char before hashing, so the grouped code the user types back
+// normalises to the same raw hex and matches.
 function generateRecoveryCodes(n = 10) {
   const plain = [], hashes = [];
   for (let i = 0; i < n; i++) {
-    const code = crypto.randomBytes(5).toString('hex').toUpperCase(); // 10 hex chars
-    plain.push(code);
-    hashes.push(hashToken(code));
+    const raw = crypto.randomBytes(16).toString('hex').toUpperCase(); // 32 hex chars, 128-bit
+    plain.push(raw.replace(/(.{4})(?=.)/g, '$1-'));                    // shown as A1B2-C3D4-...
+    hashes.push(hashToken(raw));                                       // hash the RAW hex
   }
   return { plain, hashes };
 }

@@ -1,0 +1,33 @@
+{
+  "id": "news-ticker",
+  "name": "News ticker",
+  "version": "1.0.0",
+  "kind": "html",
+  "description": "Your own headlines as a rotating feature plus a smooth scrolling ticker. Full screen it shows both; placed in a thin strip zone it becomes a ticker bar on its own. Works fully offline — the headlines are typed in, nothing is fetched.",
+  "author": "ScreenTinker",
+  "homepage": "https://github.com/screentinker/templates/tree/main/templates/news-ticker",
+  "license": "MIT",
+  "tags": ["news", "ticker", "announcements", "text"],
+  "orientation": ["landscape"],
+  "min_server": "2.2.0",
+  "entry": "index.html",
+  "thumbnail": "thumbnail.png",
+  "network": [],
+  "params": [
+    { "name": "title", "type": "text", "label": "Title", "max": 32, "default": "Latest news" },
+    { "name": "headlines", "type": "textarea", "label": "Headlines", "max": 2000,
+      "help": "One headline per line. Blank lines are ignored.",
+      "default": "Northwind opens its new riverside studio on 6 October\nQuarterly town hall moves to the main atrium — doors at 16:30\nCongratulations to the support team: 98% satisfaction this quarter\nThe east car park is closed for resurfacing until Friday\nNew bike shelter now open behind building B, with charging for e-bikes\nLunch & learn on Thursday: accessibility in everyday design" },
+    { "name": "max_items", "type": "number", "label": "Show at most", "min": 1, "max": 30, "step": 1, "default": 12,
+      "help": "Headlines beyond this number are not shown." },
+    { "name": "speed", "type": "number", "label": "Ticker speed", "min": 20, "max": 400, "step": 10, "default": 120,
+      "help": "Pixels per second on a 1080-pixel-high screen. Scales with the screen." },
+    { "name": "rotate_seconds", "type": "number", "label": "Seconds per featured headline", "min": 4, "max": 60, "step": 1, "default": 8 },
+    { "name": "accent", "type": "color", "label": "Accent colour", "default": "#FF5A36" },
+    { "name": "background", "type": "color", "label": "Background colour", "default": "#11161D" },
+    { "name": "text_color", "type": "color", "label": "Text colour", "default": "#F5F3EE" },
+    { "name": "show_clock", "type": "checkbox", "label": "Show the clock", "default": true },
+    { "name": "timezone", "type": "timezone", "label": "Clock timezone", "help": "Leave empty to use the screen's own clock.", "default": "" },
+    { "name": "locale", "type": "locale", "label": "Clock language", "help": "For example en-GB. Leave empty for the screen's language.", "default": "" }
+  ]
+}

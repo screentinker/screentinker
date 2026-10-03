@@ -5,10 +5,43 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { devicesPlayingWidget } = require('../lib/devices-playing');
+const slideRender = require('../lib/slide-render');
 const appConfig = require('../config');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
-// Phase 2.2d: workspace-aware access. Same pattern as devices.js / content.js.
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
+const { isRealTimezone } = require('../lib/device-timezone');
+const { escapeHtml, safeUrl, safeCss, safeNumber } = require('../lib/widget-sanitize');
+const pluginRegistry = require('../lib/plugins/registry');
+const { BUILTIN_WIDGET_TYPES } = require('../lib/plugins/reserved');
+const { redactSecrets, mergeSecrets, fieldsForWidget, redactConfigJson } = require('../lib/plugins/secrets');
+
+function redactWidgetRow(row) {
+  if (!row) return row;
+  const fields = fieldsForWidget(row.widget_type);
+  const out = { ...row };
+  out.config = redactConfigJson(row.config, fields);
+  if (row.draft_config) {
+    let draft;
+    try { draft = JSON.parse(row.draft_config); } catch { draft = null; }
+    if (draft && draft.config && typeof draft.config === 'object' && !Array.isArray(draft.config)) {
+      const redacted = redactSecrets(draft.config, fields);
+      if (JSON.stringify(redacted) !== JSON.stringify(draft.config)) {
+        out.draft_config = JSON.stringify({ ...draft, config: redacted });
+      }
+    }
+  }
+  return out;
+}
+
+function storedWidgetConfig(widget) {
+  if (widget && widget.draft_config) {
+    try {
+      const draft = JSON.parse(widget.draft_config);
+      if (draft && draft.config && typeof draft.config === 'object') return draft.config;
+    } catch { /* fall through to live config */ }
+  }
+  try { return JSON.parse((widget && widget.config) || '{}'); } catch { return {}; }
+}
 
 // For preview only: inline /api/content/:id/file and /thumbnail URLs as data URIs,
 // scoped to the caller's current workspace. Lets the srcdoc preview iframe show
@@ -44,16 +77,71 @@ function inlineUserContent(html, workspaceId) {
   });
 }
 
-// Escape HTML to prevent XSS
-function escapeHtml(str) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-// Validate timezone format (e.g. America/New_York, UTC, Etc/GMT+5)
+/*
+ * Is this an actual IANA zone? (#316)
+ *
+ * ⚠️ CHARACTER-SHAPE IS NOT VALIDATION. This used to test the string against a character class,
+ * which passes anything spelled like a zone and rejects anything spelled unusually, neither of
+ * which is the question. A Spanish operator hit both halves of that in one sitting:
+ *
+ *   "España"  -> the 'ñ' fails a character class -> silently fell back to UTC -> clock two hours
+ *                behind, with nothing anywhere saying why.
+ *   "Spain"   -> passes a character class, is not a zone -> toLocaleTimeString throws RangeError
+ *   "GMT+2"   -> inside the generated widget script -> the clock renders NOTHING at all.
+ *
+ * Intl is the only thing that actually knows, so ask it. Kept as a fallback for configs already
+ * stored with a bad value (a blank clock is worse than a wrong one); new values are rejected at
+ * save time by validateTimezone below, so nobody silently gets UTC again.
+ */
 function safeTimezone(tz) {
   if (!tz) return 'UTC';
-  return /^[A-Za-z_\-\/+0-9]+$/.test(tz) ? tz : 'UTC';
+  return isRealTimezone(tz) ? tz : 'UTC';
+}
+
+function serverTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+  catch (_) { return 'UTC'; }
+}
+
+function clockDateFormat(format) {
+  switch (format) {
+    case 'long': return "year:'numeric', month:'long', day:'numeric'";
+    case 'medium': return "year:'numeric', month:'short', day:'numeric'";
+    case 'short': return "year:'2-digit', month:'2-digit', day:'2-digit'";
+    default: return "weekday:'long', year:'numeric', month:'long', day:'numeric'";
+  }
+}
+
+function clockDatePosition(position) {
+  return ['above', 'below', 'left', 'right'].includes(position) ? position : 'below';
+}
+
+/*
+ * A BCP-47 tag, structurally — same approach and same expression as slide-render.js's LOCALE_RE.
+ *
+ * ⚠️ EMPTY MEANS "THE PLAYER'S OWN LOCALE", NOT ENGLISH (#323). The clock and date were formatted
+ * with a hardcoded 'en-US', so a Spanish operator got "Wednesday, September 3" on a screen whose
+ * dashboard, timezone and audience were all Spanish, with no setting anywhere to change it. An
+ * empty locale now yields `undefined`, which is how toLocaleTimeString is told to use the runtime's
+ * own locale — the right default for a screen standing in a particular country.
+ */
+const LOCALE_RE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/;
+function safeLocale(l) {
+  if (!l || typeof l !== 'string') return 'undefined';      // literal `undefined` in the emitted JS
+  return LOCALE_RE.test(l) ? `'${l}'` : 'undefined';
+}
+
+/*
+ * Save-time gate. Returns an error string, or null when the value is fine. A widget config is
+ * accepted or refused as a whole, so this is called before the insert/update rather than at render,
+ * where the only options left are "wrong time" or "no time".
+ */
+function validateTimezone(config) {
+  const tz = config && config.timezone;
+  if (tz === undefined || tz === null || tz === '') return null;   // absent is fine: safeTimezone -> UTC
+  if (isRealTimezone(tz)) return null;
+  return `"${String(tz).slice(0, 60)}" is not a time zone. Use an IANA name such as Europe/Madrid, `
+       + 'America/New_York or UTC — a country name or a GMT offset will not work.';
 }
 
 // Validate ISO date string format
@@ -62,29 +150,7 @@ function safeDateString(d) {
   return /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?/.test(d) ? d : '';
 }
 
-// Validate URL is http/https
-function safeUrl(url) {
-  if (!url) return 'about:blank';
-  try {
-    const parsed = new URL(url);
-    return ['http:', 'https:'].includes(parsed.protocol) ? url : 'about:blank';
-  } catch { return 'about:blank'; }
-}
-
-// Security: widget render output is public and CSP-exempt, so config values that
-// get inlined into <style>/CSS must not be able to break out (a config field set
-// via the API could otherwise carry `}</style><script>...`). safeCss allows
-// colors/gradients but rejects breakout/exfil constructs; safeNumber coerces to
-// a finite number (so e.g. font_size can't smuggle markup).
-function safeCss(v, fallback) {
-  if (typeof v !== 'string') return fallback;
-  if (/[<>{}\\;]/.test(v) || /url\s*\(/i.test(v) || /@import/i.test(v) || /expression/i.test(v) || /javascript:/i.test(v)) return fallback;
-  return v.trim().slice(0, 200);
-}
-function safeNumber(v, fallback) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
+// Security: widget render output is public and CSP-exempt — see lib/widget-sanitize.js.
 
 // List widgets accessible to the caller's current workspace, plus any
 // platform-template rows (workspace_id IS NULL) shared with all workspaces.
@@ -95,20 +161,56 @@ router.get('/', (req, res) => {
   const widgets = db.prepare(
     'SELECT * FROM widgets WHERE (workspace_id = ? OR workspace_id IS NULL) ORDER BY created_at DESC'
   ).all(req.workspaceId);
-  res.json(widgets);
+  res.json(widgets.map(redactWidgetRow));
 });
 
 // Create widget in the caller's current workspace.
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating widgets.' });
+  if (denyReadOnly(req, res)) return;   // a read-only member cannot create (PUT/DELETE use checkWidgetWrite)
   const { widget_type, name, config } = req.body;
   if (!widget_type || !name) return res.status(400).json({ error: 'widget_type and name required' });
+  if (!pluginRegistry.isAcceptedWidgetType(widget_type)) {
+    return res.status(400).json({ error: 'Unknown widget_type' });
+  }
+  // A template widget's config is only ever built by lib/templates (POST /api/templates/:key/use),
+  // which validates every value against the installed template. Here it would be a free blob.
+  if (widget_type === 'template') {
+    return res.status(400).json({ error: 'Create template widgets from the Templates library' });
+  }
+  const tzErr = validateTimezone(config);
+  if (tzErr) return res.status(400).json({ error: tzErr });
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
     .run(id, req.user.id, req.workspaceId, widget_type, name, JSON.stringify(config || {}));
 
-  res.status(201).json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id));
+  require('../lib/revisions').recordCurrent(db, 'widget', id, { actor: require('../lib/releases').actorOf(req), summary: 'Created' });
+  res.status(201).json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id)));
+});
+
+/*
+ * The bundled font catalogue, for the slide editor's font picker.
+ *
+ * ⚠️ SERVED RATHER THAN DUPLICATED IN THE FRONTEND. The editor previewing a family the renderer
+ * does not have — or offering one it dropped — makes the tool a liar about the thing it exists to
+ * show. One list, defined next to the files themselves.
+ */
+router.get('/slide-fonts', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({ fonts: require('../lib/slide-fonts').catalogue() });
+});
+
+/*
+ * Enabled plugin widget types (plus their field schemas) for the dashboard picker.
+ * Empty when plugins are off. Built-in types stay client-side so i18n does not move.
+ */
+router.get('/plugin-types', (req, res) => {
+  res.json({ types: pluginRegistry.listWidgetTypes() });
+});
+
+router.get('/clock-defaults', (req, res) => {
+  res.json({ timezone: serverTimezone() });
 });
 
 // Phase 2.2d: workspace-aware access. Mirrors the device/content pattern.
@@ -142,11 +244,53 @@ function checkWidgetWrite(req, res) {
   return widget;
 }
 
+/*
+ * Duplicate a widget: a new, independent widget with the same type and settings — three screens,
+ * three menus, without typing the first one in three times.
+ *
+ * ⚠️ THE COPY STAYS IN THE ORIGINAL'S WORKSPACE. Its config names that workspace's data sources and
+ *    content by id/slug; landing it anywhere else would either break those or reach across tenants.
+ * ⚠️ THE LIVE CONFIG IS COPIED, NEVER A PENDING DRAFT. With approval on, copying the draft would put
+ *    unreviewed changes into a brand-new live widget — a way around review. The copy is what the
+ *    original's screens are showing now; its first edit becomes a draft like any other.
+ * ⚠️ A TEMPLATE WIDGET IS REBUILT, not copied as a blob — exactly what "Use…" and PUT do. Since the
+ *    original was made, its template may have been revoked or uninstalled, unsigned code switched
+ *    off, or an image/data source it names deleted.
+ */
+router.post('/:id/duplicate', (req, res) => {
+  if (denyReadOnly(req, res)) return;
+  const widget = checkWidgetWrite(req, res);
+  if (!widget) return;
+  if (widget.widget_type !== 'template' && !pluginRegistry.isAcceptedWidgetType(widget.widget_type)) {
+    return res.status(400).json({ error: 'This widget type is not available on this server any more' });
+  }
+  let config;
+  try { config = JSON.parse(widget.config || '{}'); } catch { config = {}; }
+  if (widget.widget_type === 'template') {
+    try {
+      config = require('../lib/templates/widget').buildConfig(config.template, config.values, widget.workspace_id);
+    } catch (e) {
+      return res.status(e.status || 400).json({ error: e.message, param: e.param });
+    }
+  }
+  const asked = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const name = (asked || `${widget.name} (copy)`).slice(0, 120);
+
+  const id = uuidv4();
+  db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, req.user.id, widget.workspace_id, widget.widget_type, name, JSON.stringify(config));
+  require('../lib/revisions').recordCurrent(db, 'widget', id, {
+    actor: require('../lib/releases').actorOf(req),
+    summary: `Duplicated from "${String(widget.name).slice(0, 120)}"`,
+  });
+  res.status(201).json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id)));
+});
+
 // Get widget
 router.get('/:id', (req, res) => {
   const widget = checkWidgetRead(req, res);
   if (!widget) return;
-  res.json(widget);
+  res.json(redactWidgetRow(widget));
 });
 
 // Update widget
@@ -154,9 +298,46 @@ router.put('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
   if (!widget) return;
 
-  const { name, config } = req.body;
+  const { name } = req.body;
+  let { config } = req.body;
+  if (config && typeof config === 'object' && !Array.isArray(config)) {
+    config = mergeSecrets(config, storedWidgetConfig(widget), fieldsForWidget(widget.widget_type));
+  }
+  /*
+   * ⚠️ A TEMPLATE WIDGET'S CONFIG IS RE-BUILT, NEVER STORED AS SENT. Its values are checked against
+   * the installed template (types, the workspace's own images and data sources) and the template
+   * key cannot be pointed at something else by editing the blob.
+   */
+  if (widget.widget_type === 'template' && config) {
+    try {
+      const stored = storedWidgetConfig(widget);
+      config = require('../lib/templates/widget').buildConfig(stored.template, config.values, widget.workspace_id);
+    } catch (e) {
+      return res.status(e.status || 400).json({ error: e.message, param: e.param });
+    }
+  }
+  const tzErr = validateTimezone(config);
+  if (tzErr) return res.status(400).json({ error: tzErr });
+
+  /*
+   * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
+   * updated_at, which does not move), the editor shows the draft, and the draft goes live only
+   * through a reviewed submission (lib/releases.js releaseWidgetDraft). Approval off: in place,
+   * exactly as before, plus a revision so history knows what was saved.
+   */
+  const policy = require('../lib/release-policy');
+  const revisions = require('../lib/revisions');
+  const actor = require('../lib/releases').actorOf(req);
+  if (widget.workspace_id && policy.approvalRequired(db, widget.workspace_id)) {
+    const current = revisions.parseJson(widget.draft_config, null) || { name: widget.name, config: JSON.parse(widget.config || '{}') };
+    const draft = { name: name || current.name, config: config || current.config };
+    db.prepare('UPDATE widgets SET draft_config = ? WHERE id = ?').run(JSON.stringify(draft), req.params.id);
+    revisions.recordCurrent(db, 'widget', req.params.id, { actor, summary: 'Saved draft' });
+    return res.json({ ...redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id)), draft: true, pending_review: true });
+  }
   if (name) db.prepare('UPDATE widgets SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(name, req.params.id);
   if (config) db.prepare('UPDATE widgets SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(JSON.stringify(config), req.params.id);
+  revisions.recordCurrent(db, 'widget', req.params.id, { actor, summary: 'Saved' });
 
   // Push the change to any display currently showing this widget. Editing a widget used to
   // notify nothing at all: the render endpoint serves live config, but a player that already has
@@ -181,7 +362,7 @@ router.put('/:id', (req, res) => {
     }
   } catch (e) { /* best-effort; the heartbeat refresh still picks it up */ }
 
-  res.json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id));
+  res.json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id)));
 });
 
 // Delete widget
@@ -192,7 +373,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness']);
+const KNOWN_WIDGET_TYPES = new Set(BUILTIN_WIDGET_TYPES);
 function renderWidgetHtml(type, config, opts = {}) {
   const iframeSandbox = opts.iframeSandbox || 'allow-scripts';
   config = config || {};
@@ -201,12 +382,45 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'weather': return renderWeather(config);
     case 'rss': return renderRSS(config);
     case 'text': return renderText(config, iframeSandbox);
-    case 'webpage': return renderWebpage(config, iframeSandbox);
+    case 'webpage': return renderWebpage(config, iframeSandbox, opts.origin);
     case 'social': return renderSocial(config);
     case 'directory-board': return renderDirectoryBoard(config);
     case 'directory-search': return renderDirectorySearch(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
-    default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
+    /*
+     * ⚠️ THE ONLY WIDGET WHOSE CONTENT IS NOT BAKED INTO ITS CONFIG. A slide keeps its layout in
+     * `config.template` and its words in `config.fields`, and they are joined here — which is what
+     * makes it possible to come back and change a headline without rebuilding the layout, and
+     * therefore what makes editing one later work at all. See lib/slide-render.js.
+     */
+    case 'slide': return slideRender.renderSlideHtml(config, {
+      resolveImage: opts.resolveImage, resolveFont: opts.resolveFont,
+      resolveData: opts.resolveData, dataSources: opts.dataSources,
+    });
+    default: {
+      const plugin = pluginRegistry.getWidget(type);
+      if (plugin) {
+        try {
+          const html = plugin.render(config, {
+            escapeHtml,
+            safeUrl,
+            safeCss,
+            safeNumber,
+            now: opts.now || new Date(),
+            workspaceId: opts.workspaceId || null,
+            interpolate(text) {
+              return slideRender.interpolateDataSources(String(text == null ? '' : text), opts.resolveData);
+            },
+            resolveImage: typeof opts.resolveImage === 'function' ? opts.resolveImage : () => null,
+            log: (...args) => console.warn(`[plugin:${plugin.pluginId}]`, ...args),
+          });
+          if (typeof html === 'string' && html.length) return html;
+        } catch (e) {
+          console.warn(`[plugins] render failed for type "${type}":`, e.message);
+        }
+      }
+      return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
+    }
   }
 }
 
@@ -265,8 +479,93 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
   }
   res.setHeader('Content-Type', 'text/html');
-  res.send(renderWidgetHtml(widget.widget_type, config, { iframeSandbox }));
+  /*
+   * ⚠️ A TEMPLATE CARRIES ITS OWN CONTENT-SECURITY-POLICY, and the `sandbox` in it is the part
+   * that matters: it makes the document an opaque origin even when it is opened top-level (an
+   * Android panel loads a fullscreen widget straight into its WebView, and an admin can click the
+   * link). Without it an html template's code would run as this server's origin — the origin
+   * whose localStorage holds the dashboard session. See lib/templates/render.js.
+   */
+  if (widget.widget_type === 'template') {
+    const out = require('../lib/templates/widget').renderTemplateWidget(widget, {
+      origin: `${req.protocol}://${req.get('host')}`,
+      resolveImage: imageResolverFor(widget),
+      resolveFont: require('./fonts').fontResolverFor(widget),
+      resolveData: dataResolverFor(widget),
+    });
+    res.setHeader('Content-Security-Policy', out.csp);
+    // private, not public: a shared cache (a CDN in front of the server) must not keep serving a
+    // template's old code after it is revoked. Players still cache the rev-pinned copy.
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    return res.send(out.html);
+  }
+  res.send(renderWidgetHtml(widget.widget_type, config, {
+    iframeSandbox,
+    origin: `${req.protocol}://${req.get('host')}`,
+    resolveImage: imageResolverFor(widget),
+    resolveFont: require('./fonts').fontResolverFor(widget),
+    resolveData: dataResolverFor(widget),
+    workspaceId: widget.workspace_id,
+  }));
 });
+
+/*
+ * Data source dynamic variable resolver scoped to the widget's workspace.
+ */
+function dataResolverFor(widgetOrWorkspaceId) {
+  const wsId = typeof widgetOrWorkspaceId === 'string' ? widgetOrWorkspaceId : (widgetOrWorkspaceId?.workspace_id || null);
+  if (!wsId) return () => null;
+  let dataMap = null;
+  let loaded = false;
+  return (slug, key) => {
+    try {
+      if (!loaded) {
+        dataMap = require('../lib/data-sources/service').getWorkspaceDataMapSync(wsId);
+        loaded = true;
+      }
+      const dsData = dataMap ? (dataMap[slug] || dataMap[slug.toLowerCase()]) : null;
+      if (dsData && dsData[key] !== undefined && dsData[key] !== null) {
+        return dsData[key];
+      }
+    } catch (_) {}
+    return null;
+  };
+}
+
+/*
+ * Turn a slide's `content_id` into a URL, or into nothing.
+ *
+ * ⚠️ SCOPED TO THE WIDGET'S OWN WORKSPACE, AND THAT IS THE WHOLE JOB. The id comes out of a config
+ * blob that a workspace editor authored, so it is a value a user typed — nothing stops somebody
+ * pasting an id belonging to another tenant, and a resolver that simply looked up the row would
+ * then embed another customer's photo in their slide and serve it from this origin. Read as: a
+ * slide may only ever show media its own workspace already owns.
+ *
+ * A widget with no workspace is a PLATFORM TEMPLATE (see checkWidgetRead), so it is held to the
+ * matching rule — platform content only — rather than being treated as unscoped.
+ */
+function imageResolverFor(widget) {
+  return (contentId) => {
+    if (!contentId) return null;
+    try {
+      const row = widget.workspace_id
+        ? db.prepare('SELECT filepath, remote_url FROM content WHERE id = ? AND workspace_id = ?')
+            .get(contentId, widget.workspace_id)
+        : db.prepare('SELECT filepath, remote_url FROM content WHERE id = ? AND workspace_id IS NULL')
+            .get(contentId);
+      if (!row) return null;
+      // remote_url content is a URL the operator supplied and the player already fetches directly;
+      // an uploaded file is served from this origin. Either way the slide references, never inlines
+      // — the designer's base64 habit is how one widget config in the wild reached 2.71 MB.
+      if (row.remote_url) return row.remote_url;
+      return row.filepath ? `/uploads/content/${encodeURIComponent(row.filepath)}` : null;
+    } catch (e) {
+      return null;
+    }
+  };
+}
 
 // Public JSON feed of a directory board's entries. A directory-search page polls
 // this to reflect board edits without a reload. It exposes only the same data
@@ -338,10 +637,16 @@ router.get('/:id/telemetry', (req, res) => {
 router.post('/preview', (req, res) => {
   const { widget_type, config } = req.body || {};
   if (!widget_type || typeof widget_type !== 'string') return res.status(400).json({ error: 'widget_type required' });
-  if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
+  if (!KNOWN_WIDGET_TYPES.has(widget_type) && !pluginRegistry.hasWidget(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
   // Preview renders inside the DASHBOARD origin, so it never opts into same-origin —
   // see PREVIEW_IFRAME_SANDBOX.
-  let html = renderWidgetHtml(widget_type, config || {}, { iframeSandbox: PREVIEW_IFRAME_SANDBOX });
+  const resolveData = dataResolverFor(req.workspaceId);
+  const resolveFont = req.workspaceId ? require('./fonts').fontResolverFor({ workspace_id: req.workspaceId }) : undefined;
+  let html = renderWidgetHtml(widget_type, config || {}, {
+    iframeSandbox: PREVIEW_IFRAME_SANDBOX,
+    resolveData,
+    resolveFont,
+  });
   if (req.workspaceId) html = inlineUserContent(html, req.workspaceId);
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
@@ -361,10 +666,16 @@ setInterval(() => {
 router.post('/preview-session', (req, res) => {
   const { widget_type, config } = req.body || {};
   if (!widget_type || typeof widget_type !== 'string') return res.status(400).json({ error: 'widget_type required' });
-  if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
+  if (!KNOWN_WIDGET_TYPES.has(widget_type) && !pluginRegistry.hasWidget(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
   const id = uuidv4();
   // Same reasoning as /preview — dashboard origin, never same-origin.
-  const html = renderWidgetHtml(widget_type, config || {}, { iframeSandbox: PREVIEW_IFRAME_SANDBOX });
+  const resolveData = dataResolverFor(req.workspaceId);
+  const resolveFont = req.workspaceId ? require('./fonts').fontResolverFor({ workspace_id: req.workspaceId }) : undefined;
+  const html = renderWidgetHtml(widget_type, config || {}, {
+    iframeSandbox: PREVIEW_IFRAME_SANDBOX,
+    resolveData,
+    resolveFont,
+  });
   previewStore.set(id, { html, widget_type, created: Date.now() });
   res.json({ id, url: `/api/widgets/preview-session/${id}` });
 });
@@ -385,19 +696,28 @@ router.get('/preview-session/:id', (req, res) => {
 });
 
 function renderClock(c) {
+  const datePosition = clockDatePosition(c.date_position);
+  const dateFirst = datePosition === 'above' || datePosition === 'left';
+  const row = datePosition === 'left' || datePosition === 'right';
+  const dateMargin = row
+    ? (dateFirst ? 'margin-right:8px;' : 'margin-left:8px;')
+    : (dateFirst ? 'margin-bottom:8px;' : 'margin-top:8px;');
+  const dateHtml = c.show_date !== false ? '<div id="date"></div>' : '';
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:${safeCss(c.background, 'transparent')}; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; overflow:hidden; }
+  body { background:${safeCss(c.background, 'transparent')}; display:flex; flex-direction:${row ? 'row' : 'column'}; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; overflow:hidden; }
   #time { font-size:${safeNumber(c.font_size, 64)}px; font-weight:700; color:${safeCss(c.color, '#FFFFFF')}; }
-  #date { font-size:${Math.max(16, safeNumber(c.font_size, 64) / 3)}px; color:${safeCss(c.color, '#FFFFFF')}; opacity:0.7; margin-top:8px; }
+  #date { font-size:${Math.max(8, safeNumber(c.date_font_size, Math.max(16, safeNumber(c.font_size, 64) / 3)))}px; color:${safeCss(c.date_color, safeCss(c.color, '#FFFFFF'))}; opacity:${c.date_color ? 1 : 0.7}; ${dateMargin} }
 </style></head><body>
+${dateFirst ? dateHtml : ''}
 <div id="time"></div>
-${c.show_date !== false ? '<div id="date"></div>' : ''}
+${dateFirst ? '' : dateHtml}
 <script>
 function update() {
-  const opts = { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit', second:'2-digit' };
-  document.getElementById('time').textContent = new Date().toLocaleTimeString('en-US', opts);
-  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString('en-US', { timeZone: '${safeTimezone(c.timezone)}', weekday:'long', year:'numeric', month:'long', day:'numeric' });` : ''}
+  // show_seconds defaults TRUE so existing widgets keep the clock they already had (#323).
+  const opts = { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} };
+  document.getElementById('time').textContent = new Date().toLocaleTimeString(${safeLocale(c.locale)}, opts);
+  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
 }
 setInterval(update, 1000); update();
 </script></body></html>`;
@@ -407,28 +727,48 @@ function renderWeather(c) {
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; display:flex; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; color:${safeCss(c.color, '#FFF')}; }
-  .weather { text-align:center; }
-  .temp { font-size:${safeNumber(c.font_size, 48)}px; font-weight:700; }
-  .location { font-size:18px; opacity:0.7; margin-top:4px; }
-  .desc { font-size:16px; opacity:0.6; margin-top:8px; }
-  .icon { font-size:64px; }
-</style></head><body>
+  /*
+   * #324: EVERYTHING SCALES, OR NOTHING DOES.
+   *
+   * Only .temp was tied to font_size; location, description and icon were pinned at 18px, 16px
+   * and 64px. In a small zone the icon alone is 64px whatever the space, the content overflows,
+   * and the widget gets a scrollbar - reported as "the font size does change, but nothing else".
+   * No Fit setting could help, because Fit places the widget's output rather than laying it out.
+   * The other three are derived from the same base size now, so one control moves all of them.
+   */
+  .weather { text-align:center; max-width:100%; max-height:100%; }
+  .temp { font-size:${safeNumber(c.font_size, 48)}px; font-weight:700; line-height:1.1; }
+  .location { font-size:${Math.max(10, Math.round(safeNumber(c.font_size, 48) * 0.34))}px; opacity:0.7; margin-top:2px; }
+  .desc { font-size:${Math.max(10, Math.round(safeNumber(c.font_size, 48) * 0.30))}px; opacity:0.6; margin-top:4px; }
+  .icon { font-size:${Math.max(14, Math.round(safeNumber(c.font_size, 48) * 1.2))}px; line-height:1; }
+  /* A signage widget must never offer a scrollbar. If it still does not fit, it clips. */
+  html, body { overflow:hidden; }
+  body.horizontal .weather { display:flex; align-items:center; justify-content:center; text-align:left; }
+  body.horizontal .weather > * + * { margin-left:${Math.max(6, Math.round(safeNumber(c.font_size, 48) * 0.25))}px; }
+</style></head><body class="${c.layout === 'horizontal' ? 'horizontal' : ''}">
 <div class="weather">
   <div class="icon" id="icon"></div>
-  <div class="temp" id="temp">--</div>
-  <div class="location">${escapeHtml(c.location) || 'Unknown'}</div>
-  <div class="desc" id="desc"></div>
+  <div>
+    <div class="temp" id="temp">--</div>
+    ${c.show_location === false ? '' : `<div class="location">${escapeHtml(c.location) || 'Unknown'}</div>`}
+    <div class="desc" id="desc"></div>
+  </div>
 </div>
 <script>
 async function load() {
   try {
-    const r = await fetch('https://wttr.in/${encodeURIComponent(c.location || 'New York')}?format=j1');
+    // #324: wttr.in accepts lang=, so "Sunny" can arrive in the operator's language rather than
+    // always English. Same locale field the clock gained in #323; blank leaves wttr.in's default.
+    const r = await fetch('https://wttr.in/${encodeURIComponent(c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + String(c.locale).slice(0, 2).toLowerCase() : ''}');
     const d = await r.json();
     const cur = d.current_condition[0];
     const unit = '${c.units === 'metric' ? 'temp_C' : 'temp_F'}';
     const deg = '${c.units === 'metric' ? '°C' : '°F'}';
     document.getElementById('temp').textContent = cur[unit] + deg;
-    document.getElementById('desc').textContent = cur.weatherDesc[0].value;
+    // With lang=, wttr.in returns localised text under lang_<code>; fall back to English.
+    const langKey = Object.keys(cur).find((k) => k.startsWith('lang_'));
+    document.getElementById('desc').textContent =
+      (langKey && cur[langKey] && cur[langKey][0] && cur[langKey][0].value) || cur.weatherDesc[0].value;
     const code = parseInt(cur.weatherCode);
     const icons = {113:'☀️',116:'⛅',119:'☁️',122:'☁️',143:'🌫️',176:'🌧️',200:'⛈️',227:'🌨️',260:'🌫️',263:'🌧️',266:'🌧️',293:'🌧️',296:'🌧️',299:'🌧️',302:'🌧️',305:'🌧️',308:'🌧️',311:'🌧️',314:'🌧️',317:'🌧️',320:'🌨️',323:'🌨️',326:'🌨️',329:'🌨️',332:'🌨️',335:'🌨️',338:'🌨️',350:'🌧️',353:'🌧️',356:'🌧️',359:'🌧️',362:'🌨️',365:'🌨️',368:'🌨️',371:'🌨️',374:'🌨️',377:'🌨️',386:'⛈️',389:'⛈️',392:'⛈️',395:'🌨️'};
     document.getElementById('icon').textContent = icons[code] || '🌡️';
@@ -604,14 +944,27 @@ function renderText(c, iframeSandbox = 'allow-scripts') {
 </style></head><body><iframe sandbox="${escapeHtml(iframeSandbox)}" srcdoc="${escapeHtml(inner)}"></iframe></body></html>`;
 }
 
-function renderWebpage(c, iframeSandbox = 'allow-scripts') {
+function renderWebpage(c, iframeSandbox = 'allow-scripts', origin) {
   const zoom = (c.zoom || 100) / 100;
   const invZoom = 100 / (c.zoom || 100) * 100;
+  const kioskPath = typeof c.url === 'string' && /^\/api\/kiosk\/[a-f0-9-]+\/render(?:\?|$)/i.test(c.url);
+  let url = kioskPath ? c.url : safeUrl(c.url);
+  // Older kiosk assignments saved the dashboard's absolute origin. When the dashboard was
+  // opened at localhost, that origin points at the display itself. Kiosk renders are served by
+  // this widget's origin, so only rewrite that known-bad generated URL.
+  try {
+    const parsed = new URL(url);
+    if (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) &&
+        /^\/api\/kiosk\/[a-f0-9-]+\/render$/i.test(parsed.pathname)) {
+      const path = parsed.pathname + parsed.search;
+      url = origin ? new URL(path, origin).toString() : path;
+    }
+  } catch (_) { /* safeUrl already reduced invalid input to about:blank */ }
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; } body { height:100vh; overflow:hidden; }
   iframe { width:${invZoom}%; height:${invZoom}%; border:0; transform:scale(${zoom}); transform-origin:0 0; }
 </style></head><body>
-<iframe src="${escapeHtml(safeUrl(c.url))}" sandbox="${escapeHtml(iframeSandbox)}"></iframe>
+<iframe src="${escapeHtml(url)}" sandbox="${escapeHtml(iframeSandbox)}"></iframe>
 ${c.refresh_interval > 0 ? `<script>setInterval(()=>document.querySelector('iframe').src=document.querySelector('iframe').src,${c.refresh_interval * 1000});</script>` : ''}
 </body></html>`;
 }
@@ -650,10 +1003,10 @@ function renderDirectoryBoard(c) {
   @keyframes bg-pulse { 0%,100% { background:#1a1a2e; } 50% { background:#1b1b30; } }
   @keyframes bg-pulse-light { 0%,100% { background:#f5f5f5; } 50% { background:#ededf0; } }
 
-  .page { position:fixed; inset:0; overflow:hidden; transition: transform 1.5s ease; will-change: transform; }
+  .page { position:fixed; top:0; right:0; bottom:0; left:0; overflow:hidden; transition: transform 1.5s ease; will-change: transform; }
 
-  .bg-layer { position:absolute; inset:0; z-index:0; }
-  .bg-img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition: opacity 2s ease-in-out; }
+  .bg-layer { position:absolute; top:0; right:0; bottom:0; left:0; z-index:0; }
+  .bg-img { position:absolute; top:0; right:0; bottom:0; left:0; width:100%; height:100%; object-fit:cover; opacity:0; transition: opacity 2s ease-in-out; }
   .bg-img.active { opacity:0.30; }
 
   .header {
@@ -695,6 +1048,9 @@ function renderDirectoryBoard(c) {
   }
   body.light .category h2 { border-bottom-color: rgba(0,0,0,0.12); }
 
+  /* grid-gap is deliberate: display:grid is itself Chromium 57, so on a Chrome 53 panel this
+     element is an inert block and the gap can never apply. Removing it only cost modern
+     multi-column boards their 36px gutter. See the row-gap note below. */
   .entries { display:grid; gap:14px 36px; }
   .entries[data-cols="auto"] { grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); }
   .entries[data-cols="1"] { grid-template-columns: 1fr; }
@@ -702,8 +1058,12 @@ function renderDirectoryBoard(c) {
   .entries[data-cols="3"] { grid-template-columns: repeat(3, 1fr); }
   .entries[data-cols="4"] { grid-template-columns: repeat(4, 1fr); }
 
-  .entry { font-size:38px; line-height:1.35; color:#fff; display:flex; gap:14px; align-items:baseline; }
-  .entry .id { font-weight:600; min-width:3.5em; flex-shrink:0; }
+  /* Row gap for engines with no grid support, where .entries lays out as a plain block.
+     @supports is Chromium 28, so a real grid engine zeroes this and uses the gap above rather
+     than double-spacing rows and trailing a margin after the last one. */
+  .entry { font-size:38px; line-height:1.35; color:#fff; display:flex; align-items:baseline; margin-bottom:14px; }
+  @supports (display:grid) { .entry { margin-bottom:0; } }
+  .entry .id { font-weight:600; min-width:3.5em; flex-shrink:0; margin-right:14px; }
   .entry .text { display:flex; flex-direction:column; flex:1; min-width:0; }
   .entry .nm { font-weight:400; }
   .entry .sub { font-size:0.55em; opacity:0.65; margin-top:4px; line-height:1.3; font-weight:400; }
@@ -1050,10 +1410,10 @@ function renderDirectorySearch(c) {
   }
   body.light .group h2 { border-bottom-color:rgba(0,0,0,0.12); }
 
-  .entry { display:flex; gap:14px; align-items:baseline; padding:10px 8px; font-size:30px; line-height:1.3; border-radius:8px; }
+  .entry { display:flex; align-items:baseline; padding:10px 8px; font-size:30px; line-height:1.3; border-radius:8px; }
   .entry:nth-child(even) { background:rgba(255,255,255,0.03); }
   body.light .entry:nth-child(even) { background:rgba(0,0,0,0.03); }
-  .entry .id { font-weight:700; min-width:2.6em; flex-shrink:0; }
+  .entry .id { font-weight:700; min-width:2.6em; flex-shrink:0; margin-right:14px; }
   .entry .text { display:flex; flex-direction:column; flex:1; min-width:0; }
   .entry .nm { font-weight:400; }
   .entry .sub { font-size:0.6em; opacity:0.6; margin-top:3px; }
@@ -1063,15 +1423,15 @@ function renderDirectorySearch(c) {
   /* The keyboard is sized against the VIEWPORT, not in fixed px. A panel's CSS viewport is its
      physical resolution divided by its density, so a 1080p screen at 240dpi presents only 1280x720
      CSS px - and a keyboard laid out for 1920x1080 then eats ~37% of the height instead of ~24%.
-     The vh terms scale it down on short viewports; the clamp() maxima are the original values, so
-     a 1080-tall viewport renders pixel-identically to before (5.3vh and 2.3vh both exceed their
-     max at 1080 and clamp). The px minima keep the keys tappable on very short screens. */
-  .keyboard { flex:0 0 auto; padding:clamp(5px,0.8vh,8px) 12px clamp(8px,1.3vh,14px); background:rgba(0,0,0,0.25); user-select:none; }
+     The viewport rule below scales it down on short screens; the default keeps the original
+     1080px layout and the smallest rule keeps keys tappable on very short screens. */
+  .keyboard { flex:0 0 auto; padding:8px 12px 14px; background:rgba(0,0,0,0.25); user-select:none; }
   body.light .keyboard { background:rgba(0,0,0,0.05); }
-  .krow { display:flex; gap:clamp(4px,0.6vh,6px); justify-content:center; margin-bottom:clamp(4px,0.6vh,6px); }
+  .krow { display:flex; justify-content:center; margin-bottom:6px; }
+  .krow > * + * { margin-left:6px; }
   .key {
     flex:1 1 0; max-width:96px; min-width:0;
-    height:clamp(34px,5.3vh,56px); font-size:clamp(15px,2.3vh,24px); text-transform:uppercase;
+    height:56px; font-size:24px; text-transform:uppercase;
     border:0; border-radius:8px; background:rgba(255,255,255,0.12); color:inherit; cursor:pointer;
   }
   .key:active { background:#4a9eff; color:#fff; }
@@ -1083,7 +1443,18 @@ function renderDirectorySearch(c) {
     .header h1 { font-size:30px; }
     #q { font-size:26px; padding:14px 16px; }
     .entry { font-size:24px; }
-    /* .key is viewport-scaled above - no fixed override here, it would undo the clamp. */
+  }
+  @media (max-height:1050px) {
+    .keyboard { padding:0.8vh 12px 1.3vh; }
+    .krow { margin-bottom:0.6vh; }
+    .krow > * + * { margin-left:0.6vh; }
+    .key { height:5.3vh; font-size:2.3vh; }
+  }
+  @media (max-height:650px) {
+    .keyboard { padding:5px 12px 8px; }
+    .krow { margin-bottom:4px; }
+    .krow > * + * { margin-left:4px; }
+    .key { height:34px; font-size:15px; }
   }
 </style>
 </head>
@@ -1295,7 +1666,8 @@ function renderDiagSmoothness(config) {
   .col{position:absolute;top:0;left:0;width:52%;height:100%;overflow:hidden;border-right:1px solid #20293a}
   .roll{position:absolute;left:0;right:0;top:0;will-change:transform;animation:roll 30s linear infinite}
   @keyframes roll{from{transform:translate3d(0,0,0)}to{transform:translate3d(0,-50%,0)}}
-  .row{display:flex;align-items:center;gap:1.4vw;padding:1.5vh 2vw;border-bottom:1px solid #20293a;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:2.6vh}
+  .row{display:flex;align-items:center;padding:1.5vh 2vw;border-bottom:1px solid #20293a;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:2.6vh}
+  .row > * + *{margin-left:1.4vw}
   .row .n{color:#54a6ff;min-width:3.2em;font-variant-numeric:tabular-nums}
   .row:nth-child(3n) .n{color:#37d391}
   .sweep{position:absolute;top:0;right:0;width:48%;height:100%;background:repeating-linear-gradient(90deg,#0f1420 0 3vw,#182234 3vw 6vw)}
@@ -1305,15 +1677,16 @@ function renderDiagSmoothness(config) {
   .col .tag{left:1.5vw;background:#0a0d13;padding:.4vh .8vw;border-radius:4px}
   .sweep .tag{right:1.5vw}
   .hud{position:absolute;left:50%;bottom:3vh;transform:translateX(-50%);background:rgba(12,16,24,.94);border:1px solid #20293a;border-radius:14px;padding:2.2vh 2.4vw;min-width:64vw;z-index:6;box-shadow:0 1.4vh 4vh rgba(0,0,0,.55)}
-  .verdict{display:flex;align-items:center;gap:1.4vw;margin-bottom:1.8vh}
+  .verdict{display:flex;align-items:center;margin-bottom:1.8vh}
+  .verdict > * + *{margin-left:1.4vw}
   .dot{width:1.8vh;height:1.8vh;border-radius:50%;background:#6d7789}
   .verdict.smooth .dot{background:#37d391;box-shadow:0 0 0 .6vh rgba(55,211,145,.16)}
   .verdict.stall .dot{background:#ff5d5d;box-shadow:0 0 0 .6vh rgba(255,93,93,.18)}
   .verdict .txt{font-size:3.4vh;font-weight:750;letter-spacing:.01em}
   .verdict.smooth .txt{color:#37d391}.verdict.stall .txt{color:#ff5d5d}
   .verdict .sub{font-size:1.9vh;color:#6d7789;font-weight:400;margin-left:auto;text-align:right}
-  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2vw;margin-bottom:1.4vh}
-  .stat{background:#121826;border:1px solid #20293a;border-radius:10px;padding:1.2vh 1vw}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:1.4vh}
+  .stat{background:#121826;border:1px solid #20293a;border-radius:10px;padding:1.2vh 1vw;margin:0 .6vw}
   .stat .k{font-size:1.4vh;text-transform:uppercase;letter-spacing:.08em;color:#6d7789}
   .stat .v{font-family:ui-monospace,Menlo,monospace;font-size:4vh;font-variant-numeric:tabular-nums;margin-top:.4vh}
   .stat .v small{font-size:1.8vh;color:#6d7789}
@@ -1390,3 +1763,7 @@ function renderDiagSmoothness(config) {
 }
 
 module.exports = router;
+module.exports.renderWidgetHtml = renderWidgetHtml;
+module.exports.dataResolverFor = dataResolverFor;
+module.exports.imageResolverFor = imageResolverFor;
+module.exports.widgetIframeSandboxForWorkspace = widgetIframeSandboxForWorkspace;

@@ -34,14 +34,48 @@ const PUBLIC_ROUTERS = [
   { path: '/api/reports',     mod: './routes/reports' },
   { path: '/api/groups',      mod: './routes/device-groups' },
   { path: '/api/playlists',   mod: './routes/playlists' },
+  // Slide decks: the authoring document. Publishes to a playlist of slide widgets — see
+  // lib/slide-deck.js for why that is the whole design rather than a new content type.
+  { path: '/api/slide-decks', mod: './routes/slide-decks' },
+  // Uploaded fonts for slides. Workspace-scoped; see routes/fonts.js for why redistribution is
+  // the thing to understand about this one.
+  { path: '/api/fonts',       mod: './routes/fonts' },
+  // #320: operator-uploaded GLSL transitions. Workspace-scoped like fonts, and for the same reason:
+  // it is the customer's content and the customer's licence, not part of the shipped library.
+  { path: '/api/transitions/custom', mod: './routes/custom-shaders' },
+  // Content approval and version history. Workspace-scoped through the same tenancy middleware
+  // as everything above; the settings endpoint is admin-only inside the router.
+  { path: '/api/approvals',   mod: './routes/approvals' },
+  { path: '/api/revisions',   mod: './routes/revisions' },
   { path: '/api/activity',    mod: './routes/activity' },
   { path: '/api/kiosk',       mod: './routes/kiosk', renderBypass: true },
   { path: '/api/pip',         mod: './routes/pip' },
+  // Data Sources (iCal, APIs, etc.) for dynamic slide template interpolation
+  { path: '/api/data-sources', mod: './routes/data-sources' },
   // Trigger DEFINITIONS. ⚠️ Public (token-reachable) on purpose — an integrator provisioning a site
   // configures these from their own tooling. The FIRE path is not here and never will be: it lives
   // on the device, because a trigger that needs this server is a trigger that fails with the WAN
   // down, which is the whole feature. See docs/triggers-design.md.
   { path: '/api/triggers',    mod: './routes/triggers' },
+  /*
+   * Display power schedules — the weekly BACKLIGHT clock. Public (token-reachable) for the same
+   * reason as triggers: an integrator provisioning a site sets these from their own tooling, and
+   * "the screens are dark 22:00-06:00" is exactly the kind of thing that belongs in a site
+   * handover script rather than in twenty dashboard visits.
+   *
+   * ⚠️ Like triggers, the DECISION is not here. The panel evaluates its own windows offline; this
+   * router only defines them. Nothing in it can turn a device off — see routes/display-power-schedules.js.
+   */
+  { path: '/api/display-power-schedules', mod: './routes/display-power-schedules' },
+  /*
+   * Saved device endpoints — REST calls a PANEL makes on its own network. Public (token-reachable)
+   * for the same reason as triggers: an integrator provisioning a site configures "poll the PLC
+   * every minute" from their own tooling.
+   *
+   * ⚠️ The REQUESTS are not made here. The panel runs them on its own clock, offline, which is the
+   * whole point — this server has no route to the customer's 192.168.x.x. See routes/device-endpoints.js.
+   */
+  { path: '/api/device-endpoints', mod: './routes/device-endpoints' },
 ];
 
 const JWT_ONLY_ROUTERS = [
@@ -51,6 +85,19 @@ const JWT_ONLY_ROUTERS = [
   { path: '/api/white-label', mod: './routes/white-label',  tenancy: true },
   { path: '/api/workspaces',  mod: './routes/workspaces' },
   { path: '/api/admin',       mod: './routes/admin' },
+  /*
+   * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
+   * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
+   */
+  { path: '/api/plugin-submissions', mod: './routes/plugin-submissions', tenancy: true },
+  // Templates library (lib/templates). JWT only: installing changes what code the server serves.
+  { path: '/api/templates',   mod: './routes/templates',    tenancy: true },
+  /*
+   * Server diagnostics for a platform operator: instance shape, the loop-lag history the server has
+   * always recorded and never shown, and an in-process CPU profile. JWT-only and gated again inside
+   * on requirePlatformAdmin — a workspace owner is not an operator of the host.
+   */
+  { path: '/api/admin/diagnostics', mod: './routes/diagnostics' },
   { path: '/api/tokens',      mod: './routes/tokens',       tenancy: true },
 ];
 

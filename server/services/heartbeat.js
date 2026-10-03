@@ -1,8 +1,14 @@
-const { db, pruneStatusLog, pruneTelemetryRetention } = require('../db/database');
+const { db, pruneStatusLog, pruneTelemetryRetention, playsMigrationTouched } = require('../db/database');
+// Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
+const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 const config = require('../config');
 const { deviceRoom, emitToWorkspace } = require('../lib/socket-rooms');
 const statusLogWriter = require('../lib/status-log-writer');
 const { chunkedDelete, currentBand, yieldTick } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
+const { expireStrandedPlays } = require('../lib/play-backfill');
+const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player defer
+const playRollup = require('./play-rollup');      // proof-of-play aggregation; gates the raw prune
+const pluginHooks = require('../lib/plugins/hooks');
 
 const liveness = require('../lib/liveness'); // v4 core pass: server-derived 3-state liveness
 
@@ -45,6 +51,17 @@ function startHeartbeatChecker(io) {
   // #146: start the batched device_status_log flush loop.
   statusLogWriter.start();
 
+  /*
+   * 2.0.1: drain the first-boot stranded-play backlog with players held off while it runs.
+   * Fire-and-forget for the same reason as the startup prune above — boot must not block on it —
+   * but it is STARTED here, before server.listen, so no player can arrive ahead of the defer.
+   */
+  drainStrandedAtBoot().catch((e) => {
+    // A drain that fails must not leave the fleet locked out.
+    console.error(`[boot] stranded drain failed: ${e && e.message}`);
+    bootDefer.lift({ reason: 'error' });
+  });
+
   const deviceNs = io.of('/device');
 
   setInterval(() => {
@@ -57,7 +74,7 @@ function startHeartbeatChecker(io) {
     accrueUsage(now).catch(() => {});
 
     // Check database for devices that should be offline
-    const onlineDevices = db.prepare("SELECT id, last_heartbeat FROM devices WHERE status = 'online'").all();
+    const onlineDevices = db.prepare(`SELECT id, last_heartbeat FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
     for (const device of onlineDevices) {
       const conn = deviceConnections.get(device.id);
@@ -109,6 +126,7 @@ function startHeartbeatChecker(io) {
         // Offline-cause log: this liveness-timeout path is the "stopped reporting" case —
         // annotate reason/detail and record it in the unified incident feed too.
         statusLogWriter.record(device.id, 'offline_timeout', 'heartbeat_timeout', 'Stopped sending heartbeats');
+        pluginHooks.emit('device.offline', { device_id: device.id, reason: 'heartbeat_timeout' });
         try {
           db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, 'offline', 'heartbeat_timeout', 'Stopped sending heartbeats')")
             .run(device.id);
@@ -127,8 +145,26 @@ function startHeartbeatChecker(io) {
 // #146: batched play-log prune (idx_play_logs_time), chunked so a 90-day backlog
 // trims across many bounded DELETEs instead of one large statement.
 const _delPlayLogs = db.prepare('DELETE FROM play_logs WHERE rowid IN (SELECT rowid FROM play_logs WHERE started_at < ? LIMIT ?)');
+
+/*
+ * ⚠️ THE CUTOFF COMES FROM services/play-rollup, NOT FROM RETENTION ALONE.
+ *
+ * Raw plays are the only copy until they have been aggregated into play_log_hourly, so this prune
+ * is only allowed below the rollup watermark. prunableBefore() returns the EARLIER of the
+ * retention cutoff and the last aggregated hour: if the rollup is behind — a long outage, a slow
+ * first pass over an adopted database, an exception in the sweep — the prune waits for it instead
+ * of deleting proof-of-play that was never counted.
+ *
+ * Ordering the calls in runMaintenance() is not sufficient on its own. A crash between them, or a
+ * later edit that reorders or conditionally skips the rollup, would silently destroy records; the
+ * watermark makes the guarantee checkable here, at the moment of deletion.
+ *
+ * The 90-day window itself is now config.playLogRetentionDays (PLAY_LOG_RETENTION_DAYS), matching
+ * device_events and event_loop_lag. It was the only retention in the system that was hardcoded.
+ */
 async function prunePlayLogs() {
-  const cutoff = Math.floor(Date.now() / 1000) - (90 * 86400);
+  const cutoff = playRollup.prunableBefore();
+  if (!(cutoff > 0)) return 0;   // nothing aggregated yet: never prune on the first boot
   return (await chunkedDelete((lim) => _delPlayLogs.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
 }
 
@@ -165,18 +201,139 @@ async function capDeviceEvents() {
 // re-entrancy-guarded (a long run never stacks with the next interval). Never throws
 // into the interval. NOT for startup (see the un-gated startup prune above).
 let _maintRunning = false;
+/*
+ * 2.0.1 — a batch past this took the DISK, not the query. On the DS225+ report each 2000-row batch
+ * blocked the loop for 1-2s on spinning SATA, which is invisible in a log that only prints totals.
+ * Warn so slow storage lands in the same stream as the loop-lag band and the #146 critical-band
+ * download shed, where an operator correlating a stall already has their eyes.
+ */
+const SLOW_BATCH_MS = 2000;
+
+/**
+ * One bounded stranded-play batch, with the line that makes a long drain legible.
+ *
+ * `remaining` is derived from a count taken ONCE when the drain started, not re-counted per batch:
+ * counting the open set is itself an index scan over hundreds of thousands of rows, and paying for
+ * it every batch to print a number would be the same mistake as the sweep it is reporting on.
+ *
+ * @returns {{closed: number, ms: number, drained: boolean}}
+ */
+function strandedBatch({ label, index, of, remaining }) {
+  const t0 = Date.now();
+  const closed = expireStrandedPlays(db, { limit: config.strandedPlayBatch });
+  const ms = Date.now() - t0;
+  const drained = closed < config.strandedPlayBatch;
+
+  if (closed > 0 || ms > SLOW_BATCH_MS) {
+    const rem = remaining == null ? 'unknown' : Math.max(0, remaining - closed);
+    const line = `[${label}] stranded sweep batch ${index}/${of} closed=${closed} remaining=${rem} duration=${ms}ms`;
+    if (ms > SLOW_BATCH_MS) console.warn(`${line} — slow storage (batch held the loop >${SLOW_BATCH_MS}ms)`);
+    else console.log(line);
+  }
+  return { closed, ms, drained };
+}
+
+/*
+ * #307: close plays that have been open longer than their content could possibly have run.
+ *
+ * lib/play-backfill.closeStrandedPlays already infers an end from the NEXT play, which is a
+ * measurement and always preferable — but it needs a next row, and it declines when the gap exceeds
+ * the item's own length rather than crediting a dark screen with playback. So the last play before
+ * a device goes quiet, and every play cut short by a power failure, was left open with nothing that
+ * would ever revisit it: **36,096 open rows in the database this was investigated against, 35,982
+ * of them over a day old** — and 494,000 on the 73-device Synology install that prompted 2.0.1.
+ *
+ * ⚠️ CHUNKED AND BOUNDED PER SWEEP, because the table has 1.44M rows and the driver is synchronous.
+ * An unbounded UPDATE here would block the event loop in exactly the way #307 is about. It drains
+ * over successive sweeps rather than in one.
+ */
+async function expireStrandedPlaysChunked() {
+  const of = config.strandedPlayMaxBatchesPerSweep;
+  let total = 0;
+  for (let i = 0; i < of; i++) {
+    const { closed, drained } = strandedBatch({ label: 'maintenance', index: i + 1, of, remaining: null });
+    total += closed;
+    if (drained) break;
+    // Yield between batches so a long drain cannot hold the loop for its whole duration.
+    await new Promise((r) => setImmediate(r));
+  }
+  if (total > 0) console.log(`[maintenance] closed ${total} stranded play(s) past their ceiling`);
+  return total;
+}
+
+/** The open set, counted once. Rides the #307 partial index (idx_play_logs_open). */
+function countOpenPlays() {
+  try {
+    return db.prepare('SELECT COUNT(*) AS n FROM play_logs WHERE ended_at IS NULL').get().n;
+  } catch { return 0; }
+}
+
+/**
+ * 2.0.1 — drain the stranded backlog at boot, with players held off while it runs.
+ *
+ * ⚠️ WHY A SEPARATE DRAIN AND NOT JUST THE INTERVAL SWEEP. The interval sweep is deliberately
+ * bounded to a handful of batches per tick so it can never be the thing that pins a LIVE server.
+ * At 494,000 rows and 4 batches of 500 per 30s tick that is a backlog measured in days, and every
+ * one of those ticks competes with the fleet it is trying to stop hurting. The boot drain runs the
+ * same bounded, yielding batches with no per-tick cap — which is only safe BECAUSE players are
+ * deferred while it runs, and is why the two are one feature rather than two.
+ *
+ * ⚠️ IT RUNS BEFORE server.listen (startHeartbeatChecker is called above it in server.js), so the
+ * defer is already in force by the time any player can reach the socket.
+ *
+ * "Idle" is a batch that closes fewer rows than it asked for: the predicate is drained, which is
+ * the same drained-test lib/chunked-prune uses everywhere else. Not a magic threshold — with
+ * players deferred nothing new is arriving, so it genuinely reaches the end of the set.
+ */
+async function drainStrandedAtBoot() {
+  if (!bootDefer.armed({ migrationTouchedPlays: playsMigrationTouched })) return 0;
+
+  const t0 = Date.now();
+  const openAtBoot = countOpenPlays();
+  console.log(`[boot] ${openAtBoot} open play(s) at start (counted in ${Date.now() - t0}ms)`);
+  if (!bootDefer.begin({ openPlays: openAtBoot })) return 0;
+
+  /*
+   * An ESTIMATE of how many batches this will take, from the count above. It can be overshot (the
+   * sweep only closes plays past their ceiling, and a batch can close fewer than it asked for
+   * without being drained), which is why `i` is not clamped to it — a line reading `batch 991/988`
+   * is more honest than one that pretends the estimate was a promise.
+   */
+  const of = Math.max(1, Math.ceil(openAtBoot / config.strandedPlayBatch));
+  let closed = 0;
+  let timedOut = false;
+  for (let i = 1; ; i++) {
+    const r = strandedBatch({ label: 'boot', index: i, of, remaining: openAtBoot - closed });
+    closed += r.closed;
+    bootDefer.progress(closed);
+    if (r.drained) break;
+    // The valve, checked between batches: a fleet held off forever is worse than a stampede.
+    if (bootDefer.expired()) { timedOut = true; break; }
+    await yieldTick();   // same discipline as every other sweep: never hold the loop for a drain
+  }
+
+  // Re-counted rather than subtracted, so the lift line states what IS open, not what we believe.
+  bootDefer.lift({ closed, remaining: countOpenPlays(), reason: timedOut ? 'timeout' : 'drained' });
+  return closed;
+}
+
 async function runMaintenance() {
   if (_maintRunning) return;
   if (config.maintenanceBandGateEnabled && currentBand() !== 'normal') return;   // #146 P1.3 kill switch
   _maintRunning = true;
   try {
     await pruneProvisioningDevices();
+    // Aggregate before pruning. prunePlayLogs() enforces this independently via the watermark,
+    // so the ORDER here is an optimisation (prune the hours we just rolled up on the same pass),
+    // not the safety property.
+    try { playRollup.rollupOnce(); } catch (e) { console.warn(`[play-rollup] sweep failed: ${e && e.message}`); }
     await prunePlayLogs();
     await pruneStatusLog({ bandGate: true });   // per-device chunked; own re-entrancy
     await pruneTelemetryRetention({ bandGate: true });   // #240 device_telemetry age sweep (per-device chunked)
     await pruneDeviceEvents();                   // offline-cause log: incident-feed age retention (chunked)
     await capDeviceEvents();                     // offline-cause log: per-device incident row cap
     await pruneUsageDaily();                     // #146 BILLING rollup retention (chunked)
+    await expireStrandedPlaysChunked();          // #307 close plays nothing else will ever close
     // Expiry sweeps on small tables — single cheap statements, bounded by table size.
     db.prepare("DELETE FROM team_invites WHERE expires_at < strftime('%s','now')").run();
     db.prepare("DELETE FROM workspace_invites WHERE expires_at < strftime('%s','now')").run();
@@ -285,5 +442,7 @@ module.exports = {
   capDeviceEvents,     // offline-cause log: per-device incident cap
   accrueUsage,
   pruneUsageDaily,
+  drainStrandedAtBoot,   // 2.0.1 first-boot stranded drain (exported for tests)
+  countOpenPlays,        // 2.0.1
   __resetAccrual: () => { _lastAccrue = 0; },   // #146 test hook: reset the accrual baseline
 };

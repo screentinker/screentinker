@@ -543,7 +543,29 @@ function installedSha() {
  * Version remains the fallback for a box installed before checksums were recorded: it is the same
  * comparison as before, so an older install is no worse off than it was.
  */
+/*
+ * ⚠️ Was the last install interrupted part way through replacing the tree?
+ *
+ * The installer writes this marker before it touches the first entry and removes it only once the
+ * tree is whole. Its presence means the install died mid-replace and what is on disk is a MIXTURE:
+ * VERSION may already read the new number while half the modules are still the old ones.
+ *
+ * That state boots. The caller of install() correctly treats a failed UPDATE as survivable — an
+ * unreachable update server must not be an outage — so it starts the server it finds, which reports
+ * a version nobody ever built. It happened on 2.0.0-alpha5 and could not be diagnosed, because the
+ * only record of the failure lived in a process that then rebooted.
+ */
+function treeIsMixture() {
+  try { return fs.existsSync(path.join(__dirname, '.payload-incomplete')); } catch (e) { return false; }
+}
+
 function differs(manifest, have, haveSha) {
+  /*
+   * ⚠️ A MIXED TREE ALWAYS DIFFERS, whatever the digest or the version claim — those are exactly
+   * the values a half-finished replace makes untrustworthy. Reinstalling is the only answer that
+   * ends with a tree somebody built; leaving it is a box quietly running a build that never existed.
+   */
+  if (treeIsMixture()) return true;
   if (manifest.sha256 && haveSha) return manifest.sha256 !== haveSha;
   return manifest.version !== have;
 }

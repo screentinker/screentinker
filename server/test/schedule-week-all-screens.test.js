@@ -118,6 +118,21 @@ test('every event names the screen it targets, so blocks can be told apart', asy
   assert.equal(cafe.device_name, 'Cafe screen');
 });
 
+test('days=N widens the window for the month view, and is capped', async () => {
+  // Three and a half weeks past the requested Sunday: inside a 42-day month grid, outside the week.
+  await mkSchedule(A.token, { device_id: A.lobby, title: 'Late August', start_time: '2026-08-20T09:00:00', end_time: '2026-08-20T10:00:00' });
+  const wk = await week(A.token, 'all=1');
+  assert.ok(!wk.body.map(e => e.title).includes('Late August'), 'the default seven-day window does not reach it');
+  const month = await week(A.token, 'all=1&days=42');
+  assert.equal(month.status, 200);
+  assert.ok(month.body.map(e => e.title).includes('Late August'), 'a 42-day window does');
+  const capped = await week(A.token, 'all=1&days=99999');
+  assert.equal(capped.status, 200, 'an absurd value is clamped, not refused');
+  assert.ok(capped.body.map(e => e.title).includes('Late August'));
+  const junk = await week(A.token, 'all=1&days=banana');
+  assert.equal(junk.body.length, wk.body.length, 'garbage falls back to the seven-day default');
+});
+
 test('all=1 NEVER crosses tenants', async () => {
   const r = await week(A.token, 'all=1');
   const titles = r.body.map(e => e.title);

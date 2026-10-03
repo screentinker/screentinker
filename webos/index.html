@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ScreenTinker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="css/style.css">
+  <!--
+    LG's SCAP library is NOT redistributed here. Drop the files from the webOS Signage SDK into
+    vendor/ before building (see README.md); without them the app still plays, and simply reports
+    no power / update capabilities to the dashboard.
+  -->
+  <script src="vendor/cordova.webos.js"></script>
+  <script src="vendor/storage.js"></script>
+  <script src="vendor/configuration.js"></script>
+  <script src="vendor/deviceInfo.js"></script>
+  <script src="vendor/power.js"></script>
+  <script src="js/device-control.js"></script>
+  <script src="js/app.js"></script>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <div id="setup" class="panel hidden">
+    <div class="card">
+      <img src="largeIcon.png" alt="" class="logo">
+      <h1>ScreenTinker</h1>
+      <p class="mut">Enter the address of your ScreenTinker server. The player then shows a pairing code to claim in the dashboard.</p>
+      <label for="server">Server URL</label>
+      <input id="server" type="url" placeholder="https://signage.example.com" autocomplete="off" spellcheck="false">
+      <p id="setupError" class="err hidden"></p>
+      <div class="row">
+        <button id="save" class="btn primary">Save and start</button>
+        <button id="cancel" class="btn hidden">Cancel</button>
+      </div>
+      <p id="info" class="mut small"></p>
+      <p class="mut small">Press <b>Back</b> on the remote at any time to return here.</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -70,6 +70,27 @@ function logFailedLogin(email, ip, reason) {
   } catch {}
 }
 
+/*
+ * Stamp the moment this user was last handed a session.
+ *
+ * ⚠️ EVERY PATH THAT MINTS A SESSION MUST CALL THIS, not just /login. It was called from the two
+ * interactive login finishers only, so a user who signed up and was handed a session on the spot
+ * (POST /register, below) was never stamped and read as "never logged in" for ever. On the hosted
+ * instance that was 132 of 349 accounts, 43 of which were actively publishing playlists and
+ * uploading content at the time. The column is read by admin views and was about to be used to
+ * pick accounts for deletion, so an under-report here is not cosmetic.
+ *
+ * Kept separate from logSuccessfulLogin because a signup is NOT a login: it must not write an
+ * `auth:login_success` row that no interactive login produced. Workspace switching (which re-mints
+ * a token for an already-authenticated user) deliberately does not call either.
+ */
+function stampLastLogin(userId) {
+  try {
+    // Signing in also cancels a pending stale-account deletion notice (lib/account-cleanup.js).
+    db.prepare("UPDATE users SET last_login = strftime('%s','now'), cleanup_warned_at = NULL, cleanup_delete_after = NULL WHERE id = ?").run(userId);
+  } catch {}
+}
+
 function logSuccessfulLogin(userId, email, ip) {
   try {
     // Phase 2.2 writer-leak fix: stamp the user's oldest workspace so this
@@ -81,8 +102,8 @@ function logSuccessfulLogin(userId, email, ip) {
     ).get(userId);
     db.prepare('INSERT INTO activity_log (user_id, action, details, ip_address, workspace_id) VALUES (?, ?, ?, ?, ?)')
       .run(userId, 'auth:login_success', email, ip, ws?.workspace_id || null);
-    db.prepare("UPDATE users SET last_login = strftime('%s','now') WHERE id = ?").run(userId);
   } catch {}
+  stampLastLogin(userId);
 }
 
 // ==================== Local Auth ====================
@@ -188,11 +209,27 @@ router.post('/register', (req, res) => {
     return res.status(201).json({ verification_required: true, email: user.email });
   }
 
+  // This signup is being handed a live session, so it counts as the user's most recent one. The
+  // early return above (hosted + verification required) issues NO session and is deliberately not
+  // stamped: those accounts really have never had one.
+  stampLastLogin(user.id);
   const token = generateToken(user, workspaceId);
   res.status(201).json({ token, user, current_workspace_id: workspaceId });
 });
 
 // Login
+/** A user whose every workspace membership is on a COPIED workspace exists here only as a copy. */
+function isCopiedUser(userId) {
+  try {
+    const r = db.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN w.origin_node_id IS NOT NULL THEN 1 ELSE 0 END) AS copied
+        FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
+       WHERE m.user_id = ?`).get(userId);
+    return !!(r && r.total > 0 && r.copied === r.total);
+  } catch (e) { return false; }
+}
+
 router.post('/login', (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
@@ -301,10 +338,27 @@ router.post('/login', (req, res) => {
   // The response is deliberately IDENTICAL to a wrong password: a distinct 429 would tell
   // an attacker "this account exists and is under attack", turning the endpoint into an
   // account-existence oracle. The trade is that a locked-out legitimate user sees the
-  // generic message, so the trip is written to activity_log for the operator instead.
+  // generic message, so the trip is written to activity_log AND the server console (#472).
+  //
+  // ⚠️ Do NOT "still check the password and say 'locked' if it is correct" (suggested in
+  // #472). A different answer for the right password during the lock lets an attacker keep
+  // guessing straight through it and stop on the changed answer: the lock would stop nothing.
   if (loginLockout.isLocked(user.id)) {
+    loginLockout.warnLocked(user.id, `${email} (user ${user.id})`);
     logFailedLogin(email, getClientIp(req), 'Locked out (too many failed passwords)');
     return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  /*
+   * Scale-out (docs/scale-out-design.md §5.3): a COPIED account has no password hash here by
+   * design — the replica must never verify a password, or it has become an identity provider. If
+   * this node holds copied workspaces and a primary is configured, the login goes to the primary
+   * as the user's own request; the token that comes back verifies here (shared JWT_SECRET) and the
+   * copied user row carries the rest. Only for a row that is a copy: a local account with no hash
+   * (SSO-only, provisioned) keeps today's refusal below.
+   */
+  if (!user.password_hash && config.primaryUrl && isCopiedUser(user.id)) {
+    return require('../lib/replica-proxy').proxyToPrimary(req, res, config);
   }
 
   if (!user.password_hash || !bcrypt.compareSync(password, user.password_hash)) {
@@ -315,7 +369,10 @@ router.post('/login', (req, res) => {
       return ssoRefusal();
     }
     const rec = loginLockout.recordFailure(user.id);
-    if (rec.lockedUntil) logActivity(null, 'auth:login_locked', `${email} - locked after repeated failures`, null, getClientIp(req));
+    if (rec.lockedUntil) {
+      logActivity(null, 'auth:login_locked', `${email} - locked after repeated failures`, null, getClientIp(req));
+      loginLockout.warnLocked(user.id, `${email} (user ${user.id})`);
+    }
     logFailedLogin(email, getClientIp(req), 'Wrong password');
     return res.status(401).json({ error: 'Invalid email or password' });
   }
@@ -736,6 +793,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     ? db.prepare(`
         SELECT w.id, w.name, w.organization_id, o.name AS organization_name,
                wm.role AS workspace_role, om.role AS org_role,
+               COALESCE(w.live_video_enabled, 0) AS live_video_enabled,
                (SELECT COUNT(*) FROM devices WHERE workspace_id = w.id) AS device_count
         FROM workspaces w
         JOIN organizations o ON o.id = w.organization_id
@@ -746,6 +804,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     : db.prepare(`
         SELECT w.id, w.name, w.organization_id, o.name AS organization_name,
                wm.role AS workspace_role, om.role AS org_role,
+               COALESCE(w.live_video_enabled, 0) AS live_video_enabled,
                (SELECT COUNT(*) FROM devices WHERE workspace_id = w.id) AS device_count
         FROM workspaces w
         JOIN organizations o ON o.id = w.organization_id
@@ -762,6 +821,10 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     w.can_admin = isPlatformAdmin
       || w.org_role === 'org_owner' || w.org_role === 'org_admin'
       || w.workspace_role === 'workspace_admin';
+    // Members → "Whole organization" (GET /workspaces/:id/organization-members): the same rule the
+    // endpoint enforces, as a capability flag so org_role itself stays server-side.
+    w.can_view_org_members = isPlatformStaffUser
+      || w.org_role === 'org_owner' || w.org_role === 'org_admin';
     delete w.org_role; // internal-only; don't leak to client
   }
 
@@ -775,8 +838,18 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     // reflects live state after reload. Fail-open to verified if somehow absent.
     email_verified: db.prepare('SELECT email_verified FROM users WHERE id = ?').get(req.user.id)?.email_verified ?? 1,
     hide_billing: config.hideBilling, // #116: client hides the Subscription nav + guards #/billing
+    // #329: same idea as hide_billing above — a capability the client cannot infer without asking.
+    // `enroll` decides whether the Servers nav appears (the honest "is this node part of a mesh in
+    // any way?"); `hub` gates the aggregate reads (/mesh/orgs, /alerts, /uptime, /devices), which
+    // live in the hub router and 404 on a node that only reports upward.
+    mesh: {
+      enroll: !!(req.app.locals.mesh && req.app.locals.mesh.enroll),
+      hub: !!(req.app.locals.mesh && req.app.locals.mesh.hub),
+    },
     current_workspace_id: req.workspaceId,
-    current_workspace: req.workspace ? { id: req.workspace.id, name: req.workspace.name, organization_id: req.workspace.organization_id } : null,
+    // origin_node_id: set when this workspace is a COPY held on a replica (docs/scale-out.md); the
+    // client uses it only to say where things that are not copied (playback history) live.
+    current_workspace: req.workspace ? { id: req.workspace.id, name: req.workspace.name, organization_id: req.workspace.organization_id, origin_node_id: req.workspace.origin_node_id || null } : null,
     current_organization: currentOrg,
     current_workspace_role: req.workspaceRole,
     current_org_role: req.orgRole,
@@ -1745,6 +1818,93 @@ function upsertFederatedUser({ claims, email, provider, req }) {
   return { user: db.prepare('SELECT * FROM users WHERE id = ?').get(existing.id), isNew: false };
 }
 
+
+// ---------------------------------------------------------------------------
+// Support access (lib/support-access) — the customer's side and ours, in one place.
+//
+// Customer (any self-hosted admin):
+//   POST   /support/request         mint a request code to send to support
+//   GET    /support/status          open requests + live support sessions (+ can_issue for us)
+//   DELETE /support/request/:code   withdraw a request
+//   DELETE /support/grant/:jti      end a support session — takes effect on its next request
+//   POST   /support                 (unauthenticated, rate-limited in server.js) redeem a token
+//
+// Us (the issuing instance only — SUPPORT_SIGNING_KEY_FILE set, platform admin):
+//   POST   /support/generate        sign a token against a customer's request code
+//
+// Every step is written to the customer's activity log. The redeem route is the one that
+// matters for abuse: it is behind the same per-IP limiter as login, the token is a 64-byte
+// Ed25519 signature, and a valid token still needs an open request code from THIS instance.
+// ---------------------------------------------------------------------------
+const supportAccess = require('../lib/support-access');
+const { generateSupportSessionToken } = require('../middleware/auth');
+
+router.post('/support/request', requireAuth, requireAdmin, (req, res) => {
+  const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 200) : null;
+  const { code, expiresAt } = supportAccess.createRequest({ requestedBy: req.user.email, note });
+  logActivity(req.user.id, 'support_request_created', `code=${code} expires=${expiresAt}${note ? ` note=${note}` : ''}`, null, getClientIp(req));
+  res.json({ code, expires_at: expiresAt, ttl_hours: Math.round(supportAccess.REQUEST_TTL_SEC / 3600) });
+});
+
+router.get('/support/status', requireAuth, requireAdmin, (req, res) => {
+  res.json({
+    requests: supportAccess.listOpenRequests(),
+    grants: supportAccess.listActiveGrants(),
+    // Only the hosted instance holds the signing key. The Settings page shows the generator
+    // when this is true, and nothing at all otherwise — a self-hoster never sees our tooling.
+    can_issue: isPlatformRole(req.user.role) && supportAccess.canIssue(),
+    max_hours: supportAccess.MAX_HOURS,
+  });
+});
+
+router.delete('/support/request/:code', requireAuth, requireAdmin, (req, res) => {
+  const n = supportAccess.cancelRequest(req.params.code);
+  if (n) logActivity(req.user.id, 'support_request_cancelled', `code=${supportAccess.normaliseRequestCode(req.params.code)}`, null, getClientIp(req));
+  res.json({ cancelled: n });
+});
+
+router.delete('/support/grant/:jti', requireAuth, requireAdmin, (req, res) => {
+  const jti = String(req.params.jti || '');
+  const n = supportAccess.revokeGrant(jti);
+  if (n) logActivity(req.user.id, 'support_session_revoked', `jti=${jti}`, null, getClientIp(req));
+  res.json({ revoked: n });
+});
+
+router.post('/support', (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!token) return res.status(400).json({ error: 'Support token required' });
+  let grant;
+  try {
+    grant = supportAccess.redeemToken(token, { sourceIp: getClientIp(req) });
+  } catch (err) {
+    // The message set is small and deliberate (lib/support-access.verifyToken/redeemToken); it
+    // tells a support engineer what to fix without telling a stranger anything about this
+    // instance's open requests. Audited so a customer can see failed attempts too.
+    logActivity(null, 'support_login_failed', `${err.message} ip=${getClientIp(req)}`, null, getClientIp(req));
+    return res.status(401).json({ error: err.message });
+  }
+  const sessionToken = generateSupportSessionToken(grant);
+  const user = supportAccess.supportUser({ id: `support:${grant.jti}`, by: grant.issuedBy });
+  logActivity(`support:${grant.jti}`, 'support_login',
+    `org=${grant.org} request=${grant.requestCode} by=${grant.issuedBy || '?'} reason=${grant.reason || ''} expires=${grant.expiresAt}`,
+    null, getClientIp(req));
+  res.json({ token: sessionToken, user, current_workspace_id: null, support_expires_at: grant.expiresAt });
+});
+
+router.post('/support/generate', requireAuth, requireSuperAdmin, (req, res) => {
+  // Deliberately a 404, not a 403: on an instance without the key this endpoint does not exist.
+  if (!supportAccess.canIssue()) return res.status(404).json({ error: 'Not found' });
+  const { org, hours, reason, request_code: requestCode } = req.body || {};
+  try {
+    const { token, jti, expiresAt } = supportAccess.issueToken({ requestCode, org, hours, reason, issuedBy: req.user.email });
+    logActivity(req.user.id, 'support_token_issued',
+      `org=${org || 'Customer'} request=${supportAccess.normaliseRequestCode(requestCode)} jti=${jti} expires=${expiresAt} reason=${reason || ''}`,
+      null, getClientIp(req));
+    res.json({ token, jti, expires_at: expiresAt });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 module.exports = router;
 // Exported for tests: these two carry the security decisions of the SSO flow, and testing them

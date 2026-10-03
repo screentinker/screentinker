@@ -64,17 +64,85 @@ function sizeFor(provider, width, height) {
   return width > height ? '1792x1024' : (height > width ? '1024x1792' : '1024x1024');
 }
 
-async function openaiCompatGenerate(baseUrl, key, prompt, model, size, signal) {
-  const body = { prompt, n: 1, size, response_format: 'b64_json' };
-  if (model) body.model = model; // omit for sd.cpp (uses its loaded checkpoint)
-  const res = await fetch(baseUrl + '/images/generations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok) throw new Error(`Image endpoint error ${res.status}: ${(await res.text().catch(() => '')).slice(0, 150)}`);
-  const j = await res.json();
+/*
+ * ⚠️ "OpenAI-COMPATIBLE" IS A SPECTRUM, AND `size` IS WHERE IT BREAKS FIRST.
+ *
+ * xAI answers `400 {"error":"Argument not supported: size"}` — it rejects the ARGUMENT, not the
+ * value, because the model decides its own dimensions. Sending it is fatal, and the failure text is
+ * clear enough to act on, so a single retry without the offending argument turns a hard failure
+ * into a working request rather than making every operator discover this per provider.
+ *
+ * Bounded deliberately: ONE retry, only for a 400 that names the argument. A general
+ * "retry without whatever it complained about" loop would paper over real prompt errors.
+ */
+/*
+ * xAI's supported aspect ratios (docs.x.ai, /v1/images/generations). It has no `size` at all — it
+ * takes `aspect_ratio` plus `resolution`, which is why simply dropping `size` produced a correct
+ * image in the WRONG SHAPE: a 16:9 request came back 832x1248 portrait, and on a 16:9 slide that
+ * crops to a middle band.
+ */
+const XAI_ASPECTS = [
+  ['21:9', 21 / 9], ['2:1', 2], ['20:9', 20 / 9], ['19.5:9', 19.5 / 9], ['16:9', 16 / 9],
+  ['5:2', 2.5], ['3:2', 1.5], ['4:3', 4 / 3], ['1:1', 1], ['3:4', 0.75], ['2:3', 2 / 3],
+  ['9:16', 9 / 16], ['9:19.5', 9 / 19.5], ['9:20', 9 / 20], ['1:2', 0.5],
+];
+
+/** Nearest supported ratio to what the caller asked for, by log distance so 2:1 and 1:2 are equally far. */
+function nearestAspect(width, height) {
+  const want = (width || 1) / (height || 1);
+  let best = '1:1';
+  let bestErr = Infinity;
+  for (const [name, value] of XAI_ASPECTS) {
+    const err = Math.abs(Math.log(value) - Math.log(want));
+    if (err < bestErr) { bestErr = err; best = name; }
+  }
+  return best;
+}
+
+async function openaiCompatGenerate(baseUrl, key, prompt, model, size, signal, dims) {
+  const attempt = async (withSize) => {
+    /*
+     * ⚠️ THE RETRY IS NOT "SEND LESS", IT IS "SPEAK THE OTHER DIALECT". Dropping `size` alone got a
+     * picture but surrendered all control of its shape, which for a slide background is most of
+     * the point. xAI's equivalent is aspect_ratio + resolution, so the retry states the shape in
+     * the vocabulary that endpoint actually has.
+     *
+     * resolution '2k' because this fills a screen — on a 1080p panel the 1k variant is visibly
+     * soft, and the difference is about two cents an image.
+     */
+    const body = withSize
+      ? { prompt, n: 1, size, response_format: 'b64_json' }
+      : {
+        prompt,
+        n: 1,
+        response_format: 'b64_json',
+        aspect_ratio: nearestAspect(dims && dims.width, dims && dims.height),
+        resolution: '2k',
+      };
+    if (model) body.model = model;   // omit for sd.cpp (uses its loaded checkpoint)
+    const res = await fetch(baseUrl + '/images/generations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
+      signal,
+    });
+    const text = res.ok ? null : (await res.text().catch(() => '')).slice(0, 200);
+    if (!res.ok) return { ok: false, status: res.status, text };
+    return { ok: true, json: await res.json() };
+  };
+
+  let r = await attempt(true);
+  /*
+   * The one retry. xAI says `Argument not supported: size`; other shims word it differently, so
+   * this matches on the argument name plus a "not supported / unknown / unexpected" phrasing rather
+   * than an exact string, and only ever for a 400.
+   */
+  if (!r.ok && r.status === 400 && /size/i.test(r.text || '') && /not supported|unsupported|unknown|unexpected|invalid/i.test(r.text || '')) {
+    r = await attempt(false);
+  }
+  if (!r.ok) throw new Error(`Image endpoint error ${r.status}: ${r.text}`);
+
+  const j = r.json;
   const b64 = j && j.data && j.data[0] && j.data[0].b64_json;
   if (b64) return 'data:image/png;base64,' + b64;
   const url = j && j.data && j.data[0] && j.data[0].url;
@@ -85,8 +153,6 @@ async function openaiCompatGenerate(baseUrl, key, prompt, model, size, signal) {
   throw new Error('Image endpoint returned no image');
 }
 
-// generateImage(opts) -> data URL. opts: { provider, baseUrl, apiKey, model,
-// prompt, width, height, timeoutMs }
 async function generateImage(opts) {
   const { provider, baseUrl, apiKey, model, prompt } = opts;
   const width = opts.width || 1024;
@@ -95,7 +161,7 @@ async function generateImage(opts) {
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs || 180000);
   try {
     if (provider === 'openai' || provider === 'sdcpp') {
-      return await openaiCompatGenerate(baseUrl, apiKey || 'none', prompt, model, sizeFor(provider, width, height), controller.signal);
+      return await openaiCompatGenerate(baseUrl, apiKey || 'none', prompt, model, sizeFor(provider, width, height), controller.signal, { width, height });
     }
     return await comfyGenerate(baseUrl, prompt, model, width, height, controller.signal);
   } catch (e) {
@@ -106,4 +172,4 @@ async function generateImage(opts) {
   }
 }
 
-module.exports = { generateImage };
+module.exports = { generateImage, nearestAspect };

@@ -221,3 +221,64 @@ test('moving to the top level grants nobody anything', () => {
   const rows = [{ client_id: 'west', user_id: 'u1', role: 'viewer' }];
   assert.deepEqual(tree.whoGainsAccess('acme', null, getParentId, listFor(rows)), []);
 });
+
+/*
+ * ⚠️ THE INSTANCE OWNER COULD NOT PUSH CONTENT TO THEIR OWN CLIENTS.
+ *
+ * resolveAccess short-circuited platform_admin to manager and never looked at the explicit access
+ * row — the identical short-circuit that client-roles.effectiveRole had, fixed there and not here,
+ * and everything that matters goes through this one.
+ *
+ * Two failures came out of that single line: the role was capped at manager, whose capabilities do
+ * not include push-content, so a deliberate publisher row was read and discarded; and the source
+ * came back 'platform-admin' rather than 'direct', so even an uncapped publisher would have failed
+ * requiresDirectAccess — the rule that stops write inheriting down the client tree.
+ *
+ * ⚠️ FOUND BY RUNNING THREE REAL SERVERS AND PUSHING A FILE BETWEEN THEM, not by a test. Every test
+ * in this file constructs the access row it wants, so none of them ever asked what an owner with a
+ * publisher row actually resolves to.
+ */
+const OWNER = { id: 'u-owner', role: 'platform_admin' };
+const TECH = { id: 'u-tech', role: 'user' };
+const noParents = () => null;
+
+test('⚠️ an owner with an explicit publisher row resolves to publisher, DIRECTLY', () => {
+  const rows = { 'c1:u-owner': { role: 'publisher' } };
+  const get = (cid, uid) => rows[`${cid}:${uid}`] || null;
+
+  const r = tree.resolveAccess('c1', OWNER, noParents, get, roles);
+  assert.equal(r.role, 'publisher', 'manager is the owner FLOOR, not a ceiling');
+  assert.equal(r.source, 'direct',
+    'a direct row must stay direct, or the write gate refuses it however good the role is');
+  assert.ok(roles.roleAllows(r.role, 'push-content'));
+  assert.ok(!(roles.requiresDirectAccess('push-content') && r.source !== 'direct'),
+    'the two halves together are what the live push actually needs');
+});
+
+test('an owner with no row at all still sees the client, as manager', () => {
+  // The floor is why an owner never loses sight of a client nobody named them on.
+  const r = tree.resolveAccess('c1', OWNER, noParents, () => null, roles);
+  assert.equal(r.role, 'manager');
+  assert.equal(r.source, 'platform-admin');
+});
+
+test('an owner named at or below manager is not demoted by their own row', () => {
+  const rows = { 'c1:u-owner': { role: 'viewer' } };
+  const r = tree.resolveAccess('c1', OWNER, noParents, (cid, uid) => rows[`${cid}:${uid}`] || null, roles);
+  assert.equal(r.role, 'manager', 'the floor applies only where it raises the answer');
+});
+
+test('⚠️ and none of this leaks to an ordinary technician', () => {
+  // The floor is about the instance owner specifically. Everyone else is default-deny by absence.
+  assert.equal(tree.resolveAccess('c1', TECH, noParents, () => null, roles).role, null);
+  const rows = { 'c1:u-tech': { role: 'viewer' } };
+  const r = tree.resolveAccess('c1', TECH, noParents, (cid, uid) => rows[`${cid}:${uid}`] || null, roles);
+  assert.equal(r.role, 'viewer');
+  assert.equal(roles.roleAllows(r.role, 'push-content'), false);
+});
+
+test('an owner with a malformed row still sees the client rather than being locked out', () => {
+  const rows = { 'c1:u-owner': { role: 'not-a-role' } };
+  const r = tree.resolveAccess('c1', OWNER, noParents, (cid, uid) => rows[`${cid}:${uid}`] || null, roles);
+  assert.equal(r.role, 'manager', 'a typo must not lock the instance owner out of their own client');
+});

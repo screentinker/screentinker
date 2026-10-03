@@ -344,7 +344,7 @@ test('the page carries the ST_PLAYER_VERSION marker the server stamps on', () =>
 
 test('the serve-time stamp is anchored on the declaration, not on the old literal', () => {
   const server = fs.readFileSync(path.join(ROOT, 'server', 'server.js'), 'utf8');
-  assert.match(server, /const PLAYER_VERSION = \)'\[\^'\]\*'/,
+  assert.match(server, /\/\(const PLAYER_VERSION\\s\*=\\s\*\)\['"\]\[\^'"\]\*\['"\]\//,
     'the /player route must rewrite the declaration by pattern');
   assert.match(server, /ST_PLAYER_VERSION marker not found/,
     'a missing marker must be reported, not silently ignored');

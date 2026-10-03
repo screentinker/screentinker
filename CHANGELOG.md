@@ -1,5 +1,3265 @@
 # Changelog
 
+## 2.3.2
+
+A hotfix for 2.3.1. No outside code contributions in this release.
+
+### Fixed
+
+- **The Edit button vanished from every widget card (#469).** #463's *Duplicate* made the card's action
+  row Edit · Duplicate · History · Delete (~280 px), right-aligned inside a card that clips
+  (`overflow: hidden`) and auto-fills down to 200 px. A right-aligned row that does not fit spills out
+  of its LEFT edge, so the first button — Edit — was cut off; a 1500 px window put it at −23 px.
+  Every widget type was affected. The row now wraps. A test pins it.
+- **The native Raspberry Pi card said "Bookworm" (#470).** The `.deb` needs PySide6, packaged only
+  from Debian 13 "trixie" on, so apt refuses it on Bookworm. The card now says Trixie or newer and
+  points older Pi OS at the kiosk install.
+
+## 2.3.1
+
+A patch release: duplicating widgets, the player version on every Displays card, two web/Pi player
+fixes from an outside contributor, and an ffmpeg probe that survives a slow first boot.
+
+**@tizmagik** authored 2 of the 7 commits in this release — the offline-playback stall (#460) and the
+missed same-version deploy (#461), both found on a real Raspberry Pi. Thanks also to **Bold Media
+Group** for two thoroughly diagnosed reports (#466, #467), and to **カタカナ** (Discord) for the
+Duplicate suggestion.
+
+### Added
+
+- **Duplicate a widget.** Every widget card has a *Duplicate* button: an independent copy with the same
+  type and settings, opened straight in its editor, so three screens can show three menus without
+  typing the first one in three times (`POST /api/widgets/:id/duplicate`). Suggested by **カタカナ**
+  (Discord).
+  - ⚠️ The copy stays in the original's workspace (its data sources and images belong there), takes
+    the **live** config and never a pending draft (no way around approval), and a template widget is
+    rebuilt through its template, so a revoked or no-longer-allowed template cannot be copied back to life.
+- **Templates → Installed** shows how many widgets each template is behind ("In 2 widgets · use it
+  again for another screen"), and the "created" message says a template can be used again — "Use…"
+  always made a new, independent widget, but nothing said so.
+- **The player app version on every Displays card, and which screens are behind (#467).** Each card
+  shows the version its player reports; an Android player older than the APK this server serves is
+  marked amber (`v1.9.6 ↓`, with the served version in its tooltip). The status filter gains an
+  *App version* section — *Behind v2.3.0 (n)* and every version in use — so a straggler no longer
+  needs opening each display or a database query. Requested by **Bold Media Group**.
+  - Only Android players are marked: the served APK is the only update that applies to them, so a
+    web, Tizen, BrightSign or native player's version is shown but never flagged. The list carries
+    each device's `platform_family`, and `/api/version` reports `apk_version`, for that.
+  - *Card details* chooses what a card shows (app version, battery, Wi-Fi, storage), per browser.
+    A 0% battery that is not charging is treated as no battery and not shown — on a running,
+    mains-powered panel it reads as a fault to staff and customers.
+
+### Fixed
+
+- **Web and Raspberry Pi players froze on a slide while offline (#460).** The offline proof-of-play
+  queue lived inside `connect()`, so any advance with the socket down threw `ReferenceError` and the
+  slide never moved again — even after the connection came back. Present since #299 (2026-08-29).
+  Thanks to **@tizmagik**, who found it on a real Pi and fixed it.
+  - Hardened: the queue is now created as the page loads, so a missing `offline-play-queue.js` only
+    turns off offline reporting instead of stopping the whole player.
+- **Players kept running old code after a same-version deploy (#461).** Each reconnect overwrote the
+  code hash the page had loaded with, so the change was never noticed. Thanks to **@tizmagik**.
+  - Hardened: the reload now waits a random 0–30 s, so a deploy does not reload the whole fleet in the
+    same second as its reconnect burst.
+- **ffmpeg reported "not found" after a slow boot, for the life of the process (#466).** The startup
+  probe gave `ffmpeg -version` 5 s and cached ANY failure — so a NAS whose first boot after upgrading
+  ran a 1.5M-row migration logged a present ffmpeg as "not found on PATH", and video thumbnails
+  (including the backfill) stayed off until a restart. Now a missing binary (`ENOENT`), a broken one
+  and a timeout are told apart; only definite answers are cached; a timeout is logged as one and
+  re-checked on a backoff, and when a re-check finds the tools the thumbnail backfill runs again.
+  The probe allows 15 s. Reported with the diagnosis by **Bold Media Group**.
+- **CI:** the template-sandbox browser test waits up to 120 s for Chrome and retries once, after GitHub
+  runners started timing out at 30 s (#464).
+
+## 2.3.0 (2026-09-30)
+
+A feature release: live data sources, a signed template library, native players for Raspberry Pi
+and Windows, a Platform area for server administrators, limited-time sales, and a refreshed look —
+plus a run of upload, support-session and proof-of-play fixes found in the field.
+
+No outside code contributions in this release. Thanks to **Hadi** (Discord) for the report behind the
+add-content folder fix and display reordering (#454).
+
+### Added
+
+**Live data sources, built in (#457).** REST API, Google Sheets, CSV, RSS/Atom and a manual table join
+Calendar and Weather, on every workspace with no plugin or switch. One table engine turns any
+row-shaped source into slide variables (`{{ds:slug.row1_price}}`), numeric aggregates, and — the one
+to recommend — a **key column**, so `{{ds:menu.latte_price}}` keeps pointing at the right row after
+the sheet is sorted.
+- ⚠️ REST credentials are encrypted at rest, redacted on every read, back-filled into a test only for
+  the origin they were saved with, and a custom API-key header never follows a redirect.
+- ⚠️ An unshared Google Sheet answers **200 with a sign-in page**, not 401: any HTML answer is an
+  explained error, never cached as data.
+- `updated` means "the data last changed", so an unchanged sync no longer bumps every bound widget
+  and defeats the players' render cache.
+- A cross-org test proves the list, every per-id route, secret back-fill and a spoofed
+  `X-Workspace-Id` stay inside the workspace.
+
+**Community template library (#455).** Slide templates (fields bound to live data) and sandboxed code
+templates, installed from a catalog whose index and packages are Ed25519-signed with a dedicated
+catalog key, with a serial number and revocation; unsigned code templates stay off until a platform
+admin allows them. Ships *UPTIME 3036*, an MIT game, as a code-template example.
+
+**Native players for Raspberry Pi and Windows (#453).** One Python/Qt engine (PySide6 — LGPL, never
+PyQt6) with OS backends, held to the Android player's shared test vectors. The Pi player is a `.deb`
+(Pi OS Trixie), the Windows player an installer plus a LocalSystem helper service; both are served
+by the operator's own server and self-update only on a sha256 match announced by that server.
+⚠️ These packages are **not** built by the release workflow: a server offers them once they are
+staged on it, and `/download/` says so when they are absent.
+
+**Platform area for server administrators (#459).** The admin page's ten unrelated sections become a
+Platform sidebar group — Overview, Users, Organizations, Plans & sales, Branding, System, Cleanup,
+Plugins — each loading only its own data; `#/admin` redirects to the Overview.
+- **Overview**: users, organizations, screens online, paying accounts and trials; activity and
+  health (new sign-ups, inactive 30 days, accounts and organizations with no screens, screens
+  offline 24h+, trials ending, unverified emails, storage, stale accounts); and *Needs your
+  attention* items that expand into the specifics with a link to the page that fixes each.
+- **Cleanup**: stale = a customer account, not paying, no trial, no paired screen, sharing nothing,
+  with no activity (sign-in, sign-up, API-token use or dashboard action) for N days. Notice first —
+  an email "deleted on <date> unless you sign in", recorded only if it was sent; signing in or any
+  later activity voids it; delete takes only accounts whose notice ran out, re-checking each at every
+  step. Uploads are removed from disk only when no other row references them. Audited.
+- Users and Organizations search; Player debug finally linked from System; Settings no longer
+  carries a second copy of the all-users table.
+
+**Members → Whole organization (#459).** Org owners/admins and platform staff see everyone in the
+organization across its workspaces (`GET /api/workspaces/:id/organization-members`); workspace
+admins and other organizations are refused.
+
+**Limited-time sales (#458).** Admin → Plans & sales: percent off, plans, monthly/yearly, how long the
+discount lasts, start and end. ⚠️ Every sale is a Stripe coupon that **checkout attaches**, with
+`redeem_by` at the sale's end, so the struck-through price is what is charged. Shown on the homepage
+(banner + countdown on the server clock) and the Billing page (not to existing subscribers, whose
+changes go through the Stripe portal). One rule everywhere: no checkout (self-hosted, or no Stripe)
+means no sale anywhere.
+
+**Hourly proof-of-play rollup (#451).** `play_logs` was 76% of a production database and still
+growing. Plays are aggregated into UTC hourly buckets (45x smaller) so raw rows can later be pruned
+without losing the record; raw retention is unchanged in this release.
+
+### Changed
+
+- **Sidebar grouped by job (#456)**: Devices, Publish, Create, Automate, Insights, Workspace (and
+  Platform), collapsible, remembered per browser, translated into all ten languages; a collapsed
+  group shows the badges of what it hides.
+- **Release palette dashboard-wide (#459)**: gradient primary actions and active navigation, a
+  gradient bar on cards and modals. ⚠️ A customised white-label colour replaces all of it; the
+  server's default colour (`#3B82F6`) is not treated as a brand.
+- **Homepage (#458)**: a release section for live data, templates and native players; comparison
+  tables and the Yodeck/OptiSigns pages gain live-data and template rows (competitor tiers read off
+  their pricing pages on 2026-09-30).
+- **1 MiB upload chunks (#450)** instead of 5 MiB, so the progress bar moves every few seconds and a
+  0.3 Mbps uplink can finish a chunk inside the 125 s proxy ceiling; chunk requests get their own
+  rate-limit budget so fast links are not refused mid-file.
+
+### Fixed
+
+- **Add-content folders (#454)** had not worked since 2.2.0 (`childrenOf.get` on a function, error
+  swallowed). The Displays → Playlist picker is now the same component as the Playlists one, with
+  folders, search and scrolling for hundreds of items; displays can be reordered by dragging.
+- **Proof-of-play (#452)**: the Android player reported `completed = true` on every advance, so a
+  screen failing every item wrote a perfect run of successes. A fault now marks the item incomplete.
+- **Support sessions (#448, #449)** could not upload or pair ("No plan found"), and an upload that
+  transferred every byte then died at the `INSERT` on a foreign key, orphaning the file. Both fixed;
+  support uploads belong to the workspace, not to an account.
+- **Unclaimed devices (#447)** lost every live dashboard event (a null room), and
+  `GET /api/subscription/me` threw for a session with no users row.
+
+### Security
+
+Found while security-testing the template library (#454); each predated it.
+- `POST /api/status/import` skipped the read-only check, so a workspace viewer could create devices
+  and playlists and overwrite branding including `custom_css`.
+- A plugin zip was inflated in full before its size was checked (a 300 KB upload grew the process by
+  ~600 MB). Inflation is now streamed and capped.
+- Rate limiters keyed on the raw path while Express routes on the decoded one, so `%68tml` stepped
+  around every limiter.
+- The native player's playlist web view granted the microphone to any origin.
+
+### Upgrade notes
+
+- Migrations are additive and run on boot: template tables, `promotions`, `users.cleanup_warned_at`
+  / `cleanup_delete_after`, and an index on `activity_log(user_id, created_at)`.
+- Sales need a cloud-mode server with Stripe configured; stale-account notices need email.
+- Stage the native Pi and Windows packages on the server separately if you want to offer them.
+
+## 2.2.3 (2026-09-26)
+
+### Added
+
+**Agent Skills Discovery at `/.well-known/agent-skills/index.json`**, with two skill documents that
+describe what this product actually does: operating a screen estate through the MCP server or the
+REST API, and choosing hardware and getting a player onto it.
+
+⚠️ **Each index entry carries a sha256 computed from the bytes the artifact route returns**, not a
+digest stored beside the prose. A hand-maintained digest is wrong the first time anybody edits a
+sentence — and to a verifying agent a mismatch reads as *tampering*, not as staleness.
+
+⚠️ **A skill is read by something that will then act on it**, so a plausible instruction that does
+not match the API is worse than no skill: the agent follows it, fails, and cannot tell that the
+document was wrong rather than its own request. The test cross-checks every tool and command name a
+skill mentions against the ones the server publishes.
+
+**An ARD capability manifest at `/.well-known/ai-catalog.json`**, listing the MCP server, the OpenAPI
+description, the skills index and the auth guide — each an entry an agent can actually fetch, served
+with `Access-Control-Allow-Origin: *` because browser-side agents read it. `robots.txt` points at it
+with an `Agentmap:` line.
+
+**Still deliberately absent:** OAuth authorization-server metadata, an A2A agent card, WebMCP tools
+and the agent-payment profiles. Each would mean publishing a document that names an endpoint or a
+capability this instance does not have. The `/.well-known` 404 says what is published instead.
+
+## 2.2.2 (2026-09-26)
+
+### Added
+
+**OAuth 2.0 Protected Resource Metadata at `/.well-known/oauth-protected-resource`** (RFC 9728).
+ScreenTinker *is* a protected resource that takes bearer tokens, so this document is true and worth
+publishing: the resource identifier, the scopes that exist, that credentials are presented in the
+`Authorization` header, and where the prose lives.
+
+⚠️ **`authorization_servers` is deliberately absent.** It is OPTIONAL in RFC 9728, and this resource
+delegates to nothing — no `/authorize`, no `/token`, and sessions are signed with a symmetric secret
+so there is no key a `jwks_uri` could publish. Naming an issuer would send a client into a
+discovery-and-redirect dance ending at a 404, which is the wasted-retries failure `/auth.md` exists
+to prevent. A reader that finds no authorization server is pointed at the documentation instead.
+
+⚠️ **The advertised scopes and the mintable scopes are now one list** (`lib/api-scopes.js`).
+Advertising a scope the minting code rejects is worse than advertising nothing: a client asks for it,
+is refused, and cannot tell that the advertisement was wrong rather than its request.
+
+**A `401` now carries `WWW-Authenticate` with `resource_metadata`** (RFC 9728 §5.1), from the API and
+from the MCP endpoint, through one shared builder so the two cannot disagree. Without it, an agent
+arriving with no credential can only probe blindly — the exact behaviour the auth guide is written to
+stop.
+
+
+**An MCP server card at `/.well-known/mcp/server-card.json`** (SEP-1649), so a client can learn what
+this server is before connecting to it: `serverInfo`, `capabilities`, the Streamable HTTP endpoint,
+and how to authenticate.
+
+⚠️ **It is built from the same `identity()` the `initialize` handshake returns.** A card that
+disagrees with the handshake is worse than no card — a client picks its endpoint, transport and auth
+strategy from the card and only discovers the mismatch after connecting. The test asserts the route
+uses the shared definition rather than restating the same fields by hand.
+
+⚠️ **The card describes, it does not grant.** The endpoint still refuses everything without a token,
+so the card says the credential is issued by a human and points at `/auth.md`.
+
+**No OAuth or OIDC discovery metadata is published, deliberately.** ScreenTinker is not an
+authorization server: it has no `/authorize`, no `/token`, and its sessions are signed with a
+symmetric secret, so there is no public key a `jwks_uri` could serve. Publishing metadata naming
+endpoints that do not exist would make a scanner pass and send real agents into a flow that cannot
+complete — the precise failure `/auth.md` exists to prevent. ScreenTinker *consumes* OIDC discovery as
+a relying party for per-organisation SSO; that is the opposite direction and does not make it a
+provider.
+
+
+**Every published page now names its Markdown twin in the document**, as
+`<link rel="alternate" type="text/markdown">`, not only in the `Link` header.
+
+⚠️ **This exists because a CDN defeats content negotiation.** The server has negotiated
+`Accept: text/markdown` since 2.2.0 and sends `Vary: Accept` — but Cloudflare ignores `Vary` for
+caching, for everything except `Accept-Encoding`. So one cached variant is served to every client: on
+a cache HIT, a request asking for Markdown gets 87 KB of HTML with a `200`, while the same request
+with a cache-buster gets the 18 KB Markdown from the origin. The cached body also carries whatever
+`Link` header it was stored with, which can predate the feature entirely.
+
+The in-document link is inside that cached body, so it survives, and it is what an HTML-parsing
+client looks for anyway. It is the only half of the problem the application controls — **the other
+half is a cache rule on the zone**, bypassing cache when `Accept` contains `text/markdown`.
+
+
+**Agent registration discovery: `auth.md` is served from the service root.** The convention puts that
+document at `/auth.md`; we published only `/.well-known/auth.md`, so anything following the standard
+asked for `/auth.md` and got the app shell — 200, `text/html`, 21 KB — and concluded the instance did
+not support it. Its H1 now names the document as well, because scanners identify it by heading as
+well as by path.
+
+This instance has no authorization server, so there is no OAuth protected-resource metadata to point
+at and inventing some would be worse than publishing nothing. `/auth.md` is therefore self-contained:
+who it is for, the single supported method (a bearer token in the `Authorization` header), where a
+human provisions one, the credential format and lifetime, and — stated plainly — that there is **no
+programmatic registration endpoint and none is planned**, so an agent stops and asks rather than
+hunting for one.
+
+**No A2A agent card is published, deliberately.** An agent card's `supportedInterfaces` is a promise
+of a protocol endpoint: a client reads it and then speaks A2A JSON-RPC (`message/send`, `tasks/get`)
+to the URL it names. ScreenTinker does not implement A2A, and pointing the card at `/mcp` would name
+an endpoint that speaks a different protocol, so every call would fail after the client had committed
+to it. A2A is for tasking an autonomous agent; ScreenTinker is a tool provider, which is what MCP is
+for — the two are complementary by design. The 404 below says so.
+
+⚠️ **An unknown `/.well-known/…` path now returns 404 instead of the app shell.** Everything under
+that prefix is machine-read, and a 200 with HTML is indistinguishable from a malformed document;
+"this instance does not do OAuth" is a useful answer that only a 404 conveys. ⚠️ The body lists what
+*is* published, **derived from the registered routes** — the first version hand-listed two documents
+and was wrong within the day, once two more were added, and a 404 that misdescribes the server is
+worse than a bare one because it is what a client reads when it is already lost. ⚠️ The guard sits
+**below** the static middleware on purpose: above it, it would have swallowed
+`/.well-known/acme-challenge/…` and broken certbot's webroot renewal — silently, with the certificate
+expiring sixty days later.
+
+### Fixed
+
+**The pre-upgrade database backup could never finish on a busy instance.** `upgrade.sh` used the
+sqlite3 shell's `.backup`, which copies every page in a single step while holding a read lock — so
+one write from the running server aborts it and it starts again at page one. On a 1.4 GB database
+with 33 displays heartbeating it ran at 94% CPU for over eight minutes with the destination frozen at
+1227 MB, printing nothing. ⚠️ **It fails by load, not by size**, so it passes every quiet-hour
+rehearsal: the nightly backup of that same database at 03:00 finishes in about 80 seconds, while the
+upgrade you run at lunchtime does not finish at all. And because there is no error and no progress,
+the obvious response is to kill it and skip the backup — losing the only way back, at exactly the
+moment you are about to need it.
+
+It uses `VACUUM INTO` now, which writes a fresh database from one read transaction and completes on a
+busy WAL database; the same 1.4 GB production database took under a minute. Older sqlite (before
+3.27) still falls back to `.backup`, chosen by **comparing the version** rather than by catching the
+failure — the first draft fell back on any error and announced "VACUUM INTO unavailable (sqlite3
+3.45.1)" when the real fault was an unreadable source file.
+
+⚠️ **The copy is compacted, so it is smaller than the source** (1405 MB → 1004 MB on that run). That
+is a complete database, not a truncated one. The upgrade now runs `PRAGMA integrity_check` on it and
+refuses to go any further if it does not answer `ok`, because an unverified backup is not a way back.
+
+`backup.sh` still uses `.backup` for the nightlies and has the same exposure.
+
+## 2.2.1 (2026-09-26)
+
+### Fixed
+
+**A playlist answer carried the playlist twice.** `get_playlist` and `publish_playlist` returned the
+raw row: `items` with every storage column, plus `published_snapshot` and `published_structure`, which
+are serialised copies of the same playlist. Measured on a one-item playlist, that is 2,397 bytes to say
+something worth about fifty — and both duplicates grow with the item count, so the bigger the playlist
+the worse it gets. ⚠️ The real cost is not the bytes: a model that reads the snapshot is reading the
+**last published** version while being asked about the draft, which is the one distinction the tool
+instructions go out of their way to explain. Those tools, and the three that create content or add an
+item, now answer with what a screen would play rather than with a database row.
+
+**An MCP tool could hand a model a screen's settings PIN.** `rename_display` had no output shape, so it
+answered with the raw device row — eighty columns, including a live `settings_pin`. That is the number
+2.2.0 made load-bearing: it is what the Esc-unpair gate on the web player now demands. So an agent that
+renamed a screen was handed the PIN that unpairs it, in its context, its transcript, and whatever logs
+either. `claim_secret` and `trigger_clear_all_token` went the same way on a device that has them.
+
+⚠️ **The fix is not a shape for that tool.** `get_display` already strips secrets and has a test saying
+so, and that guard covered one tool out of twenty-one — the next tool added without a shape reopens the
+hole. Redaction now runs on every tool result at the one point where results are serialised, and what
+counts as a credential is the same definition mesh replication uses to decide what never leaves for a
+replica, in `lib/secret-names.js`. The test cross-reads replication's own blocklist and fails if
+anything on it would reach a model, which is how `pairing_code` and `enrol_key` were caught: both are
+credentials, neither has a name that looks like one.
+
+**The MCP media-library tool returned items with no name, and its search never matched anything.**
+`list_content` projected `name`, `type` and `duration`; a content row has `filename`, `mime_type` and
+`duration_sec` and has never had the other three. So every item came back as a bare id, and `search` —
+filtering on the same absent field — returned an empty list for every query. ⚠️ Neither answer is an
+error and both are well-formed, so an agent asked to put something on a screen reports that the media
+library is empty, or that its files have no names, and is believed. Found while recording a demo
+against a seeded instance, which is the only reason anybody looked at the payload rather than the
+status code. The projection is now asserted against the schema, so renaming the column fails the test
+instead of quietly emptying the tool again.
+
+## 2.2.0 (2026-09-26)
+
+Contributed by [@awatterott](https://github.com/awatterott) of
+[Watterott electronic](https://www.watterott.com), who runs ScreenTinker on large LED video walls in
+production and supplied the Colorlight/EDID configuration behind the new LED wall guide, the
+certified-hardware entry and the photograph on it — and who reported the camera-permission prompt on
+the pairing screen that is fixed below.
+
+⚠️ **The APK does not ship with a server upgrade.** As always, staging the Android build is a separate
+step. The Vega `.vpkg` for the 2026 Fire TV sticks is likewise built and installed separately; see
+`docs/vega-player.md`.
+
+⚠️ **Two-way Talk will not appear on any screen until its player is updated.** The capability used to
+be declared from a probe the player ran at startup, and that probe is gone (see below). The dashboard
+now offers 2-way whenever the screen supports Talk at all, and a screen with no microphone reports
+back and says so — but a player from before this release still declares the old capability set.
+
+### Added
+
+**ScreenTinker speaks the Model Context Protocol.** Every instance, hosted or self-hosted, now serves
+an MCP server at `/mcp`. Point Claude — or any MCP client — at it with the same
+`Authorization: Bearer st_...` the REST API takes, and ask for things in plain English: which screens
+are offline, put this video on the lobby TV, did the autumn campaign actually run. No other digital
+signage CMS does this.
+
+⚠️ **It is a client of our own public API, not a second way into the database.** Every tool call is an
+HTTP request back into the same API you could call with `curl`, carrying the caller's token — so
+workspace isolation, the scope gate, the replica proxy and the rate limits apply to an agent exactly
+as they apply to a script. There is no second copy of the permission model to drift out of step with
+the first.
+
+Twenty-one tools, chosen rather than generated: the spec has 133 operations and a model gets
+measurably worse at picking the right one as the list grows. ⚠️ **The list is filtered by the token's
+scope** — a read-only token is never shown that a write tool exists, so an agent holding one does not
+spend its turns discovering what it may not do.
+
+**The site now tells automated visitors what it is.** `robots.txt` carries Content Signals
+(`search=yes, ai-input=yes, ai-train=yes` — this is documentation for an open-source project, and
+being quoted is the point), and every published page has a Markdown rendition: send
+`Accept: text/markdown`, or append `.md` to the path. There is an RFC 9727 API catalogue at
+`/.well-known/api-catalog`, an authentication guide at `/.well-known/auth.md`, and `Link` headers
+pointing at all of it.
+
+⚠️ The auth guide's most useful sentence is the one saying an agent **cannot** obtain a token — a human
+creates one in the dashboard. Without it, a capable agent burns its retries hunting for a registration
+endpoint that does not exist and reads every 401 as "my token is wrong".
+
+**A downloads page, and a guide for every platform.** `/download` lists every player *this instance*
+can hand out, built from the artifacts it actually has — and says plainly when it has none rather than
+offering a link to nothing. Four platforms that had a name on the homepage and nowhere to click now
+have guides: Windows, ChromeOS, LG webOS and BrightSign. E-paper/ESP32 and LED video walls have them
+too, taking the platform count to eleven.
+
+⚠️ **The guides no longer link a GitHub release for a player.** The BrightSign archive has the server
+URL stamped into its bytes when it is built, so a release asset points a freshly imaged player at
+screentinker.com — which presents as a pairing bug rather than a packaging one, and is expensive to
+diagnose because every individual step looks correct. `/download/autorun.zip` is built for the
+instance serving it.
+
+**Alert email carries an unsubscribe link**, with RFC 8058 headers over SMTP so the mail client's own
+button works. ⚠️ A GET never unsubscribes anyone: mail scanners and link-safety services fetch every
+link in a message with no human involved, and wiring the change to GET would silence accounts nobody
+touched. The link opens a page with a button; the button does the work.
+
+There is also a platform-admin endpoint to turn a customer's alert email off, which writes an
+`activity_log` row. That row is the point: a hand-written database UPDATE leaves nothing behind, so
+months later nothing distinguishes "the customer asked us to stop" from "the alert service is broken
+and nobody noticed a display go dark".
+
+**The marketing site says what the product actually does now.** The homepage had drifted behind the
+software: it advertised nine platforms while eleven shipped, and its comparison table quoted our own
+price as the monthly figure times twelve — understating our own annual plan by $199 against
+competitors whose numbers had also moved. Prices are re-checked against each vendor's public page and
+dated. Eight features that shipped and were never mentioned anywhere a customer would look — display
+power schedules, group sync, node mesh, scale-out replicas, SSO, two-factor authentication,
+consent-gated support access and portrait-native panels — now appear on it.
+
+**E-paper and ESP32 signs, documented at last.** The embedded renderer has been in the product for a
+while and was never mentioned anywhere a customer would look. The server resolves the playlist item,
+dithers it to the colours the panel actually has, packs it into the controller's byte layout, and
+tells the board how long to deep sleep — so a battery-powered sign runs with no browser on the device.
+Ten panel presets, and two dithering algorithms that are not interchangeable.
+
+**LED video walls**, contributed from a production install. The LED processor hands the wall's native
+resolution to the player over EDID, so a 2808×648 wall arrives as an ordinary display and needs no
+LED-wall feature at all. ⚠️ Streaming sticks cannot drive one — they only output standard resolutions
+— so use a Raspberry Pi or a small x86 PC.
+
+**Apple TV is documented as not supported**, with the reasoning, because people ask. tvOS ships no web
+view and an app may not carry its own engine, so the player cannot run there; a native port could not
+show widgets, HTML bundles, web pages or YouTube; and unattended operation needs MDM Single App Mode,
+without which an Apple TV sleeps and does not relaunch after a power cut.
+
+**Vega OS player for Fire TV Stick 4K Select and Fire TV Stick HD (2026).** Those sticks are not
+Android. The APK does not install. `vega/` is an installed WebView shell that loads the same
+`/player` page as a browser, so playlists, zones, widgets, YouTube, HLS, schedules and the
+dashboard's volume controls are the web player's, not a second implementation. The shell reports
+platform `vega` and the Amazon model code (`AFTCA002`, `AFTCL001`). A WebView data clear does not
+mint a new display: the shell keeps the pairing in `/data` and the page adopts it, and an unpair
+or `?reset=` clears that copy.
+
+It does not claim Android's powers, because the OS does not have them: no device-owner kiosk, no
+reboot, no display-power API, no RTSP, no package install, no self-update of the `.vpkg`. The shell
+does ask LCM for a permanent lifespan, which is the policy Vega logs as the screensaver being
+disabled. That is not a wake lock: the panel can still be forced off. Group sync does not warm a
+second video decoder: on an AFTCA002 that is a CMA claim (about 236 MB of decoder DMA), not a
+RAM claim. Image→image transitions run. A video boundary hard-cuts: drawing a `<video>` into a
+canvas SIGTRAPs in Vega's compositor, on a stack that has also fired with tens of megabytes of
+CMA still free. The 960px capture cap stays as mitigation for the run that did drain that pool.
+The certified-hardware entries stay **not supported**. See
+[`docs/vega-player.md`](docs/vega-player.md).
+
+**Device-side REST — a screen can now make an HTTP request on its own network.** Signage sits on the
+customer's LAN next to the things worth asking: a PLC, a door sensor, a local Home Assistant. The
+ScreenTinker server is frequently in another country and has no route to that `192.168.x.x`, so the
+request runs on the **panel** and nothing is proxied. Up to 64 KiB of the answer comes back, with a
+`truncated` flag, for the dashboard to show.
+
+⚠️ **The scheme allowlist is the whole security boundary, and it is not the one people expect.** The
+operator sending this already holds a `full` token and can already run `shell` on a device-owner
+panel, so reaching a LAN host is not an escalation — it is the request. What is refused is a change
+of *kind*: `file://` and `content://` would turn "fetch a URL and return 64 KiB" into "read a file
+off this device and return 64 KiB", and on Android `content://` reads through content providers,
+which is precisely how one app's private data is exposed to another. Cloud metadata addresses go
+too — link-local only exists when DHCP has failed, so nothing there is a real signage target — and a
+hostname that *resolves* to one is caught by re-checking every resolved address and then **pinning**
+it into the connection, so the address approved is the address connected to. Redirects are not
+followed, because a 302 is a second target the guard never saw.
+
+⚠️ **It is deliberately not a mesh command.** A hub cannot send it to a peer's screens. The mesh
+consent sentence is "Reboot, reload, change settings on screens", and making someone else's panel
+issue arbitrary requests from inside their LAN is not a setting — it is using their screen as a
+foothold on a network the hub cannot otherwise reach. No wording fixes that; a consent line honest
+enough to cover it is one nobody would tick.
+
+The 64 KiB limit is a **read** limit, not a Content-Length check: a broken or hostile endpoint can
+declare 10 bytes and send gigabytes, and a panel must spend 64 KiB on that rather than an OOM in the
+middle of playback. The request runs on a worker thread, so an unreachable target blocks nothing.
+Every request answers — a refusal, a timeout and a 500 are all results, and silence would be
+indistinguishable from a command that never arrived.
+
+Android only for now; `net.http_request` is in no baseline, so a fielded player is refused the
+command rather than sent something it would drop.
+
+**Saved endpoints — the same request, on the panel's own clock.** A one-shot `http_request` needs
+someone holding the dashboard open. A saved endpoint does not: it is a named definition attached to
+one screen or to a group, synced down with the playlist payload, and **run by the panel** — on an
+interval, or when the screen wakes, sleeps or sends a heartbeat. The panel keeps the definitions
+across a reboot, so a screen that restarts at 03:00 with the WAN still down goes on polling its PLC.
+
+⚠️ **A device's endpoints are the UNION of its own and its group's, not an override** — and that is
+the opposite of how display-power schedules resolve, deliberately. A power window answers one
+question ("is this screen lit"), so exactly one row can win. A list of endpoints is not one answer:
+picking a winner would silently stop work an operator configured. The one thing that does override
+is a **name** — a device-level "PLC state" replaces the group's "PLC state", so a single panel can
+be pointed at a different address without being taken out of its group.
+
+⚠️ **Header values are encrypted at rest and never returned.** `GET` shows header *names* so an
+operator can see what is configured, and a blank value on save **keeps** the stored one — otherwise
+a form that cannot display the API key would erase it every time anyone edited the URL.
+
+The minimum interval is 30 seconds. This runs on a panel whose day job is playing video, against a
+target that is often a small embedded controller, and a one-second poll is how a screen stutters and
+a PLC gets hammered — with neither symptom pointing back here. "Run it now" from the dashboard goes
+through the same `http_request` path as everything else, so testing an endpoint exercises the code
+that will run it on a timer.
+
+**A screen can now answer the LAN as well as call it.** The panel serves `GET /api/status` and
+`POST /api/command` on its own network, so a Crestron or AMX processor in the same rack can turn the
+sign on with the projector, blank it when the room empties, or hand it the room's volume. Until now
+an integrator's only option was to drive the dashboard, which means a browser, a login and a WAN path
+— three things a room control system does not have and will not be given.
+
+⚠️ **Off by default, and its own switch.** It shares the trigger HTTP port because it is the same
+door on the same socket, but it is not the same permission: `accept_http` lets a LAN host put an
+overlay on a screen, this lets a LAN host change what a screen is doing. Enabling one does not enable
+the other, they hold separate secrets, and each path on the socket is refused unless its own flag is
+set. One flag for both would have handed remote control to every site that only wanted an emergency
+overlay, and the two get switched on months apart by different people.
+
+⚠️ **Enabling it opens a listening TCP port on the customer's network**, with no TLS (the gear calling
+it frequently has none — AMX NetLinx has no TLS anywhere in the language) and a secret that crosses
+the segment in cleartext. Turn it on for one screen, on a network you control, on its own VLAN. It is
+not a fleet-wide setting, and `docs/device-rest-design.md` says so at more length.
+
+⚠️ **What a LAN caller may ask for is a much smaller set than what a `full` token can send**:
+`refresh`, `screen_on`, `screen_off`, `set_volume`, `set_brightness`, `set_system_brightness`. Not
+`shell`, `install_apk`, `update`, `set_server_url`, `launch`, `kiosk_unlock` — and not `http_request`,
+which would make every panel a request relay whose audit trail names the screen instead of the caller.
+`reboot` is out for a different reason: everything on the list is undone by sending its opposite and a
+reboot is not, so a stuck automation would be a fleet on the floor. The reasoning is about who holds
+the credential, not what the panel can do — this one gets typed into a Crestron program and left in a
+building for a decade.
+
+The reply is written and the socket closed **before** the command runs, because `screen_off` blanks
+the panel and `refresh` tears down the WebView: answering a control system with a dropped connection
+on a command that worked makes it retry, and one operator action becomes four.
+
+**The playlist content picker now navigates folders as a tree.** A bar above the list shows where
+you are and what is inside it — `All › WESTERN AUSTRALIA › HOSTS` — and slides sideways rather than
+growing the window. Picking a folder shows everything beneath it, not only the files sitting
+directly in it.
+
+⚠️ The first version of this filter was a flat list, and on a real library that is worse than it
+sounds. One customer has 39 folders, 30 of them nested five levels deep: the flat version offered
+all 39 at once, showed a parent and its own child side by side as if they were unrelated, and
+reported "100" for a folder that actually holds 204 files once its children are counted. The same
+library now opens on four choices instead of thirty-nine.
+
+The dropdown stays for jumping straight to a folder you can already name, now indented to show the
+same structure. Both controls read and write one piece of state, so they cannot disagree on screen.
+
+**Reports returned an empty result for a valid date range.** All three report endpoints built the end
+of the window as `new Date(end + 'T23:59:59')`, which assumes a bare `YYYY-MM-DD`. Hand them a full ISO
+timestamp — what a client library, a script or an AI agent naturally sends — and the concatenation
+produced an Invalid Date, `NaN`, and a query matching nothing. ⚠️ The endpoint then answered **200 with
+an empty list**. Not an error: "nothing played", which is plausible enough that nobody questions it.
+Found by asking the new MCP server for a week of uptime and being told, convincingly, that every screen
+had been dark.
+
+⚠️ **And the two ends of a range were in different time zones.** A bare date parses as UTC midnight
+while `T23:59:59` without an offset parses as *local*, so the window was skewed by the server's UTC
+offset. Invisible on our own infrastructure, which runs UTC — and five hours wrong on a self-hosted
+instance in Chicago, on every report it has ever produced.
+
+**The player asked for camera permission on top of the pairing code.** `register()` runs before a
+screen is paired and probed for a microphone, so on a fresh Raspberry Pi kiosk the browser's
+permission dialog appeared over the pairing code — the first screen a new customer ever sees, and a
+dialog there reads as "this thing wants my camera". The probe is gone. Two-way Talk now proves the
+microphone by *using* it: the player asks when the operator clicks the button, which is the one moment
+a dialog is expected, and a screen with no microphone falls back to a one-way session and says so
+instead of going quietly one-way.
+
+**Approved community hardware reports never appeared on any container.** `certified-hardware.json` is
+read from the repository root at runtime and was never copied into the Docker image. The route catches
+the resulting error and serves the committed static page, which looks entirely correct — so the
+failure was invisible, and what it silently dropped was every approved submission, which is merged in
+at render time. The approve link worked, the row was marked approved, and the report never showed up.
+⚠️ This was the third file to go missing from the image this way, so it is now a test: every
+repository-root path the server resolves at runtime must appear in the Dockerfile.
+
+**`/scripts` served the whole directory.** It published `reset-admin.js`, `mint-billing-token.js`,
+`support-keygen.js`, `upgrade.sh` and `backup.sh` to anonymous callers. Nothing secret — the repository
+is public — but that directory is where a self-hoster's own script lands, and the next person to drop
+a restore script with a connection string beside them would have published it without touching a
+route. It is an allowlist now. ⚠️ Which immediately needed widening: a deployment bind-mounts four
+BrightSign provisioning payloads into that same directory, and narrowing it without them would have
+404'd every BrightSign install — silently, because a missing archive gets the SPA fallback with a 200
+and a player writes that to its storage root as its autorun.
+
+**A 93 MB zip was served as `text/plain`.** The bytes arrived intact, which is why it passed every
+check; what it did was tell every proxy and CDN in front of the instance that a zip was text they
+could transform. The type comes from the extension now, and `.sh`/`.bat` deliberately stay text so
+they can be read in a browser before being run.
+
+**The pricing page ignored its own database.** The Enterprise/Custom card is a row in the `plans`
+table, and the page displayed a hardcoded title regardless — so the database said "Custom", the page
+said "Enterprise / Custom", and renaming the plan changed nothing. ⚠️ The exclusion that keeps that row
+out of the main grid also needed two conditions rather than one: the schema seeds it *priced*, so a
+shape test alone would have shown two enterprise cards on every fresh self-hosted install.
+
+**"Most Popular" had quietly moved.** The badge was positional — correct when there were four plans —
+and two were added, so it drifted onto Starter and stayed there for months. Nobody decided that. It is
+pinned to a named plan now, and the test asserts which one.
+
+### Fixed
+
+**A widget first in a cached playlist bricked the player at boot.** Second time a temporal dead zone
+has done this. The boot render ran before `playbackOrder` and its two companions were initialised, so
+a playlist whose first item was a widget threw on every start — and because the playlist is cached,
+rebooting could not clear it. The declarations are hoisted above the boot path now, and the boot
+render is wrapped: a cached playlist that cannot render logs why, drops the cache and carries on to
+connect, rather than taking the screen down with it. A test asserts the placement, not just the
+behaviour, because the behaviour is correct right up until someone moves a `const`.
+
+**Esc on the web player was a public unpair button.** It asked `confirm('Reset player and return to
+setup?')` and, on OK, wiped the display's identity and reloaded — so anyone who could reach a
+keyboard on a kiosk could unpair the screen. The operator's first sign of it was a sign showing a
+pairing code. A `confirm()` dialog is not a permission check: it establishes only that somebody meant
+to press the button, which is precisely what was wrong.
+
+Esc now asks for the **settings PIN the dashboard already provisions for that screen** — the same
+number the Android player's hidden menu uses, reused rather than reinvented so an operator has one
+PIN per screen and rotating it in one place rotates it everywhere. A correct PIN unpairs; a wrong,
+empty or cancelled one does nothing at all and leaves the screen playing.
+
+⚠️ **A screen with no PIN cannot be unpaired at the panel, and Esc does nothing visible** — not even
+an explanation, because the status overlay is full-screen and telling the room "unpair from the
+dashboard" would blank a running sign for anyone who leaned on the key. Unpair that screen from the
+dashboard. Any weaker fallback would restore the old behaviour for exactly the screens least likely
+to have anyone watching them.
+
+⚠️ **The PIN prompt closes itself after 30 seconds.** Without that, someone who presses Esc and walks
+away leaves a PIN box covering a running sign until the next reload — which turns "Esc is harmless"
+into "Esc blanks the screen", the same class of problem as the reset it replaces. Playback is never
+paused while it is up.
+
+On a correct PIN the player tells the server it is unpaired **while it still holds the token that
+proves it may**, then clears its identity, the playlist and layout caches, the trigger config and
+cache, `st_install_id`, the BrightSign registry, and `?k=` from the URL. Server-side the screen goes
+back to unpaired and its fingerprint rows are dropped, so the next registration is a genuinely new
+display instead of being reclaimed onto the row that was just released — **the row itself survives**,
+because assignments, play history and telemetry hang off it and a screen that vanished because
+somebody pressed a key would be worse than one left needing attention.
+
+⚠️ `st_install_id` is the load-bearing part of that list: it salts the fingerprint the server matches
+on, and leaving it means the next register is reclaimed onto the old row and the whole unpair was
+theatre. That is why the decision and the key list now live in `lib/unpair-gate.js` with tests, rather
+than inline in a keydown handler reachable only through a real browser and a real PIN.
+
+⚠️ **A replica cannot relay this event.** Every other player event reports something and a primary may
+believe a peer relaying it; this one changes a screen's pairing state, and a replica holding a scoped
+write grant should not gain "unpair any screen in these workspaces" as a side effect of gaining
+"relay what these screens report". On a replica-attached screen the local wipe still happens and the
+player says on its console that the server was never told.
+
+The web player also now stores the settings PIN it is sent and listens for `device:settings-pin`, so a
+rotation from the dashboard reaches the screen the gate depends on. ⚠️ It is only adopted when the
+field is actually present — some register paths omit it, and there is no "remove the PIN" feature, so
+absent means "this sender did not include it" and an unconditional assignment would erase a
+known-good PIN on the next reconnect.
+
+**The dashboard now notices its own updates.** The "a new version is available, reload?" prompt was
+driven by a hash of a hardcoded list of twenty files — and the playlist view, everything under
+`js/lib/`, and all ten translation files were not on it. A fix shipped to any of those reached no
+open dashboard at all: nothing prompted a reload, so an operator sitting on the page saw no change
+and reasonably concluded it had not been fixed. Every view added since that list was written
+inherited the same hole, silently, because nothing about adding a view tells you to edit an array
+in the server.
+
+There is no list any more — it walks what is actually served, so a new file is covered the day it
+is added. It reads file metadata rather than contents, which keeps the work off the event loop that
+answers every screen's heartbeat.
+
+**`refresh` was implemented on the panel and impossible to send.** `MainActivity` has handled it for a
+long time — it reconnects the socket, so the screen re-fetches its playlist — and nothing anywhere on
+the server could ask for it. It is now in `ALLOWED_COMMANDS`, so "the sign is stale, kick it" works
+from the dashboard, the API and the new LAN door. Found by the test that holds the LAN door's command
+list to the panel's: the door wanted `refresh`, and the subset check failed because the *server* was
+missing it.
+
+**A new secret column would have replicated to every replica.** `lib/mesh/replication.js` copies
+"every column except", which is the right shape for a faithful copy and the wrong shape for a schema
+that grows — it ships a secret added later by default. The local API secret was exactly that column.
+Caught by the guard that exists for it (`test_replication_blocklist_covers_every_secret_column`),
+which walks `PRAGMA table_info` for every replicated table and fails on any column whose name looks
+like a credential and is not listed. The flag replicates and the secret does not: a replica showing
+"the control door is open on this screen" is the truth an operator needs, while a replica holding the
+key multiplies the number of places one compromise is enough.
+
+**A new device column reached no player.** The device SELECT that feeds every playlist payload is an
+explicit column list, and the two new columns were not in it — so the feature was written, tested at
+the route, and dead on the wire. This is the third time that exact list has done it (#325's
+background colour, then `workspace_id`), and the reason it was caught this time is that the test
+asserts on what a real registered device receives over its socket rather than on what the JavaScript
+says it sends.
+
+## 2.1.6 (2026-09-23)
+
+Contributed by [@awatterott](https://github.com/awatterott), who reported the Raspberry Pi
+cursor-hiding regression on #409 and supplied the labwc configuration that fixes it (#412).
+
+⚠️ **No new player binary ships with this release.** The display power schedules below need one, so
+they will report as unsupported on every screen until an APK matching this version is staged. The
+server refuses to send a schedule to a player that has not declared it can honour one, so nothing
+goes dark unexpectedly in the meantime.
+
+### Added
+
+**Uploads are now resumable, and no longer all-or-nothing.** A large file, or a slow or distant
+connection, could fail at a fixed wall that had nothing to do with the file: a single-request upload
+has to finish inside the shortest timeout between the browser and the server, which behind a CDN is
+about two minutes and does **not** scale with size. Measured on production: one customer failed
+seven times at 125.008–125.012 seconds while his 65 successful uploads in the same session peaked at
+114.2s — he was living inside a ten-second margin and had no way to know.
+
+Selecting several files made failure certain rather than likely, because the dashboard sent them as
+one request: the bytes scaled with the selection and the two minutes did not. The symptom he
+reported was *"it stays on 1%"*, which is exactly what an aggregate progress bar does while it
+measures half a gigabyte that will never arrive.
+
+Files now upload one at a time, in 5 MiB chunks, each with its own budget — so a dropped connection
+costs one chunk instead of a gigabyte, and file size stops being a gamble. **Progress survives a
+reload:** close the tab at 340 MB of 500 MB, come back, and you are offered the rest. The offset is
+always read from the bytes on the server, never from a counter the browser keeps, because the moment
+that matters is after a crash — exactly when a local counter would be wrong.
+
+Two things fall out of it. A workspace near its storage limit is now told **before** uploading
+rather than after, because a session declares its size up front — previously someone at 19.9 GB of a
+20 GB plan could upload 500 MB and simply end up over. And abandoned uploads are collected on a
+daily sweep that works from session rows, never from a file glob, so an upload still in progress can
+never be swept out from under the person making it.
+
+The single-request endpoint remains for API tokens, the agency portal and small files.
+
+**Display power schedules — blank the screen on a weekly clock.** Signage runs in shops that close,
+and a backlight has a finite number of hours in it. You can now set "off 22:00–06:00, Mon–Fri" on a
+screen or a whole group, with a screen's own schedule overriding its group's exactly as playlists
+and content schedules already do.
+
+⚠️ **This blanks the panel; it does not switch the device off**, and that is a deliberate limit
+rather than a missing feature. A device that is off cannot be told to come back on, so a schedule
+that could power one down would be a schedule that strands screens — recovering one means someone
+walking to it. Throughout a scheduled-off window the player keeps running: playlists sync, downloads
+continue, OTA still happens, and `screen on` from the dashboard wakes it instantly.
+
+The windows are evaluated **on the player**, against its own timezone, from a copy it holds on disk.
+A screen therefore sleeps and wakes on time with the network down, and a panel that reboots at 02:00
+comes back dark and stays dark until its window ends. The evaluator is pinned across languages by
+`shared/power-window-vectors.json`, the same discipline the per-item scheduler uses — including the
+DST cases, where an hour is skipped in spring and lived twice in autumn.
+
+⚠️ It **fails to ON**, the opposite of the content scheduler beside it. An unknown timezone, a
+malformed time or a corrupt row leaves the screen lit, because a screen that is dark for a reason
+nobody can find is indistinguishable from dead hardware — the one failure an operator cannot
+diagnose without driving to it. Every heartbeat reports `display_power: on | scheduled_off`, so a
+deliberately dark screen is visibly different from a broken one.
+
+Waking a screen by hand during a window is honoured until that window **ends**, then the schedule
+resumes on its own — neither a permanent override (where the operator silently loses the schedule)
+nor no override at all (where the panel goes dark again while they are standing in front of it).
+
+Set it on a screen from its Controls tab, or on a whole group from the **Screen off** button on the
+group row. The group editor says how many members cannot honour a schedule and how many override it
+with their own — neither is visible from a group row otherwise. A screen that sits in two groups
+that both schedule its power gets a warning naming which one is actually in force, because the
+resolver's tie-break (lowest group id) is stable and documented but invisible, and the only symptom
+would be a screen going dark at the wrong time with both group pages looking correct.
+
+⚠️ On a **device** page an unsupported panel cannot be given a schedule at all, rather than being
+allowed to save one the server will refuse to send. A group still can, because a group is a mixed
+bag by nature and refusing the write because of its weakest member would be worse than naming them.
+
+Android today. Other players accept and store the schedule and report it as unsupported rather than
+swallowing it; they do not declare the new `display.power_schedule` capability, and the server will
+not send a schedule to a panel that has not. That gate is deliberately separate from `display.power`:
+a panel that can be told to sleep is not necessarily one that can be trusted to sleep unattended and
+wake itself again — which is why no fielded player receives one, since the capability is in no
+baseline.
+
+### Fixed
+
+**Three more places showed only the first 100 files.** The same cap behind the playlist-picker bug
+was also truncating the **schedule editor's** content picker, a device's **standby content**
+dropdown and the **zone assignment** modal — each one quietly offering an operator the newest
+hundred files and nothing else. All three now page the whole library, and a guard keeps any future
+view from fetching "everything" through an endpoint that returns a hundred.
+
+**The playlist content picker only ever showed 100 items.** Adding content to a playlist listed the
+first 100 files in the workspace and nothing else — newest first, so the ones missing were the
+oldest, which in a library built up over time are exactly the ones already sorted into folders. A
+customer with 211 files could see a video in his library, open the picker, and not find it. He
+reported it as *"it won't give me the option to choose uploaded content from a different folder"*,
+which is the only conclusion the behaviour supports. It was never about folders: `GET /api/content`
+defaults to `LIMIT 100` and the picker asked for everything without paging.
+
+The picker now pages until the server stops giving more, and **has a folder filter** — with 12
+folders and 211 files a flat list is hard to use even when it is complete, and folders are how that
+operator had organised the library in the first place. The rendered list is capped separately and
+says how many more matched, because the fix for a silently truncated list is not a differently
+silent one.
+
+⚠️ This affected **every workspace over 100 items**, on every playlist, for as long as the limit has
+existed. It surfaced now because one customer uploaded 211 files in six hours.
+
+**Raspberry Pi: the mouse pointer now actually hides on a stock Pi OS image.** The cursor-hiding
+added in 2.1.5 (#409) refused to touch an existing `~/.config/labwc/rc.xml`, on the reasoning that
+it would hold the owner's own keybindings. Pi OS ships one — a stub rooted at `<openbox_config/>`,
+which labwc will not read keybindings from at all ([labwc#3190]) — so on the images this feature
+exists for, the safe-looking branch was the only branch, and it did nothing but print a warning.
+The installer now replaces that stub (keeping a `.screentinker-bak`), merges into a real
+`<labwc_config>` instead of overwriting it the way the wayfire path already did, and runs
+`labwc --reconfigure` so the binding applies without waiting for a reboot. Reported by
+[@awatterott](https://github.com/awatterott) on #409.
+
+[labwc#3190]: https://github.com/labwc/labwc/discussions/3190
+
+## 2.1.5 (2026-09-22)
+
+### Added
+
+**A failed payment is now something the product tells you about, and handles.** Until now a
+declined card wrote a status nobody read: no email, no notice in the dashboard, no change in
+access. The only thing that ever actually happened was the account dropping to Free whenever
+Stripe eventually gave up, with no explanation. Now the first failure sends one email — a card
+usually fails because it expired, and being told is the whole remedy — and puts a banner in the
+dashboard. Nothing changes for seven days, because Stripe is still retrying and taking something
+away from a customer who is not at fault would only have to be undone. After that the account
+moves to the Free plan and a second email says so plainly: nothing has been deleted, the content
+and playlists are untouched, and a working card restores everything at once. Paying again at any
+point clears the whole episode, including the record of which emails were sent, so a lapse next
+year is announced rather than silently swallowed.
+
+⚠️ **No screen is ever blanked by any of this.** Screens beyond the Free limit stop, exactly as
+they already do when a trial ends — a shopfront going dark over a card problem would be a far
+worse outcome than a month of unpaid Pro, and it is the customer's own audience who would see it.
+
+**The billing state is now reconciled against Stripe daily.** Webhook delivery is not a guarantee —
+this instance lost every subscription event for months because the endpoint was never subscribed
+to them, and nothing could notice. The sweep now asks Stripe directly what it believes about every
+subscription on file and corrects the database, so a missed delivery heals within a day instead of
+persisting invisibly.
+
+### Fixed
+
+**Raspberry Pi: the mouse pointer can now be hidden on the newer Pi OS compositor.** A Pi running
+labwc — what Pi OS Trixie uses — kept its pointer on screen because hiding it is the compositor's
+job there and labwc has no setting for it. It does have an action for it, though, so the installer
+now binds that action to a shortcut and the kiosk launcher presses it once at startup. Found and
+contributed by @awatterott (#409); the installer writes the shortcut without touching an existing
+labwc configuration, and does nothing at all if the compositor is something else.
+
+**A panel that is portrait by nature now runs that way.** A Lenovo ThinkSmart View — a tablet whose
+screen is taller than it is wide — came up flipped, with a black bar and a smeared edge, because
+every screen in the app insisted on being landscape and left the panel's own firmware to turn the
+picture round, which that firmware does badly. The app now takes the panel as it finds it and turns
+the content in software instead. Panels that are landscape by nature are unaffected, byte for byte.
+Testing credit: @PowerSprout, for the panel and the patience (#390).
+
+**Android TV: the setup screen no longer does nothing, or quietly dies.** On a TV box, several rows
+of the setup screen opened settings pages that exist on phones and not on televisions. One killed
+the app outright — the boot relauncher then restarted it, so from the sofa it looked like nothing
+had happened at all. Each row now checks whether the screen it wants exists, and says so plainly
+when it does not, instead of failing into silence (#392).
+
+**A web player left running old code after a deploy now fixes itself.** Reloading the player during
+the few seconds a server is restarting could leave the panel on a cached copy of the old player
+while recording the new version as if it had updated — so it sat there, out of date, with nothing
+left to tell it otherwise. One panel reported 2.1.0 for weeks against a 2.1.4 server. The player now
+compares what it is running against what the server serves and reloads once when they disagree
+(#389).
+
+**After paying, Stripe dropped customers on the marketing homepage.** The return address Stripe was
+given was built from the browser's `Origin`, which carries the host and nothing else — so a
+customer who had just paid was sent to `https://<your-host>/#/billing`, and `/` is the public
+marketing page, which ignores the part after the `#`. They saw the front door and no sign the
+purchase had worked. It now returns them to the dashboard's own address, on whichever domain they
+started from, so a white-label customer comes back to their own. Two further faults sat behind that
+one and would each have kept it broken on their own: the address pointed at Settings, while the
+"payment received" confirmation is shown by the Billing screen; and the dashboard matched that
+screen's address exactly, so the `?payment=success` on the end sent the whole thing to the Displays
+list instead. Both corrected, and the checkout, the cancel path and the billing portal now all
+return to the same place.
+
+**Every "Choose a plan" link we emailed a lapsing trial went to the front page.** The trial
+reminder and trial-ended emails both pointed at the marketing homepage rather than the billing
+screen, so the one thing those messages ask a customer to click threw away the part of the address
+that says where to go. The mesh's deep links into another server's dashboard had the same fault.
+Both corrected — and a guard now fails the build on any server-side link written that way, which is
+how the same mistake reached three unrelated places.
+
+**A paid subscription never recorded when its period ends.** Both live subscribers had no renewal
+date stored, for two reasons that each fail in silence. A subscription that is created and then
+simply runs emits `customer.subscription.created` and nothing more until it renews or changes, so
+listening only for `updated` meant the first statement of the period end — and on an annual plan,
+for a year, the only one — was never heard. And Stripe moved `current_period_end` from the
+subscription onto its item, so the field that was being read had quietly become undefined and was
+stored as "no date" rather than raising anything. Both shapes are now read, `created` is handled
+alongside `updated`, and the stored date is logged so a missing one is visible.
+
+**The platform plan overview counted organisations that were never updated.** `organizations.plan_id`
+is written once when an organisation is created and never touched again — no payment updates it —
+so the per-plan "organisations" figure reported every account on the plan they started with. An
+operator reading it saw every account on Pro while a customer was paying for Home. It now resolves
+the plan through the account owner, the way the device figure beside it already did.
+
+**Signing in no longer fails on a password you typed correctly.** The login form asks for the
+address first and reveals the password box once it knows which account you are signing in to.
+Editing the address after that hid the box again but kept what was in it, so the next press sent
+the *previous* account's password — a rejection nobody could explain from the screen, because the
+box you would check was hidden. A browser password manager made it the common case: it cannot tell
+which account an address-first form is for, so it fills the one password it has saved for the site,
+and typing a different address on top left that password behind. Those rejections also counted
+toward the per-account lockout, whose reply is deliberately identical to a wrong password, so
+enough of them could lock an account that was being typed correctly. Changing the address now
+clears the password with it, and a hidden password box is never submitted.
+
+**A form that arrives already filled now signs in on one press.** Password-manager autofill and
+automated tests fill both boxes before pressing anything, then press once — which only advanced the
+form, sent no request at all, and left nothing on screen to explain why nothing happened. Once the
+address has been identified, a password that is already in the box is submitted on the same press.
+The organization lookup still runs first, so nobody is offered a password box that their identity
+provider is going to refuse.
+
+**Android: the player stopped re-opening its encrypted store twice a minute.** Building a
+`ServerConfig` opens both preference stores to work out which one holds the pairing, and the
+encrypted one is a Keystore round trip. `DeviceInfo.getDeviceInfo()` built two of them on every
+call — and that runs on register, on re-register and on the 60-second heartbeat, all on the thread
+that draws. On boards whose vendor Keystore is unreliable, the crypto library's wait-and-retry on
+each failure turned that into a visible stall roughly twice a minute, for a value that cannot
+change while content is playing. It is now built once per object, as the update checker already
+did; the brightness control, which did the same thing per read and per write, follows the same
+pattern. Diagnosed, traced and reported by @visimpres-glitch in #406.
+
+**A kiosk page assigned from a dashboard on localhost never loaded on the display.** Assigning a
+kiosk page builds a webpage widget pointing at that page's render route, and it took the address
+from the dashboard's own browser bar. Anyone administering from the machine running the server —
+`localhost:3001`, which is what the install instructions hand you — pinned every screen to an
+address that means *itself*, so the panel asked its own hardware for the page and showed nothing.
+New assignments now store the path alone and each player resolves it against the server it already
+contacted; existing assignments carrying a loopback address are repaired as they render, with the
+stored value deliberately left alone. Only that generated kiosk address is touched — a webpage
+widget you deliberately pointed at a loopback service is left exactly as you set it. The kiosk
+page's own tap handler also dropped optional chaining, which older embedded WebViews refuse to
+parse at all, taking the whole page down with it rather than just that line.
+Contributed by @MashaWaleed in #404.
+
+**Tizen: multitasking resumes media, Return offers to exit, and a store-ready package.** Hidden
+behind Smart Hub or another app, the TV pauses every `<video>` and the AVPlay session and nothing
+restarted them, so a single looping video came back as a frozen frame (Samsung CO-MT-01). The player
+now suspends on hide and restores on show, re-mounting anything that cannot simply play again.
+Return on the playback screen used to drop the operator onto the Server URL form; it now opens
+Exit / Change server / Cancel, D-pad navigable (CO-US-05). `./build-wgt.sh --store` builds a
+consumer-store `.wgt` with the partner-only privileges and `background-support` stripped — the
+Seller Office pre-test refused the SSSP manifest outright — and `tizen/STORE-SUBMISSION.md` carries
+what to enter for the reviewer.
+
+### Added
+
+**A clock's date is a setting now, and its timezone is a list.** The date under a clock widget was
+fixed: always shown, always the full weekday-and-month form, always three-quarters of the time's
+size in the time's own colour, always underneath. It is now optional, offered in four formats
+(full, long, medium and short), placeable above, below, left or right of the time, and given its own
+size and colour — a date picked deliberately is no longer dimmed to 70% the way the inherited one
+was. The format picker shows each option rendered in the operator's own locale rather than a
+hardcoded American example, so what you choose is what you will see.
+
+The timezone field became the browser's own IANA list with two shortcuts — *use dashboard timezone*
+and *use server timezone* (the latter asks the server, which is the only one that knows). Where the
+browser has no zone list to offer, older embedded WebViews among them, the field stays free text and
+the server still refuses an invalid IANA name on save, so nothing silently becomes UTC. Existing
+clocks are untouched: a widget with no date settings keeps exactly the date it had.
+Contributed by @MashaWaleed in #403.
+
+**NOC: this server's mesh, live.** Servers → Topology → *Open the live NOC* (or `#/noc`, instance
+owner, only where the mesh is on): this server, what it reports to, what reports to it, and the
+servers reached through a child, as an SVG graph with a list fallback. Roles from the pairing,
+screen counts per node, links coloured by state with `lag_s` (never a guessed zero), acked/head
+revision, outbox depth, cache bytes, and a pulse when a link's counters moved. One `GET
+/api/mesh/noc` every 3 s while the page is open and visible — built in O(edges) from what the node
+already holds; opening it starts no snapshot, cache fill or mesh read. Disconnect on a child's card
+is the existing `DELETE /api/mesh/links/:id`. Either side of a link can now end it: the replica's
+Topology and NOC gained *Disconnect* (the parent-side disenroll that had never been mounted), and a
+primary's `/api/status` shows its uplink's live state.
+
+**NOC readability + this server's health.** Chips now carry only the name, `n/m online` and an
+alert ring (link down, copy lag unknown, or this server's `DATA_DIR` filesystem under 10% free);
+roles and ids moved to the hover title, link captions appear on hover and on the selected server's
+links, and a strip under the header shows this process's CPU, memory and free disk on every poll
+(`—` when a probe cannot answer, never `0`). The screen table shows CPU / memory / storage columns
+only when a listed screen has reported them, and hides the playlist column when no title exists.
+Nothing new is scraped from other servers, and the poll is still one O(edges) read that moves
+nothing.
+
+**Scale-out: four things a 12-server estate showed.** A hub now marks a primary *down* the moment
+its socket closes rather than at the next failed pull (a killed primary read "connected · copy lag
+25s" for up to 30 s). A `workspace-replication` grant now carries the read categories it was
+authored to imply (`health`, `identity`, …), so a copied screen's status follows its primary's
+heartbeats instead of going stale on the replica. A replica's change-log cursor parks at the
+examined head on a short page, so a second-tier hub's `acked/head` no longer sticks at the last
+revision it was granted while its own copies keep the log moving (and the log can be pruned
+again). The NOC's "N here" counts screens attached to *this* server, its edge captions sit by the
+child instead of piling up at the midpoint of nine fan-in lines, and the drawer names every role
+of a server that is primary, replica and hub at once.
+
+**Scale-out, phase C3: a replica can keep the media files.** A replica paired with the new
+`caches-content` role (a tick under the copy tick) stores the bytes of copied content rows on its
+own disk as they are used — fetched only from `PRIMARY_URL`, checked against the row's size and
+sha256, stored under the row's own filename so the ordinary readers serve them as local hits, and
+prefetched one at a time as rows land — so a dashboard preview or a screen that has not downloaded
+yet still gets its media while the primary is unreachable. A file the replica has never fetched
+still answers `503 primary_unreachable`: nothing is invented. Bounded by `REPLICA_CACHE_BYTES` per
+primary (10 GiB unless set), least-recently-read files evicted, a file larger than the cap never
+stored; removed when the row is deleted on the primary, or when the link or the role goes. No grant
+changes on the primary: the authority is the copy grant its operator already gave. Stock installs
+gain an empty table and nothing else — no worker exists on a node without the role. Two-process
+test: `server/test/scale-out-c3-e2e.test.js`.
+
+**Scale-out, phase C2: screens on a replica.** A replica that took the new `terminates-players`
+role when it was paired (a tick under the copy tick) may accept player connections for the copied
+workspaces — once the *primary's* operator grants `player-events` on the primary, a write grant
+nothing on the wire can set. The replica verifies each screen by asking the primary once per socket
+(the token never leaves the primary; the replica keeps a hash so a known screen can reconnect while
+the primary is away), serves assignments and media from its mirror, forwards every event as a
+`player-event` write applied on the primary by the same code a directly connected screen runs, and
+keeps a durable, ordered outbox while the primary is unreachable — proof-of-play is never thinned
+or dropped, heartbeats coalesce. New screens pair to the replica and are provisioned on the primary.
+Commands travel from the primary up the edge as `command-relay`; the replica's own dashboard sends
+them through the primary, so there is one command path, and the dashboard socket now checks the
+same `ALLOWED_COMMANDS` list the REST route always did. A replica without the role, or a primary
+without the grant, behaves exactly as C1. Nothing ever redirects a screen to another server.
+Two-process test with a real player socket: `server/test/scale-out-c2-e2e.test.js`.
+
+**Scale-out, phase C1: one writer, many readers.** A second server can now hold a live, read-only
+copy of another server's workspaces and serve their dashboards — the same tables, the same 40
+route files, no mirror schema. It is the mesh, not a new cluster product: the replica is the
+primary's mesh parent, paired with the usual code, carrying a new `serves-dashboard` role and a
+new **workspace-replication** grant whose consent text says, next to the tick, that *passwords,
+tokens and secrets are never copied*. The primary keeps a change log through SQLite triggers that
+exist only while that grant does (`test_change_log_triggers_absent_without_replication_grant`), the
+replica pulls a snapshot then every change over the mesh link, and rows that arrived that way are
+tagged on the workspace (`origin_node_id`). Every write for a copied workspace is caught in the
+tenancy resolver and forwarded to `PRIMARY_URL` with the operator's own token — status, headers and
+body relayed as the primary answered, a `403` staying a `403` — and
+`test_every_mutating_route_passes_resolveTenancy` fails the build on a mutating route that skips
+that resolver. `PRIMARY_URL` has no default; unset, writes answer `409` and nothing is discovered.
+Reads keep working when the primary is down, writes answer `503 primary_unreachable`, and
+`lag_s` reads `null` rather than zero. Sweeps, data-source polling and lifecycle emails run for a
+node's own rows only. Players stay on the primary in this phase; content bytes are fetched through
+per request; playback history is not copied. `server/test/scale-out-e2e.test.js` boots two real
+processes — a self-hosted primary and a hosted-shaped replica — and diffs their answers route by
+route, in both directions, which is the I8 test ARCHITECTURE.md had been carrying as a gap.
+Workspace edits (rename, members, invites, create) and imports that name a copied workspace are
+forwarded the same way, and Reports on a copied workspace says that playback history lives on the
+primary. Operator guide: `docs/scale-out.md`.
+
+**Support access — consent-gated, time-boxed, revocable.** The login page's "Support Access" field
+and the Settings token generator have existed since the first open-source release with no server
+behind them (both endpoints 404'd). They now work, around one rule: a token we sign is only honoured
+against a **request code your instance generated** (Settings → Support Access, 24 h, single use), so
+our key is not a key to every install. The session it opens is a `platform_operator` — cross-org
+read/write, none of the owner powers — expires with the grant, appears in Settings with an *End
+session* button that takes effect on the next request, and is written to your activity log at every
+step. Self-hosters can point `SUPPORT_PUBLIC_KEY` at their own key to trust a different support desk,
+or none. See `docs/support-access.md`.
+
+## 2.1.4 (2026-09-17)
+
+### Fixed
+
+**Multi-zone panels no longer flash a "Connecting" overlay on cold boot.** A follow-up to the
+cold-start-into-zones fix: a zoned panel renders through the zone manager rather than the single-zone
+controller, so the boot "Connecting to server..." status was shown on top of the restored zones for a
+few seconds until the online catch-up cleared it. It is now suppressed while zones are already up.
+
+Added regression unit tests for the pieces that were breaking: the shared layout-mode decision (so
+the cached cold-start and the live update can never diverge again), the remote-view capture pacing
+(rate-limit floor and backoff cap), the D-pad direction geometry, and the accessibility self-enable
+list merge (preserves other services, no duplicates).
+
+## 2.1.3 (2026-09-17)
+
+### Added
+
+**Provisioned panels can enable the ScreenTinker accessibility service by themselves.** The
+accessibility service is the durable way to mirror a panel's whole screen in the remote view (it
+survives updates, unlike the screen-record permission that is wiped on every app restart) and the
+only way the remote arrow keys work. Until now it could only be turned on by hand at the panel or by
+a per-boot ADB command. A panel granted `WRITE_SECURE_SETTINGS` once at provisioning
+(`adb shell pm grant com.remotedisplay.player android.permission.WRITE_SECURE_SETTINGS`) now enables
+its own accessibility service on every boot, so whole-screen remote view and the remote D-pad keep
+working across reboots and updates with nobody at the screen. Without that one-time grant the app
+does nothing new and the operator is still nudged toward Settings. See
+`docs/device-owner-provisioning.md`.
+
+### Fixed
+
+**A rebooted device no longer shows offline for several minutes while it is actually back.** Online
+status was pushed to the dashboard only when a device re-registered (one shot); heartbeats kept the
+database current but told the panel nothing, and the panel never re-synced when its own socket
+reconnected. So a device that rebooted and resumed playing could sit "offline" on the panel until its
+next periodic re-register, up to five minutes on the web/BrightSign player. The panel now re-syncs
+whenever its own socket reconnects, and a heartbeat re-broadcasts online on the offline-to-online
+transition, so a recovered device flips back within one heartbeat.
+
+**Remote-control arrow keys work again.** In a device's Remote tab, taps and swipes worked but the
+D-pad arrows, Enter, and Center did nothing. They were routed to a shell `input keyevent`, which
+needs `INJECT_EVENTS` (a signature permission the app cannot hold, even as device owner), so they
+failed silently. The arrows now move a highlight box around the on-screen items through the
+accessibility service, and Enter / Center taps the highlighted item, so a panel can be navigated
+entirely from the dashboard even on screens that only respond to a remote. The highlight clears when
+the operator taps directly, leaves the screen, or ends the session. Requires the ScreenTinker
+accessibility service enabled on the panel (see the self-enable note above).
+
+**The remote live view no longer flickers, and keeps up with control.** On a panel using the
+accessibility capture path, the screen mirror occasionally dropped a single frame back to just the
+player's own window (a flicker between the real screen and the playlist) whenever Android rate-limited
+its screenshot API; those misses are now skipped instead of shown. The stream also grabs a fresh
+frame right after each remote tap or key press, and no longer backs off as far under load, so driving
+a panel feels responsive rather than lagging seconds behind.
+
+**Multi-zone panels no longer flash fullscreen on a cold start.** A panel on a multi-zone (or
+video-wall) layout restored its cached playlist on boot through the single-zone path, so after a
+reboot or power cut it came up as one fullscreen rotation and only snapped into its zones once the
+server reconnected. The offline cold-start now restores the layout shape too, so a zoned panel boots
+straight into its zones.
+
+**Operator "force update" now overrides the phantom/backoff OTA holds.** A display on a genuine
+prerelease core (for example a one-off `-diag` build) could not self-recover to stable: the #144
+phantom guard deliberately refuses to chase an older-core prerelease, and the dashboard "force
+update" hit the same hold and silently reported "already on the latest version". `ota-breaker.decide()`
+now takes a `forced` flag; a forced check on a client strictly BEHIND latest returns `forced-override`
+ahead of the `superseded-prerelease` and `rate-backoff` holds, while an unforced check is held
+exactly as before. It never forces a downgrade or a same-version reinstall, and the server-side OTA
+kill switch still wins. The Android player sends `forced=1` only on an operator-forced check, never
+the 30-minute timer. (#369)
+
+## 2.1.2 (2026-09-17)
+
+### Added
+
+**Live TV / IPTV as a playlist item.** Add a **live stream** in the content library: an HLS
+(`.m3u8`) URL the screen opens itself. The URL can be a LAN address (venue and hotel IPTV live on
+10.x / `.local`), because ScreenTinker never fetches or restreams it: the bytes go straight from
+your source to the screen, so a 5 Mbps channel on 40 screens is not our WAN bill. A live item is
+ordinary content (`video/hls`): it takes tags, schedules, from/to windows, conditions, fit and
+weight, and shuffles like anything else. Its duration is **dwell** (how long to stay on the channel,
+default 5 minutes); set it to 0 to stay until the item is skipped by a schedule, a condition, or the
+playlist moving on. Plays on the web player (native HLS on Safari / BrightSign / webOS, and a
+lazily-loaded bundled hls.js on Chrome), Tizen, and native Android (ExoPlayer). E-ink skips live
+items, and a player too old to know about `video/hls` is not sent them, so nothing sits on a black
+screen. A live channel works in a full screen or a single zone of a multi-zone layout.
+
+**Native RTSP camera feeds on Android.** The same "Add live stream" also takes an `rtsp://` URL (an
+IP camera or NVR, credentials in the URL allowed) and plays it directly on the **native Android
+player** (ExoPlayer, forced over TCP so it works through firewalls and on cameras that refuse UDP).
+This is Android-only, and gated: the `video/rtsp` item is only ever sent to a screen that declares
+`playback.rtsp`, so browsers, BrightSign/webOS, Tizen and e-ink never receive an rtsp item they
+cannot open. RTSP does not fan out (a camera caps its own concurrent sessions), so for many screens
+off one camera, or for non-Android players, still run an on-site RTSP-to-HLS bridge (for example
+go2rtc) and point a `video/hls` URL at its output.
+
+**Tags and metadata on content, and shuffle / weighted-random playlists.** Tag a file in the
+library (`promo, lobby`) or attach key=value metadata. A playlist item can skip unless it has (or
+lacks) a tag, or unless a metadata field matches, using the same condition picker as the
+data-source gate, with a When dropdown. Tags and metadata are copied onto the published snapshot so
+a screen still skips with the WAN down.
+
+**Order on a playlist: in order (default), shuffle, or weighted random.** Shuffle draws from a
+no-repeat bag: every item plays once per cycle, and the bag is reshuffled so the same item never
+plays twice in a row across a bag boundary. Weighted uses each item's weight (1-1000, default 1) and
+avoids playing the same item twice in a row when another eligible item exists. Draft vs published,
+same as every other playlist field: publish to push to devices. Old players ignore the extra fields
+and keep playing in order.
+
+Wall followers and group-sync members still play in order; the leader index / shared clock is the
+source of truth. Multi-zone Android and multi-zone e-ink stay sequential; web, Tizen, BrightSign /
+webOS (web player), native Android fullscreen, and single-zone e-ink shuffle. The same zoned layout
+therefore shuffles on web/webOS/BrightSign and plays in order on Android and e-ink.
+
+**A device's default image now actually shows when there is nothing to play.** The Default/standard
+image under Device settings (`devices.default_content_id`) was stored but never sent to any player or
+rendered anywhere, so a screen with no playlist, an empty playlist, or a playlist whose only items
+are outside their schedule window went black. It is now resolved into the socket payload
+(`default_content`) and rendered as an idle fallback by the web player, native Android, Tizen, and
+e-ink, instead of a black frame. Image only (a video/URL default is ignored, e-ink included), and the
+local file is pinned for offline so it still appears with the WAN down. This is the supported answer
+to LED-wall off-hours: set a default image instead of building a black-image playlist with a
+timetable. Old players ignore the field and keep showing their idle screen.
+
+### Fixed
+
+**The slide editor no longer plays entrance animations while you are arranging a slide.** Switching to
+any slide but the first replayed its entrance, so elements were mid-flight (faded out, sliding in) and
+could not be grabbed until the animation settled, which made dragging things around maddening. The
+canvas now shows every slide settled, the way PowerPoint's editor does; the entrance plays only when
+you click **Play entrance** (motion still previews while you are editing an element's animation on the
+Motion tab).
+
+**Security: TOTP recovery codes are now 128-bit, and older codes keep working.** Recovery codes were
+40-bit (5 random bytes) stored as an unsalted SHA-256, which is brute-forceable offline if that table
+ever leaked. New codes are 128-bit (16 bytes, shown grouped in fours for legibility). No one is locked
+out: verification hashes whatever the user types and looks the hash up, so a pre-existing 40-bit code
+still matches its stored hash, and only newly issued codes (at setup or a manual regenerate) are
+longer. The two-factor input fields were widened so the longer code can be entered.
+
+**Security: a widget colour/background value can no longer beacon to an external URL.** `safeCss`
+blocked `url(...)` but not the other CSS functions that fetch a resource without that token, so a
+value like `image-set("//host/beacon.png" 1x)` passed and loaded the URL when the widget rendered
+(a tracking beacon or render confirmation, no script). Blocked `image-set()`, `image()`,
+`cross-fade()`, `paint()` and `element()` (and their prefixed forms); legitimate colours and
+gradients are unaffected. Also scoped a slide deck's voiceover-duration lookup to the deck's own
+workspace, so its warnings can no longer probe whether a content id in another workspace exists.
+**Discarding a draft no longer strips per-item schedules.** A discard rebuilt the playlist's items
+from the published version but dropped their per-item schedule blocks (dayparting and validity): the
+published structure never captured them and the re-insert never wrote them, so discarding an unrelated
+draft edit silently removed the schedules from every item. Publish now captures the blocks into the
+structure, and discard restores them.
+
+**Bulk actions are safer, and an embedded panel's cursor stops drifting.** The bulk duplicate action
+ran its inserts without a transaction, so a mid-batch failure left a half-duplicated selection; it is
+now atomic like every other bulk action. Paste also accepted a schedule block with no days (stored as
+a block that never plays); it now requires at least one day, matching the normal editor. And an
+embedded e-ink panel's playlist cursor no longer advances as a side effect of a metadata poll or a
+dashboard preview, only a real device render moves it, so a monitor polling the info endpoint can no
+longer make a panel skip an item.
+**Security: token-scope and stale-membership gaps.** Four workspace-scoping fixes from the review. The embedded (e-ink) device-content router was mounted outside the API-token scope gate, so an `agency` or `billing:read` token could read a device's rendered content in its workspace; it now accepts only read-ladder tokens. Workspace export and import trusted the JWT's `current_workspace_id` without re-checking membership, so a user removed from a workspace but still holding a token could export its branding or import into it and overwrite its branding; both now re-validate the claim against current access. A schedule PUT could set a `zone_id` belonging to another workspace's layout (POST already checked); it now validates it. And a content upload accepted a `folder_id` from another workspace (edit and batch-move already checked); it now validates it. None is cross-tenant data disclosure.
+**Security: read-only members could create content in their workspace.** The read-only-viewer gate was enforced on edit and delete but missing on the CREATE routes, so a `workspace_viewer` could still upload content, add remote/YouTube/live-stream content, create widgets, upload fonts, add custom shader transitions, create kiosk pages, and create or duplicate layouts. Added a shared `denyReadOnly` gate to those routes (and to the custom-shader delete, which scoped by workspace but not role). This is the same read-only escalation class as the slide-deck and token fixes; none of it is cross-tenant.
+
+**Data-source `play_when` gating and custom shader transitions work on live devices again.** The
+device payload query left `workspace_id` out of its column list, so the value passed on to the
+payload builder was always null and the two features that key off it (an item that plays only when a
+data-source field matches, and a workspace's uploaded shader transitions) silently no-opped on every
+real screen while passing in tests that supplied a workspace id. Added the column to the query, and
+to the dashboard preview payload, which had the same gap.
+
+**A cyclic or over-deep playlist nest can no longer crash publish.** Playlists nest one level deep,
+enforced when a child is added. But the snapshot builder's depth guard was dead code (it reset the
+depth to zero on every recursion), and the bulk `paste` action skipped the one-level checks the
+single-item add path runs. A row written by some other path (an import, a migration) that formed a
+cycle, or a paste that built a second level, would recurse until the stack overflowed and publish or
+preview returned a 500. The builder now tracks the nesting depth and the ancestor chain and refuses a
+cycle or an over-deep reference, and paste enforces the same one-level guard as add.
+**Security: the e-ink/embedded renderer no longer makes unguarded server-side fetches (SSRF).** When
+a device's content is a remote URL, the embedded snapshot renderer fetches it on the server. Three of
+those paths bypassed the SSRF guard the media proxy and data-source fetcher already use: the native
+layout renderer fetched a zone's URL with no vetting at all, and the remote-image and remote-page
+paths vetted once then fetched with an unpinned client, so a hostname that resolves to a private
+address at connect time, or a public URL that redirects to one, reached them. Any workspace editor
+could point content at `169.254.169.254`, `127.0.0.1`, or a LAN service and have it rendered into a
+snapshot every device pulls. The two image fetches now go through `guardedRequest` (vet + socket-pin +
+redirect re-vet), the Chromium page render vets every request it makes and aborts any to a
+private/reserved address, and a known non-image URL skips the image probe entirely.
+**Security: a read-only member could reach live screens (slide decks + agency tokens).** Two authorization gaps let a `workspace_viewer` perform writes the role is meant to forbid. Slide decks had no read-only gate: a viewer could create, edit, PUBLISH (which builds slide widgets and a playlist and pushes a playlist-update to every screen) and delete decks. And `POST /api/tokens` gated only on workspace membership, so a viewer could mint an `agency` token with auto-publish and push content to live signage through the agency surface, which does not re-check the owner's role. A viewer is now denied deck writes/publish/delete (matching playlists and schedules) and may mint only a read-scoped token.
+**Security: a non-string widget config value could bypass HTML escaping.** `escapeHtml` returned a
+non-string argument unchanged, so a widget `config` field set to a JSON array/object (weather
+`location`, social `platform`/`query`, rss `feed_url`) reached the render output unescaped and was
+string-coerced there, which for the rss JS-string context meant arbitrary script in the widget
+document. Non-`slide` widget config is not normalized, so the array reached the sink intact. Fixed by
+coercing with `String()` before escaping, matching the slide renderer. These are the escaped
+built-in widgets whose only defense is this escaping.
+
+**Schedule and play-window edits now tell you they need a Publish.** Setting a play window on an item
+(`play_from` / `play_until`) saved silently, so it was easy to set a time frame, see nothing change on
+the screen, and conclude the timetable was broken when the edit was only a draft. It now shows the
+same "publish the playlist to push it to devices" cue the schedule dialog already gave. The
+draft/published model is unchanged: a screen keeps playing the last published snapshot until you
+Publish, which is why an unpublished schedule looks like "it always plays".
+
+**A zero-length schedule window (start time equal to end time) is now rejected.** Such a block
+evaluates as never active, so the item silently vanished instead of playing, the mirror image of the
+"schedule ignored" report and just as confusing. The editor and the API both refuse it now, with a
+message pointing at the overnight-window form (make the end earlier than the start, or use 24:00 for
+"until midnight").
+
+**A slide background image no longer tiles.** The slide background layer set `background-size:cover`
+but never set `background-repeat`, so the CSS default of repeat tiled any image whose intrinsic size
+cover could not resolve (an SVG logo/wordmark used as a background, or a raster before its dimensions
+had loaded). A branded background showed a column of repeated marks down one edge, and because the
+slide iframe is rebuilt every cycle it reappeared on each reload. Pinned `background-repeat:no-repeat`
+on the background layer; cover never wants tiling.
+
+**Harden a live slide element (clock/date/countdown) against old-WebView repaint ghosting.** On some
+older Android System WebViews a live element that rewrites its text every second composites the new
+glyphs over the old without clearing, so they smear into a repeated ghost column (a room-sign clock
+whose minutes appeared to "repeat down the edge"). Each live element is now pinned to its own
+compositing layer (`translateZ(0)`, an identity transform) so the WebView re-rasterises it cleanly
+each frame. This could not be reproduced on a current WebView in-house, so it is a defensive fix for
+old field panels; where a panel still shows it, updating the panel's System WebView is the real remedy.
+
+## 2.1.1 (2026-09-16)
+
+### Added
+
+**Checkbox selection on a playlist, and bulk actions that write the same fields the
+players already honour.** Shift-click a range, Select all, then copy / cut / paste /
+delete / duplicate, set duration, from/to, days-and-hours, activate or deactivate,
+log plays or don't, fit (layout / fit / fill / stretch), drop a transition widget
+in front of each selected item, or skip unless a data-source field matches.
+
+Deactivated items are dropped from the published snapshot, so a BrightSign still on
+an old player skips them too. Fit and "don't log" are additive: old players inherit
+the zone and keep logging. The data-source condition fails open if the bag is missing.
+
+The data-source "skip unless a field matches" condition is evaluated on every player — web,
+native Android, Tizen, the embedded/e-ink renderer, and BrightSign / webOS (which run the web
+player) — from the same `_ds` value bag, and fails open when the bag is missing.
+
+**From / to on a playlist item, next to duration.** Duration is still how long the file stays on
+screen when it plays. The new fields are an eligibility window: if the screen's local now is
+outside it, the item is skipped. Empty means always in the loop. This is an interval (3am inside
+the span plays), not a daypart — the clock icon still does Mon–Fri 9–5. The two AND together.
+Evaluated on the player (web, Android, Tizen, BrightSign/webOS via the web player, e-ink via the
+embedded renderer) so it works offline. Fails open. Rechecked at item boundaries. Times are
+`YYYY-MM-DDTHH:MM` in the screen's zone, never UTC. Old players ignore the new fields and keep
+playing everything.
+
+The Outlook calendar **shows** those windows on a playlist event (peek + stacked labels). It does
+not write `schedules` rows for them. Open playlist from the peek to edit.
+
+### Fixed
+
+**Tablet room-sign panels can fill the screen.** Added 3:2 / 2:3 and 16:10 / 10:16 to the slide-deck
+aspect options. A panel like an 800x1200 ThinkSmart is exactly 2:3, so a 16:9 deck could never fill
+it: it letterboxed, and on a glossy panel the black bars reflect the room. Authoring the deck at
+3:2 (landscape) now fills such a panel exactly. The renderer already accepted any ratio; only the
+editor's picker and the deck whitelist were gating it.
+
+**`busy_timeout` on the database connection.** The main connection now waits up to 5s through a
+brief writer lock instead of failing a statement with "database is locked". better-sqlite3 defaulted
+this to 5s (so the native path never saw it); the node:sqlite fallback opened with none, so a boot
+migration contended by the WAL checkpointer could fail. Matches the native driver's behaviour.
+
+## 2.1.0
+
+### Added
+
+**A plugin system, off by default.** Self-hosted operators can drop a folder in `DATA_DIR/plugins`,
+enable it as platform admin, and restart, to add widget types, data-source resolvers, optional
+API routes, and named hooks (`device.offline`, `device.online`, `playlist.published`,
+`content.uploaded`, `plugin.submitted`, `plugin.approved`, `plugin.rejected`) without forking core files. Unset `PLUGINS_ENABLED` and the loader does not
+scan, does not `require()` plugin code, and `/api/admin/plugins` 404s. Plugins are trusted local
+code (no sandbox, no marketplace, no phone-home). A broken plugin is marked `error` and does not
+prevent boot. Built-in types cannot be shadowed. Widget plugins render server-side HTML on the
+existing `/api/widgets/:id/render` path. Samples: `plugins/countdown`, `plugins/json-api`,
+`plugins/webhook`. Password fields are never returned by GET; blank PUT keeps the stored secret.
+Documented in `docs/plugins.md`.
+
+**Upload a plugin zip; it does not run until you approve that exact tree.** Workspace editors can
+submit a `.zip` from the dashboard. The archive is inspected against a file allowlist (no zip-slip,
+no symlinks, no `package.json`, no shell scripts) and sits in a quarantine directory the loader
+never scans. Platform admin reviews the file list and `plugin.json` on Admin → Plugins, then
+approves or rejects. Approve copies the tree into `DATA_DIR/plugins` and pins its sha256 on an
+allowlist; it does not enable. Enable + restart still required to `require()`. After that, an edit
+on disk that changes the hash is a load error, not a new payload. Drop-folder installs keep working
+as before; **Pin** locks one of those to a hash the same way. Admin can inspect each file
+(plugin.json and index.js) before approving. This is the human gate, not a
+sandbox — plugins remain trusted code once they load.
+
+**Upload a PDF and it becomes a playlist.** Each page is rendered to a full-HD image, the pages land
+in a folder named after the document, and a playlist of the same name plays them in order. A
+16:9 slide deck exported to PDF comes out at exactly 1920x1080; a portrait document shows with side
+bars on a landscape screen, which is what every other CMS does with a PDF and is the right outcome.
+Text becomes pixels, so it is no longer searchable or editable, and the pages take the usual image
+duration until you change it.
+
+⚠️ The rendering happens in the uploader's browser, not on the server. The server never parses a
+PDF, gains no PDF dependency, and its upload allowlist is exactly as strict as before — the pages
+arrive as ordinary PNGs through the ordinary path. That is deliberate: every server-side renderer
+that is not copyleft needs either a canvas shim or a headless browser, and a PDF parser is a large
+thing to bolt onto an upload endpoint. pdf.js (Apache-2.0) is vendored under `frontend/vendor/pdfjs/`
+with its codec licences beside it, and loaded only when a PDF is actually uploaded. The dashboard
+CSP gains `'wasm-unsafe-eval'` for the image codecs; that permits WebAssembly compilation only,
+not `eval`.
+
+**Room-booking signs in every language.** The iCal data-source room output (Busy / Available, "busy until" / "free until", today / tomorrow, all-day) is now produced from a per-language table covering all ten dashboard locales and defaults to English instead of German. An unknown locale falls back to English; the `status_de` / `status_en` payload fields are kept for back-compat, and the data-source language picker is driven from `getAvailableLanguages()`.
+
+**Dutch (nl) dashboard language,** at full key parity.
+
+**Secret fields encrypted at rest.** Secret fields in `data_sources.config` and `plugin_state.settings` are stored AES-256-GCM encrypted (key derived from the instance JWT secret, via `lib/secretbox`), with a one-time boot migration for existing rows. GET redaction is unchanged; rotating `JWT_SECRET` makes stored secrets re-enterable.
+
+**Per-plugin network egress allowlist.** A plugin may declare `network.allow` in `plugin.json`; its fetches are then constrained to those hosts before the SSRF guard runs. Undeclared means unrestricted (still SSRF-guarded: loopback / link-local / cloud-metadata always refused).
+
+**Certified-hardware affiliate links.** The certified-hardware page carries disclosed affiliate buy links (`rel="sponsored nofollow"`), and the homepage links to the page.
+
+### Changed
+
+**Playlists "Show auto-generated" toggle now hides "Scheduled:" playlists.** Content-only schedules create a throwaway one-item playlist that was never flagged `is_auto_generated`, so the toggle could not hide it. New ones are flagged at creation and a one-time migration backfills existing rows (structural selector, never the display name). Schedule edits now rewrite the generated playlist's item and garbage-collect the orphan.
+
+The homepage deployed-screens count is labelled "(self-reported, opt-in only)", and the Data Sources empty state no longer names a specific provider ("any public iCal feed").
+
+### Fixed
+
+**No black flash between clips (web player).** Plain solo videos now warm-play muted offscreen and mount on the first presented frame, holding the previous frame instead of blanking the stage while the next clip loads. A configured transition still wipes.
+
+**Portrait panels driven in landscape now fill the screen.** Orientation fit accounts for the panel's native aspect, so a landscape slide on a native-portrait panel (e.g. an 800x1200 room-sign tablet) is rotated to fill instead of letterboxed into a portrait stage.
+
+## 2.0.10
+
+### Added
+
+**A public Certified Hardware list, at `/certified-hardware`.** The device models that have been
+tested, what each one actually does rather than what the box claims, which are only community
+reported, and which are not supported and why. Reseller agreements point at this page, so entries
+that carry a support obligation live in a data file in the repository and reach the page only
+through a commit. Anyone can report hardware that works for them, and an approved report is
+published alongside, clearly marked as untested and carrying no support commitment.
+
+**LG webOS 4, 5 and 6 panels can run the player.** They ship browser engines older than the player's
+JavaScript needs, so until now they loaded nothing; the documentation said as much. The server now
+serves a second copy of the player at a separate address, transpiled ahead of time for those older
+engines, along with matching copies of the service worker and the optional live-video and talk
+scripts. Panels new enough for the normal player are unaffected and never see it. A panel older
+still than webOS 4 is told so plainly instead of showing a black screen.
+
+The transpiled copies are built by a script and committed, rather than being produced on demand, so
+nothing is transformed while a request is waiting and the build tool is not needed to run the
+server. A guard fails the build if a committed copy drifts from its source, and a second guard
+compiles every script the old engine loads and fails if any of it would need downlevelling. Layout
+features those engines lack have been replaced throughout the pages a panel renders, with the
+bounds preserved rather than approximated, so modern panels look identical. Contributed by
+@MashaWaleed in #343.
+
+@MashaWaleed authored 5 of the 21 commits in this release, and the webOS 4/5/6 player is entirely
+their work: five revisions across four review rounds, including the ahead-of-time build, both
+guards, and the compatibility sweep across every surface a panel renders.
+
+### Fixed
+
+**The live view degraded silently after every update, and nothing said so.** Screen-capture consent
+does not survive the app restarting, and an update restarts the app. The flag recording that a panel
+had been granted whole-screen capture had been written since the feature shipped and was never read,
+so every update quietly dropped a panel to drawing only the player's own window: the remote view
+showed the playlist and went blank over Settings, with no error anywhere. A customer reported exactly
+that on two panels after one update. Panels now report which capture tier they are actually on, the
+dashboard explains it and points at the accessibility service, which captures the whole screen and
+survives updates, and the grant re-arms itself on restart where that can be done without a dialog.
+
+⚠️ Being the device owner does not guarantee a silent grant, which is an OEM decision rather than
+something ownership implies. So an automatic restore is a probe: if a consent dialog appears it is
+withdrawn within a second and a half and that panel never asks again, because a dialog left sitting
+over live signage with nobody there is worse than the degraded capture it was trying to fix.
+
+**The dashboard never reported a single client-side error.** The player has posted its JavaScript
+errors to a rate-limited sink for a long time; the dashboard posted nothing, so every one of the 201
+error reports on production came from the player. A customer hitting a broken dashboard was
+invisible — the missing `esc` import that left three dialogs dead for weeks, live, behind a green
+test suite, was exactly this shape: a ReferenceError in a click handler that nothing was listening
+for. Uncaught errors and unhandled promise rejections are now captured and sent to the same sink,
+fingerprinted so a repeat is one entry rather than thousands, and visible in the existing admin
+viewer. Failed image and script loads are ignored, since they are asset problems and would drown the
+real faults. The same `PLAYER_DEBUG_REPORTING` kill switch covers it.
+
+⚠️ The reported URL is redacted to origin, path and hash route. The query string is never sent, from
+either the path or the hash: this origin carries single-use credentials there (`?k=` enrol keys,
+`?reset=` password-reset tokens) and the sink is unauthenticated.
+
+**The audit trail could not tell success from failure.** `activityLogger` gated on
+`res.statusCode < 400`, so a mutation that failed left no row at all — from the data, a playlist
+publish that returned 500 looked exactly like one that never happened. Production carried 12,667
+audited requests and zero recorded failures outside the explicit login-failed event. Requests now
+record the status they actually returned, in a new `activity_log.status_code` column, and failures
+are kept rather than discarded.
+
+The same middleware wrapped `res.json`, so it only ever saw responses that happened to be sent as
+JSON; a route replying with `res.send`, `res.sendStatus`, `res.end` or an unhandled throw was never
+audited at all, which made audit coverage depend on how each handler chose to reply. It now hooks
+`res.on('finish')`, which fires once per response however it was sent and reads the status when it
+is final.
+
+Auditing is gated on ownership: a row is written when the request belongs to an authenticated user
+or a known device, or when it is a 5xx. Anonymous requests are not audited, which matters because
+the public surface is scanned constantly and carries high-frequency anonymous endpoints. That
+property used to hold by accident — an endpoint could opt out by not replying with JSON, and the
+widget telemetry route did exactly that on purpose — so it is now stated and tested rather than
+inherited. One consequence: `POST /api/telemetry/report` is anonymous and is no longer audited.
+
+**Every OTA left a copy of the APK behind, forever.** The update cleanup swept
+`getExternalFilesDir(DIRECTORY_DOWNLOADS)`, but staging tries internal storage first and almost
+always succeeds there, so the downloaded APK sat in a directory cleanup never looked at. One whole
+APK stranded per superseded version, in the same internal storage the next update then checks for
+free space. Invisible at 9MB; not at 29.6MB. Cleanup now sweeps every directory staging can choose,
+reading the one candidate list rather than repeating an entry of it, so a future staging location is
+swept automatically. Confirmed on-device before the fix: after a clean 2.0.8 to 2.0.9 update the
+player logged that it was clearing update state while the 29.6MB APK remained on disk.
+
+### Changed
+
+**The Android APK is 44% smaller.** 2.0.9's live-video publisher added the WebRTC native library for
+all four ABIs, and AGP's default packaging stored those ~43MB uncompressed so they could be mapped
+straight out of the APK. That default assumes a per-ABI split delivered by Play; ScreenTinker
+sideloads one universal APK over its own OTA, so every device carries four copies and runs one.
+Compressing them (`useLegacyPackaging`) takes the download from 52,724,535 to 29,557,559 bytes and
+the installed footprint from ~52.7MB to ~41MB — smaller on both counts, because only the matching
+ABI is ever unpacked and the other three go from stored to deflated. Android does the unpacking at
+install time; nothing in the player changed. The v1 JAR signature MDM signage requires is unaffected
+(the output filename is unchanged, so `resignReleaseV1` still runs — verified with jarsigner).
+
+## 2.0.9
+
+### Added
+
+**Live video (WebRTC).** An optional path that shows sub-second video of what a screen is actually
+playing, alongside the existing screenshot stream. With a [go2rtc](https://github.com/AlexxIT/go2rtc)
+sidecar and a publishing player, one screen can be watched by many dashboards without asking the
+device to encode a separate stream per viewer; ScreenTinker is only ever the signaling proxy and
+never becomes an SFU. Off by default at every level (server master gate `LIVE_VIDEO_ENABLED`, per
+workspace, per device), so enabling the sidecar never silently starts streaming. The Android
+publisher was rewritten onto a WebSocket + trickle-ICE path (native libwebrtc drops the inline
+HTTP-answer candidates that browsers tolerate), and its foreground service was hardened against the
+ANR and native crashes that came from disposing a `PeerConnection` from its own callback. The
+dashboard plays WebRTC first, then falls back to MSE/HLS, then to the screenshot stream. Documented
+in `docs/live-video.md`.
+
+**A VP8/VP9-capable go2rtc image.** Stock go2rtc registers only H264/H265 for WebRTC ingest, so a
+publisher with no H264 encoder gets its video rejected and no frames flow. This is invisible for
+browsers and real phones (all offer H264) but bites the Android emulator, whose only H264 codec is a
+software encoder libwebrtc excludes. `docker/go2rtc-vp8/` builds an image that adds VP8/VP9 to the
+receive set with a one-function patch, for emulator testing and unusual hardware. Real hardware does
+not need it.
+
+**Talk: voice intercom and PA broadcast.** Operators can now talk to screens over the same go2rtc
+path, in Opus. Per device, Talk is one-way by default (operator mic to the screen's speaker, so it
+works on a mic-less display) with a separate 2-way button that appears only when the device declares
+a microphone. Per group and per workspace, a one-way PA broadcast fans a single operator stream out
+to every device in scope, listen-only, so a whole group's mics never mix into noise. The operator
+can optionally share a webcam, shown fullscreen over the content on the screen; content audio and
+video duck while talk is active and restore on stop, and hardware echo-cancellation on the device
+stops the operator hearing themselves. Talk is fail-soft: any failure just leaves no audio and never
+touches playback or live video.
+
+**Talk is gated per organization, with a per-org TURN/STUN.** Talk is off by default and enabled per
+org: a global `TALK_ENABLED` master switch plus each organization's own `talk_enabled` flag, both
+required. A platform admin sets it under Admin → Organizations, where an organization can also
+provide its **own ICE (STUN/TURN) servers** — a JSON override that applies to that org's live video
+and talk alike, falling back to the sidecar's `GO2RTC_*` servers when unset. `lib/org-webrtc.js`
+resolves both from a device or workspace up to its org, and every talk endpoint enforces the flag
+server-side.
+
+**Trial expiry actually happens.** The 14-day Pro trial used to end only when the user next opened
+Billing, paired a screen, uploaded content, or a screen reconnected; anyone who went quiet stayed on
+Pro indefinitely (283 of 421 hosted accounts on 2026-09-12). A nightly sweep (`services/trialExpiry.js`,
+14:00 UTC) now moves every lapsed trial to Free through the same `expireTrial()` the lazy path uses,
+and pushes each affected screen its access-gated playlist so an extra screen that is connected stops
+at once. Two emails go with it, once per user: "your Pro trial ends in N days" at three days out, and
+"your Pro trial has ended" after the downgrade, each naming which screens stop and what it costs to
+keep them. Off entirely under `SELF_HOSTED=true`; emails also need `HOSTED_INSTANCE=true`. The
+expiry email only reaches trials that lapsed within `TRIAL_EXPIRED_EMAIL_MAX_AGE_DAYS` (default 30),
+so the first sweep on a deep backlog downgrades silently rather than mailing months-old signups. New
+columns `users.trial_expired_at`, `trial_ending_email_sent_at`, `trial_expired_email_sent_at`; the
+Billing page shows "Your Pro trial ended on …" for a downgraded account.
+
+### Fixed
+
+**A dashboard push could re-enable a paywalled screen.** Only the three device-register paths
+consulted `checkDeviceAccess`; the ~20 dashboard-side pushes (playlist, content, layout, widget and
+group edits, the scheduler, mute-sync, data-source refresh, video walls, releases) and the offline
+flush in `lib/command-queue` all sent the raw playlist, so assigning content to a blocked screen
+brought it back until its next reconnect. `buildPlaylistPayload` — the only builder exported for
+delivery — is now the gated one; the dashboard preview uses `buildPlaylistPayloadUnchecked`.
+
+**Blocked screens said "Device Limit Reached" instead of "Trial Expired".** The trial-expired branch
+was keyed on `trial_started`, which the downgrade nulls first, so it could never fire. It now keys on
+`trial_expired_at` and tells the owner their trial ended.
+
+## 2.0.8
+
+The first release since 2.0.7, and a large one: two new subsystems, a new player platform, and
+every open issue on the tracker.
+
+### Added
+
+**Content approval workflows and version history.** A workspace admin can require approval before
+anything goes live. It is off by default for every existing and new workspace, and turning it on
+changes nothing that is already playing. Draft, Submitted, Approved, Published, with a Changes
+requested path and a reviewer comment. Approval binds to an immutable revision and to the stamps of
+everything it depends on, both rechecked at the decision and again at publish, so an edit after
+approval invalidates it rather than shipping unreviewed. Nobody can approve their own submission or
+one containing changes they authored. A single release policy in `lib/release-policy.js` is
+consulted by every path that can change a screen: playlist and deck publish, widget, layout and
+content edits, agency auto-publish, and schedule-generated playlists.
+
+Version history is always on, for content, playlists, layouts, slide decks and widgets, with one
+revision model. Every revision records who made it, including whether it came from a person, an API
+token, an import, a mesh peer or a restore. Revisions can be previewed, compared and restored, and a
+restore creates a new draft attributed to the restorer rather than rewriting anything. Replaced
+media bytes are retained so an older revision stays viewable, under a bounded retention that never
+prunes what is live, pending review or a migration baseline. Widget config secrets are redacted in
+every history response. Documented in `docs/approvals-and-history.md`.
+
+**Data sources.** A workspace can register an external source and bind widget and slide fields to
+it with `{{ds:name.field}}`. iCal is the first integration, aimed at room booking panels: a sign
+knows whether the room is busy, what is on next and when it frees up. Fetches go through the SSRF
+guard with pinned DNS, a body cap, redirect limits and a per-workspace concurrency bound. Contributed by @renebohne in #332 and #340.
+
+**LG webOS player.** An installed shell around the web player, so a webOS signage panel is a first
+class display alongside Android, Tizen, BrightSign and the browser.
+
+**Embedded renderer: multi-zone layouts.** The e-paper and microcontroller path can now render a
+full layout, not just a single item, compositing zones natively with Jimp where every zone is an
+image and falling back to a browser render otherwise. Contributed by @renebohne in #331 and #339.
+
+@renebohne authored 22 of the 40 commits in this release.
+
+### Fixed
+
+**Samsung Tizen panels black-screened on 2.0.x (#330).** A content security policy added in 2.0.0
+blocked the player's own scripts on Tizen 5.0. The panel installed the app, the shell stayed
+responsive, and nothing rendered, with nothing in any log. Proven on hardware by a control build.
+The policy is removed rather than corrected: it also omitted the `file:` scheme from `img-src` and
+`media-src`, so a corrected script policy would have booted the app and then black-screened it again
+on any cached media. The reasoning that justified the policy, and what would have to be measured on
+a panel before one is ever added back, is recorded in `tizen/config.xml`.
+
+**Playback froze mid-playlist on some Android TV chipsets (#333).** With group sync on, the player
+warms the next clip on a second decoder six seconds before each boundary. Where the chipset allows
+only one decoder, that reclaimed the one already playing: the picture held and the playlist never
+advanced. The stall watchdog did fire, but reported through the path a video uses when it ends
+normally, which a synced group deliberately ignores. A stalled or errored video is now a fault
+distinct from a normal finish, a failed warm-up is no longer promoted at the boundary, and a clip
+that faults on every attempt is held rather than looped.
+
+**Screen background colour never reached the player (#336).** The query that builds the device
+payload lists its columns explicitly and the colour added in 2.0.7 was never added to the list, so
+every push carried no colour and players kept their default black. Two places that painted their own
+black over it, the letterbox around a fullscreen video and the frame around a widget, are fixed with
+it.
+
+**Android displays reinstalled the same build forever (#341).** The OTA check advertised the
+server's own version rather than the version of the APK it would serve. A server whose mounted APK
+is older offers an update, Android accepts the download as a same-version reinstall, and the display
+returns on the old version to be offered again. Two field displays did this 493 times over five
+days with nothing failing anywhere. The server now reads `versionName` out of the APK itself, so it
+cannot advertise a version it does not hold, and the update-check breaker gained a progress axis:
+the same target offered repeatedly to a display that never moves stops being offered. This is the
+skip-after-N that #144 identified and left out.
+
+**The SSSP manifest reported the .wgt size in bytes (#329).** Samsung expects kilobytes, and the
+mismatch failed the install with a message that named neither.
+
+**Raspberry Pi kiosk installs ran two launchers.** Each supervised the other's browser, so a
+restart left an orphaned renderer holding the display. One launcher per install now, supervising
+itself.
+
+### Also
+
+Slide decks, playlists, layouts and widgets all record history whether or not approval is enabled.
+The embedded renderer reads the published snapshot rather than live playlist rows, so an e-paper
+panel no longer shows a draft. `pinnedLookup` handles `options.all` for modern Node request paths.
+
+## 2.0.7
+
+### Fixed — 2.0.6 broke the dashboard for everyone
+
+`frontend/js/views/schedule.js` shipped with its new recurrence block inserted INSIDE an
+unterminated `import {`, so the file was a syntax error. `app.js` imports that module statically,
+which means the failure was never confined to the Schedule view: the whole dashboard module graph
+stopped evaluating, and every page rendered blank and reported "Disconnected". The player and the
+API were unaffected — screens carried on showing their playlists throughout — but nobody could
+open the dashboard to see that.
+
+The fix is a reordering; not a line of the recurrence logic changed.
+
+Nothing in this repo had ever parsed browser code. The server has its own tests and CI lints
+`docs/openapi.yaml`, but `frontend/` was only ever read by a browser, so a file that could not be
+parsed at all passed every gate we had. `test/frontend-parses.test.js` now parses every `.js` under
+`frontend/` and `tizen/` — accepting module or classic-script syntax, since the tree holds both —
+and asserts the static-import property that made this fatal rather than local.
+
+### Fixed — the dashboard no longer probes for a mesh it was told it does not have (#329)
+
+The mesh routers mount conditionally, and the client discovered whether they existed by calling them
+and reading the 404: `/mesh/capabilities` then `/mesh/nodes` on every sidebar render, `/mesh/orgs`
+on every `/me` refresh, and `/mesh/alerts` and `/mesh/uptime` whenever those views opened. On an
+install with no mesh — very nearly all of them — that is a steady trickle of 404s in the console for
+a question the server settled at boot.
+
+`/api/auth/me` now carries `mesh: { enroll, hub }`, recorded where the mount decision is actually
+made, mirroring the existing `hide_billing` flag. The two are separate because the routes are: the
+Servers nav turns on `enroll` (either half of a mesh), while the aggregate reads live in the hub
+router and turn on `hub`.
+
+An absent flag means UNKNOWN, not off. A server older than this field, or a user cached before it,
+falls through to the original probe-and-catch path, so an older install still lights up its Servers
+section correctly rather than silently hiding it.
+
+## 2.0.6
+
+### Added — e-paper and microcontroller displays
+
+`/api/embedded/render` pre-renders whatever a screen should be showing into a device-native image, so
+a panel with no browser and no Android on it can still be a ScreenTinker display. Server-side resize
+and Floyd-Steinberg or Atkinson dithering, output as a packed 1-bit bitstream (48 KB for an 800x480
+e-paper), BMP, JPEG or PNG. Contributed by @renebohne in #322 and tested against a Seeed Studio
+reTerminal Sticky.
+
+The interesting part for a battery device is what it does NOT send. An ETag on every render means a
+panel that wakes, asks, and finds nothing has changed gets a 304 with no body and goes straight back
+to sleep, and `X-ST-Expires-In` tells it how long that sleep can be. A playlist cursor comes back in
+the same headers, so the device needs no state of its own beyond a token.
+
+Pairing is by six-digit code, generated by the SERVER with a CSPRNG. The device asks for a code and
+displays what it is given rather than choosing one, which is what stops somebody registering codes
+and waiting for an operator to type one they already own. `pair/status` hands back the device token
+only to the caller holding the `claim_secret` issued at registration, and both routes sit behind the
+existing pairing lockout.
+
+The renderer needs `puppeteer-core` and a browser ONLY for widgets and slides; images render natively
+through Jimp with neither installed. Nothing is a hard dependency: with no browser present the server
+boots and the image path works, and a widget render answers `BROWSER_NOT_FOUND` rather than failing.
+It is off by default in the shipped image, which carries no browser.
+
+### Added — upload your own transition shader (#320)
+
+`shared/Transitions/` is deliberately a first-party set: every shipped shader written from scratch
+and stamped MIT, so `docs/licensing.md` can make a flat claim with no per-effect conditions. An
+operator's own shader is their content and their licence, so it is stored per workspace and never
+enters the shipped library, the manifest, or a release.
+
+Delivery turned out to be much smaller than expected, and the reason is worth recording: every player
+already resolves a shader as an id to a GLSL string. The web player and Tizen read the same
+`window.__TRANSITION_SHADERS` global, and Android has one reader with one caller. So the sources
+travel WITH the playlist, keyed by ids the items already reference, and each player merges them into
+the lookup it has. No new endpoint, no download, no cache to invalidate, and Tizen needs no `.wgt`
+rebuild or re-signing. Only shaders a playlist actually references are sent.
+
+Validation is structural rather than a compile, deliberately. The only honest way to know GLSL is
+valid is to link it against a real GL context, and putting that on the upload path makes a browser a
+server dependency, the exact thing #322 spends its effort making optional. So: the renderer's entry
+point must be present, no preprocessor directives, 64 KB, at most eight parameters. A shader that
+passes those and is still broken fails the way an unknown one already does, which is a hard cut.
+
+An upload cannot shadow a built-in: ids are prefixed `custom-`, the resolver consults the shipped
+manifest first, and the Android side refuses to hold an id without that prefix. The cap is per
+ORGANISATION, not per workspace, because workspaces are cheap to create and a per-workspace limit is
+therefore not a limit.
+
+### Added — a plain Crossfade, and it is the default for a new transition widget
+
+The transition library shipped fourteen effects and every one was a set piece: CRT Collapse,
+Datamosh, Film Advance, Van Eck. There was no plain dissolve, so a playlist that just wanted slides
+to melt into each other had to choose between a hard cut and a glitch. Contributed by @rolbk in #315.
+
+The argument for taking it, which was theirs and was right: a dissolve is not a fifteenth effect, it
+is the default transition in every signage product and the one most operators will ever use. "Upload
+your own shader" is the answer for genuinely custom effects, not for the one everybody expects out of
+the box. Nobody should have to write GLSL to get a fade between two slides. `Crossfade` therefore
+sorts first in the manifest and is what a new transition widget previews, and the file sort is
+case-insensitive so that ordering cannot drift back on a later filename.
+
+Two parameters, both 0..1: `ease` (default 1) applies a smoothstep to the linear `progress` every
+player drives, so the dissolve is slow-in and slow-out; `dipToBlack` (default 0) blends toward a
+fade through black. At progress 0 the output is exactly the outgoing frame and at 1 exactly the
+incoming one, so the mounted element underneath matches the last wipe frame with no seam.
+
+No new build step: a `.glsl` flows through the generators that already exist, and the checked-in
+`manifest.json` and `tizen/js/transitions.js` were regenerated with it.
+
+
+### Added — the Android player runs on Android 6.0 (#328)
+
+`minSdk` drops from 24 to 23, so the APK installs on Android 6.0 boxes and older tablets that could
+otherwise only run the web player in a browser, and Firefox 143 was the last browser release for
+that OS. Contributed by @rolbk.
+
+Three API-24 call sites are guarded rather than dropped: EXIF orientation for remote images reads
+through a temp file below N, remote tap and swipe fall back to in-app view dispatch where gesture
+dispatch is unavailable, and the network callback registers for any network instead of the default
+one. At `minSdk` 23 the Gradle plugin emits the v1 signature itself, which Android 6 needs to install
+at all; `resignReleaseV1` stays as a backstop, and a signed build was checked to still carry v1, v2
+and v3 so MDM-managed signage keeps the JAR signature it depends on.
+
+### Added — specific days of the week on a schedule (#327)
+
+The scheduler has always understood `BYDAY`, evaluated against the DEVICE's local day of week, and
+`recurrence_end` has always been stored and honoured by both the scheduler and the calendar. Neither
+was reachable: the form offered four fixed presets, so weekdays and weekends were expressible and
+"Mon, Wed, Fri" was not, and a repeat could never be given an end date. Both are on the form now, and
+editing a schedule whose days are not a preset shows the days it actually uses.
+
+### Added — a background colour per screen (#325)
+
+The letterbox behind content that does not fill the frame was `#000` in the player's stylesheet, so a
+white-background image sat in a black surround and looked like a fault. It is a per-device setting
+now, following the route `orientation` already takes. Unset means the player's own default, so every
+existing screen keeps exactly the black it has, and the reset control clears back to unset rather
+than pinning the screen to black. Hex only, validated at the API and again in the player, because the
+value reaches an inline style.
+
+### Fixed — a clock widget could not hide its seconds, and was always English (#323)
+
+`second:'2-digit'` was unconditional, so a clock widget could only ever be HH:MM:SS, while the
+Designer's clock element has had a seconds checkbox all along. There is a setting now, defaulting to
+on so existing widgets are unchanged. The clock was also formatted with a hardcoded `en-US`, so a
+Spanish operator got English weekday and month names on a screen whose dashboard, timezone and
+audience were all Spanish. A blank locale now means the screen's own locale rather than English,
+which is what the Slides clock has always done.
+
+
+### Fixed — the weather widget ignored its own size setting (#324)
+
+Only the temperature scaled with `font_size`; the location, description and icon were pinned at 18px,
+16px and 64px. In a small zone the icon alone is 64px whatever the space, so the content overflowed
+and the widget grew a scrollbar, reported precisely as "the font size does change, but nothing
+else". No Fit setting could help, because Fit places the widget's output rather than laying it out.
+All four sizes derive from one base now and the widget clips rather than scrolls. A side-by-side
+layout and an optional city line come with it, and the condition text can arrive in the operator's
+language instead of always English.
+
+### Fixed — Android portrait wipes were fitted to the unrotated display (#326)
+
+The Android half of the fault fixed in the web player for 2.0.5. MainActivity transposes the stage's
+layout params before rotating it, and a View's rotation does not change its layout bounds, so on a
+1920x1080 panel set to portrait the stage is laid out 1080x1920 while `displayMetrics` still reports
+1920x1080. Every wipe was fitted to the latter. `transitionView` is `MATCH_PARENT` inside that same
+rotated root, so its own measured size is the stage box, which is what the wipe uses now.
+
+⚠️ NOT VERIFIED ON HARDWARE. The unit tests do not exercise `runWipe` and no portrait Android panel
+was available. The signature to look for is the picture visibly changing shape for the length of the
+transition, on every effect rather than one.
+
+### Changed — CI installs the way production does
+
+The smoke job booted the server and checked its version, but installed with `npm ci` and let
+`DATA_DIR` default. Both quietly made it unable to see the two failures it most needed to catch. A
+devDependency required at load time booted fine here and crashed for every self-hoster, which is
+exactly what #322 arrived doing. And `DATA_DIR` defaults to `server/`, which is also where a module
+inventing its own uploads path would guess, so a wrong guess and the right answer were the same
+directory, which is why an uploads-path bug in #322 was invisible until it was reproduced by hand.
+
+It now installs `--omit=dev` as `upgrade.sh` and the Dockerfile do, boots with `DATA_DIR` outside the
+checkout as the image does, and asserts three things this project has been bitten by: release notes
+present and matching VERSION, every router answering 401 rather than 404, and the database landing
+under `DATA_DIR` with no stray `.db` files in the checkout.
+
+### Changed — llms.txt
+
+There was no `llms.txt`, and the SPA catch-all answered 200 with the dashboard shell for it, so an
+audit read a missing file as a malformed one. Added with an H1, a summary and linked sections, every
+internal link checked against a file on disk.
+
+### Changed — the Tizen bundle byte-identity guard is gone
+
+It arrived with #315 and it was a fair catch: the `#BS-UMD` guard reads the checked-in
+`tizen/js/transitions.js`, so a copy that has drifted from the bundler is one that guard is silently
+not guarding, and it had drifted. Requiring a regeneration commit after every shader change is the
+wrong fix. The cleaner answer is to stop committing that file at all, since `build-wgt.sh`
+regenerates it on every build, and point the existing guard at `bundle()` instead.
+
+### Upgrading
+
+One new column (`devices.background_color`) and one new table (`custom_shaders`), both added by the
+usual migration on first boot. Nothing to run by hand and nothing to undo: an instance that never
+sets a background colour or uploads a shader behaves exactly as it did before.
+
+**The Android APK changes for every screen.** `minSdk` drops to 23, so `versionCode` moves and every
+Android display takes the update at its next check. The player also gains the portrait wipe fix,
+which is the one change in this release that has not been confirmed on hardware. Worth watching a
+portrait Android screen through a transition before rolling the APK widely.
+
+**The embedded renderer is off unless you turn it on.** It needs `puppeteer-core` and a browser for
+widget and slide rendering, and the shipped image carries neither. Image rendering works without
+them. If you want the full path: `npm i puppeteer-core` in `server/` and set `CHROME_PATH`.
+
+**Custom transitions are capped per organisation**, not per workspace, and the cap is a flat 50 rather
+than plan-derived. If you want it to follow the plan, `organizations.plan_id` is the hook.
+
+
+## 2.0.5
+
+### Fixed — every wipe on a portrait panel was drawn in landscape
+
+A portrait screen rotates `#playerContainer` with a CSS transform, and a transform does not move the
+layout box: `clientWidth`/`clientHeight` are the box the image is fitted into, while
+`getBoundingClientRect()` is the rotated envelope. On a portrait panel those are each other's
+transposes. The GL wipe fitted both frames into the envelope and painted them on a fixed, unrotated
+overlay, so the picture jumped to 1.8x at the start of every transition and back at the end, on all
+fourteen effects. Measured across the boundary with grid slides: 5 dB PSNR, where a 4 px shift
+scores 19 dB. The wipe now takes the stage's own box and its computed placement, which is the
+landscape case unchanged and the portrait case turned exactly as the stage is. A stage with no box
+hard-cuts instead of running a 2x2 wipe fabricated from a 0x0 rect. Reported and fixed by
+@rolbk in #315; the accompanying report notes Android's `MediaPlayerManager.runWipe` has the same
+fault, which is not fixed here.
+
+### Fixed — a clock widget's timezone was checked for its spelling, not its existence (#316)
+
+`safeTimezone` tested the value against a character class, which answers neither question a timezone
+field has. A Spanish operator hit both halves in one sitting: `España` failed the character class and
+was silently replaced with UTC, so the clock ran two hours behind with nothing saying why, while
+`Spain` and `GMT+2` passed it, are not zones, and made `toLocaleTimeString` throw inside the
+generated widget script — so the clock rendered nothing at all. Intl decides now, at save time, on
+both create and update, with a message naming the right format. The render-time fallback stays for
+configs already stored, since a wrong clock beats a blank one, but nothing new can reach it. The
+dashboard field is backed by the browser's own zone list.
+
+### Fixed — the layout editor dragged a square it had just destroyed (#316)
+
+The zone mousedown handler sets the selection and calls `renderZones()`, which removes every
+`.zone-el` and builds them again. From that point the element the handler closed over is detached, so
+dragging updated `z.x_percent` but painted onto an orphan: nothing moved under the pointer and the
+zone jumped to its new position at the next render, which is to say the next time the operator
+clicked. Reported identically in Chrome and Firefox, which is what a DOM bug looks like rather than
+an input one.
+
+### Fixed — uploads were capped at 20 files, and the refusal said nothing (#317)
+
+Somebody uploading 160 photos from a company party got an error with no number in it and worked out
+by trial that sixteen at a time went through. Two faults: the per-request cap was 20, and no
+`MulterError` was ever handled, so exceeding it surfaced as a bare unhandled error. An oversized
+single file had the same missing handler. The cap is higher and stated when hit, and the dashboard
+now chunks a large selection, reports progress across the whole selection rather than 0-100% per
+batch, and on a mid-way failure says how many files already landed.
+
+### Fixed — a signup was never recorded as a login
+
+`last_login` had one writer, called from the two interactive login finishers. `POST /api/auth/register`
+issues a session immediately and was never stamped, so anyone who signed up and kept using that
+session read as "never logged in" for as long as the account existed. On the hosted instance that was
+132 of 349 accounts, 43 of them with real authenticated activity. The column feeds admin views and
+was about to be used to select accounts for deletion, so this was one query away from removing live
+customers. `scripts/backfill-last-login.js` repairs existing rows from each user's most recent
+activity, and deliberately leaves users with no activity NULL: `activity_log` is not retained for the
+life of an instance, so for older accounts there is no evidence either way.
+
+### Fixed — the update check could only see the first 100 container tags
+
+GHCR returns 100 tags and a `Link: rel="next"` header, and the check read page one and stopped. Page
+one is in push order, so it ended wherever the project was 100 tags ago, and the highest semver tag
+visible was 1.9.40 — permanently, drifting further behind with every release. Every self-hosted
+instance was therefore told 1.9.40 was current: nobody on 1.9.x was ever offered 2.x, and instances
+already on 2.x were told they were ahead of the latest release. Nothing errored, which is why it went
+unnoticed. The walk now follows the next link, bounded at 20 pages, and a later page failing still
+uses the tags already gathered.
+
+### Added — many playlist items at once, and a whole-playlist sort (#318, #319)
+
+`POST /playlists/:id/items/bulk` takes a list of content ids and inserts them in one transaction.
+Content only: widgets and child playlists are singular things placed deliberately, and the nesting
+rules on the single-item route exist to be reasoned about one at a time. Partial success is the
+design — refusing 160 photos because one expired last week is an obstacle, but silently dropping it
+is worse, since the published snapshot filters expired content and the operator would publish a
+shorter playlist with nothing saying so. Valid rows go in, refused ones come back itemised.
+
+Sorting is computed in the dashboard and sent to the existing reorder route, so the server learns
+nothing about sort modes and the result is ordinary `sort_order` values: the operator can still drag
+afterwards. Widgets and nested playlists have no filename or duration of their own, so they keep
+their relative order and settle after the content. The picker sorts and multi-selects too, and adds
+in the order shown rather than the order ticked.
+
+### Changed — the site had no page for someone searching "hosted"
+
+Titles and meta descriptions across `guides/`, `compare/` and `integrations/` ran 61-79 and 159-247
+characters and truncated in results; sixteen titles and eighteen descriptions are now inside 60 and
+155, with `og:*` and `twitter:*` updated alongside. `cloud-digital-signage.html` is new: the site
+ranked for hosted queries and converted none of them, because every snippet said self-hosted, free
+and open source, and the page that answered those searchers did not exist. It states outright that
+the software is identical, MIT licensed, and that self-hosting is free and stays free, and carries a
+real "should you self-host instead?" section.
+
+The Samsung guide gets a content fix rather than a metadata one: it sells the URL Launcher path,
+which is exactly the path that fails on older sets, so it was recruiting the people who then arrive
+in support with a Connect button that does nothing. A "Which Samsung TVs work" section now states the
+2022-and-newer floor before the setup steps and sends older sets to the Android TV or Raspberry Pi
+guides.
+
+### Upgrading
+
+No schema changes and no configuration changes. The portrait wipe fix is in the web player, which
+the server serves, so upgrading the server delivers it — no APK or `.wgt` rebuild is required for it.
+`scripts/backfill-last-login.js` is optional and dry-run by default; run it with `--apply` if you
+report on `last_login`.
+
+## 2.0.4
+
+Five things, and three of them are the same shape: a server refusing a player and the player never
+coming back. Two were introduced by 2.0.1 and found by deploying it and looking at what it did.
+
+### Fixed — a screen could sit on "Waiting for content" with everything it needed already cached (#314)
+
+Reported from a fleet: after an OTA the panel sat on the waiting screen indefinitely, with all media
+cached and a playlist assigned, and toggling the playlist assignment in the dashboard fixed it
+instantly. That workaround is the tell. It is a server-initiated push, the one route into a player
+that does not go through register.
+
+**The backoff window slid forward for ever.** Every retry INSIDE the window recomputed its own end
+from the moment of the retry, so a player reconnecting on its own timer pushed its release further
+away and never got back in. Measured on a running server: still refused after 70 seconds of complete
+silence, having been told to retry after 60. Because a throttled register returns before the playlist
+is sent, "never got back in" is a dark screen. Retries inside the window now report the time
+remaining and nothing more; a device that genuinely storms is still caught, and still escalates, on
+the rate path the moment the window expires.
+
+**And nobody was listening.** Three separate gates refuse a register and all three announce it with
+`device:throttled`, which no player implemented: not Android, not the web player, not Tizen, not
+BrightSign. The server asked for a pause and the client came straight back on its one-second timer,
+re-tripping the window it was waiting out. The web player (and so BrightSign) and Android now honour
+the server's number, clamped at both ends so a missing value cannot strand a screen and a zero cannot
+turn the reconnect into a busy loop.
+
+**Android could also read a full cache as an empty one.** Readiness asked whether the cached copy
+carried the revision the playlist asked for, and an asset cached by a build from before content
+revisions existed has no revision to compare, so it could never answer yes. A panel whose disk was
+full of playable media therefore waited for content it already had. Playback now prefers confirmed
+content exactly as before and falls back to "we have bytes for this" only when nothing anywhere
+passes that bar, so a replaced asset still reaches the screen the moment it lands.
+
+### Fixed — a deferred boot stranded every web and Tizen player it refused
+
+2.0.1 added a hold that keeps players off a server while it drains stranded plays. It refused them in
+Socket.IO namespace middleware, and a v4 client treats that as a denial rather than a fault: it stops
+reconnecting, fires no disconnect event, and ignores its own retry settings. The web player arms its
+reconnect supervisor from the disconnect handler and Tizen's watchdog waits on a connected socket, so
+both sat on "Connection failed: maintenance" until somebody power-cycled the panel. Android survived
+on an unrelated backstop.
+
+Which made the feature worse than the stampede it prevents, on exactly the kind of install it was
+written for. The unit test could not see it because it connected with reconnection disabled, and the
+assertion it did make required the broken behaviour.
+
+The socket is now accepted and then refused, using the same `device:throttled` the other refusal
+gates use, carrying how long to wait. A client that honours it waits and returns; a client that
+ignores it still gets an ordinary disconnect, which every player already supervises. Verified with 70
+simulated panels against a boot carrying 400,001 stranded plays: 67 were refused, and all 70
+recovered on their own.
+
+### Fixed — the most expensive thing the server did, it did on every play
+
+`closeStrandedPlays` repairs rows left open when a play's end was lost. It ran on every `play_start`.
+It is a correlated self-join of the play log against itself plus a join to content, grouped per row,
+across the device's whole history: measured against a copy of a real fleet database (3.1 million
+rows, 2.7 million on the busiest device) at **362ms, and 355ms when there was nothing to close**. The
+full price is paid whether or not it finds anything.
+
+At roughly one play per second across a 78-panel site that is a ~150ms synchronous block about once a
+second, permanently. A 60-second CPU profile from the affected server put **27.1% of all wall time**
+inside this one call, which is the entire explanation for a loop whose median sat at the measurement
+floor while its 99th percentile sat at 130-165ms. It is also why moving that customer to faster
+storage fixed their baseline and left the spikes untouched: the cost is CPU, not disk.
+
+A lost play end comes from a session ending abruptly, so the evidence for one is the FIRST play of a
+NEW connection. Inside a live session every end arrives normally and there is nothing to repair. The
+sweep is now armed per connection and disarmed once it runs. The repair itself is unchanged, including
+the same-zone rule and the per-row ceiling that stops a 20-second clip being credited with hours.
+
+### Fixed — an enrolment key could be minted by a token that should not have one
+
+2.0.3 stopped an API token READING a display's enrolment key, because that key lets its holder be that
+screen. The routes that MINT and REVOKE one were left on the default gate, where anything that is not
+a read needs only write scope, which handed the same power back through another door. Both now require
+full scope, the same as the trigger secret.
+
+Separately, the notification sent when a display is created was broadcasting the raw device row to
+every member of the workspace with only the device token removed, so the settings PIN, the trigger
+secret and the enrolment key went to everyone regardless of role. It now goes through the same
+sanitiser the device list uses.
+
+### Added — server diagnostics in platform admin
+
+Diagnosing a slow install meant sending a customer a shell script and talking them through running it
+as root on their production server. Everything it collected was already being recorded: the event loop
+writes its own timings every second, and one affected server held 205,866 rows of exactly the history
+we had spent an afternoon reconstructing by hand.
+
+Platform admin now has three read-outs: the instance shape (table sizes, payload sizes, play-log depth
+and its indexes), the loop-lag history including a daily trend, and an on-demand CPU profile. The
+daily trend is the one that matters, because a step change on a date turns "why is this server slow"
+into "what happened on the 14th".
+
+⚠️ The profile runs in-process, so no debug port is ever opened. The alternative was the recipe we
+were about to hand a customer: signal the process to open the V8 inspector, attach, capture, and hope
+somebody remembers to close it. Same data, nothing listening, nothing left behind. One at a time,
+bounded, and audited. It returns counts, timings and function names; no playlist content, no media,
+no credentials.
+
+### Fixed — the landing page had not caught up with 2.0
+
+BrightSign was missing from a page that lists supported platforms, despite running the same player as
+every browser and being able to host the server itself. The "Content Designer" card advertised the
+feature that is deprecating rather than Slides, which replaced it, and there was nothing about
+triggers or workspaces.
+
+### Upgrading
+
+Nothing to do. No schema change, no configuration change. Players pick up the throttle handling when
+they next update; the server-side fixes apply to every player already in the field, including ones
+that will never be updated.
+
+## 2.0.3
+
+### Fixed — an API token could read a display's enrolment key
+
+The enrolment key added in 2.0.1 was withheld from the device list, which is the rule that governs
+`settings_pin`: one consumer, so do not hand it to every member on every dashboard load. It was not
+withheld from an API token, and that is the rule that governs `trigger_secret` — `GET
+/api/devices/:id` has no scope gate, so a READ-scoped integration token could read the key off the
+detail response.
+
+The key is the stronger of the two credentials. The trigger secret lets its holder push content to a
+screen; the enrolment key lets its holder BE the screen — register as that display, take its
+playlist and its commands, and report as it. So it now sits behind the same gate, and the helper is
+named for the category rather than for one member of it.
+
+Scope, honestly: enrolment keys are opt-in and only exist on displays somebody deliberately made a
+web player for, and an API token is already a workspace credential. This narrows an exposure inside
+an authenticated surface; it is not a path from the outside.
+
+A dashboard session still reads the key, because the operator has to be able to copy the player URL.
+
+## 2.0.2
+
+### Fixed — the "what's new" panel was empty in every container
+
+2.0.1 added the panel that tells you what changed after an upgrade, and did not ship the file it
+reads. `release-notes.json` lives at the repo root; the Dockerfile copies the root files it needs one
+by one and this one was never added, so `/api/release-notes` answered with nothing on every
+containerised install. Everything passed on the way out — the unit tests read the file out of the
+source tree, where it was present the whole time. Found by deploying it and looking, which is the
+expensive way to find it.
+
+The Dockerfile now copies it, and a test reads every repo-root path the server code resolves at
+runtime and asserts the image ships each one, so the next root file is caught the day somebody adds
+the read rather than on a deploy.
+
+Nothing else changed. If your 2.0.1 install is otherwise behaving, this only affects that panel.
+
+## 2.0.1
+
+Two things the field found in 2.0.0. Neither is a new feature; both are places where the product
+made someone do work it should have done itself.
+
+### Added — slides can talk, and a deck can have music under it
+
+A slide can carry a **voiceover**, and a deck can carry one **background music** track that plays
+continuously underneath the whole thing. **Audio files can now be uploaded** — mp3, m4a, wav, ogg
+and flac — which the content library previously refused outright.
+
+The interesting part is where the audio lives, because the obvious answer is wrong twice. A slide is
+a widget in an iframe, and a deck publishes as one widget per slide plus a playlist — so a looping
+track inside a slide would restart on every advance, which is the one thing a bed must not do. Audio
+in there would also be invisible to the rule that decides which zone owns the sound, and to the
+per-item mute, the wall-follower rule and the browser's autoplay gesture — the same reason a slide's
+background video has always been unconditionally silent.
+
+So neither track is rendered into the slide. The player owns both elements: the voiceover for as
+long as its item is up, the bed across items that name the same track. Publish stamps one track id
+across every slide in the deck, and the player leaves a playing bed alone when the id has not
+changed — compared by id rather than URL, because replacing an audio file keeps the id and changes
+the path. The bed is stored once, on the deck, so two slides can never disagree about it.
+
+Both tracks play on **every player**, not just a browser tab: the web player, Tizen, BrightSign and
+Android each own the two elements themselves, with the same rule in all four — the bed is keyed on
+its track id and a matching id is left completely alone, never re-prepared and never restarted. On
+Android that is two ExoPlayer instances of its own, deliberately not the one that owns the video
+surface, whose lifetime ends with every item. A panel that has not updated declares no support and
+the dashboard stops offering a deck with a voiceover to a screen that cannot say it.
+
+A voiceover longer than its slide's dwell is now flagged in the editor, exactly like motion that
+outlives its dwell has been since decks shipped — the slide changes mid-sentence otherwise.
+
+Screens stay silent by default. Audio still goes through the same mute decision as everything else,
+which on a signage panel with no user gesture means muted.
+
+### Added — a web player that survives a host with no storage (#313)
+
+Reported by someone driving vMix signage from a browser input. A vMix browser input deletes its
+entire browser profile when vMix closes — vMix's own staff say so on their forum — so localStorage,
+cookies and IndexedDB all go together and the player comes back knowing nothing. A player with no
+identity pairs as a NEW display, so every restart of the production PC left another dead screen in
+the dashboard.
+
+Add Display now has a checkbox — *"This player can't stay paired"* — which creates the display
+from the dashboard and hands back a **web player URL**: `…/player?k=…`. There is no code to type,
+because there is no player yet to show one. The key in that URL identifies the screen, so a player
+with nothing else comes back as the display it was rather than as a stranger, and the URL is always
+available afterwards on that display's **Web player** tab.
+
+**Nothing gets one of these unless it is asked for.** Ordinary pairing does not mint a key, the
+register path never creates one, and the tab only appears on a display that actually has one — so
+every display added the usual way is exactly as it was.
+
+- **It is a separate credential, not the device token.** The token authenticates every message and
+  cannot be changed without re-pairing the screen. This does one thing — names a display and proves
+  you may be it — and an operator can roll it from the display's page and paste a new URL without
+  touching the screen. Same reach while it is secret; a completely different recovery when it is not.
+- **It is an exchange at the door.** The key is turned into the display's id and token in the first
+  lines of the register handler, so the blocked gate, the flap limiter, the token check and the
+  reconnect path all run exactly as they always did. A parallel authentication path would have been
+  a parallel set of bugs.
+- **A key that resolves to nothing is refused, never fallen through.** Dropping to the pairing path
+  would provision a new row — and a storage-less player would do that on every restart, which is
+  the failure being fixed.
+- Offered only on web players, never handed out in a device list response, and counted against the
+  same per-IP lockout that guards pairing codes.
+
+Onboarding is unchanged: pair the screen the way you always did, then take its URL from the display
+page and paste that into vMix.
+
+### Fixed — a slide was a different composition on every screen shape
+
+A slide is laid out in percentages and in units relative to the stage, so **the stage's aspect is
+the composition**. The renderer handed the stage whatever box the panel had, which meant a deck
+designed at 16:9 became a different slide on anything else: a background set to cover was cropped
+about a fifth off each side, headlines ran past the edges, and the eyebrow could sit off-screen
+entirely. Found on a 2560x1800 Android panel, where the whole slide was one background image and a
+fifth of it was simply missing.
+
+The stage is now fitted to the shape the deck was authored in and centred, with the surrounding
+frame painted black — so the slide is the same composition on a 16:9 panel, an ultrawide, a portrait
+screen or inside a zone. The deck's shape is stamped onto every published slide at publish time,
+the same way the music bed's id is, so nothing downstream has to ask the deck anything. A deck
+published before this carries no shape and is treated as 16:9, which is the editor's default and
+what those decks were laid out in.
+
+⚠️ **The fitting is done in script, and that is the load-bearing half.** Container query units
+shipped in Chrome 105, and a lot of signage hardware still runs an Android WebView from 2021 — where
+every type size on a slide was an invalid declaration the engine threw away, so those panels have
+never rendered a slide at the authored size. The oversized, clipped text people were seeing there
+was the browser's default size being auto-inflated, not a layout bug. The fitter converts those
+units to pixels against the fitted stage, reading the number out of the element's style attribute
+rather than the CSSOM — on an engine that rejected the declaration the CSSOM has nothing left to
+read. Three CSS-only versions of this were tried first and abandoned; the note in
+`server/test/slide-render.test.js` records why, so nobody rebuilds one. If the script cannot run,
+the stage falls back to the full box and the slide renders exactly as it did before — degraded,
+never blank.
+
+### Fixed — a 2.0.0 first boot could be flattened by its own fleet
+
+Reported from a 73-device install on a Synology DS225+ over spinning SATA, upgrading 1.9.39 to
+2.0.0. Migrations and the playlist-source backfill were fine. What was not:
+
+- **The `play_logs` index build printed nothing for over five minutes.** It sat in uninterruptible
+  disk sleep, which from outside is indistinguishable from a hang — and the natural response to a
+  hang is to kill it, which is the one thing that must not happen during a migration. The build now
+  logs an estimated row count and a warning before it starts, and its duration afterwards. There is
+  deliberately no progress *during* it: `db.exec` is one synchronous call and nothing else in the
+  process can run until it returns, so the honest options are a line either side or silence.
+- **All 73 players reconnected at once and HTTP was unreachable for about twenty minutes**, even
+  though the WebSocket layer was accepting. The #142 shed was working exactly as designed and could
+  not help — nothing was misbehaving, there were simply 73 well-behaved players arriving together
+  while the stranded-play sweep was still draining. Setting `SCREENTINKER_DEFER_PLAYERS=1` (and, by
+  default, the first boot after a migration that touched plays) now refuses players with a 503
+  until the sweep reports idle. `/api/status` keeps answering 200 with a `maintenance` block saying
+  why — failing a healthcheck mid-maintenance is how a slow boot becomes a restart loop — and the
+  dashboard is untouched, so an operator can watch the drain rather than being locked out with the
+  fleet. It always lifts: when the sweep drains, or after 30 minutes, whichever comes first.
+  This is the reporter's own workaround (stop nginx → let maintenance finish → start nginx) made
+  into something nobody has to know.
+- **The stranded sweep now logs every batch** — `batch i/n closed=X remaining=Y duration=Z` — and
+  raises to warn past two seconds, so slow storage is visible in the same stream as the shed lines.
+  On the reported hardware each batch held the loop for one to two seconds and nothing said so.
+
+The batch size was already right; it has not changed.
+
+**The "36,096 stranded plays" figure in the 2.0.0 notes was the investigation set, not the
+universe.** That was one database's open rows. This install had **494,000**. Wording corrected in
+the entries below.
+
+### Added — onboarding can put a playlist on the screen before you walk away
+
+The wizard ended when a display existed, congratulated you, and left the screen blank; assigning
+something was a separate hunt through Playlists that nothing in the wizard mentioned. Raised by a
+vendor running Juuno alongside this, and it is a fair hit.
+
+The last step now asks "What should this screen play?" and offers the playlists the workspace
+already has. It writes through the same endpoint the Displays picker uses, so the assignment is a
+real per-screen override rather than something the inheritance resolver quietly undoes later.
+Skipping it behaves exactly as before — the wizard never blocks on it. Nothing new is created and
+no new kind of playlist exists.
+
+### Fixed — onboarding said content was playing when the screen was blank
+
+Found while adding the step above, and it is the more serious half. Adding an item to a playlist
+marks that playlist a draft, and a player's payload is built from the published snapshot with no
+fallback to the live items — so a playlist that has never been published sends the screen an empty
+list.
+
+The wizard's upload step created the display's playlist, added the clip, said "Content uploaded and
+assigned!", and finished on "Your display is paired and content is playing!" — with nothing on the
+screen and nothing anywhere saying a publish was still owed. The Displays page at least shows a
+Publish button and a draft marker; onboarding showed neither.
+
+It now publishes what it assigns, so the wizard's claim is true. Choosing an existing playlist on
+the last step publishes it too, but ONLY if it has never been published — one that already has a
+snapshot may carry draft edits somebody is midway through, and pushing those to every screen using
+it is not a setup wizard's decision to make.
+
+### Fixed — the getting-started checklist was a dead end
+
+It lived only on the dashboard, so following one of its own steps lost it: click "Add some
+content", land on the Content Library, and the thing that sent you there is gone — no step, no
+progress, nothing naming what you were in the middle of.
+
+Worse, its buttons did nothing once you arrived. Only step 1 carried an in-page action; the rest
+fell back to setting the location hash, which is a no-op when it is already the page you are on. So
+on Playlists, the checklist's "New playlist" button sat there doing nothing while the page's own
+New Playlist button opened the dialog.
+
+The checklist now appears on every page its steps link to — including the two it hands you off to
+mid-flow: the page for a playlist you just created, and the screen's own page where the last step
+sends you — and every step acts in place: "Add content" opens
+the file picker, "New playlist" opens the same dialog the page's own button does, and "Assign"
+opens the display's page. Where a step means something different from where you are standing, it
+says so and does that instead: inside an empty playlist it reads "Add content" and fills that
+playlist, and on a screen's own page it reads "Choose playlist", opens the Playlist tab the picker
+is hidden behind, and puts the cursor in it. One shared
+mount rather than a copy per view, and a test derives the affected pages from the steps themselves,
+so adding a step that points somewhere new fails until that page handles it.
+
+Assigning a playlist to a screen no longer counts as finished until that playlist is **published**.
+It used to tick on the assignment alone, so "Get your first screen live" reported 4 of 4 while the
+display sat dark — and the banner that explains why ("Devices will show nothing until you publish")
+was not even rendered: it is built from the device's playlist status at page-render time, and
+assigning only repainted the item list. So it appeared on the next full page load, which is also
+when a completed checklist disappears, making it look as though the warning only showed up once the
+checklist got out of the way. The page now re-renders after an assign, so the warning and the
+outstanding step are on screen together. A layout with no playlist stopped counting too — there is
+nothing to put in its zones.
+
+And an empty playlist no longer ticks "Put content in a playlist". It used to count the moment one
+existed — which is what step 3's own button produces — so the checklist marked itself done and sent
+the user on to "Send it to the screen" with nothing in it. That puts a blank playlist on a display,
+which is the same failure as the onboarding publish bug reached from a different direction.
+
+### Added — the app says what changed after an upgrade
+
+Until now an upgrade was invisible from inside the product. The admin page could tell you a newer
+version existed and offer to install it, the nav grew a badge, Settings showed a number — and
+nothing anywhere said what you got.
+
+A "What's new" panel now appears on the dashboard the first time you sign in after the running
+version changes, with a few plain-language lines about what is different. It is a panel in the
+page, not a dialog in the way, and it is dismissed per version rather than once and forever, so
+the next release is announced too. The full list, including older versions, lives under
+Settings → About.
+
+The notes are written by hand for each release (`release-notes.json`) rather than generated from
+this changelog. This file is for whoever touches the code next; that one is for someone who wants
+to know whether anything they do has changed.
+
+### Upgrading
+
+An ordinary upgrade. If this instance runs 50 or more players on spinning storage and is coming
+from 1.9, read
+[Upgrading 1.9 to 2.0 on slow storage](docs/operations.md#upgrading-19-to-20-on-slow-storage)
+first — it applies to the 2.0.0 boot you may not have taken yet.
+
+## 2.0.0
+
+The 2.0 line, gathering everything from `2.0.0-alpha0` through `2.0.0-beta8`. Those entries stay
+below and are the detailed history; this is what changed since **1.9.x**.
+
+Upgrading from 1.9.x is a normal upgrade — schema migrations run on first boot, nothing needs doing
+by hand, and no existing content, playlist, schedule or device pairing changes meaning. The
+"Upgrading" section at the end of this entry lists the three things worth knowing first.
+
+### Added — slides
+
+A real authoring surface for the thing most people were using a text widget for. `config.template`
+is a view — geometry, style, motion, a slot name per element — and `config.fields` is a record. They
+meet at render time and nowhere else, so editing a headline three months later writes one string
+and leaves the layout untouched. Fifteen signage products were surveyed before this was designed and
+not one of them makes the changeable text part of the template; the single vendor that does is the
+one where editing later genuinely breaks.
+
+- **Elements**: headlines, text, big numbers, photos, rules and panels, plus **clock, date,
+  countdown and QR** moved over from the designer. QR codes are drawn server-side, so a code needs
+  no network at the panel and no third-party image service.
+- **Fonts**, bundled and served with the slide, so a deck renders the same on Android, Tizen,
+  BrightSign and a browser instead of falling back to whatever a panel happened to have. Uploads are
+  supported and carry a licence note, because this server redistributes the file.
+- **Motion** per element, with the editor showing when the last element settles against the slide's
+  own dwell — an animation that outlives its slide reads as a broken player, not a mis-timed one.
+- **Portrait and other shapes**, so a deck can be authored for the screen it will land on.
+- **Picture and video backgrounds**, with a scrim so white text stays readable over both. A video
+  background keeps the still as its poster, so a slow or undecodable clip shows the picture rather
+  than a black rectangle.
+- **Generated slides**, and then **layered** ones: a background plate plus individual objects cut
+  out with real transparency, each landing as its own element with its own entrance, and a headline
+  painted as artwork rather than typeset. The words behind that artwork stay a field, so they remain
+  editable and are read out to anything that cannot see the picture.
+
+The **Designer is marked deprecating** in the navigation. Widgets made with it still play and are
+still editable there; new work belongs in Slides.
+
+### Added — triggers
+
+An external system — a Crestron or Extron panel, a PLC, a button — can put a playlist over whatever
+a screen is showing. **Resolved on the screen itself**, so an alarm still works with the WAN down,
+which is the entire point: a trigger that needs the server is a trigger that fails in the situation
+it exists for. Assigning a trigger is what makes a screen download and pin the target playlist's
+media, so an unassigned trigger is a row in a database that will never fire.
+
+Fired over HTTP or UDP, in four wire shapes, because an integrator should not have to know which
+kind of box is behind the address. Where a player cannot bind a socket, the server can hold the door
+open instead — opt-in, and still gated per device.
+
+### Added — node mesh
+
+Servers can federate: a hub can see a customer's screens, transfer content to them, ask them to
+reboot or reload, and read diagnostics — each under its own grant, with the **customer deciding**
+what they accept and able to see what was done to them. There is a relay tier for topologies that
+need one.
+
+⚠️ Deliberately conservative for this release: enrollment and uplinks are **opt-in**, depth is capped
+at two tiers, and the mesh is read-only for the things it does not yet carry across a link
+(content, schedules, widgets and layouts are not mirrored).
+
+### Added — running the server on the player
+
+A BrightSign can now run ScreenTinker itself: the server as a real Node process, the player in the
+widget beside it. Screenshots, audio-plane muting and LAN trigger ingress all work on that shape.
+Video backgrounds composite behind slide content there too, which took a hardware session to prove.
+
+### Added — proof of play that survives an outage
+
+Players queue what they played while offline and flush it on reconnect, deduplicated by a
+player-minted id so a re-flush cannot double-count. A 20,963-second hole in the record was what
+prompted it.
+
+### Added — workspaces, SSO, and the rest
+
+A second workspace per account; per-organisation SSO/OIDC with DNS-verified domains; HTML bundles
+(`.wgt` / `.zip`) as a playlist item; bulk selection and group actions; playlist inheritance that
+forks instead of overwriting; Japanese localisation, and locales that no longer have to be complete
+to ship. Licences are gated in CI and an SBOM is published with every release.
+
+### Added — a receipt when a payment succeeds
+
+On `invoice.payment_succeeded`, so it covers renewals and portal payments rather than only the first
+checkout, and exactly once per invoice — Stripe retries webhooks until it gets a 2xx and can
+redeliver regardless.
+
+### Fixed — the event loop was really blocked, and the band was lying about it (#307)
+
+Reported from a 70-screen deployment, and it turned out to be three things at once.
+
+**The band was decided by one 20ms bucket per second.** A sampling window holds ~49 records, and the
+99th percentile of 49 records is the maximum — measured on a production instance,
+`avg(max_ms − p99_ms) = 0.000` in every window across two hours. Release required five *consecutive*
+clean seconds, which a working server never strings together, so one instance sat at `elevated` for
+sixteen days with its typical delay at the measurement floor. The band now reads the median of the
+last 15 windows. Replaying the real series: 88.6% elevated before, 99.9% normal after. Maintenance
+is band-gated, so this was also quietly throttling every prune sweep.
+
+**Closing a play searched the device's whole history** — and `LIMIT 1` cannot help when there is a
+sort in front of it. One screen with 377,132 play rows made that query cost **153ms on the event
+loop every time it advanced an item**. The server now remembers the row it opened and closes it by
+primary key, with an indexed fallback for plays it did not open.
+
+**Plays were started and never closed** — 36,096 open rows in the database this was investigated
+against, the oldest three months old, and that set was what the query above had to search. (That
+figure is one instance's open set, not a ceiling: a 73-device field install upgrading to 2.0.0 had
+494,000. See 2.0.1.) A play now expires once it has been open longer than its
+content could have run, closed at its ceiling so a dark screen is never credited with playback.
+
+### Fixed — the trigger form was never styled
+
+It used a CSS class that does not exist, so it rendered as a bare stack of labels appended to the
+page. Rebuilt as a proper dialog, and unpublished playlists are no longer offered as a target —
+the server refuses them, so listing them only meant filling in the form to be told no.
+
+### Upgrading
+
+- **Nothing to do by hand.** Migrations run on first boot. The #307 index is created then, on a
+  1.4M-row table, in about 150ms.
+- **The mesh is off unless you turn it on.** No server joins anything by default.
+- **The Designer still works.** It is marked deprecating, not removed, and existing widgets are
+  unaffected.
+
+## 2.0.0-beta8
+
+A production bug from a 70-screen deployment, the trigger form finally looking
+like the rest of the product, and a receipt when somebody pays you.
+
+### Fixed — the event loop was really blocked, and the band was lying about it (#307)
+
+Three defects, found by measuring a production server rather than reading the code.
+
+**The band was decided by one 20ms bucket per second.** A sampling window is one second at 20ms
+resolution, so the histogram holds ~49 records — and the 99th percentile of 49 records **is the
+maximum**. Measured over two hours of production: `avg(max_ms − p99_ms) = 0.000`, exactly, in every
+window. So the band tracked the worst single bucket each second, and release required five
+*consecutive* clean seconds, which a server doing real work never strings together. One instance sat
+at `elevated` for sixteen days with its typical delay pinned at the 20ms measurement floor. The
+band now reads the median of the last 15 windows; a lone outlier cannot move a median. Replaying the
+real series: 88.6% elevated before, 99.9% normal after. A sustained storm still reads critical, and
+a single catastrophic window still escalates immediately.
+
+That also mattered beyond the label: maintenance is band-gated, so while the band was wrongly
+elevated, every prune sweep was being skipped most of the time.
+
+**Closing a play searched the device's whole history.** The query ordered every open row for a
+device and took the first — and `LIMIT 1` cannot save you when there's a sort in front of it. One
+production screen has 377,132 play rows; that query measured **153ms, on the event loop, every time
+that panel advanced an item**. Exactly the signature in the telemetry: 100–300ms spikes in pairs,
+about ten seconds apart. The server now remembers the row it opened and closes it by primary key,
+with the search kept as an indexed fallback for plays it didn't open.
+
+**Plays were started and never closed** — 36,096 open rows in the database this was investigated
+against, the oldest from June. A play now expires once it has been open longer than its content
+could have run, at its ceiling, so downtime is still never credited as playback. (Read that count
+as one instance's backlog, not the size of the problem: a 73-device field install upgrading to
+2.0.0 had 494,000 open rows. See 2.0.1.)
+
+Rehearsed against a copy of a real production database: 36,096 open rows → 11, in about three
+minutes, with no downtime credited and the sweep costing 0ms in steady state.
+
+### Fixed — the trigger form was never styled
+
+It used `.modal-backdrop`, a class defined nowhere. The app's modal CSS is `.modal-overlay`. So it
+got no positioning, no centering, no dimming and no card — it appended a stack of bare labels to the
+end of the page. Nothing errored, which is why it survived: it read as an unfinished feature rather
+than as a typo.
+
+Rebuilt on the skeleton every other dialog uses, grouped into five sections, with the sources next
+to the token they qualify and Enabled beside Save. Escape, the close button and the backdrop all
+dismiss it now — Cancel used to be the only way out.
+
+### Changed — unpublished playlists are no longer offered to a trigger
+
+The server refuses a trigger pointing at a playlist with no published snapshot, and it is right to:
+such a trigger syncs with no items and renders nothing, forever, silently. But the dropdown listed
+every playlist, so the normal way to meet that rule was to fill in the whole form and be told no.
+The one already saved on a trigger stays listed even if it has since been unpublished — dropping it
+would silently re-point that trigger at whatever happened to be first.
+
+### Added — a receipt email when a payment succeeds
+
+On `invoice.payment_succeeded`, so it covers renewals and portal payments rather than only the
+first checkout. Sent **exactly once per invoice**: Stripe retries webhooks until it gets a 2xx and
+can redeliver regardless, and nothing in the Stripe route deduped before — the other handlers only
+survived it by being idempotent updates. The claim is taken before the send, and the send happens
+after the acknowledgement so a hung mail transport cannot hold a webhook open.
+
+Zero-amount invoices (trials, full coupons, proration credits) do not produce a receipt, and neither
+does an invoice that cannot be tied to an account.
+
+## 2.0.0-beta7
+
+The slide editor absorbs most of what the designer could do, and gains two things nothing in signage
+does: slides generated as separately animated cut-out layers, and video behind the words.
+
+### Added — clock, date, countdown and QR are slide elements
+
+Four kinds moved out of the designer, which is now labelled **Designer (deprecating)** in the nav
+rather than removed: widgets made with it still play and are still re-editable there, and pulling
+the entry would strand them in the raw HTML editor.
+
+The security argument is the whole reason this could be done at all. The designer implements these
+by building a **script per element**, interpolating an element's configuration into JavaScript
+source — `setInterval` with a date pasted in, `fetch` with a URL pasted in — so operator input
+becomes program text. The slide renderer has spent its life keeping script out of its output.
+
+Here the script is a **constant**: byte-identical in every document, with no interpolation of any
+kind. Configuration reaches it as `data-` attributes through the HTML escaper, is read with
+`getAttribute`, and is written with `textContent`, never `innerHTML`. There is no path from a
+slide's configuration to executed code, and the tests assert it directly — the emitted script is
+compared byte-for-byte against the constant.
+
+Formats are allowlists rather than format strings, time zones and locales are structural regexes,
+the countdown target is normalised to epoch milliseconds, and a QR payload only ever becomes module
+coordinates. QR codes are drawn server-side from the already-bundled `qrcode` library, so a code
+needs no network at the panel and no third-party image service.
+
+Worth knowing if you have used it: **the designer's QR was never real.** Its editor drew a box with
+the word "QR" in it, and its publish path has no `qr` case at all, so the element vanished entirely
+from the published widget.
+
+### Added — layered slides: generated objects, cut out and animated separately
+
+Describe a scene and get back a background plate plus individual objects with real transparency,
+each landing as its own element with its own entrance — rather than one flat picture with text on
+top.
+
+The pieces are **generated**, not extracted. Segmenting an object out of a finished image needs a
+model, which means a native dependency and a ~100MB asset on a product that deliberately dropped
+`sharp`; it is also worse at the job, because an object composited onto a soft background has no
+clean boundary and the edges come back ragged around exactly the thin features a viewer looks at.
+Instead each object is generated alone on a flat chroma backdrop and keyed out in pure JavaScript.
+
+A bad cut-out still looks like a cut-out, so two measurements decide whether one is kept: how far
+the backdrop's border wanders from its median, and whether the key removed anything at all. An
+object that fails is skipped, named, and reported — a slide comes back with three layers or two, and
+the difference is never something an operator has to notice for themselves.
+
+### Added — lettering: a generated headline that is painted, not typeset
+
+Brush script and painted display type, the things no bundled font can do. **The words stay a
+field**: the editor shows them, a regenerate is asked for them, and they are emitted as the image's
+alt text, so a slide whose headline is a picture is still readable to anything that cannot see it.
+It can never be cropped, and it falls back to real type if it cannot be generated — a slide whose
+whole purpose is to say one thing must not come back saying nothing.
+
+Image models misspell, and nothing can verify that the picture spells the headline, so the operator
+is told to check it every time.
+
+### Added — video backgrounds
+
+The background layer can be a clip, sitting in front of the still rather than replacing it: the
+still becomes the video's `poster`, so what shows while the video loads — and for good on a panel
+that cannot decode it — is the picture rather than a black rectangle.
+
+Always muted, and not configurable: autoplay without a gesture is only permitted for muted media,
+the player already decides which zone owns the audio, and scenery that talks over the next zone is
+a support call.
+
+**Proven on a live XT245.** With hardware z-order a video decodes onto a plane the DOM sits behind,
+so a background would play *over* the headline — the inverse of a background. The renderer emits
+`hwz="off"`, and a probe on real hardware confirmed DOM composites over a playing video (three
+captures seconds apart, the overlay steady while the footage moved). Every other platform ignores
+the unknown attribute.
+
+### Added — `fit` on slide images
+
+`cover` fills the box and crops the overflow, which is right for a photograph and wrong for a
+cut-out, where the crop slices through the object itself. `cover` remains the default and slides
+authored before this render byte for byte as they did.
+
+### Fixed
+
+- A QR added with no styling was a **solid white square**: its modules inherited the element colour,
+  which defaults to white, on the white panel behind them. Modules now have their own colour
+  defaulting to black, and a deck warning catches an unscannable pair at authoring time rather than
+  on a wall.
+- Per-element configuration was **silently dropped on every save**. The deck writer rebuilds each
+  stored element key by key, so a clock would have lost its time zone the next time the deck was
+  touched for an unrelated reason, with the editor still showing the operator's own choice until
+  they reloaded.
+- Generated objects landed **under the headline**, and a headline as short as "20% OFF" wrapped into
+  the subhead. The text band is now reserved server-side, and the geometry assumes the wrap rather
+  than the intent.
+
+## 2.0.0-beta6
+
+Two things that had never worked on a BrightSign now do, both proven on a live XT245 rather than
+argued from the code.
+
+### Added — the server can hold the LAN trigger door for players that cannot
+
+Triggers are player-side by design so an alarm survives the WAN going down — but that needs the
+player to bind a socket, which needs a Node context. BrightSign's server-on-a-player build creates
+its widget **without** `nodejs_enabled` (deliberately: a Node-enabled widget "is NOT Node", and
+hosting the server there cost four boot failures), so the player has no `require`, `dgram` and raw
+`http` both throw, and no listener ever binds. Measured on hardware: trigger ports 7847, 8079 and
+8099 all closed. **Enabling triggers on such a device did nothing whatsoever.** Tizen is in the same
+position and says so honestly in `capabilities.js`.
+
+The server on that board is real Node, so it can hold the door and hand what arrives to the player
+over the socket they already share. On a server-on-a-player the offline guarantee is untouched —
+server and player are the same hardware.
+
+* ⚠️ **The player still decides.** The server resolves only *which device* a payload is addressed to,
+  by its secret, and forwards the wire text verbatim; accept/reject stays in the one resolver both
+  sides already share.
+* ⚠️ The secret sweep **does not break early** (reply time would otherwise leak a device's position
+  in the list), and "no such device" and "wrong transport" answer identically, so an unauthenticated
+  LAN port cannot be used to enumerate secrets or configuration.
+* **Off unless `TRIGGER_INGRESS=1`**, and still gated per device by the same `accept_http` /
+  `accept_udp` flags an operator already sets. Set `TRIGGER_INGRESS_UDP_PORT` to move the port.
+
+Verified on an XT245: a real UDP datagram across the LAN put the alarm on screen; the clear token
+restored the playlist; `GET /api/trigger?secret=…&token=…` did the same.
+
+### Fixed — screenshots on a BrightSign server-on-a-player
+
+⚠️ **The BrightSign screenshot branch had never run on real hardware.** It was gated on
+`device.platform === 'brightsign'`, and a BrightSign reports **`Chrome 148`** — its player is the
+web player inside a Chromium widget. So the special-case, *including the pre-existing snapshot
+queue*, never executed: a capture request was accepted, did nothing, and left the previous frame in
+place. On our test unit that frame was ten days old.
+
+The gate is now what the server can actually do (`@brightsign/screenshot` loads in this process)
+plus a loopback check on the device, since we capture our own framebuffer and must never send it
+labelled as another screen.
+
+⚠️ **If you self-host and rely on BrightSign screenshots, they have not been working.** There is no
+data to repair — no capture was ever taken — but the dashboard's "last screenshot" for those devices
+is as old as whenever it last worked by another route.
+
+Also new: `/api/status` reports **`screen_capture`**, because the absence of a capture is otherwise
+invisible — the request succeeds and nothing happens.
+
+## 2.0.0-beta5
+
+LAN triggers now work on Android. Until this release they had **never once worked on an Android
+panel** — three separate defects, each invisible to the test suite, all found by firing a real
+trigger at a real device for the first time.
+
+### Fixed — the overlay was built on a network thread, so it was never visible
+
+`TriggerListeners` reads its datagram (or HTTP request) on its own thread and called straight
+through to `TriggerOverlay.show()`, which constructs Views and attaches them. The failure mode was
+the worst kind: no crash, no log. `dumpsys` showed the box really was a child of the layer — and
+measuring **0×0**, because it never got a layout pass.
+
+So the trigger "fired", the controller logged it, the lease ran, the state machine believed a screen
+was covered, and the panel carried on playing its playlist. That is the reported "triggers are
+inert", exactly. Every view touch now goes through the main-thread handler the class already had.
+
+### Fixed — UDP was dead whenever no multicast group was configured (the default)
+
+⚠️ **`org.json`'s `optString` returns the STRING `"null"` for a JSON null on Android.** The server
+sends `multicast_group: null` when unset, and that string reached `InetAddress.getByName()` from
+*outside* `joinGroup`'s try — so it threw all the way out and killed the whole listener thread,
+including the unicast and broadcast paths that never needed a group at all.
+
+⚠️ **The same trap hits two neighbours, and one is security-relevant.** `secret: null` became the
+string `"null"`, and a fire is refused only when the device secret `isNullOrEmpty()` — which
+`"null"` is not. **A device with trigger listeners enabled and no secret set accepted
+`ST1 null <token>` instead of refusing everything.** `clear_all_token: null` likewise made the
+literal token `"null"` clear every active trigger.
+
+**If you have trigger listeners enabled, set a secret** (`POST /api/devices/:id/trigger-secret`).
+Devices on this release refuse every fire until one is set, which is what should always have
+happened.
+
+⚠️ A JVM test cannot reproduce any of this: the reference `org.json` returns the *fallback* for a
+JSON null, and only Android's returns `"null"`. That is why the suite was green. The same trap
+already cost this project once, in the `remote_url` download path.
+
+### Fixed — trigger media was never downloaded on Android
+
+The adopt site's comment says the media "is pinned by the same message that pins the base playlist".
+True for the **web** player, whose service worker gets trigger URLs appended by
+`lib/device-triggers.js`. Android has no service worker — it downloads through `DownloadCoordinator`,
+driven by a loop over `assignments` **only**, and trigger items live in a separate array that never
+reached it.
+
+So assigning a trigger to a device whose base playlist was unchanged downloaded nothing, and the
+fire rendered its black box with no media inside: the "black screen" half of the report.
+
+### Verified on hardware
+
+HTTP POST raw `ST1` line → overlay on screen with its video playing; clear token → base playlist
+restored; `GET /trigger?secret=…&token=…` → overlay again. The built-in UDP self-test reports
+"this player receives its own group", proving the receive path. An external UDP fire could not be
+staged through an emulator's NAT, so that specific path remains unproven end to end.
+
+## 2.0.0-beta4
+
+A one-fix release, and the fix is to beta3's own inference. Worth reading if you run beta3.
+
+### Fixed — a stranded play could be credited with hours it did not play
+
+beta3 added a repair that closes a play left open by an outage, using the start of the play that
+followed it. Sound reasoning — but the guard against an implausible span was a blanket 24 hours,
+and that is not tight enough. Deployed to our alpha instance, it closed a **20-second clip with a
+duration of 31,368 seconds** (8h43m): the device had been offline overnight with no backfill
+available, so the "next play" was the following morning and the entire gap was credited to the item.
+
+⚠️ **If you deployed beta3, check for this.** Any row whose `duration_sec` far exceeds the real
+length of its content was inferred wrongly and should be reverted to open:
+
+```sql
+SELECT p.id, p.duration_sec, c.duration_sec AS real_length
+  FROM play_logs p JOIN content c ON c.id = p.content_id
+ WHERE p.ended_at IS NOT NULL AND c.duration_sec > 0
+   AND p.duration_sec > c.duration_sec + 60;
+```
+
+The ceiling now comes from the item's **own length** where we know it — a 20-second clip cannot have
+played for eight hours whatever the gap says — with a short grace for rounding and stalls, and a
+modest absolute cap where the length is unknown (widgets, images with an operator-set dwell). Beyond
+either, the row stays open, which is honest about what we do not know. A genuinely long item still
+closes correctly: a 40-minute video is allowed its 40 minutes, which a small fixed cap would have
+wrongly refused.
+
+The lesson is the one the rest of that module already followed and this guard did not: a missing
+duration reads as missing, but an invented one reads as fact — and would be billed as fact.
+
+## 2.0.0-beta3
+
+Proof-of-play survives an outage now. Found by accident: a host-maintenance window took our alpha
+instance down for 5h49m while an Android TV player was mid-soak against it. The screen played
+faultlessly the whole time — and the server recorded none of it.
+
+### Fixed — plays during an outage are no longer thrown away (#299)
+
+Playback is offline-native; reporting was online-only. Every player guarded its proof-of-play emit
+on a live socket and returned, so a play happening with the link down was discarded where it
+occurred — not queued, not retried. `play_logs` had a 20,963-second hole where ~1,040 plays should
+be, and nothing anywhere reported the loss. For a product where proof-of-play is frequently the
+billable artifact, an outage silently erased the evidence that content ran.
+
+Players now keep finished plays in a bounded, persisted queue and replay them on reconnect with
+their **real** timestamps. Three things this had to get right:
+
+* ⚠️ **Complete plays, not replayed start/end pairs.** The server closes a play by finding "the most
+  recent open row for this device+content", so a backlog replayed alongside live playback could
+  close the row the player has open *right now*. A finished play carrying both timestamps inserts
+  in one shot and cannot race anything.
+* ⚠️ **The server had to learn to accept a time.** It stamps rows `strftime('%s','now')` — correct
+  for live plays, useless for old ones. Replaying through it would have recorded a thousand plays
+  as all happening in the seconds after reconnect, which is *worse* than the gap because it reads
+  as real data. And because a panel's clock cannot be trusted (a dead RTC reports 1970), times
+  outside a sane window are **dropped rather than clamped** into looking plausible.
+* ⚠️ **Backfill bypasses the insert throttle.** `PLAY_LOG_MIN_GAP_MS` caps proof-of-play at one row
+  per device per 2s to bound a runaway live player. Applied to a flush it would have decimated the
+  backlog to roughly one surviving row per 2s of flush time — silently reintroducing the same loss.
+  The batch is bounded instead.
+
+Replay is idempotent via a player-minted id with a partial unique index, so a flush that dies
+before its ack cannot double-count: trading an under-report for an over-report is not a fix.
+Entries clear only on the server's ack, and the queue is bounded so a panel offline for weeks
+cannot fill its storage — evictions are counted rather than silent, which is how the original bug
+hid.
+
+Covers every player: one shared queue serves the web player (and therefore BrightSign and Fire
+TV/Vega) and is copied byte-identically into the Tizen `.wgt`; Android has its own Kotlin port with
+the wire shape pinned by tests on both sides.
+
+### Fixed — the play an outage stranded is closed from the play that followed it
+
+One row per outage was beyond the backfill's reach: the item in flight when the link dropped had
+its start recorded live and its end lost, so it sat open forever with no duration. The queue cannot
+replay it without duplicating the row that already exists.
+
+But the evidence was already in the table — a device advancing to another item proves the previous
+one ran until that moment, so the successor's `started_at` is the predecessor's end. This also
+repairs rows stranded by **past** outages and reboots, on the first play after upgrading.
+
+* ⚠️ **Same zone only.** A multi-zone device plays several items at once, so the next row for the
+  device may belong to a different zone that started while this one was still on screen. Closing
+  against it would cut the play short.
+* ⚠️ **Never the item playing now** (it has no successor because it has not ended), and **never
+  across an implausible span** — a panel that played one item, went dark for a week and returned
+  must not have a week of runtime attributed to it. Past the cap the row stays open and honest.
+* `completed` is deliberately left alone: advancing is evidence it *played* that long, not that it
+  ran to its end — an error-advance looks identical from here.
+
+## 2.0.0-beta2
+
+A player release: two defects reported against 1.9.40 on Android TV, both fixed here. They came
+from one operator running five TVs, and both have the same underlying shape — the video path
+trusted a signal that a wedged or reconfiguring decoder never sends.
+
+### Fixed — a frozen playlist now recovers itself (#297)
+
+A video advanced the playlist in exactly two ways: ExoPlayer reported `STATE_ENDED`, or it reported
+a playback error. A decoder that simply **wedges** reports neither — it stays `READY`, the player
+still believes it is playing, and the position stops moving. Nothing in the app ever looked at the
+position, so the playlist stopped for good and only restarting the app recovered it.
+
+* A stall detector now watches playback position instead of waiting for an event, and routes a
+  wedge into the same self-heal an error already used.
+* ⚠️ **The dangerous half of a watchdog is the false positive**, not the miss: firing on a paused
+  wall follower, a group-sync member waiting for its slot, or a stream that is legitimately
+  buffering would skip content nobody asked it to skip. A stalled item is only reported while the
+  player claims to be playing, buffering gets a longer allowance than a stuck `READY` state, and
+  a report resets the detector so one wedge cannot advance twice. Most of the nine new tests are
+  about *not* firing.
+
+### Fixed — the green screen at the switch to the next video (#298)
+
+`setupExoPlayer()` disabled Media3's shutter, with the comment "hold the last frame instead of
+flashing black during a reset/prepare". It does not hold the last frame — it **uncovers the video
+surface**, and with `surface_type="texture_view"` the buffer behind that surface during a decoder
+reconfiguration is whatever the SoC left there. On several TV chipsets that is uninitialised YUV,
+which paints solid green.
+
+That accounts for every detail of the report: TVs only, at the switch to the next item, unaffected
+by re-encoding every clip to identical settings (the codec is torn down and re-created on each
+`prepare` regardless of resolution), and gone when the playlist loops a single item.
+
+* The freeze-frame the old comment promised is now painted explicitly, into the ImageView stacked
+  above the video surface, and cleared on `onRenderedFirstFrame` — the only trustworthy signal that
+  the decoder is putting real pixels on screen.
+* When there is no frame to hold, the shutter is re-armed, so a brief black hold remains the worst
+  case rather than green.
+* The cover reuses one half-size bitmap. Capturing at full resolution on every switch would
+  allocate ~33MB a time on a 4K panel — on exactly the memory-constrained devices already failing.
+
+## 2.0.0-beta1
+
+First beta of the 2.0 line. The alpha series proved the shape; this is the point at which the
+feature set stops moving and the remaining work is verification. Two things landed since alpha8
+that change what the product can do — HTML bundles as playable content, and a way to actually
+create a workspace — alongside a run of defects that only show up in front of a person.
+
+⚠️ **Two known gaps carried into beta deliberately**, both documented where they live rather than
+left to be discovered: a flattened HTML bundle cannot `fetch()` its own files at runtime or stream
+embedded video, and Tizen's offline bundle path has never run on a real panel
+(`docs/player-parity.md` says which platforms are measured).
+
+
+### Added — you can create a second workspace
+
+Workspace scoping, invites, member roles, the switcher and the JWT context were all built and
+working. What did not exist was any way to make one: a `workspaces` row was written in exactly
+two places — at signup and by a platform admin — both hardcoded to the name "Default", and the
+tenant-facing router had GET, PATCH, members and invites but no POST.
+
+Production showed 313 organizations with exactly one workspace each. That read like nobody wanted
+a second one; it actually meant nobody could have one.
+
+* `POST /api/workspaces` creates one in an organization **you administer**. The org is resolved
+  from your own membership; an `organization_id` in the body is honoured only after confirming you
+  are org_owner or org_admin there — otherwise the endpoint would mint a workspace inside someone
+  else's tenant, which every workspace-scoped route downstream would then treat as legitimately
+  theirs.
+* ⚠️ **An org role is required, not `can_admin`.** A workspace_admin administers one workspace;
+  letting that mint siblings would let anyone handed a corner of a tenant grow it. The creator is
+  added as workspace_admin, or they would own a workspace they could not administer or invite into.
+* A per-org cap (`MAX_WORKSPACES_PER_ORG`, default 25) stops a scripted caller filling the switcher.
+* The switcher gains a "New workspace" control — always visible in the single-workspace view, since
+  hiding the only route to an invisible capability behind a hover is how this happened in the first
+  place — and a row at the foot of the dropdown.
+
+### Added — HTML bundles (`.wgt` / `.zip`) play as a playlist item
+
+Upload a W3C widget package or a plain zip of `index.html` plus assets, and put it in a playlist
+like any other content. Asked for by a BrightSign community contact; it plays on all four players
+and survives an outage on three of them.
+
+* A bundle is an **ordinary content row**. The archive is stored exactly as uploaded and is never
+  extracted on the server, so it inherits revision-keyed re-download, resumable delivery, the mesh,
+  storage quota, replace, folders and expiry — and zip-slip has no target on our disk.
+* Validation reads only the zip's central directory. Refuses traversal (after normalising
+  backslashes, or a Windows-built archive escapes), symlink entries, encryption, unsupported
+  compression, duplicate names, non-UTF8 names, declared bombs, and an archive with no entry point.
+  A `.wgt`'s `config.xml` `<content src>` wins over `index.html`.
+* The server flattens it into one self-contained document, which is what makes it playable
+  everywhere on day one — every player already mounts an iframe and none of them can unzip.
+* **Offline** on web, BrightSign and Vega (the render is fetched same-origin and mounted as
+  `srcdoc`, so it lands in the service worker's Cache API) and on Android (its own render store).
+  ⚠️ Tizen's offline path is implemented but has **never run on a panel**; its online path is
+  unchanged. See `docs/player-parity.md`.
+* **Limits, stated plainly:** a flattened bundle cannot `fetch()` its own files at runtime and
+  cannot stream embedded video. Both are traded away for playing on every platform.
+
+### Fixed — an unrecognised media type stopped the playlist dead
+
+On the web and Android players an item whose `mime_type` matched nothing mounted nothing **and
+armed no advance timer**: no media element, so no error event, and neither watchdog re-arms the
+rotation. One such item blanked the screen and froze the loop until a socket push or a restart.
+Reachable in a single call, because `POST /api/content/remote` stores `mime_type` verbatim from the
+request body with no validation. Tizen degraded better but still retried a broken item forever in a
+single-item playlist. All three now skip.
+
+### Fixed — "Add Background Image" and "Choose Logo" did nothing on a directory board
+
+Reported as "someone couldn't upload a background picture", and that is exactly what it
+was. The image picker referenced `esc()` — added by the escaping sweep on 2026-08-11 and
+never imported into `views/widgets.js` — so opening the dialog threw ReferenceError before
+it could attach itself to the page. The button was inert, silently, and the promise behind
+it never settled.
+
+The same missing import broke two more things on the same day, in the same file:
+
+* the **Weather** widget's config form could not be opened at all (`esc(config.location)`)
+* the **Social** widget's config form could not be opened at all (`esc(config.query)`)
+
+Verified against the 1.9.x tree in a real browser: Weather and Social render an empty form
+and the picker never opens, all three with `esc is not defined`; adding the import fixes
+all three and leaves no page errors.
+
+Nothing caught it. The reference resolves only when the line runs, so a syntax check
+passes; every view still rendered, because all three calls sit inside click handlers; and
+the whole suite stayed green. `test/frontend-shared-helpers.test.js` now fails when a
+frontend file calls a shared helper it has not imported, and the browser smoke opens every
+widget type's form.
+
+**This is live on hosted (v1.9.36, since 2026-08-14) and on the 1.9.x branch — it needs the
+same one-line fix there.**
+
+### Added — upload a picture from inside the picker
+
+The dialog was read-only, and its empty state said so: "Upload images first from Content
+Library". Choosing a background meant abandoning a half-filled widget form, crossing to
+another view to upload, and coming back. It now takes a file directly — a button or a drop
+— uploads it into the library, and returns it selected.
+
+### Fixed — the image picker could show nothing while the library was full of images
+
+It asked for `/content` with no query, which returns the 100 newest rows of **every** type,
+and filtered to images afterwards. A workspace whose last hundred uploads were videos saw
+an empty picker, and the search box could not reach them either because it only ever
+filtered what had already been fetched. Both the widget picker and the slide editor now ask
+the server for images, and for its maximum.
+
+### Fixed — picking an image threw the grid back to the top
+
+Every selection re-rendered the whole list, which re-fetched each authenticated thumbnail
+and reset the scroll position. Choosing a fourth background meant scrolling down four times.
+
+### Fixed — a refused upload said only "Upload failed"
+
+The server is specific — unsupported file type, storage limit, no workspace — and
+`uploadContent()` replaced all of it with a shrug. It now reports what the server said.
+
+## 2.0.0-alpha8
+
+### Fixed — the slide Motion tab could not be used
+
+Delay and duration each moved one step and stopped. Both sliders triggered a
+repaint that rewrote the panel they live in, destroying the control being dragged
+on its first input event — the same defect the Style tab had, still present here
+because that tab was fixed and this one was not touched.
+
+Motion now matches Style: grouped controls, a slider **and** a number box for each
+value, and the entrance replays when you let go of a slider rather than
+restarting on every pixel of the drag.
+
+### Fixed — typing a headline lost the caret after every character
+
+The text field on the Content tab had the same problem, in the place it shows
+worst: each keystroke rebuilt the panel, so the textarea was replaced and the
+cursor went with it. Typing past the first letter was not possible.
+
+### Added — the Motion tab shows timing against the slide
+
+Delay and duration mean nothing on their own: 0.8s is unnoticeable on a
+ten-second slide and most of a two-second one. The tab now draws where the
+selected element lands against the slide's dwell, with the other elements behind
+it for context, and says plainly when something will still be animating as the
+slide is replaced — which on a wall reads as text that never arrives.
+
+### Internal
+
+The rule those three bugs broke is now enforced rather than remembered: a guard
+fails the build if any live-value handler triggers a full repaint, if the two
+update paths are collapsed back together, if a typed number commits on every
+keystroke, or if the editor stops taking its fonts and animations from the
+server. It found the third instance itself.
+
+## 2.0.0-alpha7
+
+Two fixes and one addition, all found by using the thing.
+
+### Fixed — the slide Style panel could not be used
+
+Every slider called a repaint that replaced the panel's own HTML — including the
+control being dragged. The slider you were holding was destroyed on its first input
+event, so it moved one step and stopped, and the colour picker closed the moment you
+picked a colour. It looked fine and did nothing.
+
+Value changes now update the stage, the thumbnail and the header and leave the
+control under the pointer alone. Structural changes — adding, deleting, reordering —
+still repaint everything, because the list of things to inspect has changed.
+
+While it was open, the panel was rebuilt around that: every value has a slider **and**
+a number box, so you can drag to find a look or type to match one; controls are grouped
+into Position & size, Type and Appearance; weight and align are buttons rather than
+dropdowns; and the colour control is a real swatch instead of the plain white bar a
+native colour input renders as until its internals are styled.
+
+### Added — picture backgrounds
+
+A slide can sit on a photo from your content library, with a **Dim** control.
+
+The dim is not decoration. The photo is whatever you had, its contrast varies across
+the frame, and white text over a bright sky is unreadable from the far side of a lobby.
+It renders as a scrim between the photo and the words — dimming the photo needs image
+editing, dimming the text ruins it. The background colour stays underneath, because
+that is what shows while the photo downloads and what stays if it never arrives.
+
+### Fixed — a failed BrightSign server install now says why
+
+When a payload install failed part way, the log on the device simply stopped and the
+reason went to two places nobody can reach: a status listener bound to localhost, and
+an on-screen buffer that is gone at the next reboot. The one file a technician can
+fetch remotely contained everything except the cause.
+
+Worse, the tree replace is not atomic. Dying part way leaves a mixture — the version
+file already updated while half the modules are the old ones — and that tree boots,
+because a failed update is deliberately survivable. The box then reports a version
+nobody built.
+
+Failures are now written to that log, naming the file the install died on. A marker
+records that a replace was interrupted, and the next boot reinstalls rather than
+trusting the version number.
+
+⚠️ On an existing player this takes **two reboots** to arm: the launcher ships inside
+the payload, and a new launcher only runs from the boot after it is installed.
+
+### Note on upgrading
+
+Still a pre-release, so Android players on the stable channel will not take it.
+
+## 2.0.0-alpha6
+
+Slides. A deck of PowerPoint-style pages you build in the dashboard, each element with its own
+entrance, published as a playlist your screens already understand.
+
+### Added — a slide editor
+
+**Slides** in the sidebar. Build a deck, drag elements around the stage, and give each one an
+entrance — rise, drop, slide, zoom, wipe or fade, with its own delay and duration. Headline, text,
+big number, photo, rule and panel. Three property tabs per element plus one for the slide itself.
+
+Publishing emits one slide widget per page and a playlist that orders them, so nothing downstream
+had to learn a new content type: scheduling, groups, inheritance and every player keep working on
+objects that already existed.
+
+**Editing text does not rebuild the layout.** A slide keeps its geometry, style and motion in a
+*template* and its words in a *record*, joined when the slide renders. That is what makes coming
+back in three months to change a number actually work — and it is the thing every other widget in
+this product gets wrong by baking content into its HTML.
+
+**Saving is not publishing.** Somebody part-way through a deck has every right to a slide that does
+not add up yet, and nothing reaches a wall until they say so.
+
+### Added — fonts, finally
+
+Five families ship with the server — Inter, Archivo, Oswald, Bitter and JetBrains Mono — so a slide
+looks the same on Android, Tizen, BrightSign and a browser. Before this there was no font pipeline
+at any layer: the old designer offered "Impact", which exists on none of those, so the same slide
+rendered differently on every panel.
+
+All five are under the SIL Open Font License, which permits the redistribution this product
+performs — every screen showing a slide downloads the face from your server.
+
+You can **upload your own** for a brand face: `.woff2`, `.woff`, `.ttf` or `.otf`, checked by
+content rather than by filename. Delete one later and slides using it stay readable in a bundled
+family rather than falling back to whatever the panel happens to have.
+
+### Fixed — an Android bug that would have made decks unusable
+
+Playlist continuity was keyed on content id, and widget items have none. In a playlist made of
+slides every item looked identical, so any edit snapped playback back to the first slide — and then
+returned without re-rendering, leaving the old slide on screen with the index pointing elsewhere.
+Fixed with an identity that includes the widget, plus a re-render when only the revision moved.
+
+### Fixed — releases were shipping short, silently
+
+CI never built the two BrightSign artifacts that make a player run the **server** rather than just
+the player. Every release since they existed went out without them and nothing said so. They are
+built in CI now, the payload manifest ships beside its payload, and `finalize-release.sh` refuses
+to finish if any expected asset is missing.
+
+Release tarballs also carried `server/.claude/` tooling files — all zero bytes, nothing leaked, and
+now excluded and caught by the credential gate.
+
+### Added — naming your servers
+
+Every server in a mesh has a name its peers display. It defaulted to the machine's hostname and
+there was no way to change it — the setter existed and had no callers, so a lab of three servers
+was three boxes all called `i9`. Rename under **Servers**; the name reaches every peer on the next
+report, and travels upward only, so nobody above can rename your server for you.
+
+### Added — remote diagnostics, verified content, and passing content on
+
+An MSP can see *why* a customer's screen is unhealthy, under its own grant, with error payloads
+reduced to the message and a URL's origin — never the query string. Content is checked before it is
+served, by size every time and by digest when the file has actually changed. And a relay can pass
+content on to a server below it when all three parties agree.
+
+### Note on upgrading
+
+Still a pre-release, so Android players on the stable channel will not take it. The mesh remains off
+unless `MESH_ACCEPT_ENROLLMENT` or `MESH_ALLOW_UPLINK` is set.
+
+## 2.0.0-alpha5
+
+The mesh stops being read-only. A hub can now send content to a customer's server and ask its
+screens to do things — and every one of those is a *request* the receiving server decides on, using
+its own grant, its own disk and its own rules. Servers also finally have names.
+
+### Added — a hub can send content to a customer's server
+
+Content pushed from a hub is offered, not delivered: the receiving server checks the grant its own
+operator gave, the disk budget that grant carries, and the free space it actually has, then accepts
+or refuses and says which. Transfers resume where they left off rather than restarting, which is
+what makes a 400 MB video survive a site link that drops. Abandoned transfers are swept.
+
+One campaign can be sent to many customers at once. The batch re-checks visibility and permission
+per server, so it cannot reach a customer a single send could not.
+
+### Added — a hub can ask a customer's screens to reboot, reload or change settings
+
+Under a separate grant, with a deliberately smaller command set than a local operator has. The
+consent screen says "reboot, reload, change settings on screens", so `shell` and `install_apk` are
+not in it — a consent screen that overstates what it grants is worse than none.
+
+### Added — the customer can see what was done to them
+
+Every write a hub performs against a customer's server is recorded on that server, visible to its
+own operator, and cannot be edited or suppressed from above. An MSP relationship a customer cannot
+audit is not one they consented to.
+
+### Added — a relay tier
+
+A hub can pass content on to a server further down, but only when all three parties agree: the
+content's owner marked it relayable, the relay operator opted that client in, and the receiving
+server's own grant allows it. None of the three is substitutable for another. Telemetry travels the
+other way through a relay under the same rule.
+
+### Added — topology, and names for the servers in it
+
+The Servers view draws the estate as a tree: direct neighbours, servers further away, how many hops
+a screen's data crosses to reach you, and which server relayed it. Previously a three-tier mesh was
+indistinguishable from a two-tier one.
+
+And servers can be named. The name defaulted to the machine's hostname and there was no way to
+change it — the setter existed and had no callers, so a lab of three servers was three boxes all
+called `i9`. An instance owner can now rename theirs under **Servers → Rename**; the name reaches
+every peer on the next report. It travels upward only: nobody above can rename your server.
+
+### Added — remote diagnostics, under their own grant
+
+A hub can see why a customer's screen is unhealthy, not merely that it is. Error payloads are not
+forwarded wholesale: what travels is the message, the fingerprint, and a URL's origin and path
+without its query string.
+
+### Added — bulk selection and group actions on the dashboard
+
+Select several screens and act on them together (#296).
+
+### Added — playlist inheritance that forks instead of overwriting
+
+A per-device edit to a group's playlist now forks a copy rather than editing the playlist every
+other device in the group is using.
+
+### Fixed — a long list of things that only three real servers could find
+
+Among them: the write path could not be reached by any user on any install; a backslash walked
+through the path allowlist; the disk budget could be bypassed by omitting a field; a delete could
+take another customer's bytes with it; a mandated retry double-applied; a restore restarted every
+screen that already had the content; content ids were never translated between servers, so a push
+would have failed even once everything else was right.
+
+### Fixed — the API documented six commands and accepted twenty-two
+
+`POST /groups/{id}/command` had grown three times and the spec kept the original six, so an
+integrator would conclude their token could reboot a screen but not set its volume. A contract test
+now fails if the two ever disagree again.
+
+### Added — API documentation for things that already shipped
+
+`POST /devices/{id}/command` (commanding a single screen was reachable only over the dashboard
+socket) and the whole `/triggers` surface, which shipped in alpha4 undocumented.
+
+### Note on upgrading
+
+The mesh is off unless you turn it on: with `MESH_ACCEPT_ENROLLMENT` and `MESH_ALLOW_UPLINK` unset
+there are no mesh routes at all. As with alpha4, this is a pre-release version — Android players on
+the stable OTA channel will not take it.
+
 ## 2.0.0-alpha4
 
 Triggers become usable, and a QA pass found that the previous build could not switch them on.

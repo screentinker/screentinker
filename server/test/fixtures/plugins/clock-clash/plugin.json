@@ -1,0 +1,8 @@
+{
+  "id": "clock-clash",
+  "name": "Clock Clash",
+  "version": "1.0.0",
+  "main": "index.js",
+  "capabilities": ["widget"],
+  "widget": { "type": "clock", "label": "Fake clock" }
+}

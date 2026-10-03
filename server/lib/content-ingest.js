@@ -10,16 +10,23 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const config = require('../config');
-const { sanitizeString } = require('../middleware/sanitize');
+const { cleanUserText } = require('../middleware/sanitize');
 const { videoDisplayDims, imageDisplayDims } = require('./media-orientation');
+const { isSupportUserId } = require('./support-access');
+const { digestFile } = require('./content-digest');
 const { finalizeUpload } = require('./upload-sniff');
+const htmlBundle = require('./html-bundle');
+const fs = require('fs');
 
-// Multer takes file.originalname from the multipart header, bypassing sanitizeBody, so
-// HTML-escape here (renders as text in every UI sink). .normalize('NFC') first: macOS
-// sends NFD-decomposed names; Linux/renderers expect NFC. Single point - every filename
-// storage site flows through here.
+// Multer takes file.originalname from the multipart header, bypassing sanitizeBody, so it is
+// cleaned here instead.
+//
+// ⚠️ NOT HTML-ESCAPED ANY MORE — see middleware/sanitize.js. Escaping at ingest and again at the
+// sink is double encoding, and it compounded on every re-save. Stored as typed; escaped where it
+// is rendered. .normalize('NFC') first: macOS sends NFD-decomposed names; Linux/renderers expect
+// NFC. Single point - every filename storage site flows through here.
 function safeFilename(name) {
-  return sanitizeString((name || '').normalize('NFC'));
+  return cleanUserText((name || '').normalize('NFC'));
 }
 
 /*
@@ -63,7 +70,10 @@ async function deriveMediaMetadata(sourcePath, filepath, mime) {
       // they are independently useful, and losing them would letterbox the asset wrongly.
       if (metadata.thumbnailWritten) thumbnailPath = thumbName;
       else console.warn(`Thumbnail write failed for ${filepath}: ${metadata.thumbnailError}`);
-    } else if (mime.startsWith('video/')) {
+    } else if (mime.startsWith('video/') || mime.startsWith('audio/')) {
+      // Audio takes the same branch as video: ffprobe reads its duration the same way, and that
+      // number is what lets the slide editor warn when a voiceover outruns the slide it is on.
+      // The thumbnail half below simply produces nothing for audio, which is correct.
       try {
         // execFile, NOT execFileSync. These two spawns each carry a 15s timeout, and run
         // synchronously they block the event loop for their whole duration — nothing else on
@@ -117,13 +127,76 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
   const id = uuidv4();
   // Content-derived extension + mime. Throws UnsupportedUploadError (and removes the temp
   // file) when the bytes are not a supported media type; the caller maps that to a 400.
-  const { filepath, mime } = finalizeUpload(file);
+  let { filepath, mime } = finalizeUpload(file);
+
+  /*
+   * A zip is only accepted when it is an HTML BUNDLE, and that is decided here rather than in the
+   * sniffer because the answer is not in the magic bytes — it is in the central directory. The
+   * validator reads that directory and never extracts anything, so nothing attacker-named is
+   * written to this disk; on refusal the stored file is removed and the caller gets the reason.
+   */
+  let bundleEntry = null;
+  if (mime === 'application/zip') {
+    const stored = path.join(config.contentDir, filepath);
+    try {
+      const info = await htmlBundle.validateBundle(stored);
+      bundleEntry = info.entryPoint;
+      mime = htmlBundle.BUNDLE_MIME;
+    } catch (err) {
+      try { fs.unlinkSync(stored); } catch (e) { /* best effort */ }
+      throw err;
+    }
+  }
+
   const { width, height, durationSec, thumbnailPath } = await deriveMediaMetadata(file.path, filepath, mime);
 
+  /*
+   * ⚠️ byte_digest IS SET HERE TOO, AND THAT IS THE POINT OF THE COLUMN.
+   *
+   * It was added for mesh content and implemented only in the mesh writer, so every locally
+   * uploaded file carried NULL — which made the dedup lookup unable to match anything already in
+   * the library. A node would re-download bytes it was already holding, and charge the operator's
+   * storage allowance for them. The column's own migration note named five writers that owe it a
+   * value; one of them had it.
+   *
+   * Hashing on ingest costs one streamed read of a file that was just written and is still in page
+   * cache. Failure is non-fatal: a NULL digest degrades to "cannot dedup", which is exactly where
+   * every existing row already is, so an unreadable file must not lose the upload.
+   */
+  let digest = null;
+  try { digest = await digestFile(path.join(config.contentDir, filepath)); } catch (e) { digest = null; }
+
+  /*
+   * ⚠️ content.user_id IS A FOREIGN KEY INTO users, AND A SUPPORT SESSION HAS NO users ROW.
+   *
+   * Binding `support:<jti>` here threw `FOREIGN KEY constraint failed` — but only at the very
+   * END of the upload, after every byte had been received, the file moved into contentDir and the
+   * thumbnail rendered. A 47 MB upload on a 2 Mbps link therefore transferred for three minutes
+   * and then vanished, leaving the media and its thumbnail orphaned on disk with no row pointing
+   * at them. The dashboard reported it only as a failed upload. Observed 2026-09-28.
+   *
+   * The column is nullable and workspace_id already carries the tenancy, so an upload made during
+   * a support session is recorded as belonging to the workspace with no owning account — which is
+   * true. It also keeps it out of getUserStorageMB, which sums by user_id: support bytes are not
+   * the customer's allowance.
+   *
+   * ⚠️ The same FK sits on playlists, content_folders, layouts, widgets and schedules, all of
+   * which bind req.user.id the same way and are NOT fixed here. See the PR for why.
+   */
+  const ownerUserId = isSupportUserId(userId) ? null : userId;
+
   db.prepare(`
-    INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null);
+    INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id, byte_digest, bundle_entry)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, ownerUserId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry);
+
+  try {
+    require('./plugins/hooks').emit('content.uploaded', {
+      content_id: id,
+      workspace_id: workspaceId,
+      mime,
+    });
+  } catch { /* hooks must not fail an upload */ }
 
   return db.prepare('SELECT * FROM content WHERE id = ?').get(id);
 }

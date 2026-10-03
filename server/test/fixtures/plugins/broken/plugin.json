@@ -1,0 +1,7 @@
+{
+  "id": "broken",
+  "name": "Broken",
+  "version": "1.0.0",
+  "main": "index.js",
+  "capabilities": ["widget"]
+}

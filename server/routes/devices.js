@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../db/database');
+const config = require('../config');
+const enrolKey = require('../lib/enrol-key');   // #313
 const { resolveDevicePlaylist, resolvedLayoutId } = require('../lib/resolve-device-playlist');
 const { PLATFORM_ROLES, ELEVATED_ROLES, isPlatformStaff } = require('../middleware/auth');
 // Phase 2.2a: workspace-aware access. accessContext returns { workspaceRole, actingAs }
@@ -9,7 +11,8 @@ const { accessContext } = require('../lib/tenancy');
 // requireScope gates by API-token scope; the workspace WRITE gate is checkDeviceOwnership, which
 // already rejects workspace_viewer — the same check requireFleetWrite performs in routes/triggers.js.
 const { requireScope } = require('../middleware/apiToken');
-const { stripDeviceSecrets, stripDeviceSecretsForList, stripTriggerSecretForTokens } = require('../lib/device-sanitize');
+const { ALLOWED_COMMANDS, LOCAL_API_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens } = require('../lib/device-sanitize');
 const { layoutZones, orphanCountsByDevice } = require('../lib/zone-validate');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings preservation
 const playerCapabilities = require('../lib/player-capabilities');
@@ -59,6 +62,10 @@ router.get('/', (req, res) => {
   res.json(devices.map(d => ({
     ...stripDeviceSecretsForList(d),
     capabilities: playerCapabilities.capabilitiesFor(d),
+    // #467: which player family this is (android | web | tizen | brightsign | vega | linux | windows),
+    // so the Displays page can tell an APK player — the only kind the served APK applies to —
+    // from the rest without re-deriving the precedence rules client-side.
+    platform_family: playerCapabilities.platformFamily(d),
     orphan_count: orphanCounts[d.id] || 0,
   })));
 });
@@ -124,7 +131,7 @@ router.get('/:id', (req, res) => {
   if (ctx.actingAs) device._actingAs = true;
   // SELECT d.* now carries trigger_secret. A read-scoped token must not be able to turn "list my
   // screens" into "inject content on any of them" — see lib/device-sanitize.js.
-  stripTriggerSecretForTokens(device, req.viaToken);
+  stripSecretsForTokens(device, req.viaToken);
 
   const telemetry = db.prepare(
     'SELECT * FROM device_telemetry WHERE device_id = ? ORDER BY reported_at DESC LIMIT 20'
@@ -165,14 +172,17 @@ router.get('/:id', (req, res) => {
   let playlist_has_published = false;
   if (device.playlist_id) {
     assignments = db.prepare(`
-      SELECT pi.id, pi.content_id, pi.widget_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
+      SELECT pi.id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
              pi.created_at, pi.updated_at,
-             COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.thumbnail_path,
+             COALESCE(c.filename, w.name, cp.name) as filename, c.mime_type, c.filepath, c.thumbnail_path,
              c.duration_sec as content_duration, c.remote_url,
-             w.name as widget_name, w.widget_type, w.config as widget_config
+             w.name as widget_name, w.widget_type, w.config as widget_config,
+             cp.name as child_playlist_name,
+             (SELECT COUNT(*) FROM playlist_items ci WHERE ci.playlist_id = pi.child_playlist_id) as child_item_count
       FROM playlist_items pi
       LEFT JOIN content c ON pi.content_id = c.id
       LEFT JOIN widgets w ON pi.widget_id = w.id
+      LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
       WHERE pi.playlist_id = ?
       ORDER BY pi.sort_order ASC
     `).all(device.playlist_id);
@@ -264,8 +274,10 @@ router.get('/:id/preview-payload', (req, res) => {
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
   const ctx = ws && accessContext(req.user.id, req.user.role, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
-  const { buildPlaylistPayload } = require('../ws/deviceSocket');
-  const payload = buildPlaylistPayload(req.params.id);
+  // Unchecked on purpose: this is the dashboard's "what would it play" preview, not a delivery
+  // channel. The gated buildPlaylistPayload would render a suspended card for a blocked screen.
+  const { buildPlaylistPayloadUnchecked } = require('../ws/deviceSocket');
+  const payload = buildPlaylistPayloadUnchecked(req.params.id);
   payload.wall_config = null; // v1: wall members preview full-frame (no socket-free follower freeze)
   res.json(payload);
 });
@@ -317,17 +329,26 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule } = req.body;
+  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled } = req.body;
   // #150: validate orientation against the known enum (previously accepted any string, which
   // let a bad value reach the player -> unknown rotation falls back to landscape silently).
+  // #325: a CSS colour that reaches the player's inline style, so it is constrained to a hex
+  // literal rather than trusted. Empty string clears it back to the player default.
+  if (background_color !== undefined && background_color !== null && background_color !== ''
+      && !/^#[0-9a-fA-F]{3,8}$/.test(String(background_color))) {
+    return res.status(400).json({ error: 'background_color must be a hex colour such as #202020' });
+  }
   if (orientation !== undefined && !deviceSettings.ORIENTATIONS.has(orientation)) {
     return res.status(400).json({ error: `Invalid orientation. Allowed: ${[...deviceSettings.ORIENTATIONS].join(', ')}` });
   }
   // Whitelist allowed fields to prevent SQL injection via field names
-  const ALLOWED_FIELDS = ['name', 'notes', 'timezone', 'orientation', 'default_content_id'];
+  const ALLOWED_FIELDS = ['name', 'notes', 'timezone', 'orientation', 'background_color', 'default_content_id'];
   const updates = [];
   const values = [];
-  Object.entries({ name, notes, timezone, orientation, default_content_id }).forEach(([key, val]) => {
+  // #325: an empty colour means "back to the player default", which is NULL in the column rather
+  // than an empty string the player would try to apply as a CSS value.
+  const bg = background_color === '' ? null : background_color;
+  Object.entries({ name, notes, timezone, orientation, background_color: bg, default_content_id }).forEach(([key, val]) => {
     if (val !== undefined && ALLOWED_FIELDS.includes(key)) {
       updates.push(`${key} = ?`);
       values.push(val);
@@ -352,6 +373,11 @@ router.put('/:id', (req, res) => {
     // next OTA check, which is what a prerelease version sorting below its own release causes.
     updates.push('ota_beta = ?'); values.push(ota_beta ? 1 : 0);
   }
+  // #go2rtc: per-device live-video opt-in. Only meaningful when the workspace flag and the server
+  // master switch are also on (see liveVideoOn); off by default. Write-gated by checkDeviceOwnership.
+  if (live_video_enabled !== undefined) {
+    updates.push('live_video_enabled = ?'); values.push(live_video_enabled ? 1 : 0);
+  }
   // #12 scheduled reboot: device-local "HH:MM" (null/'' clears -> off). Reset the
   // once-per-day guard on any change so a newly-set time can still fire later today.
   if (reboot_schedule !== undefined) {
@@ -372,9 +398,9 @@ router.put('/:id', (req, res) => {
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
   // ⚠️ stripDeviceSecrets only removes device_token. GET /:id additionally calls
-  // stripTriggerSecretForTokens; these two echo paths did not, so a token got the trigger secret
+  // stripSecretsForTokens; these two echo paths did not, so a token got the trigger secret
   // back from a rename — the escalation lib/device-sanitize.js exists to prevent.
-  res.json(stripTriggerSecretForTokens(stripDeviceSecrets(updated), req.viaToken));
+  res.json(stripSecretsForTokens(stripDeviceSecrets(updated), req.viaToken));
 });
 
 // #146 Item D: operator BLOCK / UNBLOCK toggle. Writes devices.blocked; the device
@@ -407,6 +433,41 @@ router.put('/:id', (req, res) => {
  * Modelled on POST /:id/settings-pin: rotate-or-set, live push, and the response says whether the
  * panel actually got it rather than implying it.
  */
+/*
+ * Send one command to one screen.
+ *
+ * ⚠️ THE GROUP EQUIVALENT HAS EXISTED FOR A LONG TIME and this did not, so commanding a single
+ * device was reachable only over the dashboard socket. That was survivable while the only caller
+ * was a browser tab; it stopped being survivable when another server needed to ask, because the
+ * mesh write channel re-enters this node's own HTTP API precisely so that a remote request passes
+ * the same guards a local one does. Without an HTTP surface there was nothing for it to re-enter.
+ *
+ * Guarded exactly as the group route is: requireScope('full') for API tokens (a fleet-affecting
+ * action is not an ordinary write), checkDeviceOwnership for the workspace, the shared command
+ * allowlist, and the panel's own declared capabilities.
+ */
+router.post('/:id/command', requireScope('full'), (req, res) => {
+  const device = checkDeviceOwnership(req, res);
+  if (!device) return;
+
+  const { type, payload } = req.body || {};
+  if (!type) return res.status(400).json({ error: 'command type required' });
+  if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
+  const v = validateCommand(type, payload);   // #312 follow-up: reject a malformed set_server_url at the door
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+  const deviceNs = req.app.get('io')?.of('/device');
+  if (!deviceNs) return res.status(503).json({ error: 'The realtime layer is not available.' });
+
+  const r = deliverCommand(deviceNs, device, type, payload);
+  if (r.status === 'unsupported') {
+    // Named rather than generic: "this panel cannot do that" is actionable, "failed" is not.
+    return res.status(400).json({ error: 'That screen cannot do that', capability: r.capability });
+  }
+  // `id` is present for http_request: it is how the caller matches the result that follows.
+  res.json({ success: true, status: r.status, device_id: device.id, ...(r.id ? { id: r.id } : {}) });
+});
+
 router.post('/:id/trigger-config', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
@@ -566,6 +627,117 @@ router.post('/:id/trigger-secret', requireScope('full'), (req, res) => {
   res.json({ success: true, delivered, secret });
 });
 
+/*
+ * ⚠️ THE ENABLEMENT HALF OF THE INBOUND LOCAL API (Goal B part 3), and it exists because the
+ * trigger feature already taught this lesson the expensive way: the definitions half of triggers
+ * shipped complete and INERT, because nothing wrote the secret or the accept flags. A QA pass found
+ * a system that could not be switched on. So this route ships in the same commit as the panel code.
+ *
+ * ⚠️ SEPARATE FROM /trigger-config, even though the panel serves both on one socket and one port.
+ * `accept_http` means a LAN host may put an overlay on this screen; this means a LAN host may change
+ * what this screen is DOING. A single flag would have handed remote control to every site that only
+ * ever wanted an emergency overlay, and the two get enabled months apart by different people.
+ */
+router.post('/:id/local-api', requireScope('full'), (req, res) => {
+  const device = checkDeviceOwnership(req, res);
+  if (!device) return;
+  const b = req.body || {};
+  if (b.enabled === undefined) return res.status(400).json({ error: 'enabled is required' });
+  const enabled = !!b.enabled;
+
+  /*
+   * ⚠️ ENABLING WITHOUT A SECRET IS REFUSED HERE, not silently allowed for the panel to sort out.
+   * The panel does refuse everything in that state (LocalApi returns 503 no_secret_configured), but
+   * an operator who ticks the box and walks away believes the feature is on. Telling them at the
+   * door is the difference between a working configuration and one that is quietly dead.
+   */
+  if (enabled && !device.local_api_secret) {
+    return res.status(400).json({
+      error: 'set a local API secret first — POST /api/devices/:id/local-api-secret',
+    });
+  }
+
+  db.prepare("UPDATE devices SET local_api_enabled = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(enabled ? 1 : 0, req.params.id);
+
+  let delivered = false;
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const commandQueue = require('../lib/command-queue');
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), req.params.id, buildPlaylistPayload);
+      const room = io.of('/device').adapter.rooms.get(req.params.id);
+      delivered = !!(room && room.size > 0);
+    }
+  } catch (e) { console.warn(`[local-api] push failed: ${e.message}`); }
+
+  console.log(`[local-api] ${enabled ? 'enabled' : 'disabled'} for ${req.params.id} by user ${req.user && req.user.id}`);
+  /*
+   * ⚠️ `delivered` is reported rather than implied, and the panel binds the socket when it next
+   * (re)starts its listeners — which this push triggers. An operator who is told "on" and finds a
+   * closed port an hour later blames the feature; one who is told the panel is offline waits.
+   */
+  res.json({
+    success: true, delivered,
+    local_api: {
+      enabled,
+      port: device.trigger_http_port || 8079,
+      commands: LOCAL_API_COMMANDS,
+      secret_set: !!device.local_api_secret,
+    },
+  });
+});
+
+/*
+ * Generate or set the local API secret.
+ *
+ * ⚠️ NOT trigger_secret, and not shared with it. The trigger secret is designed to be pasted into an
+ * AMX program and it travels in a query string in cleartext; what it buys is an overlay on a screen
+ * that is already showing this workspace's content. This one buys "reload that screen, blank it,
+ * change its volume". Sharing the value would mean every installer ever given the trigger secret
+ * could take the fleet dark, and rotating one would silently rotate the other.
+ */
+router.post('/:id/local-api-secret', requireScope('full'), (req, res) => {
+  const device = checkDeviceOwnership(req, res);
+  if (!device) return;
+  const b = req.body || {};
+  let secret;
+  if (b.rotate || b.secret === undefined) {
+    secret = require('crypto').randomBytes(24).toString('hex');
+  } else {
+    secret = String(b.secret);
+    // 16 is the floor for the same reason as the trigger secret: this is guessable offline by
+    // anything on the LAN, as fast as the panel's rate limiter allows, forever, with no lockout and
+    // no audit trail. 24 bytes rather than 16 on rotation because this one buys more.
+    if (!/^[\x21-\x7E]{16,128}$/.test(secret)) {
+      return res.status(400).json({ error: 'secret must be 16-128 printable ASCII characters with no spaces' });
+    }
+  }
+  db.prepare("UPDATE devices SET local_api_secret = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(secret, req.params.id);
+
+  let delivered = false;
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const commandQueue = require('../lib/command-queue');
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), req.params.id, buildPlaylistPayload);
+      const room = io.of('/device').adapter.rooms.get(req.params.id);
+      delivered = !!(room && room.size > 0);
+    }
+  } catch (e) { console.warn(`[local-api-secret] push failed: ${e.message}`); }
+
+  console.log(`[local-api-secret] rotated for ${req.params.id} by user ${req.user && req.user.id}`);
+  // Same rule as the trigger secret: returned to a human, never to an API token.
+  if (req.viaToken) {
+    return res.json({ success: true, delivered, secret_set: true,
+      note: 'the secret is not returned to API tokens — read it from the dashboard' });
+  }
+  res.json({ success: true, delivered, secret });
+});
+
 router.post('/:id/settings-pin', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
@@ -601,6 +773,55 @@ router.post('/:id/settings-pin', (req, res) => {
   // Deliberately NOT logging the PIN itself.
   console.log(`[settings-pin] device ${req.params.id} pin ${req.body && req.body.rotate ? 'rotated' : 'set'} by user ${req.user.id} (delivered=${delivered})`);
   res.json({ success: true, settings_pin: pin, delivered });
+});
+
+/*
+ * #313 — the enrolment key for a display, and the player URL that carries it.
+ *
+ * ⚠️ WHY THIS IS A DELIBERATE ACTION AND NOT AUTOMATIC. Nearly every display keeps its own
+ * credentials and needs none of this; minting a key for all of them would put a durable secret on
+ * rows that never use one. An operator asks for it on the screen that needs it.
+ *
+ * POST mints or ROLLS it — the same call, because rolling is the recovery when a URL leaks, and an
+ * operator reaching for it is not in the mood to hunt for a second button. The old URL stops
+ * working at the display's next connect.
+ */
+/*
+ * ⚠️ FULL SCOPE TO MINT, for the same reason the trigger secret needs it — and more so.
+ *
+ * The default gate is method-based: anything that is not a GET needs only `write`. 2.0.3 stopped an
+ * API token from READING an enrolment key off a device, on the grounds that the key lets its holder
+ * BE that screen — register as it, take its playlist and its commands, report as it. Leaving the
+ * MINT ungated handed the same power back through a different door: a write-scoped integration
+ * could roll a key for any display in reach and then adopt that display's identity with it. Revoke
+ * is gated for the mirror reason — it is the vMix display's only way back, and taking it away is a
+ * denial of service on a screen the token was never given control of.
+ */
+router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
+  const device = checkDeviceOwnership(req, res);
+  if (!device) return;
+  const key = enrolKey.setEnrolKey(db, req.params.id);
+  const rolled = !!device.enrol_key;
+  console.warn(`[enrol] ${rolled ? 'rolled' : 'minted'} enrolment key for device ${req.params.id} (user ${req.user.id})`);
+  res.json({
+    success: true,
+    id: req.params.id,
+    enrol_key: key,
+    rolled,
+    // Built from the request's own origin so it is right on a LAN address, a tunnel or a domain,
+    // without the operator having to know which one this instance answers on.
+    player_url: enrolKey.playerUrl(`${req.protocol}://${req.get('host')}`, key),
+  });
+});
+
+/* Withdraw it. The display keeps working — it still holds its own token — but the URL stops
+ * enrolling anything, which is what you want when a link has gone somewhere it should not. */
+router.delete('/:id/enrol-key', requireScope('full'), (req, res) => {
+  const device = checkDeviceOwnership(req, res);
+  if (!device) return;
+  enrolKey.clearEnrolKey(db, req.params.id);
+  console.warn(`[enrol] revoked enrolment key for device ${req.params.id} (user ${req.user.id})`);
+  res.json({ success: true, id: req.params.id, enrol_key: null });
 });
 
 router.post('/:id/block', (req, res) => {
@@ -643,9 +864,9 @@ router.post('/:id/re-adopt', (req, res) => {
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
   console.log(`[#150] re-adopted settings (fp ${fingerprint.slice(0, 8)}…) onto device ${req.params.id} by user ${req.user.id}`);
   // ⚠️ stripDeviceSecrets only removes device_token. GET /:id additionally calls
-  // stripTriggerSecretForTokens; these two echo paths did not, so a token got the trigger secret
+  // stripSecretsForTokens; these two echo paths did not, so a token got the trigger secret
   // back from a rename — the escalation lib/device-sanitize.js exists to prevent.
-  res.json(stripTriggerSecretForTokens(stripDeviceSecrets(updated), req.viaToken));
+  res.json(stripSecretsForTokens(stripDeviceSecrets(updated), req.viaToken));
 });
 
 // Delete device
@@ -675,6 +896,137 @@ router.delete('/:id', (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+// ── Live video (go2rtc). All READ-gated: watching a screen is a read, exactly like a screenshot.
+// The publish path (the player offering video INTO go2rtc) authenticates as a DEVICE, not a user,
+// and lives with the player-publisher work; it is deliberately not here. See docs/live-video.md.
+const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE (TURN/STUN) override
+
+// Resolve read access to a device via its workspace, the same shape GET /:id uses. Returns the
+// device row (with workspace) or null after sending the response.
+function checkDeviceRead(req, res) {
+  const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
+  if (!device) { res.status(404).json({ error: 'Device not found' }); return null; }
+  if (!device.workspace_id) { res.status(403).json({ error: 'Device not assigned to a workspace' }); return null; }
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
+  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
+  device._workspace = ws;
+  return device;
+}
+
+// Whether live VIDEO is on for this device: the server master gate, the workspace flag, and the
+// device flag must all be set. Independent of whether a publisher is actually connected right now.
+function liveVideoOn(device) {
+  return !!(config.liveVideoEnabled && device._workspace && device._workspace.live_video_enabled && device.live_video_enabled);
+}
+
+/*
+ * What the dashboard should do to watch this screen right now.
+ *
+ * mode 'webrtc' only when live video is enabled at all three levels AND go2rtc is healthy AND a
+ * stream for this device actually exists (a publisher is connected). Anything short of that is
+ * mode 'snapshot' — the existing screenshot path — so the Devices page never breaks when the
+ * sidecar is absent, down, or nobody is publishing. The browser signals through signalPath (a
+ * proxied ScreenTinker route), never straight to go2rtc, so the admin API stays private.
+ */
+router.get('/:id/live', async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  const snapshot = { mode: 'snapshot', fallback: 'snapshot' };
+  if (!liveVideoOn(device)) return res.json({ ...snapshot, reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ ...snapshot, reason: 'no_sidecar' });
+  const name = go2rtc.streamName(device.workspace_id, device.id);
+  // "present" must mean a publisher is ACTUALLY streaming, not just that ensureStream left an inert
+  // placeholder behind (see go2rtc.hasActiveProducer). Otherwise the dashboard would try webrtc,
+  // ICE-connect to a stream with no media, and sit on a black frame instead of the snapshot.
+  const [healthy, present] = await Promise.all([go2rtc.healthy(), go2rtc.hasActiveProducer(name)]);
+  if (!healthy) return res.json({ ...snapshot, reason: 'sidecar_down' });
+  if (!present) return res.json({ ...snapshot, reason: 'not_publishing' });
+  res.json({
+    mode: 'webrtc',
+    fallback: 'snapshot',
+    // Proxied signaling: the browser POSTs its SDP offer here, the server forwards to go2rtc.
+    signalPath: `/api/devices/${device.id}/live/webrtc`,
+    iceServers: orgWebrtc.iceServersForDevice(device.id),
+    // A viewer URL is not minted; the proxy holds the session. expiresAt bounds how long the
+    // dashboard should trust this descriptor before re-asking (a publisher can drop meanwhile).
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+// Proxy one WebRTC SDP exchange for WATCHING. Read-gated, and the requested stream must belong to
+// this exact workspace+device: streamBelongsTo recomputes the name, so a caller cannot hand us
+// another workspace's stream even with a valid session on their own device.
+router.post('/:id/live/webrtc', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!liveVideoOn(device) || !go2rtc.enabled()) return res.status(409).json({ error: 'Live video is not available for this device' });
+  const name = go2rtc.streamName(device.workspace_id, device.id);
+  if (!go2rtc.streamBelongsTo(name, device.workspace_id, device.id)) return res.status(403).json({ error: 'Stream does not belong to this device' });
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  const answer = await go2rtc.webrtcExchange(name, offer, 'sub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer', fallback: 'snapshot' });
+  res.type('application/sdp').send(answer.sdp);
+});
+
+/*
+ * #talk — two-way voice intercom. Gated exactly like live video (same three flags + a live go2rtc),
+ * because it rides the same sidecar; the dashboard additionally shows the control only for a device
+ * that declares remote.talk. Audio is Opus, which go2rtc registers by default, so no patched sidecar
+ * is needed (unlike VP8 video). Two one-directional streams per device:
+ *   dn (downlink): operator mic -> device speaker  — operator PUBLISHES here (this route), device subscribes
+ *   up (uplink):   device mic   -> operator speaker — operator SUBSCRIBES here (this route), device publishes
+ * The device's own two exchanges (subscribe dn, publish up) go through the device-authenticated WS
+ * proxy (lib/live-publish-ws.js), never these session routes.
+ */
+router.get('/:id/talk', async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  const off = { mode: 'off' };
+  if (!orgWebrtc.talkEnabledForDevice(device.id)) return res.json({ ...off, reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ ...off, reason: 'no_sidecar' });
+  if (!(await go2rtc.healthy())) return res.json({ ...off, reason: 'sidecar_down' });
+  res.json({
+    mode: 'webrtc',
+    // Operator publishes mic to the downlink, subscribes to the uplink. Proxied like /live/webrtc.
+    publishPath: `/api/devices/${device.id}/talk/publish`,
+    viewPath: `/api/devices/${device.id}/talk/view`,
+    iceServers: orgWebrtc.iceServersForDevice(device.id),
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+// Operator -> device audio: proxy the operator's PUBLISH offer into the downlink stream (dst=).
+router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'dn');
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  try { await go2rtc.ensureStream(name); } catch (_) { /* go2rtc may auto-create on dst */ }
+  const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
+  res.type('application/sdp').send(answer.sdp);
+});
+
+// Device -> operator audio: proxy the operator's SUBSCRIBE offer against the uplink stream (src=).
+router.post('/:id/talk/view', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const device = checkDeviceRead(req, res);
+  if (!device) return;
+  if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
+  const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'up');
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  // No ensureStream on a subscribe: a placeholder-only stream cannot be consumed ("unsupported
+  // url"). The device's uplink publish creates the real producer; the operator retries until then.
+  const answer = await go2rtc.webrtcExchange(name, offer, 'sub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer', reason: 'not_publishing' });
+  res.type('application/sdp').send(answer.sdp);
 });
 
 module.exports = router;

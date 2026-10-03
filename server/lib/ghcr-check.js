@@ -32,6 +32,26 @@ function extractSemverTags(tags) {
   return parsed.map(p => p.tag);
 }
 
+/*
+ * The `next` link from an RFC 5988 Link header, resolved against the URL it came from.
+ *
+ * Registries return this as a PATH (`</v2/owner/repo/tags/list?last=x&n=100>; rel="next"`), not an
+ * absolute URL, so it has to be resolved against the current request or the next fetch goes to a
+ * relative path and throws. Returns null when there is no next link, which is how the walk ends.
+ */
+function nextPageUrl(linkHeader, currentUrl) {
+  if (!linkHeader) return null;
+  // A Link header may carry several links; take the one whose rel is exactly "next".
+  for (const part of String(linkHeader).split(',')) {
+    const m = part.match(/<([^>]+)>\s*;\s*rel\s*=\s*"?next"?/i);
+    if (m) {
+      try { return new URL(m[1], currentUrl).toString(); }
+      catch { return null; }
+    }
+  }
+  return null;
+}
+
 // Compare two semver strings element-wise. Returns:
 //   negative  → a < b
 //   0         → a == b
@@ -88,26 +108,55 @@ async function checkNow(currentVersion) {
       const { token } = await tokenRes.json();
       if (!token) throw new Error('GHCR token response missing token field');
 
-      // Step 2: list tags with Bearer auth
-      const tagsUrl = 'https://ghcr.io/v2/screentinker/screentinker/tags/list';
-      const tagsRes = await fetchWithTimeout(tagsUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      /*
+       * Step 2: list tags with Bearer auth — FOLLOWING PAGINATION.
+       *
+       * ⚠️ THE FIRST PAGE IS NOT THE TAG LIST. GHCR returns 100 tags and a `Link: <...>; rel="next"`
+       * header, and this used to read page one and stop. Page one is in push order, so it ends
+       * wherever the project was 100 tags ago: on this repo it stopped at 2.0.0-beta5, and the
+       * highest SEMVER tag it could see was 1.9.40 — for ever, drifting further behind with every
+       * release. Every self-hosted instance was therefore told 1.9.40 was current, so nobody on
+       * 1.9.x was ever offered 2.x, and instances already on 2.x were told they were ahead of
+       * release. The check reported success the whole time, which is why it went unnoticed.
+       *
+       * Bounded: MAX_PAGES caps the walk so a registry that keeps handing back a next link cannot
+       * turn a background poll into an unbounded fetch loop. Hitting the cap is not an error — the
+       * tags gathered so far are still used, since a slightly stale answer beats none.
+       */
+      const MAX_PAGES = 20;
+      let tagsUrl = 'https://ghcr.io/v2/screentinker/screentinker/tags/list?n=100';
+      const tags = [];
+      let pages = 0;
+      let firstStatus = null;
 
-      // Some registries return 401/404 if no tags exist yet — not an error,
-      // just means no releases published.
-      if (tagsRes.status === 401 || tagsRes.status === 404) {
+      while (tagsUrl && pages < MAX_PAGES) {
+        const tagsRes = await fetchWithTimeout(tagsUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (pages === 0) firstStatus = tagsRes.status;
+
+        // Some registries return 401/404 if no tags exist yet — not an error,
+        // just means no releases published.
+        if (tagsRes.status === 401 || tagsRes.status === 404) break;
+        if (!tagsRes.ok) {
+          if (pages === 0) throw new Error(`GHCR tags endpoint returned ${tagsRes.status}`);
+          break;   // a later page failing still leaves the earlier ones usable
+        }
+
+        const body = await tagsRes.json();
+        const page = Array.isArray(body.tags) ? body.tags : [];
+        tags.push(...page);
+        pages++;
+
+        tagsUrl = nextPageUrl(tagsRes.headers.get('link'), tagsUrl);
+      }
+
+      if (firstStatus === 401 || firstStatus === 404) {
         latestVersion = null;
         checkedAt = Date.now();
         return { latest: null, update_available: false };
       }
 
-      if (!tagsRes.ok) throw new Error(`GHCR tags endpoint returned ${tagsRes.status}`);
-
-      const body = await tagsRes.json();
-
-      // Handle both { tags: [...] } and { name, tags: [...] } response shapes
-      const tags = body.tags || [];
       if (!Array.isArray(tags) || tags.length === 0) {
         latestVersion = null;
         checkedAt = Date.now();
@@ -163,6 +212,7 @@ function startPolling(intervalHours, currentVersion) {
 }
 
 module.exports = {
+  nextPageUrl,   // exported for tests
   extractSemverTags,
   compareVersions,
   getLatestVersion,

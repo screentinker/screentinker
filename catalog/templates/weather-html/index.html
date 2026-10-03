@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Weather</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="g-clear">
+<div id="sky" class="sky" aria-hidden="true"></div>
+<div id="fx" class="fx" aria-hidden="true"></div>
+
+<header class="top">
+  <div>
+    <div id="place" class="place"></div>
+    <div id="date" class="date"></div>
+  </div>
+  <div id="clock" class="clock"></div>
+</header>
+
+<main class="now">
+  <div id="bigicon" class="bigicon"></div>
+  <div class="reading">
+    <div class="temp"><span id="temp"></span><span class="deg">°</span><span id="unit" class="unit"></span></div>
+    <div id="cond" class="cond"></div>
+    <div id="chips" class="chips"></div>
+  </div>
+</main>
+
+<section id="days" class="days"></section>
+
+<div id="waiting" class="waiting" hidden>
+  <div class="w-title">Waiting for weather data</div>
+  <div class="w-sub">Pick a Weather data source in this template's settings. The first reading appears after its next sync.</div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

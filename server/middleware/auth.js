@@ -50,6 +50,19 @@ function generateMfaPendingToken(user) {
   );
 }
 
+// Session for a redeemed support grant (lib/support-access). Carries `support: true` + the
+// grant's jti, which resolveSessionUser checks against support_grants on every request; the
+// token expires exactly when the grant does, so nothing outlives the window the customer agreed
+// to. The identity claims (name shown in the UI) ride along; the ROLE is fixed in supportUser().
+function generateSupportSessionToken(grant) {
+  const now = Math.floor(Date.now() / 1000);
+  return jwt.sign(
+    { id: `support:${grant.jti}`, support: true, jti: grant.jti, by: grant.issuedBy || null, current_workspace_id: null },
+    config.jwtSecret,
+    { algorithm: 'HS256', expiresIn: Math.max(60, grant.expiresAt - now) }
+  );
+}
+
 // Verify a SESSION token. Rejects any token carrying an audience: those are minted for a
 // single narrower purpose and must go through their own accessor (verifyMfaPendingToken),
 // never through a session path.
@@ -124,6 +137,16 @@ function resolveSessionUser(token, { allowPasswordChange = false, sourceIp = nul
     }
     return { user: recoveryUser(decoded), decoded, viaRecovery: true };
   }
+  // Support sessions (lib/support-access) are the same shape: a synthetic platform_operator
+  // identity with no users row, honoured only while its support_grants row exists and is
+  // unexpired. Revoking the row from Settings ends the session on the very next request.
+  if (decoded.support) {
+    const support = require('../lib/support-access');
+    if (!decoded.jti || !support.grantActive(decoded.jti, { sourceIp })) {
+      throw new SessionError('support_grant_invalid');
+    }
+    return { user: support.supportUser(decoded), decoded, viaRecovery: false, viaSupport: true };
+  }
   if (decoded.mfa_pending) throw new SessionError('mfa_required');
   const user = db.prepare('SELECT id, email, name, role, auth_provider, avatar_url, plan_id, email_alerts, must_change_password FROM users WHERE id = ?').get(decoded.id);
   if (!user) throw new SessionError('user_not_found');
@@ -134,9 +157,23 @@ function resolveSessionUser(token, { allowPasswordChange = false, sourceIp = nul
 }
 
 // Express middleware - requires valid JWT
+/*
+ * RFC 9728 §5.1: a 401 from a protected resource points at its own metadata, so a client that
+ * arrived without a credential can find out what this resource is and how it is authenticated
+ * without having to guess a well-known path. Costs one header; saves an agent a round of blind
+ * probing, which is the behaviour the auth guide is written to prevent.
+ */
+function wwwAuthenticate(req) {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  const base = `${proto}://${host}`;
+  return `Bearer realm="ScreenTinker", resource_metadata="${base}/.well-known/oauth-protected-resource"`;
+}
+
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticate(req));
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -152,13 +189,14 @@ function requireAuth(req, res, next) {
     if (err.code === 'mfa_required') return res.status(401).json({ error: 'mfa_required' });
     // No grant, spent, expired or revoked — indistinguishable from any other bad token.
     if (err.code === 'recovery_grant_invalid') return res.status(401).json({ error: 'Invalid or expired token' });
+    if (err.code === 'support_grant_invalid') return res.status(401).json({ error: 'Invalid or expired token' });
     if (err.code === 'user_not_found') return res.status(401).json({ error: 'User not found' });
     if (err.code === 'password_change_required') return res.status(403).json({ error: 'password_change_required' });
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
   req.user = session.user;
   // Tenancy middleware reads this on the resolver step.
-  req.jwtWorkspaceId = session.viaRecovery ? null : (session.decoded.current_workspace_id || null);
+  req.jwtWorkspaceId = (session.viaRecovery || session.viaSupport) ? null : (session.decoded.current_workspace_id || null);
   next();
 }
 
@@ -224,4 +262,4 @@ function requireSuperAdmin(req, res, next) {
 // Preferred alias for new code.
 const requirePlatformAdmin = requireSuperAdmin;
 
-module.exports = { generateToken, generateMfaPendingToken, verifyToken, verifyMfaPendingToken, resolveSessionUser, SessionError, MFA_TOKEN_AUDIENCE, requireAuth, requireAdmin, requireSuperAdmin, requirePlatformAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES, PLATFORM_STAFF, ELEVATED_ROLES };
+module.exports = { wwwAuthenticate, generateToken, generateMfaPendingToken, generateSupportSessionToken, verifyToken, verifyMfaPendingToken, resolveSessionUser, SessionError, MFA_TOKEN_AUDIENCE, requireAuth, requireAdmin, requireSuperAdmin, requirePlatformAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES, PLATFORM_STAFF, ELEVATED_ROLES };

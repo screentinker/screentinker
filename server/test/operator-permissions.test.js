@@ -49,6 +49,18 @@ db.exec(`
     remote_url TEXT, user_id TEXT, folder TEXT, folder_id TEXT, workspace_id TEXT,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
+  -- ⚠️ The delete handler also clears mesh provenance, because that table declares no FOREIGN KEY
+  -- and so nothing cascades it: a surviving row would point at a deleted content id, and the next
+  -- push of that asset would re-transfer the whole file and charge the allowance again. Absent from
+  -- this hand-built fixture, the DELETE threw and the route 500'd — the fixture-drift failure this
+  -- suite keeps rediscovering. See mesh-mirror-store.test.js for the guard that catches it early.
+  CREATE TABLE mesh_content_provenance (
+    origin_node_id TEXT NOT NULL, origin_content_id TEXT NOT NULL, local_content_id TEXT NOT NULL,
+    edge_id TEXT, bytes INTEGER NOT NULL DEFAULT 0,
+    first_seen_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    last_seen_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (origin_node_id, origin_content_id)
+  );
   -- Empty, but the DELETE handler queries these for playlist cleanup.
   -- ⚠️ The device columns here are the ones device_resolved_playlist reads. The delete fan-out
   -- resolves inheritance rather than reading devices.playlist_id, because a screen that INHERITS

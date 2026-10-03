@@ -16,14 +16,31 @@
 
 const { safeParseArray } = require('./store');
 
+/*
+ * A name off the wire, made safe to store.
+ *
+ * ⚠️ THIS IS ANOTHER OPERATOR'S TEXT. It is rendered on our dashboard next to real numbers, so it is
+ * capped at the same 60 characters the setter enforces locally (a name is a signpost, and one that
+ * can be a kilobyte is a layout attack), stripped of control characters that would let it forge line
+ * structure in a log or a table, and returned as null when nothing survives — so an empty-ish name
+ * falls through to COALESCE and leaves the previous one alone rather than blanking it.
+ */
+function cleanName(raw) {
+  if (typeof raw !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const clean = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 60).trim();
+  return clean || null;
+}
+
 /** Node self-report. */
 function upsertNodeHealth(db, { edgeId, originNodeId, body, originTs, receivedAt }) {
   db.prepare(`
     INSERT INTO mesh_mirror_nodes
-      (origin_node_id, via_edge_id, node_version, device_count, devices_online, origin_ts, received_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (origin_node_id, via_edge_id, node_name, node_version, device_count, devices_online, origin_ts, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(origin_node_id) DO UPDATE SET
       via_edge_id    = excluded.via_edge_id,
+      node_name      = COALESCE(excluded.node_name, mesh_mirror_nodes.node_name),
       node_version   = excluded.node_version,
       device_count   = excluded.device_count,
       devices_online = excluded.devices_online,
@@ -32,7 +49,7 @@ function upsertNodeHealth(db, { edgeId, originNodeId, body, originTs, receivedAt
       -- ⚠️ Hearing from a node CLEARS its stale mark. Without this a node that was disconnected and
       -- later re-paired would stay greyed out forever while cheerfully reporting.
       stale_since    = NULL
-  `).run(originNodeId, edgeId, body.version || null, body.device_count ?? null,
+  `).run(originNodeId, edgeId, cleanName(body.name), body.version || null, body.device_count ?? null,
          body.devices_online ?? null, originTs ?? null, receivedAt);
 
   /*
@@ -53,6 +70,24 @@ function upsertNodeHealth(db, { edgeId, originNodeId, body, originTs, receivedAt
   if (body.version) {
     db.prepare('UPDATE mesh_edges SET peer_version = ? WHERE id = ? AND peer_node_id = ?')
       .run(body.version, edgeId, originNodeId);
+  }
+
+  /*
+   * ⚠️ AND THE SAME FOR THE NAME, FOR THE SAME REASON.
+   *
+   * peer_name was written from the introduction at enrollment and never again, so renaming a server
+   * changed it everywhere except on the hubs that watch it — which is the only place anybody was
+   * going to read it. Refreshed here it stays true, and the identical `peer_node_id = ?` guard keeps
+   * a RELAYED grandchild's name off the direct child's edge.
+   *
+   * ⚠️ COALESCE ABOVE, AND A TRUTHY CHECK HERE, BECAUSE ABSENT IS NOT THE SAME AS BLANK. An older
+   * child that does not send a name at all must not blank the name we already have; only a node
+   * that actually says something gets to change what it is called.
+   */
+  const named = cleanName(body.name);
+  if (named) {
+    db.prepare('UPDATE mesh_edges SET peer_name = ? WHERE id = ? AND peer_node_id = ?')
+      .run(named, edgeId, originNodeId);
   }
 }
 
@@ -82,13 +117,13 @@ function upsertWorkspace(db, { originNodeId, body, originTs, receivedAt }) {
   return true;
 }
 
-function upsertDevice(db, { originNodeId, body, originTs, receivedAt }) {
+function upsertDevice(db, { originNodeId, body, originTs, receivedAt, edgeId }) {
   if (!body || !body.id) return false;
   db.prepare(`
     INSERT INTO mesh_mirror_devices
       (origin_node_id, device_id, name, status, last_heartbeat, body, origin_ts, received_at,
-       first_seen_at, workspace_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       first_seen_at, workspace_id, edge_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(origin_node_id, device_id) DO UPDATE SET
       name           = excluded.name,
       workspace_id   = excluded.workspace_id,
@@ -97,6 +132,7 @@ function upsertDevice(db, { originNodeId, body, originTs, receivedAt }) {
       body           = excluded.body,
       origin_ts      = excluded.origin_ts,
       received_at    = excluded.received_at,
+      edge_id        = excluded.edge_id,
       -- A device that reports again is not deleted, whatever a stale tombstone said.
       deleted_at     = NULL
       -- ⚠️ first_seen_at is deliberately ABSENT from this SET list, which is what makes it mean
@@ -107,7 +143,7 @@ function upsertDevice(db, { originNodeId, body, originTs, receivedAt }) {
       -- drop the whole existing fleet out of the first report anybody ran.
   `).run(originNodeId, body.id, body.name ?? null, body.status ?? null,
          body.last_heartbeat ?? null, JSON.stringify(body), originTs ?? null, receivedAt,
-         receivedAt, body.workspace_id ?? null);
+         receivedAt, body.workspace_id ?? null, edgeId ?? null);
   return true;
 }
 
@@ -145,8 +181,77 @@ function insertPlayLog(db, { originNodeId, body, originTs, receivedAt }) {
 }
 
 /** Route a validated envelope to the right table. */
+/*
+ * What a child says this hub may do to it. Stored on the EDGE rather than in a mirror table,
+ * because it describes the relationship rather than the child's data — and because the one
+ * question it answers ("may I offer this operator a Save button?") is asked per edge.
+ *
+ * ⚠️ Recorded verbatim and trusted for NOTHING except rendering. The child enforces its own grant
+ * on every request, re-read live from its own row; a hub that used this to decide anything would be
+ * a hub granting itself permission. Shape-checked so a malformed or hostile offer cannot make the
+ * hub's UI claim more than the child would honour — and an unparseable one clears the offer rather
+ * than leaving a stale, more permissive answer standing.
+ */
+function recordWriteOffer(db, edge, ctx) {
+  const b = ctx.body || {};
+  const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 200) : []);
+  const offer = {
+    categories: list(b.categories),
+    workspaces: list(b.workspaces),
+    bytesBudget: Number.isFinite(b.bytesBudget) ? b.bytesBudget : null,
+    bytesUsed: Number.isFinite(b.bytesUsed) ? b.bytesUsed : 0,
+    at: ctx.receivedAt,
+  };
+  const empty = !offer.categories.length || !offer.workspaces.length;
+  /*
+   * ⚠️ Recorded SEPARATELY from the write offer, and not cleared with it. A child may consent to
+   * its data travelling further up while granting no write at all — the two are unrelated
+   * decisions, and folding them together would silently revoke one by changing the other.
+   */
+  const sharesUpward = b.shareUpward === true ? 1 : 0;
+  db.prepare('UPDATE mesh_edges SET peer_write_offer = ?, peer_shares_upward = ? WHERE id = ?')
+    .run(empty ? null : JSON.stringify(offer), sharesUpward, edge.id);
+  return true;
+}
+
+/*
+ * ⚠️ WHERE THIS PAYLOAD CAME FROM, IN HOPS — learned rather than declared.
+ *
+ * A node cannot tell this hub where it sits in the tree; that would be describing a relationship it
+ * is not a party to, and it would be trusting a claim nobody can check. But a payload that has
+ * genuinely travelled through a relay carries the path it took, and the receiver already refuses
+ * any item whose ancestry does not include the node that handed it over. So the shape is proven by
+ * arrival: if this row is here and attested, that route exists.
+ *
+ * Recorded per node rather than per payload — the question is "how far away is this server", and
+ * the answer changes only when the topology does.
+ */
+function recordNodePath(db, edge, env, receivedAt) {
+  const chain = Array.isArray(env && env.ancestry) ? env.ancestry.filter((x) => typeof x === 'string') : [];
+  const origin = env && env.origin_node_id;
+  if (!origin || origin === edge.peer_node_id) return;      // direct: the edge already says it
+  if (!chain.includes(edge.peer_node_id)) return;           // unattested: not ours to record
+
+  /*
+   * Hops counted from THIS node: the chain is [origin, …, neighbour], so its length is exactly the
+   * number of links back to here. A screen on a directly-paired server is 1; one behind a relay is 2.
+   */
+  const hops = chain.length;
+  try {
+    db.prepare(`INSERT INTO mesh_node_paths (node_id, via_edge_id, path, hops, first_seen_at, last_seen_at)
+                VALUES (?,?,?,?,?,?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                  via_edge_id  = excluded.via_edge_id,
+                  path         = excluded.path,
+                  hops         = excluded.hops,
+                  last_seen_at = excluded.last_seen_at`)
+      .run(origin, edge.id, JSON.stringify(chain), hops, receivedAt, receivedAt);
+  } catch (e) { /* a node with no paths table simply learns no shape */ }
+}
+
 function storeEnvelope(db, edge, env, now) {
   const receivedAt = now || Math.floor(Date.now() / 1000);
+  recordNodePath(db, edge, env, receivedAt);
   const ctx = { edgeId: edge.id, originNodeId: env.origin_node_id, body: env.body || {},
                 originTs: env.origin_ts ? Math.floor(env.origin_ts / 1000) : null, receivedAt };
   switch (env.type) {
@@ -156,6 +261,7 @@ function storeEnvelope(db, edge, env, now) {
     case 'alert-event':    return upsertAlert(db, ctx) ? 'alert-event' : null;
     case 'proof-of-play':  return insertPlayLog(db, ctx) ? 'proof-of-play' : null;
     case 'tombstone':      return markDeleted(db, ctx) ? 'tombstone' : null;
+    case 'write-offer':    return recordWriteOffer(db, edge, ctx) ? 'write-offer' : null;
     default:
       // ⚠️ Unknown types are NOT stored. They are relayable (I5) and that is a transport concern —
       // inventing a table for a payload this node cannot interpret would be storing bytes nobody can
@@ -261,6 +367,7 @@ function readDevice(db, originNodeId, deviceId) {
 }
 
 module.exports = {
+  recordNodePath,
   upsertNodeHealth, upsertDevice, upsertAlert, insertPlayLog, storeEnvelope,
   markDeleted, markNodeStale, pruneEdge, purgeNode, freshnessOf, readDevice, safeParseArray,
 };

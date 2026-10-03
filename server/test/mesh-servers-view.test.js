@@ -184,13 +184,53 @@ test('⚠️ mesh writes address LOCAL administration only (I2)', () => {
    * THIS node's own configuration by its own instance owner, so the guard is about the TARGET
    * rather than the verb.
    */
-  const LOCAL = ['/mesh/pair/code', '/mesh/uplink'];
+  /*
+   * ⚠️ /mesh/clients joins the list, and it belongs here for the same reason the other two do: it
+   * writes THIS hub's own records — which customers exist, which of this hub's staff may act on
+   * them, and which customer a linked server is filed under. Nothing under it reaches another node.
+   *
+   * The check below still forbids writes to /mesh/nodes, and it caught the first spelling of the
+   * filing route (PUT /mesh/nodes/:id/client). That was a real catch rather than a false positive:
+   * a URL reading "write to a node" is one somebody later extends into writing to a node, so the
+   * route was re-addressed under the resource it actually modifies.
+   */
+  /*
+   * ⚠️ /mesh/identity is the most local write on this page: what this box calls ITSELF. It changes
+   * one column on this node's own mesh_node row and reaches nothing else. A peer learns the new
+   * name only because this node volunteers it on its next self-report — which the peer is free to
+   * ignore, and which no hub can request.
+   *
+   * Worth stating the direction, since a name IS displayed on other people's dashboards: it travels
+   * up, never down. Nothing above can set it. A hub renaming its customers' servers is precisely
+   * the thing this guard exists to keep out, and this is the opposite of it.
+   */
+  /*
+   * ⚠️ /mesh/links: THIS hub's own edge to a server below — the parent-side disenroll. Addressed
+   * as the link rather than the node for exactly the reason the filing route was re-addressed: it
+   * ends this node's copy and stops this node pulling; it changes nothing on the other server,
+   * which learns only that a door is shut at its next connection.
+   */
+  const LOCAL = ['/mesh/pair/code', '/mesh/uplink', '/mesh/clients', '/mesh/identity', '/mesh/links'];
+
+  /*
+   * ⚠️ AND ONE THAT DELIBERATELY IS NOT LOCAL. /mesh/content asks a customer's server to accept
+   * files; it is the only call from this view that leaves this node, and it belongs to the same
+   * family as POST /mesh/write — the hub ASKS, and the child decides against its own grant, its own
+   * disk and its own free space. It is named separately from LOCAL rather than folded into it,
+   * because "this write stays here" and "this write goes to a customer" are different claims and
+   * collapsing them would let a future route inherit the wrong one silently.
+   */
+  // '/mesh/content' (no node id) is the same act aimed at several customers at once — the route
+  // re-checks visibility and role PER NODE, so a batch cannot reach a client a single send could
+  // not. Listed as a prefix so both forms are covered by one entry.
+  const ASKS_A_CUSTOMER = ['/mesh/content'];
   const writes = [...VIEW.matchAll(/api\.(post|put|patch|delete)\(\s*[`'"]([^`'"$]*)/g)]
     .map((m) => ({ verb: m[1], path: m[2] }));
   assert.ok(writes.length > 0, 'the Connect tab does write something');
   for (const w of writes) {
-    assert.ok(LOCAL.some((p) => w.path.startsWith(p)),
-      `api.${w.verb} to "${w.path}" — a write outside local administration`);
+    assert.ok(LOCAL.some((p) => w.path.startsWith(p)) || ASKS_A_CUSTOMER.some((p) => w.path.startsWith(p)),
+      `api.${w.verb} to "${w.path}" — a write that is neither local administration nor a request ` +
+      'to a customer. It must be one or the other, deliberately.');
   }
   for (const remote of ['/mesh/nodes', '/mesh/devices', '/mesh/orgs', '/mesh/topology']) {
     for (const verb of ['post', 'put', 'patch', 'delete']) {
@@ -338,8 +378,18 @@ test('⚠️ a persistent banner names the server being viewed', () => {
   // be a question the UI leaves to memory.
   assert.match(APP, /renderRemoteOrgBanner/);
   assert.match(APP, /Viewing <strong>\$\{name\}<\/strong>/);
-  assert.match(APP, /Read-only for now/);
   assert.match(APP, /Back to this server/);
+
+  /*
+   * ⚠️ This asserted the literal words "Read-only for now", which was right while nothing could be
+   * changed from here and became a lie the moment write shipped. What has to survive is that the
+   * banner states what this operator may ACTUALLY do — so it must answer both ways, from the
+   * customer's own announcement, and must still say read-only when nothing was granted.
+   */
+  assert.match(APP, /org\.writable/,
+    'the banner must reflect what the customer granted, not a fixed sentence');
+  assert.match(APP, /[Rr]ead-only/,
+    'and must still say read-only when they have granted nothing');
 });
 
 test('the remote-orgs fetch fails silently on a server with no mesh', () => {
@@ -403,8 +453,21 @@ test('⚠️ the ACTIONS are removed from the DOM, not disabled', () => {
    * about fails loudly instead of silently writing to the wrong server.
    */
   const API = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'api.js'), 'utf8');
-  assert.match(API, /!== 'GET'[\s\S]{0,200}refuse:/,
-    'writes are refused at the api layer while viewing another server');
+
+  /*
+   * ⚠️ The property changed shape when write landed, and the assertion had to change with it. It
+   * used to be "every non-GET is refused"; now a non-GET either goes to the CUSTOMER's server or is
+   * refused — and it may never quietly go to ours. Both branches are asserted, and the ordering
+   * with them: refusal is the fallthrough, so a route nobody considered is refused rather than
+   * routed. The behavioural proof lives in mesh-remote-routing.test.js, which runs this module
+   * against a stubbed fetch; this is the source-level backstop.
+   */
+  assert.match(API, /verb !== 'GET'/,
+    'writes must still be recognised as writes at the api layer');
+  assert.match(API, /org\.writable && meshWritable\(path, verb\)[\s\S]{0,200}write: true/,
+    'a write may leave for the customer only when they granted it AND the path is allowlisted');
+  assert.match(API, /write: true[\s\S]{0,400}refuse:/,
+    'and refusal must be the fallthrough, so an unconsidered route is refused rather than routed');
 });
 
 test('⚠️ an offline server falls back to the mirror AND SAYS SO', () => {
@@ -455,7 +518,9 @@ test('every readable path names the grant it needs', () => {
   const rules = [...block.matchAll(/\{\s*pattern:\s*'([^']+)'([^}]*)\}/g)];
   assert.ok(rules.length >= 4, 'there must be readable paths');
   for (const [, pat, rest] of rules) {
-    assert.match(rest, /grant:/, `${pat} must declare a grant`);
+    // Scale-out C2: verify-device is keyed to a WRITE grant (player-events) — still a grant, and
+    // still one the answering node's operator chose; authorize() reads it from the edge row.
+    assert.match(rest, /grant:|writeGrant:/, `${pat} must declare a grant`);
   }
 });
 
@@ -477,4 +542,31 @@ test('⚠️ a view NEVER re-renders itself into document.body', () => {
   assert.match(src, /state\._container = container/, 'the container handed in is remembered');
   assert.match(src, /if \(state\._container\) render\(state\._container\)/,
     'and re-renders address it explicitly');
+});
+
+/*
+ * ⚠️ THE AUTO-LOGGER MUST BE MOUNTED ABOVE THE MESH ROUTERS.
+ *
+ * activityLogger wraps res.json for every SUBSEQUENT route, so anything mounted above it is
+ * invisible to the audit log. It already carried a comment recording that it had once been mounted
+ * after the workspace routes and silently never fired — and the mesh routers were then added above
+ * the corrected position and inherited the identical bug. The result: nothing mesh-related was ever
+ * written to activity_log. Not granting another server the right to change your screens, not
+ * revoking it, not minting a pairing code, not severing a link.
+ *
+ * Asserted rather than commented, because a comment saying "mount this first" is exactly what
+ * failed twice. This is an ordering property of one file, so it is checked as one.
+ */
+test('⚠️ activityLogger is mounted BEFORE the mesh routers, or the mesh is unauditable', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const logger = src.indexOf('app.use(activityLogger)');
+  assert.ok(logger > 0, 'the auto-logger must still be mounted at all');
+
+  const meshMounts = [...src.matchAll(/app\.use\('\/api\/mesh'/g)].map((m) => m.index);
+  assert.ok(meshMounts.length >= 1, 'the mesh routers must still be mounted here');
+  for (const at of meshMounts) {
+    assert.ok(logger < at,
+      'a mesh router is mounted above activityLogger, so nothing it does will ever be logged — ' +
+      'move the mount below app.use(activityLogger)');
+  }
 });

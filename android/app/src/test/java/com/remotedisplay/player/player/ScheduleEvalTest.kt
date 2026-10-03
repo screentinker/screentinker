@@ -35,8 +35,15 @@ class ScheduleEvalTest {
                     endDate = o.get("end_date").let { if (it.isJsonNull) null else it.asString }
                 )
             }
+            val window = if (v.has("window") && !v.get("window").isJsonNull) {
+                val w = v.getAsJsonObject("window")
+                ScheduleEval.windowOf(
+                    w.get("play_from")?.let { if (it.isJsonNull) null else it.asString },
+                    w.get("play_until")?.let { if (it.isJsonNull) null else it.asString }
+                )
+            } else null
             val utcMs = Instant.parse(v.get("utc_now").asString).toEpochMilli()
-            val got = ScheduleEval.isItemActiveNow(blocks, utcMs, v.get("timezone").asString)
+            val got = ScheduleEval.isItemActiveNow(blocks, utcMs, v.get("timezone").asString, window)
             val expected = v.get("expected").asBoolean
             count++
             if (got != expected) {

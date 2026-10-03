@@ -122,7 +122,7 @@ for (const r of PUBLIC_ROUTERS) {
   });
 }
 test('partition: known-privileged routers are JWT-only and never public', () => {
-  const MUST_BE_PRIVATE = ['/api/admin', '/api/workspaces', '/api/ai', '/api/provision', '/api/white-label', '/api/tokens'];
+  const MUST_BE_PRIVATE = ['/api/admin', '/api/workspaces', '/api/ai', '/api/provision', '/api/white-label', '/api/tokens', '/api/plugin-submissions'];
   const jwtOnly = new Set(JWT_ONLY_ROUTERS.map(r => r.path));
   const publicSet = new Set(PUBLIC_ROUTERS.map(r => r.path));
   for (const p of MUST_BE_PRIVATE) {
@@ -148,6 +148,117 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
     // ⚠️ The FIRE path is NOT here — it is device-local, because a trigger that needs this server is
     // a trigger that fails with the WAN down. See docs/triggers-design.md.
     '/api/triggers',
+    /*
+     * Uploaded transitions, added deliberately. Same reasoning as fonts, already on this door: it is
+     * workspace content an integrator may reasonably manage from their own tooling, and every route
+     * here is workspace-scoped like its siblings.
+     *
+     * ⚠️ Worth knowing at review time: the payload is GLSL that will execute on the GPU of every
+     * screen in that workspace. That reach is real but not new — a `write` token can already change
+     * what those screens play. It is bounded by the engine's existing failure mode (an unknown or
+     * broken shader hard-cuts, it never blanks a screen) and by validation refusing anything without
+     * the renderer's entry point, anything with a preprocessor directive, anything over 64 KB, and
+     * anything declaring more than eight parameters. Uploads are prefixed `custom-` and consulted
+     * only AFTER the shipped manifest, so no upload can shadow a built-in.
+     */
+    '/api/transitions/custom',
+    /*
+     * Slide decks, added deliberately. The deck is an AUTHORING document — it publishes to a
+     * playlist of slide widgets and then takes no part in playback — and both of those objects are
+     * already on this door, so keeping the thing that writes them off it would be a limitation with
+     * no principle behind it: an integrator generating decks from their own data is the obvious use.
+     *
+     * ⚠️ What is worth knowing at review time is that PUBLISH creates widgets and playlist items,
+     * so a `write` token here can add objects to the library. That is the same reach a write token
+     * already has against /api/widgets and /api/playlists directly, and every route is
+     * workspace-scoped through accessContext exactly as its siblings are — a deck cannot publish
+     * into, or read from, a workspace the caller is not a member of.
+     */
+    '/api/slide-decks',
+    /*
+     * Uploaded slide fonts, added deliberately. Reads and deletes are workspace-scoped through
+     * accessContext like every sibling.
+     *
+     * ⚠️ What review should weigh: an upload here is REDISTRIBUTED by this server — every screen
+     * showing a slide in that face fetches the file, from a URL that cannot be authenticated
+     * (the slide's iframe is an opaque origin and carries no credentials, the same constraint
+     * /uploads/content already lives with). The id is a uuid, so unguessable rather than secret.
+     * A `write` token can therefore put a file on this origin that the public can fetch — which is
+     * exactly what it can already do with /api/content, at larger sizes.
+     */
+    '/api/fonts',
+    /*
+     * Data sources (iCal/API feeds) for slide-template interpolation, added deliberately. The
+     * authoring value a workspace stores here is a feed URL plus the subscription config, and the
+     * objects it affects (slide decks, widgets, playlists) are already on this door, so an
+     * integrator provisioning feeds from their own tooling is the intended caller — the same
+     * reasoning that put slide-decks and triggers here.
+     *
+     * ⚠️ Two things review should weigh, both already mitigated:
+     *  1. `/test` (and background sync) fetch an OPERATOR-SUPPLIED URL. Callers can therefore cause
+     *     the server to make an outbound request, so the fetch path is SSRF-guarded (scheme
+     *     allowlist, DNS + private-IP vetting, socket pinning, per-hop redirect re-vetting), the
+     *     `/test` trigger is rate-limited to 10/min, and in-flight fetches are bounded by a
+     *     process-wide concurrency cap; errors are deliberately not echoed back (they would aid
+     *     SSRF reconnaissance). Note the actual FIRE of these feeds to screens happens on the
+     *     device/client, not here.
+     *  2. Credentials in feed URLs are stored in the workspace's data-source config and are only
+     *     readable by that workspace's members (and the server's own render path), matching the
+     *     promise siblings on this door already make.
+     */
+    '/api/data-sources',
+    /*
+     * Display power schedules — the weekly BACKLIGHT clock — added deliberately. Same reasoning as
+     * triggers: an AV integrator provisioning a site configures "the screens are dark 22:00-06:00"
+     * from their own tooling, and that belongs in a handover script rather than twenty dashboard
+     * visits. Writes carry the same requireScope('full') + role pairing as /api/pip and /api/triggers,
+     * and reads are workspace-scoped like every sibling.
+     *
+     * ⚠️ What review should weigh, since this one is unusually easy to misread: a `full` token here
+     * can make an estate go DARK on a timer, which looks exactly like mass hardware failure to
+     * whoever is standing in front of it. Three things bound that, and they are the reason this is
+     * on the door rather than off it:
+     *
+     *  1. It is the PANEL, not the device. The player keeps running throughout — content syncs,
+     *     OTA proceeds, heartbeats continue — and `screen_on` wakes it instantly. Nothing here can
+     *     power a device off; there is no such command, deliberately, because a device that is off
+     *     cannot be told to come back on.
+     *  2. A screen reports `display_power: scheduled_off` on every heartbeat, so a deliberately
+     *     dark screen is DISTINGUISHABLE from a dead one in the dashboard. That is what stops this
+     *     becoming an undiagnosable outage.
+     *  3. The reach is not new: a `write` token can already assign an empty playlist and leave the
+     *     same screens showing nothing, with no telemetry saying it was on purpose.
+     *
+     * ⚠️ The DECISION is not here. The panel evaluates its own windows offline against
+     * shared/power-window-vectors.json — same principle as the trigger fire path — so nothing on
+     * this door is consulted at the moment a screen actually sleeps.
+     */
+    '/api/display-power-schedules',
+    /*
+     * Saved device endpoints — REST calls a PANEL makes on its own network — added deliberately.
+     * Same reasoning as triggers and power schedules: an integrator provisioning a site configures
+     * "poll the PLC every minute" from their own tooling, and that belongs in a handover script.
+     * Writes carry the same requireScope('full') + role pairing as its siblings.
+     *
+     * ⚠️ What review should weigh, because this one is genuinely new reach: a `full` token here can
+     * make a screen issue HTTP requests INSIDE the customer's private network, on a timer, for ever.
+     * Four things bound it:
+     *
+     *  1. The scheme allowlist (shared/http-target-vectors.json) applies at save time and again on
+     *     the panel. file:// and content:// are refused, so this cannot become "read a file off the
+     *     device" — which is the only escalation of KIND available here.
+     *  2. The caller already holds `full`, which on a device-owner panel can run `shell`. Reaching
+     *     a LAN host is not an escalation for them; it is what they asked for.
+     *  3. Responses are capped at 64 KiB and relayed only to THIS device's workspace dashboards.
+     *  4. Header values are encrypted at rest and never returned by any read surface, so a
+     *     workspace member who can list endpoints still cannot read the credentials in them.
+     *
+     * ⚠️ And the reach stops at the tenant: http_request is NOT a mesh command, so no other server
+     * can aim a panel this way. See the note in lib/device-command.js.
+     */
+    '/api/device-endpoints',
+    '/api/approvals',
+    '/api/revisions',
   ].sort();
   assert.deepEqual(PUBLIC_ROUTERS.map(r => r.path).sort(), EXPECTED_PUBLIC);
 });
@@ -319,6 +430,23 @@ test('gap: device PUT accepts layout_id and returns it on read', async () => {
 test('gap: device PUT REJECTS a cross-tenant layout_id (400)', async () => {
   const res = await jfetch(`/api/devices/${S.deviceId}`, { method: 'PUT', ...auth(S.jwt), body: JSON.stringify({ layout_id: S.layoutB }) });
   assert.equal(res.status, 400, 'a layout from another workspace must be rejected');
+});
+
+test('#467: the device list carries each display\'s platform_family and app_version', async () => {
+  const r = await jfetch('/api/devices', auth(S.jwt));
+  assert.equal(r.status, 200);
+  const d = r.body.find((x) => x.id === S.deviceId);
+  assert.ok(d, 'the paired test device is listed');
+  assert.ok(['android', 'web', 'tizen', 'brightsign', 'vega', 'linux', 'windows'].includes(d.platform_family), String(d.platform_family));
+  assert.ok('app_version' in d);
+});
+
+test('#467: /api/version reports the served APK version (null when none is staged), without auth', async () => {
+  const r = await jfetch('/api/version');
+  assert.equal(r.status, 200);
+  assert.ok('apk_version' in r.body, 'apk_version key present');
+  assert.ok(r.body.apk_version === null || typeof r.body.apk_version === 'string');
+  assert.equal(typeof r.body.hash, 'string');
 });
 
 test('docs: /openapi.yaml serves the spec document', async () => {

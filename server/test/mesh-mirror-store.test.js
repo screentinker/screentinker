@@ -37,9 +37,29 @@ function freshDb() {
       tls_verify INTEGER NOT NULL DEFAULT 1, peer_version TEXT, peer_min_version TEXT,
       token_hash TEXT, token_expires_at INTEGER, client_id TEXT, created_at INTEGER,
       last_sync_at INTEGER, revoked_at INTEGER, peer_url TEXT, up_token TEXT, peer_name TEXT,
-      shared_workspaces TEXT);
+      shared_workspaces TEXT,
+      -- Phase 5 write consent. ⚠️ Set ONLY by the child's own operator; the wire may never write
+      -- these, which is why they are absent from the enrollment INSERT and its ON CONFLICT clause.
+      write_grant TEXT,
+      write_scope TEXT,
+      -- How much disk this edge may consume, and how much it has. ⚠️ NULL is NOTHING, never
+      -- unlimited — the same rule as write_scope, and for the same reason.
+      write_bytes_budget INTEGER,
+      write_bytes_used INTEGER NOT NULL DEFAULT 0,
+      -- What a child announced this hub may do to it. Advisory — see mirror-store.recordWriteOffer.
+      peer_write_offer TEXT,
+      -- Whether the peer agreed its data may travel a second hop, and whether we agreed ours may.
+      share_upward INTEGER NOT NULL DEFAULT 0,
+      peer_shares_upward INTEGER NOT NULL DEFAULT 0,
+      -- Whether this operator passes received content on to that client without being asked.
+      auto_forward INTEGER NOT NULL DEFAULT 0,
+      -- Scale-out: the change-log position a replica has acknowledged.
+      acked_rev INTEGER);
     CREATE TABLE mesh_mirror_nodes (
       origin_node_id TEXT PRIMARY KEY, via_edge_id TEXT NOT NULL, node_version TEXT,
+      -- What the node calls itself. Kept alongside node_version because it has the same lifecycle:
+      -- declared by the origin, refreshed on every report, never authored by the receiver.
+      node_name TEXT,
       device_count INTEGER, devices_online INTEGER, origin_ts INTEGER,
       received_at INTEGER NOT NULL, stale_since INTEGER);
     CREATE TABLE mesh_mirror_devices (
@@ -47,6 +67,9 @@ function freshDb() {
       last_heartbeat INTEGER, body TEXT NOT NULL DEFAULT '{}', origin_ts INTEGER,
       received_at INTEGER NOT NULL, deleted_at INTEGER, first_seen_at INTEGER,
       workspace_id TEXT,
+      -- Which edge the row arrived on. Relayed rows originate at a node this hub has no edge to,
+      -- so visibility is resolved from the edge rather than the origin.
+      edge_id TEXT,
       PRIMARY KEY (origin_node_id, device_id));
     CREATE TABLE mesh_mirror_workspaces (
       origin_node_id TEXT NOT NULL, workspace_id TEXT NOT NULL, name TEXT,
@@ -393,6 +416,128 @@ test('⚠️ a RELAYED report from deeper in the subtree does NOT overwrite the 
   }
 });
 
+// ===== the name a node calls itself =====
+
+/*
+ * ⚠️ THE DEFECT: THE NAME COULD TRAVEL, AND COULD NOT CHANGE.
+ *
+ * mesh_node.node_name, store.setNodeName() and the `nodeName` field in the pairing handshake all
+ * shipped together and looked complete. Nothing in the entire tree ever called the setter, and
+ * mesh_edges.peer_name was written from the introduction at enrollment - once, and never again. So
+ * every server in a mesh was permanently whatever its hostname happened to be on pairing day, and
+ * an operator who renamed a box renamed it for nobody but themselves.
+ *
+ * That is the same defect peer_version had, immediately above, so it is fixed and covered the
+ * same way: the name rides the periodic self-report.
+ */
+test('a rename reaches the parent, on the mirror row AND the edge', () => {
+  const db = freshDb();
+  {
+    db.prepare(`INSERT INTO mesh_edges (id, peer_node_id, direction, transport_direction, peer_name)
+                VALUES ('e1','child-1','down','they-dial','oldhost')`).run();
+
+    ms.upsertNodeHealth(db, {
+      edgeId: 'e1', originNodeId: 'child-1',
+      body: { name: 'Kenosha North', version: '2.0.0', device_count: 1, devices_online: 1 },
+      originTs: NOW, receivedAt: NOW,
+    });
+    assert.equal(db.prepare("SELECT node_name n FROM mesh_mirror_nodes WHERE origin_node_id='child-1'").get().n,
+      'Kenosha North');
+    assert.equal(db.prepare("SELECT peer_name n FROM mesh_edges WHERE id='e1'").get().n, 'Kenosha North',
+      'THE ORIGINAL BUG: the edge is what the Servers view reads, and it kept the pairing-day name');
+
+    // ...and again, because a rename is not a one-time event either.
+    ms.upsertNodeHealth(db, {
+      edgeId: 'e1', originNodeId: 'child-1',
+      body: { name: 'Kenosha South', version: '2.0.0', device_count: 1, devices_online: 1 },
+      originTs: NOW + 60, receivedAt: NOW + 60,
+    });
+    assert.equal(db.prepare("SELECT peer_name n FROM mesh_edges WHERE id='e1'").get().n, 'Kenosha South');
+  }
+});
+
+test('⚠️ a report carrying no name leaves the last known one alone', () => {
+  /*
+   * Absent is not blank. A child on an older build sends node-health with no name field at all;
+   * reading that as "" would erase a good name on the first report from an un-upgraded peer - data
+   * loss produced entirely by the reader, and it would look like the child had done it.
+   */
+  const db = freshDb();
+  {
+    db.prepare(`INSERT INTO mesh_edges (id, peer_node_id, direction, transport_direction, peer_name)
+                VALUES ('e1','child-1','down','they-dial','Kenosha North')`).run();
+    ms.upsertNodeHealth(db, {
+      edgeId: 'e1', originNodeId: 'child-1',
+      body: { name: 'Kenosha North', version: '2.0.0' }, originTs: NOW, receivedAt: NOW,
+    });
+
+    for (const body of [{ version: '2.0.0' }, { name: '', version: '2.0.0' },
+                        { name: '   ', version: '2.0.0' }, { name: null, version: '2.0.0' },
+                        { name: 42, version: '2.0.0' }]) {
+      ms.upsertNodeHealth(db, {
+        edgeId: 'e1', originNodeId: 'child-1', body, originTs: NOW + 60, receivedAt: NOW + 60,
+      });
+      const why = `a report of ${JSON.stringify(body)} must leave the name alone`;
+      assert.equal(db.prepare("SELECT node_name n FROM mesh_mirror_nodes WHERE origin_node_id='child-1'").get().n,
+        'Kenosha North', why);
+      assert.equal(db.prepare("SELECT peer_name n FROM mesh_edges WHERE id='e1'").get().n, 'Kenosha North', why);
+    }
+  }
+});
+
+test('⚠️ a RELAYED report does NOT rename the child it arrived through', () => {
+  // Exactly the guard peer_version needs, for exactly the same reason: a node-health payload
+  // legitimately arrives via a child on behalf of a GRANDCHILD, and stamping that name onto the
+  // edge would label the child with something behind it. The Servers view would then disagree with
+  // the topology view, and only one of them would be wrong.
+  const db = freshDb();
+  {
+    db.prepare(`INSERT INTO mesh_edges (id, peer_node_id, direction, transport_direction, peer_name)
+                VALUES ('e1','child-1','down','they-dial','Direct Child')`).run();
+    ms.upsertNodeHealth(db, {
+      edgeId: 'e1', originNodeId: 'grandchild-9',      // relayed THROUGH child-1, not FROM it
+      body: { name: 'Deep Site', version: '1.9.39' }, originTs: NOW, receivedAt: NOW,
+    });
+    assert.equal(db.prepare("SELECT peer_name n FROM mesh_edges WHERE id='e1'").get().n, 'Direct Child',
+      "the grandchild's name leaked onto the child edge");
+    // ...while the grandchild is still recorded under its own id, which is the point of relaying.
+    assert.equal(
+      db.prepare("SELECT node_name n FROM mesh_mirror_nodes WHERE origin_node_id='grandchild-9'").get().n,
+      'Deep Site');
+  }
+});
+
+test('⚠️ a name off the wire is bounded and stripped before it is stored', () => {
+  /*
+   * This text comes from a machine we do not run and is rendered on our dashboard beside real
+   * numbers. Escaping at the renderer handles markup; it does nothing about a name that is a
+   * kilobyte long (a layout attack on every page it appears in) or one carrying control characters
+   * (which forge line structure in a log or a table). Bounded on the way in, at the single entry.
+   */
+  const db = freshDb();
+  {
+    db.prepare(`INSERT INTO mesh_edges (id, peer_node_id, direction, transport_direction)
+                VALUES ('e1','child-1','down','they-dial')`).run();
+
+    ms.upsertNodeHealth(db, {
+      edgeId: 'e1', originNodeId: 'child-1',
+      body: { name: 'A'.repeat(400), version: '2.0.0' }, originTs: NOW, receivedAt: NOW,
+    });
+    assert.equal(db.prepare("SELECT node_name n FROM mesh_mirror_nodes WHERE origin_node_id='child-1'").get().n.length,
+      60, 'the 60-character cap the local setter enforces applies to the wire too');
+
+    ms.upsertNodeHealth(db, {
+      edgeId: 'e1', originNodeId: 'child-1',
+      body: { name: 'Site\nB\tnorth ', version: '2.0.0' }, originTs: NOW + 60, receivedAt: NOW + 60,
+    });
+    const stored = db.prepare("SELECT node_name n FROM mesh_mirror_nodes WHERE origin_node_id='child-1'").get().n;
+    // Asserted by code point, so this assertion contains no control characters of its own.
+    assert.ok(![...stored].some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127),
+      `control characters survived: ${JSON.stringify(stored)}`);
+    assert.equal(stored, 'Site B north', 'stripped to spaces and trimmed, not deleted outright');
+  }
+});
+
 test('a report carrying no version leaves the last known one alone', () => {
   // A health-only grant may omit it. "I did not say" must not read as "I am unknown", or the
   // Servers view would flap to blank every time a narrow-grant peer reported.
@@ -405,4 +550,71 @@ test('a report carrying no version leaves the last known one alone', () => {
     });
     assert.equal(db.prepare("SELECT peer_version v FROM mesh_edges WHERE id='e1'").get().v, '2.0.0-alpha1');
   }
+});
+
+/*
+ * ⚠️ WHAT A CHILD SAYS THIS HUB MAY DO TO IT.
+ *
+ * The hub has no copy of the child's write grant and must never infer one, so without this
+ * announcement it cannot tell an operator whether they may push to a client — it can only let them
+ * try and be refused, by a refusal deliberately identical for "no such thing" and "not permitted".
+ *
+ * Advisory in the strongest sense: the child re-checks its own row on every request. What is tested
+ * here is that the hub records it, shape-checks it, and NEVER ends up claiming more than the child
+ * offered — including when the offer is malformed, hostile, or absent.
+ */
+
+/*
+ * A real mesh_edges ROW, because recordWriteOffer UPDATEs it — the in-memory `edge()` builder above
+ * is enough for the mirror tables, which key on edge_id without needing the row to exist.
+ */
+function seedEdge(db, id = 'e1') {
+  db.prepare(`INSERT INTO mesh_edges (id, peer_node_id, direction, transport_direction, peer_version)
+              VALUES (?, 'child-1', 'down', 'they-dial', '2.0.0')`).run(id);
+  return db.prepare('SELECT * FROM mesh_edges WHERE id = ?').get(id);
+}
+
+test('a write offer from a child is recorded on the edge', () => {
+  const db = freshDb();
+  const edge = seedEdge(db);
+  ms.storeEnvelope(db, edge, {
+    type: 'write-offer', origin_node_id: 'child-1', origin_ts: Date.now(),
+    body: { categories: ['content-push'], workspaces: ['ws-1'], bytesBudget: 20 * 1024 ** 3, bytesUsed: 5 },
+  });
+  const offer = JSON.parse(db.prepare('SELECT peer_write_offer AS o FROM mesh_edges WHERE id = ?').get(edge.id).o);
+  assert.deepEqual(offer.categories, ['content-push']);
+  assert.deepEqual(offer.workspaces, ['ws-1']);
+  assert.equal(offer.bytesUsed, 5);
+});
+
+test('⚠️ an offer that grants nothing is stored as nothing, not as an empty promise', () => {
+  const db = freshDb();
+  const edge = seedEdge(db);
+  for (const body of [
+    { categories: [], workspaces: ['ws-1'] },          // no categories
+    { categories: ['content-push'], workspaces: [] },  // no workspaces — enforcement denies this too
+    {},
+  ]) {
+    ms.storeEnvelope(db, edge, { type: 'write-offer', origin_node_id: 'child-1', origin_ts: Date.now(), body });
+    const o = db.prepare('SELECT peer_write_offer AS o FROM mesh_edges WHERE id = ?').get(edge.id).o;
+    assert.equal(o, null, `${JSON.stringify(body)} must not read as an offer`);
+  }
+});
+
+test('⚠️ a malformed offer CLEARS the previous one rather than leaving it standing', () => {
+  // A stale, more permissive answer surviving a garbled update is the wrong way for this to fail:
+  // the hub would keep offering a button the customer has since taken away.
+  const db = freshDb();
+  const edge = seedEdge(db);
+  ms.storeEnvelope(db, edge, {
+    type: 'write-offer', origin_node_id: 'child-1', origin_ts: Date.now(),
+    body: { categories: ['content-push'], workspaces: ['ws-1'] },
+  });
+  assert.ok(db.prepare('SELECT peer_write_offer AS o FROM mesh_edges WHERE id = ?').get(edge.id).o);
+
+  ms.storeEnvelope(db, edge, {
+    type: 'write-offer', origin_node_id: 'child-1', origin_ts: Date.now(),
+    body: { categories: 'everything', workspaces: { all: true } },
+  });
+  assert.equal(db.prepare('SELECT peer_write_offer AS o FROM mesh_edges WHERE id = ?').get(edge.id).o, null);
 });

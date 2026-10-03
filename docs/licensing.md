@@ -72,7 +72,7 @@ Fedora, and Category X at Apache. Not copyleft, but not a term to accept in a bi
 commercially.
 
 It is now excluded in `android/app/build.gradle.kts`. Nothing is lost — Android has provided
-`org.json` in the platform since API 1 and `minSdk` is 24 — and `android/licenses.json` denies it by
+`org.json` in the platform since API 1 and `minSdk` is 23 — and `android/licenses.json` denies it by
 name so it cannot return quietly.
 
 ## SBOM
@@ -91,7 +91,7 @@ be kept alongside. See `frontend/vendor/README.md`.
 
 ## The GLSL transitions
 
-The 14 shaders in `shared/Transitions/` are original work. Each carries its author and licence in
+The shaders in `shared/Transitions/` are original work. Each carries its author and licence in
 the file header, and none derives from Shadertoy, gl-transitions, glslsandbox or similar. "GL
 Transitions v1" in those headers refers to the *interface convention* — the function signature the
 renderer calls — not to borrowed code.

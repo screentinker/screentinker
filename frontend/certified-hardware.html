@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Certified Hardware | ScreenTinker</title>
+  <meta name="description" content="Device models tested with ScreenTinker, what each one actually does, and which are not supported. Certified Hardware under ScreenTinker reseller agreements.">
+  <meta name="keywords" content="certified hardware, digital signage hardware, signage player hardware, screentinker supported devices">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/certified-hardware">
+  <!-- The plain-text twin, named in the document as well as in the Link header: a CDN may serve a
+       cached HTML body to a request that asked for Markdown, and this survives inside that body. -->
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/certified-hardware.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/certified-hardware">
+  <meta property="og:title" content="Certified Hardware">
+  <meta property="og:description" content="Device models tested with ScreenTinker, what each one actually does, and which are not supported. Certified Hardware under ScreenTinker reseller agreements.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Certified Hardware">
+  <meta name="twitter:description" content="Device models tested with ScreenTinker, what each one actually does, and which are not supported. Certified Hardware under ScreenTinker reseller agreements.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+  <style>
+    /* Cards, not a wide table. The shared .compare-table is 640px minimum and scrolls sideways;
+       with this many fields per device that is unreadable on the phone a reseller is holding on
+       site. Cards stack, and each one is the deep-link target for its id. */
+    .status-group { margin: 40px 0; }
+    .status-group > h2 { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .status-group .count { color: var(--dim); font-weight: 400; font-size: 16px; }
+    .group-blurb { color: var(--muted); font-size: 15px; margin: 0 0 20px; }
+    .device { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 20px; margin: 16px 0; }
+    .device > h3 { margin: 0 0 14px; font-size: 19px; scroll-margin-top: 90px; }
+    .device .anchor { color: var(--dim); margin-right: 8px; text-decoration: none; font-weight: 400; }
+    .device .anchor:hover { color: var(--accent); }
+    .device-spec { display: block; margin: 0; font-size: 14px; }
+    .device-spec dt { color: var(--muted); font-weight: 600; margin-top: 10px; }
+    .device-spec dd { margin: 2px 0 0; color: var(--text); }
+    .device-notes { margin: 16px 0 0; padding-left: 20px; color: var(--text); font-size: 14px; }
+    .device-notes li { margin: 6px 0; }
+    .device-photo { margin: 18px 0 0; }
+    .device-photo img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); }
+    .device-photo figcaption { margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .device-photo figcaption a { color: var(--accent); }
+    .setup-link { margin: 14px 0 0; font-size: 14px; }
+    .buy-link { margin: 8px 0 0; font-size: 14px; }
+    .buy-link .affiliate-tag { color: var(--dim); font-size: 12px; }
+    .affiliate-notice { color: var(--muted); font-size: 13px; margin: 20px 0 0; }
+    .unknown { color: var(--dim); font-style: italic; }
+    .callout { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+      border-radius: 8px; padding: 18px 20px; margin: 24px 0; }
+    .callout p:last-child { margin-bottom: 0; }
+    .updated { color: var(--dim); font-size: 14px; }
+    /* Two columns on a roomy screen, one on a phone. No horizontal scrolling at any width. */
+    @media (min-width: 620px) {
+      .device-spec { display: grid; grid-template-columns: 220px 1fr; column-gap: 16px; }
+      .device-spec dt { margin-top: 0; }
+      .device-spec dd { margin: 0; }
+      .device-spec dt, .device-spec dd { padding: 5px 0; border-top: 1px solid var(--border); }
+      .device-spec dt:first-of-type, .device-spec dt:first-of-type + dd { border-top: 0; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <span>Certified Hardware</span>
+    </nav>
+
+    <h1>Certified Hardware</h1>
+    <p class="lead">The device models ScreenTinker has tested with ScreenTinker, what each one actually
+      does, and which ones to avoid.</p>
+    <p class="updated">Last updated 2026-09-24. 5 devices currently certified.</p>
+
+    <p style="margin:20px 0 4px">
+      <a href="/certified-hardware/submit" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Report hardware that works</a>
+    </p>
+
+    <div class="callout">
+      <p><strong>What "Certified Hardware" means.</strong> Only entries listed below as
+        <strong>Certified</strong> or <strong>Certified with limits</strong> are Certified Hardware
+        under ScreenTinker agreements. ScreenTinker has tested those models, keeps a unit of each in its
+        test lab, and support obligations attach to them.</p>
+      <p><strong>What it does not mean.</strong> Entries listed as Community reported, Known issues
+        or Not supported are <strong>not</strong> Certified Hardware and carry
+        <strong>no support commitment</strong>. They are published because knowing what other people
+        have run, and what does not work, is useful when you are choosing what to buy.</p>
+      <p>ScreenTinker is open source and runs on far more hardware than this list. Certification is a
+        statement about what ScreenTinker has tested and will support, not about what is capable of
+        running the software.</p>
+    </div>
+
+    <p class="affiliate-notice"><strong>Affiliate links.</strong> Some device cards below include a
+      "Buy this device" link that is an affiliate link. If you buy through one, ScreenTinker may earn a
+      commission at no extra cost to you. This has no bearing on what gets certified or how it is
+      tested: certification is decided on the bench, never by whether a link earns anything.</p>
+
+    <section class="status-group status-certified">
+      <h2>Certified <span class="count">(5)</span></h2>
+      <p class="group-blurb">Tested by ScreenTinker, works, and supported under ScreenTinker agreements. A unit of each is kept in the ScreenTinker test lab for regression testing.</p>
+      <article class="device" id="fire-tv-stick-4k-max">
+        <h3><a class="anchor" href="#fire-tv-stick-4k-max" aria-label="Link to Amazon Fire TV Stick 4K Max">#</a>Amazon Fire TV Stick 4K Max</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Amazon</dd>
+          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>Fire OS</dd>
+          <dt>ScreenTinker player</dt><dd>Android player (APK)</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-06-28</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>1.9.1</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>1.9.1</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>The primary recommendation for a new installation.</li>
+          <li>Validated at 1920x1080. The device supports higher output, but 4K signage playback has not been validated and is not covered.</li>
+          <li>Drives a commercial display over HDMI. The display itself needs no certification.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-android-tv.html">Setup guide for this device</a></p>
+        <p class="buy-link"><a href="https://amzn.to/4A422nY" rel="sponsored nofollow" target="_blank">Buy this device</a> <span class="affiliate-tag">(affiliate link)</span></p>
+      </article>
+      <article class="device" id="brightsign-series-5">
+        <h3><a class="anchor" href="#brightsign-series-5" aria-label="Link to BrightSign Series 5">#</a>BrightSign Series 5</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>BrightSign</dd>
+          <dt>Model numbers</dt><dd>XT245, HD1026</dd>
+          <dt>Category</dt><dd>Media player</dd>
+          <dt>Operating system</dt><dd>BrightSign OS 9 or 10</dd>
+          <dt>ScreenTinker player</dt><dd>Web player, running in an roHtmlWidget under the BrightSign autorun package (autorun.zip: autorun.brs plus st-bridge.js)</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-08-07</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>1.9.33</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>1.9.33</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>The player code is the ordinary web player, unmodified. The BrightSign-specific part is the host around it: autorun.brs owns the widget lifecycle, identity across reboots, recovery from a dead server, and video-mode and multi-output control, with st-bridge.js as the page&#39;s half of that contract. This package has to be installed on the player.</li>
+          <li>BrightSign&#39;s HTML widget does not reliably come back from a page reload. That is why the host exists: on deploy the page asks for a restart and autorun.brs tears the widget down and builds a new one, which is a restart the operating system actually performs. Without that host a deploy can darken the panel until someone power-cycles it.</li>
+          <li>The same hardware can also run the ScreenTinker server itself rather than only the player. That is a separate configuration with its own requirements, listed below.</li>
+        </ul>
+        <p class="buy-link"><a href="https://amzn.to/4xmzSSA" rel="sponsored nofollow" target="_blank">Buy this device</a> <span class="affiliate-tag">(affiliate link)</span></p>
+      </article>
+      <article class="device" id="brightsign-series-5-server">
+        <h3><a class="anchor" href="#brightsign-series-5-server" aria-label="Link to BrightSign Series 5, running the ScreenTinker server">#</a>BrightSign Series 5, running the ScreenTinker server</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>BrightSign</dd>
+          <dt>Model numbers</dt><dd>XT245</dd>
+          <dt>Category</dt><dd>Media player</dd>
+          <dt>Operating system</dt><dd>BrightSign OS 10</dd>
+          <dt>ScreenTinker player</dt><dd>The ScreenTinker server itself, as a real Node process, with the player running in the widget beside it</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-08-15</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>1.9.36</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>1.9.36</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>This is the whole system on one box: no separate server to host, and the panel keeps working if the network does not.</li>
+          <li>BrightSign OS 10 is required, and is not optional. The server runs on the Node runtime that ships with OS 10. OS 9 can run the player but cannot run the server.</li>
+          <li>NVMe or SSD storage is REQUIRED. Do not run the server from an SD card. A server writes continuously, to its database, its write-ahead log, its media library and its logs, and that load will wear out an SD card and take the site down with it. This is why the entry names the XT245, which takes a 128 GB NVMe drive, rather than the Series 5 generally.</li>
+          <li>Server mode is off unless you ask for it. It listens on port 8181.</li>
+          <li>Install from the autorun-server.zip and server-payload.zip assets published with each release. The payload installs in two stages; a single combined archive is not usable because the boot-time archive reader does not handle one that large.</li>
+          <li>Newer than the player configuration, which has been running since 2026-08-07. Treat it accordingly.</li>
+        </ul>
+      </article>
+      <article class="device" id="kb1001-portable-android-display">
+        <h3><a class="anchor" href="#kb1001-portable-android-display" aria-label="Link to KB1001 Android tablet">#</a>KB1001 Android tablet</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Shenzhen Efercro Electronic Technology</dd>
+          <dt>Model numbers</dt><dd>KB1001</dd>
+          <dt>Category</dt><dd>Display with built-in player</dd>
+          <dt>Operating system</dt><dd>Android 15</dd>
+          <dt>ScreenTinker player</dt><dd>Android player (APK)</dd>
+          <dt>Maximum resolution</dt><dd>1280x800</dd>
+          <dt>Validated on</dt><dd>2026-07-10</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>1.9.4</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>1.9.4</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>The panel is 1280x800. It was tested with 1080p content, which the device downscales to fit, so a 1080p playlist plays correctly but is not shown at full resolution.</li>
+          <li>Requires ScreenTinker 1.9.4 or later. Earlier Android builds could strand a panel on &quot;waiting for content&quot; after a restart, with no recovery short of clearing the app and re-provisioning (issue #162, fixed 2026-07-10).</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-android-tv.html">Setup guide for this device</a></p>
+        <p class="buy-link"><a href="https://amzn.to/4cKsp8A" rel="sponsored nofollow" target="_blank">Buy this device</a> <span class="affiliate-tag">(affiliate link)</span></p>
+      </article>
+      <article class="device" id="web-player">
+        <h3><a class="anchor" href="#web-player" aria-label="Link to Web player (any browser)">#</a>Web player (any browser)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Category</dt><dd>Browser</dd>
+          <dt>Operating system</dt><dd>Any operating system with a current browser</dd>
+          <dt>ScreenTinker player</dt><dd>Web player. No installation.</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-09-13</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>2.0.9</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>0.0.1</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Tested on Chrome and Firefox. Edge is expected to work but has not been tested.</li>
+          <li>Point the browser at /player on your server. Nothing is installed.</li>
+          <li>No minimum browser version has been established.</li>
+          <li>There is no ScreenTinker version floor either. The browser has been a supported display since the first release, and it is re-tested with the current one.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="status-group status-community-reported">
+      <h2>Community reported <span class="count">(4)</span></h2>
+      <p class="group-blurb">A user reports that this works. ScreenTinker has not tested it and keeps no unit. These are NOT Certified Hardware and carry no support commitment.</p>
+      <article class="device" id="samsung-om55b">
+        <h3><a class="anchor" href="#samsung-om55b" aria-label="Link to Samsung OM55B">#</a>Samsung OM55B</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Samsung</dd>
+          <dt>Model numbers</dt><dd>OM55B</dd>
+          <dt>Category</dt><dd>Display with built-in player</dd>
+          <dt>Operating system</dt><dd>Tizen 5.0 (SSSP v6)</dd>
+          <dt>ScreenTinker player</dt><dd>Tizen .wgt player</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated by</dt><dd>Community</dd>
+          <dt>Tested against</dt><dd>2.0.8</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>2.0.8</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>ScreenTinker holds no Tizen hardware. This entry rests on user reports and carries no support commitment.</li>
+          <li>Tizen is not turnkey. There are three install routes and each has a catch.</li>
+          <li>The released .wgt is unsigned and is for inspection only. Samsung distributor certificates are locked to the DUID of the signer&#39;s own panels, so a .wgt we signed would not install on yours.</li>
+          <li>Native install needs a Samsung certificate tied to each panel&#39;s DUID.</li>
+          <li>The SSSP URL Launcher route works without per-panel signing on your side: the server hosts sssp_config.xml and the panel installs itself, then reinstalls whenever the version bumps.</li>
+          <li>The simplest route is to point the panel&#39;s browser at /player, with no signing at all.</li>
+          <li>There is no in-app update for this player. A panel keeps its installed build until it is reinstalled.</li>
+          <li>Requires ScreenTinker 2.0.8 or later. A content security policy added in 2.0.0 black-screened Tizen 5.0 panels and was removed in 2.0.8 (issue #330).</li>
+        </ul>
+      </article>
+      <article class="device" id="lg-webos">
+        <h3><a class="anchor" href="#lg-webos" aria-label="Link to LG webOS signage panels">#</a>LG webOS signage panels</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>LG</dd>
+          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Category</dt><dd>Display with built-in player</dd>
+          <dt>Operating system</dt><dd>webOS 4.x, 5.x and 6.x, and webOS Signage 22 and later</dd>
+          <dt>ScreenTinker player</dt><dd>webOS .ipk shell around the web player</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated by</dt><dd>Community</dd>
+          <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Minimum ScreenTinker version</dt><dd>2.0.8</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Community contributed. No LG panel was available to ScreenTinker, so no unit is held in the lab and this carries no support commitment.</li>
+          <li>Installed from a USB stick or an SI server. No vendor signature is needed.</li>
+          <li>Built without LG&#39;s SCAP library, which LG&#39;s licence does not allow us to redistribute. Power control and self-update therefore need a local build with the LG SDK files in place. The dashboard hides those buttons on a panel that reports it cannot do them.</li>
+          <li>webOS 3.x and older are below the player&#39;s baseline and are shown a compatibility message rather than a black screen.</li>
+        </ul>
+      </article>
+      <article class="device" id="android-tv-generic">
+        <h3><a class="anchor" href="#android-tv-generic" aria-label="Link to Android TV devices (general)">#</a>Android TV devices (general)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>Android TV</dd>
+          <dt>ScreenTinker player</dt><dd>Android player (APK)</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated by</dt><dd>Community</dd>
+          <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Minimum ScreenTinker version</dt><dd>2.0.8</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Android TV hardware in general is not certified. Individual models are listed separately when ScreenTinker has tested them.</li>
+          <li>With group sync enabled the player warms the next clip on a second video decoder shortly before each item boundary. Some chipsets allow only one decoder at higher profiles, and the second request can reclaim the decoder already playing. The picture holds, no error is raised, and the playlist stops advancing.</li>
+          <li>Reported on Xiaomi Mi TV P1 panels (issue #333) and fixed in 2.0.8. The chipsets that behave this way have never been identified.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-android-tv.html">Setup guide for this device</a></p>
+      </article>
+      <article class="device" id="led-video-wall-colorlight-pi">
+        <h3><a class="anchor" href="#led-video-wall-colorlight-pi" aria-label="Link to LED video wall (Colorlight processor + Raspberry Pi)">#</a>LED video wall (Colorlight processor + Raspberry Pi)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Model numbers</dt><dd>Colorlight X4, Colorlight X8</dd>
+          <dt>Category</dt><dd>Single-board computer</dd>
+          <dt>Operating system</dt><dd>Raspberry Pi OS (Wayland / labwc)</dd>
+          <dt>ScreenTinker player</dt><dd>Web player in a kiosk browser on a Raspberry Pi 4</dd>
+          <dt>Maximum resolution</dt><dd>The wall&#39;s native mode, e.g. 2808x648 (13x3 modules of 216x216)</dd>
+          <dt>Validated on</dt><dd>2026-09-22</dd>
+          <dt>Validated by</dt><dd>Community</dd>
+          <dt>Tested against</dt><dd>2.1.5</dd>
+          <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Reported by Watterott electronic GmbH (Leinefelde-Worbis, Germany), who run ScreenTinker on LED walls in production. ScreenTinker holds no LED wall and this entry carries no support commitment.</li>
+          <li>The LED processor is configured once with the wall&#39;s native resolution and advertises it to the player over EDID. The Pi picks it up on boot as if a monitor with that native mode had been plugged in — nothing is configured on the Pi and ScreenTinker needs no LED-wall feature.</li>
+          <li>⚠️ Android streaming sticks cannot drive one. Fire TV, Google TV Streamer and similar only output from a fixed list of resolutions, so they cannot produce a wall&#39;s native mode. Use a Raspberry Pi or a small x86 PC.</li>
+          <li>Colorlight processors can crop and scale instead, but a 4K-class processor large enough to cover the wall without quality loss costs roughly double, and scaling means no longer driving the native pixel grid.</li>
+          <li>Brightness, colour calibration and gamma belong to the LED processor and receiving cards, not to ScreenTinker.</li>
+          <li>To blank a wall out of hours, set a device-level default image rather than putting a black image in the timetable.</li>
+          <li>Tested with MLS LED modules and Colorlight receiving cards, connected to the processor over HDMI.</li>
+        </ul>
+        <figure class="device-photo"><img src="/assets/hardware/led-wall-watterott.jpg" alt="A ScreenTinker advert running on a large outdoor LED video wall mounted on an industrial building" loading="lazy" decoding="async"><figcaption>Photo: <a href="https://www.watterott.com" rel="noopener">Watterott electronic GmbH</a></figcaption></figure>
+        <p class="setup-link"><a href="/guides/led-wall-digital-signage.html">Setup guide for this device</a></p>
+      </article>
+    </section>
+
+    <section class="status-group status-not-supported">
+      <h2>Not supported <span class="count">(3)</span></h2>
+      <p class="group-blurb">Tested and does not work well enough to recommend. Listed with the reason, because otherwise people buy them anyway.</p>
+      <article class="device" id="fire-tv-stick-4k-select">
+        <h3><a class="anchor" href="#fire-tv-stick-4k-select" aria-label="Link to Amazon Fire TV Stick 4K Select">#</a>Amazon Fire TV Stick 4K Select</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Amazon</dd>
+          <dt>Model numbers</dt><dd>AFTCA002</dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>Vega OS</dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg). Played on one AFTCA002, then the process died</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-09-24</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>2.1.6</dd>
+          <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
+          <li>Played on one AFTCA002 (ScreenTinker 2.1.6, Kepler 1.2): paired, reported 1920x1080, transitions ran, then the process died in-process. Not certified. Do not buy it for a sign until this entry changes.</li>
+          <li>Crashes on this stick were a compositor abort, not memory: three died on the same libkepler_slatium stack at a video/image boundary, one with 72 MB of CMA free and no memory stall. Drawing a &lt;video&gt; frame for a transition is what trips it, so video boundaries hard-cut and image transitions stay. CMA pressure is real but survivable — measured falling below 5 MB in 21 of 60 samples, bottoming at 668 kB, with no crash. A 13-minute run across a 44-second image/video cycle was clean.</li>
+          <li>Group sync does not warm a second video decoder. A second decoder is another CMA claim.</li>
+          <li>1920x1080 is what that AFTCA002 reported. The stick can output 4K, so this may be the panel or the HDMI link, not a device ceiling.</li>
+          <li>Offline cache worked on that run: a service worker was in control, images cached, and video decoded offline.</li>
+          <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
+      </article>
+      <article class="device" id="fire-tv-stick-hd-2026">
+        <h3><a class="anchor" href="#fire-tv-stick-hd-2026" aria-label="Link to Amazon Fire TV Stick HD (2026)">#</a>Amazon Fire TV Stick HD (2026)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Amazon</dd>
+          <dt>Model numbers</dt><dd>AFTCL001</dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>Vega OS</dd>
+          <dt>ScreenTinker player</dt><dd>Vega player (vpkg), not run on this model</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Vega OS, not Fire OS. The Android APK does not install. The player is vega/ (see docs/vega-player.md): the web player inside an installed WebView.</li>
+          <li>Not run on an AFTCL001. The 4K Select run is the only evidence, and that stick is not certified either. Do not buy it for a sign until this entry changes.</li>
+          <li>Same player as the 4K Select. Transitions are declared. Group sync does not warm a second decoder, because that is a second CMA claim. The earlier browser attempt was not reliable.</li>
+          <li>1080p is the product&#39;s output, not a measurement of this app.</li>
+          <li>No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-vega.html">Setup guide for this device</a></p>
+      </article>
+      <article class="device" id="apple-tv">
+        <h3><a class="anchor" href="#apple-tv" aria-label="Link to Apple TV (all models)">#</a>Apple TV (all models)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Apple</dd>
+          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>tvOS</dd>
+          <dt>ScreenTinker player</dt><dd>None. There is no ScreenTinker player for tvOS and none is planned.</dd>
+          <dt>Maximum resolution</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated on</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>⚠️ tvOS ships no web view. WKWebView is not in the public tvOS SDK and Apple&#39;s Human Interface Guidelines state web views are not supported on tvOS. Every ScreenTinker player is the web player inside a shell, and there is no shell to build here.</li>
+          <li>An app cannot carry its own engine: tvOS grants no JIT permission, and App Store guideline 2.5.6 requires web-browsing apps to use Apple&#39;s WebKit, which tvOS does not offer. Shipping a private web view is what gets apps rejected.</li>
+          <li>A native player was scoped and declined. It could do images, video, HLS, zones, schedules and proof-of-play; it could not do widgets, HTML bundles, web pages in a zone or picture-in-picture, or YouTube — all of which are HTML.</li>
+          <li>YouTube is not recoverable. The YouTube app on Apple TV is Google&#39;s own native client against their private backend. What Google publishes to third parties is the iframe embed, which their terms require to run in a web view and whose supported platforms are iOS, iPadOS and macOS — not tvOS.</li>
+          <li>⚠️ Unattended operation requires MDM. Without Single App Mode on a supervised device, an Apple TV sleeps and does not relaunch the app after a power cut. A screen that needs somebody to find the remote is not a digital sign.</li>
+          <li>No sideloading, and every update passes through App Review — so the release cadence would not be ours.</li>
+          <li>Use a Raspberry Pi, a small x86 PC, an Android TV box, or a Samsung/LG commercial panel. All cost less, install freely, recover from a power cut by themselves, and run the full player. See docs/tvos-player.md for the full decision record.</li>
+          <li>This would change if Apple shipped a public web view on tvOS. It would then be the same small shell built for the Vega Fire TV sticks.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/apple-tv-digital-signage.html">Setup guide for this device</a></p>
+      </article>
+    </section>
+
+    <h2>Android panels, and why we recommend a player plus a display</h2>
+    <p>No commercial Android signage panel or all-in-one commercial display has been validated to
+      date. If you have arrived here holding a listing for a white-label Android panel, that is the
+      gap you are looking at. It is not a judgement about that panel. It means nobody at ScreenTinker
+      has had one on a bench, so it cannot be certified and no support obligation can attach to it.</p>
+    <p>The recommended path is a certified player driving a commercial display over HDMI. The player
+      is the part that runs ScreenTinker, and it is the part that gets certified. <strong>The display
+      itself is not player hardware and does not require certification.</strong> Any commercial
+      display with an HDMI input will work, and you are free to choose it on the things displays are
+      actually chosen for: panel quality, brightness, operating hours, warranty and size.</p>
+    <p>That separation is deliberate. It keeps your display choice open, it keeps the part that runs
+      software cheap and replaceable, and it means a failed player is a swap rather than a
+      replacement screen.</p>
+
+    <h2>Getting a device certified</h2>
+    <p>If you need a specific model certified, contact ScreenTinker support and say which model and how
+      many screens are involved. Validation of non-certified hardware is a paid engagement for
+      reseller partners, and the result is published here whatever the outcome, including a
+      Not supported entry if that is what the testing shows.</p>
+    <p>If you are running something that is not on this list and it works, tell us. Community reports
+      are welcome and are published as Community reported. That is not certification, and it is
+      stated as such, but it helps the next person choosing hardware.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-android-tv.html">Digital signage for Android TV and Fire TV</a></li>
+        <li><a href="/guides/samsung-tv-digital-signage.html">Digital signage on a Samsung TV</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Digital signage on a Raspberry Pi</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage: complete guide</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Ready to set up a screen?</h2>
+      <p>Start a free ScreenTinker account in under a minute.</p>
+      <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Certified Hardware", "item": "https://screentinker.com/certified-hardware" }
+    ]
+  }
+  </script>
+</body>
+</html>

@@ -30,6 +30,21 @@ function consentView(edge, now) {
   if (!edge || edge.direction !== 'up') return null;
 
   const categories = Array.isArray(edge.grant_categories) ? edge.grant_categories : [];
+
+  /*
+   * ⚠️ Fails CLOSED. write_grant/write_scope arrive either already parsed or as the raw JSON column,
+   * and a malformed value must read as NO write — never as unrestricted. Absent means nothing here,
+   * which is deliberately the opposite of shared_workspaces: a write permission that becomes total
+   * by being unset is the failure this whole design exists to prevent.
+   */
+  const asList = (v) => {
+    if (Array.isArray(v)) return v.filter((x) => typeof x === 'string');
+    if (typeof v !== 'string' || !v) return [];
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p.filter((x) => typeof x === 'string') : []; }
+    catch (e) { return []; }
+  };
+  const writeCategories = asList(edge.write_grant);
+  const writeWorkspaces = asList(edge.write_scope);
   const lastSync = typeof edge.last_sync_at === 'number' ? edge.last_sync_at : null;
   const revoked = !!edge.revoked_at;
 
@@ -50,9 +65,51 @@ function consentView(edge, now) {
     // The child can always sever. This is not a permission the parent grants.
     canRevoke: !revoked,
 
-    // ⚠️ Stated explicitly because it is the question a client actually asks, and the answer is
-    // reassuring only if it is written down somewhere they can read it.
-    parentCanControlThisNode: false,
+    /*
+     * ⚠️ Stated explicitly because it is the question a client actually asks — and COMPUTED, because
+     * the reassuring answer is only worth anything if it is true.
+     *
+     * This was the literal `false`. Once write consent exists, a hardcoded false would assure an
+     * operator that nobody can touch their screens on the very screen where they granted exactly
+     * that. A consent view that cannot report the thing it exists to report is worse than no
+     * consent view, because it is believed.
+     */
+    /*
+     * ⚠️ BOTH HALVES, because enforcement needs both. grants.writeAllows refuses when the scope is
+     * empty just as firmly as when the categories are — so a row with categories and no workspaces
+     * denied everything while this reported that the parent could control the node. It failed in
+     * the safe direction and was still a lie, on the one screen whose entire purpose is to tell an
+     * operator the truth about who can change their screens.
+     */
+    parentCanControlThisNode: writeCategories.length > 0 && writeWorkspaces.length > 0,
+    /*
+     * ⚠️ A separate answer from the write grant, and reported separately. It concerns a server this
+     * operator has no relationship with — whoever their parent reports to — so folding it into
+     * "can this hub control me" would hide the one consent that reaches a stranger.
+     */
+    shareUpward: Number(edge.share_upward) === 1,
+    writeGrant: writeCategories,
+    writeGrantExplained: grants.describeGrant(writeCategories),
+    writeWorkspaces: writeWorkspaces,
+    /*
+     * ⚠️ Used and remaining, on the page where the grant was given. An operator who granted 20 GB
+     * six months ago has no other way to find out they are at 19.8 — and the moment they need to
+     * know is the moment a transfer starts failing, which is exactly when a number they cannot see
+     * is useless.
+     */
+    writeBytesBudget: typeof edge.write_bytes_budget === 'number' ? edge.write_bytes_budget : null,
+    writeBytesUsed: Number(edge.write_bytes_used) || 0,
+    /*
+     * ⚠️ 0, NOT null, when there is no budget — and that is deliberate in the dangerous direction.
+     * A UI that renders `remaining` without first checking `writeBytesBudget` will say "0 bytes
+     * remaining" for a grant that never involved storage, which is merely confusing; null invites
+     * the same careless UI to render "unlimited", which is a lie about how much of someone's disk
+     * a hub may take. Absent and empty are told apart by writeBytesBudget === null, and the consent
+     * view checks that before showing any figure.
+     */
+    writeBytesRemaining: typeof edge.write_bytes_budget === 'number'
+      ? Math.max(0, edge.write_bytes_budget - (Number(edge.write_bytes_used) || 0))
+      : 0,
   };
 }
 

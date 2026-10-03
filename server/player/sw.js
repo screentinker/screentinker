@@ -1,3 +1,12 @@
+// v28: guard the SW-activated auto-reload so a FOREIGN root-scoped worker (the dashboard's
+// sw-admin.js sharing the origin) never reloads the player; plus reason-logging on every reload
+// path. v27: web-player live capture now prefers direct video.captureStream (RFP-safe, no canvas) with
+// the canvas mirror as an image fallback. Bumped so cache-first players re-fetch.
+// v26: shipped the web-player live self-capture (index.html device:live-publish handler +
+// /player/live-publish.js). Bumped so cache-first players pick up the new code on next load.
+// v25: the rev-pinned cache-first branch now also covers /api/content/:id/bundle, and the player
+// fetches that URL SAME-ORIGIN and mounts it as srcdoc — so unlike widgets, this branch is actually
+// reachable for bundles and their offline story is the Cache API rather than the HTTP cache.
 // v24: an empty playlist payload no longer prunes. `assignments: []` is what the server sends for a
 // device between playlists AND for a snapshot that failed to parse, and treating it as "keep
 // nothing" wiped the panel's entire offline library on a message that means nothing of the sort.
@@ -14,7 +23,10 @@
 // — a player then ran a new index.html against a stale st-bridge.js and threw on every heartbeat.
 // Bump whenever a shipped /player asset changes shape; content lives in its own cache, so this
 // costs a small re-download and never re-fetches the playlist.
-const CACHE_NAME = 'rd-player-v24';
+// v29: shells for 2.1.1-2.1.4 shipped without a cache-name bump, so warm web players kept serving the
+// v28-cached (pre-2.1.1) shell. Bumping purges it on activate; the index.html version-mismatch
+// self-heal is the durable fix, this just gives already-warm players a second, immediate nudge.
+const CACHE_NAME = 'rd-player-v29';
 // Content lives in its own cache so the shell can be re-versioned (the activate handler deletes
 // every cache that is not CACHE_NAME) WITHOUT throwing away megabytes of media that are still
 // perfectly valid. Rolling the shell used to mean a player re-downloaded its entire playlist.
@@ -74,7 +86,17 @@ self.addEventListener('fetch', (event) => {
   // content caching necessary. Closing it properly means routing the render through a same-origin
   // fetch and mounting it as srcdoc; granting the frame allow-same-origin instead would hand widget
   // scripts the player's origin, which is not a trade worth making for an offline nicety.
-  if (url.pathname.startsWith('/api/widgets/') && url.pathname.endsWith('/render') && url.searchParams.has('rev')) {
+  //
+  // ⚠️ AND THIS IS WHY BUNDLES TAKE THE PRESCRIPTION ABOVE. A widget is mounted by URL into a
+  // sandboxed frame, so the branch below cannot see it. An HTML bundle is fetched by the PLAYER
+  // PAGE — a controlled, same-origin client — and mounted as srcdoc, so its render request DOES
+  // reach this handler and DOES land in the Cache API. Bundles therefore get the persistent store
+  // widgets still cannot, on the platform (BrightSign) where the HTTP cache guarantees nothing.
+  const isRevPinnedRender = url.searchParams.has('rev') && (
+    (url.pathname.startsWith('/api/widgets/') && url.pathname.endsWith('/render')) ||
+    (url.pathname.startsWith('/api/content/') && url.pathname.endsWith('/bundle'))
+  );
+  if (isRevPinnedRender) {
     event.respondWith(
       caches.match(event.request).then(cached => {
         if (cached) return cached;

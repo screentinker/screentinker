@@ -59,3 +59,37 @@ test('valid color/gradient backgrounds are preserved', async () => {
   assert.ok(html.includes('linear-gradient(45deg, #ff0000, #00ff00)'), 'legit gradient preserved');
   assert.ok(html.includes('color:#3B82F6'), 'legit hex color preserved');
 });
+
+test('webpage kiosk URLs use the serving origin instead of the dashboard localhost', async () => {
+  const kioskPath = '/api/kiosk/11111111-1111-4111-8111-111111111111/render';
+  seed('webpage1', 'webpage', { url: 'http://localhost:3001' + kioskPath });
+  const html = await render('webpage1');
+  assert.match(html, new RegExp(`src="${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${kioskPath}"`));
+  assert.doesNotMatch(html, /localhost:3001/, 'a display must not resolve the dashboard machine as itself');
+});
+
+test('webpage kiosk URLs remain usable without a request origin', () => {
+  const kioskPath = '/api/kiosk/11111111-1111-4111-8111-111111111111/render?preview=1';
+  const relative = widgetsRouter.renderWidgetHtml('webpage', { url: kioskPath });
+  const legacy = widgetsRouter.renderWidgetHtml('webpage', { url: 'http://localhost:3001' + kioskPath });
+  assert.ok(relative.includes(`src="${kioskPath}"`));
+  assert.ok(legacy.includes(`src="${kioskPath}"`));
+  assert.doesNotMatch(relative + legacy, /about:blank|localhost:3001/);
+});
+
+// A widget config field that is a JSON ARRAY/OBJECT (never normalized for non-slide widgets) used to
+// slip past escapeHtml, which returned non-strings unchanged; the surrounding template then
+// string-coerced it, unescaped. escapeHtml now String()-coerces first.
+test('social widget: an ARRAY config field cannot inject markup (non-string escape bypass)', async () => {
+  seed('social1', 'social', { platform: ['<img src=x onerror=alert(document.domain)>'], query: '#ok' });
+  const html = await render('social1');
+  assert.ok(!/<img src=x onerror=/.test(html), 'array value must not reach the document as raw markup');
+  assert.ok(html.includes('&lt;img src=x onerror='), 'it must land as escaped characters instead');
+});
+
+test('rss widget: an ARRAY feed_url cannot break out of the JS string (non-string escape bypass)', async () => {
+  seed('rss2', 'rss', { feed_url: ["');alert(document.domain);//"] });
+  const html = await render('rss2');
+  assert.ok(!html.includes("');alert(document.domain)"), 'unescaped quote must not break the JS string context');
+  assert.ok(html.includes('&#39;'), 'the quote is escaped, so the payload is inert data');
+});

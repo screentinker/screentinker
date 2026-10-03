@@ -1,4 +1,5 @@
 const setupDeviceSocket = require('./deviceSocket');
+const playerTermination = require('../lib/mesh/player-termination');   // scale-out C2
 const setupDashboardSocket = require('./dashboardSocket');
 
 module.exports = function setupWebSockets(io) {
@@ -17,6 +18,7 @@ module.exports = function setupWebSockets(io) {
    * its client library and the backpressure accounting into every ordinary install's memory to do
    * nothing.
    */
+  let replica = null;
   let meshNs = null;
   const config = require('../config');
   if (config.meshAcceptEnrollment) {
@@ -44,9 +46,41 @@ module.exports = function setupWebSockets(io) {
            * well. Recording that we HEARD from it is true regardless of whether we managed to keep
            * what it said, and conflating the two would show a healthy site as offline (I6).
            */
+          onConnect: (edge) => {
+            if (replica) replica.onConnect(edge);
+            // Scale-out C2: buffered player events for this primary go now, not after the backoff.
+            const ob = playerTermination.getOutbox();
+            if (ob) { try { ob.resume(edge); } catch (e) { /* the 1 s tick covers it */ } }
+          },
           onEnvelope: (edge, env, meta) => {
             store.touchEdge(db, edge.id);
             if (meta && meta.relayOnly) return;   // I5: relayed, not interpreted, not stored
+
+            /*
+             * Scale-out: a replica edge sees the same stream. A change-notice is consumed here
+             * (it is a nudge to pull, never a row); a device-summary is ALSO handed over so
+             * liveness lands on the copied devices row. Everything else falls through to the
+             * mirror store exactly as before.
+             */
+            if (replica) {
+              try {
+                if (meta && Array.isArray(meta.batch)) { for (const item of meta.batch) replica.onEnvelope(edge, item); }
+                else if (replica.onEnvelope(edge, env)) return;
+              } catch (e) { /* the copy is best-effort; the mirror below still lands */ }
+            }
+            /*
+             * Scale-out C2: a primary asking this node to deliver something to a screen attached
+             * HERE. Consumed, never stored, never relayed further (the screen is on this node or it
+             * is nowhere). deliverRelay checks the edge terminates players and the device is one of
+             * that primary's before it emits anything.
+             */
+            if (env && env.type === 'command-relay') {
+              try {
+                const r = playerTermination.deliverRelay(db, deviceNs, edge, env.body);
+                if (!r.ok) console.warn(`[mesh] command-relay from ${edge.peer_node_id} not delivered: ${r.reason}`);
+              } catch (e) { console.warn(`[mesh] command-relay: ${e && e.message}`); }
+              return;
+            }
 
             /*
              * ⚠️ A BATCH IS APPLIED IN ONE TRANSACTION, and its items IN ORDER.
@@ -84,7 +118,57 @@ module.exports = function setupWebSockets(io) {
          * deployment shape this feature exists for.
          */
         if (meshNs && meshNs.readFrom) {
+          /*
+           * Scale-out replica loop (lib/mesh/replica.js): for every down edge carrying
+           * serves-dashboard + workspace-replication, keep a row copy of the shared workspaces by
+           * asking through readFrom. Started only here, because readFrom is the only way it may
+           * obtain a row, and readFrom exists only once the mesh namespace is up.
+           */
+          try {
+            replica = require('../lib/mesh/replica').createReplica(db, {
+              readFrom: meshNs.readFrom, isConnected: meshNs.isConnected, logger: console,
+              // Scale-out C2: re-push the playlist to every screen attached here in a workspace
+              // that just changed. Same payload builder, same dedup on the player's side.
+              onApplied: (wsIds) => {
+                // Scale-out C3: prefetch/sweep cached media for these workspaces (no-op without a caches-content edge).
+                try { require('../lib/mesh/content-cache').onApplied(wsIds); } catch (e) { /* */ }
+                const commandQueue = require('../lib/command-queue');
+                const build = require('./deviceSocket').buildPlaylistPayload;
+                for (const wsId of wsIds) {
+                  for (const d of db.prepare('SELECT id FROM devices WHERE workspace_id = ?').all(wsId)) {
+                    const room = deviceNs.adapter.rooms.get(d.id);
+                    if (room && room.size > 0) commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.id, build);
+                  }
+                }
+              },
+            });
+            replica.start();
+            global.__meshReplica = replica;
+          } catch (e) { console.warn(`[mesh] replica loop not started: ${e && e.message}`); }
+          /*
+           * Scale-out C2: players on a replica. The outbox drains player events to their primary
+           * through writeTo; verification asks through readFrom; a reply the primary collected
+           * while applying (a play-offline ack) lands on the local socket.
+           */
+          // Scale-out C3: hands db/config to the content cache. Creates no timer; the worker starts on
+          // the first cacheable row, which a node without a caches-content edge never has.
+          try { require('../lib/mesh/content-cache').attach({ db, config: require('../config') }); } catch (e) { /* */ }
+          try {
+            playerTermination.attach({
+              db, readFrom: meshNs.readFrom, writeTo: meshNs.writeTo, logger: console,
+              onReply: (deviceId, event, payload) => { try { deviceNs.to(deviceId).emit(event, payload); } catch (e) { /* */ } },
+            });
+          } catch (e) { console.warn(`[mesh] player termination not started: ${e && e.message}`); }
+          // The parent-side revoke (routes/mesh.js DELETE /nodes/:id) shuts the child's live socket through this.
+          global.__meshDropChild = meshNs.dropChild;
           global.__meshReadFrom = meshNs.readFrom;
+          // Same publication as the read side: routes reach the live socket layer through this
+          // rather than importing it, because the sockets are constructed after routes are mounted.
+          global.__meshWriteTo = meshNs.writeTo;
+          // Same publication, same reason. Content moves over HTTP; this is how the OFFER reaches a
+          // child that dialled out and may have no inbound route of its own.
+          global.__meshContentOfferTo = meshNs.contentOfferTo;
+          global.__meshContentPurgeTo = meshNs.contentPurgeTo;
         }
         console.log(`[mesh] listening for child nodes as ${thisNodeId}`);
       }

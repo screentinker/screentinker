@@ -1,11 +1,20 @@
 const heartbeat = require('../services/heartbeat');
-const { resolveSessionUser } = require('../middleware/auth');
+const { resolveSessionUser, isPlatformRole } = require('../middleware/auth');
 const { db } = require('../db/database');
 const { accessContext, accessibleWorkspaceIds } = require('../lib/tenancy');
-const { workspaceRoom } = require('../lib/socket-rooms');
+const { roomsForDashboard } = require('../lib/socket-rooms');
 const { protectSocket } = require('../lib/safe-socket');
 const playerCapabilities = require('../lib/player-capabilities');
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const replicaProxy = require('../lib/replica-proxy');   // scale-out: copied devices are commanded on the primary
 const bsSnapshotQueue = require('../lib/brightsign-snapshot-queue');
+// Server-side framebuffer capture, for a BrightSign whose player cannot capture itself.
+const bsCapture = require('../lib/brightsign-capture');
+const bsDeviceSocketRef = require('./deviceSocket');
+const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
+const appConfig = require('../config');
+const ptyRelay = require('../lib/pty-relay');   // interactive terminal (system.pty) — one socket, never a room
 
 // Phase 2.3: workspace-scoped socket rooms + per-command permission gates.
 // Replaces the previous flat dashboardNs.emit broadcast (which leaked every
@@ -36,6 +45,14 @@ function canActOnDevice(socket, deviceId, tier /* 'read' | 'write' */) {
 module.exports = function setupDashboardSocket(io) {
   const dashboardNs = io.of('/dashboard');
   const deviceNs = io.of('/device');
+  /*
+   * The PTY relay authorises an open with EXACTLY the gate a `shell` command passes through below:
+   * write tier on the device's workspace (canActOnDevice). A PTY is at least as powerful as a
+   * one-shot shell, so it must never be reachable by anyone the shell command would refuse.
+   */
+  ptyRelay.bind(io);
+  ptyRelay.setAuthorizer((socket, deviceId) => canActOnDevice(socket, deviceId, 'write'));
+  const pty = ptyRelay.relay();
 
   dashboardNs.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -69,9 +86,13 @@ module.exports = function setupDashboardSocket(io) {
     // window.location.reload() after switching, which forces a new socket
     // connection with fresh JWT claims. So workspace memberships are
     // re-evaluated at connect time and we don't need to re-evaluate per-emit.
+    // Platform roles additionally join the unclaimed-device room, so live events about a screen
+    // that has registered but not yet been paired reach the one operator allowed to see it,
+    // instead of being dropped for want of a room. See lib/socket-rooms UNCLAIMED_ROOM.
     const wsIds = accessibleWorkspaceIds(socket.userId, socket.userRole);
-    for (const wsId of wsIds) socket.join(workspaceRoom(wsId));
-    console.log(`Dashboard client connected: ${socket.id} (user: ${socket.userId}, rooms: ${wsIds.length})`);
+    const rooms = roomsForDashboard(wsIds, isPlatformRole(socket.userRole));
+    for (const room of rooms) socket.join(room);
+    console.log(`Dashboard client connected: ${socket.id} (user: ${socket.userId}, rooms: ${rooms.length})`);
 
     /*
      * The capability gate for the remote-view handlers.
@@ -109,9 +130,42 @@ module.exports = function setupDashboardSocket(io) {
       // after load on that platform. So the host polls for this over HTTP, the one direction that
       // works. See lib/brightsign-snapshot-queue.js.
       try {
-        const row = db.prepare('SELECT platform FROM devices WHERE id = ?').get(device_id);
+        const row = db.prepare('SELECT platform, ip_address FROM devices WHERE id = ?').get(device_id);
+
+        /*
+         * ⚠️ THIS GATE HAS NEVER MATCHED A REAL BRIGHTSIGN, and that is worth knowing before
+         * trusting it. A BrightSign runs the web player inside a Chromium widget, so it reports
+         * `platform = "Chrome 148"` — not "brightsign". Verified on an XT245. So the queue below
+         * has never been populated for any BrightSign, on either build shape. It is left as-is
+         * rather than widened because nothing collects that queue either (neither autorun polls
+         * the two endpoints built for it), so changing it would swap one inert path for another.
+         * Fix the collector and this gate together, or delete both.
+         */
         if (row && String(row.platform || '').toLowerCase() === 'brightsign') {
           bsSnapshotQueue.request(device_id, { width: 960, height: 540 });
+        }
+
+        /*
+         * ⚠️ CAPTURE FROM THIS PROCESS, GATED ON WHAT WE CAN ACTUALLY DO — not on what the device
+         * calls itself. `bsCapture.available()` is true only when THIS server can load
+         * @brightsign/screenshot, which is exactly the condition under which capturing here is
+         * possible; a self-reported browser string is neither necessary nor sufficient, as the
+         * "Chrome 148" above proves.
+         *
+         * ⚠️ AND ONLY FOR A DEVICE ON THIS BOARD. We capture OUR framebuffer, so sending it for a
+         * device somewhere else would be a picture of the wrong screen, labelled convincingly. On a
+         * server-on-a-player the local player connects over loopback, which is the one property
+         * that actually distinguishes it from a mesh child or a panel across the room.
+         *
+         * Why this is needed at all: that build creates its widget WITHOUT nodejs_enabled, so the
+         * page has no `require` and cannot capture; and brightsign/server/autorun.brs has no
+         * snapshot code, so the host cannot either. Best-effort and additive — if another path does
+         * answer, the newest frame simply wins.
+         */
+        if (bsCapture.isLoopback(row && row.ip_address) && bsCapture.available()) {
+          bsCapture.capture({ width: 960, height: 540 })
+            .then((b64) => { if (b64) bsDeviceSocketRef.ingestScreenshot(device_id, b64); })
+            .catch(() => { /* a capture that fails is a missing picture, never an error path */ });
         }
       } catch (e) { /* the socket path already fired; queueing is the bonus, never the blocker */ }
       if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
@@ -162,6 +216,134 @@ module.exports = function setupDashboardSocket(io) {
       console.log(`Remote session stopped for device ${device_id}`);
     });
 
+    // #talk: two-way voice intercom. Ask a player to join (subscribe the downlink + publish its mic
+    // to the uplink); the operator side runs in the browser. Write-gated and remote.talk-gated like
+    // remote control (it plays audio out of the device and opens its mic), and only relayed when the
+    // live-video gate is on and a sidecar is up — talk rides the same go2rtc path. The audio itself
+    // never touches this socket; it flows device<->go2rtc<->dashboard over WebRTC.
+    socket.on('dashboard:talk-start', (data, ack) => {
+      const { device_id } = data || {};
+      const duplex = !!(data && data.duplex);   // true = 2-way (device also sends its mic)
+      if (!canActOnDevice(socket, device_id, 'write')) return;
+      /*
+       * ⚠️ TWO-WAY IS NO LONGER GATED ON A DECLARED remote.mic.
+       *
+       * It used to be, and the declaration came from a probe the player ran at startup — which put a
+       * browser media-permission prompt on top of the pairing code on a fresh Raspberry Pi. That probe
+       * is gone, so nothing declares the capability any more and this gate would refuse 2-way on every
+       * screen in the world.
+       *
+       * The capability is now PROVEN BY USE instead of declared in advance: the player asks for the
+       * microphone when the operator clicks 2-way — the one moment a permission dialog is expected,
+       * because a human just asked for it — and falls back to a one-way session if there is none,
+       * reporting `listen_only_no_mic` back so the dashboard can say so. A screen with no microphone
+       * gets a working one-way session rather than a refusal, which is the better failure anyway.
+       *
+       * remote.talk still gates it, as does the per-org WebRTC switch and go2rtc below.
+       */
+      if (capabilityRefused(device_id, 'remote.talk', ack)) return;
+      const on = orgWebrtc.talkEnabledForDevice(device_id);
+      if (!on || !go2rtc.enabled()) { if (typeof ack === 'function') ack({ delivered: false, reason: 'talk_unavailable' }); return; }
+      const conn = heartbeat.getConnection(device_id);
+      deviceNs.to(device_id).emit('device:talk-start', { mode: 'device', duplex, iceServers: orgWebrtc.iceServersForDevice(device_id) });
+      if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
+    });
+
+    // Stopping is never capability-gated (same reasoning as remote-stop): a stuck talk session must
+    // always be closable. Tears down the device's audio and drops the go2rtc talk streams.
+    socket.on('dashboard:talk-stop', (data) => {
+      const { device_id } = data || {};
+      if (!canActOnDevice(socket, device_id, 'write')) return;
+      deviceNs.to(device_id).emit('device:talk-stop', {});
+      try {
+        const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(device_id);
+        if (d && d.workspace_id) {
+          for (const dir of ['dn', 'up']) { const nm = go2rtc.talkStreamName(d.workspace_id, device_id, dir); if (nm) go2rtc.deleteStream(nm); }
+        }
+      } catch (_) { /* cleanup is never load-bearing */ }
+    });
+
+    // #talk broadcast (one-way PA): tell every device in a group/workspace to LISTEN to the shared
+    // channel. The operator's mic is published to that channel over HTTP (routes in device-groups /
+    // workspaces); this only fans the listen request out to the devices. Each device is filtered by
+    // the SAME gates as a per-device talk (write access + remote.talk + its own live-video flags),
+    // so a broadcast never makes a device play audio it is not individually cleared for.
+    function scopeDevices(kind, id) {
+      try {
+        if (kind === 'group') {
+          return db.prepare(`SELECT d.id, d.workspace_id, d.live_video_enabled FROM devices d
+                             JOIN device_group_members dgm ON dgm.device_id = d.id WHERE dgm.group_id = ?`).all(id);
+        }
+        if (kind === 'workspace') {
+          return db.prepare('SELECT id, workspace_id, live_video_enabled FROM devices WHERE workspace_id = ?').all(id);
+        }
+      } catch (_) {}
+      return [];
+    }
+
+    socket.on('dashboard:group-talk-start', (data, ack) => {
+      const kind = data && data.scope && data.scope.kind;
+      const id = data && data.scope && data.scope.id;
+      if ((kind !== 'group' && kind !== 'workspace') || !id) { if (typeof ack === 'function') ack({ delivered: false, reason: 'bad_scope' }); return; }
+      if (!go2rtc.enabled()) { if (typeof ack === 'function') ack({ delivered: false, reason: 'talk_unavailable' }); return; }
+      let sent = 0, skipped = 0;
+      for (const d of scopeDevices(kind, id)) {
+        // write access to this device, the device declares remote.talk, and live video is on for it
+        // at both workspace and device level.
+        if (!canActOnDevice(socket, d.id, 'write')) { skipped++; continue; }
+        const devRow = db.prepare('SELECT * FROM devices WHERE id = ?').get(d.id);
+        if (!playerCapabilities.supports(devRow, 'remote.talk')) { skipped++; continue; }
+        if (!orgWebrtc.talkEnabledForDevice(d.id)) { skipped++; continue; }
+        deviceNs.to(d.id).emit('device:talk-start', { mode: 'listen', scope: { kind, id }, iceServers: orgWebrtc.iceServersForDevice(d.id) });
+        sent++;
+      }
+      if (typeof ack === 'function') ack({ delivered: sent > 0, sent, skipped });
+    });
+
+    socket.on('dashboard:group-talk-stop', (data) => {
+      const kind = data && data.scope && data.scope.kind;
+      const id = data && data.scope && data.scope.id;
+      if ((kind !== 'group' && kind !== 'workspace') || !id) return;
+      for (const d of scopeDevices(kind, id)) {
+        if (canActOnDevice(socket, d.id, 'write')) deviceNs.to(d.id).emit('device:talk-stop', {});
+      }
+      try { const nm = go2rtc.broadcastTalkStreamName(kind, id); if (nm) go2rtc.deleteStream(nm); } catch (_) {}
+    });
+
+    // #go2rtc: ask a player to PUBLISH its screen into go2rtc so this dashboard can watch it live.
+    // Read-gated exactly like a screenshot (watching a screen is a read). Only relayed when live
+    // video is enabled at all three levels AND a sidecar is configured; otherwise the dashboard
+    // stays on snapshots and there is nothing for the player to publish to. The player needs a
+    // user gesture to grant capture, so this is a request, not a guarantee (see the player's
+    // device:live-publish handler and the deferred Android publisher).
+    socket.on('dashboard:live-publish', (data, ack) => {
+      const { device_id, action } = data || {};
+      if (!canActOnDevice(socket, device_id, 'read')) return;
+      if (action === 'stop') {
+        deviceNs.to(device_id).emit('device:live-publish', { action: 'stop' });
+        // Clean up the placeholder stream so idle st_<hash> entries do not accumulate in go2rtc's
+        // config. Best-effort and fire-and-forget: a failure just leaves an inert stream behind,
+        // which the next publish reuses anyway.
+        try {
+          const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(device_id);
+          if (d && d.workspace_id) { const nm = go2rtc.streamName(d.workspace_id, device_id); if (nm) go2rtc.deleteStream(nm); }
+        } catch (_) { /* cleanup is never load-bearing */ }
+        if (typeof ack === 'function') ack({ delivered: true });
+        return;
+      }
+      const device = db.prepare('SELECT workspace_id, live_video_enabled FROM devices WHERE id = ?').get(device_id);
+      const ws = device && device.workspace_id
+        ? db.prepare('SELECT live_video_enabled FROM workspaces WHERE id = ?').get(device.workspace_id) : null;
+      const on = !!(appConfig.liveVideoEnabled && ws && ws.live_video_enabled && device && device.live_video_enabled);
+      if (!on || !go2rtc.enabled()) {
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'live_disabled' });
+        return;
+      }
+      const conn = heartbeat.getConnection(device_id);
+      deviceNs.to(device_id).emit('device:live-publish', { action: 'start', iceServers: orgWebrtc.iceServersForDevice(device_id) });
+      if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
+    });
+
     socket.on('dashboard:device-command', (data, ack) => {
       const { device_id, type, payload } = data;
       if (!canActOnDevice(socket, device_id, 'write')) {
@@ -174,37 +356,71 @@ module.exports = function setupDashboardSocket(io) {
       // controls. A command the panel cannot honour is refused HERE, with the capability named, so
       // it fails loudly instead of being delivered and silently ignored — which is the failure
       // this whole mechanism exists to end.
+      /*
+       * Scale-out C1 inventory: the REST path (routes/devices.js) refused a type outside
+       * ALLOWED_COMMANDS and this path did not — two definitions of "a command an operator may
+       * send". One list, both doors.
+       */
+      if (!ALLOWED_COMMANDS.includes(type)) {
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'invalid', error: 'invalid command type' });
+        return;
+      }
+      // #312 follow-up: a malformed set_server_url must never reach a panel. Validate before deliver.
+      const v = validateCommand(type, payload);
+      if (!v.ok) { if (typeof ack === 'function') ack({ delivered: false, reason: 'invalid', error: v.error }); return; }
       const devRow = db.prepare('SELECT * FROM devices WHERE id = ?').get(device_id);
-      const verdict = playerCapabilities.commandAllowed(devRow, type);
-      if (!verdict.ok) {
-        console.warn(`Command ${type} refused for device ${device_id}: needs ${verdict.capability}`);
-        if (typeof ack === 'function') {
-          ack({ delivered: false, reason: 'unsupported', capability: verdict.capability });
-        }
+      /*
+       * Scale-out (docs/scale-out.md): a COPIED device is the primary's to command. This is the
+       * same REST -> proxy -> primary -> command-relay route a click on the primary takes, initiated
+       * from this socket; the replica never emits to the screen itself, even when the screen is
+       * attached here — one command path, and the primary is the one that decides.
+       */
+      if (devRow && devRow.workspace_id && replicaProxy.isCopiedWorkspace(db.prepare('SELECT origin_node_id FROM workspaces WHERE id = ?').get(devRow.workspace_id))) {
+        const token = socket.handshake && socket.handshake.auth && socket.handshake.auth.token;
+        replicaProxy.forwardJson(appConfig, { token, method: 'POST', path: `/api/devices/${encodeURIComponent(device_id)}/command`, body: { type, payload } })
+          .then((r) => {
+            if (typeof ack !== 'function') return;
+            if (r.status >= 200 && r.status < 300) {
+              const st = r.body && r.body.status;
+              ack({ delivered: st === 'sent' || st === 'relayed', queued: st === 'queued', reason: st === 'sent' || st === 'relayed' ? undefined : 'offline', via: 'primary' });
+            } else if (r.status === 503) ack({ delivered: false, reason: 'primary_unreachable' });
+            else ack({ delivered: false, reason: (r.body && (r.body.code || r.body.error)) || `primary answered ${r.status}` });
+          });
         return;
       }
+      // ⚠️ One definition of "deliver a command", shared with the group route and the mesh path —
+      // see lib/device-command.js for why it was extracted.
+      const r = deliverCommand(deviceNs, devRow, type, payload);
 
-      const room = deviceNs.adapter.rooms.get(device_id);
-      if (room && room.size > 0) {
-        deviceNs.to(device_id).emit('device:command', { type, payload });
-        console.log(`Command delivered to device ${device_id}: ${type}`);
-        if (typeof ack === 'function') ack({ delivered: true });
+      if (r.status === 'unsupported') {
+        console.warn(`Command ${type} refused for device ${device_id}: needs ${r.capability}`);
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'unsupported', capability: r.capability });
         return;
       }
-      // Device offline at emit time. Try to queue (lazy require so reverting
-      // the queue commit doesn't break this commit - MODULE_NOT_FOUND on the
-      // first try gets cached by Node's module loader, giving consistent
-      // queued=false behavior on every subsequent call).
-      let queued = false;
-      try {
-        const queue = require('../lib/command-queue');
-        queued = queue.queueCommand(device_id, type, payload);
-      } catch (e) { /* command-queue module absent; fall through to lost */ }
-      console.log(`Command for offline device ${device_id}: ${type} (queued=${queued})`);
-      if (typeof ack === 'function') ack({ delivered: false, queued, reason: 'offline' });
+      if (r.status === 'sent' || r.status === 'relayed') {
+        console.log(`Command delivered to device ${device_id}: ${type}${r.via ? ` (via ${r.via})` : ''}`);
+        if (typeof ack === 'function') ack({ delivered: true, via: r.via || null });
+        return;
+      }
+      console.log(`Command for offline device ${device_id}: ${type} (queued=${r.status === 'queued'})`);
+      if (typeof ack === 'function') {
+        ack({ delivered: false, queued: r.status === 'queued', reason: 'offline' });
+      }
     });
 
+    /*
+     * Interactive terminal. Every rule — authorisation, the system.pty gate, session ownership in
+     * both directions, the caps, idle timeout, audit — lives in lib/pty-relay.js so the device half
+     * (ws/deviceSocket.js) enforces the same ones. The ack is optional, like the remote handlers.
+     */
+    socket.on('dashboard:pty-open', (data, ack) => { pty.open(socket, data || {}, ack); });
+    socket.on('dashboard:pty-input', (data) => { pty.input(socket, data || {}); });
+    socket.on('dashboard:pty-resize', (data) => { pty.resize(socket, data || {}); });
+    socket.on('dashboard:pty-close', (data) => { pty.close(socket, data || {}); });
+
     socket.on('disconnect', () => {
+      // A closed tab must not leave a shell running on the screen that nobody can see or close.
+      pty.dashboardGone(socket);
       console.log(`Dashboard client disconnected: ${socket.id}`);
       // Stop any remote screenshot streams this socket left running (tab closed / navigated away),
       // so the device isn't left capturing forever.

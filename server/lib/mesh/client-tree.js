@@ -119,9 +119,22 @@ function validateParent(childId, parentId, getParentId, subtreeDepthBelow = () =
  * @returns {{role: string|null, source: 'none'|'direct'|'inherited'|'platform-admin', viaClientId: string|null}}
  */
 function resolveAccess(clientId, user, getParentId, getAccessRow, roles) {
-  if (user && user.role === 'platform_admin') {
-    return { role: 'manager', source: 'platform-admin', viaClientId: null };
-  }
+  const isOwner = !!(user && user.role === 'platform_admin');
+  /*
+   * ⚠️ manager is the platform_admin FLOOR, NOT A CEILING — and this is the SECOND place that had
+   * to learn it. client-roles.effectiveRole had the identical short-circuit and the identical
+   * consequence; fixing it there and not here meant the instance owner still could not push content
+   * to their own clients, because everything that matters goes through this function instead.
+   *
+   * Two failures came out of one line. The role was capped at manager, whose capabilities do not
+   * include push-content — so an explicit publisher row on an owner was read and discarded. And the
+   * source came back 'platform-admin' rather than 'direct', so even an uncapped publisher would
+   * have failed requiresDirectAccess, which exists to stop write inheriting down the client tree.
+   *
+   * Found by standing up three real servers and trying to push a file between them. Nothing in
+   * 2,500 tests noticed, because every one of them constructs the access row it wants.
+   */
+  const owner = () => ({ role: 'manager', source: 'platform-admin', viaClientId: null });
 
   const chain = ancestorChain(clientId, getParentId);
   for (const id of chain) {
@@ -130,15 +143,18 @@ function resolveAccess(clientId, user, getParentId, getAccessRow, roles) {
     // An unrecognised role stops the walk rather than being skipped. Continuing would silently hand
     // the user a BROADER inherited role from further up, turning a typo into an escalation.
     if (!roles.isKnownRole(row.role)) {
-      return { role: null, source: 'none', viaClientId: null };
+      return isOwner ? owner() : { role: null, source: 'none', viaClientId: null };
     }
-    return {
-      role: row.role,
-      source: id === clientId ? 'direct' : 'inherited',
-      viaClientId: id === clientId ? null : id,
-    };
+    const source = id === clientId ? 'direct' : 'inherited';
+    /*
+     * The floor applies only where it raises the answer. A named role at or below manager adds
+     * nothing for an owner who already has manager everywhere; a higher one is a deliberate grant
+     * and keeps its own source, so a direct publisher row stays DIRECT and passes the write gate.
+     */
+    if (isOwner && roles.ROLES[row.role].rank <= roles.ROLES.manager.rank) return owner();
+    return { role: row.role, source, viaClientId: source === 'direct' ? null : id };
   }
-  return { role: null, source: 'none', viaClientId: null };
+  return isOwner ? owner() : { role: null, source: 'none', viaClientId: null };
 }
 
 /** Convenience mirroring client-roles.userMay, but hierarchy-aware. */

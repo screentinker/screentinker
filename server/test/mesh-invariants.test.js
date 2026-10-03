@@ -36,38 +36,208 @@ const meshSources = () =>
 
 // ===== I2 — upward only =====
 
-test('test_no_downward_command_handler (I2)', () => {
+test('test_downward_handlers_are_an_allowlist (I2)', () => {
   /*
-   * The child implements NO downward command handler at all. Tolerance — "ignore what you don't
-   * understand" — is forward-compatibility and does not enforce this: a handler that ignores unknown
-   * commands still executes the ones it knows. The absence of the handler is the enforcement, so the
-   * absence is what is tested.
+   * ⚠️ THIS WAS A NAME BLOCKLIST AND IT DID NOT GUARD WHAT IT CLAIMED.
+   *
+   * The old regex forbade mesh:(command|exec|reboot|push|apply|set). It did NOT match `mesh:write`,
+   * `mesh:content` or `mesh:mutate` — so the invariant named in ARCHITECTURE.md could have been
+   * removed by anyone who picked a different verb, and the guard would have stayed green. It also
+   * read only lib/mesh/, never ws/meshSocket.js, which is the file that actually emits downward.
+   *
+   * A blocklist of names cannot express "no downward control": it expresses "not these six words".
+   * So it is now an ALLOWLIST. Every downward handler must be named here, and adding one is a
+   * deliberate edit to this list with a reason — which is exactly the review the invariant wants.
+   *
+   * I2 itself has moved twice and the honest statement is no longer "upward only":
+   *   - reads (Phase 3) made the parent able to ASK. See lib/mesh/read-proxy.js.
+   *   - writes (Phase 5) make it able to ASK for a change.
+   * What must remain true, and what this test now protects, is that EVERY downward message is
+   * answered by an allowlist on the child, keyed to a grant the child's own operator chose. The
+   * parent may ask; it may never tell.
    */
-  const forbidden = /on\s*\(\s*['"]mesh:(command|exec|reboot|push|apply|set)/i;
+  /*
+   * ⚠️ EDITING THIS LIST IS THE REVIEW. Each entry is a thing a parent may cause to happen on a
+   * child, and each one must be answered by a grant check on the child:
+   *
+   *   mesh:hello  — the parent announces its batching limits. Carries no request and changes
+   *                 nothing; the child may ignore it entirely and does when there is no overlap.
+   *   mesh:read   — "may I see X?" Answered by lib/mesh/read-proxy.js: segment-exact allowlist,
+   *                 method pinned to GET, per-rule grant, workspace scope applied on the child.
+   *   mesh:write  — "may I change X?" Answered by lib/mesh/write-proxy.js + node-write.js: its own
+   *                 allowlist with the method pinned per rule, a write grant the CHILD's operator
+   *                 set (never one that arrived over the wire), and the target's workspace resolved
+   *                 from the child's own rows rather than taken from the request.
+   *
+   *   mesh:content-offer — "may I send you these files?" Answered by lib/mesh/content-receive.js.
+   *                 The message carries a DESCRIPTION and a one-time ticket per file; it carries no
+   *                 bytes and no location. The child then decides, against its own rows and its own
+   *                 disk, in this order: does the content-push grant cover the named workspace
+   *                 (grants.writeAllows, refusing an empty scope as firmly as an empty grant); does
+   *                 it actually need any of it (checking the DISK, not just its content rows); does
+   *                 the operator's byte allowance and the real free space both permit it — all
+   *                 before a single byte is requested.
+   *
+   *                 ⚠️ The URL it fetches from is the child's OWN stored peer_url, never anything
+   *                 in the message. A parent able to name the host would be a parent able to point
+   *                 this node at anything on its network and have it download the result, and it
+   *                 would look exactly like an ordinary content push (I7).
+   *
+   *                 ⚠️ Every arrived file is verified before it is visible: size from statSync, the
+   *                 digest, and a re-sniff of the type — a parent is an authenticated remote writer
+   *                 running a version we do not control.
+   *
+   *   mesh:content-purge — "please forget what I sent you." The ONLY downward message that removes
+   *                 anything, and the narrowest one here. Answered by lib/mesh/relay.js: the ids
+   *                 are matched against provenance rows for THIS edge's peer, so a parent can reach
+   *                 what it sent and nothing else — not what the child uploaded, not what another
+   *                 parent sent. Anything a playlist here still uses is REFUSED and reported,
+   *                 because a file pulled out from under a published playlist is a blank slot on a
+   *                 wall decided by a server nobody at that site controls.
+   *
+   *   Scale-out C2 adds NO downward verb, but it adds two things a parent can cause on a child, and
+   *   they are accounted for here because this is the review:
+   *
+   *   mesh:write { type: 'player-event' | 'player-provision' } — "a screen attached to me reported
+   *                 X" / "a screen paired to me; mint it a row". Answered by lib/mesh/node-write.js
+   *                 applyPlayerOp: refused unless the CHILD's operator set the `player-events` write
+   *                 grant on that edge (validateGrant refuses it over the wire; only the operator
+   *                 consent route stores it), the device's workspace resolved from the child's own
+   *                 rows and required to be inside the grant's scope, and the same idempotency
+   *                 record as every other write. Applied by the very function the child's own
+   *                 socket handler calls. The op types are a reviewed list: nodeWrite.PLAYER_OP_TYPES
+   *                 (test/scale-out-c2.test.js).
+   *
+   *   command-relay (UPWARD, child -> parent) — the one upward payload a parent ACTS on rather than
+   *                 stores: "deliver this to a screen attached to you". Permitted because the
+   *                 parent's operator declared `terminates-players` for the edge; the parent
+   *                 (lib/mesh/player-termination.js deliverRelay) delivers only to a socket it
+   *                 holds, only for a device whose workspace it copies from THAT child (or one it
+   *                 provisioned through it), and only player-facing events. Never stored, never
+   *                 relayed further.
+   */
+  const ALLOWED_DOWNWARD = ['mesh:read', 'mesh:write', 'mesh:hello', 'mesh:content-offer',
+                            'mesh:content-purge'];
+
+  /*
+   * Direction matters, and scanning both files for handlers gets it wrong: `mesh:envelope` is
+   * handled ON THE PARENT and carries telemetry UPWARD, which is the direction the mesh is built
+   * for. So the two halves of "downward" are checked where each actually lives:
+   *   - a handler in lib/mesh/  -> something a PARENT can cause to run on a CHILD
+   *   - an emit in ws/meshSocket.js -> something the PARENT says DOWN the socket
+   */
+  const childHandlerRe = /\.on\s*\(\s*['"](mesh:[a-z0-9:_-]+)['"]/gi;
   for (const { file, src } of meshSources()) {
-    assert.doesNotMatch(src, forbidden,
-      `${file} registers a handler for a parent-issued command — 2.0 is observation only (I2)`);
+    for (const m of src.matchAll(childHandlerRe)) {
+      assert.ok(ALLOWED_DOWNWARD.includes(m[1]),
+        `lib/mesh/${file} handles "${m[1]}" — a message a parent can make this node act on — and it ` +
+        `is not in the reviewed downward allowlist [${ALLOWED_DOWNWARD.join(', ')}]. Adding one means ` +
+        'editing that list and saying why: every downward message must be answered by a grant check ' +
+        'on the child (I2).');
+    }
+  }
+
+  const socketSrc = fs.readFileSync(path.join(__dirname, '..', 'ws', 'meshSocket.js'), 'utf8');
+  const emitRe = /\.emit\s*\(\s*['"](mesh:[a-z0-9:_-]+)['"]/gi;
+  for (const m of socketSrc.matchAll(emitRe)) {
+    assert.ok(ALLOWED_DOWNWARD.includes(m[1]),
+      `ws/meshSocket.js emits "${m[1]}" downward, which is not in the reviewed allowlist ` +
+      `[${ALLOWED_DOWNWARD.join(', ')}]. This file is where the parent speaks to the child, and it ` +
+      'was outside the old guard entirely — a downward verb added here used to pass unnoticed.');
   }
 });
 
-test('write grants are modelled but refused (I2)', () => {
-  // They exist in the vocabulary so an edge stored today stays valid when Phase 5 lands, and so an
-  // operator reading the model is not surprised later by a permission that appeared from nowhere.
+test('a write grant can never arrive over the wire (I2/I10)', () => {
+  /*
+   * ⚠️ REPLACES "write grants are modelled but refused". That test asserted a PLACEHOLDER — that
+   * nothing could grant write at all — and deleting it when write landed would have removed the
+   * only thing standing between a parent and its own permissions. What it is replaced with is the
+   * PROPERTY that has to survive: a write category may be chosen by the node being written to, and
+   * by nothing else.
+   *
+   * validateGrant is the function every wire path uses. It must refuse write, forever.
+   */
   assert.ok(grants.ALL_WRITE.length > 0, 'write categories should exist in the model');
   for (const w of grants.ALL_WRITE) {
     const v = grants.validateGrant([w]);
-    assert.equal(v.ok, false, `${w} must be refused in 2.0`);
-    assert.match(v.reason, /not available in this version/i);
-    assert.match(v.reason, /observation only|flows upward/i,
-      'the refusal must explain the direction rule, not just say no');
+    assert.equal(v.ok, false, `${w} must never be grantable over the wire`);
+    assert.match(v.reason, /chosen by the node being written to|never over the wire/i,
+      'the refusal must say WHERE a write grant comes from, not merely that this one is refused');
+  }
+
+  /*
+   * ...and the consent-side door accepts the ones this server can actually act on, and no read
+   * category.
+   *
+   * ⚠️ "Every write category is grantable by the owner" was too strong, and it hid a real problem
+   * rather than protecting anything: device-command is defined and described but NO rule in
+   * write-proxy.WRITABLE requires it, so an operator could read its consequence, tick it, and grant
+   * a permanent no-op. It is now marked unavailable and refused at the consent door. The invariant
+   * being protected here is that the door takes write categories and only the owner may use it —
+   * not that every category in the catalogue is currently implemented.
+   */
+  const implemented = grants.ALL_WRITE.filter((w) => grants.WRITE_CATEGORIES[w].available !== false);
+  assert.ok(implemented.length > 0, 'at least one write category must actually be grantable');
+  for (const w of implemented) {
+    assert.equal(grants.validateWriteConsent([w]).ok, true, `${w} must be grantable by the owner`);
+  }
+  for (const w of grants.ALL_WRITE.filter((x) => !implemented.includes(x))) {
+    assert.equal(grants.validateWriteConsent([w]).ok, false,
+      `${w} has no enforcement rule, so granting it would promise something that cannot happen`);
+  }
+  for (const r of grants.ALL_READ) {
+    assert.equal(grants.validateWriteConsent([r]).ok, false,
+      `${r} is a read category and must not be settable through the write-consent door`);
   }
 });
 
-test('content redistribution is refused until Phase 5 (I2)', () => {
+test('a write is denied unless BOTH the category and the workspace were granted (I10)', () => {
+  // Scope is not decoration. A grant that named categories but no workspaces would be a grant over
+  // the whole node, which is precisely the "grants must be scopeable below the top" gap that the
+  // industry survey found in the closest prior art.
+  assert.equal(grants.writeAllows(['content-push'], ['w1'], 'content-push', 'w1'), true);
+  assert.equal(grants.writeAllows(['content-push'], ['w1'], 'content-push', 'w2'), false,
+    'a workspace outside the scope must be refused');
+  assert.equal(grants.writeAllows(['content-push'], [], 'content-push', 'w1'), false,
+    'an EMPTY scope means nothing, never everything');
+  assert.equal(grants.writeAllows(['content-push'], null, 'content-push', 'w1'), false,
+    'an ABSENT scope means nothing, never everything');
+  assert.equal(grants.writeAllows(['device-command'], ['w1'], 'content-push', 'w1'), false,
+    'holding one write category must not confer another');
+  assert.equal(grants.writeAllows(null, ['w1'], 'content-push', 'w1'), false);
+});
+
+/*
+ * ⚠️ REPLACES "content redistribution is refused until Phase 5". That test asserted a PLACEHOLDER —
+ * that the capability could not be declared at all — and deleting it when relaying landed would
+ * have removed the only thing watching this. What replaces it is the property that has to survive:
+ * declaring the capability is a RESOURCE decision and never an authority.
+ *
+ * Three parties must agree before a byte travels a second hop, and no one of them can substitute
+ * for another:
+ *   the content's owner  — `relayable` on the provenance row, set from the manifest when they
+ *                          pushed it. Their file, their call.
+ *   the relay's operator — this capability. "I am willing to spend disk holding things for onward
+ *                          use", which says what the node CAN do and never what it MAY.
+ *   each server below    — its own write grant, checked on arrival like any other push.
+ *
+ * A single flag would have collapsed those into whoever runs the middle node — the party that
+ * benefits from caching rather than the one giving something up.
+ */
+test('declaring redistributes-content grants no authority over anyone (I2/I10)', () => {
   const v = capabilities.validateCapabilities(['redistributes-content'], { acceptEnrollment: true });
-  assert.equal(v.ok, false);
-  assert.match(v.reason, /not available in this version/i);
-  assert.ok(!capabilities.AVAILABLE_NOW.includes('redistributes-content'));
+  assert.equal(v.ok, true, 'a node may now declare it is willing to hold content for onward use');
+  assert.ok(capabilities.AVAILABLE_NOW.includes('redistributes-content'));
+
+  // ⚠️ And it must remain a capability, not a grant: it appears in neither grant vocabulary, so it
+  // can never be mistaken for permission to do anything to anybody.
+  assert.ok(!grants.ALL_READ.includes('redistributes-content'));
+  assert.ok(!grants.ALL_WRITE.includes('redistributes-content'));
+  assert.equal(grants.validateGrant(['redistributes-content']).ok, false);
+  assert.equal(grants.validateWriteConsent(['redistributes-content']).ok, false);
+
+  // Still gated on the node accepting enrollment at all — a node that hosts nobody relays nothing.
+  assert.equal(capabilities.validateCapabilities(['redistributes-content'], { acceptEnrollment: false }).ok, false);
 });
 
 // ===== I3 — no cycles =====
@@ -135,10 +305,32 @@ test('test_no_phone_home (I7)', () => {
   /*
    * No license check, no activation, no usage beacon, no central registry. Air-gapped is a
    * first-class install, and it cannot be if identity or enrollment needs the internet.
+   *
+   * ⚠️ LOOPBACK IS THE ONE EXCEPTION, AND IT IS ASSERTED RATHER THAN WAIVED. local-apply.js calls
+   * this server's own HTTP API over 127.0.0.1 so that a mesh write passes exactly the guards a
+   * local request passes — the alternative was a second write implementation, which would drift.
+   * A call to yourself is not phoning home: it needs no internet, works air-gapped, and reaches
+   * nothing the operator does not already run.
+   *
+   * So the guard is now STRICTER, not looser: any URL appearing in lib/mesh must be a loopback
+   * address. A hardcoded external host still fails, and now so does a loopback call that someone
+   * later edits into a real one.
    */
+  const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|\[::1\]|localhost)(:|\/|$)/;
   for (const { file, src } of meshSources()) {
-    assert.doesNotMatch(src, /fetch\s*\(|https?:\/\/(?!\s)/,
-      `${file} contains a network call or a hardcoded URL — mesh identity and pairing are local (I7)`);
+    for (const m of src.matchAll(/https?:\/\/[^\s'"`)]+/g)) {
+      assert.match(m[0], LOOPBACK,
+        `${file} contains the URL ${m[0]} — mesh identity and pairing are local, and the only ` +
+        'address that may appear here is this server\'s own loopback (I7)');
+    }
+    /*
+     * A network call is only acceptable next to a loopback URL. A file that fetches without one
+     * has taken its address from somewhere, and "somewhere" is what I9 exists to prevent.
+     */
+    if (/fetch\s*\(/.test(src)) {
+      assert.match(src, LOOPBACK.source ? /https?:\/\/(127\.0\.0\.1|\[::1\]|localhost)/ : /$^/,
+        `${file} makes a network call but names no loopback address — where is it dialling? (I7)`);
+    }
   }
 });
 
@@ -228,7 +420,7 @@ test('every existing install becomes a node with zero edges (migration is a no-o
       const edgeCols = db.prepare("select name from pragma_table_info('mesh_edges')").all().map(r => r.name);
       const edges = db.prepare('select count(*) c from mesh_edges').get().c;
       const mirrorCounts = {};
-      for (const t of ['mesh_mirror_nodes','mesh_mirror_devices','mesh_mirror_alerts','mesh_mirror_play_logs']) {
+      for (const t of ['mesh_mirror_nodes','mesh_mirror_devices','mesh_mirror_alerts','mesh_mirror_play_logs','mesh_node_paths']) {
         mirrorCounts[t] = db.prepare('select count(*) c from ' + t).get().c;
       }
       db.close();
@@ -251,10 +443,54 @@ test('every existing install becomes a node with zero edges (migration is a no-o
      * nobody reviewed is precisely the thing worth a failing test.
      */
     assert.deepEqual(tables, [
-      'mesh_client_access', 'mesh_clients', 'mesh_edges',
-      'mesh_mirror_alerts', 'mesh_mirror_devices', 'mesh_mirror_nodes', 'mesh_mirror_play_logs',
-      'mesh_mirror_workspaces', 'mesh_node', 'mesh_pairing_codes', 'mesh_tombstones',
+      /*
+       * ⚠️ SORTED. The query returns them in name order, so a new table goes in its alphabetical
+       * place — appending it to the end fails with a diff that looks like every table moved.
+       *
+       * Phase 5 added three, all empty on every install until somebody actually pushes:
+       *   mesh_content_provenance — maps a peer's content id to the local row. This is what makes a
+       *     re-push idempotent: without it the child mints a fresh content id every time, and since
+       *     content_id and filepath are both in the player's structural fingerprint, every screen
+       *     on the site restarts at item 1 on every push.
+       *   mesh_pull_tickets — short-lived, single-asset, stored hashed, bound to a filepath.
+       *   mesh_write_ops — a retried write returns its first outcome instead of applying twice.
+       */
+      /*
+       * Scale-out C1 added one, empty on every install and written by NO application code:
+       *   mesh_change_log — filled only by triggers that exist while an up edge carries the
+       *     workspace-replication grant (lib/mesh/replication.js). Its emptiness here is also what
+       *     test_change_log_triggers_absent_without_replication_grant checks from the outside.
+       */
+      /*
+       * Scale-out C2 added two, both REPLICA-side and empty on every install that terminates no
+       * players:
+       *   mesh_player_events   — the durable, ordered outbox of player events for a primary
+       *     (lib/mesh/player-termination.js). Proof-of-play is never thinned here.
+       *   mesh_player_verdicts — "the primary said yes to this device + token HASH", so a screen
+       *     with a prior session can reconnect while the primary is unreachable. Never the token.
+       */
+      /*
+       * Scale-out C3 added one, REPLICA-side, empty on every node without a caches-content edge:
+       *   mesh_content_cache — which copied content rows have their bytes on this disk
+       *     (lib/mesh/content-cache.js). Never a content row; only a note that the file is here.
+       */
+      'mesh_change_log', 'mesh_client_access', 'mesh_clients', 'mesh_content_cache', 'mesh_content_provenance',
+      'mesh_edges', 'mesh_mirror_alerts', 'mesh_mirror_devices', 'mesh_mirror_nodes', 'mesh_mirror_play_logs',
+      'mesh_mirror_workspaces', 'mesh_node', 'mesh_node_paths', 'mesh_pairing_codes',
+      'mesh_player_events', 'mesh_player_verdicts', 'mesh_pull_tickets', 'mesh_tombstones', 'mesh_write_ops',
     ]);
+
+    /*
+     * mesh_node_paths — how far away a node is and by which route, LEARNED from the ancestry a
+     * relayed payload carries rather than declared by anybody. A node cannot tell this hub where it
+     * sits (that is a relationship it is not a party to), but a payload that genuinely travelled
+     * A<-B<-C proves the shape by having taken it, and the receiver already refuses any item whose
+     * ancestry does not include the node that handed it over. Empty until something is relayed.
+     */
+    assert.equal(
+      mirrorCounts.mesh_node_paths === undefined ? 0 : mirrorCounts.mesh_node_paths, 0,
+      'a fresh install knows no paths — the shape is learned, never assumed',
+    );
 
     // Still empty on a fresh install: tables exist, nothing is mirrored until something is paired.
     for (const t of ['mesh_mirror_nodes', 'mesh_mirror_devices', 'mesh_mirror_alerts',

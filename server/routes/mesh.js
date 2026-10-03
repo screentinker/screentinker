@@ -25,6 +25,36 @@ const { resolveSessionUser } = require('../middleware/auth');
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
+const contentOffer = require('../lib/mesh/content-offer');
+const { digestFileSync } = require('../lib/content-digest');
+const path = require('path');
+const fs = require('fs');
+const config = require('../config');
+
+/*
+ * Has this exact file (same path, size and mtime) already been shown to match this digest?
+ *
+ * ⚠️ Keyed on mtime AND size, so any write invalidates the answer — the cache can only ever save a
+ * re-read of bytes that demonstrably have not changed. Bounded, because an unbounded map keyed on
+ * filenames is a slow leak on a node serving a large library.
+ */
+const digestChecks = new Map();
+const DIGEST_CACHE_MAX = 500;
+
+function verifiedRecently(abs, stat, expected) {
+  const key = `${abs}:${stat.size}:${stat.mtimeMs}`;
+  const seen = digestChecks.get(key);
+  if (seen !== undefined) return seen === expected;
+
+  const actual = digestFileSync(abs);
+  if (digestChecks.size >= DIGEST_CACHE_MAX) {
+    // Oldest first: Map preserves insertion order, and this is a cache rather than an index.
+    digestChecks.delete(digestChecks.keys().next().value);
+  }
+  digestChecks.set(key, actual);
+  return actual === expected;
+}
+
 module.exports = function meshRoutes(db, { requireAuth }) {
   const router = express.Router();
 
@@ -47,6 +77,37 @@ module.exports = function meshRoutes(db, { requireAuth }) {
       if (role && clientRoles.roleAllows(role, 'view-mirrored-data')) allowed.add(c.id);
     }
     return allowed;
+  }
+
+  /**
+   * May this user perform a WRITE action on the client that owns this node?
+   *
+   * ⚠️ TWO CONDITIONS, AND THE SECOND ONE IS THE POINT. The role must permit the action, AND the
+   * access must be `direct` — a row naming this user on THIS client. Read access inherits down the
+   * client tree deliberately; write must not, or dragging a client under "West Region" hands the
+   * ability to change a hospital's screens to everyone holding that region, in one drag, with
+   * nobody named. resolveAccess already reports provenance, so this is one extra comparison.
+   *
+   * ⚠️ This is a hub-side PRE-FILTER, not the enforcement. The child re-checks its own grant on
+   * every request and owes this hub nothing (I10). A hub that skipped this check would only be rude
+   * to its own staff; the child would still refuse.
+   */
+  function canWriteToNode(user, nodeId, action) {
+    const row = db.prepare('SELECT client_id FROM mesh_edges WHERE peer_node_id = ? AND direction = ?')
+      .get(nodeId, 'down');
+    if (!row || !row.client_id) return false;
+
+    const clients = db.prepare('SELECT id, parent_client_id FROM mesh_clients').all();
+    const parentOf = new Map(clients.map((c) => [c.id, c.parent_client_id]));
+    const getParentId = (id) => parentOf.get(id) || null;
+    const getAccessRow = (clientId, userId) => db.prepare(
+      'SELECT role FROM mesh_client_access WHERE client_id = ? AND user_id = ?').get(clientId, userId);
+
+    const { role, source } = clientTree.resolveAccess(
+      row.client_id, user, getParentId, getAccessRow, clientRoles);
+    if (!role || !clientRoles.roleAllows(role, action)) return false;
+    if (clientRoles.requiresDirectAccess(action) && source !== 'direct') return false;
+    return true;
   }
 
   /**
@@ -89,9 +150,51 @@ module.exports = function meshRoutes(db, { requireAuth }) {
      * mean a node paired before anybody organised it into clients is silently readable by every
      * technician — and "we hadn't got round to filing it yet" is not a defence in a security review.
      */
-    return edges
+    const direct = edges
       .filter((e) => (e.client_id ? allowed.has(e.client_id) : user && user.role === 'platform_admin'))
       .map((e) => e.peer_node_id);
+
+    /*
+     * ⚠️ NODES BELOW A VISIBLE ONE ARE VISIBLE TOO — otherwise a relayed screen is stored correctly
+     * and then filtered out of every view, which reads as the relay not working at all.
+     *
+     * A relayed row's ORIGIN is a node this hub has no edge to, so visibility cannot be resolved
+     * from the origin. It is resolved from the EDGE the row arrived on: if you may see the node
+     * that relayed it, you may see what it relayed, because that is the same client's estate one
+     * level further down.
+     *
+     * ⚠️ It does NOT widen who may see anything. The relayed row only exists because the node at
+     * the bottom consented to its data travelling a second hop, and it is filed under the same
+     * client as the node that carried it — so a technician sees exactly the clients they were named
+     * on, in more depth, and never a client they were not.
+     */
+    const visibleEdgeIds = new Set(
+      db.prepare("SELECT id, client_id FROM mesh_edges WHERE direction = 'down' AND revoked_at IS NULL")
+        .all()
+        .filter((e) => (e.client_id ? allowed.has(e.client_id) : user && user.role === 'platform_admin'))
+        .map((e) => e.id),
+    );
+    /*
+     * ⚠️ FROM THE ROUTE MAP, NOT FROM DEVICE ROWS.
+     *
+     * This first derived relayed nodes from mesh_mirror_devices, which tied a server's VISIBILITY to
+     * it having screens. A site that had connected but had nothing plugged in yet was therefore
+     * invisible — its workspace arrived and could not be shown, and acting on it answered "no such
+     * server" about a row on the topology page, because the topology reads the route map while this
+     * read the devices.
+     *
+     * mesh_node_paths is the right source: it is written for ANY relayed payload — node health, a
+     * workspace, a screen — so a server appears as soon as it is genuinely reachable through
+     * something visible, which is the same moment the topology admits it exists.
+     */
+    let relayed = [];
+    try {
+      relayed = db.prepare('SELECT node_id, via_edge_id FROM mesh_node_paths').all()
+        .filter((r) => visibleEdgeIds.has(r.via_edge_id))
+        .map((r) => r.node_id);
+    } catch (e) { relayed = []; }
+
+    return [...new Set([...direct, ...relayed])];
   }
 
   const edgeFor = (nodeId) => db.prepare(
@@ -215,8 +318,37 @@ module.exports = function meshRoutes(db, { requireAuth }) {
          */
         serverName,
         stale: fresh === 'stale',
-        // Honest state of the feature, sent rather than assumed: readable, not yet writable.
-        writable: false,
+        /*
+        * ⚠️ WHAT THE CHILD SAYS WE MAY DO — AND ONLY EVER FOR RENDERING.
+        *
+        * This was a hardcoded `false` with a comment saying it must stay so until the child tells us
+        * otherwise, and nothing was ever built for the child to tell us. So a hub operator could not
+        * see, per client, whether they may push content or how much storage is left; they could only
+        * try and be refused, by a refusal deliberately identical for "no such thing" and "not
+        * permitted". The child now announces its grant upward (mesh:write-offer) and this reads it.
+        *
+        * Advisory in the strongest sense: the child re-checks its own row on every request and owes
+        * this hub nothing. A `true` here means "offer the operator the button", never "the write
+        * will succeed" — and a stale or absent offer degrades to read-only, which is the safe way
+        * for this to be wrong.
+        */
+      ...(() => {
+        let offer = null;
+        try { offer = edge && edge.peer_write_offer ? JSON.parse(edge.peer_write_offer) : null; } catch (x) { offer = null; }
+        const cats = (offer && Array.isArray(offer.categories)) ? offer.categories : [];
+        const spaces = (offer && Array.isArray(offer.workspaces)) ? offer.workspaces : [];
+        return {
+          writable: cats.length > 0 && spaces.length > 0,
+          writeOffer: offer ? {
+            categories: cats,
+            workspaces: spaces,
+            bytesBudget: offer.bytesBudget ?? null,
+            bytesUsed: offer.bytesUsed ?? 0,
+            bytesRemaining: typeof offer.bytesBudget === 'number'
+              ? Math.max(0, offer.bytesBudget - (offer.bytesUsed || 0)) : 0,
+          } : null,
+        };
+      })(),
       };
 
       if (!mine.length) {
@@ -268,9 +400,21 @@ module.exports = function meshRoutes(db, { requireAuth }) {
     const rows = db.prepare(q.sql).all(...q.params);
     const total = db.prepare(q.countSql).get(...q.countParams).c;
     const edges = new Map(ids.map((id) => [id, edgeFor(id)]));
+    /*
+     * ⚠️ A RELAYED SCREEN HAS NO DIRECT EDGE, and reading freshness from a missing one made it
+     * STALE — a live screen two hops down displayed as unreachable, which is worse than not showing
+     * it at all: an operator would go and investigate a site that is working.
+     *
+     * Its liveness belongs to the link it actually arrives over, which is the edge to the node that
+     * relayed it. If that link is healthy the reports are current; if it drops, everything beneath
+     * it goes stale together, which is exactly the truth.
+     */
+    const edgeById = new Map(
+      db.prepare("SELECT * FROM mesh_edges WHERE direction = 'down'").all().map((e) => [e.id, e]),
+    );
 
     const devices = rows.map((r) => {
-      const edge = edges.get(r.origin_node_id);
+      const edge = edges.get(r.origin_node_id) || edgeById.get(r.edge_id);
       const view = hubView.withAsOf(hubView.deviceStatus(r, edge, now), now);
       let body = {};
       try { body = JSON.parse(r.body || '{}'); } catch (e) { body = {}; }
@@ -280,6 +424,13 @@ module.exports = function meshRoutes(db, { requireAuth }) {
         // ("Lobby (Acme)") breaks sort and search for every row at once, and it is the sort of thing
         // that is very hard to undo once a customer has learned to read it.
         originNodeId: r.origin_node_id,
+        /*
+         * ⚠️ WHICH SERVER IT CAME THROUGH, when that is not the same as where it lives. Without it
+         * a three-tier estate is a flat list and an operator cannot tell which of their servers to
+         * ask about a screen — the first question anybody has about a row they cannot reach.
+         */
+        ...(edge && edge.peer_node_id !== r.origin_node_id
+          ? { relayedVia: edge.peer_node_id, relayedViaName: edge.peer_name || null } : {}),
         name: r.name,
         ...view,
         body,
@@ -452,12 +603,606 @@ module.exports = function meshRoutes(db, { requireAuth }) {
    * ⚠️ SCOPED BEFORE IT ASKS. A caller may only read through to a node they can already see, so the
    * proxy cannot become a way around the client scoping that governs everything else here.
    */
-  router.get('/read/:nodeId', requireAuth, async (req, res) => {
-    const ids = visibleNodeIds(req.user);
-    if (!ids.includes(req.params.nodeId)) {
-      // 404 rather than 403: whether a node exists is not something an unauthorised caller learns.
-      return res.status(404).json({ error: 'No such server.' });
+  /**
+   * POST /api/mesh/write/:nodeId — ask a child to change something.
+   *
+   * ⚠️ ASK. Everything that decides whether it happens lives on the child: its own allowlist, a
+   * write grant its own operator set, and the target's workspace resolved from its own rows. This
+   * route does no allowlisting of its own for the same reason the read route does not — a second
+   * copy of the list would drift, and the copy that matters is the one on the machine that owns the
+   * screens.
+   *
+   * ⚠️ THE opId IS MINTED HERE AND MUST SURVIVE A RETRY. If the child answers `indeterminate` the
+   * caller should send the SAME body again: the child recorded the first outcome and will return it
+   * rather than applying twice. Minting a fresh id on retry would defeat that entirely, which is
+   * why it is generated per request body and echoed back in the response.
+   */
+  /*
+   * ⚠️ CLIENTS, AND WHO MAY ACT ON THEM. WITHOUT THESE ROUTES THE WRITE PATH CANNOT BE REACHED.
+   *
+   * canWriteToNode resolves a role through mesh_clients / mesh_client_access, and nothing in the
+   * codebase ever created a row in either table — no route, no migration, no enrolment path. So
+   * the check could never pass, for anybody, on any install: the transport, the opId machinery and
+   * the whole 403/504/503 triad were unreachable behind a permission model with no way to grant
+   * permission. A capability that cannot be granted is a capability that does not exist.
+   *
+   * Deliberately platform-staff only. Deciding which of YOUR technicians may change a customer's
+   * screens is an instance-owner decision, not a per-client one — a manager who could name
+   * themselves publisher would defeat the direct-access rule that keeps write from inheriting down
+   * the client tree.
+   */
+  function requirePlatformStaff(req, res, next) {
+    if (!req.user || (req.user.role !== 'platform_admin' && req.user.role !== 'platform_operator')) {
+      return res.status(403).json({ error: "Only this platform's staff can manage client access." });
     }
+    return next();
+  }
+
+  /*
+   * ⚠️ THE PARENT CAN END IT TOO. Revocation used to exist only on the child
+   * (DELETE /api/mesh/uplink/:id): the node HOLDING a copy had no way to stop holding it short of
+   * waiting a year for the pairing token to expire — and "the node that holds someone's data can
+   * end that at will" is the consent-from-below rule read from the other side. lib/mesh/edge-status
+   * has had `disenroll(edge, { by: 'parent' })` since Phase 2; nothing mounted it. This does.
+   *
+   * What it does, in this order, on THIS node: marks the edge revoked (the one state both sides
+   * already use; nothing is sent downward — the child learns at its next connection, which the
+   * live socket drop forces now), so the replica loop stops pulling and `terminates-players` /
+   * `caches-content` end with it (both key on an active edge); then removes every media file cached
+   * for that edge. Copied rows are KEPT and simply no longer updated — the same retain-and-mark-
+   * stale default the child-side revoke has, for the same reason (a report must not rewrite itself
+   * because somebody clicked disconnect). Screens already attached keep playing; a new register
+   * answers read_replica.
+   */
+  router.delete('/links/:nodeId', requireAuth, requirePlatformStaff, (req, res) => {
+    const edge = db.prepare("SELECT * FROM mesh_edges WHERE peer_node_id = ? AND direction = 'down'").get(req.params.nodeId);
+    const edgeStatus = require('../lib/mesh/edge-status');
+    const now = Math.floor(Date.now() / 1000);
+    const d = edgeStatus.disenroll(edge, { by: 'parent', now, reason: (req.body && req.body.reason) || null });
+    if (!d.ok) return res.status(edge ? 409 : 404).json({ error: d.reason });
+    db.prepare('UPDATE mesh_edges SET revoked_at = ?, token_hash = NULL WHERE id = ?').run(now, edge.id);
+    // The child's live socket, if any: dropped now, so its next connection is refused at the door.
+    try { if (global.__meshDropChild) global.__meshDropChild(edge.peer_node_id); } catch (e) { /* the next envelope is refused anyway */ }
+    let filesDropped = 0;
+    try { filesDropped = require('../lib/mesh/content-cache').sweep(db, require('../config')); } catch (e) { /* no cache on this node */ }
+    let copied = 0;
+    try { copied = db.prepare('SELECT COUNT(*) AS n FROM workspaces WHERE origin_node_id = ?').get(edge.peer_node_id).n; } catch (e) { /* */ }
+    res.json({
+      ok: true,
+      summary: d.summary,
+      filesDropped,
+      copiedWorkspacesRetained: copied,
+      note: copied
+        ? 'The copied workspaces stay, read-only and no longer updated; screens already attached keep ' +
+          'playing what they have, and no new screen will be accepted for them here.'
+        : undefined,
+    });
+  });
+
+  router.get('/clients', requireAuth, (req, res) => {
+    const visible = visibleClientIds(req.user);
+    const rows = db.prepare(`SELECT id, name, parent_client_id, created_at FROM mesh_clients
+                              ORDER BY name COLLATE NOCASE`).all()
+      .filter((c) => visible.has(c.id));
+    const access = db.prepare(`SELECT client_id, user_id, role FROM mesh_client_access`).all();
+    const users = db.prepare('SELECT id, email, name FROM users').all();
+    const byId = new Map(users.map((u) => [u.id, u]));
+    res.json(rows.map((c) => ({
+      ...c,
+      nodes: db.prepare('SELECT peer_node_id FROM mesh_edges WHERE client_id = ? AND direction = ?')
+        .all(c.id, 'down').map((e) => e.peer_node_id),
+      access: access.filter((a) => a.client_id === c.id).map((a) => ({
+        user_id: a.user_id, role: a.role,
+        email: (byId.get(a.user_id) || {}).email || null,
+        name: (byId.get(a.user_id) || {}).name || null,
+      })),
+    })));
+  });
+
+  router.post('/clients', requireAuth, requirePlatformStaff, (req, res) => {
+    const name = String((req.body && req.body.name) || '').trim();
+    if (!name) return res.status(400).json({ error: 'A client needs a name.' });
+    const parent = (req.body && req.body.parent_client_id) || null;
+    if (parent && !db.prepare('SELECT 1 FROM mesh_clients WHERE id = ?').get(parent)) {
+      return res.status(400).json({ error: 'That parent client does not exist.' });
+    }
+    const id = require('crypto').randomUUID();
+    db.prepare(`INSERT INTO mesh_clients (id, name, parent_client_id, created_at)
+                VALUES (?,?,?,strftime('%s','now'))`).run(id, name, parent);
+    res.status(201).json({ id, name, parent_client_id: parent });
+  });
+
+  /*
+   * Assign a linked server to a client. Until a node has a client it is visible to platform staff
+   * and writable by nobody — which is the right default: an unassigned customer is one nobody has
+   * been made responsible for yet.
+   */
+  /*
+   * ⚠️ ADDRESSED UNDER /clients, NOT /nodes, AND THE URL IS THE POINT.
+   *
+   * This writes mesh_edges.client_id — which customer a linked server is FILED under, this hub's
+   * own bookkeeping. It has nothing to do with the node's mirrored data, and a guard asserting that
+   * everything under /mesh/nodes is read-only caught the first spelling of this route. It was right
+   * to: a URL that reads like "write to a node" is one somebody later extends into writing to a
+   * node. The resource being modified is the client's list of servers, so that is where it lives.
+   *
+   * `unassigned` as the client id unfiles a server. An unfiled server is writable by nobody, which
+   * is the correct default — a customer nobody has been made responsible for yet.
+   */
+  router.put('/clients/:id/nodes/:nodeId', requireAuth, requirePlatformStaff, (req, res) => {
+    const edge = db.prepare('SELECT id FROM mesh_edges WHERE peer_node_id = ? AND direction = ?')
+      .get(req.params.nodeId, 'down');
+    if (!edge) return res.status(404).json({ error: 'No such server.' });
+    const clientId = req.params.id === 'unassigned' ? null : req.params.id;
+    if (clientId && !db.prepare('SELECT 1 FROM mesh_clients WHERE id = ?').get(clientId)) {
+      return res.status(404).json({ error: 'No such client.' });
+    }
+    db.prepare('UPDATE mesh_edges SET client_id = ? WHERE id = ?').run(clientId, edge.id);
+    res.json({ ok: true, node_id: req.params.nodeId, client_id: clientId });
+  });
+
+  /*
+   * ⚠️ PASS CONTENT ON TO THIS CLIENT AUTOMATICALLY — set here, by the operator who holds the
+   * relationship with them, and settable nowhere else.
+   *
+   * A grandparent cannot switch this on: the servers below granted content-push to THIS node, not
+   * to whoever is above it, and letting an instruction from above decide what lands on them would
+   * be acting on a grant nobody gave. What arrives from above is an offer this node may choose to
+   * repeat.
+   *
+   * It also cannot widen what travels. Content carries the owner's decision about whether it may be
+   * passed on at all, and forwarding respects that whatever this says.
+   */
+  router.put('/clients/:id/nodes/:nodeId/auto-forward', requireAuth, requirePlatformStaff, (req, res) => {
+    const edge = db.prepare("SELECT id FROM mesh_edges WHERE peer_node_id = ? AND direction = 'down'")
+      .get(req.params.nodeId);
+    if (!edge) return res.status(404).json({ error: 'No such server.' });
+    const on = !!(req.body && req.body.enabled);
+    db.prepare('UPDATE mesh_edges SET auto_forward = ? WHERE id = ?').run(on ? 1 : 0, edge.id);
+    res.json({
+      ok: true,
+      autoForward: on,
+      note: on
+        ? 'Content sent to this server that its owner allowed to be passed on will now be offered ' +
+          'to that client automatically. They still apply their own permissions on arrival.'
+        : 'This client will only receive content you send them explicitly.',
+    });
+  });
+
+  router.put('/clients/:id/access', requireAuth, requirePlatformStaff, (req, res) => {
+    if (!db.prepare('SELECT 1 FROM mesh_clients WHERE id = ?').get(req.params.id)) {
+      return res.status(404).json({ error: 'No such client.' });
+    }
+    const userId = (req.body && req.body.user_id) || null;
+    const role = (req.body && req.body.role) || null;
+    if (!userId || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) {
+      return res.status(400).json({ error: 'That user does not exist.' });
+    }
+    /*
+     * An empty role REMOVES the access rather than storing a blank one — the same shape as
+     * revoking a write grant with an empty category list, so "take it away" is expressible
+     * without severing anything else.
+     */
+    if (!role) {
+      db.prepare('DELETE FROM mesh_client_access WHERE client_id = ? AND user_id = ?')
+        .run(req.params.id, userId);
+      return res.json({ ok: true, removed: true });
+    }
+    if (!clientRoles.isKnownRole(role)) {
+      return res.status(400).json({ error: `Unknown role. Known roles: ${clientRoles.ROLE_NAMES.join(', ')}.` });
+    }
+    db.prepare(`INSERT INTO mesh_client_access (client_id, user_id, role, granted_at)
+                VALUES (?,?,?,strftime('%s','now'))
+                ON CONFLICT(client_id, user_id) DO UPDATE SET role = excluded.role`)
+      .run(req.params.id, userId, role);
+    res.json({ ok: true, client_id: req.params.id, user_id: userId, role });
+  });
+
+  /*
+   * ⚠️ "NO SUCH SERVER" IS THE RIGHT ANSWER TO A STRANGER AND THE WRONG ONE TO YOUR OWN OPERATOR.
+   *
+   * Acting on a node requires a DIRECT link: writes, content and commands all reach a child over
+   * the socket it dialled in on, and there is deliberately no forwarding — the servers below a
+   * relay granted THAT relay, not whoever sits above it, so passing an instruction through would
+   * let a grandparent act on a grant it was never given.
+   *
+   * But relayed telemetry means a node two hops down now APPEARS on the topology and in the fleet
+   * list. An operator clicks it and, before this, was told "No such server" about a row they were
+   * looking at. The refusal was correct and the message was a lie.
+   *
+   * So the two cases are separated: a node nobody may see stays "no such server", because whether
+   * it exists is not something an unauthorised caller learns. A node you CAN see but cannot reach
+   * directly says so, and names the server that does have the link — which is the next thing that
+   * person needs to know.
+   */
+  function directEdgeOrExplain(user, nodeId) {
+    const ids = visibleNodeIds(user);
+    if (!ids.includes(nodeId)) return { ok: false, status: 404, error: 'No such server.' };
+
+    const direct = db.prepare(
+      "SELECT * FROM mesh_edges WHERE peer_node_id = ? AND direction = 'down' AND revoked_at IS NULL")
+      .get(nodeId);
+    if (direct) return { ok: true, edge: direct };
+
+    let via = null;
+    try {
+      const path = db.prepare('SELECT via_edge_id, hops FROM mesh_node_paths WHERE node_id = ?').get(nodeId);
+      if (path) via = db.prepare('SELECT peer_node_id, peer_name FROM mesh_edges WHERE id = ?').get(path.via_edge_id);
+    } catch (e) { via = null; }
+
+    return {
+      ok: false,
+      status: 409,
+      error: via
+        ? `That server reports through ${via.peer_name || `server ${String(via.peer_node_id).slice(0, 8)}`}, ` +
+          'not to this one, so changes cannot be sent to it from here. Ask that server to make the ' +
+          'change, or connect to it directly.'
+        : 'That server does not report to this one directly, so changes cannot be sent to it from here.',
+      reachableFrom: via ? via.peer_node_id : null,
+    };
+  }
+
+  router.post('/write/:nodeId', requireAuth, async (req, res) => {
+    const reach = directEdgeOrExplain(req.user, req.params.nodeId);
+    if (!reach.ok) return res.status(reach.status).json(reach);
+    /*
+     * ⚠️ Seeing a client is not permission to change their screens. Before this check any `viewer`
+     * who could reach the node could reach this route — the read proxy gates on visibility alone,
+     * which is right for reads and wrong here.
+     */
+    if (!canWriteToNode(req.user, req.params.nodeId, 'push-content')) {
+      return res.status(403).json({
+        error: 'You can see this server, but you are not named as a publisher on it. Write access ' +
+               'has to be granted on the client directly — it is deliberately not inherited from a ' +
+               'parent client.',
+      });
+    }
+    const writeTo = global.__meshWriteTo;
+    if (!writeTo) {
+      return res.status(503).json({ error: 'This server is not accepting connections from others.' });
+    }
+    const path = String((req.body && req.body.path) || '');
+    const method = String((req.body && req.body.method) || '').toUpperCase();
+    if (!path || !method) {
+      return res.status(400).json({ error: 'A write needs a path and a method.' });
+    }
+
+    const opId = String((req.body && req.body.opId) || require('crypto').randomUUID());
+    /*
+     * ⚠️ WHO ASKED, SENT AS A CLAIM AND NOTHING MORE.
+     *
+     * The child cannot verify this and must never act on it — its own grant is the only thing that
+     * decides anything. It travels because "your MSP changed this playlist" is far less useful to
+     * a customer working out what happened than "Priya at your MSP changed it", and the child
+     * records it labelled as unverified. Name and email only: no id, because an id from another
+     * server means nothing on the child and would invite somebody to try joining on it.
+     */
+    const actor = req.user ? { name: req.user.name || null, email: req.user.email || null } : null;
+
+    const answer = await writeTo(req.params.nodeId, {
+      actor,
+      path,
+      method,
+      body: req.body && req.body.body,
+      opId,
+      sentAt: Date.now(),
+      /*
+       * A deadline, so a request that sat in a reconnect buffer cannot outrun a revocation. Short
+       * on purpose: an operator who waited two minutes has already retried.
+       */
+      notAfter: Date.now() + 120_000,
+      ...(typeof (req.body && req.body.intentSeq) === 'number' ? { intentSeq: req.body.intentSeq } : {}),
+    });
+
+    if (!answer || !answer.ok) {
+      /*
+       * ⚠️ Three outcomes, and they need three different responses from an operator: 503 the child
+       * is not connected and nothing happened; 504 it did not acknowledge and the change may or may
+       * not have landed — retry with this opId to find out; 403 it refused, and no retry will help.
+       * Collapsing them into one error is how somebody retries a write that already applied.
+       */
+      if (answer && answer.offline) return res.status(503).json({ error: answer.reason, opId });
+      if (answer && answer.indeterminate) {
+        return res.status(504).json({ error: answer.reason, opId, retryWithSameOpId: true });
+      }
+      return res.status(403).json({ error: (answer && answer.reason) || 'That server refused.', opId });
+    }
+    res.json({ ok: true, opId, replayed: !!answer.replayed, result: answer.outcome });
+  });
+
+  /*
+   * ⚠️ SEND CONTENT TO A CHILD — the SECOND route here that reaches another node, and like the
+   * first it only ASKS. It builds a description of some files and a one-time ticket for each, hands
+   * both to the child, and the child decides what it needs, whether it may accept it, and whether
+   * there is room. Nothing about the child's disk is judged here (I10).
+   *
+   * The bytes never touch this route. The envelope caps a batch at 512 KB against a 500 MB upload
+   * limit, so the socket carries the offer and the child pulls the files over HTTP from the address
+   * it already had — which also means one slow transfer cannot block the control plane.
+   */
+  router.post('/content/:nodeId', requireAuth, async (req, res) => {
+    const reach = directEdgeOrExplain(req.user, req.params.nodeId);
+    if (!reach.ok) return res.status(reach.status).json(reach);
+    if (!canWriteToNode(req.user, req.params.nodeId, 'push-content')) {
+      return res.status(403).json({
+        error: 'You do not have permission to send content to this client. Ask an administrator ' +
+               'to name you on it.',
+      });
+    }
+
+    const offerTo = global.__meshContentOfferTo;
+    if (!offerTo) {
+      return res.status(503).json({ error: 'This server is not accepting connections from others.' });
+    }
+
+    const edge = reach.edge;
+
+    const workspaceId = req.body && req.body.workspace_id;
+    if (!workspaceId) {
+      return res.status(400).json({
+        error: 'Name the workspace on their server that this content is for.',
+      });
+    }
+
+    /*
+     * ⚠️ `relayable` is THIS operator's consent that the files may be passed on by the receiving
+     * server to servers below it. Their content, their call — and it is opt-in per push rather
+     * than a property of the link, because "you may send me things" and "you may hand what I sent
+     * you to someone else" are different agreements.
+     */
+    const built = contentOffer.buildOffer(db, edge, (req.body && req.body.content_ids) || [],
+                                          { contentDir: config.contentDir,
+                                            relayable: !!(req.body && req.body.relayable) });
+    if (!built.ok) return res.status(400).json({ error: built.reason, skipped: built.skipped });
+
+    const answer = await offerTo(req.params.nodeId, {
+      manifest: built.manifest, tickets: built.tickets, workspaceId,
+      // Same claim, same caveat as the write path — see POST /write/:nodeId.
+      actor: req.user ? { name: req.user.name || null, email: req.user.email || null } : null,
+    });
+
+    if (!answer || !answer.ok) {
+      /*
+       * Same three outcomes as a write, and they mean the same three things to an operator: 503
+       * nothing was sent, 504 some of it may have arrived and re-sending is safe, 403 the customer
+       * refused. A partial success arrives here too — the child reports per item, and that detail
+       * is passed through rather than flattened, because "3 of 9 files failed" is the only version
+       * of this an operator can act on.
+       */
+      if (answer && answer.offline) return res.status(503).json({ error: answer.reason });
+      if (answer && answer.indeterminate) return res.status(504).json({ error: answer.reason, resendIsSafe: true });
+      return res.status(403).json({
+        error: (answer && answer.reason) || 'That server refused the content.',
+        failed: (answer && answer.failed) || [],
+        stored: (answer && answer.stored) || [],
+      });
+    }
+    res.json({ ok: true, ...answer, skippedHere: built.skipped });
+  });
+
+  /*
+   * ⚠️ SEND THE SAME CONTENT TO SEVERAL CLIENTS AT ONCE.
+   *
+   * The real shape of this job: an MSP has one campaign and forty sites, and doing that one node at
+   * a time is forty trips through a UI plus keeping track of which ones took it. Nothing about it
+   * needs new permission — the content belongs to this operator, and every client on the list has
+   * already granted them content-push individually. This is a loop over a decision each customer
+   * already made, not a new power.
+   *
+   * ⚠️ IT IS NOT A RELAY, and the distinction is worth keeping straight. Each child still fetches
+   * from THIS node; nothing is cached in between, no third party holds anybody's bytes, and each
+   * child's own grant is checked on arrival exactly as it is for a single push. The relay tier —
+   * where an intermediate node stores and serves a subtree — is a different feature with an
+   * unresolved consent question, and is documented in docs/mesh-relay-design.md rather than built.
+   *
+   * ⚠️ Bounded concurrency, not one big Promise.all. A push holds its acknowledgement open until
+   * the child has finished fetching, so forty at once is forty long-lived sockets and forty
+   * simultaneous transfers out of one uplink — which is how a hub saturates its own connection and
+   * makes every one of them slower. Four at a time keeps the link usable and the wall-clock sane.
+   */
+  router.post('/content', requireAuth, async (req, res) => {
+    const wanted = Array.isArray(req.body && req.body.targets) ? req.body.targets : [];
+    if (!wanted.length) return res.status(400).json({ error: 'Choose which servers to send to.' });
+    if (wanted.length > 100) {
+      return res.status(400).json({ error: `That is ${wanted.length} servers; 100 at a time.` });
+    }
+    const contentIds = (req.body && req.body.content_ids) || [];
+    if (!contentIds.length) return res.status(400).json({ error: 'Choose some content to send.' });
+
+    const offerTo = global.__meshContentOfferTo;
+    if (!offerTo) {
+      return res.status(503).json({ error: 'This server is not accepting connections from others.' });
+    }
+
+    const visible = visibleNodeIds(req.user);
+    const actor = req.user ? { name: req.user.name || null, email: req.user.email || null } : null;
+
+    /*
+     * ⚠️ EVERY TARGET IS AUTHORISED INDIVIDUALLY. A batch is a convenience for the operator and
+     * must never become a way to reach a client they could not reach one at a time — so visibility
+     * and the publisher role are re-checked per node, not once for the request.
+     */
+    const results = [];
+    const queue = wanted.slice();
+    const runOne = async (t) => {
+      const nodeId = t && t.node_id;
+      const workspaceId = t && t.workspace_id;
+      const label = { nodeId, workspaceId };
+      if (!nodeId || !workspaceId) return { ...label, ok: false, reason: 'Missing server or workspace.' };
+      // ⚠️ Same reachability answer as the single send, per target — a batch across forty sites is
+      // exactly where an operator meets a relayed node and needs to be told why it was skipped.
+      const reach = directEdgeOrExplain(req.user, nodeId);
+      if (!reach.ok) return { ...label, ok: false, reason: reach.error };
+      if (!canWriteToNode(req.user, nodeId, 'push-content')) {
+        return { ...label, ok: false, reason: 'You may not send content to that client.' };
+      }
+      const edge = reach.edge;
+
+      /*
+       * ⚠️ A FRESH OFFER PER TARGET, tickets included. A ticket names one file on one EDGE, so
+       * reusing one batch's tickets across children would hand every child a credential minted for
+       * a different relationship — and make revoking one edge stop transfers on another.
+       */
+      const built = contentOffer.buildOffer(db, edge, contentIds,
+        { contentDir: config.contentDir, relayable: !!(req.body && req.body.relayable) });
+      if (!built.ok) return { ...label, ok: false, reason: built.reason };
+
+      const answer = await offerTo(nodeId, {
+        manifest: built.manifest, tickets: built.tickets, workspaceId, actor,
+      });
+      return {
+        ...label,
+        ok: !!(answer && answer.ok),
+        reason: answer && answer.reason,
+        stored: (answer && answer.stored ? answer.stored.length : 0),
+        alreadyHeld: (answer && answer.alreadyHeld ? answer.alreadyHeld.length : 0),
+      };
+    };
+
+    const CONCURRENCY = 4;
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+      for (;;) {
+        const next = queue.shift();
+        if (!next) return;
+        try { results.push(await runOne(next)); }
+        catch (e) { results.push({ nodeId: next && next.node_id, ok: false, reason: (e && e.message) || 'failed' }); }
+      }
+    }));
+
+    /*
+     * ⚠️ 200 with per-target results, even when some failed. A batch across forty sites will have a
+     * few offline, and collapsing that into one status code loses the only thing the operator needs
+     * — WHICH ones, so they can send to those again later without re-sending to the thirty-seven
+     * that took it.
+     */
+    res.json({
+      ok: results.every((r) => r.ok),
+      sent: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    });
+  });
+
+  /*
+   * ⚠️ WITHDRAW CONTENT THIS SERVER SENT. The only route here that removes anything anywhere, and
+   * it can only reach what this node itself sent to that client — the child matches every id
+   * against its own record of what came from us.
+   *
+   * A child refuses anything one of its playlists still uses, and reports which. That is not a
+   * failure to work around: a file pulled out from under a published playlist is a blank slot on a
+   * wall, and the decision to accept that belongs to whoever is standing in front of it.
+   */
+  router.post('/content/:nodeId/purge', requireAuth, async (req, res) => {
+    const reach = directEdgeOrExplain(req.user, req.params.nodeId);
+    if (!reach.ok) return res.status(reach.status).json(reach);
+    if (!canWriteToNode(req.user, req.params.nodeId, 'push-content')) {
+      return res.status(403).json({ error: 'You do not have permission to change content on this client.' });
+    }
+    const purgeTo = global.__meshContentPurgeTo;
+    if (!purgeTo) return res.status(503).json({ error: 'This server is not accepting connections from others.' });
+
+    const oids = (req.body && req.body.content_ids) || [];
+    if (!Array.isArray(oids) || !oids.length) {
+      return res.status(400).json({ error: 'Choose what to withdraw.' });
+    }
+
+    const answer = await purgeTo(req.params.nodeId, {
+      oids,
+      actor: req.user ? { name: req.user.name || null, email: req.user.email || null } : null,
+    });
+    if (!answer || !answer.ok) {
+      if (answer && answer.offline) return res.status(503).json({ error: answer.reason });
+      if (answer && answer.indeterminate) return res.status(504).json({ error: answer.reason, resendIsSafe: true });
+      return res.status(403).json({ error: (answer && answer.reason) || 'That server refused.' });
+    }
+    res.json({ ok: true, ...answer });
+  });
+
+  /*
+   * ⚠️ WHERE THE BYTES ACTUALLY COME FROM, and the only unauthenticated-by-JWT route in this file.
+   *
+   * The caller is a CHILD SERVER, not a person — it holds a ticket rather than a session, so
+   * requireAuth would be exactly wrong. The ticket is the credential: it is hashed at rest, names
+   * ONE file on ONE edge, expires in hours, and is checked against a LIVE read of the edge so a
+   * link severed a moment ago stops serving immediately.
+   *
+   * ⚠️ Range is honoured because the far side depends on it. These transfers run over the worst
+   * links this product sees — a shop on 4G, a coach with a rooftop modem — and a 400 MB file that
+   * restarts from zero on every drop never completes at all.
+   *
+   * ⚠️ NOT single-use, deliberately: a resumable download makes several requests against the same
+   * ticket by design, so single-use would break precisely the transfers this exists for.
+   */
+  router.get('/pull/:token', (req, res) => {
+    const redeemed = contentOffer.redeemTicket(db, req.params.token);
+    // One answer for "no such ticket", "expired" and "the link is gone" — a caller learns nothing
+    // from the difference, and there is nothing useful it could do with it.
+    if (!redeemed.ok) return res.status(404).json({ error: redeemed.reason });
+
+    const abs = path.join(config.contentDir, path.basename(redeemed.ticket.filepath));
+    if (!fs.existsSync(abs)) return res.status(404).json({ error: 'That file is no longer here.' });
+
+    /*
+     * ⚠️ CHECKED BEFORE IT IS SERVED — but the size on every request and the digest only when the
+     * file has actually changed.
+     *
+     * The receiving node verifies size, digest and type on arrival, so a wrong file cannot be
+     * accepted whatever this does; that is the guarantee, and it stays. What this adds is catching
+     * it HERE, where the operator who can fix it will see it, instead of as a mystery failure at a
+     * customer site. A file replaced or truncated under a live ticket is a real thing — a restore, a
+     * botched sync, a disk error — and the ticket names the bytes it was minted for.
+     *
+     * ⚠️ Re-hashing per request was the obvious version and it is wrong: a 500 MB asset pulled by
+     * forty sites would be forty full reads of a file nobody touched, on the box those sites are
+     * also fetching from. The digest is verified once per (size, mtime) and the result remembered,
+     * so a changed file is caught and an unchanged one costs a statSync.
+     */
+    let stat;
+    try { stat = fs.statSync(abs); } catch (e) {
+      return res.status(404).json({ error: 'That file is no longer here.' });
+    }
+    if (typeof redeemed.ticket.size === 'number' && stat.size !== redeemed.ticket.size) {
+      console.warn(`[mesh] refusing to serve ${redeemed.ticket.filepath}: ${stat.size} bytes, ` +
+                   `ticket says ${redeemed.ticket.size}`);
+      return res.status(409).json({ error: 'That file has changed since it was offered.' });
+    }
+    if (redeemed.ticket.digest && !verifiedRecently(abs, stat, redeemed.ticket.digest)) {
+      console.warn(`[mesh] refusing to serve ${redeemed.ticket.filepath}: digest does not match the ticket`);
+      return res.status(409).json({ error: 'That file has changed since it was offered.' });
+    }
+
+    /*
+     * ⚠️ The response is forced to an opaque type and marked nosniff. It is a byte stream for a
+     * machine; nothing about it should ever be interpreted by a browser that happens to open the
+     * URL, and the same rule the upload routes follow applies here.
+     */
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    res.setHeader('Cache-Control', 'private, no-store');
+    // A validator so the far side can use If-Range and refuse to stitch two different files.
+    if (redeemed.ticket.digest) res.setHeader('ETag', `"${redeemed.ticket.digest}"`);
+
+    db.prepare('UPDATE mesh_pull_tickets SET used_at = strftime(\'%s\',\'now\') WHERE id = ?')
+      .run(redeemed.ticket.id);
+
+    // res.sendFile handles Range, If-Range, 206 and 416 correctly; re-implementing that by hand is
+    // how off-by-one errors get into a byte stream.
+    return res.sendFile(abs, { dotfiles: 'deny' }, (err) => {
+      if (err && !res.headersSent) res.status(500).end();
+    });
+  });
+
+  router.get('/read/:nodeId', requireAuth, async (req, res) => {
+    /*
+     * ⚠️ Reads do not traverse a relay either — readFrom finds a directly-connected socket or
+     * nothing. Before this, asking a two-hop server for live data answered "not connected right
+     * now", which reads as a temporary fault and invites retrying something that can never work.
+     * A node nobody may see still gets the flat 404: whether it exists is not something an
+     * unauthorised caller learns.
+     */
+    const reach = directEdgeOrExplain(req.user, req.params.nodeId);
+    if (!reach.ok) return res.status(reach.status).json(reach);
     const readFrom = global.__meshReadFrom;
     if (!readFrom) {
       return res.status(503).json({ error: 'This server is not accepting connections from others.' });
@@ -554,13 +1299,64 @@ module.exports = function meshRoutes(db, { requireAuth }) {
         transportDirection: e ? e.transport_direction : null,
         tlsVerify: e ? !!e.tls_verify : null,
         peerVersion: node ? node.node_version : null,
+        // What to print on the box in the diagram. Same precedence as the fleet rollup.
+        peerName: (node && node.node_name) || (e && e.peer_name) || null,
         lastSyncAt: e ? e.last_sync_at : null,
         // Surfaced per edge so an operator can see WHICH link is the problem rather than being told
         // the mesh is unwell.
         freshness: require('../lib/mesh/mirror-store').freshnessOf(e, now),
       };
     });
-    res.json({ edges, asOf: now, depthCap: require('../config').meshMaxDepth });
+    /*
+     * ⚠️ NODES BEYOND THE FIRST HOP, so the shape of the estate is visible rather than just this
+     * node's own neighbours.
+     *
+     * Without it a three-tier mesh looked identical to a two-tier one: a single row saying "we are
+     * paired with B", and no way to tell whether B is a site with screens or a relay with a dozen
+     * sites behind it. The number an operator asks for is how many servers a screen's data crosses
+     * to reach them, and that number was nowhere on the page.
+     *
+     * Learned from attested ancestry (mirror-store.recordNodePath) rather than declared, and scoped
+     * the same way everything else here is: a path is shown only if the edge it arrived over is one
+     * this user may see.
+     */
+    let indirect = [];
+    try {
+      const visibleEdges = new Set(
+        db.prepare("SELECT id, client_id FROM mesh_edges WHERE direction = 'down' AND revoked_at IS NULL")
+          .all()
+          .filter((e) => (e.client_id ? visibleClientIds(req.user).has(e.client_id)
+                                      : req.user && req.user.role === 'platform_admin'))
+          .map((e) => e.id),
+      );
+      indirect = db.prepare('SELECT * FROM mesh_node_paths ORDER BY hops, node_id').all()
+        .filter((r) => visibleEdges.has(r.via_edge_id))
+        .map((r) => {
+          let path = [];
+          try { path = JSON.parse(r.path); } catch (e) { path = []; }
+          const via = db.prepare('SELECT peer_node_id, peer_name FROM mesh_edges WHERE id = ?').get(r.via_edge_id);
+          const seen = db.prepare('SELECT node_name FROM mesh_mirror_nodes WHERE origin_node_id = ?')
+            .get(r.node_id);
+          return {
+            nodeId: r.node_id,
+            /*
+             * ⚠️ ONLY FROM THE MIRROR, never from mesh_node_paths. A path is ancestry — a list of
+             * ids attested by the nodes that relayed it — and a name is not a fact about a path.
+             * Reading it here keeps the naming and the routing on separate rails, so no amount of
+             * creative naming downstream can change where anything is delivered.
+             */
+            name: (seen && seen.node_name) || null,
+            hops: r.hops,
+            // Ordered nearest-first, so it reads the way an operator traces it: us -> B -> C.
+            path: [...path].reverse(),
+            viaNodeId: via ? via.peer_node_id : null,
+            viaName: via ? via.peer_name : null,
+            lastSeenAt: r.last_seen_at,
+          };
+        });
+    } catch (e) { indirect = []; }
+
+    res.json({ edges, indirect, asOf: now, depthCap: require('../config').meshMaxDepth });
   });
 
   return router;

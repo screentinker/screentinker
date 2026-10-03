@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2e: workspace-aware access. Same pattern as content/widgets/folders.
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
 
 // Escape HTML to prevent XSS
 function escapeHtml(str) {
@@ -126,19 +126,20 @@ router.get('/:id/render', (req, res) => {
   .header p { font-size:${safeNumber(style.subtitleSize, 20)}px; opacity:0.7; margin-top:8px; }
   .header img { max-height:80px; margin-bottom:16px; }
   .content { flex:1; display:flex; align-items:center; justify-content:center; padding:20px 60px; }
-  .button-grid { display:grid; grid-template-columns:repeat(${safeNumber(style.columns, 3)}, 1fr); gap:${safeNumber(style.gap, 24)}px; width:100%; max-width:1200px; }
+  .button-grid { display:grid; grid-template-columns:repeat(${safeNumber(style.columns, 3)}, 1fr); width:100%; max-width:1200px; }
   .kiosk-btn {
     background:${safeColor(style.buttonBg, '#1e293b')}; border:2px solid ${safeColor(style.buttonBorder, '#334155')};
     border-radius:${safeNumber(style.buttonRadius, 16)}px; padding:${safeNumber(style.buttonPadding, 32)}px;
     text-align:center; cursor:pointer; transition:all 0.2s ease; touch-action:manipulation;
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; margin:${safeNumber(style.gap, 24) / 2}px;
   }
+  .kiosk-btn > * + * { margin-top:12px; }
   .kiosk-btn:hover, .kiosk-btn:active { background:${safeColor(style.buttonHover, '#3b82f6')}; border-color:${safeColor(style.buttonHover, '#3b82f6')}; transform:scale(1.02); }
   .kiosk-btn .icon { font-size:${safeNumber(style.iconSize, 48)}px; }
   .kiosk-btn .label { font-size:${safeNumber(style.labelSize, 20)}px; font-weight:600; }
   .kiosk-btn .sublabel { font-size:${safeNumber(style.sublabelSize, 14)}px; opacity:0.6; }
   .footer { padding:20px 60px; text-align:center; font-size:14px; opacity:0.4; }
-  .idle-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.95); display:none; flex-direction:column;
+  .idle-overlay { position:fixed; top:0; right:0; bottom:0; left:0; background:rgba(0,0,0,0.95); display:none; flex-direction:column;
     align-items:center; justify-content:center; z-index:100; cursor:pointer; }
   .idle-overlay h2 { font-size:48px; margin-bottom:16px; }
   .idle-overlay p { font-size:20px; opacity:0.6; }
@@ -186,7 +187,8 @@ router.get('/:id/render', (req, res) => {
 
         // Report touch to server
         if (window.parent !== window) {
-          window.parent.postMessage({ type: 'kiosk-tap', label: btn.querySelector('.label')?.textContent }, '*');
+          const label = btn.querySelector('.label');
+          window.parent.postMessage({ type: 'kiosk-tap', label: label ? label.textContent : '' }, '*');
         }
       });
     });
@@ -221,6 +223,7 @@ router.get('/:id/render', (req, res) => {
 // Create kiosk page in the caller's current workspace.
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating kiosk pages.' });
+  if (denyReadOnly(req, res)) return;
   const { name, config: pageConfig } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 

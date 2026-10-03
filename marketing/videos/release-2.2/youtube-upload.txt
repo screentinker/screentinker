@@ -1,0 +1,71 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: ScreenTinker 2.2 - Point an AI at Your Screens
+File:  screentinker-2p2.mp4  (3:02 - 1080p30)
+Thumb: thumbnail.png
+========================================================================
+
+------------------------------- TITLE ----------------------------------
+RECOMMENDED:
+ScreenTinker 2.2: Point an AI at Your Screens (Open-Source Digital Signage)
+
+Alternates:
+I Gave an AI Assistant Control of My Digital Signage (Open Source)
+What's New in ScreenTinker 2.2: MCP, E-Paper Signs & Eleven Platforms
+
+---------------------------- DESCRIPTION -------------------------------
+
+ScreenTinker 2.2 serves a Model Context Protocol endpoint, so you can point
+Claude - or anything else that speaks MCP - at your own signage server and ask
+for things in plain English. "Which screens are offline?" "Put the autumn
+campaign on the lobby screen." We don't know of another digital signage
+platform that does this.
+
+It is a client of your own public API, not a second way into the database:
+every tool call is an HTTP request carrying your token, through the same
+workspace isolation and the same rate limits a script would hit. The tool list
+is filtered by that token's scope - a read-only token is shown ten tools, a
+full one twenty-one, and the read-only one is never even told the write tools
+exist.
+
+ScreenTinker is open source. Host it yourself, or let us run it for you.
+
+In this video:
+- MCP: 21 tools, chosen rather than generated, filtered by your token's scope.
+- Tokens are issued by a person, not by the assistant - and the auth guide says so.
+- Every published page has a Markdown version, plus an RFC 9727 API catalogue.
+- Device REST and the LAN control door: API only for now, and the video says so.
+- E-paper and ESP32 signs: dithered, packed and deep-slept by the server.
+- Eleven platforms, each with a guide, and a downloads page built from what
+  your instance actually has.
+- Apple TV documented as NOT supported, with the reasoning.
+- Also fixed: Esc on the web player now wants the screen's settings PIN, the
+  dashboard notices its own updates, and reports stopped returning nothing for
+  valid date ranges.
+
+Every screen in this video is a real ScreenTinker instance with invented demo
+data. The MCP exchanges are real: the questions were asked against that server
+and the answers are what it returned.
+
+Download / docs: https://screentinker.com
+Source: https://github.com/screentinker/screentinker
+Discord: https://discord.gg/utTdsrqq4Z
+
+------------------------------ CHAPTERS --------------------------------
+0:00 Just ask it
+0:11 What ScreenTinker 2.2 is
+0:23 The MCP endpoint, and 21 tools
+0:38 Scoped: read-only sees ten
+0:54 Asking for work, not just answers
+1:04 It's your own API (and tokens are human-issued)
+1:27 A site machines can read
+1:43 Device REST and the LAN door (API only)
+2:05 E-paper and ESP32 signs
+2:20 Eleven platforms, and a downloads page
+2:34 Also in 2.2, and where to get it
+
+-------------------------------- TAGS ----------------------------------
+digital signage, open source digital signage, self hosted digital signage,
+MCP, model context protocol, claude mcp, AI digital signage, screentinker,
+digital signage software, free digital signage, raspberry pi digital signage,
+e-paper display, esp32 display, brightsign, android tv signage, signage API

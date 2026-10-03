@@ -110,6 +110,109 @@ sed -i -E "s/(versionCode.*\?:[[:space:]]*)\"[0-9]+\"/\1\"$((CODE + 1))\"/" andr
 NUMERIC="${NEW%%-*}"
 sed -i -E "/^<\?xml/! s/([[:space:]]version=\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" tizen/config.xml
 
+# 4b) webOS app version. Same numeric-only rule as Tizen (appinfo.json version is x.y.z).
+sed -i -E "s/(\"version\": *\")[0-9][^\"]*(\")/\1${NUMERIC}\2/" webos/appinfo.json
+
+# 4c) Vega app version. package.json "version" is the first such key; manifest.toml's
+#     `version = "..."` is the package version (schema-version is unquoted and untouched).
+#     vega/src/deviceInfo.ts carries the same string as a fallback for when the turbo module
+#     cannot answer getVersion(). All three have to move together or a stick reports a version
+#     the dashboard cannot match to a release.
+sed -i -E "0,/\"version\":/s/(\"version\": *\")[0-9][^\"]*/\1${NUMERIC}/" vega/package.json
+sed -i -E "s/^(version = \")[0-9][^\"]*/\1${NUMERIC}/" vega/manifest.toml
+sed -i -E "s/(export const APP_VERSION = ')[0-9][^']*/\1${NUMERIC}/" vega/src/deviceInfo.ts
+
+# 4c-bis) The two web shells carry the version as a literal fallback, for when the host bridge
+#     cannot answer. build-ipk.sh and build-wgt.sh stamp them at BUILD time, which is why leaving
+#     them alone here never broke a shipped package - and why nobody noticed the committed tizen
+#     copy sitting on 2.1.4 for two releases while the tag said otherwise. Stamp them here so the
+#     TAGGED TREE agrees with the tag, and so a test run (which runs both builds) leaves it clean.
+for _shell in webos tizen; do
+  sed -i -E "s/(var APP_VERSION_FALLBACK = ')[0-9][^']*/\\1${NUMERIC}/" "$_shell/js/app.js"
+done
+
+# 4d) Vega BUILD NUMBER, stamped into the build scripts themselves.
+#
+# ⚠️ THE APPSTORE REFUSES build_number 0. The valid range is 1..2^63-1, and `react-native
+# build-vega` defaults to 0 when the flag is absent — which every build before this one was, so
+# every .vpkg ever produced here was unsubmittable. Worse, the Appstore requires BOTH the version
+# AND the build number to be greater than the previous submission, so an unset build number also
+# means there is no way to upload a second version later.
+#
+# ⚠️ STAMPED AS A LITERAL, not computed in the npm script. `--build-number $(...)` would be shell
+# interpolation inside package.json, which breaks on Windows (there is a windows-setup.bat in this
+# repo) and makes the built artifact depend on the shell that launched it. A literal is
+# reproducible and greppable, and it matches how every other version in this script is written.
+#
+# Derived from the version so it cannot go backwards while the version goes forwards:
+# major*10000 + minor*100 + patch, i.e. 2.1.6 -> 20106. Two digits each for minor and patch is
+# plenty for this project and keeps the number readable at a glance.
+#
+# ⚠️ A RE-SUBMISSION OF THE SAME VERSION NEEDS A HIGHER NUMBER BY HAND. If Amazon rejects a build
+# and you fix it without bumping the version, pass a larger --build-number on the command line for
+# that upload. This derivation deliberately does not track re-submissions: guessing at them would
+# make the number unpredictable, and an unpredictable build number is how you lose track of which
+# binary is live.
+VEGA_BUILD_NUMBER="$(printf '%d' "$(( $(echo "$NUMERIC" | cut -d. -f1) * 10000 \
+                                   + $(echo "$NUMERIC" | cut -d. -f2) * 100 \
+                                   + $(echo "$NUMERIC" | cut -d. -f3) ))")"
+# Replace an existing --build-number, or append one if the scripts predate this step.
+if grep -q -- "--build-number" vega/package.json; then
+  sed -i -E "s/(--build-number )[0-9]+/\1${VEGA_BUILD_NUMBER}/g" vega/package.json
+else
+  sed -i -E "s/(react-native build-vega[^\"]*)\"/\1 --build-number ${VEGA_BUILD_NUMBER}\"/g" vega/package.json
+fi
+echo "  vega build number: ${VEGA_BUILD_NUMBER}"
+
+# 4e) ⚠️ BUILD THE VEGA PACKAGE BEFORE TAGGING, so a release cannot be cut from a stamped tree
+#     that does not compile. This is not belt-and-braces: the Vega app has broken at the BUILD
+#     step twice in one day — once on a dependency pinned to a version that does not exist
+#     (kepler-file-system ~2.0.0), once on a Babel transformer that silently produced a 4.5 KB
+#     .vpkg with no JavaScript in it and exited 0. Neither was visible from the source, and the
+#     server test suite cannot see either.
+#
+#     SKIPPED, LOUDLY, when the Vega SDK is absent — most machines that cut a release do not have
+#     it, and refusing to release without it would be worse than the risk. `vega` reaches the PATH
+#     via `source ~/vega/env`.
+if [ -f "$HOME/vega/env" ]; then
+  # shellcheck disable=SC1091
+  ( set +u; . "$HOME/vega/env" >/dev/null 2>&1
+    cd vega
+    echo "  building the Vega package (SDK found)..."
+    if [ ! -d node_modules ]; then npm install --no-audit --no-fund >/dev/null 2>&1; fi
+    npm run build:release >/tmp/vega-build-$$.log 2>&1 || {
+      echo "ERROR: the Vega package failed to build at v$NEW - refusing to tag." >&2
+      echo "       see /tmp/vega-build-$$.log" >&2
+      exit 1
+    }
+    VPKG=build/armv7-release/screentinker-vega_armv7.vpkg
+    # ⚠️ A .vpkg with no JS bundle still "builds" and still exits 0. Check for the bundle, not the
+    # exit code — that empty 4.5 KB package is what installs and then does nothing on a stick.
+    #
+    # ⚠️ THE LISTING GOES INTO A VARIABLE, AND grep -q IS NOT USED. This guard's first version piped
+    # into `grep -q`, which stops reading the moment it matches — that closes the pipe, the upstream
+    # `tar` and `zstd` die on SIGPIPE, and under `set -o pipefail` (line 1 of this script) the whole
+    # pipeline reports failure. So it refused to tag a PERFECTLY GOOD package, every time, and the
+    # error it printed said the package had no JavaScript in it. A check that cannot tell "the thing
+    # is broken" from "I could not finish looking" is worse than no check: it blocks every release
+    # and points at the wrong thing while doing it.
+    VPKG_LIST="$(zstd -d -c "$VPKG" 2>/dev/null | tar tf - 2>/dev/null || true)"
+    case "$VPKG_LIST" in
+      *bundle/index.bundle*) : ;;
+      *)
+        echo "ERROR: $VPKG has no JS bundle - refusing to tag." >&2
+        echo "       (it listed ${VPKG_LIST:+$(printf '%s' "$VPKG_LIST" | wc -l) entries}${VPKG_LIST:-nothing at all - is zstd installed?})" >&2
+        exit 1
+        ;;
+    esac
+    echo "  vega .vpkg OK: $(du -h "$VPKG" | cut -f1), build_number ${VEGA_BUILD_NUMBER}"
+  ) || exit 1
+else
+  echo "  NOTE: Vega SDK not found at ~/vega/env - the .vpkg was NOT built or verified."
+  echo "        Before submitting to the Appstore, run on a machine with the SDK:"
+  echo "            source ~/vega/env && cd vega && npm run build:release"
+fi
+
 # 5) public API spec version. This is the number Redoc prints at the top of the published
 #    API reference (frontend/api-docs.html renders docs/openapi.yaml directly), so leaving it
 #    behind means customers read a version that has not existed for months — it had drifted to
@@ -123,7 +226,11 @@ sed -i -E "0,/^  version:/s/^(  version:[[:space:]]*).*/\1${NUMERIC}/" docs/open
 #    documentation while saying nothing, and the entry has to come from whoever knows what
 #    shipped. This only refuses to let a release be cut silently without one, which is how the
 #    file fell 23 versions behind.
-if ! grep -q "^## ${NEW}$" CHANGELOG.md 2>/dev/null; then
+# ⚠️ NOT anchored at end-of-line. Every heading in this changelog carries its date
+#    ("## 2.1.5 (2026-09-22)"), so `^## ${NEW}$` matched NOTHING and this warned on every
+#    correctly-written release — which made it noise, which made it ignored, which is the exact
+#    opposite of a guard. Match the version followed by end-of-line OR a space.
+if ! grep -qE "^## ${NEW}( |$)" CHANGELOG.md 2>/dev/null; then
   echo
   echo "  WARNING: CHANGELOG.md has no '## $NEW' entry."
   echo "  Add one before pushing the tag — the release notes are read from it."
@@ -131,7 +238,15 @@ if ! grep -q "^## ${NEW}$" CHANGELOG.md 2>/dev/null; then
 fi
 
 # 7) commit + annotated tag (no push)
-git add VERSION server/package.json server/package-lock.json android/app/build.gradle.kts tizen/config.xml docs/openapi.yaml
+# ⚠️ EVERY FILE STAMPED ABOVE MUST BE LISTED HERE. webos/appinfo.json was stamped at step 4b and
+#    left out of this line, so v2.0.8 was tagged with appinfo.json still on the previous version.
+#    webos-player.test.js asserts that parity, which means the tagged commit failed its own test
+#    suite and the release job never ran. A stamp that is not staged is worse than no stamp: the
+#    working tree looks correct and only CI sees the truth.
+#    The two js/app.js fallbacks are stamped at 4c-bis. They used to be left to build-ipk.sh /
+#    build-wgt.sh, which run during the test suite - so the tagged commit carried a stale literal
+#    and a test run dirtied the tree. v2.2.0 was tagged that way once before this was fixed.
+git add VERSION server/package.json server/package-lock.json android/app/build.gradle.kts tizen/config.xml tizen/js/app.js docs/openapi.yaml webos/appinfo.json webos/js/app.js vega/package.json vega/manifest.toml vega/src/deviceInfo.ts
 git commit -q -m "chore(release): v$NEW"
 git tag -a "v$NEW" -m "ScreenTinker v$NEW"
 

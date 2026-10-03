@@ -89,3 +89,9 @@ test('combining search + type + sort works together', async () => {
   const r = await get('?type=image&sort=name&q=' + encodeURIComponent(''));
   assert.deepEqual(names(r), ['alpha-logo.png', 'gamma-100%-off.png']);
 });
+
+test('#tag search matches content.tags JSON', async () => {
+  db.prepare("UPDATE content SET tags = ? WHERE filename = 'alpha-logo.png'").run(JSON.stringify(['promo']));
+  const r = await get('?q=' + encodeURIComponent('#promo'));
+  assert.deepEqual(names(r), ['alpha-logo.png']);
+});

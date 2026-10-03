@@ -15,10 +15,23 @@ export async function render(container) {
   `;
 
   try {
-    const [subData, plans] = await Promise.all([
+    const [subData, plans, promoRes] = await Promise.all([
       fetch('/api/subscription/me', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }}).then(r => r.json()),
-      fetch('/api/subscription/plans').then(r => r.json())
+      fetch('/api/subscription/plans').then(r => r.json()),
+      fetch('/api/subscription/promotion').then(r => (r.ok ? r.json() : {})).catch(() => ({}))
     ]);
+    /*
+     * A running sale (lib/promotions.js). Shown only where checkout will actually apply it: a
+     * customer who already has a subscription is sent to Stripe's billing portal to change plan,
+     * and the portal does not take the sale's coupon — so for them the sale price would be a lie.
+     */
+    const promo = (promoRes && promoRes.promotion) || null;
+    const saleEligible = promo && !subData.self_hosted && !subData.subscription?.stripe_subscription_id;
+    const saleFor = (p, cycle) => saleEligible && p.price_monthly > 0
+      && (promo.cycles === 'both' || promo.cycles === cycle)
+      && (!promo.plan_ids.length || promo.plan_ids.includes(p.id));
+    const cut = (n) => Math.round(Number(n) * (100 - (promo ? promo.percent_off : 0))) / 100;
+
 
     const content = document.getElementById('billingContent');
 
@@ -36,6 +49,15 @@ export async function render(container) {
           <div>
             <div style="font-size:13px;font-weight:500">${t('billing.trial_ends', { plan: (subData.trial.plan?.charAt(0).toUpperCase() + subData.trial.plan?.slice(1)) || '', n: subData.trial.days_left })}</div>
             <div style="font-size:12px;color:var(--text-muted)">${t('billing.trial_after')}</div>
+          </div>
+        </div>
+        ` : ''}
+        ${(!subData.trial?.active && subData.trial?.expired_at && subData.plan.name === 'free') ? `
+        <div style="background:var(--bg-secondary);border:1px solid var(--warning);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
+          <span style="font-size:20px">&#9201;</span>
+          <div>
+            <div style="font-size:13px;font-weight:500">${t('billing.trial_ended', { plan: (subData.trial.plan?.charAt(0).toUpperCase() + subData.trial.plan?.slice(1)) || '', date: esc(new Date(subData.trial.expired_at).toLocaleDateString()) })}</div>
+            <div style="font-size:12px;color:var(--text-muted)">${t('billing.trial_ended_after', { n: subData.plan.max_devices })}</div>
           </div>
         </div>
         ` : ''}
@@ -71,13 +93,18 @@ export async function render(container) {
 
       <div class="settings-section">
         <h3>${t('billing.available_plans')}</h3>
+        ${saleEligible ? `<div class="billing-sale"><span class="billing-sale-tag">${t('billing.sale_tag', { pct: promo.percent_off })}</span><strong>${esc(promo.headline)}</strong>${promo.ends_at ? `<span class="billing-sale-end">${t('billing.sale_ends', { when: new Date(promo.ends_at * 1000).toLocaleString() })}</span>` : ''}</div>` : ''}
         <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:16px">
           ${plans.map(p => `
             <div style="background:var(--bg-secondary);border:${p.id === subData.plan.id ? '2px solid var(--accent)' : '1px solid var(--border)'};border-radius:var(--radius-lg);padding:20px;position:relative">
               ${p.id === subData.plan.id ? `<div style="position:absolute;top:-10px;right:12px;background:var(--accent);color:white;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:500">${t('billing.current')}</div>` : ''}
               <div style="font-size:18px;font-weight:700;margin-bottom:4px">${esc(p.display_name)}</div>
               <div style="font-size:24px;font-weight:700;color:var(--accent);margin-bottom:12px">
-                ${p.price_monthly > 0 ? `$${p.price_monthly}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>` : t('billing.free')}
+                ${p.price_monthly > 0
+                  ? (saleFor(p, 'monthly')
+                    ? `<s class="billing-was">$${p.price_monthly}</s> $${cut(p.price_monthly)}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>`
+                    : `$${p.price_monthly}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>`)
+                  : t('billing.free')}
               </div>
               <div style="font-size:13px;color:var(--text-secondary);line-height:2">
                 <div>${p.max_devices === -1 ? t('billing.unlimited') : p.max_devices} ${t('billing.devices_lc')}</div>
@@ -86,7 +113,10 @@ export async function render(container) {
                 <div>${p.remote_url ? '&#10003;' : '&#10007;'} ${t('billing.feat.remote_urls')}</div>
                 <div>${p.priority_support ? '&#10003;' : '&#10007;'} ${t('billing.feat.priority_support')}</div>
               </div>
-              ${p.price_yearly > 0 ? `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">${t('billing.yearly_save', { price: p.price_yearly, pct: Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100) })}</div>` : ''}
+              ${p.price_yearly > 0 ? (saleFor(p, 'yearly')
+                ? `<div style="font-size:12px;margin-top:8px">${t('billing.yearly_sale', { was: p.price_yearly, now: cut(p.price_yearly) })}</div>`
+                : `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">${t('billing.yearly_save', { price: p.price_yearly, pct: Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100) })}</div>`) : ''}
+              ${saleFor(p, 'monthly') || saleFor(p, 'yearly') ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t(`billing.sale_dur_${promo.duration}`, { n: promo.duration_in_months })}</div>` : ''}
               ${!subData.self_hosted && p.price_monthly > 0 && p.id !== subData.plan.id ? `
                 <div style="margin-top:12px;display:flex;gap:6px">
                   <button class="btn btn-primary btn-sm" style="flex:1" onclick="window._checkout('${p.id}','monthly')">${t('billing.monthly')}</button>

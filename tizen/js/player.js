@@ -5,6 +5,8 @@
  *   video/youtube-> iframe embed; single item loops, multi advances after duration
  *   remote_url   -> same as image/video but src = remote_url
  *   widget       -> iframe of {server}/api/widgets/{id}/render for duration_sec
+ *   html bundle  -> sandboxed iframe of {server}/api/content/{content_id}/bundle for duration_sec
+ *                   (the server flattens the .wgt/.zip; this player unpacks nothing)
  * Content file URL: {server}/api/content/{content_id}/file  (public)
  */
 // Minimal i18n for the Tizen player (no shared i18n module here). Falls back to en.
@@ -15,6 +17,9 @@ var TIZEN_I18N = {
   de: { nothing_scheduled: 'Derzeit ist nichts geplant', no_content: 'Noch kein Inhalt zugewiesen', portrait_video_unsupported: 'Hochformat-Video wird auf diesem TV nicht unterstützt – nutze Querformat oder drehe die Datei und markiere sie als Querformat.' },
   pt: { nothing_scheduled: 'Nada programado no momento', no_content: 'Nenhum conteúdo atribuído ainda', portrait_video_unsupported: 'Vídeo em retrato não é suportado nesta TV — use paisagem ou gire o arquivo e marque-o como Paisagem.' }
 };
+/* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Matches no image/ or video/
+ * prefix, so nothing in the dispatch chains below routes it as media by accident. */
+var BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
 var TZ_LANG = (function () { try { return (localStorage.getItem('rd_lang') || navigator.language || 'en').split('-')[0]; } catch (e) { return 'en'; } })();
 function tzt(k) { return (TIZEN_I18N[TZ_LANG] && TIZEN_I18N[TZ_LANG][k]) || TIZEN_I18N.en[k] || k; }
 
@@ -29,6 +34,11 @@ function PlaylistPlayer(stageEl, getBase, getDeviceId) {
   this.timezone = null; // #74/#75: device-effective IANA tz for schedule eval
   this.wallFollower = false;   // video-wall: a follower holds the leader's item, no auto-advance
   this.currentVideoEl = null;  // current <video> (wall leader reads position; follower drift-corrects)
+  // Slide audio: a voiceover that belongs to one item, and a music bed that outlives the advance.
+  // Mirrors server/player/index.html — same fields, same rule for when the bed restarts.
+  this._voEl = null;
+  this._bedEl = null;
+  this._bedTrackId = null;
   this.itemStartedAt = 0;      // wall position fallback for non-video items
   // #170: current device orientation. Portrait/flipped VIDEO must rotate the Tizen hardware video
   // plane via AVPlay (CSS rotate can't touch it -> black screen). Set by app.js applyOrientation.
@@ -134,7 +144,11 @@ PlaylistPlayer.prototype._releasePreloadImage = function () {
   this.preloadImgEl = null; this.preloadImgIdx = -1;
 };
 
-PlaylistPlayer.prototype.load = function (assignments) {
+PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
+  var nextOrder = playbackOrder || this.playbackOrder || 'sequential';
+  if (nextOrder !== this.playbackOrder) this.playOrderState = {};
+  this.playbackOrder = nextOrder;
+  this.playOrderState = this.playOrderState || {};
   // B3: a malformed device:playlist-update with a non-array `assignments` used to throw
   // (.filter is not a function) out of the socket handler; coerce to [] instead.
   var items = (Array.isArray(assignments) ? assignments : []).filter(function (a) {
@@ -151,13 +165,14 @@ PlaylistPlayer.prototype.load = function (assignments) {
       // widget_rev for the same reason as schedules and transition above: a widget's IDENTITY
       // is unchanged when it is EDITED, so a content edit produced an identical signature, the
       // update was treated as unchanged, and the screen kept the old render until a restart.
-      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.transition || null];
+      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null, a.tags || [], a.meta || {}, a.transition || null];
   }));
   if (sig === this.sig && this.items.length) {
-    // In-place duration refresh: patch duration_sec on the live items so a duration edit takes effect
-    // (group schedule tick re-anchors; solo advance uses it next) WITHOUT restarting playback.
+    // In-place duration/weight refresh: patch live items so a duration or weight edit takes effect
+    // WITHOUT restarting playback.
     for (var k = 0; k < this.items.length && k < items.length; k++) {
       if (this.items[k].duration_sec !== items[k].duration_sec) this.items[k].duration_sec = items[k].duration_sec;
+      if (this.items[k].weight !== items[k].weight) this.items[k].weight = items[k].weight;
     }
     return;
   }
@@ -229,6 +244,8 @@ PlaylistPlayer.prototype.load = function (assignments) {
 
 PlaylistPlayer.prototype.stop = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  // Here and not in clearStage(): that runs on every advance, and the bed has to survive those.
+  this.stopSlideAudio();
   this._releasePreloadImage();   // #187: drop any warmed next-image bitmap on teardown
   this.clearStage();
   // Proof-of-play: close the open row so its duration is recorded on teardown.
@@ -243,7 +260,21 @@ PlaylistPlayer.prototype.clearStage = function () {
   this.stage.innerHTML = '';
 };
 
+// default/standby content: if the device carries a fallback IMAGE (set by app.js from the payload's
+// top-level default_content), render it in place of an idle card. Returns true when it took the stage.
+// It is NOT in the items list, so renderImage's staleness gate keys on defaultContent instead of the
+// item index (see renderImage). single=true -> no advance timer is armed; the image just stays until
+// the next payload (idle) or the next daypart re-check (nothingScheduled) supersedes it.
+PlaylistPlayer.prototype.showDefaultContent = function () {
+  var dc = this.defaultContent;
+  if (!dc || (dc.mime_type || '').indexOf('image/') !== 0) return false;
+  this._releasePreloadImage();   // never mount a warmed NEXT-item image as the default
+  this.renderImage(dc, true);
+  return true;
+};
+
 PlaylistPlayer.prototype.idle = function () {
+  if (this.showDefaultContent()) return;   // no playlist / empty playlist -> fallback image if set
   this.clearStage();
   this.stage.innerHTML =
     '<div class="card" style="position:relative"><h1>ScreenTinker</h1>' +
@@ -343,26 +374,41 @@ PlaylistPlayer.prototype.gotoIndex = function (idx) {
 };
 
 PlaylistPlayer.prototype.scheduleAllows = function (item) {
-  if (!item || !item.schedules || !item.schedules.length) return true;
   try {
     return (typeof ScheduleEval !== 'undefined')
-      ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), this.timezone) : true;
+      ? ScheduleEval.itemShouldPlay(item, Date.now(), this.timezone) : true;
   } catch (e) { return true; }
 };
 
 PlaylistPlayer.prototype.anyScheduled = function () {
   for (var i = 0; i < this.items.length; i++) {
-    if (this.items[i].schedules && this.items[i].schedules.length) return true;
+    var it = this.items[i];
+    if ((it.schedules && it.schedules.length) || it.play_from || it.play_until || it.play_when) return true;
   }
   return false;
 };
 
 PlaylistPlayer.prototype.firstActiveIndex = function () {
+  try {
+    // Wall followers and group-sync (scheduleDriven) members MUST stay sequential — the
+    // leader index / shared clock is the source of truth, and a private shuffle would
+    // desync the wall. Today they never reach here (the solo timer is suppressed), so this
+    // guard is defense-in-depth matching the web player.
+    if (typeof PlayOrder !== 'undefined' && !this.wallFollower && !this.scheduleDriven) {
+      return PlayOrder.firstIndex(this.items, function (it) { return this.scheduleAllows(it); }.bind(this), this.playbackOrder || 'sequential', this.playOrderState);
+    }
+  } catch (e) {}
   for (var i = 0; i < this.items.length; i++) if (this.scheduleAllows(this.items[i])) return i;
   return -1;
 };
 
 PlaylistPlayer.prototype.nextActiveIndex = function (from) {
+  try {
+    // See firstActiveIndex: solo/fullscreen shuffles, wall-followers and group-sync stay sequential.
+    if (typeof PlayOrder !== 'undefined' && !this.wallFollower && !this.scheduleDriven) {
+      return PlayOrder.nextIndex(this.items, from, function (it) { return this.scheduleAllows(it); }.bind(this), this.playbackOrder || 'sequential', this.playOrderState);
+    }
+  } catch (e) {}
   if (!this.items.length) return -1;
   for (var i = 1; i <= this.items.length; i++) {
     var idx = (from + i) % this.items.length;
@@ -382,12 +428,17 @@ PlaylistPlayer.prototype.startPlayback = function () {
 // Every item filtered out: idle and re-check shortly (a daypart may open).
 PlaylistPlayer.prototype.nothingScheduled = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  var self = this;
+  // Keep re-checking regardless of what we paint: a daypart may open, and startPlayback then swaps the
+  // scheduled item back in over the fallback image.
+  this.timer = setTimeout(function () { self.startPlayback(); }, 30000);
+  // A playlist exists but every item is filtered out by its schedule -> show the fallback image if the
+  // device has one, else the "nothing scheduled" card (renderImage owns the decode-gated swap).
+  if (this.showDefaultContent()) return;
   this.clearStage();
   this.stage.innerHTML =
     '<div class="card" style="position:relative"><h1>ScreenTinker</h1>' +
     '<p class="sub">' + tzt('nothing_scheduled') + '</p></div>';
-  var self = this;
-  this.timer = setTimeout(function () { self.startPlayback(); }, 30000);
 };
 
 // Proof-of-play: build + forward a device:play-event payload via the onPlayEvent hook (set by app.js).
@@ -395,6 +446,7 @@ PlaylistPlayer.prototype.nothingScheduled = function () {
 // row's duration closes. Mirrors server/player/index.html and the Android WebSocketService.
 PlaylistPlayer.prototype._logPlay = function (event, item, completed) {
   if (typeof this.onPlayEvent !== 'function' || !item) return;
+  if (item.log_play === 0) return;
   var cid = item.content_id || item.widget_id || '';
   var payload = {
     device_id: this.getDeviceId(),
@@ -407,6 +459,84 @@ PlaylistPlayer.prototype._logPlay = function (event, item, completed) {
   try { this.onPlayEvent(payload); } catch (e) {}
 };
 
+/*
+ * Slide audio — a voiceover per item, one music bed across items.
+ *
+ * ⚠️ MIRRORS THE WEB PLAYER ON PURPOSE (applySlideAudio in server/player/index.html), the same way
+ * this file already mirrors media-mute and schedule-eval. The rule that matters is identical: the
+ * bed is compared by TRACK ID, and a matching id is left completely alone. Re-assigning src, or
+ * calling play() on something already playing, is audible as a stutter at every slide change — and
+ * a deck publishes the same id onto all of its slides precisely so this branch is not taken.
+ *
+ * ⚠️ THE ELEMENTS ARE NOT IN THE STAGE. clearStage() empties it on every item, which is exactly
+ * right for a voiceover and exactly wrong for a bed, so both live on document.body and are managed
+ * here instead. The bed is torn down by stop(), not by an advance.
+ *
+ * ⚠️ NO AUTOPLAY GESTURE IS NEEDED HERE. Tizen is a privileged app — the same reason renderVideo
+ * below can unmute once playing — so unlike a browser tab this actually makes sound on a wall.
+ */
+PlaylistPlayer.prototype.applySlideAudio = function (item) {
+  var a = (item && item.audio) || {};
+  var self = this;
+  // Same precedence the video path uses: a wall follower is silent regardless, so a room never
+  // gets the same voice from six panels a few milliseconds apart.
+  var wantMuted = this.wallFollower ? true : !!(item && item.muted);
+
+  // ---- voiceover: this item's, and only this item's.
+  if (this._voEl) { try { this._voEl.pause(); this._voEl.parentNode && this._voEl.parentNode.removeChild(this._voEl); } catch (e) {} this._voEl = null; }
+  if (a.vo_url) {
+    var vo = document.createElement('audio');
+    vo.src = this.absUrl(a.vo_url);
+    try { vo.volume = typeof a.vo_volume === 'number' ? a.vo_volume : 1; } catch (e) {}
+    vo.muted = wantMuted;
+    document.body.appendChild(vo);
+    try { vo.play(); } catch (e) {}
+    this._voEl = vo;
+  }
+
+  // ---- bed: continuous while consecutive items name the same track.
+  if (!a.music_id) { this.stopSlideBed(); return; }
+  if (a.music_id !== this._bedTrackId) {
+    this.stopSlideBed();
+    var bed = document.createElement('audio');
+    bed.src = this.absUrl(a.music_url);
+    bed.loop = true;
+    document.body.appendChild(bed);
+    try { bed.play(); } catch (e) {}
+    this._bedEl = bed;
+    this._bedTrackId = a.music_id;
+  }
+  // Same track: volume and mute only — never src, never play().
+  if (this._bedEl) {
+    try { this._bedEl.volume = typeof a.music_volume === 'number' ? a.music_volume : 0.4; } catch (e) {}
+    this._bedEl.muted = wantMuted;
+  }
+};
+
+PlaylistPlayer.prototype.stopSlideBed = function () {
+  if (!this._bedEl) return;
+  try { this._bedEl.pause(); this._bedEl.parentNode && this._bedEl.parentNode.removeChild(this._bedEl); } catch (e) {}
+  this._bedEl = null;
+  this._bedTrackId = null;
+};
+
+PlaylistPlayer.prototype.stopSlideAudio = function () {
+  if (this._voEl) { try { this._voEl.pause(); this._voEl.parentNode && this._voEl.parentNode.removeChild(this._voEl); } catch (e) {} this._voEl = null; }
+  this.stopSlideBed();
+};
+
+/*
+ * ⚠️ ABSOLUTE, ALWAYS. The payload gives audio as a server-relative path (/uploads/content/...),
+ * and a Tizen player is a packaged .wgt — its document origin is the widget, not the server, so a
+ * relative URL resolves against the package and 404s. getBase() is the same resolver contentUrl
+ * uses two functions up, for exactly this reason.
+ */
+PlaylistPlayer.prototype.absUrl = function (u) {
+  if (!u) return u;
+  if (/^https?:/i.test(u)) return u;
+  return this.getBase() + u;
+};
+
 PlaylistPlayer.prototype.playCurrent = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
   if (!this.items.length) { this.idle(); return; }
@@ -415,6 +545,9 @@ PlaylistPlayer.prototype.playCurrent = function () {
   this.currentVideoEl = null;        // set by renderVideo when applicable
 
   var item = this.items[this.index];
+
+  // Slide audio: replaces the voiceover, leaves a matching bed playing.
+  this.applySlideAudio(item);
 
   // Proof-of-play (parity with the web/Android players): close the outgoing item and open this one.
   // Wall followers don't log — the leader's single row represents the whole wall.
@@ -440,14 +573,19 @@ PlaylistPlayer.prototype.playCurrent = function () {
   // Widgets also buffer-swap (renderWidget reveals the new iframe on load, then clears), so they skip
   // the pre-dispatch clearStage too — kills the black flash on directory-board/widget reloads.
   var isWidget = !!(item.widget_id && !item.content_id);
+  // An HTML bundle buffer-swaps for the same reason a widget does — renderBundle reveals on load —
+  // so it must skip the pre-dispatch clearStage too, or it black-flashes for as long as the
+  // flattened document takes to parse, which on a TV is longer than a widget's.
+  var isBundle = mime === BUNDLE_MIME;
   // Skip the pre-dispatch clearStage for an image (it decode-gates + swaps inside renderImage) AND for a
   // landscape video that will composite into a wipe (renderVideoBuffered needs the outgoing frame to
   // capture as `from`, then clears inside its own mount). Everything else clears up front as before.
-  if (!isImage && !isWidget && !this._videoWillComposite(item)) this.clearStage();
+  if (!isImage && !isWidget && !isBundle && !this._videoWillComposite(item)) this.clearStage();
 
   try {
     if (mime === 'video/youtube') return this.renderYouTube(item, single);
     if (item.widget_id && !item.content_id) return this.renderWidget(item, single);
+    if (isBundle) return this.renderBundle(item, single);
     if (mime.indexOf('video/') === 0) return this.renderVideo(item, single);
     if (mime.indexOf('image/') === 0) return this.renderImage(item, single);
     // Fallback: a remote_url with unknown mime -> try iframe
@@ -494,7 +632,12 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
     img.src = this.contentUrl(item);
   }
   var settled = false;
+  // default/standby content is rendered from renderImage too, but it is NOT in the items list, so the
+  // index-based staleness check below would always read it as stale and blank. For it, "stale" means
+  // only that a newer payload replaced the fallback mid-decode.
+  var isDefault = (item === self.defaultContent);
   var stale = function () {
+    if (isDefault) return item !== self.defaultContent;
     // A next()/gotoIndex/playlist change mid-decode must not mount a now-stale image over the current
     // item (mirrors how renderVideo's _takePreload only fires for the still-current index).
     return self.index !== targetIdx || self.items[targetIdx] !== item;
@@ -792,6 +935,50 @@ PlaylistPlayer.prototype.renderVideoAv = function (item, single) {
   } catch (e) { this.avFallback(item); }
 };
 
+// Multitasking (Samsung certification CO-MT-01: "when the application resumes, media playback
+// resumes in the same state"). When the app is hidden (Smart Hub, another app, source change) the
+// platform pauses every <video> and the AVPlay session and, with background-support off, freezes
+// our JS. Nothing here ever restarted anything on resume, so a single looping video came back as
+// a frozen frame for good — the exact test a Samsung QA tester runs. Multi-item playlists only
+// recovered because the advance timer happened to fire.
+//
+// suspend(): note what was playing and pause it (AVPlay: suspend(), which Samsung's multitasking
+// guide requires — the platform does not do it for us). resume(): AVPlay restore(), else play()
+// every element we paused; anything that cannot be resumed (ended, play() rejected) is re-mounted
+// via onReplay, which the app maps to playCurrent() or a zone re-render, whichever owns the stage.
+PlaylistPlayer.prototype.suspend = function () {
+  this._suspended = true;
+  if (this.avActive) { try { webapis.avplay.suspend(); } catch (e) {} }
+  var media = this.stage.querySelectorAll('video, audio');
+  for (var i = 0; i < media.length; i++) {
+    var m = media[i];
+    try { if (!m.paused && !m.ended) { m.__stWasPlaying = true; m.pause(); } } catch (e) {}
+  }
+  if (this._bedEl) { try { if (!this._bedEl.paused) { this._bedEl.__stWasPlaying = true; this._bedEl.pause(); } } catch (e) {} }
+};
+
+PlaylistPlayer.prototype.resume = function (onReplay) {
+  if (!this._suspended) return;
+  this._suspended = false;
+  var replay = false;
+  if (this.avActive) {
+    try { webapis.avplay.restore(); } catch (e) { replay = true; }
+  }
+  var list = Array.prototype.slice.call(this.stage.querySelectorAll('video, audio'));
+  if (this._bedEl) list.push(this._bedEl);
+  for (var i = 0; i < list.length; i++) {
+    var m = list[i];
+    if (!m.__stWasPlaying) continue;
+    delete m.__stWasPlaying;
+    if (m.ended) { replay = true; continue; }
+    try {
+      var p = m.play();
+      if (p && typeof p.catch === 'function') p.catch(function () { if (onReplay) onReplay(); });
+    } catch (e) { replay = true; }
+  }
+  if (replay && onReplay) onReplay();
+};
+
 // AVPlay missing/failed on this device -> honest note (never a silent black), then move on.
 PlaylistPlayer.prototype.avFallback = function (item) {
   this.avStop();
@@ -822,6 +1009,10 @@ PlaylistPlayer.prototype.renderVideo = function (item, single) {
   // so the outgoing frame is still on stage to capture. Plain videos fall through to the proven path.
   if (this._videoWillComposite(item)) { return this.renderVideoBuffered(item, single); }
   var self = this;
+  // A live HLS channel (video/hls + remote_url .m3u8) is a plain <video> whose src is the stream URL
+  // — shaped exactly like a remote MP4 — but it NEVER ends, so its duration_sec is DWELL (how long to
+  // hold the channel), not clip length. See the advance block at the end of this function.
+  var isHls = (item.mime_type || '') === 'video/hls';
   // Double buffer: reuse the pre-buffered element for this index if warmed (no black hold); its src
   // is already set + buffering, so playback starts near-instantly.
   var pre = this._takePreload(this.index);
@@ -842,11 +1033,20 @@ PlaylistPlayer.prototype.renderVideo = function (item, single) {
   var applyMute = function () { try { v.muted = self.wallFollower ? true : !!item.muted; } catch (e) {} };
   v.addEventListener('playing', applyMute, { once: true });
   if (!v.paused && v.readyState >= 2) applyMute(); // a reused preload may already be playing
-  // Safety net: if 'ended' never fires (rare), advance after the known
-  // content duration (or the assignment duration) + a buffer.
+  // Advance timing splits by whether the clip ENDS:
+  //  - normal uploaded/remote video: 'ended' advances; the timer is only a safety net (duration + buf).
+  //  - live HLS (video/hls): the stream never ends, so 'ended' never fires. duration_sec is DWELL:
+  //      dwell > 0      -> arm the finite advance timer for the dwell (durationMs), like an image.
+  //      dwell 0/absent -> arm NO timer: stay on the channel (never spin). It leaves only when the
+  //                        ~60s schedule re-check (app.js register -> device:playlist-update -> load)
+  //                        finds it ineligible, or the playlist is otherwise advanced.
   if (!single) {
-    var secs = Number(item.content_duration || item.duration_sec) || this.DEFAULT_DURATION; // B3: numeric
-    this.schedule((secs + 5) * 1000);
+    if (isHls) {
+      if (Number(item.duration_sec) > 0) this.schedule(this.durationMs(item));
+    } else {
+      var secs = Number(item.content_duration || item.duration_sec) || this.DEFAULT_DURATION; // B3: numeric
+      this.schedule((secs + 5) * 1000);
+    }
   }
 };
 
@@ -905,6 +1105,87 @@ PlaylistPlayer.prototype.renderWidget = function (item, single) {
   f.addEventListener('load', reveal, { once: true });
   setTimeout(reveal, 4000); // fallback: reveal even if a blocked widget never fires load
   f.src = src;
+  this.stage.appendChild(f);
+  if (!single) this.schedule(this.durationMs(item));
+};
+
+/*
+ * An HTML bundle, mounted the way a widget is.
+ *
+ * The server flattens the archive into one self-contained document; this player unpacks nothing.
+ * `rev` is content_rev, so replacing the archive replaces what is framed — the same contract the
+ * media cache uses to decide a re-download.
+ *
+ * ⚠️ SANDBOXED, WHICH NO OTHER IFRAME IN THIS FILE IS. Widgets and YouTube here are network-origin
+ * URLs, cross-origin to this widget's app:// origin, so the same-origin policy already isolates
+ * them and no sandbox attribute was ever needed. A bundle is operator-uploaded HTML, and the day it
+ * is ever mounted from local storage rather than over HTTP that free isolation disappears — so the
+ * attribute is set here, now, while the reason is written down, rather than left as a gap for the
+ * offline work to walk into.
+ */
+PlaylistPlayer.prototype.renderBundle = function (item, single) {
+  var self = this;
+  var src = this.getBase() + '/api/content/' + item.content_id + '/bundle?rev=' + (item.content_rev || 0);
+  var f = document.createElement('iframe');
+  f.setAttribute('frameborder', '0');
+  f.setAttribute('sandbox', 'allow-scripts');
+  f.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;opacity:0';
+  var revealed = false;
+  var reveal = function () {
+    if (revealed) return; revealed = true;
+    var kids = self.stage.children;
+    for (var i = kids.length - 1; i >= 0; i--) { if (kids[i] !== f) self.stage.removeChild(kids[i]); }
+    f.style.opacity = '1';
+  };
+  f.addEventListener('load', reveal, { once: true });
+  // Longer than the widget path's 4s: a widget's `load` means "the server answered", but a
+  // flattened bundle's means "the parser walked a document full of data: URIs", and TV silicon is
+  // slow at that. Revealing early shows a half-painted page.
+  setTimeout(reveal, 8000);
+
+  /*
+   * ⚠️ CACHED COPY FIRST, NETWORK SECOND — and the ORDER is the offline story.
+   *
+   * There is no service worker in this runtime (app:// origin, see media-cache.js), so nothing
+   * caches the render for us the way it does on the web player. BundleStore keeps it on disk; if a
+   * copy for THIS revision is there, the bundle plays with the WAN down.
+   *
+   * ⚠️ AND THE ONLINE PATH IS DELIBERATELY LEFT AS src=. srcdoc is used ONLY for a cached document,
+   * because a srcdoc frame inherits its parent's CSP and a flattened bundle is nothing but data:
+   * URIs — measured on the web player, where the same document runs on the CSP-exempt /player and
+   * is silently script-dead on the dashboard. config.xml now declares a policy that permits data:,
+   * but that is NOT confirmed on a panel, so the proven path stays the default and the unproven one
+   * only ever replaces "nothing to show at all".
+   */
+  var cached = null;
+  try {
+    cached = (typeof BundleStore !== 'undefined' && BundleStore.available())
+      ? BundleStore.load(item.content_id, item.content_rev || 0) : null;
+  } catch (e) { cached = null; }
+
+  if (cached) {
+    f.srcdoc = cached;
+  } else {
+    f.src = src;
+    // Warm the store for next time, including the next power cut. Fire-and-forget: a failure here
+    // must never touch playback, and the item is already rendering from the network.
+    try {
+      if (typeof BundleStore !== 'undefined' && BundleStore.available()) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', src, true);
+        xhr.timeout = 30000;
+        xhr.onload = function () {
+          if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
+            BundleStore.save(item.content_id, item.content_rev || 0, xhr.responseText);
+          }
+        };
+        xhr.onerror = function () {};
+        xhr.ontimeout = function () {};
+        xhr.send();
+      }
+    } catch (e) { /* never let caching break playback */ }
+  }
+
   this.stage.appendChild(f);
   if (!single) this.schedule(this.durationMs(item));
 };
@@ -982,7 +1263,7 @@ ZoneRenderer.prototype.signature = function (layout, assignments) {
     return [z.id, z.x_percent, z.y_percent, z.width_percent, z.height_percent, z.z_index, z.fit_mode, z.background_color];
   });
   var asig = (assignments || []).map(function (a) {
-    return [a.zone_id || '', a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.sort_order, a.schedules || []];
+    return [a.zone_id || '', a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.sort_order, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null];
   });
   return JSON.stringify([layout.id || '', zsig, asig]);
 };
@@ -1048,14 +1329,28 @@ ZoneRenderer.prototype.scheduleAdvance = function (zone, ms, fn) {
 // Per-item schedule gating, mirrors PlaylistPlayer / Android. No blocks = always on;
 // fails open (any evaluator error means the item plays).
 ZoneRenderer.prototype.allows = function (item) {
-  if (!item || !item.schedules || !item.schedules.length) return true;
   try {
     return (typeof ScheduleEval !== 'undefined')
-      ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), this.timezone) : true;
+      ? ScheduleEval.itemShouldPlay(item, Date.now(), this.timezone) : true;
   } catch (e) { return true; }
 };
 
-ZoneRenderer.prototype.nextActive = function (list, from) {
+ZoneRenderer.prototype.setPlaybackOrder = function (mode) {
+  var m = mode || 'sequential';
+  if (m !== this.playbackOrder) this.orderState = {};
+  this.playbackOrder = m;
+  this.orderState = this.orderState || {};
+};
+
+ZoneRenderer.prototype.nextActive = function (list, from, zoneId) {
+  try {
+    if (typeof PlayOrder !== 'undefined') {
+      if (!this.orderState) this.orderState = {};
+      var key = zoneId || '_';
+      if (!this.orderState[key]) this.orderState[key] = {};
+      return PlayOrder.nextIndex(list, from - 1, function (it) { return this.allows(it); }.bind(this), this.playbackOrder || 'sequential', this.orderState[key]);
+    }
+  } catch (e) {}
   for (var i = 0; i < list.length; i++) {
     var idx = (from + i) % list.length;
     if (this.allows(list[idx])) return idx;
@@ -1090,12 +1385,12 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
   var self = this;
   // #74/#75: skip items whose schedule excludes them now; blank-idle the zone and
   // re-check shortly (a daypart may open) if none are active.
-  var activeIdx = this.nextActive(list, index);
+  var activeIdx = this.nextActive(list, index, zone && zone.id);
   if (activeIdx < 0) { this.scheduleAdvance(zone, 30000, function () { self.showItem(zone, list, 0); }); return; }
 
   var a = list[activeIdx];
   // Scheduled zones cycle even with one active item so windows re-evaluate.
-  var multi = list.length > 1 || list.some(function (x) { return x.schedules && x.schedules.length; });
+  var multi = list.length > 1 || list.some(function (x) { return (x.schedules && x.schedules.length) || x.play_from || x.play_until; });
   var advance = function () { self.showItem(zone, list, activeIdx + 1); };
   var dur = this.durationMs(a);
   var mime = a.mime_type || '';
@@ -1112,9 +1407,17 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
     } else if (a.widget_type || (a.widget_id && !a.content_id)) {
       zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0)));
       if (multi) this.scheduleAdvance(zone, dur, advance);
+    } else if (mime === BUNDLE_MIME) {
+      // A zone bundle is the same server-flattened document as the fullscreen one, sandboxed for
+      // the reason renderBundle records. Without this branch a bundle in a zone matched nothing and
+      // the zone rendered an empty div that never advanced.
+      var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0));
+      bf.setAttribute('sandbox', 'allow-scripts');
+      zone.el.appendChild(bf);
+      if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime.indexOf('video/') === 0) {
       var v = document.createElement('video');
-      v.className = zrFitClass(zone.fit);
+      v.className = zrFitClass(a.fit_mode || zone.fit);
       // Zone videos are muted: TV web autoplay needs muted, and overlapping zone audio
       // is rarely intended. (Single-zone fullscreen handles audio in PlaylistPlayer.)
       v.autoplay = true; v.muted = true; v.setAttribute('playsinline', '');
@@ -1131,7 +1434,7 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       }
     } else if (mime.indexOf('image/') === 0) {
       var img = document.createElement('img');
-      img.className = zrFitClass(zone.fit);
+      img.className = zrFitClass(a.fit_mode || zone.fit);
       img.onerror = function () { if (multi) self.scheduleAdvance(zone, 2000, advance); };
       img.src = this.contentUrl(a);
       zone.el.appendChild(img);
@@ -1370,6 +1673,9 @@ GroupSyncController.prototype.slots = function () {
   var p = this.player, items = p.items, acc = 0, s = [];
   for (var i = 0; i < items.length; i++) {
     if (!p.scheduleAllows(items[i])) continue;   // same daypart filter as solo playback
+    // A dwell-0 live HLS channel is INFINITE (no finite slot length), so it would desync a synced
+    // group. Treat it as INELIGIBLE for the clock scheduler; a dwell>0 live item is a finite slot.
+    if (items[i].mime_type === 'video/hls' && !(Number(items[i].duration_sec) > 0)) continue;
     // CANONICAL slot length — MUST match the web + Android engines exactly (max(1,dur||10)*1000).
     // Deliberately NOT durationMs() (its MIN_DURATION=3 clamp would diverge from the other players).
     var d = Math.max(1, Number(items[i].duration_sec) || 10) * 1000;

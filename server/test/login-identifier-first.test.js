@@ -30,10 +30,45 @@ test('password visibility depends on BOTH identification and SSO-only', () => {
 });
 
 test('the primary button advances before it signs in', () => {
-  assert.match(LOGIN, /if \(identified && !ssoOnlyDomain\) return doLogin\(\);\s*\n\s*identify\(\);/,
+  // The button identifies FIRST; signing in on the same press is allowed only afterwards, and only
+  // when the address is known, not SSO-only, and a password is already in the box. The shape below
+  // used to be `... return doLogin(); identify();` — it grew the second half because a form that
+  // arrives pre-filled (a password manager, a test harness) pressed once, sent no request at all
+  // and had nothing on screen to explain it. The invariant is unchanged: no credential is offered
+  // or submitted before the organization lookup has answered.
+  assert.match(LOGIN, /if \(identified && !ssoOnlyDomain\) return doLogin\(\);\s*\n\s*await identify\(\);/,
     'the button must identify first and only sign in once an address is known');
   assert.match(STATE, /'auth\.sign_in'[\s\S]{0,80}'auth\.next'/,
     'the label must still advance through Next before offering Sign in');
+});
+
+test('a single press completes a form that already carries a password, and only then', () => {
+  // Every completion is gated on the SAME three conditions, so none of them can sign in early.
+  const completions = LOGIN.match(/if \(identified && !ssoOnlyDomain && document\.getElementById\('loginPassword'\)\?\.value\) return doLogin\(\);/g) || [];
+  assert.equal(completions.length, 3, 'button, Enter-in-email and Enter-in-password all complete the same way');
+  for (const c of completions) assert.match(c, /identified && !ssoOnlyDomain/, 'never before the address is known');
+});
+
+test('a hidden password box is never submitted', () => {
+  /*
+   * It keeps the value that was typed for the PREVIOUS address, so submitting it is a guaranteed
+   * 401 on credentials the operator believes are right — and one that counts toward the
+   * per-account lockout, whose reply is deliberately indistinguishable from a wrong password.
+   */
+  const handler = LOGIN.slice(LOGIN.indexOf("getElementById('loginPassword')?.addEventListener('keydown'"));
+  const body = handler.slice(0, handler.indexOf('});'));
+  assert.doesNotMatch(body, /if \(e\.key === 'Enter'\) isSetup \? doRegister\(true\) : doLogin\(\);/,
+    'the unconditional submit is what sent a hidden box');
+  assert.match(body, /if \(identified && !ssoOnlyDomain\) return doLogin\(\);/,
+    'Enter signs in only once the address is known');
+});
+
+test('changing the address drops the password it was not entered for', () => {
+  const listener = LOGIN.slice(LOGIN.indexOf("getElementById('loginEmail')?.addEventListener('input'"));
+  const body = listener.slice(0, listener.indexOf('});'));
+  assert.match(body, /identified = false;/);
+  assert.match(body, /if \(pw\) pw\.value = '';/,
+    'applyFormState only HIDES the box, so the stale password has to be cleared explicitly');
 });
 
 test('editing the address returns to the identifier step', () => {

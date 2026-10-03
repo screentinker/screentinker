@@ -60,9 +60,36 @@ function check(deviceId, now = Date.now(), bandOverride = null) {
   if (now - s.lastSeen > config.reconnectIdleResetMs) { s.hits = []; s.level = 0; s.blockedUntil = 0; s.lastThrottleAt = 0; }
   s.lastSeen = now;
 
-  // Already inside an enforced backoff window: reject and escalate (tighten fast).
+  /*
+   * Already inside an enforced backoff window: refuse, but DO NOT extend it.
+   *
+   * ⚠️ THIS USED TO ESCALATE, AND THAT MADE THE THROTTLE PERMANENT (#314). Every retry inside the
+   * window called reject(), which bumped the level and recomputed blockedUntil FROM NOW — so each
+   * attempt pushed the release further away. A player reconnects on its own timer and cannot know
+   * it is making things worse, so a device that once tripped the limit stayed tripped: measured
+   * still-throttled after 70s of complete silence, having been told to retry after 60s.
+   *
+   * That matters far more than it sounds, because a throttled register returns BEFORE the playlist
+   * push in ws/deviceSocket.js — the screen shows "Waiting for content" for as long as this lasts,
+   * with every byte of its content already cached. Reported from a fleet after an OTA, where the
+   * post-update relaunch cascade supplies the reconnect burst.
+   *
+   * So the window is now what it says it is: the device is refused until blockedUntil, told how
+   * long remains, and the next attempt after that is evaluated normally. The escalation that
+   * defends against a genuinely storming device still happens — on the rate path below, which is
+   * reached once the window expires — so a device that really is flapping is caught again
+   * immediately, while one that simply waited is let back in.
+   */
   if (now < s.blockedUntil) {
-    return reject(s, now, band, 'in-backoff', s.hits.length, config.reconnectBaseMax);
+    return {
+      allow: false,
+      retryAfterMs: Math.max(0, s.blockedUntil - now),
+      reason: 'in-backoff',
+      observed: s.hits.length,
+      allowed: config.reconnectBaseMax,
+      band,
+      level: s.level,
+    };
   }
 
   // Sliding window of genuine reconnects.

@@ -46,6 +46,9 @@ class ZoneManager(
     // Render context kept for rotation re-renders.
     private var renderServerUrl = ""
     private var renderDeviceId = "" // appended to widget render URLs so widgets can report per-device
+    // IPTV: a dwell-0 live stream in a rotating zone re-checks eligibility on this slow cadence
+    // (stays if it is still the active pick; advances if a daypart opened a sibling). Never a busy-loop.
+    private val LIVE_RECHECK_MS = 60_000L
     private var renderCache: com.remotedisplay.player.data.ContentCache? = null
 
     var currentLayoutId: String? = null
@@ -145,23 +148,29 @@ class ZoneManager(
 
     // #74/#75 zone schedule helpers.
     private fun assignmentAllows(a: JSONObject): Boolean {
-        val arr = a.optJSONArray("schedules") ?: return true
-        if (arr.length() == 0) return true
-        val blocks = ArrayList<ScheduleEval.Block>(arr.length())
-        for (j in 0 until arr.length()) {
-            val s = arr.getJSONObject(j)
-            val d = s.getJSONArray("days")
-            val days = HashSet<Int>(d.length())
-            for (k in 0 until d.length()) days.add(d.getInt(k))
-            blocks.add(
-                ScheduleEval.Block(
-                    days, s.getString("start"), s.getString("end"),
-                    if (s.isNull("start_date")) null else s.optString("start_date").ifEmpty { null },
-                    if (s.isNull("end_date")) null else s.optString("end_date").ifEmpty { null }
+        if (a.optInt("enabled", 1) == 0) return false
+        val arr = a.optJSONArray("schedules")
+        val blocks = ArrayList<ScheduleEval.Block>()
+        if (arr != null) {
+            for (j in 0 until arr.length()) {
+                val s = arr.getJSONObject(j)
+                val d = s.getJSONArray("days")
+                val days = HashSet<Int>(d.length())
+                for (k in 0 until d.length()) days.add(d.getInt(k))
+                blocks.add(
+                    ScheduleEval.Block(
+                        days, s.getString("start"), s.getString("end"),
+                        if (s.isNull("start_date")) null else s.optString("start_date").ifEmpty { null },
+                        if (s.isNull("end_date")) null else s.optString("end_date").ifEmpty { null }
+                    )
                 )
-            )
+            }
         }
-        return ScheduleEval.isItemActiveNow(blocks, System.currentTimeMillis(), effectiveTimezone)
+        val window = ScheduleEval.windowOf(
+            if (a.isNull("play_from")) null else a.optString("play_from").ifEmpty { null },
+            if (a.isNull("play_until")) null else a.optString("play_until").ifEmpty { null }
+        )
+        return ScheduleEval.isItemActiveNow(blocks, System.currentTimeMillis(), effectiveTimezone, window)
     }
 
     private fun zoneNextActive(assignments: List<JSONObject>, from: Int): Int {
@@ -189,10 +198,15 @@ class ZoneManager(
         }
         val a = assignments[activeIdx]
         // Scheduled zones cycle even with one active item so windows re-evaluate.
-        val multi = assignments.size > 1 || assignments.any { (it.optJSONArray("schedules")?.length() ?: 0) > 0 }
+        val multi = assignments.size > 1 || assignments.any {
+            (it.optJSONArray("schedules")?.length() ?: 0) > 0
+                || !it.isNull("play_from") && it.optString("play_from").isNotEmpty()
+                || !it.isNull("play_until") && it.optString("play_until").isNotEmpty()
+        }
         val advance: () -> Unit = { showZoneItem(zone, assignments, activeIdx + 1, params) }
 
         val mimeType = a.optString("mime_type", "")
+        val isLive = mimeType == "video/hls" || mimeType == "video/rtsp"   // live stream: bytes never end -> dwell, not STATE_ENDED
         val remoteUrl = if (a.isNull("remote_url")) null else a.optString("remote_url", null)
         val widgetType = if (a.isNull("widget_type")) null else a.optString("widget_type", null)
         val contentId = if (a.isNull("content_id")) null else a.optString("content_id", null)
@@ -221,6 +235,17 @@ class ZoneManager(
                 container.addView(webView); zoneViews[zone.id] = webView
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
             }
+            // HTML bundle - the server's flattened document, in a WebView like a widget. `rev` is
+            // content_rev so a replaced archive actually reloads; without this branch a bundle in a
+            // zone matched nothing, rendered an empty view and never advanced.
+            mimeType == ItemTiming.BUNDLE_MIME -> {
+                val webView = createWebView()
+                val bRev = a.optLong("content_rev", 0L)
+                webView.loadUrl("$renderServerUrl/api/content/" + a.optString("content_id", "") + "/bundle?rev=" + bRev)
+                webView.layoutParams = params
+                container.addView(webView); zoneViews[zone.id] = webView
+                if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
+            }
             // YouTube - render via an embed wrapper with a valid origin (Error 153 fix)
             mimeType == "video/youtube" && !remoteUrl.isNullOrEmpty() -> {
                 val webView = createWebView()
@@ -245,18 +270,32 @@ class ZoneManager(
                     layoutParams = params
                 }
                 val exoPlayer = ExoPlayer.Builder(context).build().apply {
-                    setMediaItem(MediaItem.fromUri(src))
-                    repeatMode = if (multi) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ALL
+                    if (mimeType == "video/rtsp") {
+                        // RTSP camera in a zone: force TCP so it works through NAT/firewalls and on
+                        // cameras that refuse UDP (media3-exoplayer-rtsp).
+                        setMediaSource(
+                            androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory()
+                                .setForceUseRtpTcp(true)
+                                .createMediaSource(MediaItem.fromUri(src))
+                        )
+                    } else {
+                        setMediaItem(MediaItem.fromUri(src))   // ExoPlayer infers HLS from the .m3u8 (media3-exoplayer-hls)
+                    }
+                    // A live stream never ends, so REPEAT is moot; a normal clip in a lone zone loops.
+                    repeatMode = if (multi && !isLive) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ALL
                     volume = if (isMuted) 0f else 1f
                     if (multi) addListener(object : Player.Listener {
                         override fun onPlaybackStateChanged(state: Int) {
-                            if (state == Player.STATE_ENDED) handler.post { advance() }
+                            // A live stream never reaches STATE_ENDED (it advances on its dwell timer
+                            // below); a normal clip advances when it finishes.
+                            if (!isLive && state == Player.STATE_ENDED) handler.post { advance() }
                         }
                         // Same reason MediaPlayerManager treats a playback error as a completion
                         // ("Root-2: a corrupt/undecodable video used to freeze the playlist
                         // forever"): an error lands in STATE_IDLE, never STATE_ENDED, so without
                         // this the zone stops rotating and goes black until the layout changes or
-                        // the app restarts — while every other zone keeps going.
+                        // the app restarts — while every other zone keeps going. Covers a dead
+                        // stream URL too, so a live zone skips instead of sitting black.
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                             handler.post { advance() }
                         }
@@ -266,11 +305,29 @@ class ZoneManager(
                 }
                 playerView.player = exoPlayer
                 container.addView(playerView); zoneViews[zone.id] = playerView; zoneExoPlayers[zone.id] = exoPlayer
+                // DWELL for a live stream in a rotating zone: it never fires STATE_ENDED, so advance on
+                // the dwell timer (duration_sec > 0). A dwell-0 stream stays until it is no longer the
+                // active pick (windows still re-evaluate on the slow cadence, without remounting).
+                if (multi && isLive) {
+                    val liveDwell = a.optInt("duration_sec", 0)
+                    if (liveDwell > 0) {
+                        scheduleZoneAdvance(zone.id, liveDwell * 1000L, advance)
+                    } else {
+                        val recheck = object : Runnable {
+                            override fun run() {
+                                if (zoneNextActive(assignments, activeIdx) == activeIdx) handler.postDelayed(this, LIVE_RECHECK_MS)
+                                else advance()
+                            }
+                        }
+                        zoneRotators[zone.id] = recheck
+                        handler.postDelayed(recheck, LIVE_RECHECK_MS)
+                    }
+                }
             }
             // Image
             mimeType.startsWith("image/") -> {
                 val imageView = ImageView(context).apply {
-                    scaleType = when (zone.fitMode) {
+                    scaleType = when (a.optString("fit_mode", zone.fitMode).ifEmpty { zone.fitMode }) {
                         "contain" -> ImageView.ScaleType.FIT_CENTER
                         "fill" -> ImageView.ScaleType.FIT_XY
                         else -> ImageView.ScaleType.CENTER_CROP

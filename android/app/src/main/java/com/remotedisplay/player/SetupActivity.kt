@@ -120,11 +120,7 @@ class SetupActivity : AppCompatActivity() {
                 if (granted) {
                     // requestPermissions() does nothing once the answer is already given, so it
                     // cannot be the way back. App notification settings can toggle it either way.
-                    try {
-                        startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                        })
-                    } catch (_: Exception) { openAppSettings() }
+                    openFirstAvailable(appNotificationSettings(), appDetailsSettings(), Intent(Settings.ACTION_SETTINGS))
                 } else {
                     ActivityCompat.requestPermissions(
                         this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100
@@ -134,14 +130,16 @@ class SetupActivity : AppCompatActivity() {
         }
 
         enableAccessibilityBtn.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            openFirstAvailable(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), appDetailsSettings(), Intent(Settings.ACTION_SETTINGS))
         }
 
         enableInstallBtn.setOnClickListener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                    data = Uri.parse("package:$packageName")
-                })
+                openFirstAvailable(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply { data = Uri.parse("package:$packageName") },
+                    appDetailsSettings(),
+                    unavailable = adbHint("appops set $packageName REQUEST_INSTALL_PACKAGES allow"),
+                )
             }
         }
 
@@ -156,9 +154,11 @@ class SetupActivity : AppCompatActivity() {
         // boot receiver can directly start the activity from the background, which
         // works where you can't set a launcher (e.g. Android TV).
         enableOverlayBtn.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                data = Uri.parse("package:$packageName")
-            })
+            openFirstAvailable(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply { data = Uri.parse("package:$packageName") },
+                appDetailsSettings(),
+                unavailable = adbHint("appops set $packageName SYSTEM_ALERT_WINDOW allow"),
+            )
         }
 
         // #160 Track-A: WRITE_SETTINGS — one-time grant that unlocks remote system-brightness +
@@ -166,11 +166,12 @@ class SetupActivity : AppCompatActivity() {
         writeSettingsStatus = findViewById(R.id.writeSettingsStatus)
         enableWriteSettingsBtn = findViewById(R.id.enableWriteSettingsBtn)
         enableWriteSettingsBtn.setOnClickListener {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                    data = Uri.parse("package:$packageName")
-                })
-            } catch (e: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+            // No generic-Settings fallback here: Android TV has no "modify system settings" page
+            // anywhere, so landing on the Settings root was a dead end dressed up as a screen.
+            openFirstAvailable(
+                Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply { data = Uri.parse("package:$packageName") },
+                unavailable = adbHint("appops set $packageName WRITE_SETTINGS allow"),
+            )
         }
 
         // Default launcher / HOME: a kiosk MUST be the default launcher, else Android returns to the
@@ -199,15 +200,13 @@ class SetupActivity : AppCompatActivity() {
             findViewById<View>(R.id.fullscreenRow).visibility = View.GONE
         } else {
             enableFullscreenBtn.setOnClickListener {
-                try {
-                    startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                        data = Uri.parse("package:$packageName")
-                    })
-                } catch (e: Exception) {
-                    startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                    })
-                }
+                // This is the row that crashed Android TV: neither intent exists there, and the
+                // fallback threw from inside the catch. See openFirstAvailable.
+                openFirstAvailable(
+                    Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply { data = Uri.parse("package:$packageName") },
+                    appNotificationSettings(),
+                    unavailable = adbHint("appops set $packageName USE_FULL_SCREEN_INTENT allow"),
+                )
             }
         }
 
@@ -220,17 +219,15 @@ class SetupActivity : AppCompatActivity() {
                 // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS only ASKS to add an exemption — it
                 // offers no way to remove one, so it is a dead end for someone already exempt.
                 // The system list is where an exemption can actually be turned back off.
-                try { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-                catch (_: Exception) { openAppSettings() }
+                openFirstAvailable(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), appDetailsSettings())
             } else {
-                try {
-                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:$packageName")
-                    })
-                } catch (e: Exception) {
-                    try { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-                    catch (_: Exception) { openAppSettings() }
-                }
+                // On Android TV both of these resolve to the OS's EmptyStubActivity — a screen that
+                // draws nothing — so they are skipped and the adb route is offered instead.
+                openFirstAvailable(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = Uri.parse("package:$packageName") },
+                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                    unavailable = adbHint("dumpsys deviceidle whitelist +$packageName"),
+                )
             }
         }
 
@@ -276,11 +273,46 @@ class SetupActivity : AppCompatActivity() {
 
     /** Last-resort destination: this app's own settings page, where everything can be reached. */
     private fun openAppSettings() {
-        try {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:$packageName")
-            })
-        } catch (_: Exception) { try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {} }
+        openFirstAvailable(appDetailsSettings(), Intent(Settings.ACTION_SETTINGS))
+    }
+
+    private fun appDetailsSettings() =
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply { data = Uri.parse("package:$packageName") }
+
+    private fun appNotificationSettings() =
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply { putExtra(Settings.EXTRA_APP_PACKAGE, packageName) }
+
+    private fun adbHint(cmd: String) = getString(R.string.setup_screen_unavailable, "adb shell $cmd")
+
+    /**
+     * Open the first of [candidates] this build can actually show; tell the installer how to grant
+     * the permission over adb when none can.
+     *
+     * Android TV ships a different Settings app from phones and whole screens are simply absent.
+     * On Google TV 14 (reproduced on the onn_stick emulator, 2026-09-18) there is no
+     * ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, no ACTION_APP_NOTIFICATION_SETTINGS and no
+     * ACTION_MANAGE_WRITE_SETTINGS, and the two battery-optimisation intents resolve to
+     * com.android.tv.settings/.EmptyStubActivity — an activity that draws nothing. Every row here
+     * used to startActivity() and hope: the "Launch on Boot" row threw ActivityNotFoundException
+     * from INSIDE its catch block and killed the app, "Background Activity" opened the stub, and
+     * "System Settings" fell back to the Settings root where the permission does not exist. From
+     * the couch all three are "I clicked it and nothing came up".
+     *
+     * So: resolve before starting, treat the stub as absent, and never end in silence.
+     */
+    private fun openFirstAvailable(vararg candidates: Intent, unavailable: String? = null): Boolean {
+        for (intent in candidates) {
+            val target = try { packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) } catch (_: Exception) { null }
+            if (target == null || target.activityInfo?.name?.endsWith("EmptyStubActivity") == true) continue
+            try { startActivity(intent); return true } catch (_: Exception) { /* try the next one */ }
+        }
+        // A dialog, not a toast: on a TV a toast is two lines and the adb command is the payload.
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(getString(R.string.setup_screen_unavailable_title))
+            .setMessage(unavailable ?: getString(R.string.setup_screen_unavailable_plain))
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+        return false
     }
 
     private fun updateStatuses() {
@@ -407,8 +439,7 @@ class SetupActivity : AppCompatActivity() {
             } catch (_: Exception) { /* fall through to the settings picker */ }
         }
         // Fallback: open the "Home app" picker in Settings (works on every version / OEM).
-        try { startActivity(Intent(Settings.ACTION_HOME_SETTINGS)) }
-        catch (_: Exception) { try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {} }
+        openFirstAvailable(Intent(Settings.ACTION_HOME_SETTINGS), Intent(Settings.ACTION_SETTINGS))
     }
 
     private fun isAccessibilityEnabled(): Boolean {

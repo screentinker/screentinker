@@ -38,12 +38,59 @@ const CAPABILITIES = Object.freeze({
     // ⚠️ Phase 4: proof-of-play must never be downsampled — averaged evidence is not evidence.
     requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
   },
-  'redistributes-content': {
-    summary: 'Caches and serves media to its subtree',
-    // ⚠️ PHASE 5 ONLY. Named here so the vocabulary is stable, and REFUSED by validation until then.
-    // This is the one that inverts I2's direction, so it gets its own security review.
+  /*
+   * Scale-out (docs/scale-out-design.md). This node holds a full-fidelity ROW COPY of the workspaces
+   * a child shares under the `workspace-replication` grant, in its own tables, and serves the
+   * dashboard for them read-only. It is still a capability, not a permission: declaring it with a
+   * health-only grant gets a fleet page and nothing more. Writes for a copied workspace are never
+   * applied here — they are forwarded to the operator-typed PRIMARY_URL or refused (I9, I10).
+   */
+  'serves-dashboard': {
+    summary: 'Serves a read-only dashboard from a copy of the workspaces a server below shares',
     requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
-    phase5: true,
+  },
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6). This node accepts PLAYER sockets for the copied
+   * workspaces: it authenticates each one by asking the primary (the token never leaves the
+   * primary), serves assignments and media from its own mirror, forwards every player event to the
+   * primary as a `player-event` write, and delivers the primary's commands to that player when a
+   * `command-relay` comes up the edge. Requires serves-dashboard on the same edge — there is no
+   * mirror to serve from otherwise. It is still a capability: without the `player-events` WRITE
+   * grant set by the PRIMARY's operator, the events have nowhere to go and the replica refuses the
+   * player (I2, I10).
+   */
+  'terminates-players': {
+    summary: 'Accepts player connections for the copied workspaces and relays their events to the server that owns them',
+    requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
+    requires: ['serves-dashboard'],
+  },
+  /*
+   * Scale-out C3 (docs/scale-out-design.md §6a). This node keeps the BYTES of copied content rows
+   * on its own disk, so it can serve media to a dashboard or an attached player while the primary
+   * is unreachable. A resource declaration by THIS node's operator, like redistributes-content: the
+   * authority to hold the data is the workspace-replication grant the primary's operator gave, and
+   * the bytes already transit here on every fetch-through. Quota REPLICA_CACHE_BYTES per edge.
+   */
+  'caches-content': {
+    summary: 'Keeps copies of the media files of the copied workspaces on this server\'s disk',
+    requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
+    requires: ['serves-dashboard'],
+  },
+  'redistributes-content': {
+    summary: 'Keeps media it was sent, so it can pass it on to servers below it',
+    /*
+     * ⚠️ THIS IS A RESOURCE DECLARATION, NOT AN AUTHORITY. It says this node is willing to spend
+     * its disk holding media it was sent so that it can pass it on — nothing more. Whether any
+     * particular file may travel further is the CONTENT OWNER's decision, carried per push (see
+     * `rl` in the manifest and mesh_content_provenance.relayable), and whether a given server below
+     * accepts it is that server's own grant, checked on arrival exactly as any other push is.
+     *
+     * Two settings held by two parties, and both required. A single flag would put the decision
+     * with the operator who BENEFITS from caching rather than the one giving something up, which
+     * is the defect the write grant already had once — the parent authored the grant the child
+     * enforced, and it took an amendment to I2 to fix. See docs/mesh-relay-design.md.
+     */
+    requiresFlag: 'MESH_ACCEPT_ENROLLMENT',
   },
 });
 
@@ -98,6 +145,20 @@ function validateCapabilities(requested, flags = {}) {
       reason: `This node is not configured to accept enrollments. Set MESH_ACCEPT_ENROLLMENT=1 on ` +
               `it first — until then it cannot act as a parent for ${needsAccept.join(', ')}.`,
     };
+  }
+
+  // A capability that only makes sense on top of another says so, and is refused without it.
+  for (const c of requested) {
+    const needs = CAPABILITIES[c].requires || [];
+    const missing = needs.filter((n) => !requested.includes(n));
+    if (missing.length) {
+      return {
+        ok: false,
+        rejected: [c],
+        reason: `${c} needs ${missing.join(', ')} on the same edge — it works from the copy that ` +
+                `${missing.join(', ')} keeps, and has nothing to serve without it.`,
+      };
+    }
   }
 
   return { ok: true, capabilities: [...new Set(requested)] };

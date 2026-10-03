@@ -49,6 +49,20 @@ class TriggerOverlay(
     private val log: (level: String, message: String) -> Unit = { _, _ -> }
 ) : TriggerRenderer {
     private val handler = Handler(Looper.getMainLooper())
+
+    /*
+     * ⚠️ EVERY VIEW TOUCH GOES THROUGH HERE, because a trigger arrives on a NETWORK thread.
+     * TriggerListeners reads its datagram (or its HTTP request) on its own thread and calls
+     * straight through to TriggerController.fire() -> show(). Building and attaching Views from
+     * there is an Android violation, and the way it failed was the worst kind: no crash, no log.
+     * The box WAS added to the layer — dumpsys showed it as a child — but it never got a layout
+     * pass, so it measured 0x0 and nothing was ever visible. The trigger "fired", the controller
+     * logged it, the lease ran, the state machine believed a screen was covered, and the panel
+     * carried on playing its playlist. That is precisely the reported "triggers are inert".
+     */
+    private inline fun onMain(crossinline block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else handler.post { block() }
+    }
     private var box: FrameLayout? = null
     private var player: ExoPlayer? = null
     private var advance: Runnable? = null
@@ -88,32 +102,39 @@ class TriggerOverlay(
             return false
         }
 
-        val b = FrameLayout(context)
-        b.setBackgroundColor(Color.BLACK)
-        b.layoutParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        layer.addView(b)
-        layer.visibility = android.view.View.VISIBLE
-        box = b
-        items = all
-        index = 0
+        /*
+         * The filtering above is pure and stays on the calling thread — the caller needs the
+         * boolean synchronously to decide whether the fire counts. Only the view work is marshalled.
+         */
+        onMain {
+            val b = FrameLayout(context)
+            b.setBackgroundColor(Color.BLACK)
+            b.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            layer.addView(b)
+            layer.visibility = android.view.View.VISIBLE
+            box = b
+            items = all
+            index = 0
 
-        return try {
-            setBaseAudioSuppressed(true)
-            renderAt(0)
-            log("info", "fired \"${trigger.name}\" (${all.size} item(s))")
-            true
-        } catch (e: Throwable) {
-            // ⚠️ Everything above has already committed — the box is on screen and the base is
-            // silenced. A throw that escaped here would leave an opaque black rectangle over the
-            // playlist with nothing in it and no audio anywhere.
-            log("warn", "\"${trigger.name}\" failed to render: ${e.message}")
-            hide()
-            false
+            try {
+                setBaseAudioSuppressed(true)
+                renderAt(0)
+                log("info", "fired \"${trigger.name}\" (${all.size} item(s))")
+            } catch (e: Throwable) {
+                // ⚠️ Everything above has already committed — the box is on screen and the base is
+                // silenced. A throw that escaped here would leave an opaque black rectangle over the
+                // playlist with nothing in it and no audio anywhere.
+                log("warn", "\"${trigger.name}\" failed to render: ${e.message}")
+                hide()
+            }
         }
+        return true
     }
 
-    override fun hide() {
+    override fun hide() = onMain { hideOnMain() }
+
+    private fun hideOnMain() {
         advance?.let { handler.removeCallbacks(it) }
         advance = null
         // Release, not pause: a paused ExoPlayer holds a decoder, and on a panel with one hardware
@@ -184,7 +205,11 @@ class TriggerOverlay(
             iv.scaleType = ImageView.ScaleType.FIT_CENTER
             iv.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            val bmp = ImageLoader.decodeFile(file, ImageLoader.screenWidth(context), ImageLoader.screenHeight(context))
+            // #477: decode against the box the image is shown in. The overlay lives inside the
+            // stage, so on a portrait mount it is portrait while displayMetrics stays landscape.
+            val bw = if (b.width > 0) b.width else ImageLoader.screenWidth(context)
+            val bh = if (b.height > 0) b.height else ImageLoader.screenHeight(context)
+            val bmp = ImageLoader.decodeFile(file, bw, bh)
             if (bmp != null) iv.setImageBitmap(bmp) else log("warn", "trigger image $id failed to decode")
             b.addView(iv)
             if (multi) scheduleAdvance(durMs)

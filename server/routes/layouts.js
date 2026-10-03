@@ -6,7 +6,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2h: workspace-aware access. Templates (is_template=1) are the
 // platform-shared pair (NULL user_id, NULL workspace_id) and are visible
 // everywhere, writable only by platform_admin.
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
 
 // List layouts in the caller's current workspace plus all templates.
 // Phase 2.2h: workspace-scoped. Templates (is_template=1) remain visible to
@@ -79,21 +79,54 @@ router.get('/:id', (req, res) => {
   if (!layout) return;
 
   layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
+  // `zones` stays the LIVE set - renderers and assignments read this route too. A pending draft is
+  // offered alongside it so the editor can open on the author's unpublished work instead of
+  // showing them the live layout and quietly discarding the draft on their next save.
+  const pending = require('../lib/revisions').parseJson(layout.draft_zones, null);
+  if (pending) layout.draft = pending;
   res.json(layout);
 });
 
-// Create layout in the caller's current workspace.
+const VALID_FIT_MODES = new Set(['cover', 'contain', 'fill']);
+function safeFitMode(m) {
+  return (typeof m === 'string' && VALID_FIT_MODES.has(m.toLowerCase())) ? m.toLowerCase() : 'contain';
+}
+function safeHexColor(c, fallback = '#000000') {
+  if (!c || typeof c !== 'string') return fallback;
+  const s = c.trim();
+  return /^#[0-9a-fA-F]{3,8}$/.test(s) ? s : fallback;
+}
+
+// Create layout
 router.post('/', (req, res) => {
-  if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating layouts.' });
-  const { name, width, height, zones } = req.body;
-  if (!name) return res.status(400).json({ error: 'name required' });
+  const { name, width, height, zones, is_template, template_category } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+
+  // Templates are platform-wide; only platform_admin can create them.
+  if (is_template && !PLATFORM_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only platform admins can create templates' });
+  }
+  // Owned layouts require an active workspace.
+  if (!is_template && !req.workspaceId) {
+    return res.status(400).json({ error: 'Workspace ID is required' });
+  }
+  // A read-only member cannot create an owned layout (a template already needs platform_admin above).
+  if (!is_template && denyReadOnly(req, res)) return;
 
   const id = uuidv4();
-  db.prepare('INSERT INTO layouts (id, user_id, workspace_id, name, width, height) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(id, req.user.id, req.workspaceId, name, width || 1920, height || 1080);
+  const w = width || 1920;
+  const h = height || 1080;
+  const tpl = is_template ? 1 : 0;
+  const cat = is_template ? (template_category || 'general') : null;
+  const wsId = is_template ? null : req.workspaceId;
+  const userId = is_template ? null : req.user.id;
 
-  // Create zones if provided
-  if (zones && Array.isArray(zones)) {
+  db.prepare(`
+    INSERT INTO layouts (id, name, width, height, is_template, template_category, user_id, workspace_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, name, w, h, tpl, cat, userId, wsId);
+
+  if (Array.isArray(zones) && zones.length > 0) {
     const stmt = db.prepare(`
       INSERT INTO layout_zones (id, layout_id, name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color, sort_order)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -101,12 +134,13 @@ router.post('/', (req, res) => {
     zones.forEach((z, i) => {
       stmt.run(uuidv4(), id, z.name || `Zone ${i + 1}`, z.x_percent || 0, z.y_percent || 0,
         z.width_percent || 100, z.height_percent || 100, z.z_index || 0,
-        z.zone_type || 'content', z.fit_mode || 'contain', z.background_color || '#000000', i);
+        z.zone_type || 'content', safeFitMode(z.fit_mode), safeHexColor(z.background_color, '#000000'), i);
     });
   }
 
   const layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(id);
   layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(id);
+  require('../lib/revisions').recordCurrent(db, 'layout', layout.id, { actor: require('../lib/releases').actorOf(req), summary: 'Created' });
   res.status(201).json(layout);
 });
 
@@ -117,6 +151,33 @@ router.put('/:id', (req, res) => {
   if (layout.is_template && !PLATFORM_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Cannot edit templates' });
 
   const { name, width, height, zones } = req.body;
+
+  // Approval on: the whole layout is saved as a DRAFT (draft_zones) and screens keep the zones
+  // they have until a reviewed submission publishes it (lib/releases.js releaseLayoutDraft).
+  const policy = require('../lib/release-policy');
+  const revisions = require('../lib/revisions');
+  const actor = require('../lib/releases').actorOf(req);
+  if (layout.workspace_id && policy.approvalRequired(db, layout.workspace_id)) {
+    const base = revisions.parseJson(layout.draft_zones, null)
+      || { name: layout.name, width: layout.width, height: layout.height, zones: db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id) };
+    const draft = {
+      name: name || base.name, width: width || base.width, height: height || base.height,
+      zones: Array.isArray(zones) ? zones.map((z, i) => ({ ...z, id: z.id || uuidv4(), sort_order: i })) : base.zones,
+    };
+    db.prepare('UPDATE layouts SET draft_zones = ? WHERE id = ?').run(JSON.stringify(draft), req.params.id);
+    revisions.recordCurrent(db, 'layout', req.params.id, { actor, summary: 'Saved draft' });
+    /*
+     * ⚠️ ECHO THE DRAFT BACK, NOT THE LIVE ZONES.
+     *
+     * The editor assigns the response straight onto its canvas. Returning the live rows made the
+     * zones visibly snap back to their pre-edit positions the instant the "saved as draft" toast
+     * appeared, and a second Save then serialised those reverted positions over the draft.
+     */
+    const current = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
+    current.zones = draft.zones;
+    return res.json({ ...current, name: draft.name, width: draft.width, height: draft.height, draft: true, pending_review: true });
+  }
+
   const txn = db.transaction(() => {
     if (name) db.prepare('UPDATE layouts SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(name, req.params.id);
     if (width) db.prepare('UPDATE layouts SET width = ? WHERE id = ?').run(width, req.params.id);
@@ -162,8 +223,8 @@ router.put('/:id', (req, res) => {
         const vals = [
           z.name || `Zone ${i + 1}`,
           z.x_percent || 0, z.y_percent || 0, z.width_percent || 100, z.height_percent || 100,
-          z.z_index || 0, z.zone_type || 'content', z.fit_mode || 'contain',
-          z.background_color || '#000000', i,
+          z.z_index || 0, z.zone_type || 'content', safeFitMode(z.fit_mode),
+          safeHexColor(z.background_color, '#000000'), i,
         ];
         if (existingSet.has(zid)) updateZone.run(...vals, zid, req.params.id);
         else insertZone.run(zid, req.params.id, ...vals);
@@ -180,6 +241,7 @@ router.put('/:id', (req, res) => {
     }
   });
   txn();
+  revisions.recordCurrent(db, 'layout', req.params.id, { actor, summary: 'Saved' });
 
   const updated = db.prepare('SELECT * FROM layouts WHERE id = ?').get(req.params.id);
   updated.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(req.params.id);
@@ -214,9 +276,20 @@ router.delete('/:id', (req, res) => {
 
 // Add zone to layout. Phase 2.2h: tightened to write-access; workspace_viewer
 // can read the layout via GET but cannot add zones.
+// Zone-level writes change what screens show in place. With approval on they are refused with
+// the way forward: save the whole layout (PUT /:id), which becomes a draft for review.
+function refuseZoneWriteUnderApproval(req, res, layout) {
+  if (layout.workspace_id && require('../lib/release-policy').approvalRequired(db, layout.workspace_id)) {
+    res.status(409).json({ error: 'This workspace requires review before layout changes go live. Save the layout as a whole to create a draft, then submit it for review.', code: 'approval_required' });
+    return true;
+  }
+  return false;
+}
+
 router.post('/:id/zones', (req, res) => {
   const layout = checkLayoutWrite(req, res);
   if (!layout) return;
+  if (refuseZoneWriteUnderApproval(req, res, layout)) return;
 
   const { name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color } = req.body;
   const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM layout_zones WHERE layout_id = ?').get(req.params.id).m || 0;
@@ -227,7 +300,7 @@ router.post('/:id/zones', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, req.params.id, name || 'New Zone', x_percent || 0, y_percent || 0,
     width_percent || 50, height_percent || 50, z_index || 0,
-    zone_type || 'content', fit_mode || 'contain', background_color || '#000000', maxOrder + 1);
+    zone_type || 'content', safeFitMode(fit_mode), safeHexColor(background_color, '#000000'), maxOrder + 1);
 
   db.prepare("UPDATE layouts SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
 
@@ -239,6 +312,7 @@ router.post('/:id/zones', (req, res) => {
 router.put('/:id/zones/:zoneId', (req, res) => {
   const layout = checkLayoutWrite(req, res);
   if (!layout) return;
+  if (refuseZoneWriteUnderApproval(req, res, layout)) return;
   const zone = db.prepare('SELECT * FROM layout_zones WHERE id = ? AND layout_id = ?').get(req.params.zoneId, req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
@@ -246,7 +320,13 @@ router.put('/:id/zones/:zoneId', (req, res) => {
   const updates = [];
   const values = [];
   fields.forEach(f => {
-    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); values.push(req.body[f]); }
+    if (req.body[f] !== undefined) {
+      let val = req.body[f];
+      if (f === 'fit_mode') val = safeFitMode(val);
+      if (f === 'background_color') val = safeHexColor(val, '#000000');
+      updates.push(`${f} = ?`);
+      values.push(val);
+    }
   });
 
   if (updates.length > 0) {
@@ -263,6 +343,7 @@ router.put('/:id/zones/:zoneId', (req, res) => {
 router.delete('/:id/zones/:zoneId', (req, res) => {
   const layout = checkLayoutWrite(req, res);
   if (!layout) return;
+  if (refuseZoneWriteUnderApproval(req, res, layout)) return;
   db.prepare('DELETE FROM layout_zones WHERE id = ? AND layout_id = ?').run(req.params.zoneId, req.params.id);
   db.prepare("UPDATE layouts SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
   res.json({ success: true });
@@ -272,6 +353,7 @@ router.delete('/:id/zones/:zoneId', (req, res) => {
 // destination lands in the caller's current workspace.
 router.post('/:id/duplicate', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before duplicating a layout.' });
+  if (denyReadOnly(req, res)) return;
   const source = checkLayoutRead(req, res);
   if (!source) return;
 

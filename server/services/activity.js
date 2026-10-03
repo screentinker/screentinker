@@ -36,7 +36,7 @@ function getClientIp(req) {
 // when known; the middleware below sources it from resolveTenancy. When
 // workspaceId is null but a device_id is provided, fall back to the device's
 // workspace - matches the backfill rule for consistency.
-function logActivity(userId, action, details = null, deviceId = null, ipAddress = null, workspaceId = null) {
+function logActivity(userId, action, details = null, deviceId = null, ipAddress = null, workspaceId = null, statusCode = null) {
   try {
     // A break-glass identity ('recovery-<jti>') is synthetic and has no users row, so
     // activity_log.user_id's foreign key rejects it and the row is lost — which is exactly
@@ -46,14 +46,21 @@ function logActivity(userId, action, details = null, deviceId = null, ipAddress 
       details = `[break-glass ${userId}] ${details || ''}`.trim();
       userId = null;
     }
+    // Same for a support session ('support:<jti>', lib/support-access): everything a support
+    // engineer does on a customer's instance must land in the customer's audit log.
+    if (typeof userId === 'string' && userId.startsWith('support:')) {
+      details = `[support ${userId}] ${details || ''}`.trim();
+      userId = null;
+    }
     let ws = workspaceId || null;
     if (!ws && deviceId) {
       const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);
       ws = d?.workspace_id || null;
     }
     db.prepare(
-      'INSERT INTO activity_log (user_id, device_id, action, details, ip_address, workspace_id) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(userId || null, deviceId || null, action, details || null, ipAddress || null, ws);
+      'INSERT INTO activity_log (user_id, device_id, action, details, ip_address, workspace_id, status_code) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(userId || null, deviceId || null, action, details || null, ipAddress || null, ws,
+          Number.isInteger(statusCode) ? statusCode : null);
   } catch (e) {
     // LOUD on purpose. A silently-dropped audit row is how a break-glass session went
     // unrecorded for months: the insert failed a foreign key, this catch swallowed it, and
@@ -70,13 +77,23 @@ let auditDrops = 0;
 function auditDropCount() { return auditDrops; }
 
 function getActivity(options = {}) {
-  const { userId, deviceId, limit = 50, offset = 0 } = options;
+  const { userId, deviceId, workspaceId, action, limit = 50, offset = 0 } = options;
   let sql = `SELECT al.*, u.name as user_name, u.email as user_email
     FROM activity_log al LEFT JOIN users u ON al.user_id = u.id WHERE 1=1`;
   const params = [];
 
   if (userId) { sql += ' AND al.user_id = ?'; params.push(userId); }
   if (deviceId) { sql += ' AND al.device_id = ?'; params.push(deviceId); }
+  /*
+   * ⚠️ WORKSPACE FILTERING, which this could not do — rows have carried workspace_id since the
+   * Phase 2.2 writer-leak fix and nothing could query on it. On a multi-tenant install that made
+   * the audit trail readable only in full or not at all: an operator who administers one workspace
+   * could not ask what happened in it, and any caller wanting to show them a scoped view had to
+   * fetch everything and filter in the process, which is the shape that leaks the moment somebody
+   * adds a count or a total.
+   */
+  if (workspaceId) { sql += ' AND al.workspace_id = ?'; params.push(workspaceId); }
+  if (action) { sql += ' AND al.action = ?'; params.push(action); }
 
   sql += ' ORDER BY al.created_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
@@ -84,25 +101,85 @@ function getActivity(options = {}) {
   return db.prepare(sql).all(...params);
 }
 
-// Prune old activity logs (keep 90 days)
-function pruneActivityLog() {
-  db.prepare("DELETE FROM activity_log WHERE created_at < strftime('%s','now') - (90 * 86400)").run();
+/*
+ * Prune old activity logs.
+ *
+ * ⚠️ This existed and was NEVER CALLED — not by a route, not by a scheduler, not by anything. So
+ * activity_log grew for the life of the install while a comment described a 90-day retention that
+ * was never applied. It is scheduled now (services/scheduler.js); see the note there about why it
+ * does not run at boot.
+ *
+ * The horizon is a parameter rather than a literal so a caller can be explicit, but the default is
+ * unchanged — silently shortening anyone's retention on upgrade would be its own kind of bug.
+ */
+function pruneActivityLog(days = 90) {
+  const keep = Number.isFinite(days) && days > 0 ? Math.floor(days) : 90;
+  return db.prepare(
+    "DELETE FROM activity_log WHERE created_at < strftime('%s','now') - (? * 86400)",
+  ).run(keep).changes;
 }
 
-// Express middleware to auto-log API mutations
+const AUDITED_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+
+/*
+ * Should this finished request become an audit row?
+ *
+ * Successes: yes, unchanged — that is the audit trail.
+ *
+ * The rule is ownership, and it applies to successes and failures alike: a row is written when the
+ * request belongs to an authenticated user or a known device, or when it is a 5xx.
+ *
+ * ⚠️ ANONYMOUS REQUESTS ARE NOT AUDITED, AND THAT IS LOAD-BEARING. The public surface is scanned
+ * constantly (≈1,000 probes/day for /wp-login.php, /.env and friends) and carries genuinely
+ * anonymous high-frequency endpoints — widget telemetry reports once per widget per device,
+ * forever. Auditing those buries the operator's own history in noise and hands a stranger unlimited
+ * writes to this table. test/widget-telemetry-bounded.test.js pins exactly this.
+ *
+ * ⚠️ THIS USED TO BE ENFORCED BY ACCIDENT. The old middleware wrapped res.json, so an endpoint
+ * could opt out of auditing by replying with res.end() instead — and routes/widgets.js telemetry
+ * did precisely that, with a comment explaining the trick. Hooking 'finish' removed that escape
+ * hatch, so the property now has to be stated rather than inherited from how a handler replies.
+ *
+ * ⚠️ BEHAVIOUR CHANGE: `POST /api/telemetry/report` (657 rows on prod) is anonymous and therefore
+ * no longer audited. That is the same principle applied consistently, not an oversight.
+ */
+function shouldAudit(req, res) {
+  if (!AUDITED_METHODS.includes(req.method)) return false;
+  // A 5xx is OUR fault. Keep it whoever triggered it — that is the row worth having.
+  if (res.statusCode >= 500) return true;
+  // Everything else must belong to someone. An anonymous caller cannot write here.
+  return !!(req.user?.id || req.params?.deviceId || req.body?.device_id);
+}
+
+/*
+ * Express middleware to auto-log API mutations.
+ *
+ * ⚠️ HOOKS res.on('finish'), NOT res.json.
+ *
+ * Wrapping res.json only saw responses that happened to be sent AS JSON. A route ending in
+ * res.send(), res.sendStatus(), res.end() or an unhandled throw produced no row at all, so the
+ * audit trail silently depended on how each handler chose to reply. 'finish' fires once per
+ * response however it was sent, and by then res.statusCode is final — which is the whole point,
+ * since the old wrapper read the status BEFORE the body was written.
+ *
+ * Everything it reads (req.user, req.params, req.body, req.route) is still populated at finish;
+ * the response object is done, the request object is not.
+ */
 function activityLogger(req, res, next) {
-  const originalJson = res.json.bind(res);
-  res.json = function(data) {
-    // Only log successful mutations
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && res.statusCode < 400) {
+  res.on('finish', () => {
+    try {
+      if (!shouldAudit(req, res)) return;
       const action = `${req.method} ${req.baseUrl || ''}${req.route?.path || req.path}`;
       const userId = req.user?.id;
       const deviceId = req.params?.id || req.params?.deviceId || req.body?.device_id;
       const details = summarizeAction(req);
-      logActivity(userId, action, details, deviceId, getClientIp(req), req.workspaceId || null);
+      logActivity(userId, action, details, deviceId, getClientIp(req), req.workspaceId || null, res.statusCode);
+    } catch (e) {
+      // A finish handler runs outside the request's error path: throwing here would be an
+      // unhandled 'error' on the response, so contain it. logActivity already shouts on its own.
+      console.error(`[AUDIT-DROP] activityLogger finish handler failed: ${e.message}`);
     }
-    return originalJson(data);
-  };
+  });
   next();
 }
 

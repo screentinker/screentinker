@@ -3,7 +3,12 @@ const router = express.Router();
 const crypto = require('crypto');
 const { db } = require('../db/database');
 const { canAdminWorkspace, canAccessWorkspace } = require('../lib/permissions');
-const { isPlatformRole } = require('../middleware/auth');
+const { isPlatformRole, isPlatformStaff } = require('../middleware/auth');
+const go2rtc = require('../lib/go2rtc');
+const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const appConfig = require('../config');
+const replicaProxy = require('../lib/replica-proxy');
 const { logActivity, getClientIp } = require('../services/activity');
 const { sendEmail } = require('../services/email');
 
@@ -36,6 +41,138 @@ const INVITE_EXPIRY_DAYS = (() => {
   const parsed = parseInt(process.env.INVITE_EXPIRY_DAYS, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
 })();
+
+/*
+ * Scale-out (docs/scale-out.md): this router acts on a URL-param workspace, not the caller's active
+ * one, so it does not run behind resolveTenancy — and so it is the one JWT router that could become
+ * a second writer for a COPIED workspace (origin_node_id set). The same interception the resolver
+ * does happens here, on every mutating route that names a workspace: the request is forwarded to
+ * the primary (or refused with 409 when PRIMARY_URL is unset) and nothing is applied locally.
+ * router.param runs before route-level middleware, so a text/multipart body is still an intact
+ * stream when it is proxied. Membership and invite changes count: a copied workspace's members are
+ * the primary's rows too. test_copied_workspace_rows_are_never_mutated_on_a_replica holds this.
+ */
+router.param('id', (req, res, next, id) => {
+  if (!replicaProxy.isMutating(req)) return next();
+  let ws = null;
+  try { ws = db.prepare('SELECT id, origin_node_id FROM workspaces WHERE id = ?').get(id); } catch (e) { /* fall through to the handler's 404 */ }
+  if (ws && replicaProxy.shouldIntercept(req, ws)) return replicaProxy.proxyToPrimary(req, res, appConfig);
+  next();
+});
+
+/** An organization is a copy when any of its workspaces is — organizations arrive by the same replication. */
+function isCopiedOrganization(organizationId) {
+  return !!db.prepare('SELECT 1 FROM workspaces WHERE organization_id = ? AND origin_node_id IS NOT NULL LIMIT 1').get(organizationId);
+}
+
+/*
+ * How many workspaces one organization may create.
+ *
+ * Not a plan limit — the plans table has no such column, and inventing one here would put a
+ * billing decision in a routes file. This is a runaway guard: without any cap, a scripted caller
+ * can mint workspaces until the switcher is unusable and the /me query that lists them is the
+ * slowest thing on the dashboard. Same env-configurable shape as the invite limits above.
+ */
+const MAX_WORKSPACES_PER_ORG = (() => {
+  const parsed = parseInt(process.env.MAX_WORKSPACES_PER_ORG, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
+})();
+
+/*
+ * Which organization a create lands in.
+ *
+ * ⚠️ NEVER THE BODY ALONE. `organization_id` is honoured only after confirming the caller actually
+ * administers that org — otherwise this endpoint mints a workspace inside somebody else's tenant,
+ * and every workspace-scoped route downstream would treat it as legitimately theirs.
+ *
+ * With no id supplied we resolve it from membership, which is the normal case: one org, one
+ * owner. Several orgs and no id is AMBIGUOUS and says so rather than guessing — picking "the first
+ * one" would silently create the workspace in the wrong tenant.
+ */
+function resolveTargetOrg(req) {
+  const requested = req.body && req.body.organization_id ? String(req.body.organization_id) : null;
+
+  if (requested) {
+    const org = db.prepare('SELECT id FROM organizations WHERE id = ?').get(requested);
+    if (!org) return { error: { status: 404, message: 'Organization not found' } };
+    if (isPlatformRole(req.user.role)) return { organizationId: org.id };
+    const om = db.prepare('SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?')
+      .get(org.id, req.user.id);
+    if (!om || (om.role !== 'org_owner' && om.role !== 'org_admin')) {
+      return { error: { status: 403, message: 'You do not administer that organization' } };
+    }
+    return { organizationId: org.id };
+  }
+
+  const owned = db.prepare(
+    "SELECT organization_id FROM organization_members WHERE user_id = ? AND role IN ('org_owner','org_admin')"
+  ).all(req.user.id);
+  if (owned.length === 1) return { organizationId: owned[0].organization_id };
+  if (owned.length === 0) {
+    return { error: { status: 403, message: 'Only an organization owner or admin can create a workspace' } };
+  }
+  return { error: { status: 400, message: 'You administer more than one organization — specify organization_id' } };
+}
+
+/*
+ * Create a workspace inside an organization the caller administers.
+ *
+ * ⚠️ ORG-LEVEL, SO IT NEEDS AN ORG ROLE. A workspace_admin administers ONE workspace; letting that
+ * mint siblings would let a delegated editor grow the tenant they were given a corner of. Same
+ * reasoning the org security-settings route already applies.
+ *
+ * The creator is added as workspace_admin, or they would create a workspace they cannot administer
+ * and cannot invite anyone into — reachable only via their org role, which is a confusing half-state
+ * for anyone who is org_admin today and not tomorrow.
+ */
+router.post('/', (req, res) => {
+  const target = resolveTargetOrg(req);
+  if (target.error) return res.status(target.error.status).json({ error: target.error.message });
+  const organizationId = target.organizationId;
+  // A new workspace inside a copied organization is the primary's to create (see router.param above).
+  if (isCopiedOrganization(organizationId)) return replicaProxy.proxyToPrimary(req, res, appConfig);
+
+  const name = String((req.body && req.body.name) || '').trim();
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  if (name.length > NAME_MAX) return res.status(400).json({ error: `Name must be ${NAME_MAX} characters or fewer` });
+
+  let slug = null;
+  if (req.body && req.body.slug !== undefined && String(req.body.slug).trim() !== '') {
+    slug = String(req.body.slug).trim().toLowerCase();
+    if (slug.length > SLUG_MAX) return res.status(400).json({ error: `Slug must be ${SLUG_MAX} characters or fewer` });
+    if (!SLUG_RE.test(slug)) {
+      return res.status(400).json({ error: 'Slug must be lowercase letters, digits, and hyphens (no leading/trailing/double hyphens)' });
+    }
+  }
+
+  const existing = db.prepare('SELECT COUNT(*) AS c FROM workspaces WHERE organization_id = ?').get(organizationId);
+  if (existing.c >= MAX_WORKSPACES_PER_ORG) {
+    return res.status(409).json({ error: `This organization already has the maximum of ${MAX_WORKSPACES_PER_ORG} workspaces` });
+  }
+
+  const id = crypto.randomUUID();
+  try {
+    db.transaction(() => {
+      db.prepare('INSERT INTO workspaces (id, organization_id, name, slug, created_by) VALUES (?, ?, ?, ?, ?)')
+        .run(id, organizationId, name, slug, req.user.id);
+      db.prepare("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'workspace_admin')")
+        .run(id, req.user.id);
+    })();
+  } catch (e) {
+    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE/i.test(e.message)) {
+      return res.status(409).json({ error: 'Slug already used in this organization' });
+    }
+    throw e;
+  }
+
+  // Attribute the audit row to the workspace that was just created, not to whatever the caller
+  // happened to be looking at — this router has no resolveTenancy, so nothing else would.
+  req.workspaceId = id;
+  logActivity(req.user.id, 'workspace_created', `Created workspace "${name}"`, null, getClientIp(req), id);
+
+  const created = db.prepare('SELECT id, name, slug, organization_id, created_at FROM workspaces WHERE id = ?').get(id);
+  res.status(201).json({ ...created, can_admin: true });
+});
 
 // Rename a workspace. MVP scope: name + slug only. Permission: platform_admin,
 // org_owner/admin of the parent org, or workspace_admin of the target ws.
@@ -79,6 +216,13 @@ router.patch('/:id', (req, res) => {
     }
   }
 
+  // #go2rtc: opt this workspace into live video. Off by default; only meaningful when the server
+  // master switch (LIVE_VIDEO_ENABLED) is also on. Admin-gated by the canAdminWorkspace check above.
+  if (req.body.live_video_enabled !== undefined) {
+    updates.push('live_video_enabled = ?');
+    values.push(req.body.live_video_enabled ? 1 : 0);
+  }
+
   if (updates.length === 0) {
     return res.status(400).json({ error: 'No fields to update' });
   }
@@ -95,7 +239,7 @@ router.patch('/:id', (req, res) => {
     throw e;
   }
 
-  const updated = db.prepare('SELECT id, name, slug, organization_id FROM workspaces WHERE id = ?').get(req.params.id);
+  const updated = db.prepare('SELECT id, name, slug, organization_id, live_video_enabled FROM workspaces WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 
@@ -236,6 +380,53 @@ router.get('/:id/members', (req, res) => {
   const ws = loadWorkspace(req, res, false);
   if (!ws) return;
   res.json(listMembers(ws.id, ws.organization_id));
+});
+
+/*
+ * GET /:id/organization-members — everyone in the ORGANIZATION this workspace belongs to: its
+ * org owners/admins plus every direct member of any of its workspaces, each with the workspaces
+ * they are in and their role there. Powers Members → "Whole organization".
+ *
+ * ⚠️ ORG ADMINS AND PLATFORM STAFF ONLY. A workspace admin sees their own workspace (/:id/members)
+ * and nothing more: the org-wide list names people in workspaces they have no access to. And it is
+ * scoped by the workspace's organization_id, never by a caller-supplied org id, so it can only
+ * ever describe the organization the caller was already allowed into.
+ */
+router.get('/:id/organization-members', (req, res) => {
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.params.id);
+  if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+  const orgId = ws.organization_id;
+  const isOrgAdmin = !!db.prepare(
+    "SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ? AND role IN ('org_owner','org_admin')"
+  ).get(orgId, req.user.id);
+  if (!isOrgAdmin && !isPlatformStaff(req.user.role)) {
+    return res.status(403).json({ error: 'Organization admin access required' });
+  }
+  req.workspaceId = ws.id;
+  const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(orgId) || { id: orgId, name: '' };
+  const workspaces = db.prepare('SELECT id, name FROM workspaces WHERE organization_id = ? ORDER BY name COLLATE NOCASE').all(orgId);
+  const people = new Map();
+  const person = (r) => {
+    if (!people.has(r.user_id)) people.set(r.user_id, { user_id: r.user_id, email: r.email, name: r.name, org_role: null, workspaces: [], last_login: r.last_login || null });
+    return people.get(r.user_id);
+  };
+  for (const r of db.prepare(`
+    SELECT u.id AS user_id, u.email, u.name, u.last_login, om.role
+      FROM organization_members om JOIN users u ON u.id = om.user_id
+     WHERE om.organization_id = ?
+  `).all(orgId)) person(r).org_role = r.role;
+  for (const r of db.prepare(`
+    SELECT u.id AS user_id, u.email, u.name, u.last_login, wm.role, w.id AS ws_id, w.name AS ws_name
+      FROM workspace_members wm
+      JOIN workspaces w ON w.id = wm.workspace_id
+      JOIN users u ON u.id = wm.user_id
+     WHERE w.organization_id = ?
+     ORDER BY w.name COLLATE NOCASE
+  `).all(orgId)) person(r).workspaces.push({ id: r.ws_id, name: r.ws_name, role: r.role });
+  const rank = { org_owner: 0, org_admin: 1 };
+  const members = [...people.values()].sort((a, b) =>
+    (rank[a.org_role] ?? 2) - (rank[b.org_role] ?? 2) || String(a.name || a.email).localeCompare(String(b.name || b.email)));
+  res.json({ organization: org, workspaces, members });
 });
 
 // GET /:id/invites - admin only. Pending (non-expired) rows.
@@ -406,6 +597,81 @@ router.delete('/:id/members/:userId', (req, res) => {
   db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
     .run(ws.id, req.params.userId);
   res.json({ success: true });
+});
+
+/*
+ * #talk broadcast (one-way PA to every device in the workspace). Same shape as the per-group
+ * routes in device-groups.js: the operator publishes their mic to the workspace's shared go2rtc
+ * stream, and the dashboard tells every device in the workspace to listen. Gated on the live-video
+ * master switch + the workspace flag + a live sidecar. Any workspace member may talk.
+ */
+function loadTalkWorkspace(req, res) {
+  const ws = db.prepare('SELECT id, live_video_enabled FROM workspaces WHERE id = ?').get(req.params.id);
+  if (!ws) { res.status(404).json({ error: 'Workspace not found' }); return null; }
+  if (!canAccessWorkspace(db, req.user, ws)) { res.status(403).json({ error: 'Access denied' }); return null; }
+  return ws;
+}
+
+router.get('/:id/talk', async (req, res) => {
+  const ws = loadTalkWorkspace(req, res); if (!ws) return;
+  if (!orgWebrtc.talkEnabledForWorkspace(ws.id)) return res.json({ mode: 'off', reason: 'disabled' });
+  if (!go2rtc.enabled()) return res.json({ mode: 'off', reason: 'no_sidecar' });
+  if (!(await go2rtc.healthy())) return res.json({ mode: 'off', reason: 'sidecar_down' });
+  res.json({
+    mode: 'webrtc',
+    scope: { kind: 'workspace', id: ws.id },
+    publishPath: `/api/workspaces/${ws.id}/talk/publish`,
+    iceServers: orgWebrtc.iceServersForWorkspace(ws.id),
+    expiresAt: Date.now() + 30000,
+  });
+});
+
+router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
+  const ws = loadTalkWorkspace(req, res); if (!ws) return;
+  if (!orgWebrtc.talkEnabledForWorkspace(ws.id) || !go2rtc.enabled()) {
+    return res.status(409).json({ error: 'Talk is not available for this workspace' });
+  }
+  const name = go2rtc.broadcastTalkStreamName('workspace', ws.id);
+  const offer = typeof req.body === 'string' ? req.body : '';
+  if (!offer) return res.status(400).json({ error: 'SDP offer required' });
+  try { await go2rtc.ensureStream(name); } catch (_) { /* go2rtc may auto-create on dst */ }
+  const answer = await go2rtc.webrtcExchange(name, offer, 'pub');
+  if (!answer) return res.status(502).json({ error: 'go2rtc did not answer' });
+  res.type('application/sdp').send(answer.sdp);
+});
+
+/*
+ * #312 follow-up: fan a command out to EVERY device in a workspace. Today this exists for the
+ * workspace-wide server-URL rewrite (relocating a server without visiting every panel), but it is
+ * the same shape as the per-group /command route and takes any ALLOWED_COMMANDS type.
+ *
+ * Admin-gated (loadWorkspace requireAdmin), not editor: a fleet-wide command — a reboot, or
+ * pointing every screen at a new address — is a workspace-owner decision, and the blast radius is
+ * the whole workspace. Per-device capability refusals are reported rather than failing the lot, so
+ * a mixed fleet (a browser tab that cannot honour set_server_url among Android panels) still does
+ * the right thing for the members that can.
+ */
+router.post('/:id/command', (req, res) => {
+  const ws = loadWorkspace(req, res, /* requireAdmin */ true);
+  if (!ws) return;
+  const { type, payload } = req.body || {};
+  if (!type) return res.status(400).json({ error: 'command type required' });
+  if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
+  const v = validateCommand(type, payload);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+  const deviceNs = req.app.get('io')?.of('/device');
+  if (!deviceNs) return res.status(503).json({ error: 'The realtime layer is not available.' });
+
+  const devices = db.prepare('SELECT * FROM devices WHERE workspace_id = ?').all(ws.id);
+  const results = devices.map((device) => ({
+    device_id: device.id, name: device.name, ...deliverCommand(deviceNs, device, type, payload),
+  }));
+  const sent = results.filter(r => r.status === 'sent' || r.status === 'relayed').length;
+  const offline = results.filter(r => r.status === 'offline' || r.status === 'queued').length;
+  const unsupported = results.filter(r => r.status === 'unsupported').length;
+  logActivity(req.user.id, 'workspace_command', `workspace: ${ws.name} (${ws.id}) type=${type} sent=${sent}`, null, getClientIp(req), ws.id);
+  res.json({ success: true, type, total: results.length, sent, offline, unsupported, results });
 });
 
 module.exports = router;

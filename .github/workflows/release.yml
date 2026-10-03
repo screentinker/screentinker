@@ -79,6 +79,13 @@ jobs:
           cp tizen/ScreenTinker.wgt ScreenTinker.wgt
           ls -la ScreenTinker.wgt
 
+      - name: Build LG webOS .ipk (no SCAP library in CI; see webos/vendor/README.md)
+        run: |
+          chmod +x webos/build-ipk.sh
+          ( cd webos && ./build-ipk.sh )
+          cp webos/ScreenTinker.ipk ScreenTinker.ipk
+          ls -la ScreenTinker.ipk
+
       - name: Build BrightSign autorun.zip (single-file player installer)
         run: |
           chmod +x scripts/build-autorun-zip.sh
@@ -102,9 +109,40 @@ jobs:
             --exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' --exclude='*.db.*' \
             --exclude='server/uploads' --exclude='server/certs' --exclude='server/test' \
             --exclude='*.apk' \
-            server frontend scripts docs VERSION README.md LICENSE .env.example ScreenTinker.wgt brightsign
+            --exclude='brightsign/*.zip' --exclude='brightsign/server-payload.json' \
+            --exclude='.claude' --exclude='.cc-writes' \
+            server frontend scripts docs VERSION README.md LICENSE .env.example ScreenTinker.wgt ScreenTinker.ipk brightsign
           echo "TARBALL=$OUT" >> "$GITHUB_ENV"
           ls -la "$OUT"
+
+      # ⚠️ THE SERVER-MODE ARTIFACTS, WHICH CI DID NOT BUILD UNTIL NOW.
+      #
+      # autorun.zip above makes a BrightSign a player. These two make one a SERVER, and they were
+      # never in this workflow — so every release since they existed shipped without them and the
+      # gap was silent: nothing fails, the release just comes out short. v2.0.0-alpha4 and the first
+      # cut of alpha5 both went out missing both files, and alpha5's had to be built and uploaded by
+      # hand afterwards. The completeness check in scripts/finalize-release.sh now refuses to let
+      # that happen quietly again.
+      #
+      # ⚠️ AFTER the tarball step on purpose. The tarball includes brightsign/, so building an 80MB
+      # payload into it beforehand would silently multiply the source archive.
+      #
+      # Buildable here because the payload is architecture-independent by design — no .node
+      # binaries, SQLite reached through node:sqlite — which the script verifies rather than
+      # assumes, and hard-fails on. That is what lets an x86_64 runner build for an aarch64 player.
+      - name: Build BrightSign server-mode artifacts (bootstrap + payload + manifest)
+        run: |
+          chmod +x scripts/build-server-boot-zip.sh scripts/build-server-zip.sh
+          ./scripts/build-server-boot-zip.sh -o autorun-server.zip
+          ./scripts/build-server-zip.sh --payload -o server-payload.zip
+          # ⚠️ The manifest is not decoration: the launcher reads <payloadUrl with .zip swapped for
+          # .json> to learn what version is published, so the two MUST be siblings wherever they are
+          # served — including as release assets, where /releases/download/<tag>/ makes that swap
+          # resolve. A manifest that does not travel with its zip advertises a version the archive
+          # does not contain.
+          test -f server-payload.json || { echo "::error::the payload manifest was not generated"; exit 1; }
+          ls -la autorun-server.zip server-payload.zip server-payload.json
+          cat server-payload.json
 
       - name: Generate release notes
         run: |
@@ -153,10 +191,21 @@ jobs:
             echo "  Sign it with your own Samsung certificate (Tizen Studio + a profile that includes"
             echo "  your TV's DUID) to install, or - easiest - point a Tizen TV browser / URL Launcher"
             echo "  at \`https://<your-instance>/player\` (no signing needed)."
+            echo "- \`ScreenTinker.ipk\` - LG webOS Signage app. Install from USB or an SI server; it then"
+            echo "  updates itself from your instance. Built without LG's SCAP library (not redistributable),"
+            echo "  so power and self-update controls need a build from \`webos/build-ipk.sh\` with the SDK"
+            echo "  files in \`webos/vendor/\`; see \`docs/webos-player.md\`."
               echo "- \`autorun.zip\` - BrightSign player installer. Drop it on the root of a player's"
               echo "  storage (microSD, USB, or internal flash) and power-cycle: it unpacks itself and"
               echo "  reboots into the player. Edit \`screentinker.json\` inside the archive first to"
               echo "  point it at your own server."
+              echo "- \`autorun-server.zip\` + \`server-payload.zip\` + \`server-payload.json\` - make a"
+              echo "  BrightSign run the ScreenTinker **server** rather than just a player. Drop the"
+              echo "  first on the player's storage root with an \`st-config.json\` containing"
+              echo "  \`{\"server\": 1}\`; it fetches the payload on boot. Point \`payloadUrl\` at your"
+              echo "  own host - the default reaches ours, which is wrong for your site. The manifest"
+              echo "  must sit beside the payload wherever you serve it: the launcher reads it to"
+              echo "  decide whether an update is published."
             if [ "${{ steps.ver.outputs.prerelease }}" = "true" ]; then
               echo "- Docker image: \`ghcr.io/screentinker/screentinker:${{ steps.ver.outputs.version }}\` (pre-release - \`:latest\` is NOT moved)."
             else
@@ -181,8 +230,12 @@ jobs:
             --notes-file RELEASE_NOTES.md \
             "${TARBALL}" \
             autorun.zip \
+            autorun-server.zip \
+            server-payload.zip \
+            server-payload.json \
             "screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json" \
-            tizen/ScreenTinker.wgt
+            tizen/ScreenTinker.wgt \
+            ScreenTinker.ipk
 
   docker:
     name: Docker image (amd64 + arm64) -> ghcr

@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc } from '../utils.js';
-import { t } from '../i18n.js';
+import { t, tn } from '../i18n.js';
 
 /*
  * Triggers — externally-fired interrupt content. docs/triggers-design.md.
@@ -71,6 +71,24 @@ function formHtml(tr) {
   const isNew = !tr.id;
   const opt = (list, sel) => list.map(x =>
     `<option value="${esc(x.id)}"${x.id === sel ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+
+  /*
+   * ⚠️ ONLY PLAYLISTS THAT CAN ACTUALLY FIRE.
+   *
+   * The server refuses to save a trigger pointing at a playlist with no published snapshot, and it
+   * is right to: deviceSocket uses the same guard, so such a trigger would sync with `items: []`
+   * and render nothing, forever, silently. But the dropdown offered every playlist, so the normal
+   * way to meet that rule was to fill the whole form, press Save, and be told no.
+   *
+   * Offering a choice the server will reject is the wrong order. An unpublished playlist is not a
+   * valid answer to "what should this show", so it is not in the list.
+   *
+   * ⚠️ EXCEPT the one already saved on THIS trigger. A playlist can be unpublished after a trigger
+   * was pointed at it, and dropping it from the list would silently re-point that trigger at
+   * whatever happens to be first the next time somebody opens the form to change its name.
+   */
+  const firable = cache.playlists.filter((x) => x.published_snapshot || x.id === tr.target_ref);
+  const unpublishedCount = cache.playlists.length - firable.length;
   const assigned = new Set((tr.assignments || []).map(a => `${a.target_type}:${a.target_id}`));
   const checks = (list, type) => list.map(x => `
       <label class="check">
@@ -78,56 +96,99 @@ function formHtml(tr) {
                ${assigned.has(`${type}:${x.id}`) ? 'checked' : ''}> ${esc(x.name)}
       </label>`).join('') || `<p class="muted">${esc(t('trigger.none_available'))}</p>`;
 
+  /*
+   * ⚠️ `.modal-overlay`, NOT `.modal-backdrop`. This dialog spent its whole life using a class name
+   * that is not defined anywhere in main.css, so it got no fixed positioning, no centering and no
+   * dimming — it rendered as a bare stack of labels appended to the end of the page. Nothing
+   * errored, and every field worked, which is why it survived: it looked like an unfinished feature
+   * rather than one wrong word.
+   */
+  const field = (id, label, control, hint, hintId) =>
+    `<div class="form-group">
+       <label for="${id}">${esc(label)}</label>
+       ${control}
+       ${hint ? `<div class="tg-hint"${hintId ? ` id="${hintId}"` : ''}>${esc(hint)}</div>` : ''}
+     </div>`;
+
+  const section = (title, inner, blurb) =>
+    `<section class="tg-section">
+       <h4 class="tg-legend">${esc(title)}</h4>
+       ${blurb ? `<p class="tg-blurb">${esc(blurb)}</p>` : ''}
+       ${inner}
+     </section>`;
+
   return `
-  <div class="modal-backdrop" id="trigModal">
-    <div class="modal">
-      <h2>${esc(isNew ? t('trigger.new') : t('trigger.edit'))}</h2>
-
-      <label>${esc(t('trigger.name'))}
-        <input id="tgName" value="${esc(tr.name || '')}" maxlength="200"></label>
-
-      <label>${esc(t('trigger.match_token'))}
-        <input id="tgToken" value="${esc(tr.match_token || '')}" maxlength="64"></label>
-      <p class="hint">${esc(t('trigger.token_hint'))}</p>
-
-      <label>${esc(t('trigger.clear_token'))}
-        <input id="tgClear" value="${esc(tr.clear_token || '')}" maxlength="64"></label>
-
-      <label>${esc(t('trigger.target'))}
-        <select id="tgTarget">${opt(cache.playlists, tr.target_ref)}</select></label>
-      <p class="hint">${esc(t('trigger.target_hint'))}</p>
-
-      <label>${esc(t('trigger.mode'))}
-        <select id="tgMode">
-          <option value="once"${tr.mode === 'once' ? ' selected' : ''}>${esc(t('trigger.mode_once'))}</option>
-          <option value="until_cleared"${tr.mode === 'until_cleared' ? ' selected' : ''}>${esc(t('trigger.mode_until_cleared'))}</option>
-        </select></label>
-
-      <label>${esc(t('trigger.max_duration'))}
-        <input id="tgMaxDur" type="number" min="0" max="86400" value="${tr.max_duration_sec || 0}"></label>
-      <p class="hint">${esc(t('trigger.max_duration_hint'))}</p>
-
-      <label>${esc(t('trigger.lease'))}
-        <input id="tgLease" type="number" min="5" max="86400" value="${tr.lease_sec == null ? '' : tr.lease_sec}"></label>
-      <p class="hint" id="tgLeaseHint">${esc(t('trigger.lease_hint'))}</p>
-
-      <label>${esc(t('trigger.priority'))}
-        <input id="tgPriority" type="number" min="-1000" max="1000" value="${tr.priority || 0}"></label>
-
-      <label class="check"><input type="checkbox" id="tgHttp" ${tr.source_http === false ? '' : 'checked'}> HTTP</label>
-      <label class="check"><input type="checkbox" id="tgUdp" ${tr.source_udp ? 'checked' : ''}> UDP</label>
-      <label class="check"><input type="checkbox" id="tgEnabled" ${tr.enabled === 0 ? '' : 'checked'}> ${esc(t('trigger.enabled'))}</label>
-
-      <h3>${esc(t('trigger.assign'))}</h3>
-      <p class="hint">${esc(t('trigger.assign_hint'))}</p>
-      <div class="assign-grid">
-        <div><h4>${esc(t('nav.displays'))}</h4>${checks(cache.devices, 'device')}</div>
-        <div><h4>${esc(t('trigger.groups'))}</h4>${checks(cache.groups, 'group')}</div>
+  <div class="modal-overlay" id="trigModal">
+    <div class="modal tg-modal">
+      <div class="modal-header">
+        <h3>${esc(isNew ? t('trigger.new') : t('trigger.edit'))}</h3>
+        <button class="btn-icon" type="button" id="tgClose" aria-label="${esc(t('common.close'))}">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
 
-      <div class="modal-actions">
-        <button class="btn" id="tgCancel">${esc(t('common.cancel'))}</button>
-        <button class="btn btn-primary" id="tgSave">${esc(t('common.save'))}</button>
+      <div class="modal-body">
+        ${section(t('trigger.sec_identity'),
+          field('tgName', t('trigger.name'),
+            `<input class="input" id="tgName" value="${esc(tr.name || '')}" maxlength="200">`))}
+
+        ${section(t('trigger.sec_match'),
+          field('tgToken', t('trigger.match_token'),
+            `<input class="input" id="tgToken" value="${esc(tr.match_token || '')}" maxlength="64">`,
+            t('trigger.token_hint'))
+          + field('tgClear', t('trigger.clear_token'),
+            `<input class="input" id="tgClear" value="${esc(tr.clear_token || '')}" maxlength="64">`)
+          + `<div class="tg-sources">
+               <label class="tg-check"><input type="checkbox" id="tgHttp" ${tr.source_http === false ? '' : 'checked'}> HTTP</label>
+               <label class="tg-check"><input type="checkbox" id="tgUdp" ${tr.source_udp ? 'checked' : ''}> UDP</label>
+             </div>`)}
+
+        ${section(t('trigger.sec_shows'),
+          (firable.length
+            ? field('tgTarget', t('trigger.target'),
+                `<select class="input" id="tgTarget">${opt(firable, tr.target_ref)}</select>`,
+                t('trigger.target_hint'))
+            /*
+             * A disabled empty select with a hint underneath reads as a broken form. If nothing can
+             * be chosen, say why and what to do — the operator has playlists, they are just not
+             * published yet, and nothing else on this screen would tell them that.
+             */
+            : `<div class="tg-empty">${esc(t('trigger.no_published'))}</div>`)
+          + (unpublishedCount > 0 && firable.length
+            ? `<div class="tg-hint">${esc(tn('trigger.unpublished_hidden', unpublishedCount))}</div>`
+            : ''))}
+
+        ${section(t('trigger.sec_behaviour'),
+          field('tgMode', t('trigger.mode'),
+            `<select class="input" id="tgMode">
+               <option value="once"${tr.mode === 'once' ? ' selected' : ''}>${esc(t('trigger.mode_once'))}</option>
+               <option value="until_cleared"${tr.mode === 'until_cleared' ? ' selected' : ''}>${esc(t('trigger.mode_until_cleared'))}</option>
+             </select>`)
+          + `<div class="tg-row">
+               ${field('tgMaxDur', t('trigger.max_duration'),
+                 `<input class="input" id="tgMaxDur" type="number" min="0" max="86400" value="${tr.max_duration_sec || 0}">`,
+                 t('trigger.max_duration_hint'))}
+               ${field('tgLease', t('trigger.lease'),
+                 `<input class="input" id="tgLease" type="number" min="5" max="86400" value="${tr.lease_sec == null ? '' : tr.lease_sec}">`,
+                 t('trigger.lease_hint'), 'tgLeaseHint')}
+             </div>`
+          + field('tgPriority', t('trigger.priority'),
+            `<input class="input" id="tgPriority" type="number" min="-1000" max="1000" value="${tr.priority || 0}">`))}
+
+        ${section(t('trigger.assign'),
+          `<div class="assign-grid">
+             <div><h5 class="tg-col">${esc(t('nav.displays'))}</h5>${checks(cache.devices, 'device')}</div>
+             <div><h5 class="tg-col">${esc(t('trigger.groups'))}</h5>${checks(cache.groups, 'group')}</div>
+           </div>`,
+          t('trigger.assign_hint'))}
+      </div>
+
+      <div class="modal-footer">
+        <label class="tg-check tg-enabled"><input type="checkbox" id="tgEnabled" ${tr.enabled === 0 ? '' : 'checked'}> ${esc(t('trigger.enabled'))}</label>
+        <button class="btn btn-secondary" type="button" id="tgCancel">${esc(t('common.cancel'))}</button>
+        <button class="btn btn-primary" type="button" id="tgSave">${esc(t('common.save'))}</button>
       </div>
     </div>
   </div>`;
@@ -147,7 +208,13 @@ function collect() {
     match_token: document.getElementById('tgToken').value.trim(),
     clear_token: document.getElementById('tgClear').value.trim() || null,
     target_kind: 'playlist',
-    target_ref: document.getElementById('tgTarget').value,
+    /*
+     * ⚠️ The select is ABSENT when no playlist is publishable — see formHtml. Reading `.value` off
+     * null here would throw inside the click handler, which a green suite cannot see: the button
+     * would simply do nothing, with the operator watching a form that will not save and no error.
+     * Save is disabled in that state; this is the second lock on the same door.
+     */
+    target_ref: document.getElementById('tgTarget')?.value || null,
     mode,
     max_duration_sec: Number(document.getElementById('tgMaxDur').value) || 0,
     // Sent only when it applies; the server refuses lease_sec on a `once` trigger rather than
@@ -186,7 +253,37 @@ function openForm(app, tr) {
   lease.addEventListener('input', syncLease);
   syncLease();
 
-  const close = () => host.remove();
+  /*
+   * ⚠️ EVERY WAY OUT, and the listener is removed with the dialog.
+   *
+   * Cancel was the only exit: no close button (there was no header to put one in), no Escape, and
+   * clicking the backdrop did nothing because there was no backdrop. The keydown is on document, so
+   * it MUST be detached in close() — a dialog opened and dismissed twenty times otherwise leaves
+   * twenty handlers behind, and the last one closes a dialog that is no longer on screen.
+   */
+  const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    host.remove();
+  };
+  document.addEventListener('keydown', onKey);
+  document.getElementById('tgClose').addEventListener('click', close);
+  // The overlay itself, but not a click that started inside the dialog — otherwise selecting text
+  // in a field and releasing outside it closes the form and discards the edit.
+  document.getElementById('trigModal').addEventListener('mousedown', (ev) => {
+    if (ev.target.id === 'trigModal') close();
+  });
+  /*
+   * Nothing publishable to point at: Save cannot succeed, so it does not invite the attempt. The
+   * server would refuse anyway — this just puts the refusal before the work rather than after it.
+   */
+  const targetSel = document.getElementById('tgTarget');
+  if (!targetSel) {
+    const save = document.getElementById('tgSave');
+    save.disabled = true;
+    save.title = t('trigger.no_published');
+  }
+
   document.getElementById('tgCancel').addEventListener('click', close);
   document.getElementById('tgSave').addEventListener('click', async () => {
     const body = collect();

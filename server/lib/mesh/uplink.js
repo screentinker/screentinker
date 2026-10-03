@@ -55,7 +55,7 @@ class Uplink extends EventEmitter {
    */
   constructor({ parentUrl, edgeToken, nodeId, connect, tlsVerify = true,
                 bufferMax = DEFAULT_BUFFER_MAX, rand = Math.random, logger = console,
-                onRead = null }) {
+                onRead = null, onWrite = null, onContentOffer = null, onContentPurge = null }) {
     super();
     if (!parentUrl) throw new Error('An uplink needs a parent URL. There is no default address.');
     if (!edgeToken) throw new Error('An uplink needs an edge token.');
@@ -72,6 +72,18 @@ class Uplink extends EventEmitter {
     // Optional: with no handler the child simply refuses every read, which is the correct default
     // for a node that has not opted into being readable.
     this.onRead = onRead;
+    // Same default and same reason: with no handler the child refuses every write, which is correct
+    // for a node whose operator has not granted one.
+    this.onWrite = onWrite;
+    /*
+     * ⚠️ DESTRUCTURED ABOVE, and that is not a formality. The last handler added here was assigned
+     * from `opts.onContentOffer`-style scope that did not exist, which threw a ReferenceError in the
+     * CONSTRUCTOR — on every uplink, on every node. services/mesh-uplink.js catches per edge, so
+     * the entire mesh would have gone inert behind one warn line. I made the same mistake again
+     * writing this one; the test that merely CONSTRUCTS an Uplink caught it both times.
+     */
+    this.onContentOffer = onContentOffer;
+    this.onContentPurge = onContentPurge;
 
     this.socket = null;
     this.connected = false;
@@ -135,6 +147,73 @@ class Uplink extends EventEmitter {
           .catch(() => ack({ ok: false, reason: 'Could not read that.' }));
       } catch (e) {
         ack({ ok: false, reason: 'Could not read that.' });
+      }
+    });
+
+    /*
+     * ⚠️ THE SECOND — AND ONLY OTHER — INBOUND HANDLER. Same shape as mesh:read above and for the
+     * same reason: this file stays ignorant of the policy. It does not know what a playlist is,
+     * whether the parent holds a grant, or which workspace anything belongs to. It hands the
+     * request to the owner of the data (services/mesh-uplink.js -> lib/mesh/node-write.js) and
+     * returns whatever that decides.
+     *
+     * The default when no handler is wired is a REFUSAL, not silence — a node that has not been
+     * configured to accept writes must say so, because "no response" and "applied" are
+     * indistinguishable to a parent holding a timeout.
+     */
+    this.socket.on('mesh:write', (req, ack) => {
+      if (typeof ack !== 'function') return;
+      if (!this.onWrite) {
+        return ack({ ok: false, reason: 'This server does not accept changes from another server.' });
+      }
+      try {
+        Promise.resolve(this.onWrite(req || {}))
+          .then((r) => ack(r))
+          .catch(() => ack({ ok: false, reason: 'That change could not be applied.' }));
+      } catch (e) {
+        ack({ ok: false, reason: 'That change could not be applied.' });
+      }
+    });
+
+    /*
+     * ⚠️ THE THIRD INBOUND HANDLER, and the same shape as the other two on purpose: this file does
+     * not know what content is, what a digest proves, or how much disk is left. It hands the offer
+     * to the owner of the disk and returns whatever that decides.
+     *
+     * The default with no handler wired is a REFUSAL rather than silence, for the same reason as
+     * mesh:write — "no response" and "stored it" are indistinguishable to a parent holding a
+     * timeout, and here the parent would go on to add those files to a playlist.
+     */
+    this.socket.on('mesh:content-offer', (req, ack) => {
+      if (typeof ack !== 'function') return;
+      if (!this.onContentOffer) {
+        return ack({ ok: false, reason: 'This server does not accept content from another server.' });
+      }
+      try {
+        Promise.resolve(this.onContentOffer(req || {}))
+          .then((r) => ack(r))
+          .catch((e) => ack({ ok: false, reason: 'That content could not be stored.' }));
+      } catch (e) {
+        ack({ ok: false, reason: 'That content could not be stored.' });
+      }
+    });
+
+    /*
+     * ⚠️ THE FOURTH AND LAST INBOUND HANDLER, and the only one that removes anything. Same shape as
+     * the others: this file does not know what content is or what "still in use" means. It hands
+     * the request to the owner of the disk and returns whatever that decides.
+     */
+    this.socket.on('mesh:content-purge', (req, ack) => {
+      if (typeof ack !== 'function') return;
+      if (!this.onContentPurge) {
+        return ack({ ok: false, reason: 'This server does not accept content changes from another server.' });
+      }
+      try {
+        Promise.resolve(this.onContentPurge(req || {}))
+          .then((r) => ack(r))
+          .catch(() => ack({ ok: false, reason: 'That could not be applied.' }));
+      } catch (e) {
+        ack({ ok: false, reason: 'That could not be applied.' });
       }
     });
 
@@ -257,6 +336,22 @@ class Uplink extends EventEmitter {
         body_version: env.body_version,
         origin_ts: env.origin_ts,
         origin_node_id: env.origin_node_id,
+        /*
+         * ⚠️ THE ITEM'S OWN CHAIN, AND LEAVING IT OUT MADE RELAYING IMPOSSIBLE.
+         *
+         * This copied a fixed set of fields and ancestry was not one of them, so createBatch — which
+         * carries per-item ancestry precisely so a relayed item can be attested, and says so in its
+         * own comment — never received the field to carry. Every item arrived with an origin and no
+         * path, and the receiver refused it with "a node may only report data from its own subtree".
+         *
+         * Which was the CORRECT refusal: an item claiming an origin it cannot prove a path to is
+         * exactly what that check exists to stop. The bug was that an honest relay could not prove
+         * it either, because the proof was dropped one layer below the code written to send it.
+         *
+         * Costs nothing for the ordinary case: createBatch omits both fields when the item's origin
+         * matches the batch's, which is every item a node reports about itself.
+         */
+        ancestry: env.ancestry,
         body: env.body,
       });
       bytes += size;

@@ -1,7 +1,153 @@
 const { db } = require('../db/database');
 const config = require('../config');
+const { isSupportSession } = require('../lib/support-access');
 
 const TRIAL_DAYS = 14;
+
+// The ONE way a lapsed trial becomes Free. Used by the lazy path below (getUserPlan) and by the
+// nightly sweep (services/trialExpiry.js) so the two can never disagree on what "expired" writes.
+//
+// Sets plan_id='free', clears trial_started (so a later hand-granted plan is never re-downgraded
+// — see the comment in getUserPlan) and stamps trial_expired_at with the moment the trial
+// actually ended (trial_started + TRIAL_DAYS), NOT "now": the sweep may run days after the fact
+// and the expiry email + the player's "Trial Expired" card both key on this column.
+//
+// Guarded by the same predicate as getUserPlan so a stray call on a paying / comped / active
+// account is a no-op. Returns true when a row was flipped.
+// Prepared lazily: some test fixtures build a minimal users table without the trial columns and
+// require this module before any migration runs; a module-load prepare would throw there.
+let _expireTrialStmt;
+const EXPIRE_TRIAL_SQL = `
+  UPDATE users
+     SET plan_id = 'free',
+         trial_expired_at = trial_started + ${TRIAL_DAYS * 86400},
+         trial_started = NULL
+   WHERE id = ?
+     AND trial_started IS NOT NULL
+     AND trial_started + ${TRIAL_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+     AND stripe_subscription_id IS NULL
+     AND plan_id = trial_plan
+     AND plan_id != 'free'
+`;
+function expireTrial(userId) {
+  if (!_expireTrialStmt) _expireTrialStmt = db.prepare(EXPIRE_TRIAL_SQL);
+  return _expireTrialStmt.run(userId).changes === 1;
+}
+
+// Ids of every user whose trial has lapsed but who still sits on the trial plan. Same predicate
+// as expireTrial; the sweep feeds these back through expireTrial one at a time.
+//
+// ⚠️ CAST(strftime(...) AS INTEGER): strftime returns TEXT, and in SQLite an INTEGER compares
+// LESS THAN any TEXT, so `trial_started + N <= strftime('%s','now')` is ALWAYS true and
+// `> strftime(...)` ALWAYS false. Compare against an integer or the predicate lies silently.
+let _expiredTrialIdsStmt;
+const EXPIRED_TRIAL_IDS_SQL = `
+  SELECT id FROM users
+   WHERE trial_started IS NOT NULL
+     AND trial_started + ${TRIAL_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+     AND stripe_subscription_id IS NULL
+     AND plan_id = trial_plan
+     AND plan_id != 'free'
+`;
+function findExpiredTrialUserIds() {
+  if (!_expiredTrialIdsStmt) _expiredTrialIdsStmt = db.prepare(EXPIRED_TRIAL_IDS_SQL);
+  return _expiredTrialIdsStmt.all().map(r => r.id);
+}
+
+/* ============================ dunning: a PAID subscription that stopped paying ============================
+ *
+ * Distinct from the trial path above and deliberately so. A trial ends on a clock nobody can pay to
+ * stop; a failed payment is a customer who WANTS to pay and whose card did not work. So the first
+ * seven days change nothing except what they are told, and only then do they fall to Free.
+ *
+ * ⚠️ The players are never touched by any of this. Degrading a paying customer's SCREENS over a
+ * card problem turns a billing hiccup into a dark shopfront; falling to Free applies the Free
+ * limits, exactly as an expired trial already does, and nothing else.
+ *
+ * ⚠️ CAST(strftime('%s','now') AS INTEGER) — same trap as the trial predicate above: strftime
+ * returns TEXT and SQLite sorts every INTEGER below every TEXT, so an un-cast comparison is
+ * silently always-true or always-false.
+ */
+const GRACE_DAYS = Math.max(0, Number(process.env.BILLING_GRACE_DAYS) || 7);
+
+// Start the clock, once. `past_due_since IS NULL` makes a repeated failed invoice — Stripe retries
+// several times per episode — leave the ORIGINAL failure time alone, which is what the grace is
+// measured from. Returns true only for the first one.
+let _startGraceStmt;
+function startGrace(userId, atSec = Math.floor(Date.now() / 1000)) {
+  if (!_startGraceStmt) _startGraceStmt = db.prepare(`
+    UPDATE users SET past_due_since = ?, subscription_status = 'past_due'
+     WHERE id = ? AND past_due_since IS NULL`);
+  return _startGraceStmt.run(atSec, userId).changes === 1;
+}
+
+// A payment went through (or the subscription is active again): forget the episode entirely,
+// including the email stamps, so a future lapse months from now is announced rather than silent.
+let _clearGraceStmt;
+function clearGrace(userId) {
+  if (!_clearGraceStmt) _clearGraceStmt = db.prepare(`
+    UPDATE users
+       SET past_due_since = NULL, payment_failed_email_sent_at = NULL,
+           subscription_lapsed_email_sent_at = NULL, subscription_status = 'active'
+     WHERE id = ? AND past_due_since IS NOT NULL`);
+  return _clearGraceStmt.run(userId).changes === 1;
+}
+
+// Ids of subscribers whose grace has run out and who are still on a paid plan. Same predicate as
+// downgradeLapsed; the sweep feeds these back through it one at a time.
+let _lapsedIdsStmt;
+function findLapsedSubscriberIds() {
+  if (!_lapsedIdsStmt) _lapsedIdsStmt = db.prepare(`
+    SELECT id FROM users
+     WHERE past_due_since IS NOT NULL
+       AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+       AND plan_id != 'free'`);
+  return _lapsedIdsStmt.all().map(r => r.id);
+}
+
+/*
+ * Fall to Free. `stripe_subscription_id` is deliberately KEPT: it is how the reconcile finds this
+ * account again if the customer fixes their card, and clearing it would orphan a subscription that
+ * still exists in Stripe. `customer.subscription.deleted` is the event that clears it, because
+ * that is the one that means the subscription is really gone.
+ */
+let _downgradeLapsedStmt;
+function downgradeLapsed(userId) {
+  if (!_downgradeLapsedStmt) _downgradeLapsedStmt = db.prepare(`
+    UPDATE users SET plan_id = 'free', subscription_status = 'unpaid'
+     WHERE id = ?
+       AND past_due_since IS NOT NULL
+       AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
+       AND plan_id != 'free'`);
+  return _downgradeLapsedStmt.run(userId).changes === 1;
+}
+
+/*
+ * The other half of the downgrade, and it was missing.
+ *
+ * downgradeLapsed() writes plan_id='free'. Recovery therefore has to put the plan BACK — clearing
+ * the grace clock and writing subscription_status='active' on its own leaves someone who has just
+ * paid sitting on Free limits, which from their side is indistinguishable from not having paid at
+ * all. Called from every path that learns the money arrived: the invoice webhook, the subscription
+ * webhook, and the daily reconcile.
+ *
+ * ⚠️ The plan id is CHECKED against the plans table first. A plan_id with no row grants nothing —
+ * getUserPlan INNER JOINs plans — so writing an unknown one is strictly worse than leaving them on
+ * Free, where at least the limits are real.
+ */
+function restorePlan(userId, planId) {
+  if (!planId) return false;
+  const known = db.prepare('SELECT 1 FROM plans WHERE id = ?').get(planId);
+  if (!known) {
+    console.warn(`[billing] refusing to restore unknown plan '${planId}' for user ${userId}`);
+    return false;
+  }
+  return db.prepare(`
+    UPDATE users
+       SET plan_id = ?, subscription_status = 'active', past_due_since = NULL,
+           payment_failed_email_sent_at = NULL, subscription_lapsed_email_sent_at = NULL
+     WHERE id = ?`).run(planId, userId).changes === 1;
+}
 
 function getUserPlan(userId) {
   const user = db.prepare(`
@@ -43,7 +189,7 @@ function getUserPlan(userId) {
     // being silently downgraded. Grandfathered users (trial_started IS NULL) never reach this
     // block at all.
     if (!user.trial_active && !user.stripe_subscription_id && user.plan_id === user.trial_plan && user.plan_name !== 'free') {
-      db.prepare("UPDATE users SET plan_id = 'free', trial_started = NULL WHERE id = ?").run(userId);
+      expireTrial(userId);
       // Re-fetch with free plan
       return getUserPlan(userId);
     }
@@ -64,10 +210,47 @@ function getUserStorageMB(userId) {
   return Math.ceil(result.total / (1024 * 1024));
 }
 
+/**
+ * Bytes this user may still store, or null when the plan is unlimited.
+ *
+ * ⚠️ EXISTS BECAUSE checkStorageLimit CANNOT DO THIS. That middleware runs before any bytes are
+ * seen and can only ask "are you already at the limit", so a workspace at 19.9GB of 20GB passes it
+ * and then uploads a 500MB file, landing at 20.4GB. Nothing was lying; the size simply was not
+ * knowable yet.
+ *
+ * A resumable upload DECLARES its size before sending anything, which is the one thing a session
+ * knows that a stream does not — so the allowance can be enforced up front, before a gigabyte
+ * crosses the Pacific to be refused at the end.
+ *
+ * Returns a possibly NEGATIVE number when someone is already over (a plan downgrade will do it),
+ * so callers see the true shortfall rather than a floor of zero.
+ */
+function storageRoomBytes(userId) {
+  const plan = getUserPlan(userId);
+  if (!plan || plan.max_storage_mb === -1) return null;
+  const used = db.prepare('SELECT COALESCE(SUM(file_size), 0) AS total FROM content WHERE user_id = ?').get(userId);
+  return (plan.max_storage_mb * 1024 * 1024) - Number(used.total || 0);
+}
+
 // Check if user can add more devices
 function checkDeviceLimit(req, res, next) {
   const plan = getUserPlan(req.user.id);
-  if (!plan) return res.status(403).json({ error: 'No plan found' });
+  if (!plan) {
+    /*
+     * A support session has no `users` row by design, so getUserPlan finds no plan and this
+     * refused it — `No plan found`, before a single byte was accepted. Reported from the field
+     * on 2026-09-28: signed in through a support token to reproduce a customer's playback
+     * problem, uploading content was impossible.
+     *
+     * Only a support session is let through, NOT every plan-less caller. getUserPlan returns null
+     * for two different situations and they deserve opposite answers: a session with no billable
+     * account (support), and a real user whose plan_id does not join a plans row — a data fault,
+     * where silently granting unlimited storage is the wrong repair. Support sessions are consent
+     * -gated, time-boxed and recorded in support_grants, so they are the narrow case.
+     */
+    if (isSupportSession(req.user)) return next();
+    return res.status(403).json({ error: 'No plan found' });
+  }
 
   // -1 means unlimited
   if (plan.max_devices === -1) return next();
@@ -88,7 +271,22 @@ function checkDeviceLimit(req, res, next) {
 // Check if user can upload more content
 function checkStorageLimit(req, res, next) {
   const plan = getUserPlan(req.user.id);
-  if (!plan) return res.status(403).json({ error: 'No plan found' });
+  if (!plan) {
+    /*
+     * A support session has no `users` row by design, so getUserPlan finds no plan and this
+     * refused it — `No plan found`, before a single byte was accepted. Reported from the field
+     * on 2026-09-28: signed in through a support token to reproduce a customer's playback
+     * problem, uploading content was impossible.
+     *
+     * Only a support session is let through, NOT every plan-less caller. getUserPlan returns null
+     * for two different situations and they deserve opposite answers: a session with no billable
+     * account (support), and a real user whose plan_id does not join a plans row — a data fault,
+     * where silently granting unlimited storage is the wrong repair. Support sessions are consent
+     * -gated, time-boxed and recorded in support_grants, so they are the narrow case.
+     */
+    if (isSupportSession(req.user)) return next();
+    return res.status(403).json({ error: 'No plan found' });
+  }
 
   // -1 means unlimited
   if (plan.max_storage_mb === -1) return next();
@@ -132,7 +330,14 @@ function checkRemoteUrl(req, res, next) {
   next();
 }
 
-// Check subscription is active (not expired)
+/*
+ * ⚠️ NEVER MOUNTED, and now superseded. This was the only thing in the codebase that looked like
+ * subscription enforcement, which is exactly why it was dangerous: it is exported, commented, and
+ * wired to nothing, so `past_due` had no effect on anything at all. Enforcement is now the
+ * dunning sweep (services/dunning.js) moving a lapsed subscriber to Free, after which the ordinary
+ * plan limits apply — one mechanism, the same one an expired trial already uses. Kept only so a
+ * self-hosted fork that DID mount it is not broken by its disappearance; do not add it to a route.
+ */
 function checkActiveSubscription(req, res, next) {
   const plan = getUserPlan(req.user.id);
   if (!plan) return res.status(403).json({ error: 'No plan found' });
@@ -154,6 +359,16 @@ function checkActiveSubscription(req, res, next) {
 }
 
 module.exports = {
+  storageRoomBytes,
+  TRIAL_DAYS,
+  GRACE_DAYS,
+  startGrace,
+  clearGrace,
+  findLapsedSubscriberIds,
+  downgradeLapsed,
+  restorePlan,
+  expireTrial,
+  findExpiredTrialUserIds,
   getUserPlan,
   getUserDeviceCount,
   getUserStorageMB,

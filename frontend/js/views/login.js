@@ -2,6 +2,7 @@ import { showToast } from '../components/toast.js';
 import { loginFormState } from '../lib/login-form-state.js';
 import { t } from '../i18n.js';
 import { esc } from '../utils.js';
+import { applyAccent } from '../branding.js';
 
 
 /*
@@ -56,7 +57,7 @@ function brandEsc(s) {
 // Apply document-level branding (colors, favicon, title, custom CSS) for login.
 function applyLoginBrandingDoc(b) {
   const root = document.documentElement;
-  if (b.primary_color) root.style.setProperty('--accent', b.primary_color);
+  applyAccent(root, b.primary_color);
   if (b.bg_color) root.style.setProperty('--bg-primary', b.bg_color);
   if (b.brand_name) document.title = b.brand_name;
   if (b.favicon_url) {
@@ -170,7 +171,7 @@ export async function render(container) {
             <div class="form-group">
               <label>${t('auth.mfa_code_label')}</label>
               <input type="text" id="mfaCode" class="input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false"
-                     placeholder="123456" maxlength="12" style="letter-spacing:6px;text-align:center;font-family:monospace;font-size:18px">
+                     placeholder="123456" maxlength="40" style="letter-spacing:6px;text-align:center;font-family:monospace;font-size:18px">
             </div>
             <button class="btn btn-primary" id="mfaVerifyBtn" style="width:100%;justify-content:center;padding:10px">${t('auth.mfa_verify')}</button>
             <button class="btn btn-secondary" id="mfaBackBtn" style="width:100%;justify-content:center;padding:10px;margin-top:8px">${t('auth.back_to_signin')}</button>
@@ -293,9 +294,20 @@ function setupHandlers(config, isSetup) {
      * what that address uses BEFORE offering a credential, so an SSO-only user is never shown a
      * password box that is going to be refused, and the org lookup has somewhere to happen.
      */
-    document.getElementById('loginBtn')?.addEventListener('click', () => {
+    document.getElementById('loginBtn')?.addEventListener('click', async () => {
       if (identified && !ssoOnlyDomain) return doLogin();
-      identify();
+      await identify();
+      /*
+       * ⚠️ A FORM THAT ALREADY CARRIES A PASSWORD HAS SAID EVERYTHING THE LOGIN NEEDS.
+       *
+       * Identifier-first means one press advances the step rather than signing in. That is right
+       * for someone typing, and wrong for everything that fills both boxes before pressing
+       * anything: a password manager's autofill, and any test harness doing the universal
+       * fill-email, fill-password, submit. Those press once, no request is sent, no message is
+       * shown, and the only thing they can conclude is that the login failed. So once the address
+       * has been identified, a password that is already there is submitted on the same press.
+       */
+      if (identified && !ssoOnlyDomain && document.getElementById('loginPassword')?.value) return doLogin();
     });
     document.getElementById('showRegisterBtn')?.addEventListener('click', () => {
       document.getElementById('localAuthForm').style.display = 'none';
@@ -309,19 +321,31 @@ function setupHandlers(config, isSetup) {
   }
 
   // Enter key on password field
-  document.getElementById('loginPassword')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') isSetup ? doRegister(true) : doLogin();
+  document.getElementById('loginPassword')?.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    if (isSetup) return doRegister(true);
+    /*
+     * ⚠️ NEVER SUBMIT A PASSWORD BOX THAT IS HIDDEN. Its value belongs to whichever address was in
+     * the form BEFORE this one — the box is hidden by the address listener below and keeps what it
+     * held — so sending it is a guaranteed 401 on credentials the operator believes are correct.
+     * Worse, that 401 counts toward the per-account lockout (10 failures, 15 minutes), whose
+     * response is deliberately identical to a wrong password. Identify first, as the button does.
+     */
+    if (identified && !ssoOnlyDomain) return doLogin();
+    await identify();
+    if (identified && !ssoOnlyDomain && document.getElementById('loginPassword')?.value) return doLogin();
   });
 
   /*
    * Enter in the EMAIL field advances rather than submitting. During first-run setup both fields
    * are needed at once, so identifier-first is skipped entirely there.
    */
-  document.getElementById('loginEmail')?.addEventListener('keydown', (e) => {
+  document.getElementById('loginEmail')?.addEventListener('keydown', async (e) => {
     if (e.key !== 'Enter') return;
     if (isSetup) return doRegister(true);
     if (identified && !ssoOnlyDomain) return doLogin();
-    identify();
+    await identify();
+    if (identified && !ssoOnlyDomain && document.getElementById('loginPassword')?.value) return doLogin();
   });
 
   /*
@@ -334,6 +358,16 @@ function setupHandlers(config, isSetup) {
     if (isSetup) return;
     if (!identified) return;
     identified = false;
+    /*
+     * ⚠️ AND DROP THE PASSWORD, which was entered for the address that is being edited away.
+     * applyFormState only hides the box, so it used to keep that value out of sight and submit it
+     * against the NEW address on the next press — a 401 nobody could explain from the screen,
+     * because the box you would check is hidden. A password manager makes this the common case: it
+     * cannot match an account on an identifier-first form, so it fills the one password it has for
+     * this site, and typing a different address on top leaves that password behind.
+     */
+    const pw = document.getElementById('loginPassword');
+    if (pw) pw.value = '';
     applyFormState();
   });
 

@@ -1,0 +1,311 @@
+'use strict';
+
+const { SCOPES } = require('./api-scopes');
+
+/*
+ * The machine-readable front door: what an automated client is told about this instance.
+ *
+ * Everything here describes capabilities this deployment ACTUALLY HAS. That is the whole design
+ * rule. A discovery document is a promise an agent will act on — it will fetch the URL, attempt the
+ * auth flow, call the endpoint — so advertising something we do not serve does not make us look
+ * capable, it makes every agent that believes us fail in a way it cannot diagnose. Where we do not
+ * have the thing, there is no file.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+function origin(req) {
+  const configured = String(process.env.APP_URL || '').trim().replace(/\/+$/, '');
+  if (configured) return configured;
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+/*
+ * RFC 9727: /.well-known/api-catalog, a linkset naming the APIs this host offers.
+ *
+ * One API, described by the OpenAPI document we already publish and already lint in CI — so the
+ * catalogue cannot describe an API that has drifted from its description without the build failing
+ * first. `service-doc` is the human page, `service-desc` the machine contract; agents use the second
+ * and people click the first.
+ */
+function apiCatalog(base) {
+  return {
+    linkset: [{
+      anchor: `${base}/api`,
+      'service-desc': [{ href: `${base}/openapi.yaml`, type: 'application/yaml',
+        title: 'ScreenTinker Public API — OpenAPI 3 description' }],
+      'service-doc': [{ href: `${base}/docs`, type: 'text/html',
+        title: 'ScreenTinker Public API reference' }],
+      'service-meta': [{ href: `${base}/auth.md`, type: 'text/markdown',
+        title: 'How to authenticate against the ScreenTinker API' }],
+      // The MCP endpoint is part of this API's surface, so it belongs in the catalogue an agent reads
+      // first rather than only in prose.
+      related: [{ href: `${base}/mcp`, type: 'application/json',
+        title: 'ScreenTinker MCP server — manage signage from an AI client' }],
+      author: [{ href: 'https://github.com/screentinker/screentinker' }],
+    }],
+  };
+}
+
+/*
+ * ARD capability manifest (agenticresourcediscovery.org, ai-catalog data model).
+ *
+ * ⚠️ EVERY ENTRY IS SOMETHING THIS INSTANCE ACTUALLY SERVES, and each is reachable by the URL given.
+ * A catalogue is read by something that will then GO THERE; an entry for a capability we do not have
+ * costs an agent a request and its trust, and we would never hear about it.
+ *
+ * ⚠️ Exactly one of `url` or `data` per entry — never both, never neither.
+ */
+function aiCatalog(base) {
+  return {
+    specVersion: '1.0',
+    host: {
+      displayName: 'ScreenTinker',
+      identifier: base,
+      description: 'Open-source digital signage: manage screens, playlists and schedules.',
+    },
+    entries: [
+      {
+        identifier: `${base}/mcp`,
+        displayName: 'ScreenTinker MCP server',
+        description: 'Model Context Protocol endpoint. 21 tools, filtered by the token\'s scope.',
+        type: 'application/json',
+        url: `${base}/.well-known/mcp/server-card.json`,
+      },
+      {
+        identifier: `${base}/openapi.yaml`,
+        displayName: 'ScreenTinker Public API',
+        description: 'OpenAPI 3 description of the REST API the MCP server is a client of.',
+        type: 'application/yaml',
+        url: `${base}/openapi.yaml`,
+      },
+      {
+        identifier: `${base}/.well-known/agent-skills/index.json`,
+        displayName: 'ScreenTinker agent skills',
+        description: 'Skill documents describing how to operate a screen estate.',
+        type: 'application/json',
+        url: `${base}/.well-known/agent-skills/index.json`,
+      },
+      {
+        identifier: `${base}/auth.md`,
+        displayName: 'Authentication guide',
+        description: 'Scoped bearer tokens, issued by a human. No programmatic registration.',
+        type: 'text/markdown',
+        url: `${base}/auth.md`,
+      },
+    ],
+  };
+}
+
+/*
+ * OAuth 2.0 Protected Resource Metadata (RFC 9728).
+ *
+ * ⚠️ `authorization_servers` IS DELIBERATELY ABSENT, and that is the honest document rather than an
+ * incomplete one. The field is OPTIONAL in RFC 9728, and this resource delegates to nothing: there
+ * is no authorization server, no `/authorize`, no `/token`, and sessions are signed with a symmetric
+ * secret so there is no key a `jwks_uri` could publish. Naming an issuer here would send a client
+ * into a discovery-and-redirect dance that ends at a 404 — the same wasted-retries failure the auth
+ * guide exists to prevent. Everything that IS true is published: what the resource is, which scopes
+ * exist, how a credential is presented, and where the prose lives.
+ *
+ * A reader that finds no authorization server here should read resource_documentation and stop; the
+ * credential comes from a human.
+ */
+function protectedResourceMetadata(base) {
+  return {
+    resource: base,
+    resource_name: 'ScreenTinker Public API',
+    scopes_supported: [...SCOPES],
+    bearer_methods_supported: ['header'],
+    resource_documentation: `${base}/auth.md`,
+    // Not an RFC 9728 field. The MCP endpoint is the surface most agents actually want, and a
+    // client that found this document should not have to guess the path.
+    mcp_endpoint: `${base}/mcp`,
+  };
+}
+
+/*
+ * How an agent authenticates. Served as Markdown at /auth.md (and /.well-known/auth.md) because
+ * the convention asks for and the format a model reads without a parser.
+ *
+ * ⚠️ EVERY CLAIM BELOW IS CHECKED AGAINST middleware/apiToken.js AND config/api-surface.js. The
+ * limits are the interesting part and the part worth being precise about: a token that is told it can
+ * do more than it can produces an agent that retries a 401 forever.
+ */
+function authMarkdown(base) {
+  /*
+   * ⚠️ THE H1 CONTAINS "auth.md" ON PURPOSE. Discovery scanners identify this document by its
+   * heading, not only by its path, so a purely descriptive title ("Authenticating with the
+   * ScreenTinker API") reads as a page that happens to be about auth rather than as the document
+   * the convention defines. The descriptive title survives as the line under it.
+   */
+  return `# ScreenTinker auth.md
+
+*How an automated client authenticates with this ScreenTinker instance.*
+
+**Audience:** AI agents, MCP clients and scripts acting on behalf of a ScreenTinker user.
+
+ScreenTinker uses **scoped personal access tokens**. There is no OAuth flow, no client registration,
+and no way for an agent to obtain a token on its own — a human creates one in the dashboard and gives
+it to you. If you do not have one, stop here and ask for one.
+
+## Registration
+
+**There is no programmatic registration endpoint, and none is planned.** Do not look for one, and do
+not treat a \`401\` as a prompt to go and find one.
+
+| | |
+| --- | --- |
+| Supported method | \`bearer\` — a long-lived token in the \`Authorization\` header |
+| Provisioning surface | ${base}/app#/settings (human, signed in) |
+| OAuth authorization server | none — this resource does not delegate authentication |
+| Credential format | opaque string beginning \`st_\` |
+| Credential lifetime | until revoked in the dashboard |
+
+⚠️ An agent that cannot present a token cannot obtain access by any other route here. The correct
+behaviour is to stop and ask the person you are working for, naming this page.
+
+## Presenting a token
+
+    Authorization: Bearer st_...
+
+Tokens begin with \`st_\`. The API description is at ${base}/openapi.yaml and the
+rendered reference at ${base}/docs.
+
+## What a token can do
+
+A token is bound to **one workspace** and carries **one scope**:
+
+| scope | meaning |
+| --- | --- |
+| \`read\` | GET only |
+| \`write\` | GET plus create and update |
+| \`full\` | the above plus delete |
+
+## What a token can never do
+
+A token authenticates as its owner but is forced to the lowest platform role, so it is **not** a way
+to reach an administrative surface. These are unreachable with any token, by construction rather than
+by a permission check: platform administration, authentication and account management, billing,
+workspace and organisation management, and provisioning.
+
+It also cannot cross a workspace boundary: the workspace is fixed when the token is created.
+
+## Rate limits and failure
+
+- \`401\` — missing, malformed, revoked, or a token presented to a surface tokens cannot reach.
+- \`403\` — a valid token whose scope does not permit the method.
+
+A \`401\` from an endpoint you believe you should reach is far more likely to mean "tokens cannot
+reach this endpoint at all" than "your token is wrong". Retrying will not fix it.
+
+## Getting a token
+
+Sign in to the dashboard, open **Settings → API tokens**, create one, and copy it — the value is shown
+once and stored only as a hash.
+
+## Managing signage from an AI client
+
+This instance runs a **Model Context Protocol server** at \`${base}/mcp\`. Point an MCP-capable client
+at that URL with the same \`Authorization: Bearer st_...\` header and it gets a curated set of tools
+rather than 133 raw endpoints. ⚠️ The tool list is filtered by the token's scope: a \`read\` token is
+never shown a tool that writes.
+
+## Self-hosted instances
+
+ScreenTinker is open source and commonly self-hosted, so this document describes **this** instance at
+${base}. Another deployment may be a different version with a different set of endpoints; read its own
+\`${base}/openapi.yaml\` rather than assuming ours.
+`;
+}
+
+/*
+ * The Link header set for a public HTML page.
+ *
+ * Link headers are how a client that has fetched one URL learns about the rest without guessing at
+ * well-known paths. The markdown alternate is the load-bearing one for an agent: it says "there is a
+ * plain-text form of this exact page, here", which is cheaper for it to read and cheaper for us to
+ * serve than the full document.
+ */
+function linkHeader(base, { markdownOf = null } = {}) {
+  const links = [
+    `<${base}/.well-known/api-catalog>; rel="api-catalog"`,
+    `<${base}/openapi.yaml>; rel="service-desc"; type="application/yaml"`,
+    `<${base}/docs>; rel="service-doc"; type="text/html"`,
+    // The auth document is advertised from every page, not only from the catalogue: a client that
+    // landed on any URL should be able to find out how to authenticate without a second discovery
+    // hop it may not know to make.
+    `<${base}/auth.md>; rel="service-meta"; type="text/markdown"`,
+    `<${base}/llms.txt>; rel="describedby"; type="text/plain"`,
+  ];
+  if (markdownOf) {
+    links.unshift(`<${base}${markdownOf}>; rel="alternate"; type="text/markdown"`);
+  }
+  return links.join(', ');
+}
+
+/*
+ * Does this request want Markdown?
+ *
+ * ⚠️ A BROWSER SENDS `Accept: text/html,...,*​/*;q=0.8`, and that trailing wildcard matches
+ * text/markdown. Treating any match as a yes would serve Markdown to every human visitor. So the
+ * test is comparative: markdown must be asked for EXPLICITLY and must outrank text/html.
+ */
+function prefersMarkdown(accept) {
+  // Parsed, not pattern-matched: an Accept header is a list with parameters, and the q values are the
+  // whole question here. A regex over the raw string got the escaping wrong and quietly answered
+  // "no" to every request, which looks exactly like the feature not being deployed.
+  const entries = String(accept || '').toLowerCase().split(',').map((part) => {
+    const [type, ...params] = part.trim().split(';').map((x) => x.trim());
+    const qParam = params.find((p) => p.startsWith('q='));
+    const q = qParam ? parseFloat(qParam.slice(2)) : 1;
+    return { type, q: Number.isFinite(q) ? q : 1 };
+  }).filter((e) => e.type);
+
+  const qOf = (t) => {
+    const hit = entries.find((e) => e.type === t);
+    return hit ? hit.q : -1;
+  };
+  const md = Math.max(qOf('text/markdown'), qOf('text/x-markdown'));
+  // ⚠️ Must be asked for EXPLICITLY. A browser sends `*/*;q=0.8`, which matches text/markdown by the
+  // wildcard — honouring that would serve Markdown to every human visitor.
+  if (md <= 0) return false;
+  return md >= qOf('text/html');
+}
+
+/* The pages that have a Markdown rendition: our own published HTML, nothing else. */
+function markdownSource(frontendDir, urlPath) {
+  // Strip the extension we added, then resolve inside frontendDir only.
+  const rel = urlPath.replace(/\.md$/, '');
+  /*
+   * ⚠️ `/` AND `/index` BOTH MEAN THE LANDING PAGE, NOT index.html. On this site index.html is the
+   * dashboard SPA shell — a few hundred bytes of module loader with no prose in it — and `/` is
+   * served from landing.html. Resolving `/index.md` by filename would hand an agent the app shell and
+   * call it our homepage.
+   */
+  if (rel === '/' || rel === '' || rel === '/index') {
+    const landing = path.join(frontendDir, 'landing.html');
+    try { return fs.statSync(landing).isFile() ? landing : null; } catch (e) { return null; }
+  }
+  if (/^\/index(\.html)?$/.test(rel)) return null;
+  const bare = rel.replace(/^\/+/, '');
+  // A trailing slash is a directory index (/integrations/ -> integrations/index.html). Without this
+  // the section landing pages are the only published pages with no Markdown rendition, which is both
+  // arbitrary and invisible.
+  const candidates = rel.endsWith('/')
+    ? [bare + 'index.html']
+    : [bare + '.html', bare, bare + '/index.html'];
+  for (const c of candidates) {
+    if (c.includes('..') || c.includes('\0')) return null;
+    const full = path.join(frontendDir, c);
+    // Containment check: path.join collapses traversal, so compare the resolved prefix.
+    if (!full.startsWith(path.resolve(frontendDir) + path.sep)) return null;
+    try {
+      if (fs.statSync(full).isFile() && full.endsWith('.html')) return full;
+    } catch (e) { /* next candidate */ }
+  }
+  return null;
+}
+
+module.exports = { origin, apiCatalog, aiCatalog, authMarkdown, protectedResourceMetadata, linkHeader, prefersMarkdown, markdownSource };

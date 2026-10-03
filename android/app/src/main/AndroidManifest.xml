@@ -1,13 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Provisioning-only: lets a device-owner panel enable its OWN accessibility service (the
+         durable whole-screen-capture + D-pad path) without a human toggling Settings. Protected /
+         signature-level, so it is inert unless granted once at setup:
+         adb shell pm grant com.remotedisplay.player android.permission.WRITE_SECURE_SETTINGS -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- #talk: two-way voice intercom mic capture + microphone FGS -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- OPTIONAL, and never requested at startup. Android 8.1+ hides the connected Wi-Fi network
@@ -39,11 +49,21 @@
         android:supportsRtl="true">
 
         <!-- Main fullscreen media player activity -->
+        <!-- orientation=nosensor: run in the PANEL'S NATURAL orientation (never sensor-driven), and let
+             the per-device orientation setting rotate content in software (TransitionGeometry
+             .orientationRotSwap + rootView.rotation). Forcing "landscape" here made a natively-PORTRAIT
+             panel (e.g. an 800x1280 room-sign tablet) run at a rotated logical resolution, so the OS/ROM
+             display compositor had to hardware-rotate the framebuffer onto the physical glass — a step
+             some ROMs botch (black bar + edge-clamp smear on the physical panel while the app framebuffer
+             stayed clean). It also made the #344 native-portrait handling dead code, because a locked
+             landscape window can never report windowPortrait=true. nosensor keeps every landscape-natural
+             panel byte-identical (natural == landscape) and lets portrait panels render native, no
+             hardware rotate. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen"
             android:keepScreenOn="true"
             android:launchMode="singleTask">
@@ -60,17 +80,19 @@
         </activity>
 
         <!-- Screen capture permission request (transparent) -->
+        <!-- nosensor: match MainActivity so this transient activity never forces a rotate on a
+             portrait-natural panel (see MainActivity note). -->
         <activity
             android:name=".ScreenCapturePermissionActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="nosensor" />
 
         <!-- Initial setup wizard (permissions) -->
         <activity
             android:name=".SetupActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
 
         <!-- #device-owner: MDM-deploy-only guided screen to enable the accessibility service
@@ -78,14 +100,14 @@
         <activity
             android:name=".OwnerAccessibilityActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
 
         <!-- Provisioning/setup activity -->
         <activity
             android:name=".ProvisioningActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
+            android:screenOrientation="nosensor"
             android:theme="@style/Theme.RemoteDisplay.Fullscreen" />
 
         <!-- WebSocket foreground service. #5: declares ONLY mediaPlayback - the
@@ -103,6 +125,22 @@
             android:name=".service.MediaProjectionService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- #go2rtc: live-video MediaProjection sender FGS. Same mediaProjection FGS type as the
+             screenshot service above, kept separate so live video and screenshots never share a
+             single-use projection consent token. Started only after consent is granted. -->
+        <service
+            android:name=".service.LiveVideoService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- #talk: two-way voice intercom sender/receiver FGS. Captures the mic (uplink) and plays
+             operator audio (downlink) over WebRTC. microphone FGS type because it records audio in
+             the background on Android 14+; no MediaProjection is involved. -->
+        <service
+            android:name=".service.TalkService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Accessibility service for power controls -->
         <service

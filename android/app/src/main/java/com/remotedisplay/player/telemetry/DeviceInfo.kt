@@ -20,6 +20,22 @@ import org.json.JSONObject
 
 class DeviceInfo(private val context: Context) {
 
+    /*
+     * ⚠️ ONE ServerConfig FOR THE LIFE OF THIS OBJECT. #406.
+     *
+     * Constructing it is not cheap: the constructor opens BOTH preference stores to decide which
+     * one holds the pairing (#312), and the encrypted one is an EncryptedSharedPreferences, i.e. a
+     * Keystore/Tink round trip. getDeviceInfo() built two of them per call, and it is called from
+     * deviceInfoPayload() on register, re-register AND the 60 s heartbeat — all posted to the main
+     * looper. On an RK3566/OP-TEE board, whose Keystore is unreliable, Tink's "wait and retry" on
+     * each failure was a visible stall on the thread that draws, roughly twice a minute forever.
+     * Nothing in here changes during playback, so build it once. Same pattern as UpdateChecker.
+     */
+    private val serverConfig by lazy { ServerConfig(context) }
+
+    // Keeps the previous /proc/stat sample, so it lives as long as this object (one per service).
+    private val cpuLoad = CpuLoad()
+
     fun getTelemetry(): JSONObject {
         return JSONObject().apply {
             put("battery_level", getBatteryLevel())
@@ -28,7 +44,8 @@ class DeviceInfo(private val context: Context) {
             put("storage_total_mb", getStorageTotalMB())
             put("ram_free_mb", getRamFreeMB())
             put("ram_total_mb", getRamTotalMB())
-            put("cpu_usage", getCpuUsage())
+            // #474: real CPU load, or no key at all where /proc/stat is unreadable (see CpuLoad).
+            cpuLoad.sample()?.let { put("cpu_usage", Math.round(it * 10) / 10.0) }
             put("wifi_ssid", getWifiSSID())
             // The screen's OWN address on the network. The server separately records the PUBLIC
             // address it sees the connection from; showing only that had customers reading their
@@ -41,6 +58,10 @@ class DeviceInfo(private val context: Context) {
             put("local_ip6", getLocalIp6() ?: JSONObject.NULL)
             put("wifi_rssi", getWifiRSSI())
             put("uptime_seconds", getUptimeSeconds())
+            // SoC temperature. The server and dashboard already handle temperature_c (BrightSign
+            // sends it); leaving the key out when there is no usable sensor is what the server reads
+            // as "no thermometer", so a null is never sent as a number. See SocTemperature.
+            SocTemperature.read()?.let { put("temperature_c", it) }
             // #74/#75: OS timezone + UTC clock (effective-tz resolution + dashboard skew indicator)
             put("timezone", java.util.TimeZone.getDefault().id)
             put("device_utc", System.currentTimeMillis())
@@ -62,7 +83,7 @@ class DeviceInfo(private val context: Context) {
             put("render_height", renH)
             // #139 Phase 2: report OTA backoff state (alongside app_version) so the dashboard can
             // flag screens stuck in manual-update-required. Read from the persisted throttle state.
-            val cfg = ServerConfig(context)
+            val cfg = serverConfig
             val ota = OtaThrottle.State(cfg.otaTargetVersion, cfg.otaAttempts, cfg.otaLastAttemptAt, cfg.otaBackoffReported)
             put("ota_status", OtaThrottle.statusFor(ota, System.currentTimeMillis()))
             put("ota_target_version", cfg.otaTargetVersion)
@@ -88,7 +109,7 @@ class DeviceInfo(private val context: Context) {
                 put("media_volume", getMediaVolumeFraction())
                 put("system_brightness", getSystemBrightnessFraction())
                 put("screen_off_timeout_ms", getScreenOffTimeout())
-                put("window_brightness", ServerConfig(context).windowBrightness)   // -1 = follow system
+                put("window_brightness", serverConfig.windowBrightness)   // -1 = follow system
             } catch (_: Throwable) { /* leave flags absent -> dashboard treats as false */ }
         }
     }
@@ -167,18 +188,6 @@ class DeviceInfo(private val context: Context) {
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
         return memInfo.totalMem / (1024 * 1024)
-    }
-
-    private fun getCpuUsage(): Double {
-        // Simple estimation - in production you'd read /proc/stat
-        return try {
-            val runtime = Runtime.getRuntime()
-            val usedMem = runtime.totalMemory() - runtime.freeMemory()
-            val maxMem = runtime.maxMemory()
-            (usedMem.toDouble() / maxMem.toDouble()) * 100.0
-        } catch (e: Exception) {
-            0.0
-        }
     }
 
     /**

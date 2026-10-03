@@ -45,6 +45,34 @@ const PAYLOAD_TYPES = Object.freeze({
   'proof-of-play': 1,
   'tombstone': 1,
   /*
+   * Scale-out: "my change log has advanced to rev N for workspace W". Tiny, coalesced, and the
+   * replica answers it by PULLING (mesh:read /api/mesh/changes) — the rows themselves never ride
+   * an envelope, so a burst of writes is one notice and one bounded read, never a flood upward.
+   */
+  'change-notice': 1,
+  /*
+   * Scale-out C2: "deliver this to a screen attached to you" — a command (or any other
+   * server-to-player message) for a player that is connected to a REPLICA, sent UP the edge by the
+   * primary that owns the screen. Permitted because the replica's operator declared
+   * terminates-players for the edge; the replica only delivers to a socket it holds, and only for a
+   * device whose workspace is copied from the sender (I2 accounting in mesh-invariants.test.js).
+   */
+  'command-relay': 1,
+  /*
+   * ⚠️ WHAT THE CHILD HAS DECIDED THIS PARENT MAY DO — A COURTESY, NEVER AN AUTHORITY.
+   *
+   * The hub cannot otherwise know it has been granted anything: the grant lives on the child, is
+   * enforced there, and every route on this side deliberately reports `writable: false` until told
+   * otherwise. Without this the hub's operator has no way to see what they may do for a client and
+   * can only try and be refused — and the refusal is deliberately identical for "no such thing" and
+   * "not permitted", so it teaches them nothing either.
+   *
+   * ⚠️ It travels UPWARD, from the node whose screens would change, which is the only direction
+   * that preserves I10. A hub that treated this as permission would be deciding its own access;
+   * it is a hint for rendering, and the child re-checks its own row on every single request.
+   */
+  'write-offer': 1,
+  /*
    * ⚠️ A CARRIER, NOT A PAYLOAD. `batch` has no body of its own — it holds items, each with its own
    * type and body_version. It is registered here so a node that understands batches recognises it;
    * a node that does NOT will treat it as unknown and relay-without-storing (I5), which is exactly
@@ -240,7 +268,20 @@ function itemAsEnvelope(item, batch) {
     origin_ts: item.origin_ts,
     type: item.type,
     body_version: item.body_version,
-    ancestry: batch.ancestry,
+    /*
+     * ⚠️ THE ITEM'S OWN CHAIN WINS, and discarding it was the same mistake twice over.
+     *
+     * The validator that runs a few lines earlier says it outright: the batch's ancestry proves the
+     * BATCH's path, not the item's. This function then handed every item the batch's chain anyway —
+     * so a relayed payload that arrived carrying A<-B<-C was stored as though it had come straight
+     * from B, and everything downstream that reasons about distance saw one hop where there were
+     * two. A relay was indistinguishable from a direct link at exactly the layer that decides how
+     * far away something is.
+     *
+     * Falls back to the batch for ordinary items, which is correct: an item that did not bring its
+     * own chain travelled the batch's, and omitting it is what makes batching cheap.
+     */
+    ancestry: Array.isArray(item.ancestry) && item.ancestry.length ? item.ancestry : batch.ancestry,
     receipts: batch.receipts,
     body: item.body,
   };

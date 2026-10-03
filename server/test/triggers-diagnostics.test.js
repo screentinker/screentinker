@@ -157,8 +157,14 @@ test('⚠️ ...and is NEVER given to an API token, even on the detail route', (
 });
 
 test('the detail route actually calls the strip', () => {
+  /*
+   * The helper was renamed to stripSecretsForTokens when the enrolment key joined the trigger
+   * secret behind the same gate — one credential is not a special case, it is a category. Matched
+   * on either name so the assertion tracks the CALL rather than the spelling, and the reason it
+   * exists (the helper existing is not the same as it being used) is unchanged.
+   */
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'devices.js'), 'utf8');
-  assert.match(src, /stripTriggerSecretForTokens\(device, req\.viaToken\)/,
+  assert.match(src, /strip(SecretsForTokens|TriggerSecretForTokens)\(device, req\.viaToken\)/,
     'the helper existing is not the same as it being used');
 });
 
@@ -166,6 +172,10 @@ test('the status handler ignores a report for someone else\'s device', () => {
   // A socket may only speak for the device it registered as; otherwise one compromised player could
   // rewrite the diagnostics of every screen in the workspace.
   const src = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
-  const h = src.slice(src.indexOf("socket.on('device:trigger-status'"));
-  assert.match(h.slice(0, 600), /device_id !== currentDeviceId/);
+  // Scale-out C2: the body lives in EVENT_APPLIERS['trigger-status'] and checks the claimed id
+  // against the authenticated one; the socket dispatcher checks it again before calling any applier.
+  const h = src.slice(src.indexOf("'trigger-status'(deviceId, data, ctx)"));
+  assert.match(h.slice(0, 400), /device_id !== deviceId/);
+  const d = src.slice(src.indexOf('function dispatch(kind, data)'));
+  assert.match(d.slice(0, 400), /claimed !== currentDeviceId\) return;/);
 });

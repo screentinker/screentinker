@@ -1,6 +1,7 @@
 package com.remotedisplay.player.player
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -87,6 +88,25 @@ class ItemTimingTest {
         assertTrue(ItemTiming.endsOnTimer("image/jpeg", isWidget = false))
         assertTrue(ItemTiming.endsOnTimer("image/png", isWidget = false))
         assertTrue(ItemTiming.endsOnTimer("text/html", isWidget = true))
+    }
+
+    @Test fun THE_SAME_BUG_an_html_bundle_must_end_on_a_timer_too() {
+        /*
+         * A bundle is a WebView page exactly like a widget and a YouTube embed: nothing reports its
+         * completion. Off the timer path it is not a slow rotation, it is a stopped one — the same
+         * defect this class was written for, arriving through a different door.
+         */
+        assertTrue(ItemTiming.endsOnTimer(ItemTiming.BUNDLE_MIME, isWidget = false))
+        assertEquals("application/vnd.screentinker.bundle+zip", ItemTiming.BUNDLE_MIME)
+    }
+
+    @Test fun an_unknown_type_is_still_not_timed_because_the_player_skips_it_instead() {
+        /*
+         * playFile's else branch advances immediately on an unrecognised mime, so it must NOT also
+         * be armed here — that would be two advances for one item. This pins the division of labour
+         * so a later "fix" that makes everything timed does not double-skip.
+         */
+        assertFalse(ItemTiming.endsOnTimer("application/pdf", isWidget = false))
     }
 
     @Test fun real_video_must_NOT_be_timed_or_clips_get_cut_short() {

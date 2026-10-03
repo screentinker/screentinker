@@ -42,27 +42,142 @@ object TransitionGlsl {
 
     // Load a shader's GLSL source by id from assets/transitions/<id>.glsl (copied from shared/Transitions
     // at build). Returns null if missing -> the caller hard-cuts (never a black frame).
-    fun loadSource(assets: AssetManager, shaderId: String): String? = try {
-        assets.open("transitions/$shaderId.glsl").bufferedReader().use { it.readText() }
-    } catch (e: Throwable) { Log.w("TransitionGL", "shader '$shaderId' not found in assets: ${e.message}"); null }
+    /*
+     * #320: shaders an operator uploaded arrive with the playlist and live here, keyed by the same
+     * ids the items reference. Checked BEFORE assets so an upload is found, and never instead of
+     * them: a shipped shader cannot be shadowed because the server only ever sends ids prefixed
+     * "custom-". Held in memory rather than written to disk because the payload re-sends them on
+     * every reconnect, so there is no cache to invalidate and nothing to clean up.
+     */
+    private val uploaded = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun setUploadedShaders(map: Map<String, String>?) {
+        uploaded.clear()
+        if (map != null) for ((k, v) in map) if (k.startsWith("custom-")) uploaded[k] = v
+    }
+
+    fun loadSource(assets: AssetManager, shaderId: String): String? {
+        uploaded[shaderId]?.let { return it }
+        return try {
+            assets.open("transitions/$shaderId.glsl").bufferedReader().use { it.readText() }
+        } catch (e: Throwable) { Log.w("TransitionGL", "shader '$shaderId' not found in assets: ${e.message}"); null }
+    }
+}
+
+/*
+ * #344 — the wipe's geometry, pure and testable.
+ *
+ * The overlay draws its textures 1:1 across an UNROTATED, screen-sized GL surface (see the #344 note
+ * in MainActivity: it lives on the window content root, not the rotated stage, because a SurfaceView
+ * is not guaranteed to inherit an ancestor's rotation on every ROM). So the rotation the stage gets
+ * for a portrait screen has to be baked into the bitmap instead of relied upon from the compositor.
+ *
+ * This object holds only the box arithmetic — no Android graphics — so it can be unit-tested on the
+ * JVM (which the Android graphics path cannot). See TransitionGeometryTest.
+ */
+object TransitionGeometry {
+    /** The box content is laid out in: the stage is transposed for a portrait (swap) screen. */
+    fun stageBox(screenW: Int, screenH: Int, swap: Boolean): Pair<Int, Int> =
+        if (swap) screenH to screenW else screenW to screenH
+
+    /** true for the orientations MainActivity transposes the stage for (90 / 270). */
+    fun swapForRotation(rotDeg: Int): Boolean = ((rotDeg % 360) + 360) % 360 == 90 || ((rotDeg % 360) + 360) % 360 == 270
+
+    /**
+     * (rotation°, swap-axes?) to present the composition named by [o] upright on a window that is
+     * [windowPortrait]. The four strings name what the OPERATOR chose — landscape / portrait, each
+     * optionally flipped — while the rotation actually needed to show it upright depends on the
+     * panel's OWN window orientation, which earlier code assumed was always landscape.
+     *
+     * Axes are swapped exactly when the wanted composition's orientation differs from the window's.
+     * So a landscape slide on a native-PORTRAIT panel (e.g. an 800x1200 room-sign tablet driven in
+     * landscape) finally gets the quarter turn the native-landscape assumption skipped — the bug
+     * that letterboxed a landscape slide into a portrait stage, leaving bars and unfilled space.
+     *
+     * ⚠️ On a native-landscape (or square) window this returns EXACTLY the values it always did
+     * (landscape->0/no-swap, landscape-flipped->180/no-swap, portrait->90/swap, portrait-flipped->
+     * 270/swap), so no currently-working panel changes behaviour. The swap case keeps rot at 90 vs
+     * 270 by the flipped flag; if a native-portrait panel comes out upside down, the operator's
+     * "-flipped" choice is the other one, same as it has always been for portrait signage.
+     */
+    fun orientationRotSwap(o: String?, windowPortrait: Boolean): Pair<Float, Boolean> {
+        val wantPortrait = o == "portrait" || o == "portrait-flipped"
+        val flipped = o == "landscape-flipped" || o == "portrait-flipped"
+        val swap = wantPortrait != windowPortrait
+        val rot = when {
+            !swap && !flipped -> 0f
+            !swap && flipped -> 180f
+            swap && !flipped -> 90f
+            else -> 270f
+        }
+        return rot to swap
+    }
+
+    /**
+     * Degrees to turn a raw framebuffer screenshot before sending it to the dashboard.
+     *
+     * The dashboard (server/lib/orientation-style.js, #238) assumes every screenshot is a
+     * native-LANDSCAPE framebuffer with the content rotated inside it by ROTATION_DEG[orientation],
+     * and counter-rotates by that much to stand in for the wall mount. That is exactly what
+     * [orientationRotSwap] applies on a landscape window, so the two cancel. On a native-portrait
+     * window the applied rotation differs by a quarter turn, and the dashboard showed the ThinkSmart
+     * View's live view 90° off. Turning the capture by the difference presents the portrait
+     * framebuffer AS the landscape one the dashboard models, so its existing mount logic — and every
+     * landscape panel in the fleet, where this is 0 — is untouched.
+     */
+    fun screenshotUprightDeg(o: String?, windowPortrait: Boolean): Int {
+        val expected = orientationRotSwap(o, false).first.toInt()
+        val applied = orientationRotSwap(o, windowPortrait).first.toInt()
+        return ((expected - applied) % 360 + 360) % 360
+    }
+
+    /**
+     * The invariant the reporter asked for: the box the bitmaps were fitted to (once rotated) must
+     * equal the surface they are drawn on. Rotating the stage box by 90/270 must give the screen box;
+     * 0/180 leaves it. A mismatch means we fitted to the wrong thing and MUST hard-cut, not wipe.
+     */
+    fun rotatedStageMatchesScreen(stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotDeg: Int): Boolean {
+        if (stageW <= 0 || stageH <= 0 || screenW <= 0 || screenH <= 0) return false
+        val (rw, rh) = if (swapForRotation(rotDeg)) stageH to stageW else stageW to stageH
+        return rw == screenW && rh == screenH
+    }
 }
 
 // Fit a source bitmap into a w×h frame with object-fit:contain letterboxing (matches the static
 // ImageView/PlayerView framing), AND flip it vertically — GLES2 has no UNPACK_FLIP_Y_WEBGL, so the flip
 // here replicates exactly what the web renderer's upload() does, keeping the shader uv convention (and
 // therefore the transition geometry) identical across platforms. Returns an ARGB_8888 bitmap.
-fun fitTransitionBitmap(src: Bitmap, w: Int, h: Int): Bitmap {
-    val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+//
+// Landscape (no rotation) keeps calling this directly; it is unchanged.
+fun fitTransitionBitmap(src: Bitmap, w: Int, h: Int): Bitmap =
+    fitTransitionBitmapRotated(src, w, h, w, h, 0f)
+
+/*
+ * #344 — fit into the STAGE box, then rotate the result into the SCREEN box, in one Matrix, onto a
+ * screen-sized bitmap. The overlay surface is the unrotated screen, so baking the stage's rotation
+ * into the texture here is what makes the wipe match the mounted (rotated) content on every ROM,
+ * whether or not the composer would have rotated the surface for us.
+ *
+ * Order (postX appends): contain-fit in stage space -> recentre on origin -> rotate -> recentre in
+ * the screen box -> vertical GL flip on the final texture. For rot=0 with stage==screen this reduces
+ * to exactly the old contain+flip, so landscape is byte-identical.
+ */
+fun fitTransitionBitmapRotated(src: Bitmap, stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotDeg: Float): Bitmap {
+    val out = Bitmap.createBitmap(screenW, screenH, Bitmap.Config.ARGB_8888)
     val c = Canvas(out)
     c.drawColor(android.graphics.Color.BLACK)
     val iw = src.width.toFloat(); val ih = src.height.toFloat()
-    if (iw > 0f && ih > 0f) {
-        val s = minOf(w / iw, h / ih)         // contain
+    if (iw > 0f && ih > 0f && stageW > 0 && stageH > 0) {
+        val s = minOf(stageW / iw, stageH / ih)   // contain, in stage space
         val dw = iw * s; val dh = ih * s
         val m = Matrix()
         m.postScale(s, s)
-        m.postTranslate((w - dw) / 2f, (h - dh) / 2f)
-        m.postScale(1f, -1f, w / 2f, h / 2f)  // vertical flip == UNPACK_FLIP_Y_WEBGL
+        m.postTranslate((stageW - dw) / 2f, (stageH - dh) / 2f)   // placed in the stage box
+        // rotate the stage box about its centre and drop it, centred, into the screen box
+        m.postTranslate(-stageW / 2f, -stageH / 2f)
+        m.postRotate(rotDeg)
+        m.postTranslate(screenW / 2f, screenH / 2f)
+        m.postScale(1f, -1f, screenW / 2f, screenH / 2f)          // vertical flip == UNPACK_FLIP_Y_WEBGL
         c.drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG))
     }
     return out

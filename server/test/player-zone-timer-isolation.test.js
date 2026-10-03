@@ -41,6 +41,7 @@ function harness() {
     clearTimeout: (id) => { if (id) timeouts[id - 1] = null; },
     // showZoneItem needs these; none are exercised by the timer-isolation assertions.
     scheduleAllows: () => true,   // zoneNextActive's only dependency
+    itemFit: () => 'contain',     // defined outside the sliced block; fit isn't exercised here
     mediaUrl: (a) => a.src || 'x.mp4',
     config: { serverUrl: '', deviceId: 'd1' },
     widgetSandboxAttr: () => '',

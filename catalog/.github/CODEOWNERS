@@ -1,0 +1,12 @@
+# Every change needs a review from a catalog maintainer. Branch protection on `main` additionally
+# requires one approval from someone OTHER than the PR author (GitHub never counts an author's own
+# approval) and dismisses stale approvals on new pushes — so every update is re-reviewed.
+
+*                         @screentinker/catalog-maintainers
+
+# What decides whether a template is trusted: the checks, the render harness, revocations and the
+# signing procedure. Changes here need a second look from a core maintainer as well.
+/.github/                 @screentinker/catalog-maintainers @screentinker/core
+/tools/                   @screentinker/catalog-maintainers @screentinker/core
+/revoked.json             @screentinker/catalog-maintainers @screentinker/core
+/SIGNING.md               @screentinker/catalog-maintainers @screentinker/core

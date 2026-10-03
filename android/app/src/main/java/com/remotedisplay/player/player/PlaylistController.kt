@@ -28,9 +28,40 @@ data class PlaylistItem(
     val contentRev: Long = 0L,
     val widgetType: String? = null,
     val schedules: List<ScheduleEval.Block> = emptyList(),
+    // Inclusive local play window (YYYY-MM-DDTHH:MM). Null = unbounded on that side.
+    val playFrom: String? = null,
+    val playUntil: String? = null,
+    val logPlay: Boolean = true,
+    val fitMode: String? = null,
+    // Data-source "skip unless a field matches" condition + the resolved value bag (_ds) the server
+    // attached for its slug. Fails open when the bag is missing. See ScheduleEval.conditionOk.
+    val playWhen: ScheduleEval.Condition? = null,
+    val dataBag: JSONObject? = null,
+    val tags: List<String> = emptyList(),
+    val meta: JSONObject? = null,
+    val weight: Int = 1,
+    /* Slide voiceover + deck music bed. Metadata on the ITEM, not inside the slide document — a
+     * player that only renders the widget iframe makes no sound, which is why this exists. */
+    val slideAudio: SlideAudio? = null,
     // feat/transition-engine: the resolved GL transition this item plays INTO (null = hard cut).
     val transition: TransitionSpec? = null
 ) {
+    /*
+     * ⚠️  WHICH ITEM THIS IS, FOR CONTINUITY — AND IT IS NOT contentId.
+     *
+     * Widget items carry contentId = "" (there is no content row behind them), so keying continuity
+     * on contentId alone made every widget in a playlist the same item. On an all-widget playlist
+     * `indexOfFirst { it.contentId == currentlyPlayingId }` matched INDEX 0 whatever was actually on
+     * screen, so any edit snapped playback back to the first slide — and then returned without
+     * re-rendering, so the screen kept showing the old one while the index said otherwise. That is
+     * ⚠️ #234 in a new place: the fix there was to stop treating a changed field as a changed item,
+     * and this is the same mistake from the other direction.
+     *
+     * Shaped like sig() above deliberately: a content item is "abc|", a widget item is "|w-123".
+     * Both stable across an edit, and never equal to each other.
+     */
+    val itemKey: String get() = contentId + "|" + (widgetId ?: "")
+
     val isRemote: Boolean get() = !remoteUrl.isNullOrEmpty()
     // Widget assignments have a widget_id and no downloadable content file.
     val isWidget: Boolean get() = !widgetId.isNullOrEmpty()
@@ -71,6 +102,8 @@ class PlaylistController(
     // #74/#75: per-item scheduling state
     @Volatile private var effectiveTimezone: String? = null
     private var retryRunnable: Runnable? = null
+    private var playbackOrder: String = "sequential"
+    private var playOrderState = PlayOrder.State()
 
     // #157: when a playlist update REMOVES the item currently on screen (e.g. it just expired),
     // we don't yank it off / restart — the current item plays out and we rotate into this stashed
@@ -85,8 +118,106 @@ class PlaylistController(
     // the cache); the default keeps every item playable so behavior is unchanged until it's set.
     private var contentReady: (PlaylistItem) -> Boolean = { true }
     fun setContentReadyCheck(f: (PlaylistItem) -> Boolean) { contentReady = f }
+
+    /*
+     * ⚠️ THE LAST-RESORT GATE: bytes we HAVE but cannot vouch for.
+     *
+     * contentReady above is strict, and has to be — it is what makes "cached for offline" compatible
+     * with "and it still updates", by refusing a copy whose revision does not match what the
+     * playlist is asking for. The failure was making that the ONLY question. An asset cached by a
+     * build from before content revisions existed carries no revision sidecar, so it can never match,
+     * and a panel whose disk is full of perfectly playable media sat on "Waiting for content" after
+     * an OTA — reported from a fleet, with the operator's own log showing every file present.
+     *
+     * So there are two passes, in this order, and the order is the whole design: anything with a
+     * CONFIRMED revision plays first, always, so a replaced asset still reaches the screen the moment
+     * it lands. Only when nothing at all passes that bar do we ask the weaker question — is there
+     * something here we could show? — instead of showing nothing. That is the same principle
+     * ScheduleEval states two files away: a blank screen is worse than slightly stale content.
+     *
+     * Defaults to false, so a caller that never injects it keeps exactly the old behaviour.
+     */
+    private var contentUsable: (PlaylistItem) -> Boolean = { false }
+    fun setContentUsableCheck(f: (PlaylistItem) -> Boolean) { contentUsable = f }
+
+    // Slide audio. Injected like contentReady above, for the same reason: this class should not
+    // know where the server URL is stored, and a controller with neither set still behaves exactly
+    // as it did before the feature existed.
+    private var serverBase: (() -> String)? = null
+    fun setServerBase(f: () -> String) { serverBase = f }
+    private var slideAudioPlayer: SlideAudioPlayer? = null
+    fun setSlideAudioPlayer(p: SlideAudioPlayer?) { slideAudioPlayer = p }
     // True while a valid item is rendered on screen — so we NEVER blank it for a pending download.
     private var hasContentOnScreen = false
+
+    /*
+     * Default / standby content: a per-device, per-payload fallback IMAGE the server attaches
+     * top-level as `default_content` (NOT an assignment). Shown ONLY in the two DEFINED idle states —
+     * empty/no playlist, and "every item filtered out by its schedule" (LED-wall off-times) — in
+     * place of the idle text. It is deliberately kept OUT of `items` and the structural fingerprint:
+     * it must never restart playback, never rotate, and never be persisted into a snapshot as an
+     * assignment. Null/absent => behaviour is exactly the old idle text.
+     */
+    private var defaultContent: JSONObject? = null
+    // Guards against re-mounting the standby image on every idle re-check (the 30s daypart re-eval
+    // and the empty-playlist paths all funnel through the emitters below). Reset whenever real
+    // content takes the screen, or the default_content payload changes.
+    private var defaultShowing = false
+    fun setDefaultContent(json: JSONObject?) {
+        // A distinct payload (or a clear) means the standby must be re-mounted on the next idle emit.
+        if ((defaultContent?.toString() ?: "") != (json?.toString() ?: "")) defaultShowing = false
+        defaultContent = json
+    }
+
+    /**
+     * Build a synthetic PlaylistItem from default_content so the standby renders through the SAME
+     * playItem() path as a normal single image (remote_url stream or cached-local file). Returns null
+     * when there is no default, when it is not an image (only images are valid standby content — a
+     * video standby falls back to the idle text), or when there is nothing renderable to point at.
+     * default_content shape: {content_id, filename, mime_type, filepath, remote_url, file_size, content_rev}.
+     */
+    private fun buildDefaultItem(): PlaylistItem? {
+        val dc = defaultContent ?: return null
+        val mime = dc.optString("mime_type", "")
+        if (!mime.startsWith("image/")) return null   // only images are shown as standby
+        val remoteUrl = if (dc.isNull("remote_url")) null else dc.optString("remote_url", "").ifEmpty { null }
+        val contentId = if (dc.isNull("content_id")) "" else dc.optString("content_id", "")
+        // Needs something to render: a stream URL, or a content id whose bytes we can look up on disk.
+        if (remoteUrl.isNullOrEmpty() && contentId.isEmpty()) return null
+        return PlaylistItem(
+            assignmentId = -1,      // synthetic: never a real assignment id
+            contentId = contentId,
+            filename = dc.optString("filename", "default"),
+            mimeType = mime,
+            filepath = if (dc.isNull("filepath")) "" else dc.optString("filepath", ""),
+            durationSec = 0,
+            fileSize = dc.optLong("file_size", 0),
+            sortOrder = -1,
+            remoteUrl = remoteUrl,
+            contentRev = dc.optLong("content_rev", 0L)
+        )
+    }
+
+    /**
+     * Render the standby image for a DEFINED idle state. Returns true when it was shown (so the caller
+     * suppresses the idle text), false to fall back to the idle text. A LOCAL default only renders
+     * when its bytes are actually on disk (offline off-hours is the whole point) — otherwise playItem
+     * would bounce into next() and loop; a REMOTE default streams and can't be cached.
+     */
+    private fun renderDefaultContent(): Boolean {
+        val item = buildDefaultItem() ?: return false
+        if (!item.isRemote && !contentReady(item) && !contentUsable(item)) return false
+        if (defaultShowing) return true   // already up — don't re-mount on every idle re-check
+        Log.i("PlaylistController", "Rendering default/standby content: ${item.filename}")
+        onItemChanged(item)
+        defaultShowing = true
+        return true
+    }
+
+    /** Empty/no-playlist idle state (a): standby image if present, else the idle text. */
+    private fun emitPlaylistEmpty() {
+        if (!renderDefaultContent()) onPlaylistEmpty()
+    }
 
     // Video wall: followers don't self-advance — the leader's wall:sync drives the index.
     private var wallFollower = false
@@ -154,7 +285,9 @@ class PlaylistController(
     val currentContentId: String?
         get() = currentItem?.contentId
 
-    fun updatePlaylist(assignmentsJson: JSONArray) {
+    fun updatePlaylist(assignmentsJson: JSONArray, order: String = "sequential") {
+        if (order != playbackOrder) playOrderState = PlayOrder.State()
+        playbackOrder = when (order) { "shuffle", "weighted" -> order; else -> "sequential" }
         Log.i("PlaylistController", "Received JSONArray with ${assignmentsJson.length()} items")
 
         // Build new list
@@ -180,7 +313,17 @@ class PlaylistController(
                     contentRev = obj.optLong("content_rev", 0L),
                     widgetType = if (obj.isNull("widget_type")) null else obj.optString("widget_type", "").ifEmpty { null },
                     schedules = parseSchedules(obj.optJSONArray("schedules")),
-                    transition = Transitions.parse(obj.optJSONObject("transition"))
+                    playFrom = if (obj.isNull("play_from")) null else obj.optString("play_from", "").ifEmpty { null },
+                    playUntil = if (obj.isNull("play_until")) null else obj.optString("play_until", "").ifEmpty { null },
+                    logPlay = obj.optInt("log_play", 1) != 0,
+                    fitMode = if (obj.isNull("fit_mode")) null else obj.optString("fit_mode", "").ifEmpty { null },
+                    playWhen = ScheduleEval.parseCondition(obj.optJSONObject("play_when")),
+                    dataBag = obj.optJSONObject("_ds"),
+                    tags = parseTags(obj.optJSONArray("tags")),
+                    meta = obj.optJSONObject("meta"),
+                    weight = obj.optInt("weight", 1).coerceAtLeast(1),
+                    transition = Transitions.parse(obj.optJSONObject("transition")),
+                    slideAudio = parseSlideAudio(obj.optJSONObject("audio"))
                 )
             )
         }
@@ -203,10 +346,17 @@ class PlaylistController(
         // update was de-duped, and the player kept its old items — including the old rev, so the
         // render URL never changed and the WebView reuse held. The screen only caught up on an app
         // restart. Found on the emulator; the code read looked correct without it.
-        fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + it.widgetRev + "|" + (if (it.muted) "m" else "") + "|" +
+        // mimeType + remoteUrl are part of the structure: a live HLS channel is shaped exactly like a
+        // remote MP4 / YouTube item (a remote_url + a video/* mime), so its identity is that URL and
+        // that type. Including them means editing a channel's .m3u8 URL, or flipping a remote item's
+        // mime, re-renders in place instead of being de-duped and silently ignored. durationSec stays
+        // OUT on purpose — it is DWELL, applied live below without a restart.
+        fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + it.mimeType + "|" + (it.remoteUrl ?: "") + "|" + it.widgetRev + "|" + (if (it.muted) "m" else "") + "|" +
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
-            } + "|" + (it.transition?.sig() ?: "")
+            } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "") +
+            "|" + (it.playWhen?.let { c -> c.type + c.path + c.op + (c.value ?: "") } ?: "") +
+            "|" + it.tags.joinToString(",") + "|" + (it.meta?.toString() ?: "")
         val oldContentIds = items.map(::sig)
         val newContentIds = newItems.map(::sig)
         val playlistChanged = oldContentIds != newContentIds
@@ -219,7 +369,10 @@ class PlaylistController(
             var durChanged = false
             for (i in items.indices) {
                 val ni = newItems.getOrNull(i) ?: continue
-                if (items[i].durationSec != ni.durationSec) { items[i] = items[i].copy(durationSec = ni.durationSec); durChanged = true }
+                if (items[i].durationSec != ni.durationSec || items[i].weight != ni.weight) {
+                    items[i] = items[i].copy(durationSec = ni.durationSec, weight = ni.weight)
+                    durChanged = true
+                }
             }
             Log.i("PlaylistController", if (durChanged) "Durations updated in place (${items.size} items), not interrupting" else "Playlist unchanged (${items.size} items), not interrupting playback")
             return
@@ -227,8 +380,12 @@ class PlaylistController(
 
         Log.i("PlaylistController", "Playlist changed: ${items.size} -> ${newItems.size} items")
 
-        // Remember what's currently playing
-        val currentlyPlayingId = currentItem?.contentId
+        // Remember what's currently playing.
+        // ⚠️ Captured BEFORE items is replaced below, and captured as a KEY rather than a contentId
+        // so a widget item identifies itself. The rev rides along because it is the one field that
+        // changes without changing which item this is — see the re-render below.
+        val currentlyPlayingId = currentItem?.itemKey
+        val currentlyPlayingRev = currentItem?.widgetRev ?: 0L
 
         // #157: the item on screen was REMOVED (its only change is removal — e.g. it just expired).
         // In solo playback, don't interrupt it: keep it up, stash the new list, and rotate out on the
@@ -243,13 +400,13 @@ class PlaylistController(
                 wallFollower = wallFollower,
                 hasContentOnScreen = hasContentOnScreen,
                 currentlyPlayingId = currentlyPlayingId,
-                newContentIds = newItems.map { it.contentId },
+                newContentIds = newItems.map { it.itemKey },
             )) {
             var succ: String? = null
             if (items.isNotEmpty()) {
                 for (k in 1..items.size) {
-                    val cid = items[(currentIndex + k) % items.size].contentId
-                    if (cid != currentlyPlayingId && newItems.any { it.contentId == cid }) { succ = cid; break }
+                    val cid = items[(currentIndex + k) % items.size].itemKey
+                    if (cid != currentlyPlayingId && newItems.any { it.itemKey == cid }) { succ = cid; break }
                 }
             }
             pendingItems = newItems
@@ -269,14 +426,34 @@ class PlaylistController(
         if (items.isEmpty()) {
             currentIndex = -1
             cancelAdvance()
-            onPlaylistEmpty()
+            emitPlaylistEmpty()
         } else if (isRunning) {
             // Try to keep playing the current item if it's still in the list
             if (currentlyPlayingId != null) {
-                val newIndex = items.indexOfFirst { it.contentId == currentlyPlayingId }
+                val newIndex = items.indexOfFirst { it.itemKey == currentlyPlayingId }
                 if (newIndex >= 0 && hasContentOnScreen) {
                     // Current item still exists AND is genuinely on screen - don't interrupt, just update index.
                     currentIndex = newIndex
+                    /*
+                     * ⚠️ UNLESS THE ITEM IS THE SAME BUT ITS CONTENTS ARE NOT.
+                     *
+                     * A widget's identity does not change when it is edited — that is deliberate, and
+                     * it is what lets an edit avoid restarting the playlist. But it means "same item"
+                     * and "same thing on screen" stopped being the same question. widgetRev is the
+                     * only field that separates them, so a rev that moved under a matching key is
+                     * exactly the case where holding the WebView is wrong: the render URL changed,
+                     * and returning here would leave the old slide up until the next natural advance.
+                     *
+                     * Re-rendering only this item is the narrow fix. The index is already correct, so
+                     * playback continues from the same place — the operator sees their edit appear
+                     * where it was, not the playlist jump back to the start.
+                     */
+                    if (items[newIndex].widgetRev != currentlyPlayingRev) {
+                        Log.i("PlaylistController",
+                            "Same item at $newIndex but widgetRev ${currentlyPlayingRev} -> ${items[newIndex].widgetRev} — re-rendering in place")
+                        playCurrentItem()
+                        return
+                    }
                     Log.i("PlaylistController", "Current item still in playlist at index $newIndex, not interrupting")
                     return
                 }
@@ -288,7 +465,7 @@ class PlaylistController(
             // schedule-active AND downloaded item. Distinguish the two idle reasons: daypart
             // closed (nothing scheduled) => defined idle; scheduled-but-not-yet-downloaded =>
             // keep current content / waiting, never blank.
-            val fp = PlaylistSelection.firstPlayableIndex(items.size) { playableNow(it) }
+            val fp = firstPlayable()
             if (fp >= 0) { currentIndex = fp; playCurrentItem() }
             else if (firstActiveIndex() < 0) showNothingScheduled()
             else onContentNotReady()
@@ -304,7 +481,7 @@ class PlaylistController(
         if (items.isEmpty()) {
             currentIndex = -1
             cancelAdvance()
-            onPlaylistEmpty()
+            emitPlaylistEmpty()
         } else if (wasCurrentId == contentId) {
             if (currentIndex >= items.size) currentIndex = 0
             playCurrentItem()
@@ -313,7 +490,7 @@ class PlaylistController(
 
     fun start() {
         isRunning = true
-        if (items.isEmpty()) { onPlaylistEmpty(); return }
+        if (items.isEmpty()) { emitPlaylistEmpty(); return }
         // #74/#75: begin on the first schedule-active item; daypart-closed => defined idle.
         if (firstActiveIndex() < 0) { showNothingScheduled(); return }
         // Screen-resilience: only start on an item whose content is downloaded; if the scheduled
@@ -325,8 +502,8 @@ class PlaylistController(
         val from = PlaybackResume.resumeIndex(
             saved?.first ?: -1, saved?.second ?: 0L, System.currentTimeMillis(), items.size)
         val idx = if (from > 0 && playableNow(from)) from
-                  else if (from > 0) PlaylistSelection.nextPlayableIndex(items.size, from - 1) { playableNow(it) }
-                  else PlaylistSelection.firstPlayableIndex(items.size) { playableNow(it) }
+                  else if (from > 0) nextPlayable(from - 1)
+                  else firstPlayable()
         if (from > 0) Log.i("PlaylistController", "Resuming at index $from (reload within resume window)")
         if (idx >= 0) { currentIndex = idx; playCurrentItem() } else onContentNotReady()
     }
@@ -334,7 +511,7 @@ class PlaylistController(
     fun startIfNeeded() {
         if (items.isEmpty()) {
             Log.i("PlaylistController", "No items, nothing to start")
-            onPlaylistEmpty()
+            emitPlaylistEmpty()
             return
         }
         // #162: isRunning + a valid index are NOT proof the player is actually rendering. After a
@@ -359,6 +536,9 @@ class PlaylistController(
         hasContentOnScreen = false
         pendingItems = null
         pendingSuccessorId = null
+        // Here and not in the per-item path: the bed has to survive an advance, and only a real
+        // stop ends it.
+        try { slideAudioPlayer?.stop() } catch (_: Throwable) {}
         // Proof-of-play: close the open row so its duration is recorded on shutdown/screen-off.
         loggedItem?.let { onPlayLog?.invoke("play_end", it, true) }
         loggedItem = null
@@ -372,11 +552,11 @@ class PlaylistController(
             cancelPendingSwapDeadline()
             val succ = pendingSuccessorId; pendingSuccessorId = null
             items.clear(); items.addAll(p)
-            if (items.isEmpty()) { currentIndex = -1; cancelAdvance(); onPlaylistEmpty(); return }
+            if (items.isEmpty()) { currentIndex = -1; cancelAdvance(); emitPlaylistEmpty(); return }
             onRequestRefresh?.invoke()
             if (firstActiveIndex() < 0) { showNothingScheduled(); return }
             var idx = if (succ != null) items.indexOfFirst { it.contentId == succ } else -1
-            if (idx < 0 || !playableNow(idx)) idx = PlaylistSelection.firstPlayableIndex(items.size) { playableNow(it) }
+            if (idx < 0 || !playableNow(idx)) idx = firstPlayable()
             if (idx >= 0) { currentIndex = idx; playCurrentItem() } else onContentNotReady()
             return
         }
@@ -389,15 +569,46 @@ class PlaylistController(
         // are SKIPPED (their background download continues), so a stalled/failed download of the
         // next content never blanks the screen — we keep looping the content we already have. If
         // NOTHING is downloaded yet, keep current content / show the waiting state, never blank.
-        val idx = PlaylistSelection.nextPlayableIndex(items.size, currentIndex) { playableNow(it) }
+        val idx = nextPlayable(currentIndex)
         if (idx >= 0) { currentIndex = idx; playCurrentItem() } else onContentNotReady()
     }
 
     fun onVideoComplete() {
         // Called when a video finishes naturally. Wall followers don't self-advance —
         // they hold (and loop) the leader's item until a wall:sync changes the index.
+        // ⚠️ Completions ONLY. A fault goes through onVideoFault(): routing it here is what
+        // switched every self-heal off in follower/group mode (#333).
         if (wallFollower) return
         next()
+    }
+
+    /**
+     * #333: the video FAILED — a playback error, or the #297 watchdog saw the decoder wedge. See
+     * PlaybackFault for the rule. Solo: skip it (unchanged). Follower / group member: the sync owns
+     * the index, so keep it and re-mount the same item; the sync tick then snaps the position back
+     * to the group. Re-mounting is the cold path (MediaPlayerManager has already dropped the
+     * players a wedge left behind), which is the part of "restart the app" that actually fixed it.
+     */
+    private val fault = PlaybackFault()
+
+    /*
+     * Set when the NEXT advance is caused by a fault rather than an item reaching its end, so the
+     * outgoing item's play_end can say so. Consumed and cleared by playCurrentItem() at the moment
+     * it emits, which is also what stops it leaking into a later, healthy advance.
+     */
+    private var advancingAfterFault = false
+
+    fun onVideoFault() {
+        when (fault.recovery(wallFollower, currentIndex, System.currentTimeMillis())) {
+            PlaybackFault.Recovery.ADVANCE -> { advancingAfterFault = true; next() }
+            PlaybackFault.Recovery.REPLAY_CURRENT -> {
+                val item = currentItem ?: return
+                Log.w("PlaylistController", "video fault in follower/group mode — replaying ${item.filename} (index $currentIndex)")
+                playCurrentItem()
+            }
+            PlaybackFault.Recovery.HOLD ->
+                Log.w("PlaylistController", "video fault in follower/group mode — just replayed index $currentIndex, holding")
+        }
     }
 
     /**
@@ -436,6 +647,14 @@ class PlaylistController(
     private fun endsOnTimer(item: PlaylistItem): Boolean =
         ItemTiming.endsOnTimer(item.mimeType, item.isWidget)
 
+    /**
+     * A live HLS channel: shaped exactly like a remote video (a remote_url + a video mime), but its
+     * stream never reports STATE_ENDED, so onVideoComplete never fires. Timing is driven by DWELL
+     * (durationSec = how long to stay on the channel), not by clip length. A dwell of 0/absent means
+     * "stay until the schedule makes it ineligible"; a dwell > 0 advances on a timer like any item.
+     */
+    private fun isLiveStream(item: PlaylistItem): Boolean = item.mimeType == "video/hls" || item.mimeType == "video/rtsp"
+
     private fun playCurrentItem() {
         cancelAdvance()
         cancelRetry()
@@ -444,15 +663,30 @@ class PlaylistController(
         // #234: remember where we are so a controller rebuilt seconds from now can carry on.
         try { saveResume?.invoke(currentIndex, itemStartedAt) } catch (_: Throwable) {}
         Log.i("PlaylistController", "Playing: ${item.filename} (index $currentIndex)")
+        // Slide audio: replaces the voiceover, leaves a bed playing when the id has not changed.
+        try { slideAudioPlayer?.apply(item.slideAudio, item.muted || wallFollower) } catch (t: Throwable) {
+            Log.w("PlaylistController", "slide audio failed: ${t.message}")
+        }
         onItemChanged(item)
         hasContentOnScreen = true // a valid item is now rendered — protect it from being blanked
+        defaultShowing = false    // real content is on screen; a later idle emit re-mounts the standby
 
         // Proof-of-play (parity with the web player): close the outgoing item and open this one.
         // Wall followers don't log — the leader's single row represents the whole wall.
         if (!wallFollower) {
-            loggedItem?.let { prev -> if (prev !== item) onPlayLog?.invoke("play_end", prev, true) }
-            onPlayLog?.invoke("play_start", item, false)
-            loggedItem = item
+            /*
+             * ⚠️ NOT a hardcoded `true`. This passed the literal true, so `completed` could not be
+             * false however badly playback went: a screen failing every item in ~2s wrote a perfect
+             * run of completed=1, duration_sec=0 rows and Reports showed 100% completion for
+             * content that never rendered a frame. See PlayEnd.
+             */
+            val completed = PlayEnd.completed(advancingAfterFault)
+            loggedItem?.let { prev -> if (prev !== item && prev.logPlay) onPlayLog?.invoke("play_end", prev, completed) }
+            // Cleared whether or not anything was emitted: a fault that advances onto an item with
+            // logPlay off must not leave the flag armed for the next healthy advance.
+            advancingAfterFault = false
+            if (item.logPlay) onPlayLog?.invoke("play_start", item, false)
+            loggedItem = if (item.logPlay) item else null
         }
 
         // For images and widgets, auto-advance after duration. For videos, wait
@@ -463,6 +697,16 @@ class PlaylistController(
             // contract shared with the web/Tizen players). A raw durationSec*1000 here let a
             // solo fullscreen widget with duration_sec=0 schedule a 0ms advance -> self-loop.
             scheduleAdvance(slotMs(item))
+        } else if (!wallFollower && isLiveStream(item)) {
+            // Live HLS channel. It ends on NEITHER a timer (endsOnTimer is false for a video mime) nor
+            // a completion callback (the stream never fires STATE_ENDED), so without one of these two
+            // branches it would sit forever. durationSec is DWELL, not clip length:
+            //   dwell > 0  -> a finite stay: advance on a timer like any timed item.
+            //   dwell 0/absent -> stay on the channel until its schedule window closes (or an external
+            //                     advance). scheduleLiveDwellRecheck() polls eligibility and skips the
+            //                     instant it becomes ineligible, so it never spins.
+            if (item.durationSec > 0) scheduleAdvance(item.durationSec.toLong() * 1000L)
+            else scheduleLiveDwellRecheck()
         }
     }
 
@@ -486,8 +730,20 @@ class PlaylistController(
 
     // #74/#75 schedule helpers ---------------------------------------------------
     private fun scheduleAllows(item: PlaylistItem): Boolean =
-        item.schedules.isEmpty() ||
-            ScheduleEval.isItemActiveNow(item.schedules, System.currentTimeMillis(), effectiveTimezone)
+        try {
+            if (!item.enabled) false
+            else if (!ScheduleEval.isItemActiveNow(
+                    item.schedules,
+                    System.currentTimeMillis(),
+                    effectiveTimezone,
+                    ScheduleEval.windowOf(item.playFrom, item.playUntil)
+                )) false
+            else when (item.playWhen?.type) {
+                "tag" -> ScheduleEval.tagOk(item.playWhen, item.tags)
+                "meta" -> ScheduleEval.conditionOk(item.playWhen, item.meta ?: org.json.JSONObject())
+                else -> ScheduleEval.conditionOk(item.playWhen, item.dataBag)
+            }
+        } catch (e: Throwable) { true }
 
     // #group-sync schedule engine. Lay the deterministic playlist (each active item occupies a
     // CANONICAL slot, dayparted items skipped) on the server-disciplined clock and derive the target
@@ -504,6 +760,12 @@ class PlaylistController(
         val slots = ArrayList<Triple<Int, Long, Long>>()   // index, startMs, durMs
         for (i in items.indices) {
             if (!scheduleAllows(items[i])) continue
+            // A dwell-0 live HLS channel is INFINITE (its stream never ends and it declares no finite
+            // slot length). On the clock scheduler it would swallow the whole period and desync every
+            // synced member, so it is INELIGIBLE here and skipped. A dwell>0 live channel has a finite
+            // slot (its durationSec) and participates normally. Solo playback is unaffected — it never
+            // calls this; it plays the channel and holds via scheduleLiveDwellRecheck().
+            if (isLiveStream(items[i]) && items[i].durationSec <= 0) continue
             val d = slotMs(items[i]); slots.add(Triple(i, acc, d)); acc += d
         }
         if (slots.isEmpty() || acc <= 0L) return null
@@ -520,6 +782,49 @@ class PlaylistController(
     // Playable NOW = schedule-active AND its content is downloaded/available.
     private fun playableNow(i: Int): Boolean =
         i in items.indices && scheduleAllows(items[i]) && contentReady(items[i])
+
+    /** Scheduled, and we hold bytes for it — but their revision could not be confirmed. */
+    private fun playableStale(i: Int): Boolean =
+        i in items.indices && scheduleAllows(items[i]) && contentUsable(items[i])
+
+    /*
+     * Strict first, stale only if strict finds nothing. Every selection goes through these two so a
+     * future call site cannot accidentally get one pass and not the other — which is precisely how
+     * the single-pass version came to be the only behaviour.
+     */
+    private fun firstPlayable(): Int {
+        if (playbackOrder == "shuffle" || playbackOrder == "weighted") {
+            var from = -1
+            repeat(items.size) {
+                val cand = PlayOrder.nextIndex(items, from, ::scheduleAllows, playbackOrder, playOrderState)
+                if (cand < 0) return -1
+                if (playableNow(cand) || playableStale(cand)) return cand
+                from = cand
+            }
+            return -1
+        }
+        return PlaylistSelection.firstPlayableOrStale(items.size, { playableNow(it) }, { playableStale(it) })
+    }
+
+    private fun nextPlayable(from: Int): Int {
+        if (playbackOrder == "shuffle" || playbackOrder == "weighted") {
+            var f = from
+            repeat(items.size) {
+                val cand = PlayOrder.nextIndex(items, f, ::scheduleAllows, playbackOrder, playOrderState)
+                if (cand < 0) return -1
+                if (playableNow(cand) || playableStale(cand)) return cand
+                f = cand
+            }
+            return -1
+        }
+        return PlaylistSelection.nextPlayableOrStale(items.size, from, { playableNow(it) }, { playableStale(it) })
+    }
+
+    // Existence only — must not consume the shuffle bag.
+    private fun firstActiveIndex(): Int {
+        for (i in items.indices) if (scheduleAllows(items[i])) return i
+        return -1
+    }
 
     // Screen-resilience: the scheduled item(s) exist but their content isn't downloaded yet.
     // NEVER blank a screen that is already showing content — keep it and re-check soon (the
@@ -554,18 +859,20 @@ class PlaylistController(
         handler.postDelayed(retryRunnable!!, CONTENT_RECHECK_MS)
     }
 
-    private fun firstActiveIndex(): Int {
-        for (i in items.indices) if (scheduleAllows(items[i])) return i
-        return -1
-    }
-
-    private fun nextActiveIndex(from: Int): Int {
-        if (items.isEmpty()) return -1
-        for (i in 1..items.size) {
-            val idx = (from + i) % items.size
-            if (scheduleAllows(items[idx])) return idx
+    // A dwell-0 live HLS channel has no advance timer and its stream never ends, so nothing would
+    // otherwise move off it when its schedule window closes. Poll eligibility on the standard recheck
+    // cadence: advance the moment scheduleAllows() flips false, otherwise leave the channel playing
+    // untouched (no restart, no busy-loop). This is the ONLY thing that advances a dwell-0 live item.
+    private fun scheduleLiveDwellRecheck() {
+        cancelRetry()
+        retryRunnable = Runnable {
+            val item = currentItem
+            if (isRunning && !wallFollower && item != null && isLiveStream(item) && item.durationSec <= 0) {
+                if (!scheduleAllows(item)) next()
+                else scheduleLiveDwellRecheck()
+            }
         }
-        return -1
+        handler.postDelayed(retryRunnable!!, CONTENT_RECHECK_MS)
     }
 
     // Every item filtered out: show the idle screen and re-check shortly, since a
@@ -573,7 +880,9 @@ class PlaylistController(
     private fun showNothingScheduled() {
         cancelAdvance()
         hasContentOnScreen = false // the daypart genuinely closed — a defined idle, not a blank-bug
-        (onNothingScheduled ?: onPlaylistEmpty)()
+        // Idle state (b): a playlist exists but every item is filtered out by its schedule (off-times).
+        // Show the standby image when one is set, else the nothing-scheduled text.
+        if (!renderDefaultContent()) (onNothingScheduled ?: onPlaylistEmpty)()
         cancelRetry()
         retryRunnable = Runnable {
             if (isRunning && items.isNotEmpty()) {
@@ -582,6 +891,41 @@ class PlaylistController(
             }
         }
         handler.postDelayed(retryRunnable!!, 30_000L)
+    }
+
+    /**
+     * The audio block, with URLs made absolute.
+     *
+     * ⚠️ ABSOLUTE, ALWAYS. The server sends `/uploads/content/...`; ExoPlayer has no document to
+     * resolve a relative path against and simply fails. serverBase is the same value every other
+     * media path here is built on.
+     */
+    private fun parseSlideAudio(o: JSONObject?): SlideAudio? {
+        if (o == null) return null
+        fun abs(u: String?): String? {
+            if (u.isNullOrEmpty()) return null
+            if (u.startsWith("http://") || u.startsWith("https://")) return u
+            val base = (serverBase?.invoke() ?: "").trimEnd('/')
+            return if (base.isEmpty()) null else base + u
+        }
+        val a = SlideAudio(
+            voUrl = abs(if (o.isNull("vo_url")) null else o.optString("vo_url", "")),
+            voVolume = o.optDouble("vo_volume", 1.0).toFloat(),
+            musicId = if (o.isNull("music_id")) null else o.optString("music_id", "").ifEmpty { null },
+            musicUrl = abs(if (o.isNull("music_url")) null else o.optString("music_url", "")),
+            musicVolume = o.optDouble("music_volume", 0.4).toFloat(),
+        )
+        return if (a.isEmpty) null else a
+    }
+
+    private fun parseTags(arr: JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val s = arr.optString(i, "").trim()
+            if (s.isNotEmpty()) out.add(s)
+        }
+        return out
     }
 
     private fun parseSchedules(arr: JSONArray?): List<ScheduleEval.Block> {

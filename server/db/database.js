@@ -12,6 +12,12 @@ if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
 const db = new Database(config.dbPath);
 
+// Wait through a brief writer lock instead of failing the statement outright. better-sqlite3
+// defaults this to 5000ms, which is why the native path never saw "database is locked"; the
+// node:sqlite fallback opens with no busy timeout (default 0), so a write contended by the WAL
+// checkpointer worker or a concurrent boot-migration step failed immediately. Match better-sqlite3.
+db.pragma('busy_timeout = 5000');
+
 // Enable WAL mode and foreign keys
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -134,6 +140,10 @@ const migrations = [
   'ALTER TABLE content ADD COLUMN folder TEXT',
   // Device orientation and default content
   "ALTER TABLE devices ADD COLUMN orientation TEXT DEFAULT 'landscape'",
+  // #325: the letterbox behind content that does not fill the screen. It was hardcoded black in the
+  // player's stylesheet, which looks like a fault rather than a choice behind a white-background
+  // image. NULL means "use the player default", so existing screens are untouched.
+  "ALTER TABLE devices ADD COLUMN background_color TEXT",
   'ALTER TABLE devices ADD COLUMN default_content_id TEXT',
   // Audio control per assignment
   "ALTER TABLE assignments ADD COLUMN muted INTEGER DEFAULT 0",
@@ -256,6 +266,14 @@ const migrations = [
   // active device payload is built from playlist_items -> published_snapshot, which never
   // carried it, so the dashboard mute toggle was a no-op end to end.
   "ALTER TABLE playlist_items ADD COLUMN muted INTEGER NOT NULL DEFAULT 0",
+  // Per-item play window: local YYYY-MM-DDTHH:MM, inclusive, evaluated on the sign.
+  // Null = no bound on that side. Not a daypart (that's playlist_item_schedules).
+  "ALTER TABLE playlist_items ADD COLUMN play_from TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN play_until TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE playlist_items ADD COLUMN log_play INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE playlist_items ADD COLUMN fit_mode TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN play_when TEXT",
   // Slice 1: idempotency guard for the one-time signup welcome/admin emails.
   // Non-null = this user has already been handled, so we never double-send.
   // New signups are stamped with the real unix-seconds time the send block ran
@@ -647,6 +665,25 @@ const migrations = [
   // additive — existing rows are unaffected and a code-only rollback leaves dead columns.
   "ALTER TABLE users ADD COLUMN password_reset_hash TEXT",
   "ALTER TABLE users ADD COLUMN password_reset_expires INTEGER",
+  // Trial expiry (nightly sweep + emails, services/trialExpiry.js). trial_expired_at is stamped
+  // when a lapsed trial is flipped to Free — by the sweep or the lazy getUserPlan path — and is
+  // what the player reads to say "Trial Expired" rather than "Device Limit Reached" (the
+  // downgrade nulls trial_started, so that column cannot carry the message). The two *_sent_at
+  // columns are the once-per-user idempotency stamps for the T-3 and expiry emails.
+  "ALTER TABLE users ADD COLUMN trial_expired_at INTEGER",
+  "ALTER TABLE users ADD COLUMN trial_ending_email_sent_at INTEGER",
+  "ALTER TABLE users ADD COLUMN trial_expired_email_sent_at INTEGER",
+  /*
+   * Dunning: a PAID subscription whose payment failed. `past_due_since` is the grace clock —
+   * stamped when Stripe reports the first failed invoice and cleared the moment a payment
+   * succeeds, so it answers "how long have they been failing" rather than "are they failing",
+   * which is what a 7-day grace needs. The two *_sent_at columns are the once-per-episode
+   * idempotency stamps (cleared alongside the clock, so a customer who lapses, pays, and lapses
+   * again months later is told again rather than silently).
+   */
+  "ALTER TABLE users ADD COLUMN past_due_since INTEGER",
+  "ALTER TABLE users ADD COLUMN payment_failed_email_sent_at INTEGER",
+  "ALTER TABLE users ADD COLUMN subscription_lapsed_email_sent_at INTEGER",
   "ALTER TABLE organizations ADD COLUMN widget_sandbox_isolation_disabled INTEGER NOT NULL DEFAULT 0",
   // AUTH-05: make break-glass recovery revocable, single-use and auditable.
   //
@@ -800,6 +837,25 @@ const migrations = [
    * operator nothing; a node id tells them less. The peer declares a name when it pairs and this
    * side stores it, so the switcher can read "Acme HQ" where it used to read "another server". */
   'ALTER TABLE mesh_edges ADD COLUMN peer_name TEXT',
+  /* What a CHILD has told this hub it may do to that child — see mirror-store.recordWriteOffer.
+   * ⚠️ Advisory. The child enforces its own grant from its own row on every request; this exists so
+   * the hub's UI can offer the right controls instead of making an operator guess. NULL means "no
+   * offer, or an offer that grants nothing", and those are the same thing to a renderer. */
+  'ALTER TABLE mesh_edges ADD COLUMN peer_write_offer TEXT',
+  /* Whether this node's operator agreed that the parent on this edge may include what we report in
+   * ITS OWN reports further up. Set on an UP edge by the child's operator; announced to the parent
+   * so it knows, and mirrored onto the parent's DOWN edge as peer_shares_upward.
+   * ⚠️ Defaults to 0 — absent means no. A relationship formed before relaying existed never agreed
+   * to its data crossing a second hop, and inferring that consent is exactly what this design
+   * refuses to do. */
+  'ALTER TABLE mesh_edges ADD COLUMN share_upward INTEGER NOT NULL DEFAULT 0',
+  /* Whether THIS node's operator wants content they receive to be passed on automatically to this
+   * client, rather than sent by hand.
+   * ⚠️ Set on a DOWN edge, by the operator who holds the relationship with that client — never by
+   * whoever is above. A grandparent deciding what lands on a server that granted somebody else is
+   * the thing the whole grant model exists to prevent. Defaults to 0. */
+  'ALTER TABLE mesh_edges ADD COLUMN auto_forward INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE mesh_edges ADD COLUMN peer_shares_upward INTEGER NOT NULL DEFAULT 0',
 
   /* WHICH of this server's workspaces travel up this edge. JSON array of workspace ids, or NULL.
    *
@@ -812,6 +868,174 @@ const migrations = [
    * every naive check, one meaning "share nothing" and the other "share everything" — opposite
    * outcomes behind the same truthiness test is how a grant becomes accidentally total. */
   'ALTER TABLE mesh_edges ADD COLUMN shared_workspaces TEXT',
+
+  /* ─── Mesh WRITE consent (Phase 5) ────────────────────────────────────────────────────────────
+   *
+   * ⚠️ THESE TWO COLUMNS ARE THE ONLY PLACE A WRITE PERMISSION MAY LIVE, AND THE WIRE MAY NEVER
+   * WRITE THEM.
+   *
+   * `grant_categories` above is authored by the PARENT: it mints a pairing code naming what the
+   * code will grant, and the child stores the parent's answer verbatim (routes/mesh-enroll.js).
+   * That is defensible for reads — every read category is read-only by construction and the child
+   * can see what it gave away. Applied to writes it inverts the entire model: the parent would be
+   * writing its own permission into the child's database, and the child would dutifully enforce it.
+   *
+   * So write lives in its own columns, set ONLY by an authenticated operator on this node through
+   * the child-side consent route. Enrollment strips write categories out of whatever the peer sent;
+   * re-pairing does not touch these columns, so re-pairing cannot widen a write grant.
+   *
+   * ⚠️ NULL/absent means NO WRITE, and that is what every edge that already exists gets. An
+   * installation that upgrades into this keeps behaving exactly as it did the day before: read
+   * only, everywhere. Write is never acquired by migration — only by somebody on THIS node saying
+   * yes, after reading what it means.
+   *
+   * write_grant  — JSON array of write categories (see lib/mesh/grants.js WRITE_CATEGORIES).
+   * write_scope  — JSON array of workspace ids this edge may write to. ⚠️ Unlike
+   *                shared_workspaces above, NULL here means NOTHING, never "all". A column that
+   *                means "everything" when absent is exactly how a write grant becomes total by
+   *                accident, and the two columns are deliberately opposite for that reason. */
+  'ALTER TABLE mesh_edges ADD COLUMN write_grant TEXT',
+  'ALTER TABLE mesh_edges ADD COLUMN write_scope TEXT',
+
+  /* How much disk a hub may consume here, and how much of it it has used.
+   *
+   * ⚠️ SCOPE ANSWERS "WHOSE SCREENS", THIS ANSWERS "HOW MUCH OF MY DISK". They are different
+   * questions and an operator only ever gets asked the first one, so the second has to be asked
+   * explicitly or it is answered by default — and the default would be "all of it".
+   *
+   * The consent line for content-push says the hub may send content downward. Somebody granting
+   * "you may write to my Lobby workspace" is agreeing about what appears on the Lobby screens; they
+   * have not agreed to unbounded storage on a machine they pay for. On a self-hosted box that
+   * matters more than it sounds: a full disk on a signage server is a cross-tenant outage, and
+   * routes/media.js already refuses rather than fill one.
+   *
+   * ⚠️ NULL means NOTHING, exactly as write_scope does — never "unlimited". Required whenever
+   * content-push is granted, refused when absent, so a byte permission cannot become total by
+   * being left blank. The mesh already treats "how much may you send me" as first-class and
+   * refusable in the other direction (lib/mesh/backpressure.js); this is the same question pointed
+   * downward.
+   *
+   * Bytes, not megabytes — the UI converts. A unit that has to be remembered is a unit that gets
+   * confused, and being wrong by 1000x here means a filled disk. */
+  'ALTER TABLE mesh_edges ADD COLUMN write_bytes_budget INTEGER',
+  'ALTER TABLE mesh_edges ADD COLUMN write_bytes_used INTEGER NOT NULL DEFAULT 0',
+
+  /* ─── Content distribution (Phase 5) ──────────────────────────────────────────────────────────
+   *
+   * sha256 of the FILE'S BYTES. Nullable, and that is load-bearing: 88 of 100 content rows in a
+   * typical dev library have no file on disk at all, remote/YouTube rows never will, and a row on a
+   * host where the read failed must still be usable. NULL is the day-one value for every existing
+   * row, so the fallback path is exercised from the first commit rather than being the rare,
+   * untested one.
+   *
+   * ⚠️ A DIGEST IS DEDUPLICATION, NOT IDENTITY. It answers "do I already hold these exact bytes",
+   * which is a transfer optimisation. It does not answer "is this the asset the hub means" — that
+   * is mesh_content_provenance below. Conflating them would merge two customers' assets the first
+   * time two sites happened to upload the same stock video.
+   *
+   * ⚠️ A new column is a duty at every writer (see docs/playlist-nesting-design.md, where 5 of 12
+   * writers corrupted rows silently). The content writers are: lib/content-ingest.js (upload),
+   * routes/content.js POST /remote and POST /youtube (no bytes, stays NULL), routes/content.js
+   * PUT /:id/replace (NEW BYTES — must re-hash or the digest lies), routes/status.js import, and
+   * the mesh committer. */
+  'ALTER TABLE content ADD COLUMN byte_digest TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_content_digest ON content(byte_digest)',
+
+  /* HTML bundles: which file inside the archive is the entry point.
+   *
+   * ⚠️ SERVER-DERIVED, NEVER CALLER-SUPPLIED. lib/html-bundle.js resolves it from the archive's own
+   * central directory (a .wgt's config.xml <content src>, else index.html) and refuses the upload
+   * when it cannot. A caller-settable entry point would be a path into an archive chosen by whoever
+   * uploaded it, which is the shape of every zip-slip.
+   *
+   * ⚠️ AND EVERY WRITER OWES IT A VALUE, or the row says a bundle has no entry point and players
+   * skip it: lib/content-ingest.js (upload), routes/content.js PUT /:id/replace (new bytes, must be
+   * re-derived), and the mesh committer. That is the same duty byte_digest above records, and the
+   * same one that was missed there. */
+  'ALTER TABLE content ADD COLUMN bundle_entry TEXT',
+
+  /* Which local row a peer's content id means.
+   *
+   * ⚠️ KEYED ON (origin_node_id, origin_content_id) — the mesh_mirror_workspaces shape, for the
+   * reason stated there: two servers WILL eventually hand us the same id, they are generated
+   * independently and nothing coordinates them, and a single-column key would silently merge two
+   * customers' libraries into one row set.
+   *
+   * This is what makes a re-push idempotent. Without it the child mints a fresh content.id every
+   * time, every playlist item is repointed, and — because content_id and filepath are both in the
+   * player's structural fingerprint — every screen on the site restarts at item 1 on every push,
+   * even when the bytes are identical. That is #234, estate-wide, nightly. */
+  `CREATE TABLE IF NOT EXISTS mesh_content_provenance (
+     origin_node_id    TEXT    NOT NULL,
+     origin_content_id TEXT    NOT NULL,
+     local_content_id  TEXT    NOT NULL,
+     edge_id           TEXT,
+     bytes             INTEGER NOT NULL DEFAULT 0,
+     first_seen_at     INTEGER NOT NULL,
+     -- Whether the node that SENT this content agreed it may be passed on to servers below.
+     -- ⚠️ Defaults to 0: absent means no, as everywhere else in this design. Content received
+     -- before relaying existed therefore stays put, which is the correct reading of a consent
+     -- nobody was ever asked for. Set from the manifest rl field, by the owner, per push.
+     relayable         INTEGER NOT NULL DEFAULT 0,
+     last_seen_at      INTEGER NOT NULL,
+     PRIMARY KEY (origin_node_id, origin_content_id)
+   )`,
+  /* ⚠️ AFTER the CREATE above, not with the mesh_edges alters. Placed there first, it ran before
+   * the table existed, failed as a benign "no such table", and the column silently never arrived —
+   * so every content commit threw "no column named relayable" on a fresh database. */
+  'ALTER TABLE mesh_content_provenance ADD COLUMN relayable INTEGER NOT NULL DEFAULT 0',
+  'CREATE INDEX IF NOT EXISTS idx_mesh_prov_local ON mesh_content_provenance(local_content_id)',
+  'CREATE INDEX IF NOT EXISTS idx_mesh_prov_edge ON mesh_content_provenance(edge_id)',
+
+  /* Short-lived, single-asset pull tickets minted by the node that HOLDS the bytes.
+   *
+   * ⚠️ Stored HASHED, like every other credential here (lib/mesh/pairing.js). And bound to a
+   * FILEPATH rather than a content id: a replace on the hub writes a new randomly-named file and
+   * unlinks the old one, so a filepath-bound ticket 404s cleanly mid-transfer instead of splicing
+   * two different assets into one file.
+   *
+   * The child pulls; the parent never initiates a transfer. The child dialled out because it may
+   * have no inbound route at all, and every mechanism added here keeps that direction. */
+  `CREATE TABLE IF NOT EXISTS mesh_pull_tickets (
+     id          TEXT    PRIMARY KEY,
+     token_hash  TEXT    NOT NULL,
+     edge_id     TEXT    NOT NULL,
+     filepath    TEXT    NOT NULL,
+     size        INTEGER NOT NULL,
+     digest      TEXT,
+     created_at  INTEGER NOT NULL,
+     expires_at  INTEGER NOT NULL,
+     used_at     INTEGER
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_ticket_hash ON mesh_pull_tickets(token_hash)',
+  'CREATE INDEX IF NOT EXISTS idx_mesh_ticket_exp ON mesh_pull_tickets(expires_at)',
+
+  /* Applied mesh writes, so a retry cannot apply twice.
+   *
+   * ⚠️ THE READ PATH NEEDS NOTHING LIKE THIS AND THAT IS EXACTLY WHY IT IS EASY TO FORGET. A
+   * repeated read is harmless, so mesh correlates requests with nothing but socket.io's ack
+   * callback. A repeated WRITE is not harmless, and the uplink already re-queues on ack timeout —
+   * so the ordinary behaviour of a flaky link is to send the same intent again.
+   *
+   * op_id is minted by the parent and stable across its retries. The outcome is recorded, and a
+   * replay returns THE RECORDED OUTCOME rather than re-applying: the caller sees what happened the
+   * first time, which is both correct and what makes the retry safe to attempt at all.
+   *
+   * intent_seq is monotonic per (edge, target) and answers out-of-order delivery: a stale "set
+   * playlist A" arriving behind "set playlist B" is dropped rather than winning by arriving last.
+   */
+  `CREATE TABLE IF NOT EXISTS mesh_write_ops (
+     edge_id     TEXT    NOT NULL,
+     op_id       TEXT    NOT NULL,
+     target      TEXT    NOT NULL,
+     intent_seq  INTEGER,
+     ok          INTEGER NOT NULL,
+     outcome     TEXT,
+     applied_at  INTEGER NOT NULL,
+     PRIMARY KEY (edge_id, op_id)
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_write_ops_target ON mesh_write_ops(edge_id, target, intent_seq)',
+  'CREATE INDEX IF NOT EXISTS idx_mesh_write_ops_age ON mesh_write_ops(applied_at)',
 
   /* This server's OWN friendly name, which is what it declares when pairing. Defaults to the host
    * name because that is the thing an operator already recognises; editable, because hostnames are
@@ -870,10 +1094,15 @@ const migrations = [
   `CREATE TABLE IF NOT EXISTS mesh_client_access (
      client_id  TEXT    NOT NULL,
      user_id    TEXT    NOT NULL,
-     -- Per-client role. ⚠️ NOT a read/write split: a hub cannot write to a client's screens at all
-     -- in 2.0 (I2), so the axis that differs is control of the RELATIONSHIP — 'viewer' sees the
-     -- client's mirrored data, 'manager' can also change retention, rotate tokens, disenroll, and
-     -- move nodes between clients. See server/lib/mesh/client-roles.js.
+     -- Per-client role. Two axes now, and they are kept separate on purpose: control of the
+     -- RELATIONSHIP ('viewer' sees mirrored data; 'manager' also changes retention, rotates
+     -- tokens, disenrolls, moves nodes between clients) and the ability to ACT on the client's
+     -- estate ('publisher' — push content, command devices).
+     -- ⚠️ This comment used to say a hub cannot write to a client's screens at all in 2.0. That
+     -- was true when the table was written and stopped being true when write landed; I2 now reads
+     -- "the child is the last word" rather than "upward only". Whatever this column says, the
+     -- decision is still the CHILD's — this role only decides which of THIS hub's staff may ask.
+     -- See server/lib/mesh/client-roles.js.
      role       TEXT    NOT NULL DEFAULT 'viewer',
      granted_at INTEGER NOT NULL,
      granted_by TEXT,
@@ -1023,6 +1252,33 @@ const migrations = [
      deleted_at      INTEGER,
      PRIMARY KEY (origin_node_id, device_id)
    )`,
+  /* Which edge this row arrived on. ⚠️ AFTER the CREATE above — an ALTER placed with the other
+   * mesh_edges alters runs before the table exists, fails as a benign "no such table", and the
+   * column silently never arrives (that exact mistake cost an hour earlier today).
+   *
+   * Needed because a relayed row's ORIGIN is a node this hub has no edge to. Visibility is resolved
+   * from the edge a row came in on, so without this a screen relayed from two hops down is stored
+   * correctly and then filtered out of every view — present in the database, absent from the page. */
+  'ALTER TABLE mesh_mirror_devices ADD COLUMN edge_id TEXT',
+
+  /* HOW FAR AWAY A NODE IS, and by which route.
+   *
+   * ⚠️ Learned from the ancestry a relayed payload carries, never declared. A node cannot tell this
+   * hub where it sits — it would be describing a relationship it is not a party to — but a payload
+   * that arrives having genuinely travelled A<-B<-C proves the shape by having taken it.
+   *
+   * `hops` is the number of LINKS between here and that node: 1 is a server this one is paired
+   * with, 2 is a server behind one of those. That is the number an operator actually asks for when
+   * they want to know whether there is a relay in the middle. */
+  `CREATE TABLE IF NOT EXISTS mesh_node_paths (
+     node_id      TEXT PRIMARY KEY,
+     via_edge_id  TEXT NOT NULL,
+     path         TEXT NOT NULL,
+     hops         INTEGER NOT NULL,
+     first_seen_at INTEGER NOT NULL,
+     last_seen_at  INTEGER NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_node_paths_edge ON mesh_node_paths (via_edge_id)',
   /* ⚠️ WHEN THIS HUB FIRST SAW THE SCREEN, which received_at cannot answer — the row is upserted, so
    * received_at is always the LATEST report. Without a first-seen the uptime report has to assume
    * every screen existed for the whole reporting window, which scores a screen installed on the 20th
@@ -1179,9 +1435,153 @@ const migrations = [
   'ALTER TABLE devices ADD COLUMN trigger_status TEXT',
   'ALTER TABLE devices ADD COLUMN trigger_status_at INTEGER',
 
+  /*
+   * The INBOUND local REST door (Goal B part 3): a room control system on the customer's LAN asks
+   * the panel to do something, or asks what it is doing.
+   *
+   * ⚠️ ITS OWN FLAG, even though it shares the trigger HTTP socket and port. `triggers_accept_http`
+   * means "a LAN host may put an overlay on this screen"; this means "a LAN host may change what
+   * this screen is doing". One flag for both would have handed remote control to every site that
+   * only ever wanted an emergency overlay, and the two are enabled months apart by different people.
+   *
+   * ⚠️ AND ITS OWN SECRET, not trigger_secret. The trigger secret is designed to be pasted into an
+   * AMX program and travels in a query string in cleartext; it authorises an overlay. This one
+   * authorises reload / screen on-off / volume / brightness. Sharing them would mean every installer
+   * who was ever given the trigger secret could turn the fleet off, and revoking one would revoke
+   * the other.
+   */
+  'ALTER TABLE devices ADD COLUMN local_api_enabled INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE devices ADD COLUMN local_api_secret TEXT',
+
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_triggers_token ON triggers (workspace_id, match_token)`,
   `CREATE INDEX IF NOT EXISTS idx_triggers_ws     ON triggers (workspace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_trigger_assign  ON trigger_assignments (target_type, target_id)`,
+
+  /* ==============================================================================================
+   * DISPLAY POWER SCHEDULES — the BACKLIGHT on a weekly clock. Nothing here powers a device off.
+   *
+   * ⚠️ NOT the `schedules` table, and the separation is the point. That one answers "what plays
+   * when", is per-zone, carries content/widget/layout/playlist ids, priorities and colours, and a
+   * row in it is a programming decision. This answers "is the panel lit", has no content at all,
+   * and a row in it is an electricity decision. Overloading `schedules` would mean every content
+   * query grew an "and is this actually a power row" filter, which is the shape that eventually
+   * gets forgotten in exactly one query.
+   *
+   * ⚠️ The windows are evaluated ON THE PANEL, from its local copy, by lib/power-window.js and its
+   * Kotlin port against shared/power-window-vectors.json. The server never decides "off now" and
+   * pushes it — a screen whose WAN is down must still sleep and wake on time, and a schedule that
+   * depended on a live socket would strand a dark panel the moment the network blinked.
+   * ============================================================================================ */
+  `CREATE TABLE IF NOT EXISTS display_power_schedules (
+     id           TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     name         TEXT NOT NULL DEFAULT '',
+     /* Device XOR group, same shape and the same CHECK the content schedules table uses, so the
+      * precedence rule (device beats group) reads identically in both. See device-power-schedule.js,
+      * which is the ONE definition of which schedule a given screen obeys. */
+     device_id    TEXT REFERENCES devices(id) ON DELETE CASCADE,
+     group_id     TEXT REFERENCES device_groups(id) ON DELETE CASCADE,
+     /* IANA zone the windows are WRITTEN in. Resolved at push time through lib/device-timezone so
+      * creation and evaluation agree — a schedule authored in one zone and evaluated in another is
+      * the bug that makes a screen sleep an hour early twice a year. NULL = the device's own. */
+     timezone     TEXT,
+     enabled      INTEGER NOT NULL DEFAULT 1,
+     /* JSON array of { days:[0-6], start:"HH:MM", end:"HH:MM" }. Stored as a document rather than
+      * a child table because it is only ever read and written WHOLE — the player gets the entire
+      * list or none of it, and no query ever asks "which schedules contain a Tuesday". */
+     windows      TEXT NOT NULL DEFAULT '[]',
+     created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
+   )`,
+  /* One schedule per target. A screen with two contradictory power schedules has no defined
+   * behaviour, and the resolver would have to invent a tiebreak; the database refuses instead. */
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_device ON display_power_schedules (device_id) WHERE device_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_group  ON display_power_schedules (group_id)  WHERE group_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_dps_ws ON display_power_schedules (workspace_id)`,
+
+  /* ==============================================================================================
+   * RESUMABLE UPLOADS — one row per in-flight file.
+   *
+   * ⚠️ WHY THIS EXISTS. A single-request upload must finish inside whatever the shortest timeout
+   * between the browser and this process happens to be. On prod that is Cloudflare's, measured at
+   * exactly 125s across seven consecutive failures from one customer in Perth uploading to a
+   * Hetzner box — his successful uploads peaked at 114.2s, i.e. he was living inside a 10-second
+   * margin. Anyone far from the origin, or on ordinary domestic broadband, has the same ceiling;
+   * they just have not hit it yet.
+   *
+   * The fix is not a bigger timeout, it is smaller requests: each chunk gets its OWN budget, so the
+   * ceiling stops scaling with file size.
+   *
+   * ⚠️ THE OFFSET IS NOT STORED HERE. It is the size of the part file on disk, read at request
+   * time. A counter in this table would be a second source of truth that can disagree with the
+   * bytes — and it would disagree exactly when it matters, after a crash mid-append, which is the
+   * case the whole feature exists to survive.
+   * ============================================================================================ */
+  `CREATE TABLE IF NOT EXISTS upload_sessions (
+     id            TEXT PRIMARY KEY,
+     workspace_id  TEXT NOT NULL,
+     user_id       TEXT NOT NULL,
+     filename      TEXT NOT NULL,
+     /* What the CLIENT says it will send. Never trusted as fact — the append path enforces it as a
+      * ceiling and finalize refuses a part file that does not match — but needed up front so the
+      * storage allowance can be checked BEFORE a gigabyte is accepted rather than after. */
+     declared_size INTEGER NOT NULL,
+     folder_id     TEXT,
+     /* Relative to config.uploadsDir + '/incoming'. ⚠️ NOT contentDir: /uploads/content is served
+      * statically, so a partial file there would be web-reachable from the dashboard's own origin
+      * BEFORE upload-sniff has looked at its bytes. */
+     part_name     TEXT NOT NULL,
+     created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     /* Touched on every append. The sweeper measures idleness from here, so a slow upload that is
+      * still making progress is never collected out from under the person making it. */
+     updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_upload_sessions_ws  ON upload_sessions (workspace_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_upload_sessions_age ON upload_sessions (updated_at)`,
+
+  /* ==============================================================================================
+   * DEVICE ENDPOINTS — saved REST calls a PANEL makes on its own network, on its own clock.
+   *
+   * ⚠️ The polling happens ON THE DEVICE, not here. The whole point of the http_request surface is
+   * that the panel stands on the private side of the customer's firewall, next to the PLC and the
+   * sensor; a server-side poller could not reach any of it. So these rows are a DEFINITION, synced
+   * to the device, and the device runs them — including with the WAN down. Same shape as triggers.
+   *
+   * ⚠️ device_id XOR group_id, but the RESOLUTION IS A UNION, not an override. A power schedule has
+   * one answer ("is this screen lit"), so device beats group. A list of endpoints is not one
+   * answer: a screen should run its group's endpoints AND its own. The only override is by NAME,
+   * so one panel can point "PLC state" somewhere else without leaving the group.
+   * ============================================================================================ */
+  `CREATE TABLE IF NOT EXISTS device_endpoints (
+     id           TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     name         TEXT NOT NULL,
+     device_id    TEXT REFERENCES devices(id) ON DELETE CASCADE,
+     group_id     TEXT REFERENCES device_groups(id) ON DELETE CASCADE,
+     method       TEXT NOT NULL DEFAULT 'GET',
+     url          TEXT NOT NULL,
+     /* JSON object. ⚠️ Header VALUES are encrypted at rest with lib/plugins/secrets, because an
+      * endpoint header is where an API key lives and a workspace member who can read a row should
+      * not thereby read the credential. They are decrypted on the way to the panel, which needs
+      * the plaintext to make the call at all. */
+     headers      TEXT NOT NULL DEFAULT '{}',
+     body         TEXT,
+     timeout_ms   INTEGER,
+     /* How it fires. Exactly one of the two is meaningful:
+      *   interval_sec — every N seconds, on the device's own clock
+      *   run_on       — 'screen_on' | 'screen_off' | 'heartbeat'
+      * Neither set = the endpoint only runs when an operator asks. */
+     interval_sec INTEGER,
+     run_on       TEXT,
+     enabled      INTEGER NOT NULL DEFAULT 1,
+     created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_device_endpoints_ws     ON device_endpoints (workspace_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_device_endpoints_device ON device_endpoints (device_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_device_endpoints_group  ON device_endpoints (group_id)`,
 
   /*
    * ─── Playlist inheritance ────────────────────────────────────────────────────────────────
@@ -1213,12 +1613,645 @@ const migrations = [
   "ALTER TABLE devices ADD COLUMN scheduled_playlist_id TEXT REFERENCES playlists(id) ON DELETE SET NULL",
   "ALTER TABLE devices ADD COLUMN scheduled_layout_id TEXT REFERENCES layouts(id) ON DELETE SET NULL",
 
+  /* The name a node declares for ITSELF, mirrored on whoever receives its reports.
+   *
+   * ⚠️ ADDED BECAUSE THE NAME COULD TRAVEL BUT COULD NOT CHANGE. `mesh_node.node_name` and the wire
+   * field both shipped, and `mesh_edges.peer_name` was written from the introduction at enrollment
+   * — once, and never again. Nothing anywhere ever called setNodeName, so every server in a mesh
+   * was permanently whatever its hostname happened to be on pairing day. That is the same defect
+   * peer_version had, and it is fixed the same way: the name rides the periodic self-report.
+   *
+   * ⚠️ A LABEL, NEVER AN IDENTIFIER. It arrives from another operator's machine, it is not unique,
+   * not authenticated, and is freely changeable by whoever owns that node. Route, authorize and key
+   * on node_id; show this to humans and escape it on the way out. */
+  'ALTER TABLE mesh_mirror_nodes ADD COLUMN node_name TEXT',
+
+  /* The HTTP status an audited request actually returned.
+   *
+   * ⚠️ ADDED BECAUSE THE AUDIT TRAIL COULD NOT TELL SUCCESS FROM FAILURE. activityLogger gated on
+   * `res.statusCode < 400`, so a mutation that 500'd left NO row at all — identical, from the data,
+   * to one that never happened. On prod that meant 12,667 audited requests and exactly ZERO recorded
+   * failures outside the explicit `auth:login_failed` event: a playlist publish that blew up looked
+   * exactly like one that worked. This column plus the widened gate is what makes "did it break, and
+   * for whom" answerable.
+   *
+   * NULL is meaningful and correct: rows written by the ~49 direct logActivity() callers are named
+   * events ('auth:login_success', 'alert:device_offline'), not HTTP requests, and have no status. */
+  'ALTER TABLE activity_log ADD COLUMN status_code INTEGER',
+
+  /* Community hardware reports for the public Certified Hardware page.
+   *
+   * ⚠️ THIS TABLE CAN NEVER PRODUCE A CERTIFIED ENTRY. Reseller agreements define Certified Hardware
+   * as the models published on that page, and support obligations attach to them, so certification
+   * stays in certified-hardware.json where a human commits it. What lands here is the other half of
+   * that page: "a user says this works", published with an explicit note that it carries no support
+   * commitment. The status is forced server-side, not chosen by the submitter.
+   *
+   * decision_token_hash is the emailed one-click approve/reject link. Only the hash is stored and
+   * consuming it clears the row's token, so a link works exactly once — same shape as email verify. */
+  `CREATE TABLE IF NOT EXISTS hardware_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    manufacturer TEXT,
+    model_numbers TEXT,
+    category TEXT NOT NULL,
+    os TEXT,
+    player TEXT,
+    max_resolution TEXT,
+    player_version TEXT,
+    notes TEXT,
+    submitter_name TEXT,
+    submitter_email TEXT,
+    submitted_ip TEXT,
+    submitted_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decision_token_hash TEXT,
+    decision_token_expires INTEGER,
+    decided_at INTEGER,
+    decided_by TEXT
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_hardware_submissions_status ON hardware_submissions(status)',
+
+  /* Which screen-capture tier a panel can actually use: projection | accessibility | view | none.
+   *
+   * ⚠️ ADDED BECAUSE THE LIVE VIEW DEGRADES SILENTLY. MediaProjection consent does not survive the
+   * app restarting and an OTA restarts the app, so a panel drops from whole-screen capture to
+   * drawing only the player's own window — the remote view shows the playlist and goes blank over
+   * Settings, with no error and nothing anywhere saying why. A customer reported exactly that after
+   * an update, on two panels at once, and the only way to tell was to infer it from the pictures.
+   * Recording the tier makes it a state the dashboard can show and an operator can act on.
+   *
+   * NULL means "this panel has not told us" — every non-Android player, and any Android build older
+   * than this column. Do not render NULL as a fault. */
+  "ALTER TABLE devices ADD COLUMN capture_mode TEXT",
+
+  /* Whether an operator actually CHOSE this server's name, as opposed to inheriting the hostname.
+   *
+   * ⚠️ A SEPARATE FLAG RATHER THAN COMPARING THE NAME TO os.hostname(). The comparison is wrong in
+   * both directions: a box renamed at the OS level after pairing would start reporting a chosen
+   * name as a default, and an operator who deliberately types the hostname would be told they never
+   * decided. It also has to survive the hostname changing, which is the thing that prompted the
+   * name to be editable in the first place. */
+  'ALTER TABLE mesh_node ADD COLUMN chose_name INTEGER NOT NULL DEFAULT 0',
+
+  /* Slide decks — the editable SOURCE a deck is authored as.
+   *
+   * ⚠️ NOT A CONTENT TYPE, and that is the whole design. Publishing a deck emits one slide WIDGET
+   * per page plus a PLAYLIST that orders them, so scheduling, groups, inheritance, the resolver and
+   * every player keep working on objects they already understand. This row is read by the editor and
+   * by nothing else; delete every deck and the screens carry on unaffected.
+   *
+   * `playlist_id` is where it publishes TO. Deliberately not a foreign key with a cascade: SQLite's
+   * foreign_keys pragma is OFF in this process (see the FK-orphan note elsewhere), so a declared
+   * CASCADE here would be inert and would read as a guarantee that does not exist. publishDeck
+   * re-checks the playlist still exists and still belongs to this workspace on every publish. */
+  `CREATE TABLE IF NOT EXISTS slide_decks (
+     id           TEXT PRIMARY KEY,
+     workspace_id TEXT,
+     user_id      TEXT,
+     name         TEXT NOT NULL,
+     doc          TEXT NOT NULL DEFAULT '{"slides":[]}',
+     playlist_id  TEXT,
+     created_at   INTEGER NOT NULL,
+     updated_at   INTEGER NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_slide_decks_ws ON slide_decks(workspace_id)',
+
+  /* What this deck published LAST time, as a JSON array of widget ids.
+   *
+   * ⚠️ THE PRIOR STATE CANNOT COME FROM THE DOCUMENT, and a test caught why. The first version
+   * worked out what to delete by diffing the incoming doc's widget_id fields against the new set —
+   * but widget_id lives inside a blob the caller supplies, so naming another workspace's widget id
+   * on a slide made publish DELETE that widget. It also could not see a slide removed before the
+   * save, because by then the document no longer mentioned it.
+   *
+   * This column is written only by publish, so it is the server's own record of what it created,
+   * and diffing against it is both correct and unforgeable. */
+  'ALTER TABLE slide_decks ADD COLUMN published_widget_ids TEXT NOT NULL DEFAULT \'[]\'',
+  // Content approval + version history (lib/release-policy.js, lib/revisions.js). Off by default
+  // for every workspace, existing and new; a draft column is NULL until a draft exists.
+  'ALTER TABLE widgets ADD COLUMN draft_config TEXT',
+  'ALTER TABLE layouts ADD COLUMN draft_zones TEXT',
+  'ALTER TABLE content ADD COLUMN draft_json TEXT',
+
+  /* Fonts an operator uploaded, to set slides in a brand face the bundled five do not cover.
+   *
+   * ⚠️ `css_family` IS GENERATED, NEVER THE FONT'S OWN NAME. A font declaring itself "Inter" would
+   * otherwise shadow the bundled Inter in any document that used both, and whichever @font-face
+   * came second would win — a slide changing appearance because of an unrelated upload, with
+   * nothing to point at. Every uploaded face gets a unique family that cannot collide.
+   *
+   * ⚠️ `licence_note` and `uploaded_by` exist because THIS SERVER REDISTRIBUTES the file: every
+   * screen showing a slide in this face downloads it. The bundled fonts are OFL so that is settled;
+   * for an upload it is the uploader's assertion, and on a hosted instance the operator needs to be
+   * able to see who made it and on what basis. Recorded at upload, shown in the editor. */
+  // #320: operator-uploaded GLSL transitions. Customer content, kept out of shared/Transitions/ so
+  // the first-party licensing claim in docs/licensing.md stays a flat statement.
+  `CREATE TABLE IF NOT EXISTS custom_shaders (
+     id            TEXT PRIMARY KEY,
+     workspace_id  TEXT NOT NULL,
+     uploaded_by   TEXT,
+     shader_id     TEXT NOT NULL,
+     name          TEXT NOT NULL,
+     blurb         TEXT NOT NULL DEFAULT '',
+     source        TEXT NOT NULL,
+     params        TEXT NOT NULL DEFAULT '[]',
+     licence_note  TEXT,
+     created_at    INTEGER NOT NULL,
+     UNIQUE (workspace_id, shader_id)
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_custom_shaders_ws ON custom_shaders(workspace_id)',
+  `CREATE TABLE IF NOT EXISTS custom_fonts (
+     id            TEXT PRIMARY KEY,
+     workspace_id  TEXT,
+     uploaded_by   TEXT,
+     name          TEXT NOT NULL,
+     css_family    TEXT NOT NULL,
+     filepath      TEXT NOT NULL,
+     format        TEXT NOT NULL,
+     file_size     INTEGER NOT NULL,
+     licence_note  TEXT,
+     created_at    INTEGER NOT NULL
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_custom_fonts_ws ON custom_fonts(workspace_id)',
+  /*
+   * #313 — a per-display ENROLMENT KEY, so a player with no durable storage can say who it is.
+   *
+   * ⚠️ THE CASE THIS EXISTS FOR. A vMix browser input deletes its whole CEF profile when vMix
+   * closes (vMix staff, on their forum: "The Web Browser input cache is automatically cleared when
+   * closing vMix"), so localStorage, cookies and IndexedDB all go together. The web player boots
+   * with nothing but its URL, and a player with no identity provisions a NEW display row — which
+   * means a fresh unpaired screen after every restart, and a dashboard filling up with corpses.
+   *
+   * So the identity has to live in the URL. This column is the thing the URL carries.
+   *
+   * ⚠️ NOT devices.device_token, and not devices.pairing_code. The device token is used on every
+   * message and cannot be rotated without re-pairing the screen; the pairing code is six digits,
+   * which is fine displayed on a screen behind a lockout for a few minutes and far too weak as a
+   * durable secret in a URL. This is a third thing on purpose: long, rotatable from the display's
+   * page, and good for exactly one action — proving which display you are.
+   *
+   * NULL for every display that does not use one, which is nearly all of them.
+   */
+  'ALTER TABLE devices ADD COLUMN enrol_key TEXT',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_enrol_key ON devices(enrol_key) WHERE enrol_key IS NOT NULL',
+  // #299 offline proof-of-play: a player-minted id for plays replayed after an outage, so a
+  // re-flush cannot double-count. Partial index — live plays leave it NULL and must not collide.
+  'ALTER TABLE play_logs ADD COLUMN client_event_id TEXT',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_play_logs_client_event ON play_logs(client_event_id) WHERE client_event_id IS NOT NULL',
+  /*
+   * ⚠️ #307: THE 10-SECOND LOOP BLOCK. This index is the fix, and it is worth stating what it cost.
+   *
+   * deviceSocket closes a play by finding the device's most recent OPEN row:
+   *   WHERE device_id = ? AND ended_at IS NULL AND (content_id = ? OR widget_id = ?)
+   *   ORDER BY started_at DESC, id DESC LIMIT 1
+   * idx_play_logs_device covers device_id, so SQLite found the device's rows — and then sorted them
+   * in a TEMP B-TREE, because that index cannot satisfy the ORDER BY once `ended_at IS NULL` has
+   * filtered it. On prod one device has 377,132 play_logs rows. Measured against a copy of the real
+   * database: **153ms for that one query**, every time that panel advanced an item.
+   *
+   * A player advances on its dwell, so this ran roughly every ten seconds and blocked the event
+   * loop for the whole of it — which is exactly the signature in the telemetry: spikes of 100-300ms
+   * arriving in pairs about ten seconds apart, 19.5% of all seconds carrying one. It is why prod
+   * read `elevated`, and it is the load Bold's server was still carrying after their I/O subsided.
+   *
+   * PARTIAL (`WHERE ended_at IS NULL`) so it indexes only OPEN plays — a few thousand rows rather
+   * than 1.44 million — and carries the sort order, so the query becomes a seek to the first
+   * matching row. Same query on the same data afterwards: **0.000ms**.
+   *
+   * ⚠️ THE INDEX TREATS A SYMPTOM. That device has 377k rows and another has 21,115 rows still
+   * OPEN, which means plays are being started and never closed; the open set grows forever and any
+   * scan over it gets slower forever. See [[project_screentinker_fk_orphans]] and the #299 backfill
+   * work — the leak is a separate fix, and this index stops it costing the whole fleet meanwhile.
+   */
+  'CREATE INDEX IF NOT EXISTS idx_play_logs_open ON play_logs(device_id, started_at DESC, id DESC) WHERE ended_at IS NULL',
+  /*
+   * One row per Stripe invoice we have emailed a receipt for.
+   *
+   * ⚠️ THE POINT IS "ONCE", AND STRIPE MAKES THAT NON-TRIVIAL. Webhooks are retried until they get
+   * a 2xx, and the same event can be delivered more than once even after one — so a send sitting
+   * directly in the handler mails a paying customer a fresh receipt on every delivery. There is no
+   * dedup anywhere in routes/stripe.js today; every other handler happens to survive it because
+   * they are UPDATEs to a target state, which a repeat simply reapplies. An email is not.
+   *
+   * Keyed on the INVOICE id rather than the event id: an invoice is the payment, and that is the
+   * thing a customer should hear about once. Two different events about one invoice must still
+   * produce one email.
+   */
+  `CREATE TABLE IF NOT EXISTS billing_receipts (
+     invoice_id  TEXT PRIMARY KEY,
+     user_id     TEXT,
+     amount      INTEGER,
+     currency    TEXT,
+     sent_at     INTEGER NOT NULL
+   )`,
+
+  // embedded-renderer: per-device screen profile (JSON). NULL = not an embedded client.
+  // Schema: { width, height, rotation, colorDepth, dither, outputFormat }
+  // See server/lib/embedded-profiles.js for the preset library and field vocabulary.
+  'ALTER TABLE devices ADD COLUMN screen_profile TEXT',
+  // embedded-renderer: one-time secret for claim polling security (see routes/embedded.js)
+  'ALTER TABLE devices ADD COLUMN claim_secret TEXT',
+
+  // embedded-renderer: server-side item cursor so an MCU can wake, fetch, sleep without
+  // any local state. started_at is Unix seconds; the route advances item_index when
+  // now - started_at >= item.duration_sec and resets started_at.
+  `CREATE TABLE IF NOT EXISTS embedded_cursor (
+     device_id   TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+     item_index  INTEGER NOT NULL DEFAULT 0,
+     started_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  `CREATE TABLE IF NOT EXISTS embedded_zone_cursor (
+     device_id   TEXT REFERENCES devices(id) ON DELETE CASCADE,
+     zone_id     TEXT NOT NULL,
+     item_index  INTEGER NOT NULL DEFAULT 0,
+     started_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     PRIMARY KEY (device_id, zone_id)
+   )`,
+
+  // Universal data sources & integrations engine (iCal, REST APIs, Google Sheets, SQL)
+  `CREATE TABLE IF NOT EXISTS data_sources (
+     id              TEXT PRIMARY KEY,
+     workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+     slug            TEXT NOT NULL,
+     name            TEXT NOT NULL,
+     type            TEXT NOT NULL,
+     config          TEXT NOT NULL,
+     cached_data     TEXT,
+     last_fetched_at INTEGER DEFAULT 0,
+     last_status     TEXT DEFAULT 'ok',
+     last_error      TEXT,
+     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     UNIQUE(workspace_id, slug)
+   )`,
+  "CREATE INDEX IF NOT EXISTS idx_data_sources_workspace ON data_sources(workspace_id)",
+  "CREATE INDEX IF NOT EXISTS idx_data_sources_slug ON data_sources(workspace_id, slug)",
+
+  /*
+   * Plugin enablement is instance-global (no workspace_id) because loading is process-global:
+   * a require() of plugin code cannot be scoped to one tenant. Widget *instances* of a plugin
+   * type remain workspace-scoped like every other widget. Default disabled — dropping a folder
+   * on disk is not RCE-on-next-boot.
+   */
+  `CREATE TABLE IF NOT EXISTS plugin_state (
+     id         TEXT PRIMARY KEY,
+     enabled    INTEGER NOT NULL DEFAULT 0,
+     error      TEXT,
+     loaded_at  INTEGER,
+     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  'ALTER TABLE plugin_state ADD COLUMN settings TEXT',
+  'ALTER TABLE plugin_state ADD COLUMN allowlist_required INTEGER NOT NULL DEFAULT 0',
+  `CREATE TABLE IF NOT EXISTS plugin_submissions (
+     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+     plugin_id       TEXT NOT NULL,
+     name            TEXT,
+     version         TEXT,
+     description     TEXT,
+     sha256          TEXT NOT NULL,
+     tree_sha256     TEXT,
+     archive_name    TEXT NOT NULL,
+     manifest_json   TEXT NOT NULL,
+     files_json      TEXT NOT NULL,
+     size_bytes      INTEGER NOT NULL,
+     submitted_by    TEXT NOT NULL,
+     workspace_id    TEXT,
+     submitted_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     status          TEXT NOT NULL DEFAULT 'pending',
+     decided_by      TEXT,
+     decided_at      INTEGER,
+     decision_note   TEXT
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_plugin_submissions_plugin_status ON plugin_submissions(plugin_id, status)',
+  `CREATE TABLE IF NOT EXISTS plugin_allowlist (
+     plugin_id      TEXT PRIMARY KEY,
+     sha256         TEXT NOT NULL,
+     source         TEXT NOT NULL,
+     submission_id  INTEGER,
+     approved_by    TEXT NOT NULL,
+     approved_at    INTEGER NOT NULL,
+     note           TEXT
+   )`,
+  "ALTER TABLE content ADD COLUMN tags TEXT",
+  "ALTER TABLE content ADD COLUMN meta TEXT",
+  "ALTER TABLE playlists ADD COLUMN playback_order TEXT NOT NULL DEFAULT 'sequential'",
+  "ALTER TABLE playlists ADD COLUMN published_playback_order TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN weight INTEGER NOT NULL DEFAULT 1",
+  // Support access (lib/support-access). Two tables, same shape as recovery_grants:
+  //   support_requests — codes THIS instance minted when an admin asked for support. A support
+  //                      token is only honoured against an open, unexpired, unredeemed one, which
+  //                      is what stops a vendor-signed token from being a key to every install.
+  //   support_grants   — the live sessions. A `support: true` session JWT is good only while its
+  //                      row exists: DELETE revokes on the next request, expires_at bounds it,
+  //                      first_used_at + source_ip attribute it.
+  // Additive and idempotent; a code-only rollback leaves two unused tables behind.
+  `CREATE TABLE IF NOT EXISTS support_requests (
+    code          TEXT PRIMARY KEY,
+    created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    expires_at    INTEGER NOT NULL,
+    requested_by  TEXT,
+    note          TEXT,
+    redeemed_at   INTEGER,
+    redeemed_jti  TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_support_requests_expires ON support_requests(expires_at)",
+  `CREATE TABLE IF NOT EXISTS support_grants (
+    jti            TEXT PRIMARY KEY,
+    request_code   TEXT NOT NULL,
+    org            TEXT,
+    reason         TEXT,
+    issued_by      TEXT,
+    created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    first_used_at  INTEGER,
+    expires_at     INTEGER NOT NULL,
+    source_ip      TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_support_grants_expires ON support_grants(expires_at)",
+  // Templates library (lib/templates). Installs are instance-wide, like plugins, because the
+  // package bytes are shared; a workspace USES one through a widget of type 'template'.
+  //   templates_installed — one row per `catalog/id`, pinned to one version + sha256.
+  //   template_catalogs   — the official catalog plus any an admin added; caches the last
+  //                         verified index and the highest serial seen (rollback protection).
+  //   template_seen       — per-user "New" badges in the library.
+  `CREATE TABLE IF NOT EXISTS templates_installed (
+    id             TEXT PRIMARY KEY,
+    catalog        TEXT NOT NULL,
+    template_id    TEXT NOT NULL,
+    version        TEXT NOT NULL,
+    sha256         TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    manifest_json  TEXT NOT NULL,
+    trust          TEXT NOT NULL,
+    signer         TEXT,
+    status         TEXT NOT NULL DEFAULT 'active',
+    status_reason  TEXT,
+    installed_by   TEXT,
+    installed_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`,
+  'ALTER TABLE templates_installed ADD COLUMN signer_key_id TEXT',
+  `CREATE TABLE IF NOT EXISTS template_catalogs (
+    id             TEXT PRIMARY KEY,
+    label          TEXT NOT NULL,
+    url            TEXT,
+    public_key     TEXT NOT NULL,
+    builtin        INTEGER NOT NULL DEFAULT 0,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    last_serial    INTEGER NOT NULL DEFAULT 0,
+    index_json     TEXT,
+    index_expires  TEXT,
+    last_checked   INTEGER,
+    last_ok        INTEGER,
+    last_error     TEXT,
+    created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`,
+  // Sales / limited-time discounts (lib/promotions.js). Each row is backed by a Stripe coupon.
+  `CREATE TABLE IF NOT EXISTS promotions (
+    id                 TEXT PRIMARY KEY,
+    name               TEXT NOT NULL,
+    headline           TEXT NOT NULL,
+    percent_off        INTEGER NOT NULL,
+    cycles             TEXT NOT NULL DEFAULT 'both',
+    duration           TEXT NOT NULL DEFAULT 'once',
+    duration_in_months INTEGER,
+    plan_ids           TEXT NOT NULL DEFAULT '[]',
+    starts_at          INTEGER NOT NULL,
+    ends_at            INTEGER,
+    ended_at           INTEGER,
+    stripe_coupon_id   TEXT,
+    created_by         TEXT,
+    created_at         INTEGER NOT NULL
+  )`,
+  // Stale-account cleanup (lib/account-cleanup.js): the deletion notice, and an index so "last
+  // activity" (MAX(activity_log.created_at) per user) is not a table scan on a big log.
+  'ALTER TABLE users ADD COLUMN cleanup_warned_at INTEGER',
+  'ALTER TABLE users ADD COLUMN cleanup_delete_after INTEGER',
+  'CREATE INDEX IF NOT EXISTS idx_activity_log_user_time ON activity_log(user_id, created_at)',
+  `CREATE TABLE IF NOT EXISTS template_seen (
+    user_id      TEXT NOT NULL,
+    template_key TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    PRIMARY KEY (user_id, template_key)
+  )`,
+  // Scale-out C1 (docs/scale-out-design.md §11). All additive; a stock install gets three NULL
+  // columns and two empty tables and nothing reads them.
+  //   workspaces.origin_node_id — NULL means "mine". Set on a copied workspace to the node UUID of
+  //                               the primary that owns it; it is the ONE column that decides
+  //                               whether a write is local or must go to the primary.
+  //   workspaces.replica_rev/replica_as_of — how far the copy has been applied, and when.
+  //   mesh_edges.acked_rev      — on the primary: the change-log position a replica has confirmed.
+  //   mesh_change_log           — on the primary, filled by triggers that exist ONLY while an up
+  //                               edge carries workspace-replication (lib/mesh/replication.js);
+  //                               never populated by application code.
+  //   (the three workspaces columns are added below the multitenancy phase, where the table exists)
+  "ALTER TABLE mesh_edges ADD COLUMN acked_rev INTEGER",
+  `CREATE TABLE IF NOT EXISTS mesh_change_log (
+    rev          INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT NOT NULL,
+    table_name   TEXT NOT NULL,
+    row_id       TEXT NOT NULL,
+    op           TEXT NOT NULL CHECK (op IN ('upsert','delete')),
+    ts           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_mesh_change_log_ws ON mesh_change_log(workspace_id, rev)",
+  /*
+   * Scale-out C2 (docs/scale-out-design.md §6).
+   *   devices.attached_node_id — the replica this screen is connected THROUGH, written by the
+   *     primary when it applies a player-event from that replica; NULL for a screen connected here.
+   *     deliverCommand reads it to send a command-relay up the edge instead of to a local socket.
+   *   mesh_player_events   — REPLICA side: the durable, ordered outbox of player events for the
+   *     primary. Proof-of-play rows are never thinned; heartbeat-shaped kinds coalesce by key.
+   *   mesh_player_verdicts — REPLICA side: "the primary said yes to this device + token hash".
+   *     Lets a screen with a prior verified session reconnect while the primary is unreachable.
+   *     Holds a HASH of the token, never the token (design: the token never leaves the primary).
+   */
+  'ALTER TABLE devices ADD COLUMN attached_node_id TEXT',
+  `CREATE TABLE IF NOT EXISTS mesh_player_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    edge_id      TEXT NOT NULL,
+    device_id    TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    op_id        TEXT NOT NULL UNIQUE,
+    coalesce_key TEXT,
+    payload      TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_player_events_edge ON mesh_player_events(edge_id, id)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_mesh_player_events_coalesce ON mesh_player_events(coalesce_key) WHERE coalesce_key IS NOT NULL',
+  /*
+   * Scale-out C3: REPLICA side — which copied content rows have their bytes on this disk. One row
+   * per content id; the file sits under uploads/content/<filename> exactly as the copied row names
+   * it, so the ordinary readers serve it as a local hit. Empty on every node that declared no
+   * caches-content edge. Evicted LRU by last_read_at; swept when the row or the edge goes.
+   */
+  `CREATE TABLE IF NOT EXISTS mesh_content_cache (
+    content_id     TEXT PRIMARY KEY,
+    edge_id        TEXT NOT NULL,
+    filename       TEXT NOT NULL,
+    thumb_filename TEXT,
+    bytes          INTEGER NOT NULL DEFAULT 0,
+    fetched_at     INTEGER NOT NULL,
+    last_read_at   INTEGER NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_content_cache_edge ON mesh_content_cache(edge_id, last_read_at)',
+  'CREATE INDEX IF NOT EXISTS idx_mesh_content_cache_file ON mesh_content_cache(filename)',
+  `CREATE TABLE IF NOT EXISTS mesh_player_verdicts (
+    device_id    TEXT PRIMARY KEY,
+    edge_id      TEXT NOT NULL,
+    token_hash   TEXT NOT NULL,
+    verified_at  INTEGER NOT NULL
+  )`,
+
+  /*
+   * ⚠️ WHERE A PLAY HAPPENED IS A FACT ABOUT THE PAST — snapshot it, do not resolve it later.
+   *
+   * play_logs had no workspace_id; tenancy was reached by joining devices, i.e. by asking where
+   * the device is NOW. A reseller moving a display from client A's workspace to client B's would
+   * therefore rewrite history: A's past plays start appearing in B's reports and disappear from
+   * A's, with nothing recording that it happened. Devices are reassigned between client
+   * workspaces routinely, and the rollup below makes it permanent — once raw is pruned the
+   * misattribution can no longer be recomputed away.
+   *
+   * Written at INSERT from the device's workspace at that moment, and never updated afterwards.
+   */
+  'ALTER TABLE play_logs ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL',
+
+  /*
+   * Proof-of-play rollup. play_logs is 76% of a production database (1154 MB of 1.47 GB measured
+   * 2026-09-29) and growing 6.8x — 15.8k rows/day at 31-90 days old, 66.6k at 8-30, 107k in the
+   * last week. Raw rows cannot be kept for the years a proof-of-play record is wanted for, and
+   * cutting retention alone throws the record away. So: keep raw briefly, aggregate before pruning.
+   *
+   * ⚠️ THE BUCKET IS AN HOUR, IN UTC, AND BOTH HALVES OF THAT MATTER.
+   *
+   * UTC because the rollup must be idempotent (recompute + upsert, safe to rerun) and a
+   * device-local bucket is not: devices.reported_timezone is mutable and NULL for 46% of the
+   * fleet, so recomputing an old day could place its rows in a DIFFERENT bucket than the one
+   * already written — duplicating some rows and orphaning others. DST would also make some local
+   * days 23 or 25 hours, quietly distorting per-day SUM(duration_sec).
+   *
+   * HOURLY rather than daily because an hour can still be re-bucketed into any timezone at query
+   * time, and a day cannot. Once raw is pruned a daily bucket has permanently chosen a timezone
+   * for data nobody can recompute. Hourly costs ~13x more rows than daily (2,384/day vs 183/day
+   * measured on production) and is still ~108 MB per YEAR against 3.37 GB of raw.
+   *
+   * ⚠️ workspace_id IS PART OF THE KEY, AND IT IS READ FROM play_logs, NOT FROM devices.
+   *
+   * The first draft carried it as a payload column resolved by joining devices at rollup time.
+   * That is cross-tenant leakage: a reseller moving a display from client A's workspace to client
+   * B's would, on the next recompute, re-attribute A's historical plays to B — they appear in B's
+   * reports and vanish from A's, silently, with no way to tell it happened. Devices move between
+   * client workspaces as a matter of course, so this is routine rather than hypothetical.
+   *
+   * So play_logs carries its own workspace_id, snapshotted from the device at INSERT time and
+   * never updated. Where a play happened is a fact about the past; it does not change because the
+   * hardware was reassigned afterwards.
+   *
+   * NOT NULL with a '' sentinel rather than a nullable column: SQLite permits NULLs in a non-
+   * INTEGER PRIMARY KEY, and two NULLs do not compare equal, so a nullable workspace in the key
+   * would let the same (device, content, hour) insert unboundedly many duplicate rows instead of
+   * upserting — defeating the idempotency this table exists to guarantee.
+   */
+  `CREATE TABLE IF NOT EXISTS play_log_hourly (
+    device_id      TEXT NOT NULL,
+    content_id     TEXT NOT NULL DEFAULT '',
+    hour_utc       INTEGER NOT NULL,
+    workspace_id   TEXT NOT NULL DEFAULT '',
+    content_name   TEXT,
+    play_count     INTEGER NOT NULL DEFAULT 0,
+    duration_sec   INTEGER NOT NULL DEFAULT 0,
+    first_play     INTEGER,
+    last_play      INTEGER,
+    PRIMARY KEY (workspace_id, device_id, content_id, hour_utc)
+  )`,
+  // Reports scan a time range and then group; the range is the selective part, exactly as
+  // idx_play_logs_time is for raw.
+  'CREATE INDEX IF NOT EXISTS idx_play_log_hourly_time ON play_log_hourly(hour_utc)',
+
+  /*
+   * How far the rollup has been computed. Raw rows are NEVER pruned past this watermark, which is
+   * what makes "aggregate before you delete" an invariant rather than an ordering convention.
+   *
+   * An hour with no plays produces no rollup row, so presence-of-rows cannot serve as the marker —
+   * a quiet hour would be unprunable for ever. The watermark records the hour itself.
+   */
+  `CREATE TABLE IF NOT EXISTS play_log_rollup_state (
+    id                  INTEGER PRIMARY KEY CHECK (id = 1),
+    rolled_through_hour INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL DEFAULT 0
+  )`,
+  'INSERT OR IGNORE INTO play_log_rollup_state (id, rolled_through_hour, updated_at) VALUES (1, 0, 0)',
+
+  /*
+   * ⚠️ DROP idx_play_logs_content — 263 MB serving nothing.
+   *
+   * Verified on production 2026-09-29 rather than assumed: EXPLAIN QUERY PLAN on every report
+   * (by-content, by-device, by-hour, by-day, the CSV export) and on the prune sweep chooses
+   * idx_play_logs_time. The by-content report GROUPs BY content_id but FILTERS on started_at, so
+   * it never leads on this index. A grep across routes, lib and play-backfill finds no query that
+   * filters play_logs on content_id at all; the backfill joins TO content on content's own key.
+   *
+   * ⚠️ Rebuilding it is not cheap if this is ever reversed: the 2.0.1 note above records an index
+   * build on this table sitting in uninterruptible disk sleep for more than five minutes on a
+   * spinning disk, and the table is 3x larger now. With the rollup in place the per-content report
+   * has an aggregate to read instead, so it should not need to come back.
+   */
+  'DROP INDEX IF EXISTS idx_play_logs_content',
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
 // ANY OTHER error is a real, partial-migration failure: log it loudly so it's
 // visible at boot rather than as a silent runtime failure later (issue #37, where
 // a swallowed failure left users.must_change_password absent -> total auth lockout).
+/*
+ * 2.0.1 — SAY SOMETHING BEFORE BUILDING AN INDEX ON play_logs.
+ *
+ * ⚠️ THE 2.0.0 FIELD REPORT. On a 73-device install on a Synology DS225+ (spinning SATA), the
+ * idx_play_logs_open build below sat in uninterruptible disk sleep for **more than five minutes**
+ * and printed NOTHING. From outside — no log line, no CPU, an unkillable process — the upgrade was
+ * indistinguishable from a hang, and the natural operator response to a hang is to kill it, which
+ * is the one thing that must not happen in the middle of a migration.
+ *
+ * The index is not the problem: it is the #307 fix and it takes as long as the disk takes. The
+ * silence was the problem. A row estimate and a warning up front make the wait legible, and the
+ * duration afterwards makes "slow disk" visible alongside the loop-lag band and shed lines.
+ *
+ * ⚠️ WHY THERE IS NO PROGRESS DURING THE BUILD. `db.exec` is one synchronous call into SQLite; the
+ * event loop is inside it for the whole build, so no timer, interval or async log can fire until it
+ * returns. There is no honest "45% done" to print from here — the choice is a line before and a
+ * line after, or nothing. Do not add a timer here expecting it to run.
+ */
+const PLAYS_RE = /\bplay_logs\b/i;
+let _playsMigrationTouched = false;
+
+function _indexExists(name) {
+  try {
+    return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(name);
+  } catch { return false; }
+}
+
+/*
+ * An ESTIMATE, and deliberately so: MAX(rowid) is an index seek to the last row, while COUNT(*) is
+ * a full scan of the table we are about to make the operator wait on. Over-counts by whatever has
+ * been deleted, which is the right direction for a "this may take a while" warning.
+ */
+function _estimateRows(table) {
+  try {
+    const r = db.prepare(`SELECT MAX(rowid) AS n FROM ${table}`).get();
+    return (r && r.n) || 0;
+  } catch { return 0; }
+}
+
+/** Anything past this on one statement is the disk, not the query — surface it at warn. */
+const SLOW_STATEMENT_MS = 2000;
+/** Above this many rows an index build is worth warning about before it starts, not just logging. */
+const LOUD_INDEX_ROWS = 50000;
+
 let _migApplied = 0;
 for (const sql of migrations) {
   // Only a successful ADD COLUMN means a genuinely-new column (it would throw
@@ -1226,14 +2259,52 @@ for (const sql of migrations) {
   // succeed, so they must NOT count toward "new migrations applied" or the boot
   // would falsely report work on every healthy start.
   const isAddColumn = /alter\s+table\s+\S+\s+add\s+column/i.test(sql);
+  const touchesPlays = PLAYS_RE.test(sql);
+
+  // An index that already exists is a no-op statement, so only announce a build that will happen.
+  const indexName = touchesPlays
+    ? (sql.match(/create\s+(?:unique\s+)?index\s+if\s+not\s+exists\s+(\w+)/i) || [])[1]
+    : undefined;
+  const buildingIndex = !!indexName && !_indexExists(indexName);
+  if (buildingIndex) {
+    // Always say the build is starting; only SHOUT when the table is big enough for the wait to be
+    // mistaken for a hang. A fresh install builds these over zero rows and should not be alarmed.
+    const est = _estimateRows('play_logs');
+    const head = `[migrate] building ${indexName} over ~${est} play_logs row(s)`;
+    if (est >= LOUD_INDEX_ROWS) {
+      console.warn(
+        `${head}. This is ONE synchronous statement: on spinning disks it can take minutes, during ` +
+        `which the process serves nothing and looks wedged. It is not. Do not kill it.`
+      );
+    } else {
+      console.log(head);
+    }
+  }
+
+  const t0 = Date.now();
+  let ok = false;
   try {
     db.exec(sql);
+    ok = true;
     if (isAddColumn) _migApplied++;
   } catch (e) {
     if (!/duplicate column name|already exists/i.test(e.message)) {
       console.error(`[migrate] FAILED: ${sql}\n          -> ${e.message}`);
     }
   }
+  const ms = Date.now() - t0;
+
+  if (buildingIndex && ok) {
+    const line = `[migrate] built ${indexName} in ${ms}ms`;
+    if (ms > SLOW_STATEMENT_MS) console.warn(`${line} — slow storage (>${SLOW_STATEMENT_MS}ms for one statement)`);
+    else console.log(line);
+  }
+  /*
+   * Did THIS boot do work on the plays table? The answer arms the 2.0.1 player defer
+   * (lib/boot-defer.js) — a cold index plus, on the installs this matters for, a large open-play
+   * backlog behind it. A healthy restart sets nothing here and pays for none of it.
+   */
+  if (ok && touchesPlays && (buildingIndex || isAddColumn)) _playsMigrationTouched = true;
 }
 if (_migApplied > 0) console.log(`[migrate] applied ${_migApplied} new column migration(s)`);
 
@@ -1292,6 +2363,21 @@ try {
     if (n > 0) console.log(`[migrate] offline-alert backfill: ${n} device(s) marked as already-alerted`);
   }
 } catch { /* schema_migrations or column not ready yet; next boot retries */ }
+
+// Content-only schedules invent a throwaway one-item "Scheduled: ..." playlist, but the insert
+// historically omitted is_auto_generated, so the Playlists page "Show auto-generated" toggle
+// (which filters on that flag) could never hide them. New rows are flagged at insert time
+// (createAutoGeneratedPlaylist in lib/auto-playlist.js); this one-shot backfills pre-existing rows.
+// Structural selector (the schedule's own playlist_id), never the display name, since names are
+// user-editable in both directions. Must run exactly once -> schema_migrations, not the array.
+try {
+  const ID = 'backfill_scheduled_playlists_auto_generated_v1';
+  if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(ID)) {
+    const n = require('../lib/auto-playlist').backfillScheduledPlaylists(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(ID);
+    if (n > 0) console.log(`[migrate] flagged ${n} Scheduled playlist(s) as auto-generated`);
+  }
+} catch { /* schema_migrations or table not ready yet; next boot retries */ }
 
 // Fix assignments table: make content_id nullable (SQLite requires table rebuild)
 try {
@@ -1924,6 +3010,45 @@ function pruneScreenshots(deviceId) {
 // stays an idempotent no-op; tiebreak by earliest rowid. One-time; the atomic
 // id-preserving save prevents recurrence.
 try {
+  /*
+   * Version history baseline. Every existing content row, playlist, layout, slide deck and
+   * widget gets revision #1 from its CURRENT state, stamped with the row's own updated_at and no
+   * author: the upgrade did not save anything, so it invents neither a person nor a moment.
+   * Later saves build on this so "what changed since" has an answer from day one. One-shot, so a
+   * baseline is never re-taken over real history.
+   */
+  // workspaces is created by the multitenancy phase, after the migrations array above has run,
+  // so its column is added here where the table exists. Idempotent: a duplicate column throws.
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] workspaces.require_approval added (default off)'); } catch (_) { /* present */ }
+  // Live video (go2rtc). Off by default at every level so enabling the sidecar never silently
+  // starts streaming: server master gate (config.liveVideoEnabled) AND the workspace flag AND the
+  // device flag must all be on. The publish secret is per device and rotatable, never the go2rtc
+  // admin password. See docs/live-video.md and lib/go2rtc.js.
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] workspaces.live_video_enabled added (default off)'); } catch (_) { /* present */ }
+  // Scale-out C1 (docs/scale-out-design.md §3.3): NULL means "mine". Set on a copied workspace to
+  // the node UUID of the primary that owns it — the ONE column that decides whether a write is
+  // local or must go to the primary. replica_rev/replica_as_of record how far the copy is applied.
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN origin_node_id TEXT').run(); console.log('[migrate] workspaces.origin_node_id added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN replica_rev INTEGER').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN replica_as_of INTEGER').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN live_video_enabled INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
+  // #talk: per-org enablement for the voice intercom / PA feature (off by default).
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN talk_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] organizations.talk_enabled added (default off)'); } catch (_) { /* present */ }
+  // #talk/#go2rtc: optional per-org ICE (STUN/TURN) override as a JSON array [{urls,username?,credential?}].
+  // NULL -> use the global go2rtc ice_servers. Lets an org bring its own TURN.
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN ice_servers TEXT').run(); console.log('[migrate] organizations.ice_servers added'); } catch (_) { /* present */ }
+
+  const BASELINE_ID = 'revisions_baseline_v1';
+  if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(BASELINE_ID)) {
+    try {
+      const n = require('../lib/revisions').baselineAll(db);
+      if (n > 0) console.log(`[migrate] version history: ${n} baseline revision(s) recorded`);
+    } catch (e) {
+      console.warn('[migrate] version history baseline skipped:', e && e.message);
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(BASELINE_ID);
+  }
+
   const DEDUPE_ID = 'dedupe_template_zones_v1';
   if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(DEDUPE_ID)) {
     const removed = db.prepare(`
@@ -2021,4 +3146,79 @@ const PLAYLIST_SOURCE_BACKFILL_ID = 'playlist_source_backfill';
   }
 })();
 
-module.exports = { db, pruneTelemetry, pruneTelemetryRetention, pruneScreenshots, pruneStatusLog, getMaintenanceStats };
+/*
+ * One-time backfill of play_logs.workspace_id from each device's CURRENT workspace.
+ *
+ * ⚠️ PRE-MIGRATION ATTRIBUTION IS BEST-EFFORT, AND THAT IS NOT FIXABLE. Rows written before the
+ * column existed carry no record of where the device was at the time, so the only thing available
+ * is where it is NOW. A device already moved between workspaces has its whole history attributed
+ * to its current owner. Going forward the value is snapshotted at insert and is exact; this pass
+ * simply gives the existing rows their most likely tenant instead of none.
+ *
+ * ⚠️ NO PRE-MIGRATION SNAPSHOT, unlike the playlist-source backfill above, and deliberately. That
+ * one rewrote how devices resolve a playlist — state with no other source of truth. This fills a
+ * column that was NULL one statement ago and is undone by `UPDATE play_logs SET workspace_id =
+ * NULL`. Snapshotting is not free here: it copies the whole database, and on production that is
+ * 1.5 GB per run. Eleven such snapshots had accumulated to 3.3 GB before being pruned by hand on
+ * 2026-09-29.
+ *
+ * Chunked by ROWID RANGE rather than `WHERE workspace_id IS NULL LIMIT n`: there is no index on
+ * workspace_id, so the latter rescans from the start of the table on every batch and turns a
+ * linear pass into a quadratic one. A rowid range walks the table once.
+ *
+ * It says what it is doing before it starts. The 2.0.1 note above records an index build on this
+ * same table sitting in uninterruptible disk sleep for over five minutes printing NOTHING, which
+ * is indistinguishable from a hang — and the operator's response to a hang is to kill it, which is
+ * the one thing that must not happen during a migration.
+ */
+const PLAY_LOGS_WORKSPACE_BACKFILL_ID = 'play_logs_workspace_backfill';
+(function backfillPlayLogWorkspaceAtBoot() {
+  try {
+    if (db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(PLAY_LOGS_WORKSPACE_BACKFILL_ID)) return;
+  } catch { return; }   /* schema_migrations absent: a fresh database has nothing to backfill */
+
+  let total = 0;
+  try { total = db.prepare('SELECT COUNT(*) AS n FROM play_logs').get().n; } catch { return; }
+  if (total === 0) {
+    try { db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(PLAY_LOGS_WORKSPACE_BACKFILL_ID); } catch { /* next boot */ }
+    return;
+  }
+
+  console.warn(`[play_logs workspace backfill] ${total.toLocaleString()} row(s) to attribute. `
+    + 'This walks the table once and can take a few minutes on a large install — it is NOT hung.');
+
+  const BATCH = 20000;
+  const pick = db.prepare('SELECT rowid AS r FROM play_logs WHERE rowid > ? ORDER BY rowid LIMIT 1 OFFSET ?');
+  const last = db.prepare('SELECT MAX(rowid) AS r FROM play_logs').get().r || 0;
+  const fill = db.prepare(`UPDATE play_logs
+       SET workspace_id = (SELECT d.workspace_id FROM devices d WHERE d.id = play_logs.device_id)
+     WHERE rowid > ? AND rowid <= ? AND workspace_id IS NULL`);
+
+  const started = Date.now();
+  let cursor = 0, done = 0, attributed = 0;
+  try {
+    while (cursor < last) {
+      const nextRow = pick.get(cursor, BATCH - 1);
+      const upper = nextRow ? nextRow.r : last;
+      attributed += db.transaction(() => fill.run(cursor, upper).changes)();
+      done += BATCH;
+      cursor = upper;
+      if (done % (BATCH * 10) === 0) {
+        console.warn(`[play_logs workspace backfill] ~${Math.min(done, total).toLocaleString()}/${total.toLocaleString()} rows scanned`);
+      }
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(PLAY_LOGS_WORKSPACE_BACKFILL_ID);
+    console.warn(`[play_logs workspace backfill] done: ${attributed.toLocaleString()} row(s) attributed `
+      + `in ${((Date.now() - started) / 1000).toFixed(1)}s. Rows whose device is gone stay NULL.`);
+  } catch (e) {
+    // NOT fatal, unlike the playlist-source backfill: an unattributed row degrades a report's
+    // tenant filter, it does not break playback. Leaving the marker unset retries next boot.
+    console.error(`[play_logs workspace backfill] FAILED (will retry next boot): ${e.message}`);
+  }
+})();
+
+// `playsMigrationTouched`: did THIS boot build a play_logs index or add a play_logs column?
+// Read once by services/heartbeat to arm the 2.0.1 player defer (lib/boot-defer.js). The loop
+// that sets it runs at require time, well above this line, so the value is already final here.
+module.exports = { db, pruneTelemetry, pruneTelemetryRetention, pruneScreenshots, pruneStatusLog, getMaintenanceStats,
+                   playsMigrationTouched: _playsMigrationTouched };

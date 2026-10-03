@@ -1,0 +1,41 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//ScreenTinker//Room Test Calendar//DE
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:Konferenzraum Berlin (Live Test)
+X-WR-TIMEZONE:Europe/Berlin
+BEGIN:VEVENT
+UID:room-event-1@screentinker.local
+DTSTAMP:20260904T100000Z
+DTSTART:20260904T100000Z
+DTEND:20260904T113000Z
+SUMMARY:Sprint Planning & Architecture Review
+DESCRIPTION:Review der Datenquellen-Architektur und E-Paper Anbindung.
+LOCATION:Konferenzraum Berlin
+ORGANIZER;CN=Max Mustermann:mailto:max@example.com
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+UID:room-event-2@screentinker.local
+DTSTAMP:20260904T100000Z
+DTSTART:20260904T120000Z
+DTEND:20260904T133000Z
+SUMMARY:Hardware Testing: Sticky E-Paper
+DESCRIPTION:Live-Demonstration des 800x480 Türschilds.
+LOCATION:Konferenzraum Berlin
+ORGANIZER;CN=René:mailto:rene@example.com
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+UID:room-event-3@screentinker.local
+DTSTAMP:20260904T100000Z
+DTSTART:20260904T143000Z
+DTEND:20260904T153000Z
+SUMMARY:Quarterly Design Sync
+DESCRIPTION:UI/UX Roadmap für ScreenTinker v2.
+LOCATION:Konferenzraum Berlin
+ORGANIZER;CN=Anna Schmidt:mailto:anna@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR

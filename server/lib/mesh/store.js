@@ -35,8 +35,43 @@ function setNodeName(db, name) {
   const clean = String(name || '').trim().slice(0, 60);
   if (!clean) return false;
   try {
-    db.prepare('UPDATE mesh_node SET node_name = ? WHERE singleton = 1').run(clean);
-    return true;
+    /*
+     * ⚠️ ENSURE THE ROW FIRST. This is an UPDATE, and an UPDATE that matches nothing succeeds: on a
+     * node whose identity had not been materialised yet the setter stored nothing, changed nothing,
+     * and reported true — so the route answered 200 and the operator was told a rename happened
+     * that had not. ensureNodeIdentity is idempotent and is already the one way a node gets an id,
+     * and a name without an identity to hang it on is not a thing that should exist.
+     */
+    ensureNodeIdentity(db);
+    // ⚠️ chose_name IN THE SAME STATEMENT. Recorded separately it can be missed by a second caller,
+    // and a name an operator picked would keep being described to them as a hostname default.
+    const r = db.prepare('UPDATE mesh_node SET node_name = ?, chose_name = 1 WHERE singleton = 1')
+      .run(clean);
+    /*
+     * ⚠️ UNREACHABLE WHILE THE ensureNodeIdentity ABOVE STANDS, and kept deliberately anyway.
+     *
+     * Said plainly because a mutation test proved it: flipping this to `return true` does not fail
+     * the suite, since the row is guaranteed by then. It is not tested behaviour and should not be
+     * read as any — what actually covers this failure is the ensure, and removing THAT does fail.
+     * The check stays because the two lines are a pair: if a later edit makes the row conditional
+     * again, this is what turns a silent no-op back into an honest false.
+     */
+    return r.changes === 1;
+  } catch (e) {
+    return false;
+  }
+}
+
+/*
+ * Whether an operator actually picked this name, as opposed to inheriting the hostname.
+ *
+ * ⚠️ A STORED FLAG RATHER THAN COMPARING THE NAME TO os.hostname(). That comparison is wrong in both
+ * directions: a box renamed at the OS level after pairing would start reporting a chosen name as a
+ * default, and an operator who deliberately types the hostname would be told they never decided.
+ */
+function nameWasChosen(db) {
+  try {
+    return !!db.prepare('SELECT chose_name FROM mesh_node WHERE singleton = 1').get()?.chose_name;
   } catch (e) {
     return false;
   }
@@ -168,6 +203,6 @@ function listChildEdges(db) {
 }
 
 module.exports = {
-  ensureNodeIdentity, nodeName, setNodeName,
+  ensureNodeIdentity, nodeName, setNodeName, nameWasChosen,
   findEdgeByTokenHash, reloadEdge, touchEdge, listChildEdges, safeParseArray,
 };

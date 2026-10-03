@@ -5,6 +5,13 @@ Cutting a release is three steps.
 
 ## 1. Bump + tag
 
+First, write the user-facing notes. Add an entry for the new version at the TOP of
+`release-notes.json`: 3-5 plain-language bullets aimed at an operator, no issue
+numbers, no internals. These are what the app shows in the "What's new" panel and
+under Settings → About — they are NOT the changelog, which is written for whoever
+touches the code next. `test/release-notes.test.js` fails the build if the version
+in `VERSION` has no entry, so this cannot be skipped by accident.
+
 ```bash
 scripts/bump-version.sh X.Y.Z        # or: major | minor | patch
 ```

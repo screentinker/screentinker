@@ -1,0 +1,244 @@
+{
+  "_about": "Conformance vectors for the DEVICE-SIDE http_request target guard. The server validates a URL when it is saved or sent; the player enforces it again at request time. Both answer to this file, so the door cannot be stricter than the doorman.",
+  "_threat_model": {
+    "what_this_is_not": "This is NOT the server's SSRF guard, and it is almost its inverse. The server's json-api data sources REFUSE private addresses, because a caller making the SERVER fetch a LAN address is reaching somewhere they could not otherwise reach. Here the private address IS the feature: the whole point is that the panel talks to the PLC, the sensor, the local Home Assistant on the shop network. Refusing RFC1918 here would delete the feature.",
+    "what_this_is": "The request is operator-initiated by someone who already holds a 'full' token, so reaching a LAN host is not an escalation — they asked for it. The escalation this guard exists to stop is a change of KIND: turning 'make an HTTP request and give me 64KiB of the answer' into 'read a file off this device and give me 64KiB of it'. On Android that is file:// and content:// — the latter reads through content providers, which is how one app's private data is exposed to another. A scheme allowlist is the whole defence and it is not negotiable.",
+    "secondary": "Cloud metadata endpoints. A player is normally a panel on a shop wall, but nothing stops one running on a cloud VM, and 169.254.169.254 hands out IAM credentials to anything that asks. Blocking the link-local range costs nothing real: no signage device is legitimately addressed at 169.254.x.x, because that range only appears when DHCP has FAILED."
+  },
+  "_conventions": {
+    "allow": "true = the player may issue this request.",
+    "reason": "when allow is false, a stable machine-readable reason: bad_scheme | metadata_address | no_host | malformed.",
+    "note": "Hostnames are checked as written here. A hostname that RESOLVES to a blocked address is caught at request time by re-checking each resolved address — that cannot be expressed as a static vector, so it has its own unit test.",
+    "no_host": "The no_host branch is DEFENSIVE and deliberately not pinned by a vector. WHATWG URL normalises 'http:///path' to host 'path' while other parsers return an empty host; pinning either answer would make one implementation wrong without making anything safer. Both still refuse or allow consistently on every url that matters, and an empty host is refused wherever a parser reports one."
+  },
+  "vectors": [
+    {
+      "name": "plain http to a LAN device is the entire point of the feature",
+      "url": "http://192.168.1.50/api/state",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "https to a LAN device",
+      "url": "https://10.0.0.8:8443/status",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "the other RFC1918 block",
+      "url": "http://172.16.4.4/",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "172.32 is NOT private but is still a perfectly good target",
+      "url": "http://172.32.0.1/",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "a public https API",
+      "url": "https://api.example.com/v1/thing",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "a public http API — allowed, because plenty of LAN gear is http-only",
+      "url": "http://api.example.com/v1/thing",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "a hostname on the local network",
+      "url": "http://plc-01.local/read",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "loopback — a service running on the panel itself",
+      "url": "http://127.0.0.1:1880/endpoint",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "a port, a query and a fragment do not change the verdict",
+      "url": "https://192.168.1.50:8080/a/b?c=d&e=f#g",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "uppercase scheme is still http",
+      "url": "HTTP://192.168.1.50/",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "⚠️ file:// would turn an HTTP fetch into a local file read",
+      "url": "file:///data/data/com.remotedisplay.player/shared_prefs/remote_display.xml",
+      "expect": {
+        "allow": false,
+        "reason": "bad_scheme"
+      }
+    },
+    {
+      "name": "⚠️ content:// reads through Android content providers — another app's private data",
+      "url": "content://com.android.contacts/contacts",
+      "expect": {
+        "allow": false,
+        "reason": "bad_scheme"
+      }
+    },
+    {
+      "name": "file with no host",
+      "url": "file:///etc/hosts",
+      "expect": {
+        "allow": false,
+        "reason": "bad_scheme"
+      }
+    },
+    {
+      "name": "javascript: is not a transport",
+      "url": "javascript:alert(1)",
+      "expect": {
+        "allow": false,
+        "reason": "bad_scheme"
+      }
+    },
+    {
+      "name": "data: URIs are not fetched",
+      "url": "data:text/plain;base64,aGVsbG8=",
+      "expect": {
+        "allow": false,
+        "reason": "bad_scheme"
+      }
+    },
+    {
+      "name": "ftp is not in the allowlist",
+      "url": "ftp://192.168.1.50/file",
+      "expect": {
+        "allow": false,
+        "reason": "bad_scheme"
+      }
+    },
+    {
+      "name": "ws is not http, even though it looks close",
+      "url": "ws://192.168.1.50/socket",
+      "expect": {
+        "allow": false,
+        "reason": "bad_scheme"
+      }
+    },
+    {
+      "name": "an Android asset URL — refused as malformed, because '_' is illegal in a scheme",
+      "url": "android_asset://player/index.html",
+      "expect": {
+        "allow": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "a bare path is not a URL",
+      "url": "/etc/passwd",
+      "expect": {
+        "allow": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "a scheme-relative URL is refused rather than guessed at",
+      "url": "//192.168.1.50/thing",
+      "expect": {
+        "allow": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "empty",
+      "url": "",
+      "expect": {
+        "allow": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "⚠️ the cloud metadata address hands out IAM credentials to anything that asks",
+      "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+      "expect": {
+        "allow": false,
+        "reason": "metadata_address"
+      }
+    },
+    {
+      "name": "the whole link-local range goes, not just .169.254 — it only exists when DHCP failed",
+      "url": "http://169.254.1.1/",
+      "expect": {
+        "allow": false,
+        "reason": "metadata_address"
+      }
+    },
+    {
+      "name": "Alibaba's metadata address",
+      "url": "http://100.100.100.200/latest/meta-data/",
+      "expect": {
+        "allow": false,
+        "reason": "metadata_address"
+      }
+    },
+    {
+      "name": "GCP's metadata hostname",
+      "url": "http://metadata.google.internal/computeMetadata/v1/",
+      "expect": {
+        "allow": false,
+        "reason": "metadata_address"
+      }
+    },
+    {
+      "name": "and its short form",
+      "url": "http://metadata/computeMetadata/v1/",
+      "expect": {
+        "allow": false,
+        "reason": "metadata_address"
+      }
+    },
+    {
+      "name": "IPv6 link-local",
+      "url": "http://[fe80::1]/",
+      "expect": {
+        "allow": false,
+        "reason": "metadata_address"
+      }
+    },
+    {
+      "name": "the AWS IPv6 metadata address",
+      "url": "http://[fd00:ec2::254]/latest/meta-data/",
+      "expect": {
+        "allow": false,
+        "reason": "metadata_address"
+      }
+    },
+    {
+      "name": "100.64/10 is carrier-grade NAT, not metadata — allowed",
+      "url": "http://100.64.0.1/",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "name": "100.100.100.201 is not the metadata host",
+      "url": "http://100.100.100.201/",
+      "expect": {
+        "allow": true
+      }
+    }
+  ]
+}

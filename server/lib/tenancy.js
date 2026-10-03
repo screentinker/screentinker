@@ -28,6 +28,8 @@
 
 const { db } = require('../db/database');
 const { isPlatformRole, isPlatformStaff } = require('../middleware/auth');
+const replicaProxy = require('./replica-proxy');
+const config = require('../config');
 
 function membershipOf(userId, workspaceId) {
   return db.prepare(
@@ -153,6 +155,18 @@ function resolveTenancy(req, res, next) {
     req.actingAs = false;
   }
 
+  /*
+   * Scale-out (docs/scale-out-design.md §5.2): THE interceptor. A workspace whose origin_node_id is
+   * set is a copy held on this replica; a request that could change it is forwarded to the primary
+   * (or refused) and never reaches a route handler here. One check, on the row the resolver already
+   * loaded, on every mutating route — test_every_mutating_route_passes_resolveTenancy holds that
+   * "every" is true, because a route that skipped this resolver would be a second writer.
+   */
+  if (req.workspace && replicaProxy.shouldIntercept(req, req.workspace)) {
+    replicaProxy.proxyToPrimary(req, res, config);
+    return;
+  }
+
   next();
 }
 
@@ -179,10 +193,25 @@ function accessibleWorkspaceIds(userId, role) {
   `).all(userId, userId).map(r => r.id);
 }
 
+// A read-only member (workspace_viewer in the ACTIVE workspace, and not platform staff acting-as)
+// may not write in it. Returns true, after sending a 403, when the caller is read-only. Use on
+// routes scoped to the active workspace that lacked a role check — chiefly create routes, which
+// have no resource yet, plus a couple of delete routes that only scoped by workspace. The
+// resource-scoped checkXWrite helpers already cover the rest. req.workspaceRole / req.actingAs are
+// set by resolveTenancy for the active workspace, so this must run after it.
+function denyReadOnly(req, res) {
+  if (!req.actingAs && req.workspaceRole === 'workspace_viewer') {
+    res.status(403).json({ error: 'Read-only access' });
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   resolveTenancy,
   // Exported for testing / direct use by routes that need ad-hoc checks.
   accessContext,
+  denyReadOnly,
   membershipOf,
   orgMembershipOf,
   firstAccessibleWorkspace,

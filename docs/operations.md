@@ -21,6 +21,7 @@ did not behave.
 - [Rolling back](#rolling-back)
 - [Releases and version numbers](#releases-and-version-numbers)
 - [Upgrading Node.js](#upgrading-nodejs)
+- [Upgrading 1.9 to 2.0 on slow storage](#upgrading-19-to-20-on-slow-storage)
 - [Traps worth knowing before they bite](#traps-worth-knowing-before-they-bite)
 
 ---
@@ -309,6 +310,46 @@ image is a separate pin from the CI one; both need changing or what CI tests and
 
 ---
 
+## Upgrading 1.9 to 2.0 on slow storage
+
+**If this instance runs 50 or more players on a spinning disk (a NAS, a USB-attached volume), read
+this before the first 2.0 boot.** Everywhere else the upgrade is ordinary and this section does not
+apply.
+
+The first 2.0 boot builds an index over `play_logs` and then drains the plays that 1.9 left open.
+On a 73-device Synology DS225+ that index build sat in uninterruptible disk sleep for over five
+minutes, and the backlog behind it was 494,000 rows. The server came up healthy, the whole fleet
+reconnected at once, and HTTP was effectively unreachable for about twenty minutes while the
+reconnect storm and the sweep competed for the event loop.
+
+Either of these avoids it:
+
+- **Set `SCREENTINKER_DEFER_PLAYERS=1`** for the first boot. Players are refused with a 503 (they
+  back off and retry on their own) until the sweep reports idle, while `/api/status` keeps
+  answering 200 and the dashboard stays usable so you can watch it happen. This is on by default
+  for the first boot after a migration that touched `plays` (and only when there is actually a
+  backlog); set it explicitly if you want it regardless, or `=0` to turn it off. "Idle" means a
+  sweep batch closed fewer rows than it asked for — the end of the set, not a guessed threshold.
+  It always lifts: when the sweep drains, or after 30 minutes, whichever comes first.
+- **Or stop the reverse proxy** (`systemctl stop nginx`), start the app, wait for
+  `[boot] Migration complete` followed by the `[boot-defer] players accepted again` line, then
+  start the proxy. This is the manual form of the same thing.
+
+Either way the boot is no longer silent. Watch for:
+
+```
+[migrate] building idx_play_logs_open over ~1440000 play_logs row(s). This is ONE synchronous
+          statement: on spinning disks it can take minutes ... Do not kill it.
+[migrate] built idx_play_logs_open in 331402ms — slow storage (>2000ms for one statement)
+[boot-defer] holding players off: stranded-sweep; 494000 open play(s) to sweep
+[boot] stranded sweep batch 41/988 closed=500 remaining=473500 duration=1180ms — slow storage
+[boot-defer] players accepted again (sweep idle): 147s deferred, 494000 stranded play(s) closed, 0 still open
+```
+
+A batch or an index step over two seconds is logged at warn, so slow storage shows up alongside the
+loop-lag band and download-shed lines rather than in a separate place. **Do not kill the process during the index build** — it is one
+synchronous statement and it looks like a hang from outside because nothing can log while it runs.
+
 ## Traps worth knowing before they bite
 
 **Native modules are built for one Node ABI.** `better-sqlite3` is compiled against the Node that
@@ -316,6 +357,11 @@ installed it. Run the app — or its tests — under a different major version a
 `NODE_MODULE_VERSION` mismatch, which presents as hundreds of unrelated test failures rather than
 one clear error. Use the same Node the service runs. See [Upgrading Node.js](#upgrading-nodejs)
 before changing it deliberately.
+
+**A replica shares `JWT_SECRET` with its primary, and login always proxies.** A replica
+([docs/scale-out.md](scale-out.md)) never verifies a password — copied users have no hash — so
+`JWT_SECRET` must be the same value on both nodes or a session minted by the primary is refused
+by the replica. Rotate it on both at once.
 
 **SQLite foreign keys are off unless enabled per connection.** A declared `ON DELETE CASCADE` does
 not fire on its own, so deleting a parent row can leave orphaned children. Check with

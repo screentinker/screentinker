@@ -76,11 +76,12 @@ test('#100 recovery codes: stored hashed, never plaintext; input normalized', ()
   const { plain, hashes } = totp.generateRecoveryCodes(10);
   assert.equal(plain.length, 10);
   assert.equal(hashes.length, 10);
-  assert.match(plain[0], /^[0-9A-F]{10}$/, 'plaintext is 10 hex chars (shown once)');
+  assert.match(plain[0], /^[0-9A-F]{4}(-[0-9A-F]{4}){7}$/, 'plaintext is a 128-bit code, grouped in fours (shown once)');
   assert.match(hashes[0], /^[0-9a-f]{64}$/, 'stored value is a SHA-256 hash');
   assert.notEqual(plain[0], hashes[0], 'the stored value is not the plaintext');
-  // typed with stray spaces/hyphens/lowercase still matches the stored hash
-  const messy = ' ' + plain[0].toLowerCase().slice(0, 5) + '-' + plain[0].toLowerCase().slice(5) + ' ';
+  // typed with stray spaces/lowercase/re-grouping still matches the stored hash
+  const raw = plain[0].replace(/[^0-9A-F]/g, '');
+  const messy = ' ' + raw.toLowerCase().slice(0, 6) + ' ' + raw.toLowerCase().slice(6) + ' ';
   assert.equal(totp.hashRecoveryCode(messy), hashes[0], 'normalized input matches');
 });
 
@@ -95,4 +96,25 @@ test('keyuri: bare issuer by default; folds the instance host in so multi-instan
   const decoded = decodeURIComponent(scoped);
   assert.ok(decoded.includes('ScreenTinker (alpha.screentinker.com)'), 'issuer carries the host');
   assert.notEqual(scoped, plain, 'a different instance yields a different label');
+});
+
+test('recovery codes are 128-bit and round-trip through the grouped display', () => {
+  const { plain, hashes } = totp.generateRecoveryCodes(10);
+  assert.equal(plain.length, 10);
+  assert.equal(hashes.length, 10);
+  for (let i = 0; i < plain.length; i++) {
+    assert.equal(plain[i].replace(/[^0-9A-F]/gi, '').length, 32, 'code carries 128 bits (32 hex)');
+    assert.match(plain[i], /^[0-9A-F]{4}(-[0-9A-F]{4}){7}$/, 'shown grouped in fours');
+    // A user typing the grouped code back must verify against the stored hash of the raw hex.
+    assert.equal(totp.hashRecoveryCode(plain[i]), hashes[i], 'grouped code normalises to the stored hash');
+  }
+});
+
+test('an older 40-bit recovery code still verifies (no lockout after the entropy bump)', () => {
+  const { hashToken } = require('../middleware/apiToken');
+  const oldCode = crypto.randomBytes(5).toString('hex').toUpperCase();   // the pre-bump 10-hex format
+  const storedHash = hashToken(oldCode);                                 // exactly how it was stored
+  // Verification is length-agnostic (hash the typed code, look the hash up), so a pre-bump code
+  // already in the table keeps matching.
+  assert.equal(totp.hashRecoveryCode(oldCode), storedHash, 'a 40-bit code still hashes to its stored value');
 });

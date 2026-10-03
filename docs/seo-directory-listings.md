@@ -26,7 +26,7 @@ queries. Ordered by ROI.
 - [ ] **Capterra** — https://www.capterra.com/vendors/sign-up · digital-signage category. The #1 review moat competitors have (Yodeck 4,700+ reviews). Claim/create the profile, then seed honest reviews from real users.
 - [ ] **G2** — https://www.g2.com/products/new · ranks for "[competitor] alternatives". Create the product, request reviews.
 - [ ] **AlternativeTo** — https://alternativeto.net/manage-item/ · submit ScreenTinker as an alternative to **Yodeck, ScreenCloud, OptiSigns, Xibo, Anthias/Screenly**. Tag: open source, self-hosted, free. This is where OSS-seekers browse.
-- [ ] **awesome-selfhosted** — PR to https://github.com/awesome-selfhosted/awesome-selfhosted (Digital Signage / Media section). High-authority, high-intent backlink; Anthias/Xibo are there.
+- [ ] **awesome-selfhosted** — PR to https://github.com/awesome-selfhosted/awesome-selfhosted (Digital Signage / Media section). High-authority, high-intent backlink; Anthias/Xibo are there. ⚠️ **BLOCKED UNTIL ~2026-10-10.** PR #2392 was closed 2026-04-29 for their "first released more than 4 months ago" rule; first release is v1.8.0, 2026-06-10. Resubmitting early burns the second attempt, so do not.
 - [ ] **fingoweb "Top open source digital signage" roundup** — pitch inclusion via their contact form (their article ranks #1 for several OSS queries and omits us). Highest-value single listicle.
 
 ## Tier 2 — directory saturation
@@ -43,7 +43,7 @@ queries. Ordered by ROI.
 - [ ] **r/selfhosted** — a genuine "I built/self-host this" post (Anthias gets real traffic here). No spam; lead with the self-host story.
 - [ ] **r/digitalsignage** — participate, link where relevant.
 - [ ] **Hacker News (Show HN)** — "Show HN: ScreenTinker – open-source self-hosted digital signage."
-- [ ] **GitHub repo polish** — topics/tags: `digital-signage`, `signage`, `self-hosted`, `open-source`, `cms`, `raspberry-pi`, `kiosk`, `android-tv`. Keyword-rich description + README (done). Stars are themselves a ranking signal (Anthias ranks partly because its repo does).
+- [x] **GitHub repo polish** (done) — topics/tags: `digital-signage`, `signage`, `self-hosted`, `open-source`, `cms`, `raspberry-pi`, `kiosk`, `android-tv`. Keyword-rich description + README (done). Stars are themselves a ranking signal (Anthias ranks partly because its repo does).
 - [ ] **Roundup outreach** — signagespace.com, cenareo, nento, digitalsignagehub.org, softwaresuggest "15 best" — ask to be added.
 
 ## Notes

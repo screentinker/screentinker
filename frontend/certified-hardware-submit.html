@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Report Hardware That Works | ScreenTinker</title>
+  <meta name="description" content="Tell us about a device you are running ScreenTinker on. Community reports are published on the Certified Hardware page.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/certified-hardware/submit">
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+  <style>
+    /* A plain form, no framework and no script. It posts urlencoded like any HTML form, so it works
+       with JavaScript off and on a phone browser someone is holding in front of a screen. */
+    .field { margin: 18px 0; }
+    .field label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 15px; }
+    .field .hint { display: block; color: var(--muted); font-weight: 400; font-size: 13px; margin-top: 2px; }
+    .field input, .field select, .field textarea {
+      width: 100%; max-width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit;
+      font-size: 15px; color: var(--text); background: #0f1623; border: 1px solid var(--border);
+      border-radius: 8px; min-height: 44px;
+    }
+    .field textarea { min-height: 120px; resize: vertical; }
+    .field input:focus, .field select:focus, .field textarea:focus {
+      outline: 2px solid var(--accent); outline-offset: 1px;
+    }
+    .required { color: var(--accent); }
+    /* Honeypot: hidden from people, irresistible to bots. Not display:none, which some bots skip. */
+    .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+    .callout { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+      border-radius: 8px; padding: 18px 20px; margin: 24px 0; }
+    .callout p:last-child { margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/certified-hardware">Hardware</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/certified-hardware">Certified Hardware</a>
+      <span>/</span>
+      <span>Report hardware</span>
+    </nav>
+
+    <h1>Report hardware that works</h1>
+    <p class="lead">Running ScreenTinker on something that is not on the list? Tell us and we will
+      publish it so the next person choosing hardware has one more data point.</p>
+
+    <div class="callout">
+      <p><strong>This is not certification.</strong> Reports are published under
+        <strong>Community reported</strong>, which means a user says it works. ScreenTinker will not
+        have tested it and keeps no unit of it, so it is not Certified Hardware and carries no
+        support commitment.</p>
+      <p>Certification is a separate thing: ScreenTinker tests the device, keeps one in the lab, and
+        support obligations attach to it. If you need a specific model certified, contact support.</p>
+    </div>
+
+    <form method="post" action="/api/hardware-submissions">
+      <div class="field">
+        <label for="name">Device name <span class="required">*</span>
+          <span class="hint">What it is sold as. Please do not include links.</span></label>
+        <input type="text" id="name" name="name" maxlength="120" required>
+      </div>
+
+      <div class="field">
+        <label for="category">What kind of device <span class="required">*</span></label>
+        <select id="category" name="category" required>
+          <option value="">Choose one</option>
+          <option value="streaming-player">Streaming player, such as a stick or a box</option>
+          <option value="soc-display">Display with a built-in player</option>
+          <option value="media-player">Dedicated media player</option>
+          <option value="browser">Browser on a computer</option>
+          <option value="sbc">Single-board computer, such as a Raspberry Pi</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="manufacturer">Manufacturer
+          <span class="hint">Leave blank if it is white-label and has no real brand.</span></label>
+        <input type="text" id="manufacturer" name="manufacturer" maxlength="80">
+      </div>
+
+      <div class="field">
+        <label for="model_numbers">Model numbers
+          <span class="hint">Separate several with commas. This is what helps someone buy the same thing.</span></label>
+        <input type="text" id="model_numbers" name="model_numbers" maxlength="200">
+      </div>
+
+      <div class="field">
+        <label for="os">Operating system and version
+          <span class="hint">For example: Android 13, or Tizen 6.5.</span></label>
+        <input type="text" id="os" name="os" maxlength="80">
+      </div>
+
+      <div class="field">
+        <label for="max_resolution">Resolution it actually runs at
+          <span class="hint">What the screen really shows, not what the box claims. For example 1920x1080.</span></label>
+        <input type="text" id="max_resolution" name="max_resolution" maxlength="20">
+      </div>
+
+      <div class="field">
+        <label for="player_version">ScreenTinker version you are running it on</label>
+        <input type="text" id="player_version" name="player_version" maxlength="20" placeholder="2.0.9">
+      </div>
+
+      <div class="field">
+        <label for="notes">Anything worth knowing
+          <span class="hint">Gotchas, settings that had to change, things that do not work. This is
+            the most useful part for whoever reads it next.</span></label>
+        <textarea id="notes" name="notes" maxlength="2000"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="submitter_name">Your name
+          <span class="hint">Shown on the entry as who reported it. Leave blank to stay anonymous.</span></label>
+        <input type="text" id="submitter_name" name="submitter_name" maxlength="80">
+      </div>
+
+      <div class="field">
+        <label for="submitter_email">Your email
+          <span class="hint">Only so we can ask a follow-up question. Never published, never sold.</span></label>
+        <input type="email" id="submitter_email" name="submitter_email" maxlength="200">
+      </div>
+
+      <div class="hp" aria-hidden="true">
+        <label for="website">Leave this field empty</label>
+        <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+      </div>
+
+      <button type="submit" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Send report</button>
+    </form>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/certified-hardware">Certified Hardware list</a></li>
+        <li><a href="/guides/digital-signage-android-tv.html">Digital signage for Android TV and Fire TV</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Digital signage on a Raspberry Pi</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+</body>
+</html>

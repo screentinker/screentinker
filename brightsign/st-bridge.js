@@ -428,8 +428,13 @@
     add('playback.video'); add('playback.image'); add('playback.widget'); add('playback.youtube');
     add('playback.zones');
     /*
-     * ⚠️ DECLARED ON AN ASSUMPTION NOBODY HAS TESTED. These say the DOM's `el.muted` / `el.volume`
-     * reach the audio path. On this platform video decodes onto a HARDWARE PLANE the DOM cannot
+     * ⚠️ RESOLVED 2026-08-30 BY EXPERIMENT — and the assumption was WRONG. The note below asked for
+     * ears at a panel; a live XT245 answered instead: every output read `mute:false, volumeLinear:1`
+     * while the player was muting through `el.muted`. The DOM does not reach the audio plane. The
+     * bridge now drives @brightsign/audiooutput (see setAudioMuted), and the capability is probed
+     * rather than asserted. The original reasoning is kept because it is still the right reasoning:
+     *
+     * These said the DOM's `el.muted` / `el.volume` On this platform video decodes onto a HARDWARE PLANE the DOM cannot
      * touch — that is why the screen-off path tears the source down rather than pausing — and
      * whether AUDIO routes the same way has never been established: DWS exposes no audio-state
      * endpoint and no JS API reports whether sound is leaving the box, so it cannot be settled
@@ -445,7 +450,24 @@
      * either one being honoured. But this is the one capability here asserted rather than probed,
      * against the rule the file states below, and it should be resolved by experiment.
      */
-    add('audio.mute'); add('audio.volume');
+    /*
+     * ⚠️ PROBED NOW, NOT ASSERTED. The long note above said this was the one capability declared on
+     * an assumption, and that it should be settled by experiment. It has been: the DOM path does
+     * NOT reach the audio plane on this hardware, and @brightsign/audiooutput does. So the
+     * capability tracks whether that module is actually usable here, by the rule the rest of this
+     * file follows — try it, then declare.
+     */
+    try {
+      var AudioOutputProbe = tryRequire('@brightsign/audiooutput');
+      var audioUsable = false;
+      if (AudioOutputProbe) {
+        var probeNames = ['analog', 'hdmi', 'spdif', 'usb'];
+        for (var ai = 0; ai < probeNames.length; ai++) {
+          try { new AudioOutputProbe(probeNames[ai]); audioUsable = true; break; } catch (e) { /* not this one */ }
+        }
+      }
+      if (audioUsable) { add('audio.mute'); add('audio.volume'); }
+    } catch (e) { /* no audio control declared, which is the truthful answer */ }
     add('sync.clock');            // clock-derived group sync is pure JS and needs nothing
     add('remote.input');          // synthesised DOM events; needs no host and no mouse_enabled
 
@@ -552,6 +574,63 @@
 
   var API = {
     /* True only when this really is a BrightSign — either module access or the UA. */
+    /*
+     * Platform audio. THE DOM DOES NOT REACH IT.
+     *
+     * ⚠️ MEASURED, not assumed. On a live XT245 (OS 10.0.16) every output read `mute:false,
+     * volumeLinear:1` while the player was muting through `el.muted` — analog, hdmi and spdif all
+     * wide open. So `audio.mute` was declared on an assumption the hardware disproves, and three
+     * things quietly did not work: mute, wall-follower silence (N overlapping soundtracks on a
+     * wall), and a trigger overlay's base-audio suppression — an alarm that is supposed to be the
+     * only thing you can hear, playing over the advert it interrupted.
+     *
+     * @brightsign/audiooutput is the real control: `new AudioOutput('analog')` and friends expose
+     * `mute` as a settable PROPERTY, plus volumeLinear / volumeDb.
+     *
+     * ⚠️ OUTPUTS ARE ENUMERATED AND FAILURES TOLERATED, NEVER ASSUMED. On the test unit `hdmi`
+     * calls itself `hdmi:1` and `usb` throws "Failed to get mute" outright with nothing plugged in.
+     * A fixed list with no error handling would take the whole mute down because one absent jack
+     * raised — which is precisely the shape of failure this replaces.
+     */
+    audioOutputs: function () {
+      var AudioOutput = tryRequire('@brightsign/audiooutput');
+      if (!AudioOutput) return [];
+      var found = [];
+      var names = ['analog', 'hdmi', 'spdif', 'usb'];
+      for (var i = 0; i < names.length; i++) {
+        try { found.push({ name: names[i], out: new AudioOutput(names[i]) }); }
+        catch (e) { /* absent on this unit — not an error, just not there */ }
+      }
+      return found;
+    },
+
+    /**
+     * Mute or unmute every audio output this player actually has.
+     * @returns {number} how many outputs accepted it — 0 means the platform path is unavailable,
+     *          which the caller should treat as "the DOM is all we have" rather than as success.
+     */
+    setAudioMuted: function (on) {
+      var outs = this.audioOutputs();
+      var applied = 0;
+      for (var i = 0; i < outs.length; i++) {
+        try { outs[i].out.mute = !!on; applied++; }
+        catch (e) { /* one output refusing must not stop the others */ }
+      }
+      return applied;
+    },
+
+    /** Read back what the hardware says, for diagnosis — the DOM cannot tell you this. */
+    audioState: function () {
+      var outs = this.audioOutputs();
+      var state = {};
+      for (var i = 0; i < outs.length; i++) {
+        try {
+          state[outs[i].name] = { mute: outs[i].out.mute, volume: outs[i].out.volumeLinear };
+        } catch (e) { state[outs[i].name] = 'unreadable'; }
+      }
+      return state;
+    },
+
     isBrightSign: function () {
       return !!(port || registry || deviceInfo || uaIsBrightSign);
     },

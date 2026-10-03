@@ -45,7 +45,26 @@ object PlayerCapabilities {
             // Every content type the playlist engine renders, plus the layout features built on it.
             caps += listOf(
                 "playback.video", "playback.image", "playback.widget", "playback.youtube",
+                // Live HLS channels (mime_type video/hls, an .m3u8 remote_url). ExoPlayer plays these
+                // natively once media3-exoplayer-hls is on the classpath — this build bundles it — so
+                // the claim is unconditional, exactly like playback.video/playback.youtube beside it.
+                "playback.hls",
+                // Native RTSP camera/stream playback via ExoPlayer + media3-exoplayer-rtsp (bundled).
+                // Android-only capability: no browser/BrightSign/Tizen/e-ink player declares it, so the
+                // server's strip keeps rtsp items off screens that cannot open rtsp://.
+                "playback.rtsp",
                 "playback.zones", "playback.transitions", "playback.pip",
+                // Mounting a server-flattened HTML bundle is the widget WebView with a different
+                // URL, so this build can always do it. It says nothing about offline: nothing here
+                // unpacks an archive, so a bundle needs the server even on a panel that caches media.
+                "playback.bundle",
+                // Slide decks with a voiceover / music bed. SlideAudioPlayer owns two ExoPlayers of
+                // its own, outside the widget WebView that draws the slide — so this build really
+                // does make the sound. Note the android BASELINE in player-capabilities.js does NOT
+                // grant it: a fielded panel on an older APK renders the slide silently, and would be
+                // lying if the server claimed it on the panel's behalf. This line is how an updated
+                // panel earns it.
+                "playback.slide_audio",
                 // Mute reaches the YouTube embed through the IFrame API bridge, not just <video>,
                 // so this is a real claim rather than the half-truth the browser players carried.
                 "audio.mute", "audio.volume",
@@ -75,6 +94,16 @@ object PlayerCapabilities {
                 "remote.screenshot", "remote.stream",
                 // Input is plain view dispatch and works regardless of privilege.
                 "remote.input",
+                // #talk: voice intercom (TalkService + AudioTalker). WebRTC audio over the same
+                // go2rtc path as remote.stream; needs only RECORD_AUDIO, no MediaProjection.
+                // remote.talk = can play the operator's audio/webcam (one-way / PA); remote.mic =
+                // also has a microphone to send back (unlocks 2-way). Android has both.
+                "remote.talk", "remote.mic",
+                // #312 follow-up: accept a server-URL rewrite from the dashboard, VERIFYING the new
+                // address is reachable before committing and rolling back if not (see
+                // WebSocketService's set_server_url handler). Declared because we do that
+                // verify-then-commit, which is the whole reason the command is gated.
+                "remote.set_server_url",
                 // The player restarts itself; the OTA checker updates the APK.
                 "system.restart_player", "system.self_update",
                 // Clock-derived group sync is platform-independent.
@@ -94,6 +123,36 @@ object PlayerCapabilities {
             // path — offering a control that sleeps a panel it cannot wake would be the worst
             // possible version of this feature.
             if (isOwner || policy.isAdminActive() || accessibility) caps += "display.power"
+
+            /*
+             * An UNATTENDED weekly backlight schedule. Declared under the SAME condition as
+             * display.power and never on its own, because the asymmetry above becomes much more
+             * expensive once nobody is pressing the button.
+             *
+             * The comment on display.power weighs "offering a control that sleeps a panel it cannot
+             * wake" and settles it by requiring the OFF path. A schedule raises the stakes on the
+             * other half: a panel that sleeps itself at 22:00 and cannot wake is not a dead button,
+             * it is a site visit — and the screen looks like failed hardware until someone makes
+             * one. Both halves are present here (wake is a wake lock, which needs only WAKE_LOCK,
+             * held already), so the condition is the same; it is stated separately so that if the
+             * two ever diverge, THIS one keeps the stricter test.
+             *
+             * The server gates set_power_schedule on this name rather than on display.power
+             * precisely so a build that has one and not the other is never sent a schedule.
+             */
+            if (isOwner || policy.isAdminActive() || accessibility) caps += "display.power_schedule"
+
+            /*
+             * Device-side REST. UNCONDITIONAL: performing an HTTP request needs only INTERNET,
+             * which this app already holds and cannot lose at runtime — unlike every other
+             * capability in this block, which depends on a grant that can be taken away.
+             *
+             * It is declared here rather than in the static list above only to keep the whole
+             * net.* surface in one place; there is no runtime condition to test. The SERVER still
+             * gates the command on it, which is what stops a fielded player (declaring nothing,
+             * falling back to a baseline that omits it) being sent something it would drop.
+             */
+            caps += "net.http_request"
 
             // Owner-only reboot. Off-owner it degrades to an accessibility power DIALOG, which needs
             // someone standing at the screen — not a remote capability.

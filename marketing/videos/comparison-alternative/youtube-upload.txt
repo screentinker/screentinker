@@ -1,0 +1,85 @@
+========================================================================
+YOUTUBE UPLOAD PACKAGE
+Video: Free Alternative to Yodeck, ScreenCloud & OptiSigns (Open Source)
+File:  screentinker-alternative.mp4  (~2:31 · 1080p30)
+========================================================================
+
+
+------------------------------- TITLE ----------------------------------
+(pick one — both lead with the key search phrase)
+
+Free Alternative to Yodeck, ScreenCloud & OptiSigns (Open Source Signage)
+
+Stop Paying Per Screen — Free Open-Source Alternative to Yodeck & OptiSigns
+
+
+---------------------------- DESCRIPTION -------------------------------
+
+Yodeck, ScreenCloud, and OptiSigns are all solid digital signage products —
+and they all charge you per screen, every month. ScreenTinker is a free,
+open-source, self-hostable alternative that does the same job: playlists,
+scheduling, multi-zone layouts, synchronized video walls, widgets, and
+proof-of-play — on hardware you already own.
+
+Self hosting ScreenTinker is completely free, on any number of screens — you
+only pay for the server. A hosted plan exists too, at a flat $99/mo for 15
+devices, if you would rather not run one.
+
+This is an honest, fair comparison. I cover where the paid tools genuinely
+win (Yodeck's pre-configured Pi players, ScreenCloud's Slack/Power BI apps,
+OptiSigns' template library), and where the open-source option pulls ahead:
+per-screen cost at scale, data sovereignty, and no vendor lock-in.
+
+▶ Chapters
+0:00  Yodeck, ScreenCloud, OptiSigns — the per-screen problem
+0:15  Polished, but cloud-only
+0:31  The open-source alternative
+0:46  Feature parity (not a stripped-down clone)
+1:00  Why the bill grows — per-screen pricing
+1:13  What 15 screens actually costs
+1:36  Your data, your infrastructure
+1:50  Being fair — where the paid tools win
+2:06  Who should switch
+2:16  Get started
+
+💲 Pricing shown is each vendor's publicly listed rate as of mid-2026 and can
+change — check current pricing before deciding. Full sourced comparison:
+• vs Yodeck:      https://screentinker.com/compare/yodeck-alternative.html
+• vs ScreenCloud: https://screentinker.com/compare/screencloud-alternative.html
+• vs OptiSigns:   https://screentinker.com/compare/optisigns-alternative.html
+
+🔗 Links
+• Source (MIT licensed) — a star helps! https://github.com/screentinker/screentinker
+• Try it free (hosted): https://screentinker.com
+• Self-hosting guide: https://screentinker.com/guides/self-hosted-digital-signage.html
+• Community & support (Discord): https://discord.gg/utTdsrqq4Z
+
+ScreenTinker self hosted is free — for any number of screens. You only pay for
+the server it runs on, which starts around $5/mo. If you would rather not run
+one, the hosted plan is a flat $99/mo for 15 devices (free hosted plan = 1).
+
+Open source · Self-hostable · No per-screen fees · Your data on your hardware
+
+#DigitalSignage #OpenSource #SelfHosted #Yodeck #ScreenCloud
+
+
+------------------------------- TAGS -----------------------------------
+yodeck alternative, screencloud alternative, optisigns alternative,
+free digital signage, open source digital signage, self hosted digital signage,
+digital signage software, digital signage comparison, yodeck vs, screencloud vs,
+optisigns vs, xibo alternative, magicinfo alternative, cheap digital signage,
+digital signage pricing, screentinker, per screen pricing, signage without fees,
+menu board software, kiosk software, self hosted, open source
+
+
+------------------------------- NOTES ----------------------------------
+• Category: Science & Technology
+• Commercial-intent / comparison keywords — highest-value of the batch for
+  driving trials + GitHub stars. Ties directly to the compare/ pages.
+• FAIRNESS: no competitor logos or screenshots are shown (names as text only);
+  every price/feature claim is drawn from ScreenTinker's own published compare
+  pages ("publicly listed pricing, mid-2026"). Scene 06 carries an on-screen
+  disclaimer; scene 08 credits where each paid tool genuinely wins.
+• No burned-in captions — enable YouTube auto-captions.
+• If a competitor changes pricing, update render_vo.py scene 05/06 + scenes.py
+  price_bars values and the compare pages together so they stay consistent.

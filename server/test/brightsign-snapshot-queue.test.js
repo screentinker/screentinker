@@ -101,8 +101,11 @@ test('a BrightSign screenshot lands through the SAME ingest as every other playe
   const src = read('server/ws/deviceSocket.js');
   assert.match(src, /function ingestScreenshot\(/);
   assert.match(src, /module\.exports\.ingestScreenshot = ingestScreenshot;/);
-  const sock = src.slice(src.indexOf("socket.on('device:screenshot'"), src.indexOf("socket.on('device:shell-result'"));
+  // Scale-out C2 moved the handler body into EVENT_APPLIERS (callable for a screen behind a
+  // replica too); the socket handler is a guard plus a dispatch to it. Same single ingest.
+  const sock = src.slice(src.indexOf("'screenshot'(deviceId, data, ctx)"), src.indexOf("'shell-result'(deviceId, data, ctx)"));
   assert.match(sock, /ingestScreenshot\(device_id, image_b64\)/, 'the socket path must call the shared ingest');
+  assert.match(src, /socket\.on\('device:screenshot', \(data\) => dispatch\('screenshot', data\)\)/);
 
   // The exports must be attached AFTER `module.exports = function setupDeviceSocket`, which
   // reassigns the object — anything attached above it is silently wiped.

@@ -23,12 +23,27 @@ function parseBillingRateTable(raw) {
 const { parseSize } = require('./lib/parse-size');
 
 module.exports = {
+  /*
+   * #trigger-ingress: let the SERVER hold the LAN trigger door open and forward what arrives to the
+   * addressed device. Off by default — opening an unauthenticated LAN port on the server is a
+   * different security posture from opening one on a panel, and must be a deliberate choice.
+   * Needed wherever a player cannot bind a socket itself (BrightSign's server-on-a-player widget
+   * has no Node), and useful where a control system can reach the server but not each screen.
+   */
+  triggerIngress: process.env.TRIGGER_INGRESS === '1' || process.env.TRIGGER_INGRESS === 'true',
+  /** UDP port for the server-side door. Only bound when triggerIngress is on. */
+  triggerIngressUdpPort: Number(process.env.TRIGGER_INGRESS_UDP_PORT || 7847),
+
   port: process.env.PORT || 3001,
   httpsPort: process.env.HTTPS_PORT || 3443,
   dataDir: DATA_DIR,
   dbPath: process.env.DB_PATH || path.join(DATA_DIR, 'db', 'remote_display.db'),
   uploadsDir,
   contentDir: path.join(uploadsDir, 'content'),
+  // ⚠️ NOT under contentDir. Fonts are not playlist content — they are never listed in the library,
+  // never assigned to a screen, and are served from their own mount with headers a font needs and
+  // content does not (see the /fonts mount in server.js).
+  fontsDir: path.join(uploadsDir, 'fonts'),
   screenshotsDir: path.join(uploadsDir, 'screenshots'),
   certsDir,
   frontendDir: path.join(__dirname, '..', 'frontend'),
@@ -69,6 +84,39 @@ module.exports = {
   // BELOW its own release, so the tighter-looking floor refuses every 2.0.0-alpha node — including
   // one running identical code. See server/lib/mesh/node-identity.js.
   meshMinNodeVersion: process.env.MESH_MIN_NODE_VERSION || '2.0.0-0',
+
+  /*
+   * Scale-out (docs/scale-out-design.md §5.2, §10). A replica forwards every write for a COPIED
+   * workspace here. ⚠️ OPERATOR-TYPED, NO DEFAULT (I9): nothing learns this from the edge, nothing
+   * discovers it, and `test_no_builtin_primary_url` asserts no host-shaped literal is ever used as
+   * a fallback. Unset means writes for copied workspaces answer 409 read_only_replica.
+   * PRIMARY_REDIRECT=1 answers 307 instead of proxying — only for a deployment where both nodes
+   * share an origin behind one load balancer, because browsers drop Authorization on a
+   * cross-origin redirect.
+   */
+  primaryUrl: String(process.env.PRIMARY_URL || '').trim().replace(/\/+$/, '') || null,
+  // Scale-out C3: disk a replica may spend on cached media, PER primary (edge). 10 GiB unless set.
+  replicaCacheBytes: (() => { const n = Number(process.env.REPLICA_CACHE_BYTES); return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10 * 1024 * 1024 * 1024; })(),
+  primaryRedirect: ['1', 'true', 'yes'].includes(String(process.env.PRIMARY_REDIRECT || '').toLowerCase()),
+
+  /* ==========================================================================================
+   * PLUGINS — off by default and INVISIBLE.
+   *
+   * ⚠️ With PLUGINS_ENABLED unset there is no scan, no require() of plugin code, no /plugins
+   * static mount, and /api/admin/plugins 404s. A user who never sets the flag must not be able
+   * to tell the loader exists. That is the same guarantee mesh makes, for the same reason:
+   * loading operator-supplied Node is a different security posture from running the app.
+   *
+   * TWO DIRECTORIES, NOT ONE. Bundled samples live in the repo (plugins/ next to server/).
+   * Operator-installed copies live under DATA_DIR/plugins so they survive git pull / image
+   * replace. Same id in both: data-dir wins.
+   * ========================================================================================== */
+  pluginsEnabled: ['1', 'true', 'yes'].includes(
+    String(process.env.PLUGINS_ENABLED || '').toLowerCase()),
+  bundledPluginsDir: process.env.BUNDLED_PLUGINS_DIR || path.join(__dirname, '..', 'plugins'),
+  dataPluginsDir: process.env.PLUGINS_DIR || path.join(DATA_DIR, 'plugins'),
+  // Quarantine for uploaded plugin zips. Not a plugin root — the loader never scans it.
+  pluginInboxDir: process.env.PLUGIN_INBOX_DIR || path.join(DATA_DIR, 'plugin-inbox'),
 
   // App-level heartbeat. Checker runs every heartbeatInterval and marks
   // devices offline if last_heartbeat is older than heartbeatTimeout.
@@ -197,6 +245,20 @@ module.exports = {
   lagElevatedMs: parseInt(process.env.LAG_ELEVATED_MS) || 100,
   lagCriticalMs: parseInt(process.env.LAG_CRITICAL_MS) || 250,
   lagReleaseSamples: parseInt(process.env.LAG_RELEASE_SAMPLES) || 5,
+  /*
+   * ⚠️ #307: how many sampling windows the band is decided over. One window's p99 is that window's
+   * MAXIMUM (a ~49-record histogram has no 99th percentile to speak of), so a single window is a
+   * measure of the worst 20ms bucket in a second, not of load. The median across this many windows
+   * is what the band actually reads.
+   */
+  lagBandWindowSamples: parseInt(process.env.LAG_BAND_WINDOW_SAMPLES) || 15,
+  /*
+   * #307: how many stranded plays each maintenance sweep closes. Bounded because the table has
+   * 1.44M rows on a synchronous driver — the backlog drains over successive sweeps rather than in
+   * one long UPDATE, which is the failure this whole issue is about.
+   */
+  strandedPlayBatch: parseInt(process.env.STRANDED_PLAY_BATCH) || 500,
+  strandedPlayMaxBatchesPerSweep: parseInt(process.env.STRANDED_PLAY_MAX_BATCHES) || 4,
 
   // #142 load-aware per-device reconnect throttle (lib/reconnect-throttle.js).
   // The verdict of WHO is misbehaving is ALWAYS per-device (keyed on device_id):
@@ -278,6 +340,22 @@ module.exports = {
   // telemetry) delete in batches of this size, yielding to the event loop between
   // batches, so no sweep can block the loop regardless of table size. Keep well under
   // the ~50ms invariant per batch.
+  /*
+   * Raw proof-of-play retention. Was hardcoded `90 * 86400` in services/heartbeat, the only
+   * retention window in the system that could not be configured — device_events and
+   * event_loop_lag both read theirs from here.
+   *
+   * ⚠️ LOWERING THIS DESTROYS RAW ROWS, but not the proof-of-play record: services/play-rollup
+   * aggregates every hour into play_log_hourly BEFORE the prune is allowed past it, and reports
+   * read the aggregate for anything older than the raw floor. Raw is what you need for
+   * per-play debugging and exact device-local day boundaries; the rollup is what you need for
+   * "how many times did this play in August".
+   *
+   * Left at 90 on purpose while the rollup is proven against live reports. Measured on
+   * production 2026-09-29: 90 days of raw is ~3.4 GB at the current insert rate, 30 days is
+   * ~1.1 GB, and a YEAR of hourly rollups is ~108 MB.
+   */
+  playLogRetentionDays: parseFloat(process.env.PLAY_LOG_RETENTION_DAYS) || 90,
   statusLogPruneBatch: parseInt(process.env.STATUS_LOG_PRUNE_BATCH) || 2000,
   // #146 P1.3 kill switch: when false, interval maintenance runs regardless of loop-lag
   // band (disables the band-gate that skips maintenance while loaded). Startup prune is
@@ -412,4 +490,26 @@ module.exports = {
   // #143 throttle the reclaim-deferred log to once per device per window, so a
   // retrying/stuck device can't flood stdout (same discipline as the content-ack shed log).
   reclaimRejectLogWindowMs: parseInt(process.env.RECLAIM_REJECT_LOG_WINDOW_MS) || 60000,
+
+  // ── go2rtc media plane (OPTIONAL live video; see docs/live-video.md) ──────────────────────────
+  // Unset GO2RTC_URL and the app behaves exactly as before: live view stays the screenshot stream.
+  // The server is the ONLY thing that talks to this URL; the browser signals through a proxied
+  // ScreenTinker route, so the admin API port (1984) is never exposed to a dashboard user.
+  go2rtcUrl: process.env.GO2RTC_URL || null,
+  go2rtcApiToken: process.env.GO2RTC_API_TOKEN || null,
+  go2rtcBasicAuth: process.env.GO2RTC_BASIC_AUTH || null,   // "user:pass" if go2rtc's API is basic-auth'd
+  go2rtcTimeoutMs: parseInt(process.env.GO2RTC_TIMEOUT_MS) || 4000,
+  go2rtcHealthTtlMs: parseInt(process.env.GO2RTC_HEALTH_TTL_MS) || 5000,
+  // ICE handed to the browser. STUN helps every NAT; TURN is only needed when host candidates and
+  // UDP 8555 are both unreachable (public internet, or Cloudflare's orange cloud eating UDP).
+  go2rtcStunUrls: (process.env.GO2RTC_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s) => s.trim()).filter(Boolean),
+  go2rtcTurnUrl: process.env.GO2RTC_TURN_URL || null,
+  go2rtcTurnUser: process.env.GO2RTC_TURN_USER || null,
+  go2rtcTurnPass: process.env.GO2RTC_TURN_PASS || null,
+  // Live video must be switched on per workspace as well; this is the server-wide master gate. Off
+  // by default so enabling the sidecar does not silently start offering video everywhere.
+  liveVideoEnabled: process.env.LIVE_VIDEO_ENABLED === 'true',
+  // #talk: dedicated master switch for the voice intercom / PA feature, separate from live video.
+  // Per-org enablement lives in organizations.talk_enabled; this is the global gate. Off by default.
+  talkEnabled: process.env.TALK_ENABLED === 'true',
 };

@@ -1,0 +1,7 @@
+{
+  "id": "json-feed",
+  "name": "JSON Feed",
+  "version": "1.0.0",
+  "main": "index.js",
+  "capabilities": ["data-source"]
+}

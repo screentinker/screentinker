@@ -30,10 +30,12 @@ test('the worker is registered from the root, so its DEFAULT scope covers the pl
   // — no worker at all, which is worse than the narrow scope it replaced. Served from /, the
   // default scope is already the whole origin and no header has to survive the trip.
   const html = fs.readFileSync(path.join(__dirname, '..', 'player', 'index.html'), 'utf8');
-  assert.match(html, /navigator\.serviceWorker\.register\('\/sw\.js'\)/,
-    'register the worker from the root rather than relying on a header');
+  assert.match(html, /const serviceWorkerUrl = IS_LEGACY_PLAYER \? '\/sw-legacy\.js' : '\/sw\.js'/);
+  assert.match(html, /navigator\.serviceWorker\.register\(serviceWorkerUrl\)/,
+    'register each worker from the root rather than relying on a header');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(server, /app\.get\('\/sw\.js'/, 'and the server must serve it there');
+  assert.match(server, /app\.get\('\/sw-legacy\.js'/, 'the legacy worker must have the same root scope');
 });
 
 test('the server permits that scope, or the registration is rejected outright', async () => {

@@ -134,3 +134,23 @@ export function screenshotUrl(deviceId, stamp) {
   }
   return `/api/devices/${deviceId}/screenshot?t=${stamp || ''}&token=${token}`;
 }
+
+/**
+ * Compare two player version strings ("1.9.6", "2.3.0", "2.3.0-beta2", "v2.2"). Returns <0, 0, >0,
+ * or null when either is not a version at all. A pre-release sorts BELOW its release, as semver
+ * says and as the OTA server treats it (#234). Used by the Displays page to mark players behind
+ * the APK this server serves (#467).
+ */
+export function compareVersions(a, b) {
+  const parse = (v) => {
+    const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+](.*))?$/.exec(String(v || '').trim());
+    return m ? { n: [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)], pre: m[4] || '' } : null;
+  };
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) if (x.n[i] !== y.n[i]) return x.n[i] - y.n[i];
+  if (x.pre === y.pre) return 0;
+  if (!x.pre) return 1;
+  if (!y.pre) return -1;
+  return x.pre < y.pre ? -1 : 1;
+}

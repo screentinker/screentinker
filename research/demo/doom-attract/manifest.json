@@ -1,0 +1,66 @@
+{
+  "id": "doom-attract",
+  "name": "DOOM — attract mode + play",
+  "version": "0.2.1",
+  "kind": "html",
+  "description": "The DOOM shareware title loop and demos, full screen. Click (or focus) and use the keyboard to play; after a while with no input it drops back to attract mode. Local test only: the engine is GPL-2.0, so this is never listed in the catalog.",
+  "author": "id Software, jacobenget/doom.wasm; host by ScreenTinker",
+  "license": "GPL-2.0-only",
+  "tags": [
+    "game",
+    "retro"
+  ],
+  "orientation": [
+    "landscape"
+  ],
+  "entry": "index.html",
+  "network": [],
+  "params": [
+    {
+      "name": "playable",
+      "type": "checkbox",
+      "label": "Playable (click / keyboard)",
+      "default": true
+    },
+    {
+      "name": "idle_sec",
+      "type": "number",
+      "label": "Back to attract mode after (seconds idle)",
+      "default": 60,
+      "min": 15,
+      "max": 3600
+    },
+    {
+      "name": "crt",
+      "type": "checkbox",
+      "label": "CRT scanlines",
+      "default": true
+    },
+    {
+      "name": "smooth",
+      "type": "checkbox",
+      "label": "Smooth scaling (off = crisp pixels)",
+      "default": false
+    },
+    {
+      "name": "speed",
+      "type": "select",
+      "label": "Attract-mode speed",
+      "default": "1",
+      "options": [
+        {
+          "value": "0.5",
+          "label": "Slow"
+        },
+        {
+          "value": "1",
+          "label": "Normal"
+        },
+        {
+          "value": "1.5",
+          "label": "Fast"
+        }
+      ]
+    }
+  ]
+}

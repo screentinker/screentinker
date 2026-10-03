@@ -1,4 +1,5 @@
 const express = require('express');
+const playReport = require('../lib/play-report');   // raw + rollup, one series across the seam
 const router = express.Router();
 const { db } = require('../db/database');
 
@@ -37,68 +38,106 @@ router.get('/plays', (req, res) => {
   res.json(db.prepare(sql).all(...params));
 });
 
+/*
+ * Parse a `start`/`end` query parameter into an epoch second.
+ *
+ * ⚠️ THIS REPLACED `new Date(end + 'T23:59:59')`, WHICH RETURNED NOTHING FOR A VALID DATETIME.
+ *
+ * The old line assumed `end` was a bare `YYYY-MM-DD` and glued a time onto it to mean "the whole of
+ * that day". Hand it a full ISO timestamp — which is what a client library, a script, or an AI agent
+ * calling the documented API naturally sends — and the concatenation produced
+ * `2026-09-25T15:53:06.947ZT23:59:59`, an Invalid Date, `NaN`, and a WHERE clause that matched no
+ * rows. The endpoint then answered 200 with `[]`: not an error, just "nothing played", which is a
+ * plausible enough answer that nobody questions it. Found when an agent asked for a week of uptime
+ * and was told, convincingly, that every screen had been dark.
+ *
+ * Now: a date-only value still means the whole of that day (the original intent, preserved because
+ * the dashboard sends dates and `end=2026-09-25` must keep including the 25th). A datetime is taken
+ * as given. Anything unparseable is a 400 rather than a silent empty result — an explicit refusal is
+ * the one answer a caller can act on.
+ */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseRangeParam(value, { endOfDay = false } = {}) {
+  if (value === undefined || value === null || value === '') return { ok: true, epoch: null };
+  const raw = String(value).trim();
+  /*
+   * ⚠️ `Z`, BECAUSE THE TWO ENDS WERE IN DIFFERENT TIME ZONES.
+   *
+   * `new Date('2026-09-25')` is UTC midnight, but `new Date('2026-09-25T23:59:59')` — no offset — is
+   * LOCAL. So a start and an end given as the same kind of date resolved into different zones, and
+   * the window was skewed by the server's UTC offset. It has never shown up here because prod and
+   * alpha both run UTC, where the two happen to agree; a self-hosted instance in Chicago has been
+   * getting a five-hour skew on every report. No change where it is deployed, a fix where it is not.
+   */
+  const text = (endOfDay && DATE_ONLY.test(raw)) ? `${raw}T23:59:59.999Z` : raw;
+  const ms = new Date(text).getTime();
+  if (!Number.isFinite(ms)) return { ok: false, epoch: null };
+  return { ok: true, epoch: Math.floor(ms / 1000) };
+}
+
+/* Resolve both ends, or send the 400. Returns null when it has already answered. */
+function resolveRange(req, res, { defaultStart, defaultEnd }) {
+  const start = parseRangeParam(req.query.start);
+  const end = parseRangeParam(req.query.end, { endOfDay: true });
+  if (!start.ok || !end.ok) {
+    res.status(400).json({
+      error: `Invalid ${!start.ok ? 'start' : 'end'} date. Use YYYY-MM-DD or a full ISO 8601 timestamp.`,
+    });
+    return null;
+  }
+  return {
+    startEpoch: start.epoch === null ? defaultStart() : start.epoch,
+    endEpoch: end.epoch === null ? defaultEnd() : end.epoch,
+  };
+}
+
 // Summary report
 router.get('/summary', (req, res) => {
-  const { device_id, start, end, group_by } = req.query;
-  const startEpoch = start ? Math.floor(new Date(start).getTime() / 1000) : Math.floor(Date.now() / 1000) - 30 * 86400;
-  const endEpoch = end ? Math.floor(new Date(end + 'T23:59:59').getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const { device_id, group_by } = req.query;
+  const range = resolveRange(req, res, {
+    defaultStart: () => Math.floor(Date.now() / 1000) - 30 * 86400,
+    defaultEnd: () => Math.floor(Date.now() / 1000),
+  });
+  if (!range) return;
+  const { startEpoch, endEpoch } = range;
 
-  // Phase 2.2g: workspace-scope all summary queries, no admin bypass.
-  const wsScope = getWorkspaceDeviceSubquery(req);
-  let deviceFilter = wsScope.sql;
-  const params = [startEpoch, endEpoch, ...wsScope.params];
-  if (device_id) { deviceFilter += ' AND device_id = ?'; params.push(device_id); }
+  /*
+   * Phase 2.2g workspace scoping still applies, but it is now expressed as a workspace id passed
+   * to the helper rather than an `AND device_id IN (...)` fragment — see the helper's note on why
+   * filtering by CURRENT device membership leaks history across tenants when a device is moved.
+   *
+   * ⚠️ READ THROUGH lib/play-report, NOT play_logs DIRECTLY.
+   *
+   * Raw rows are pruned on config.playLogRetentionDays once services/play-rollup has aggregated
+   * them into play_log_hourly. Querying play_logs alone therefore silently reports ZERO for any
+   * period older than retention — a proof-of-play report that gets quieter the further back you
+   * look, with nothing to indicate the data was summarised rather than absent. The helper splits
+   * the range at the oldest surviving raw row and reads each side from the only table that still
+   * has it.
+   *
+   * ⚠️ AND THE DAY BUCKET IS THE DEVICE'S, NOT THE SERVER'S. These queries used
+   * date(started_at,'unixepoch','localtime'), which is whatever zone the SERVER runs in. That is
+   * correct on production only because it runs Etc/UTC; on a self-hosted box in another zone the
+   * same report bucketed differently, and would now disagree with the UTC-keyed rollup at the
+   * seam. Bucketing moves into the helper, which uses each device's reported zone.
+   */
+  const rows = playReport.hourlyRows({
+    startEpoch,
+    endEpoch,
+    workspaceId: req.workspaceId || null,
+    deviceId: device_id || null,
+  });
+  const summary = playReport.summarise(rows, playReport.deviceZones());
 
-  // Overall stats
-  const overall = db.prepare(`
-    SELECT COUNT(*) as total_plays,
-           COALESCE(SUM(duration_sec), 0) as total_duration_sec,
-           COUNT(DISTINCT content_id) as unique_content,
-           COUNT(DISTINCT device_id) as unique_devices,
-           AVG(duration_sec) as avg_duration_sec
-    FROM play_logs
-    WHERE started_at >= ? AND started_at <= ? ${deviceFilter}
-  `).get(...params);
-
-  // By content
-  const byContent = db.prepare(`
-    SELECT content_id, content_name, COUNT(*) as plays,
-           COALESCE(SUM(duration_sec), 0) as total_seconds,
-           SUM(completed) as completed_plays
-    FROM play_logs
-    WHERE started_at >= ? AND started_at <= ? ${deviceFilter}
-    GROUP BY content_id, content_name
-    ORDER BY plays DESC LIMIT 50
-  `).all(...params);
-
-  // By device
-  const byDevice = db.prepare(`
-    SELECT pl.device_id, d.name as device_name, COUNT(*) as plays,
-           COALESCE(SUM(pl.duration_sec), 0) as total_seconds
-    FROM play_logs pl
-    JOIN devices d ON pl.device_id = d.id
-    WHERE pl.started_at >= ? AND pl.started_at <= ? ${deviceFilter}
-    GROUP BY pl.device_id
-    ORDER BY plays DESC
-  `).all(...params);
-
-  // By hour of day
-  const byHour = db.prepare(`
-    SELECT CAST(strftime('%H', started_at, 'unixepoch', 'localtime') AS INTEGER) as hour,
-           COUNT(*) as plays
-    FROM play_logs
-    WHERE started_at >= ? AND started_at <= ? ${deviceFilter}
-    GROUP BY hour ORDER BY hour
-  `).all(...params);
-
-  // By day
-  const byDay = db.prepare(`
-    SELECT date(started_at, 'unixepoch', 'localtime') as day, COUNT(*) as plays,
-           COALESCE(SUM(duration_sec), 0) as total_seconds
-    FROM play_logs
-    WHERE started_at >= ? AND started_at <= ? ${deviceFilter}
-    GROUP BY day ORDER BY day
-  `).all(...params);
+  // Device names are joined here rather than in the helper: the helper deals in play facts, and a
+  // device renamed or deleted since the play does not change what was played.
+  const deviceNames = new Map(db.prepare('SELECT id, name FROM devices').all().map((d) => [d.id, d.name]));
+  const byContent = summary.by_content;
+  const byDevice = summary.by_device.map((d) => ({ ...d, device_name: deviceNames.get(d.device_id) || null }));
+  const byHour = summary.by_hour;
+  const byDay = summary.by_day;
+  const overall = summary.overall;
 
   res.json({
     period: { start: new Date(startEpoch * 1000).toISOString(), end: new Date(endEpoch * 1000).toISOString() },
@@ -121,8 +160,9 @@ router.get('/summary', (req, res) => {
 // play_logs. The added WHERE clause closes that pre-existing cross-tenant leak.
 router.get('/export', (req, res) => {
   const { device_id, start, end } = req.query;
-  const startEpoch = start ? Math.floor(new Date(start).getTime() / 1000) : 0;
-  const endEpoch = end ? Math.floor(new Date(end + 'T23:59:59').getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const range = resolveRange(req, res, { defaultStart: () => 0, defaultEnd: () => Math.floor(Date.now() / 1000) });
+  if (!range) return;
+  const { startEpoch, endEpoch } = range;
 
   const scope = getWorkspaceDeviceFilter(req);
   let sql = `SELECT pl.*, d.name as device_name FROM play_logs pl JOIN devices d ON pl.device_id = d.id WHERE pl.started_at >= ? AND pl.started_at <= ?${scope.sql}`;
@@ -149,9 +189,13 @@ router.get('/export', (req, res) => {
 // summaries for every device on the platform. The added WHERE clause closes
 // that pre-existing cross-tenant leak.
 router.get('/uptime', (req, res) => {
-  const { device_id, start, end } = req.query;
-  const startEpoch = start ? Math.floor(new Date(start).getTime() / 1000) : Math.floor(Date.now() / 1000) - 30 * 86400;
-  const endEpoch = end ? Math.floor(new Date(end + 'T23:59:59').getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const { device_id } = req.query;
+  const range = resolveRange(req, res, {
+    defaultStart: () => Math.floor(Date.now() / 1000) - 30 * 86400,
+    defaultEnd: () => Math.floor(Date.now() / 1000),
+  });
+  if (!range) return;
+  const { startEpoch, endEpoch } = range;
 
   const scope = getWorkspaceDeviceFilter(req);
   let sql = `SELECT dt.device_id, d.name as device_name,
@@ -177,3 +221,5 @@ router.get('/uptime', (req, res) => {
 });
 
 module.exports = router;
+// Exported for tests: the parsing rule is the bug, so it is tested directly.
+module.exports.parseRangeParam = parseRangeParam;

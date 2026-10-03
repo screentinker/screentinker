@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ScreenTinker Public API
-  version: 2.0.0
+  version: 2.3.2
   description: |
     Public, token-scoped REST API for ScreenTinker digital signage.
 
@@ -83,6 +83,145 @@ components:
       properties:
         error:
           type: string
+
+    DeckDocument:
+      type: object
+      description: |
+        The editable source for a deck. Each slide carries a **template** (the view: element
+        geometry, style and motion, each with a `slot` name) and **fields** (the record: `{slot:
+        value}`). They are joined when the slide is rendered, which is what makes it possible to
+        come back and change a headline without rebuilding the layout.
+      properties:
+        slides:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: 'Unique within the deck — it is how a republish finds the widget it already made.'
+              name: { type: string, maxLength: 120 }
+              dwell_sec:
+                type: integer
+                minimum: 1
+                maximum: 3600
+                default: 10
+                description: |
+                  How long the slide stays up. A slide's motion has to finish inside this; if it
+                  does not, save and publish both return a `motion-outlives-dwell` warning naming
+                  the slide. Warned rather than refused.
+              widget_id:
+                type: [string, 'null']
+                description: 'Assigned by publish. Present so a republish updates rather than duplicates.'
+              template:
+                type: object
+                properties:
+                  background: { type: string, description: 'Hex colour. Anything else falls back to black.' }
+                  elements:
+                    type: array
+                    maxItems: 40
+                    items:
+                      type: object
+                      properties:
+                        slot: { type: string, description: 'The key this element reads from fields.' }
+                        kind: { type: string, enum: [head, body, stat, image, rule, box] }
+                        box:
+                          type: object
+                          properties:
+                            x: { type: number }
+                            y: { type: number }
+                            w: { type: number }
+                            h: { type: number }
+                        content_id: { type: [string, 'null'], description: 'For an image — a content row in this workspace.' }
+                        style:
+                          type: object
+                          properties:
+                            color: { type: string, description: 'Hex. Anything else falls back to white.' }
+                            font:
+                              type: string
+                              description: |
+                                A bundled family (`inter`, `archivo`, `oswald`, `bitter`,
+                                `jetbrains-mono`), an uploaded one (`u:<uuid>`), or one of the
+                                legacy generics (`sans`, `serif`, `mono`, `condensed`) which still
+                                resolve.
+                            size_cqw:
+                              type: number
+                              description: 'Relative to the screen, never pixels — so a slide scales from 720p to 4K.'
+                            weight: { type: integer, minimum: 100, maximum: 900 }
+                            align: { type: string, enum: [left, center, right] }
+                            opacity: { type: number, minimum: 0, maximum: 1 }
+                            radius_cqw: { type: number }
+                        motion:
+                          type: [object, 'null']
+                          description: 'Null means the element is simply present from the first frame.'
+                          properties:
+                            animation: { type: string, enum: [fade, slideL, slideR, slideU, slideD, zoom, wipe] }
+                            delay: { type: number, minimum: 0, maximum: 30 }
+                            duration: { type: number, minimum: 0.05, maximum: 10 }
+                            easing: { type: string, enum: [ease-out, ease-in, ease-in-out, linear, soft] }
+              fields:
+                type: object
+                description: 'The values, keyed by slot. Editing one of these does not touch the template.'
+                additionalProperties: { type: string }
+
+    TriggerInput:
+      type: object
+      required: [name, match_token, target_ref, mode]
+      properties:
+        name: { type: string, maxLength: 200 }
+        match_token:
+          type: string
+          description: |
+            The word that fires this trigger. Printable ASCII, no spaces, 1-64 characters — the UDP
+            payload is a single space-separated line (`ST1 <secret> <token>`), so a space would be
+            unparseable on arrival and a newline would let one datagram look like two messages.
+          pattern: '^[\x21-\x7E]{1,64}$'
+        clear_token:
+          type: [string, 'null']
+          description: Optional word that clears an `until_cleared` trigger. Same charset.
+          pattern: '^[\x21-\x7E]{1,64}$'
+        source_http: { type: boolean, default: true }
+        source_udp: { type: boolean, default: false }
+        target_kind:
+          type: string
+          enum: [playlist]
+          default: playlist
+          description: |
+            Only `playlist` is implemented. A URL target is designed and deliberately not built —
+            playlist items are library content and therefore pinnable for offline use, which is the
+            whole reason the target is a playlist.
+        target_ref:
+          type: string
+          description: |
+            A playlist id in this workspace. It must be published and every item must be pinnable
+            offline (no `remote_url`, no YouTube), both checked when you save.
+        mode:
+          type: string
+          enum: [once, until_cleared]
+        max_duration_sec: { type: integer, minimum: 0, maximum: 86400, default: 0 }
+        lease_sec:
+          type: [integer, 'null']
+          minimum: 5
+          maximum: 86400
+          description: |
+            For `until_cleared` only. A dead-man's timer: the overlay retires on its own if nothing
+            renews it, so a controller that dies mid-alarm cannot leave a screen stuck.
+        priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
+        enabled: { type: boolean, default: true }
+        assignments:
+          type: array
+          description: Which screens this applies to. Every target must be in the same workspace.
+          items:
+            type: object
+            required: [target_type, target_id]
+            properties:
+              target_type: { type: string, enum: [device, group] }
+              target_id: { type: string }
+      description: |
+        Note on geometry: `position`, `width`, `height`, `opacity` and `border_radius` are accepted
+        and stored but are **not currently honoured** — every trigger renders fullscreen. They are
+        omitted here deliberately rather than documented as working.
 
     Device:
       type: object
@@ -690,6 +829,48 @@ paths:
                     length (rounded up to a whole second), anything else to 10s.
       responses:
         '201': { description: Created playlist item. }
+  /playlists/{id}/items/bulk:
+    post:
+      tags: [playlists]
+      summary: Add many content items to a playlist in one request
+      description: >-
+        Content only; widgets and child playlists are added one at a time via
+        /playlists/{id}/items. Items that cannot be added (missing, expired,
+        deactivated, or in another workspace) are reported in `skipped` rather
+        than failing the whole batch. Requires scope: write.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_ids]
+              properties:
+                content_ids:
+                  type: array
+                  maxItems: 500
+                  items: { type: string }
+                zone_id: { type: string, description: Optional zone placement for every item in the batch. }
+      responses:
+        '201':
+          description: At least one item was added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added: { type: array, items: { type: object } }
+                  skipped:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        content_id: { type: string }
+                        reason: { type: string }
+        '400': { description: Nothing could be added; `skipped` says why for each id. }
   /playlists/{id}/items/reorder:
     post:
       tags: [playlists]
@@ -1307,10 +1488,436 @@ paths:
               properties:
                 type:
                   type: string
-                  enum: [screen_on, screen_off, launch, update, reboot, shutdown]
+                  # Kept identical to server/lib/device-command.js ALLOWED_COMMANDS, which both the
+                  # group and the single-device route validate against. openapi-contract.test.js
+                  # asserts the two lists match: this one had already drifted, documenting six of
+                  # the commands a 'full' token can actually send.
+                  enum: [screen_on, screen_off, launch, update, reboot, shutdown,
+                         refresh,
+                         power_menu, lock_now, kiosk_lock, kiosk_unlock,
+                         set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
+                         shell, install_apk,
+                         set_volume, set_brightness, set_system_brightness, set_screen_timeout,
+                         set_server_url, set_power_schedule, http_request]
+                  # ⚠️ http_request answers with an `id` alongside status. The result arrives
+                  # separately, tagged with that id — it is how a caller matches an answer to its
+                  # own request when more than one is in flight to the same screen.
                 payload: { type: object }
       responses:
         '200': { description: '{ success, sent, offline, total, results }.' }
+
+  /devices/{id}/command:
+    post:
+      tags: [devices]
+      summary: Send an operational command to one screen
+      description: |
+        Sends reboot / shutdown / screen on/off / launch / update — and the device-owner and
+        system-control commands — to a single display. The group equivalent
+        (`POST /groups/{id}/command`) has existed far longer; this route did not, so commanding one
+        screen was reachable only over the dashboard's websocket and not over the API at all.
+
+        Requires scope: full (the highest scope; read and write tokens are rejected), the same as
+        the group route — a fleet-affecting action is not an ordinary write.
+
+        A panel that does not support the command is answered `400` with a `capability` field
+        naming what it lacks, rather than a generic failure: "this screen cannot do that" is
+        actionable and "failed" is not. The `status` in a success response says whether the panel
+        actually received it or the command was queued for a device that is currently offline.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  # Same list as the group route above; see the note there.
+                  enum: [screen_on, screen_off, launch, update, reboot, shutdown,
+                         refresh,
+                         power_menu, lock_now, kiosk_lock, kiosk_unlock,
+                         set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
+                         shell, install_apk,
+                         set_volume, set_brightness, set_system_brightness, set_screen_timeout,
+                         set_server_url, set_power_schedule, http_request]
+                  # ⚠️ http_request answers with an `id` alongside status. The result arrives
+                  # separately, tagged with that id — it is how a caller matches an answer to its
+                  # own request when more than one is in flight to the same screen.
+                payload: { type: object }
+      responses:
+        '200':
+          description: '{ success, status, device_id }.'
+        '400':
+          description: |
+            Unknown command type, or the panel does not support it — in which case the body carries
+            `capability` naming the missing one.
+        '404': { description: No such device in this workspace. }
+        '503': { description: The realtime layer is not available. }
+
+  # --------------------------------------------------------------- slide decks
+  /slide-decks:
+    get:
+      tags: [slides]
+      summary: List the slide decks in this workspace
+      description: |
+        A deck is the editable source document for a set of slides. Publishing one emits a playlist
+        of slide widgets — so decks take no part in playback, and everything downstream
+        (scheduling, groups, device assignment) works on the playlist, not on this.
+      x-required-scope: read
+      responses:
+        '200': { description: 'An array of decks with slide counts and total duration.' }
+    post:
+      tags: [slides]
+      summary: Create a deck
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                doc: { $ref: '#/components/schemas/DeckDocument' }
+      responses:
+        '201': { description: 'The created deck, with any publish warnings.' }
+        '400': { description: 'A deck needs a name.' }
+
+  /slide-decks/{id}:
+    get:
+      tags: [slides]
+      summary: Fetch a deck document
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The deck, its document, and its warnings.' }
+        '404': { description: 'No such deck in this workspace.' }
+    put:
+      tags: [slides]
+      summary: Save a deck document
+      description: |
+        Saving is **not** publishing — nothing reaches a screen until you publish. Warnings come
+        back on every save so an editor can show a problem while somebody works, rather than
+        refusing the change.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                doc: { $ref: '#/components/schemas/DeckDocument' }
+      responses:
+        '200': { description: 'The saved deck.' }
+        '404': { description: 'No such deck in this workspace.' }
+    delete:
+      tags: [slides]
+      summary: Delete a deck document
+      description: |
+        **The published playlist and its widgets are kept.** By the time a deck has been published
+        what is on the wall is a playlist, possibly assigned to devices or on a schedule — deleting
+        the document must not take those down with it. Pass `with_published=1` to remove them too,
+        which still refuses to delete a widget another playlist is playing.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: with_published
+          in: query
+          required: false
+          schema: { type: string, enum: ['1', 'true'] }
+          description: 'Also remove the slide widgets this deck published.'
+      responses:
+        '200': { description: '{ success, removed_widgets, playlist_kept }.' }
+        '404': { description: 'No such deck in this workspace.' }
+
+  /slide-decks/{id}/publish:
+    post:
+      tags: [slides]
+      summary: Publish a deck to a playlist of slide widgets
+      description: |
+        Creates or updates one slide widget per page and a playlist that orders them, then publishes
+        that playlist. Republishing updates the same widgets rather than making new ones, and a
+        slide removed from the deck has its widget deleted — unless another playlist still plays it,
+        in which case it is only unlinked.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The deck, plus published.playlist_id, published.slides and published.removed.' }
+        '404': { description: 'No such deck in this workspace.' }
+        '500': { description: 'The deck could not be published.' }
+
+  # -------------------------------------------------------------- slide fonts
+  /fonts:
+    get:
+      tags: [slides]
+      summary: List the fonts uploaded to this workspace
+      description: |
+        Fonts an operator uploaded, for setting slides in a brand face. The five bundled families
+        are not listed here — they ship with the server and need no upload.
+      x-required-scope: read
+      responses:
+        '200': { description: 'An array of uploaded fonts.' }
+    post:
+      tags: [slides]
+      summary: Upload a font
+      description: |
+        Multipart, field name `font`. Accepts `.woff2`, `.woff`, `.ttf` and `.otf`, identified by
+        magic bytes rather than by filename, up to 12 MB.
+
+        The response `id` is what a slide stores in its element style, in the form `u:<uuid>`.
+
+        Two things worth knowing before uploading. **This server redistributes the file**: every
+        screen showing a slide in that face downloads it, from a URL that cannot be authenticated
+        (the slide renders in an opaque-origin iframe carrying no credentials) — so it is
+        unguessable rather than secret, the same property uploaded images already have. And
+        `licence_note` is recorded against the font and shown beside it, so the question of where a
+        face came from has an answer later.
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [font]
+              properties:
+                font: { type: string, format: binary }
+                name: { type: string, maxLength: 80 }
+                licence_note: { type: string, maxLength: 300 }
+      responses:
+        '201': { description: 'The stored font, including the u:<uuid> a slide references it by.' }
+        '400': { description: 'Not a font, a TrueType Collection, empty, or over the size limit. The message says which.' }
+        '403': { description: 'No workspace context.' }
+
+  /fonts/{id}:
+    delete:
+      tags: [slides]
+      summary: Delete an uploaded font
+      description: |
+        Slides using it keep rendering — they fall back to the default bundled family, whose
+        `@font-face` is emitted alongside so the fallback actually loads. Takes the raw uuid, not
+        the `u:` form.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success: true }.' }
+        '403': { description: 'That font belongs to another workspace.' }
+        '404': { description: 'No such font.' }
+
+  # ----------------------------------------------------------------- triggers
+  /triggers:
+    get:
+      tags: [triggers]
+      summary: List the triggers in this workspace
+      description: |
+        A trigger lets an external system interrupt a screen's playlist with different content, in
+        response to an event fired at the player over the LAN — an HTTP POST or a UDP datagram. It
+        is resolved entirely on the device, so it still works with the WAN down.
+      x-required-scope: read
+      responses:
+        '200': { description: 'An array of triggers, each with its `assignments`.' }
+    post:
+      tags: [triggers]
+      summary: Create a trigger
+      description: |
+        Requires scope: full. A trigger changes what a screen shows in response to a packet that is
+        not itself authenticated by this API, so it is a fleet-affecting capability rather than
+        ordinary content editing — the same tier as a reboot.
+
+        The target playlist must be **published** and every item in it must be locally pinnable
+        (no `remote_url`, no YouTube). Both are refused at save time rather than at fire time: a
+        trigger that saves cleanly and then renders nothing during an alarm is the failure this
+        feature exists to prevent.
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriggerInput' }
+      responses:
+        '200': { description: 'The created trigger, with its assignments.' }
+        '400':
+          description: |
+            Validation failed — an unusable token, an unpublished or empty target playlist, an item
+            that cannot be cached offline, or an assignment naming a device outside this workspace.
+            The message says which.
+
+  /triggers/{id}:
+    get:
+      tags: [triggers]
+      summary: Fetch one trigger
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The trigger, with its assignments.' }
+        '404': { description: No such trigger in this workspace. }
+    put:
+      tags: [triggers]
+      summary: Update a trigger
+      description: 'Requires scope: full, and revalidates everything POST does.'
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriggerInput' }
+      responses:
+        '200': { description: The updated trigger. }
+        '400': { description: Validation failed; the message says which rule. }
+        '404': { description: No such trigger in this workspace. }
+    delete:
+      tags: [triggers]
+      summary: Delete a trigger
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success: true }.' }
+        '404': { description: No such trigger in this workspace. }
+
+  /devices/{id}/trigger-config:
+    post:
+      tags: [triggers]
+      summary: Configure how one screen listens for triggers
+      description: |
+        Which transports a player accepts (`accept_http`, `accept_udp`), which ports it binds, and
+        the multicast group it joins. Ports must be 1024-65534 — below 1024 needs root on every
+        platform ScreenTinker runs on.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accept_http: { type: boolean }
+                accept_udp: { type: boolean }
+                http_port: { type: [integer, 'null'], minimum: 1024, maximum: 65534 }
+                udp_port: { type: [integer, 'null'], minimum: 1024, maximum: 65534 }
+                multicast_group: { type: [string, 'null'] }
+      responses:
+        '200': { description: The updated trigger configuration for that device. }
+        '400': { description: 'A port outside 1024-65534, or an unusable multicast group.' }
+        '404': { description: No such device in this workspace. }
+
+  /devices/{id}/trigger-secret:
+    post:
+      tags: [triggers]
+      summary: Rotate or set the shared secret a screen requires
+      description: |
+        The secret an external system must present in the payload (`ST1 <secret> <token>`). The
+        response says whether the panel actually received the new value rather than implying it —
+        a screen that is offline when you rotate is still expecting the old one.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The secret, and whether the device was reached.' }
+        '404': { description: No such device in this workspace. }
+
+  # ------------------------------------------------------- inbound local REST API
+  /devices/{id}/local-api:
+    post:
+      tags: [devices]
+      summary: Open or close the screen's own inbound REST door
+      description: |
+        Goal B part 3. Lets a control system ON THE SAME LAN as the screen call the screen directly:
+        `GET /api/status` and `POST /api/command` on the panel itself, on the trigger HTTP port
+        (default 8079).
+
+        The point is reach. A Crestron processor or a PLC in the same rack cannot call this server —
+        it is usually in another country, behind an outbound-only firewall, and holds credentials an
+        installer is not allowed to have. It can call the screen next to it.
+
+        ⚠️ **OFF BY DEFAULT, AND SEPARATE FROM `accept_http`.** The two share a socket and a port but
+        not a permission: `accept_http` lets a LAN host put an overlay on the screen, this lets a LAN
+        host change what the screen is doing. Enabling triggers does not enable this, and enabling
+        this does not enable triggers.
+
+        ⚠️ **It opens a listening port on the customer's LAN.** Anything that can route to the panel
+        can reach it, so the secret is the only boundary — treat the port as reachable by every device
+        on that segment and firewall it if the segment is not trusted.
+
+        ⚠️ Enabling is refused until a secret is set, rather than accepted and left to fail on the
+        panel. The panel would answer `503 no_secret_configured` to every request, but an operator who
+        ticked a box and walked away believes the door is open.
+
+        The command set a LAN caller may ask for is much smaller than what a `full` token can send
+        (`refresh`, `screen_on`, `screen_off`, `set_volume`, `set_brightness`,
+        `set_system_brightness`) and is returned in the response. Notably absent: `shell`,
+        `install_apk`, `update`, `set_server_url`, `http_request`, `launch`, `kiosk_unlock`, `reboot`.
+        The panel enforces that list, not this server — nothing here is in the request path.
+
+        Android only for now.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: '{ success, delivered, local_api: { enabled, port, commands, secret_set } }.' }
+        '400': { description: 'enabled missing, or enabling with no secret set.' }
+        '404': { description: No such device in this workspace. }
+
+  /devices/{id}/local-api-secret:
+    post:
+      tags: [devices]
+      summary: Rotate or set the local REST API secret
+      description: |
+        The credential a LAN caller presents, as `Authorization: Bearer <secret>` or — for gear that
+        cannot set a header at all — `?secret=`.
+
+        ⚠️ **NOT the trigger secret, and deliberately not shared with it.** The trigger secret buys an
+        overlay on a screen already showing this workspace's content; this one buys "reload that
+        screen, blank it, change its volume". Sharing the value would mean every installer ever given
+        the trigger secret could take the fleet dark, and rotating one would silently rotate the other.
+
+        Rotation generates 24 random bytes as hex. A supplied secret must be 16-128 printable ASCII
+        characters with no spaces; the floor is there because this is guessable offline by anything on
+        the LAN, as fast as the panel's rate limiter allows, with no lockout and no audit trail.
+
+        ⚠️ The value is returned to a dashboard session — a human has to type it into a control system
+        — and NEVER to an API token, which gets `{ secret_set: true }` and a note instead.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rotate: { type: boolean, description: Generate a new secret. Default when no secret is supplied. }
+                secret: { type: string, description: '16-128 printable ASCII, no spaces.' }
+      responses:
+        '200': { description: 'The secret (dashboard session only), and whether the device was reached.' }
+        '400': { description: The supplied secret does not meet the length or charset rule. }
+        '404': { description: No such device in this workspace. }
 
   # ---------------------------------------------------------------------- pip
   /pip:
@@ -1883,6 +2490,378 @@ paths:
               schema: { type: string }
 
   # ----------------------------------------------------------------- activity
+  # ---------------------------------------------------------------------------------------------
+  # Display power schedules — the weekly BACKLIGHT clock.
+  #
+  # ⚠️ Nothing here powers a device off, and that is deliberate: a device that is off cannot be told
+  # to come back on. These windows blank the PANEL; the player keeps running, so content, updates and
+  # remote control continue throughout. The windows are evaluated ON the player against its own
+  # timezone, so a screen sleeps and wakes on time with the network down.
+  # ---------------------------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------------------------
+  # RESUMABLE UPLOADS.
+  #
+  # Why they exist: a single-request upload must finish inside the shortest timeout between the
+  # client and the server. Behind a CDN that is typically 100-125s, and it does not scale with file
+  # size, so a large file or a slow/distant link fails at a fixed wall no matter how patient anyone
+  # is. Each chunk here gets its own budget, and a dropped connection costs one chunk.
+  #
+  # The single-shot POST /content still exists and is the right choice for a small file.
+  # ---------------------------------------------------------------------------------------------
+  /content/uploads:
+    post:
+      tags: [content]
+      summary: Open a resumable upload session
+      description: >-
+        Requires scope: write. Declares the filename and byte length up front, which is what lets the
+        storage allowance be enforced BEFORE any bytes are sent rather than after. Answers with the
+        chunk size the server wants, so it can be tuned server-side without a new client.
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, size]
+              properties:
+                filename: { type: string }
+                size:
+                  type: integer
+                  description: 'Exact byte length. Enforced as a ceiling on every chunk.'
+                folder_id: { type: [string, 'null'] }
+      responses:
+        '201':
+          description: '{ id, offset, chunk_size, declared_size }'
+        '400':
+          description: 'Missing filename or size, or a folder outside this workspace.'
+        '403':
+          description: 'Read-only access, or the upload would exceed the storage allowance (code STORAGE_LIMIT).'
+        '413':
+          description: Larger than the server file-size limit.
+  /content/uploads/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    head:
+      tags: [content]
+      summary: How many bytes has this upload received?
+      description: >-
+        Requires scope: read. Answers in the Upload-Offset and Upload-Length headers. This is the
+        endpoint that makes resume real: a client that reloaded, crashed or lost its connection needs
+        to remember only the session id, and the offset is read from the bytes on disk rather than
+        from anything the client reported.
+      x-required-scope: read
+      responses:
+        '204':
+          description: 'Upload-Offset and Upload-Length headers.'
+        '404':
+          description: No such session in this workspace.
+    get:
+      tags: [content]
+      summary: Describe a resumable upload session
+      description: 'Requires scope: read. The same offset as HEAD, plus the filename, for a resume prompt.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: '{ id, filename, offset, declared_size, chunk_size, folder_id }'
+        '404':
+          description: No such session in this workspace.
+    patch:
+      tags: [content]
+      summary: Append one chunk
+      description: >-
+        Requires scope: write. The body is raw bytes; Upload-Offset states where the client believes
+        it is. Chunks are applied strictly in order, and an offset that does not match returns 409
+        WITH the current offset, so a client that lost a response corrects itself in one round trip
+        instead of starting again.
+      x-required-scope: write
+      parameters:
+        - { name: Upload-Offset, in: header, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: '{ offset, complete }'
+        '400':
+          description: Missing or malformed Upload-Offset.
+        '404':
+          description: No such session in this workspace.
+        '409':
+          description: 'Offset mismatch. The body carries the current offset.'
+        '413':
+          description: This chunk would exceed the declared size.
+    delete:
+      tags: [content]
+      summary: Abandon an upload
+      description: 'Requires scope: write. Idempotent, so a client that already forgot gets the same answer.'
+      x-required-scope: write
+      responses:
+        '200':
+          description: '{ ok: true }'
+  /content/uploads/{id}/finalize:
+    post:
+      tags: [content]
+      summary: Assemble the upload into library content
+      description: >-
+        Requires scope: write. Runs the SAME ingest a single-shot upload runs (content sniffing,
+        bundle validation, duration and thumbnail derivation, byte digest) so the resulting row is
+        indistinguishable from a form upload. The bytes are judged here rather than at session
+        create, so an unsupported file is refused at the end and the session is discarded.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '201':
+          description: The created content object.
+        '400':
+          description: The assembled bytes are not a supported media type.
+        '404':
+          description: No such session in this workspace.
+        '409':
+          description: 'Incomplete. The body carries offset and declared_size.'
+  # ---------------------------------------------------------------------------------------------
+  # DEVICE ENDPOINTS — saved REST calls a PANEL makes on its OWN network, on its own clock.
+  #
+  # Nothing here performs a request. The panel stands on the private side of the customer's
+  # firewall, next to the PLC and the sensor, and this server has no route to any of it — so these
+  # rows are a definition, synced to the device, and the device runs them including with the WAN
+  # down. Header values are encrypted at rest and are NEVER returned by any read below.
+  # ---------------------------------------------------------------------------------------------
+  /device-endpoints:
+    get:
+      tags: [device-endpoints]
+      summary: List saved endpoints in this workspace
+      description: 'Requires scope: read. Header values are returned blank; names are visible.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: '{ endpoints: [...] }'
+    post:
+      tags: [device-endpoints]
+      summary: Save an endpoint for a device or a group
+      description: >-
+        Requires scope: full. Targets exactly one of device_id or group_id. The url is checked
+        against the same allowlist the panel enforces, so file:// and content:// are refused here
+        rather than silently ignored on the screen. An endpoint runs on an interval OR on a player
+        event, never both.
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                name: { type: string, maxLength: 80 }
+                device_id: { type: [string, 'null'] }
+                group_id: { type: [string, 'null'] }
+                method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD] }
+                url: { type: string, example: 'http://192.168.1.50/api/state' }
+                headers:
+                  type: object
+                  description: 'Values are encrypted at rest and never read back. Send a blank value to keep the stored one.'
+                body: { type: [string, 'null'] }
+                timeout_ms: { type: integer, minimum: 1, maximum: 120000 }
+                interval_sec:
+                  type: integer
+                  minimum: 30
+                  maximum: 86400
+                  description: 'Minimum 30s. This runs on a panel that is also playing video, against what is often a small controller.'
+                run_on: { type: string, enum: [screen_on, screen_off, heartbeat] }
+                enabled: { type: boolean, default: true }
+      responses:
+        '201':
+          description: '{ endpoint: {...} }'
+        '400':
+          description: 'Refused url, bad method, both interval and event, or a target outside this workspace.'
+  /device-endpoints/effective/{deviceId}:
+    get:
+      tags: [device-endpoints]
+      summary: What a given screen will actually run
+      description: >-
+        Requires scope: read. The union of the group's endpoints and the device's own, with a
+        device endpoint of the same NAME replacing the group's. Header values are blank here too.
+      x-required-scope: read
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: '{ endpoints: [...] }'
+        '404':
+          description: No such device in this workspace.
+  /device-endpoints/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [device-endpoints]
+      summary: Get one saved endpoint
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: '{ endpoint: {...} }'
+        '404':
+          description: Not found in this workspace.
+    put:
+      tags: [device-endpoints]
+      summary: Update a saved endpoint
+      description: >-
+        Requires scope: full. Partial. A header sent with a BLANK value keeps the stored one, so a
+        form that never saw the credential cannot erase it by round-tripping.
+      x-required-scope: full
+      responses:
+        '200':
+          description: '{ endpoint: {...} }'
+        '400':
+          description: Validation failed.
+        '404':
+          description: Not found in this workspace.
+    delete:
+      tags: [device-endpoints]
+      summary: Delete a saved endpoint
+      description: 'Requires scope: full. Screens following it are re-synced immediately.'
+      x-required-scope: full
+      responses:
+        '200':
+          description: '{ ok: true }'
+        '404':
+          description: Not found in this workspace.
+  /device-endpoints/{id}/run:
+    post:
+      tags: [device-endpoints]
+      summary: Run this endpoint now, on one screen
+      description: >-
+        Requires scope: full. Goes through the same http_request path a scheduled run takes, so a
+        test exercises the code that will run on the timer. Answers with the request id the result
+        will carry. For a group endpoint, device_id says which screen to run it on.
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: '{ success, status, device_id, id }'
+        '400':
+          description: 'That screen cannot make requests, or no device_id for a group endpoint.'
+        '404':
+          description: Not found in this workspace.
+  /display-power-schedules:
+    get:
+      tags: [display-power-schedules]
+      summary: List display power schedules in this workspace
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: '{ schedules: [...] }' }
+    post:
+      tags: [display-power-schedules]
+      summary: Create a display power schedule
+      description: >-
+        Requires scope: full. Targets exactly one of device_id or group_id. One schedule per target —
+        a second create for the same target returns 409 with the id of the existing one.
+        Windows are local wall-clock and may cross midnight (start > end), in which case the day
+        selection applies to the day the window STARTED.
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                device_id: { type: string, description: 'Mutually exclusive with group_id.' }
+                group_id: { type: string, description: 'Mutually exclusive with device_id.' }
+                timezone:
+                  type: [string, 'null']
+                  description: 'IANA zone the windows are written in. Null inherits the device timezone.'
+                enabled: { type: boolean, default: true }
+                windows:
+                  type: array
+                  maxItems: 28
+                  items:
+                    type: object
+                    required: [days, start, end]
+                    properties:
+                      days:
+                        type: array
+                        items: { type: integer, minimum: 0, maximum: 6 }
+                        description: '0=Sunday .. 6=Saturday.'
+                      start: { type: string, example: '22:00', description: 'HH:MM, inclusive.' }
+                      end: { type: string, example: '06:00', description: 'HH:MM or 24:00, exclusive.' }
+      responses:
+        '201': { description: '{ schedule: {...} }' }
+        '400': { description: 'Malformed window, unknown timezone, or target not in this workspace.' }
+        '409': { description: 'This target already has a schedule; the body carries its id.' }
+  /display-power-schedules/effective/{deviceId}:
+    get:
+      tags: [display-power-schedules]
+      summary: The schedule a given screen actually obeys
+      description: >-
+        Requires scope: read. Resolves the device-beats-group rule and returns the schedule in force
+        for this screen, its current state (on | scheduled_off) and an ADVISORY next edge. A device's
+        own schedule wins even when it is disabled, so unticking it exempts that screen from its
+        group rather than falling back to the group's windows.
+      x-required-scope: read
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: >-
+            { schedule, supported, group_schedules, state, next_edge }. `schedule` is null when the
+            screen has none. `supported` is false when the panel does not declare
+            display.power_schedule, in which case the server will refuse set_power_schedule for it
+            and a saved schedule would never be acted on. `group_schedules` lists every group
+            schedule that could apply, in resolver order — more than one means the screen is in
+            several groups that each schedule its power, and the FIRST is the one in force.
+        '404': { description: No such device in this workspace. }
+  /display-power-schedules/{id}:
+    get:
+      tags: [display-power-schedules]
+      summary: Get one display power schedule
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: '{ schedule: {...} }' }
+        '404': { description: Not found in this workspace. }
+    put:
+      tags: [display-power-schedules]
+      summary: Update a display power schedule
+      description: 'Requires scope: full. Partial — omitted fields are left as they are.'
+      x-required-scope: full
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                device_id: { type: string }
+                group_id: { type: string }
+                timezone: { type: [string, 'null'] }
+                enabled: { type: boolean }
+                windows: { type: array, items: { type: object } }
+      responses:
+        '200': { description: '{ schedule: {...} }' }
+        '400': { description: Malformed window or unknown timezone. }
+        '404': { description: Not found in this workspace. }
+    delete:
+      tags: [display-power-schedules]
+      summary: Delete a display power schedule
+      description: >-
+        Requires scope: full. Screens that were following it are told immediately — they fall back to
+        their group's schedule, or to none, rather than continuing to evaluate windows that no longer
+        exist.
+      x-required-scope: full
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: '{ ok: true }' }
+        '404': { description: Not found in this workspace. }
   /activity:
     get:
       tags: [activity]

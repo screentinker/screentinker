@@ -1,0 +1,21 @@
+{
+  "id": "countdown",
+  "name": "Countdown",
+  "version": "1.0.0",
+  "description": "Count down to a date on a sign.",
+  "screentinker": ">=2.0.0",
+  "main": "index.js",
+  "capabilities": ["widget"],
+  "widget": {
+    "type": "countdown",
+    "label": "Countdown",
+    "icon": "⏳",
+    "fields": [
+      { "name": "target", "type": "datetime", "label": "End at", "required": true },
+      { "name": "label", "type": "text", "label": "Headline", "placeholder": "Opens in" },
+      { "name": "show_seconds", "type": "checkbox", "label": "Show seconds", "default": true },
+      { "name": "color", "type": "color", "label": "Text", "default": "#ffffff" },
+      { "name": "background", "type": "color", "label": "Background", "default": "#0b1220" }
+    ]
+  }
+}

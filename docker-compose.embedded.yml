@@ -1,0 +1,30 @@
+# Docker Compose for ScreenTinker with Embedded E-Paper & Full Widget/Slide Rendering Support
+# (Recommended for Seeed Studio reTerminal Sticky, TRMNL, and other E-Paper displays).
+#
+# Usage:
+#   docker compose -f docker-compose.embedded.yml up -d --build
+#
+services:
+  screentinker:
+    build:
+      context: .
+      dockerfile: Dockerfile.embedded
+    container_name: screentinker-embedded
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      SELF_HOSTED: "true"            # First registered user becomes admin
+      # DISABLE_HOMEPAGE: "true"     # Redirect / to dashboard
+      # JWT_SECRET: "set-a-long-random-string"
+    volumes:
+      - st-data:/data               # SQLite db, uploads, and jwt secret persist here
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  st-data:

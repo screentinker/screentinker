@@ -1,3 +1,4 @@
+import { meshCapability } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc } from '../utils.js';
 import { t } from '../i18n.js';
@@ -35,7 +36,11 @@ async function renderAlerts() {
 
   let mesh = null;
   // A server with no mesh simply has no remote half; that is not an error worth showing.
-  try { mesh = await API('/mesh/alerts'); } catch (e) { mesh = null; }
+  // #329: and on a server that says outright it is not a hub, do not even ask — /alerts is a hub
+  // route, so this was a guaranteed 404 every time the Activity view opened.
+  if (meshCapability('hub') !== false) {
+    try { mesh = await API('/mesh/alerts'); } catch (e) { mesh = null; }
+  }
 
   const local = (mesh && mesh.local) || [];
   const remote = (mesh && mesh.alerts) || [];
