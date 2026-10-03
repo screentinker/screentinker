@@ -117,3 +117,34 @@ function removeUnreferencedContent(contentId) {
 }
 
 module.exports.removeUnreferencedContent = removeUnreferencedContent;
+
+/*
+ * ⚠️ AFTER A TENANT CASCADE COMMITS, ITS BYTES GO TOO. Audit F23: deleteWorkspaceCascade,
+ * deleteOrgCascade and deleteUserCascade (lib/user-deletion.js) deleted content ROWS only, so a
+ * deleted customer's media, thumbnails, subtitles and retained .history copies stayed in
+ * config.contentDir - which is served publicly at /uploads/content - forever. Only the stale-account
+ * purge unlinked anything, by hand, and it skipped .history.
+ *
+ * `rows` are the content rows the cascade removed ({ id, filepath, thumbnail_path, subtitle_url,
+ * file_size }). MUST be called only once those rows are committed as gone: the refcount then sees
+ * exactly the rows that survive, so mesh-shared bytes another workspace still serves are kept, and
+ * a cascade that rolled back never reaches here with its files already unlinked.
+ * `unlink(rel, column)` is injectable (account-cleanup's tests); it defaults to the refcounted one.
+ */
+function removeDeletedContentFiles(rows, { unlink } = {}) {
+  const rm = unlink || ((rel, column) => unlinkIfUnreferenced(rel, '__deleted_tenant__', column));
+  const out = { files_removed: 0, bytes_freed: 0 };
+  for (const r of rows || []) {
+    try {
+      if (r.filepath && rm(r.filepath, 'filepath').unlinked) { out.files_removed++; out.bytes_freed += r.file_size || 0; }
+      if (r.thumbnail_path) rm(r.thumbnail_path, 'thumbnail_path');
+      if (r.subtitle_url) rm(r.subtitle_url, 'subtitle_url');
+      require('./revisions').removeRetainedFiles(r.id);
+    } catch (e) {
+      console.warn(`[content-files] could not remove files of deleted content ${r.id}: ${e.message}`);
+    }
+  }
+  return out;
+}
+
+module.exports.removeDeletedContentFiles = removeDeletedContentFiles;

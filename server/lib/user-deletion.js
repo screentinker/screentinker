@@ -62,6 +62,8 @@ const REASSIGN_USER_TABLES = [
 // workspace-less folder is visible to nobody but its creator, so it may go with them.
 const REASSIGN_WORKSPACE_ONLY_TABLES = ['content_folders'];
 
+const revisions = require('./revisions');
+
 const inClause = n => Array.from({ length: n }, () => '?').join(',');
 function tablesPresent(db) {
   return new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name));
@@ -72,10 +74,33 @@ function tablesPresent(db) {
 // we delete them explicitly first; their CASCADE children (playlist_items,
 // telemetry, assignments, layout_zones, *_devices) and workspace_members/invites
 // clean themselves up. MUST run inside a transaction with defer_foreign_keys=ON.
-// `have` is the set of existing table names (tablesPresent()).
+// `have` is the set of existing table names (tablesPresent()). Returns the content rows it
+// deleted, for removeDeletedFiles() to clear off disk once the transaction has COMMITTED.
+const CONTENT_FILE_COLS = ['filepath', 'thumbnail_path', 'subtitle_url', 'file_size'];
 function purgeWorkspaces(db, wsIds, have) {
-  if (!wsIds.length) return;
+  if (!wsIds.length) return [];
   const wph = inClause(wsIds.length);
+  // ⚠️ Audit F23: rows were all this ever deleted. Remember what the content rows point at on disk
+  // (the caller unlinks it after COMMIT), and take the version history with the workspace:
+  // revisions/submissions/workspace_reviewers have no FK to workspaces, so nothing cascades, and a
+  // surviving revision keeps its retained .history bytes alive through revision-retention forever.
+  // Submissions BEFORE revisions (submissions.revision_id is a NO ACTION FK). Matched by workspace
+  // AND by resource id, because revisions.workspace_id is nullable.
+  let contentRows = [];
+  if (have.has('content')) {
+    const cols = new Set(db.prepare('PRAGMA table_info(content)').all().map(c => c.name));
+    const pick = ['id', ...CONTENT_FILE_COLS.filter(c => cols.has(c))].join(', ');
+    contentRows = db.prepare(`SELECT ${pick} FROM content WHERE workspace_id IN (${wph})`).all(...wsIds);
+  }
+  for (const hist of ['submissions', 'revisions']) {
+    if (!have.has(hist)) continue;
+    db.prepare(`DELETE FROM ${hist} WHERE workspace_id IN (${wph})`).run(...wsIds);
+    for (const [type, table] of Object.entries(revisions.TABLE)) {
+      if (!have.has(table)) continue;
+      db.prepare(`DELETE FROM ${hist} WHERE resource_type = ? AND resource_id IN (SELECT id FROM ${table} WHERE workspace_id IN (${wph}))`).run(type, ...wsIds);
+    }
+  }
+  if (have.has('workspace_reviewers')) db.prepare(`DELETE FROM workspace_reviewers WHERE workspace_id IN (${wph})`).run(...wsIds);
   if (have.has('devices')) {
     const devIds = db.prepare(`SELECT id FROM devices WHERE workspace_id IN (${wph})`).all(...wsIds).map(r => r.id);
     if (devIds.length) {
@@ -91,29 +116,45 @@ function purgeWorkspaces(db, wsIds, have) {
   if (have.has('device_settings')) db.prepare(`DELETE FROM device_settings WHERE workspace_id IN (${wph})`).run(...wsIds);
   if (have.has('activity_log')) db.prepare(`UPDATE activity_log SET workspace_id = NULL WHERE workspace_id IN (${wph})`).run(...wsIds);
   db.prepare(`DELETE FROM workspaces WHERE id IN (${wph})`).run(...wsIds); // cascades workspace_members/invites
+  return contentRows;
+}
+
+// After COMMIT only (a rolled-back cascade must leave every file in place): unlink the deleted
+// rows' media through the refcounted path - mesh-shared bytes another workspace still serves are
+// kept - and their .history copies. Returns { files_removed, bytes_freed }. `unlink(rel, column)`
+// is injectable for tests; lib/content-files is required lazily, only when there is work.
+function removeDeletedFiles(contentRows, unlink) {
+  if (!contentRows.length) return { files_removed: 0, bytes_freed: 0 };
+  return require('./content-files').removeDeletedContentFiles(contentRows, { unlink });
 }
 
 // #36: cascade-delete a single workspace (and all its tenant resources). The
 // parent org is left intact. Platform-admin action; callers gate authorization.
-function deleteWorkspaceCascade(db, { workspaceId }) {
-  db.transaction(() => {
+function deleteWorkspaceCascade(db, { workspaceId, unlink, before }) {
+  const gone = db.transaction(() => {
     db.pragma('defer_foreign_keys = ON');
-    purgeWorkspaces(db, [workspaceId], tablesPresent(db));
+    // `before` runs inside the same transaction: a caller's own cleanup (corporate targets) commits
+    // with the delete or not at all, and the files still go only after commit (audit F23).
+    if (before) before();
+    return purgeWorkspaces(db, [workspaceId], tablesPresent(db));
   })();
+  return removeDeletedFiles(gone, unlink);
 }
 
 // #36: cascade-delete an organization - all its workspaces + tenant resources,
 // then the org itself (cascades organization_members). Member USERS are NOT
 // deleted (they may belong to other orgs); they simply lose this membership.
-function deleteOrgCascade(db, { orgId }) {
-  db.transaction(() => {
+function deleteOrgCascade(db, { orgId, unlink }) {
+  const gone = db.transaction(() => {
     db.pragma('defer_foreign_keys = ON');
     const have = tablesPresent(db);
     const wsIds = db.prepare('SELECT id FROM workspaces WHERE organization_id = ?').all(orgId).map(r => r.id);
-    purgeWorkspaces(db, wsIds, have);
+    const rows = purgeWorkspaces(db, wsIds, have);
     if (have.has('activity_log')) db.prepare('UPDATE activity_log SET organization_id = NULL WHERE organization_id = ?').run(orgId);
     db.prepare('DELETE FROM organizations WHERE id = ?').run(orgId); // cascades organization_members
+    return rows;
   })();
+  return removeDeletedFiles(gone, unlink);
 }
 
 function listOwnedOrgsWithSharing(db, userId) {
@@ -134,8 +175,9 @@ function listOwnedOrgsWithSharing(db, userId) {
 }
 
 // Throws OrgHasOtherMembersError if the user owns a shared org. Otherwise
-// deletes the user and resolves every reference in one transaction.
-function deleteUserCascade(db, { targetId, actingAdminId }) {
+// deletes the user and resolves every reference in one transaction, then removes
+// the files of the content that went with their solo orgs ({ files_removed, bytes_freed }).
+function deleteUserCascade(db, { targetId, actingAdminId, unlink }) {
   const owned = listOwnedOrgsWithSharing(db, targetId);
   const shared = owned.filter(o => o.shared);
   if (shared.length > 0) {
@@ -148,6 +190,7 @@ function deleteUserCascade(db, { targetId, actingAdminId }) {
 
   const have = tablesPresent(db);
 
+  let gone = [];
   const run = db.transaction(() => {
     // FK checks deferred to COMMIT: order of our deletes no longer matters, only
     // that no dangling reference remains at the end.
@@ -158,7 +201,7 @@ function deleteUserCascade(db, { targetId, actingAdminId }) {
       const wsIds = db.prepare(
         `SELECT id FROM workspaces WHERE organization_id IN (${inClause(soloOrgIds.length)})`
       ).all(...soloOrgIds).map(r => r.id);
-      purgeWorkspaces(db, wsIds, have);
+      gone = purgeWorkspaces(db, wsIds, have);
 
       const oph = inClause(soloOrgIds.length);
       if (have.has('activity_log')) db.prepare(`UPDATE activity_log SET organization_id = NULL WHERE organization_id IN (${oph})`).run(...soloOrgIds);
@@ -202,6 +245,7 @@ function deleteUserCascade(db, { targetId, actingAdminId }) {
   });
 
   run();
+  return removeDeletedFiles(gone, unlink);
 }
 
 module.exports = {

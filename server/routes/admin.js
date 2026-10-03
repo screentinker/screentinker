@@ -221,6 +221,8 @@ router.delete('/orgs/:id', requirePlatformAdmin, (req, res) => {
   const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(req.params.id);
   if (!org) return res.status(404).json({ error: 'Organization not found' });
   try {
+    // Also removes the org's uploaded files + .history copies once the rows are committed gone
+    // (audit F23) - /uploads/content is public, so leaving them was not deleting the data.
     deleteOrgCascade(db, { orgId: org.id });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to delete organization' });
@@ -287,14 +289,17 @@ router.delete('/workspaces/:id', requirePlatformAdmin, (req, res) => {
     }
   }
   try {
-    // One transaction: the corporate cleanup commits only with the delete it belongs to.
-    db.transaction(() => {
-      require('../lib/corporate/cleanup').removeWorkspaceTargets(db, ws.id);
-      try {
-        db.prepare('UPDATE organizations SET hq_workspace_id = NULL, corporate_enabled = 0 WHERE hq_workspace_id = ?').run(ws.id);
-      } catch (_) { /* pre-corporate schema: nothing points at it */ }
-      deleteWorkspaceCascade(db, { workspaceId: ws.id });
-    })();
+    // One transaction (audit F23 + corporate): the corporate cleanup runs INSIDE the cascade's own
+    // transaction, so it commits only with the delete it belongs to, and the files still go after commit.
+    deleteWorkspaceCascade(db, {
+      workspaceId: ws.id,
+      before: () => {
+        require('../lib/corporate/cleanup').removeWorkspaceTargets(db, ws.id);
+        try {
+          db.prepare('UPDATE organizations SET hq_workspace_id = NULL, corporate_enabled = 0 WHERE hq_workspace_id = ?').run(ws.id);
+        } catch (_) { /* pre-corporate schema: nothing points at it */ }
+      },
+    });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to delete workspace' });
   }

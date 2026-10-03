@@ -30,9 +30,9 @@
  * screen, subscribed since the page was loaded), saying why.
  *
  * Deletion goes through lib/user-deletion.js deleteUserCascade — the same path as deleting one
- * user by hand — and then removes the deleted accounts' uploaded files from disk, which the cascade
- * does not do, through lib/content-files unlinkIfUnreferenced so a file another row still points at
- * is never removed.
+ * user by hand — which also removes the deleted accounts' uploaded files (and their .history
+ * copies) from disk after it commits, through lib/content-files unlinkIfUnreferenced so a file
+ * another row still points at is never removed.
  */
 
 const { deleteUserCascade, OrgHasOtherMembersError } = require('./user-deletion');
@@ -169,25 +169,19 @@ function purge(db, { ids, inactiveDays, actingAdminId, now = Math.floor(Date.now
       if (st === 'not_warned') { skipped.push({ id, email: user.email, reason: 'Not warned yet: send the notice first' }); continue; }
       if (st === 'notice') { skipped.push({ id, email: user.email, reason: `Notice period runs until ${new Date(row.cleanup_delete_after * 1000).toISOString().slice(0, 10)}` }); continue; }
     }
-    // Files to consider once the rows are gone: the account's uploads in the orgs it owns.
-    const files = db.prepare(`
-      SELECT c.filepath, c.thumbnail_path, c.file_size
-        FROM content c JOIN workspaces w ON w.id = c.workspace_id
-        JOIN organizations o ON o.id = w.organization_id
-       WHERE o.owner_user_id = ?`).all(id);
+    // The cascade removes the deleted orgs' files itself once its transaction commits (audit F23:
+    // it used to be rows only, so this was the one caller that unlinked anything, and it missed
+    // subtitles and the .history copies). `unlink` is passed through for the tests.
+    let files;
     try {
-      deleteUserCascade(db, { targetId: id, actingAdminId });
+      files = deleteUserCascade(db, { targetId: id, actingAdminId, unlink });
     } catch (e) {
       skipped.push({ id, email: user.email, reason: e instanceof OrgHasOtherMembersError ? 'Owns an organization with other members' : 'Could not be deleted' });
       continue;
     }
     deleted.push({ id, email: user.email });
-    if (unlink) {
-      for (const f of files) {
-        if (f.filepath && unlink(f.filepath, 'filepath').unlinked) { filesRemoved++; bytesFreed += f.file_size || 0; }
-        if (f.thumbnail_path) unlink(f.thumbnail_path, 'thumbnail_path');
-      }
-    }
+    filesRemoved += files.files_removed;
+    bytesFreed += files.bytes_freed;
   }
   return { inactive_days: days, deleted, skipped, files_removed: filesRemoved, bytes_freed: bytesFreed };
 }
