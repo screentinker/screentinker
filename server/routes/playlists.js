@@ -6,7 +6,7 @@ const { db } = require('../db/database');
 const config = require('../config');
 // Phase 2.2k: workspace-aware access. requirePlaylistOwnership is replaced
 // by read/write helpers gated on the playlist's workspace_id.
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 const { resolveItemDuration } = require('../lib/item-duration');
 const { parseTags, parseMeta } = require('../lib/content-tags');
 const smartPlaylist = require('../lib/smart-playlist');
@@ -139,7 +139,7 @@ function loadPlaylistAccess(req, res, requireWrite) {
   if (!playlist) { res.status(404).json({ error: 'playlist not found' }); return null; }
   if (!playlist.workspace_id) { res.status(403).json({ error: 'Playlist not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(playlist.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
@@ -809,7 +809,7 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(400).json({ error: 'No active workspace' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     return res.status(403).json({ error: 'Read-only access' });

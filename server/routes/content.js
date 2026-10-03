@@ -26,7 +26,7 @@ const { checkStorageLimit, checkRemoteUrl } = require('../middleware/subscriptio
 const { cleanUserText } = require('../middleware/sanitize');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2b: workspace-aware access. Mirrors the pattern from devices.js.
-const { accessContext, denyReadOnly } = require('../lib/tenancy');
+const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 // #73: the upload ingest (processing + insert) is now shared with the agency router.
 const { ingestUploadedFile, deriveMediaMetadata } = require('../lib/content-ingest');
 const uploadSession = require('../lib/upload-session');
@@ -668,7 +668,7 @@ function checkContentRead(req, res) {
   // Platform-template row: readable by anyone authenticated.
   if (!content.workspace_id) return content;
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   return content;
 }
@@ -684,7 +684,7 @@ function checkContentWrite(req, res) {
     return content;
   }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   // Workspace_viewer is read-only; acting-as (platform_admin or org owner/admin) and editor/admin pass.
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
@@ -709,7 +709,7 @@ function contentWritable(req, content) {
   if (!content) return false;
   if (!content.workspace_id) return PLATFORM_ROLES.includes(req.user.role);
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return false;
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return false;
   // CORPORATE: same rule as checkContentWrite (batch delete / move of head office's media).

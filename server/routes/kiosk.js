@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2e: workspace-aware access. Same pattern as content/widgets/folders.
-const { accessContext, denyReadOnly } = require('../lib/tenancy');
+const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 
 // Escape HTML to prevent XSS
 function escapeHtml(str) {
@@ -75,7 +75,7 @@ function checkKioskRead(req, res) {
   if (!page) { res.status(404).json({ error: 'Page not found' }); return null; }
   if (!page.workspace_id) return page;
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(page.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   return page;
 }
@@ -90,7 +90,7 @@ function checkKioskWrite(req, res) {
     return page;
   }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(page.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;

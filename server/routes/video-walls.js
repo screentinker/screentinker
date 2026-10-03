@@ -7,7 +7,7 @@ const { clearInheritedCopy } = require('../lib/resolve-device-playlist');
 // userCanAccessWall helpers - the admin/team_members branches there were
 // dead code after the Phase 2.1 role rename (no users carry role='admin'
 // anymore; team_members is a vestigial table from the pre-workspace model).
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 // #236: per-panel mounting rotation. Normalised on the way IN as well as out, so a bad value from a
 // scripted API caller is rejected at the door instead of persisting and confusing every later read.
 const { normalizeWallRotation } = require('../lib/wall-geometry');
@@ -19,7 +19,7 @@ function loadWallAccess(req, res, requireWrite) {
   if (!wall) { res.status(404).json({ error: 'Wall not found' }); return null; }
   if (!wall.workspace_id) { res.status(403).json({ error: 'Wall not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(wall.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
@@ -106,7 +106,7 @@ router.get('/:id', requireWallRead, (req, res) => {
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(400).json({ error: 'No active workspace' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     return res.status(403).json({ error: 'Read-only access' });

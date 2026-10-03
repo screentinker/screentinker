@@ -16,7 +16,7 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { requireScope } = require('../middleware/apiToken');
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 const PowerWindow = require('../lib/power-window');
 const playerCapabilities = require('../lib/player-capabilities');
 const { powerScheduleForDevice, groupSchedulesForDevice, devicesAffectedBySchedule } = require('../lib/device-power-schedule');
@@ -29,7 +29,7 @@ const { powerScheduleForDevice, groupSchedulesForDevice, devicesAffectedBySchedu
 function requireFleetWrite(req, res, next) {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     return res.status(403).json({ error: 'Read-only access' });

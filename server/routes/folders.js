@@ -13,7 +13,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { PLATFORM_ROLES } = require('../middleware/auth');
 // Phase 2.2c: workspace-aware access. Mirrors devices.js / content.js.
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -42,7 +42,7 @@ function accessibleFolder(req, folderId, requireWrite = false) {
   }
 
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(row.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return null;
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return null;
   return { row, ctx };

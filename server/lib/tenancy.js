@@ -82,6 +82,22 @@ function accessContext(userId, role, workspace) {
   return null;
 }
 
+// Access check for a RESOURCE loaded by id (device, playlist, content row, schedule, ...): the
+// resource's own workspace, tested for THIS REQUEST. Every route under the public/agency routers
+// must use this rather than calling accessContext(req.user.id, req.user.role, ws) directly.
+//
+// ⚠️ An API token is bound to ONE workspace (middleware/apiToken.js), but it authenticates AS its
+// owner, and accessContext only asks "can this USER reach ws?" — direct memberships elsewhere and
+// org_owner/org_admin act-as both still answer yes. The binding used to reach only resolveTenancy
+// (list/create routes), so a token minted in wsA could GET/PUT a wsB device by id (audit F01).
+// Refusing here, in one place, is what makes "a token can't leave its bound workspace" true for
+// every by-id route instead of for the ones that happened to filter on req.workspaceId.
+function resourceAccess(req, workspace) {
+  if (!req || !req.user || !workspace) return null;
+  if (req.viaToken && (!req.apiToken || workspace.id !== req.apiToken.workspace_id)) return null;
+  return accessContext(req.user.id, req.user.role, workspace);
+}
+
 function resolveTenancy(req, res, next) {
   if (!req.user) {
     // Should not happen when chained after requireAuth; defensive for any future
@@ -116,6 +132,16 @@ function resolveTenancy(req, res, next) {
     workspace = ws;
     context = ctx;
     break;
+  }
+
+  // ⚠️ An API token has exactly one candidate — its bound workspace (apiToken.js strips the header
+  // and query overrides). If that is gone, or its owner lost access to it, the token is DEAD: the
+  // fallbacks below would hand it the owner's role in whichever OTHER workspace they joined first,
+  // so a token a wsA admin "revoked" by removing its owner kept working against wsB (audit F12).
+  // Fail closed rather than leave req.workspaceId null: several routes compare a row's NULL
+  // workspace_id (platform templates) against req.workspaceId, and null === null.
+  if (!workspace && req.viaToken) {
+    return res.status(403).json({ error: "API token's workspace is no longer accessible to its owner" });
   }
 
   if (!workspace) {
@@ -216,8 +242,10 @@ function denyReadOnly(req, res) {
 
 module.exports = {
   resolveTenancy,
-  // Exported for testing / direct use by routes that need ad-hoc checks.
+  // Exported for testing / direct use by routes that need ad-hoc checks. Routes checking a
+  // resource loaded by id use resourceAccess(req, ws), which also honours an API token's binding.
   accessContext,
+  resourceAccess,
   denyReadOnly,
   membershipOf,
   orgMembershipOf,

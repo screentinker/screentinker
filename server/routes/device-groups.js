@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2i: workspace-aware access. Same pattern as devices/content/widgets.
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 // #public-api: operational fleet commands (reboot/shutdown/...) need the 'full' token
 // scope. No-op for JWT sessions; for tokens a read/write scope is rejected.
 const { requireScope } = require('../middleware/apiToken');
@@ -33,7 +33,7 @@ function loadGroupAccessCtx(req, res) {
   if (!group) { res.status(404).json({ error: 'group not found' }); return null; }
   if (!group.workspace_id) { res.status(403).json({ error: 'Group not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(group.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   return { group, ctx };
 }
