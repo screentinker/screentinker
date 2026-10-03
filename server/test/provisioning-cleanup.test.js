@@ -39,3 +39,25 @@ test('sweeps unclaimed provisioning devices older than 24h, keeps the rest', asy
 test('idempotent: a second sweep with nothing stale deletes nothing', async () => {
   assert.equal(await pruneProvisioningDevices(), 0);
 });
+
+// Audit F21: "unclaimed" is decided by the workspace, not by user_id. A workspace import creates
+// provisioning placeholders WITH a workspace, user_id = the importer and created_at copied from the
+// export (already >24h old). deleteUserCascade NULLs devices.user_id in orgs the user doesn't own,
+// so deleting the member who imported the workspace used to hand those screens to this sweep.
+test('F21: an imported screen survives its importer being deleted; an unclaimed row is still swept', async () => {
+  const { deleteUserCascade } = require('../lib/user-deletion');
+  const old = Math.floor(Date.now() / 1000) - 30 * 86400;
+  db.exec('DELETE FROM devices');
+  db.prepare("INSERT INTO users (id, email, name, password_hash, auth_provider, role) VALUES ('f21-owner','f21o@t.test','o','x','local','user'), ('f21-member','f21m@t.test','m','x','local','user'), ('f21-admin','f21a@t.test','a','x','local','platform_admin')").run();
+  db.prepare("INSERT INTO organizations (id, name, owner_user_id) VALUES ('f21-org', 'Org', 'f21-owner')").run();
+  db.prepare("INSERT INTO workspaces (id, organization_id, name) VALUES ('f21-ws', 'f21-org', 'WS')").run();
+  db.prepare("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ('f21-ws', 'f21-member', 'workspace_editor')").run();
+  db.prepare("INSERT INTO devices (id, user_id, workspace_id, name, status, created_at) VALUES ('d-imp', 'f21-member', 'f21-ws', 'Lobby', 'provisioning', ?)").run(old);
+  db.prepare("INSERT INTO devices (id, status, created_at) VALUES ('d-junk', 'provisioning', ?)").run(old);
+
+  deleteUserCascade(db, { targetId: 'f21-member', actingAdminId: 'f21-admin' });
+  assert.equal(db.prepare("SELECT user_id FROM devices WHERE id = 'd-imp'").get().user_id, null, 'unlinked, as the cascade intends');
+
+  assert.equal(await pruneProvisioningDevices(), 1, 'only the workspace-less row is swept');
+  assert.deepEqual(db.prepare('SELECT id FROM devices').all().map((r) => r.id), ['d-imp']);
+});
