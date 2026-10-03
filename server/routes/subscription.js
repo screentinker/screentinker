@@ -110,7 +110,22 @@ router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  db.prepare("UPDATE users SET plan_id = ?, subscription_status = 'active', updated_at = strftime('%s','now') WHERE id = ?")
+  /*
+   * ⚠️ A hand-granted plan has to stop BOTH clocks that would otherwise take it away again:
+   *   - the trial clock: expireTrial() drops anyone still on trial_plan with no subscription once
+   *     the 14 days are up, so comping a trialing user the plan their trial granted was silently
+   *     reverted to Free at day 14. trial_started = NULL ends the trial (trial_expired_at stays
+   *     as it is — it records a lapse that did happen, if one did).
+   *   - the dunning clock: downgradeLapsed() only asks whether past_due_since is old enough, so a
+   *     past-due account moved to an agreed plan by hand fell to Free at the next sweep and got
+   *     the lapse email. The email stamps go with it, as clearGrace does, so a genuine future
+   *     lapse is still announced.
+   */
+  db.prepare(`UPDATE users
+                 SET plan_id = ?, subscription_status = 'active', trial_started = NULL,
+                     past_due_since = NULL, payment_failed_email_sent_at = NULL,
+                     subscription_lapsed_email_sent_at = NULL, updated_at = strftime('%s','now')
+               WHERE id = ?`)
     .run(plan_id, user_id);
 
   res.json({ success: true, plan: plan.display_name });
