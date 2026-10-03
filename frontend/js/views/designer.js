@@ -439,6 +439,15 @@ function redraw() {
     preview.style.background = bgValue;
   }
 
+  /*
+   * ⚠️ EVERY el.* that reaches markup goes through esc(), in the preview, the properties panel and
+   * the layer list alike. `elements` is NOT ours: it is a saved widget's config.design (the PUT route
+   * stores it as sent), a .json someone handed you, or an AI response. A text of `<img onerror=…>`
+   * ran script for whoever opened the design, and a colour or size of `x" onmouseover=…` closed a
+   * style attribute just as well — so numbers and colours are escaped too, not only text. It also
+   * fixes `value="${el.text}"` cutting `Say "hi"` to `Say ` and the next edit saving it truncated.
+   * The published-player export (generateInnerHTML) is deliberately left as it was.
+   */
   // Elements
   elements.forEach((el, i) => {
     const selected = i === selectedIdx;
@@ -447,45 +456,45 @@ function redraw() {
 
     switch (el.type) {
       case 'text':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize / 10}cqw;font-family:${el.fontFamily};color:${el.color};font-weight:${el.bold ? 'bold' : 'normal'};${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}white-space:nowrap;${border}${cursor}" data-idx="${i}">${el.text}</div>`;
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;font-size:${el.fontSize / 10}cqw;font-family:${esc(el.fontFamily)};color:${esc(el.color)};font-weight:${el.bold ? 'bold' : 'normal'};${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}white-space:nowrap;${border}${cursor}" data-idx="${i}">${esc(el.text)}</div>`;
         break;
       case 'clock':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize / 10}cqw;font-family:${el.fontFamily};color:${el.color};font-weight:bold;${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}${border}${cursor}" data-idx="${i}" id="clock_${i}"></div>`;
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;font-size:${el.fontSize / 10}cqw;font-family:${esc(el.fontFamily)};color:${esc(el.color)};font-weight:bold;${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}${border}${cursor}" data-idx="${i}" id="clock_${i}"></div>`;
         break;
       case 'date':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize / 10}cqw;font-family:${el.fontFamily};color:${el.color};${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}${border}${cursor}" data-idx="${i}" id="date_${i}"></div>`;
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;font-size:${el.fontSize / 10}cqw;font-family:${esc(el.fontFamily)};color:${esc(el.color)};${el.shadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,0.5);' : ''}${border}${cursor}" data-idx="${i}" id="date_${i}"></div>`;
         break;
       case 'image':
-        html += `<img src="${el.src}" style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.width}%;height:${el.height}%;object-fit:contain;${border}${cursor}" data-idx="${i}" draggable="false">`;
+        html += `<img src="${esc(el.src)}" style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;width:${esc(el.width)}%;height:${esc(el.height)}%;object-fit:contain;${border}${cursor}" data-idx="${i}" draggable="false">`;
         break;
       case 'video':
-        html += `<video src="${el.src}" ${el.muted ? 'muted' : ''} ${el.loop ? 'loop' : ''} autoplay playsinline style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.width}%;height:${el.height}%;object-fit:cover;${border}${cursor}" data-idx="${i}"></video>`;
+        html += `<video src="${esc(el.src)}" ${el.muted ? 'muted' : ''} ${el.loop ? 'loop' : ''} autoplay playsinline style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;width:${esc(el.width)}%;height:${esc(el.height)}%;object-fit:cover;${border}${cursor}" data-idx="${i}"></video>`;
         break;
       case 'shape':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.width}%;height:${el.height}%;background:${el.color};opacity:${el.opacity};border-radius:${el.radius || 0}px;${el.shape === 'circle' ? 'border-radius:50%;' : ''}${border}${cursor}" data-idx="${i}"></div>`;
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;width:${esc(el.width)}%;height:${esc(el.height)}%;background:${esc(el.color)};opacity:${esc(el.opacity)};border-radius:${esc(el.radius || 0)}px;${el.shape === 'circle' ? 'border-radius:50%;' : ''}${border}${cursor}" data-idx="${i}"></div>`;
         break;
       case 'weather':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;font-size:${el.fontSize / 10}cqw;color:${el.color};${border}${cursor}" data-idx="${i}" id="weather_${i}">&#9925; ${t('common.loading')}</div>`;
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;font-size:${el.fontSize / 10}cqw;color:${esc(el.color)};${border}${cursor}" data-idx="${i}" id="weather_${i}">&#9925; ${t('common.loading')}</div>`;
         break;
       case 'ticker':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.width}%;height:${el.height}%;background:${el.bgColor};overflow:hidden;display:flex;align-items:center;${border}" data-idx="${i}">
-          <div style="white-space:nowrap;animation:ticker ${el.speed || 30}s linear infinite;font-size:${el.fontSize / 10}cqw;color:${el.color}" id="ticker_${i}">${t('designer.loading_news')}</div>
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;width:${esc(el.width)}%;height:${esc(el.height)}%;background:${esc(el.bgColor)};overflow:hidden;display:flex;align-items:center;${border}" data-idx="${i}">
+          <div style="white-space:nowrap;animation:ticker ${esc(el.speed || 30)}s linear infinite;font-size:${el.fontSize / 10}cqw;color:${esc(el.color)}" id="ticker_${i}">${t('designer.loading_news')}</div>
         </div>`;
         break;
       case 'qr':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.size}%;aspect-ratio:1;background:${el.bgColor};display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;${border}${cursor}" data-idx="${i}">
-          <div style="font-size:1.5vw;color:${el.fgColor};font-weight:bold">${t('designer.qr_label')}</div>
-          <div style="font-size:0.8vw;color:${el.fgColor};opacity:0.7;margin-top:4px">${el.data?.slice(0, 25)}</div>
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;width:${esc(el.size)}%;aspect-ratio:1;background:${esc(el.bgColor)};display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;${border}${cursor}" data-idx="${i}">
+          <div style="font-size:1.5vw;color:${esc(el.fgColor)};font-weight:bold">${t('designer.qr_label')}</div>
+          <div style="font-size:0.8vw;color:${esc(el.fgColor)};opacity:0.7;margin-top:4px">${esc(el.data?.slice(0, 25))}</div>
         </div>`;
         break;
       case 'countdown':
-        html += `<div style="position:absolute;left:${el.x}%;top:${el.y}%;text-align:center;color:${el.color};${border}${cursor}" data-idx="${i}">
+        html += `<div style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;text-align:center;color:${esc(el.color)};${border}${cursor}" data-idx="${i}">
           <div style="font-size:${el.fontSize / 15}cqw;opacity:0.8">${esc(el.label || '')}</div>
           <div style="font-size:${el.fontSize / 10}cqw;font-weight:bold" id="countdown_${i}"></div>
         </div>`;
         break;
       case 'webpage':
-        html += `<iframe src="${el.url}" style="position:absolute;left:${el.x}%;top:${el.y}%;width:${el.width}%;height:${el.height}%;border:none;pointer-events:none;${border}" data-idx="${i}"></iframe>`;
+        html += `<iframe src="${esc(el.url)}" style="position:absolute;left:${esc(el.x)}%;top:${esc(el.y)}%;width:${esc(el.width)}%;height:${esc(el.height)}%;border:none;pointer-events:none;${border}" data-idx="${i}"></iframe>`;
         break;
     }
   });
@@ -576,15 +585,15 @@ function updateProps() {
   </div>`;
 
   if (el.type === 'text') {
-    html += `<div class="form-group"><label>${t('designer.prop.text')}</label><input type="text" class="input" value="${el.text}" data-prop="text"></div>
-      <div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="8" max="120" value="${el.fontSize}" data-prop="fontSize" style="width:100%"><span style="font-size:11px;color:var(--text-muted)">${el.fontSize}px</span></div>
+    html += `<div class="form-group"><label>${t('designer.prop.text')}</label><input type="text" class="input" value="${esc(el.text)}" data-prop="text"></div>
+      <div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="8" max="120" value="${esc(el.fontSize)}" data-prop="fontSize" style="width:100%"><span style="font-size:11px;color:var(--text-muted)">${esc(el.fontSize)}px</span></div>
       <div class="form-group"><label>${t('designer.prop.font')}</label><select class="input" style="background:var(--bg-input)" data-prop="fontFamily">${FONTS.map(f => `<option ${f === el.fontFamily ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
-      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${el.color}" data-prop="color" style="width:100%;height:28px;border:none;cursor:pointer"></div>
+      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${esc(el.color)}" data-prop="color" style="width:100%;height:28px;border:none;cursor:pointer"></div>
       <label style="font-size:12px;display:flex;gap:6px;margin:4px 0"><input type="checkbox" ${el.bold ? 'checked' : ''} data-prop="bold"> ${t('designer.prop.bold')}</label>
       <label style="font-size:12px;display:flex;gap:6px;margin:4px 0"><input type="checkbox" ${el.shadow ? 'checked' : ''} data-prop="shadow"> ${t('designer.prop.shadow')}</label>`;
   } else if (el.type === 'clock') {
-    html += `<div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="16" max="120" value="${el.fontSize}" data-prop="fontSize" style="width:100%"></div>
-      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${el.color}" data-prop="color" style="width:100%;height:28px;border:none"></div>
+    html += `<div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="16" max="120" value="${esc(el.fontSize)}" data-prop="fontSize" style="width:100%"></div>
+      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${esc(el.color)}" data-prop="color" style="width:100%;height:28px;border:none"></div>
       <div class="form-group"><label>${t('designer.prop.format')}</label><select class="input" style="background:var(--bg-input)" data-prop="format"><option ${el.format === '12h' ? 'selected' : ''} value="12h">12h</option><option ${el.format === '24h' ? 'selected' : ''} value="24h">24h</option></select></div>
       <label style="font-size:12px;display:flex;gap:6px;margin:4px 0"><input type="checkbox" ${el.showSeconds ? 'checked' : ''} data-prop="showSeconds"> ${t('designer.prop.show_seconds')}</label>`;
   } else if (el.type === 'image' || el.type === 'video' || el.type === 'webpage') {
@@ -595,8 +604,8 @@ function updateProps() {
   } else if (el.type === 'shape') {
     html += `<div style="display:flex;gap:6px"><div class="form-group" style="flex:1;margin:0"><label>W%</label><input type="number" class="input" value="${Math.round(el.width)}" data-prop="width"></div>
       <div class="form-group" style="flex:1;margin:0"><label>H%</label><input type="number" class="input" value="${Math.round(el.height)}" data-prop="height"></div></div>
-      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${el.color}" data-prop="color" style="width:100%;height:28px;border:none"></div>
-      <div class="form-group"><label>${t('designer.prop.opacity')}</label><input type="range" min="0" max="1" step="0.1" value="${el.opacity}" data-prop="opacity" style="width:100%"></div>
+      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${esc(el.color)}" data-prop="color" style="width:100%;height:28px;border:none"></div>
+      <div class="form-group"><label>${t('designer.prop.opacity')}</label><input type="range" min="0" max="1" step="0.1" value="${esc(el.opacity)}" data-prop="opacity" style="width:100%"></div>
       <div class="form-group"><label>${t('designer.prop.shape')}</label><select class="input" style="background:var(--bg-input)" data-prop="shape"><option ${el.shape === 'rect' ? 'selected' : ''}>rect</option><option ${el.shape === 'circle' ? 'selected' : ''}>circle</option></select></div>`;
   } else if (el.type === 'weather') {
     html += `<div class="form-group"><label>${t('designer.prop.location')}</label><input type="text" class="input" value="${esc(el.location)}" data-prop="location"></div>
@@ -604,29 +613,38 @@ function updateProps() {
         <option value="imperial" ${el.units !== 'metric' ? 'selected' : ''}>${t('widget.field.units_imperial')}</option>
         <option value="metric" ${el.units === 'metric' ? 'selected' : ''}>${t('widget.field.units_metric')}</option>
       </select></div>
-      <div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="16" max="80" value="${el.fontSize}" data-prop="fontSize" style="width:100%"></div>
-      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${el.color}" data-prop="color" style="width:100%;height:28px;border:none"></div>`;
+      <div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="16" max="80" value="${esc(el.fontSize)}" data-prop="fontSize" style="width:100%"></div>
+      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${esc(el.color)}" data-prop="color" style="width:100%;height:28px;border:none"></div>`;
   } else if (el.type === 'ticker') {
-    html += `<div class="form-group"><label>${t('designer.prop.feed_url')}</label><input type="text" class="input" value="${el.feedUrl}" data-prop="feedUrl"></div>
-      <div class="form-group"><label>${t('designer.prop.speed')}</label><input type="number" class="input" value="${el.speed}" data-prop="speed"></div>
-      <div class="form-group"><label>${t('designer.prop.text_color')}</label><input type="color" value="${el.color}" data-prop="color" style="width:100%;height:28px;border:none"></div>
-      <div class="form-group"><label>${t('designer.prop.bg_color')}</label><input type="text" class="input" value="${el.bgColor}" data-prop="bgColor"></div>`;
+    html += `<div class="form-group"><label>${t('designer.prop.feed_url')}</label><input type="text" class="input" value="${esc(el.feedUrl)}" data-prop="feedUrl"></div>
+      <div class="form-group"><label>${t('designer.prop.speed')}</label><input type="number" class="input" value="${esc(el.speed)}" data-prop="speed"></div>
+      <div class="form-group"><label>${t('designer.prop.text_color')}</label><input type="color" value="${esc(el.color)}" data-prop="color" style="width:100%;height:28px;border:none"></div>
+      <div class="form-group"><label>${t('designer.prop.bg_color')}</label><input type="text" class="input" value="${esc(el.bgColor)}" data-prop="bgColor"></div>`;
   } else if (el.type === 'countdown') {
-    html += `<div class="form-group"><label>${t('designer.prop.target_date')}</label><input type="date" class="input" value="${el.targetDate}" data-prop="targetDate"></div>
+    html += `<div class="form-group"><label>${t('designer.prop.target_date')}</label><input type="date" class="input" value="${esc(el.targetDate)}" data-prop="targetDate"></div>
       <div class="form-group"><label>${t('designer.prop.label')}</label><input type="text" class="input" value="${esc(el.label)}" data-prop="label"></div>
-      <div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="16" max="100" value="${el.fontSize}" data-prop="fontSize" style="width:100%"></div>
-      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${el.color}" data-prop="color" style="width:100%;height:28px;border:none"></div>`;
+      <div class="form-group"><label>${t('designer.prop.size')}</label><input type="range" min="16" max="100" value="${esc(el.fontSize)}" data-prop="fontSize" style="width:100%"></div>
+      <div class="form-group"><label>${t('designer.prop.color')}</label><input type="color" value="${esc(el.color)}" data-prop="color" style="width:100%;height:28px;border:none"></div>`;
   }
 
   // Save design button
-  html += `<button class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;justify-content:center" onclick="(() => {
-    const a = document.createElement('a');
-    a.download = 'design.json';
-    a.href = 'data:application/json,' + encodeURIComponent(JSON.stringify({elements: ${JSON.stringify(elements)}, bgValue: '${bgValue}'}));
-    a.click();
-  })()">${t('designer.save_design_file')}</button>`;
+  /*
+   * ⚠️ A LISTENER, NOT AN onclick ATTRIBUTE. This used to serialise the whole design INTO the
+   * attribute — `onclick="… ${JSON.stringify(elements)} …"` — so the first `"` of the JSON closed
+   * the attribute (the button never worked), and the rest of every element's text was parsed as
+   * attributes on the button: a stored text of ` onmouseover=…` was script in the dashboard origin.
+   * The data is read at click time instead, so it is also the CURRENT design, not a stale copy.
+   */
+  html += `<button type="button" id="saveDesignFileBtn" class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;justify-content:center">${t('designer.save_design_file')}</button>`;
 
   fields.innerHTML = html;
+
+  document.getElementById('saveDesignFileBtn')?.addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.download = 'design.json';
+    a.href = 'data:application/json,' + encodeURIComponent(JSON.stringify({ elements, bgValue }));
+    a.click();
+  });
 
   fields.querySelectorAll('[data-prop]').forEach(input => {
     const handler = () => {
@@ -650,7 +668,7 @@ function updateLayers() {
       background:${i === selectedIdx ? 'var(--accent)' : 'var(--bg-secondary)'};
       color:${i === selectedIdx ? 'white' : 'var(--text-secondary)'}" data-layer="${i}">
       <span>${typeIcons[el.type] || '?'}</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${el.text || el.type}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(el.text || el.type)}</span>
     </div>
   `).join('') || `<p style="color:var(--text-muted)">${t('designer.no_elements')}</p>`;
 

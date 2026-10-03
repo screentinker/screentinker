@@ -138,7 +138,7 @@ export async function render(container) {
             <tbody>
               ${summary.by_content.map(c => `
                 <tr style="border-bottom:1px solid var(--border)">
-                  <td style="padding:8px">${c.content_name || t('common.unknown')}</td>
+                  <td style="padding:8px">${esc(c.content_name || t('common.unknown'))}</td>
                   <td style="padding:8px;text-align:right">${c.plays}</td>
                   <td style="padding:8px;text-align:right">${(c.total_seconds / 3600).toFixed(1)}</td>
                   <td style="padding:8px;text-align:right">${c.plays > 0 ? Math.round((c.completed_plays / c.plays) * 100) : 0}%</td>
@@ -161,7 +161,7 @@ export async function render(container) {
             <tbody>
               ${summary.by_device.map(d => `
                 <tr style="border-bottom:1px solid var(--border)">
-                  <td style="padding:8px">${d.device_name}</td>
+                  <td style="padding:8px">${esc(d.device_name || '')}</td>
                   <td style="padding:8px;text-align:right">${d.plays}</td>
                   <td style="padding:8px;text-align:right">${(d.total_seconds / 3600).toFixed(1)}</td>
                 </tr>

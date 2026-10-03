@@ -852,7 +852,7 @@ async function loadDevice(deviceId, activeTab = null) {
                  ISP's address as the screen's. Above is where the connection comes FROM (public);
                  this is what the screen calls itself on its own network. -->
             <div class="info-card-label">${t('device.info.local_ip')}</div>
-            <div class="info-card-value small" id="telLocalIp">${device.local_ip || '--'}</div>
+            <div class="info-card-value small" id="telLocalIp">${esc(device.local_ip || '--')}</div>
           </div>
           ${device.local_ip6 ? `
           <div class="info-card">
@@ -861,7 +861,7 @@ async function loadDevice(deviceId, activeTab = null) {
                  tell them nothing. A dual-stack panel shows both cards; a v6-only panel used to
                  show a dash here and nothing else, because the player only ever collected v4. -->
             <div class="info-card-label">${t('device.info.local_ip6')}</div>
-            <div class="info-card-value small" id="telLocalIp6">${device.local_ip6}</div>
+            <div class="info-card-value small" id="telLocalIp6">${esc(device.local_ip6)}</div>
           </div>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
@@ -993,7 +993,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.android_version')}</div>
-            <div class="info-card-value small">${device.android_version}</div>
+            <div class="info-card-value small">${esc(device.android_version)}</div>
           </div>` : ''}
           <div class="info-card">
             <div class="info-card-label">${t('device.info.settings_pin')}</div>

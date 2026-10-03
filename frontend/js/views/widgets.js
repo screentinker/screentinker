@@ -661,6 +661,17 @@ export async function render(container) {
       return;
     }
 
+    /*
+     * ⚠️ EVERY stored config value below goes through escAttr — numbers and colours included.
+     *
+     * `config` is whatever JSON was last saved (the route validates only the timezone), so a
+     * "font_size" can be any string. An HTML widget's body is free-form markup BY DESIGN: dropped raw
+     * into <textarea>${...}</textarea> a `</textarea><img onerror=…>` closed the box and ran script in
+     * the dashboard origin for whoever clicked Edit. Escaping the textarea body is also what makes it
+     * ROUND-TRIP: textarea content is RCDATA, so entities are decoded — a widget showing a literal
+     * `&lt;b&gt;` came back as a real <b> and a plain re-save (even just a rename) changed the screen.
+     * escAttr encodes & < > " so the browser decodes it back to exactly the stored string.
+     */
     switch (type) {
       case 'clock':
         {
@@ -671,47 +682,47 @@ export async function render(container) {
           <div class="form-group"><label>${t('widget.field.format')}</label><select id="wFormat" class="input" style="background:var(--bg-input)"><option value="12h" ${config.format === '12h' ? 'selected' : ''}>${t('widget.field.format_12h')}</option><option value="24h" ${config.format === '24h' ? 'selected' : ''}>${t('widget.field.format_24h')}</option></select></div>
           <div class="form-group"><label>${t('widget.field.timezone')}</label>${timezoneField(timezone)}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" id="wUseDashboardTimezone">${t('widget.field.use_dashboard_timezone')}</button><button type="button" class="btn btn-secondary btn-sm" id="wUseServerTimezone">${t('widget.field.use_server_timezone')}</button></div><div class="form-hint" id="wTimezoneHint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.timezone_hint')}</div></div>
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowSeconds" ${config.show_seconds === false ? '' : 'checked'}> ${t('widget.field.show_seconds')}</label></div>
-          <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wLocale" class="input" value="${config.locale || ''}" placeholder="es-ES"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.locale_hint')}</div></div>
-          <div class="form-group"><label>${t('widget.field.font_size_px')}</label><input type="number" id="wFontSize" class="input" value="${config.font_size || 64}"></div>
+          <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wLocale" class="input" value="${escAttr(config.locale || '')}" placeholder="es-ES"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.locale_hint')}</div></div>
+          <div class="form-group"><label>${t('widget.field.font_size_px')}</label><input type="number" id="wFontSize" class="input" value="${escAttr(config.font_size || 64)}"></div>
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowDate" ${config.show_date === false ? '' : 'checked'}> ${t('widget.field.show_date')}</label></div>
           <div class="form-group"><label>${t('widget.field.date_format')}</label><select id="wDateFormat" class="input" style="background:var(--bg-input)"><option value="full" ${dateFormat === 'full' ? 'selected' : ''}>${dateFormatLabel('full')}</option><option value="long" ${dateFormat === 'long' ? 'selected' : ''}>${dateFormatLabel('long')}</option><option value="medium" ${dateFormat === 'medium' ? 'selected' : ''}>${dateFormatLabel('medium')}</option><option value="short" ${dateFormat === 'short' ? 'selected' : ''}>${dateFormatLabel('short')}</option></select></div>
           <div class="form-group"><label>${t('widget.field.date_position')}</label><select id="wDatePosition" class="input" style="background:var(--bg-input)"><option value="below" ${datePosition === 'below' ? 'selected' : ''}>${t('widget.field.date_position_below')}</option><option value="above" ${datePosition === 'above' ? 'selected' : ''}>${t('widget.field.date_position_above')}</option><option value="left" ${datePosition === 'left' ? 'selected' : ''}>${t('widget.field.date_position_left')}</option><option value="right" ${datePosition === 'right' ? 'selected' : ''}>${t('widget.field.date_position_right')}</option></select></div>
-          <div class="form-group"><label>${t('widget.field.date_font_size_px')}</label><input type="number" id="wDateFontSize" class="input" value="${config.date_font_size || Math.max(16, Math.round((config.font_size || 64) / 3))}" min="8"></div>
-          <div class="form-group"><label>${t('widget.field.date_color')}</label><input type="color" id="wDateColor" value="${config.date_color || config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>
-          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>
-          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${config.background || '#000000'}" style="width:60px;height:32px;border:none"></div>`;
+          <div class="form-group"><label>${t('widget.field.date_font_size_px')}</label><input type="number" id="wDateFontSize" class="input" value="${escAttr(config.date_font_size || Math.max(16, Math.round((config.font_size || 64) / 3)))}" min="8"></div>
+          <div class="form-group"><label>${t('widget.field.date_color')}</label><input type="color" id="wDateColor" value="${escAttr(config.date_color || config.color || '#FFFFFF')}" style="width:60px;height:32px;border:none"></div>
+          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${escAttr(config.color || '#FFFFFF')}" style="width:60px;height:32px;border:none"></div>
+          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
         }
         break;
       case 'weather':
         html += `
           <div class="form-group"><label>${t('widget.field.location')}</label><input type="text" id="wLocation" class="input" value="${esc(config.location || '')}" placeholder="${t('widget.field.location_placeholder')}"></div>
           <div class="form-group"><label>${t('widget.field.units')}</label><select id="wUnits" class="input" style="background:var(--bg-input)"><option value="imperial" ${config.units !== 'metric' ? 'selected' : ''}>${t('widget.field.units_imperial')}</option><option value="metric" ${config.units === 'metric' ? 'selected' : ''}>${t('widget.field.units_metric')}</option></select></div>
-          <div class="form-group"><label>${t('widget.field.font_size')}</label><input type="number" id="wFontSize" class="input" value="${config.font_size || 48}"></div>
-          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>
+          <div class="form-group"><label>${t('widget.field.font_size')}</label><input type="number" id="wFontSize" class="input" value="${escAttr(config.font_size || 48)}"></div>
+          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${escAttr(config.color || '#FFFFFF')}" style="width:60px;height:32px;border:none"></div>
           <div class="form-group"><label>${t('widget.field.layout')}</label><select id="wLayout" class="input" style="background:var(--bg-input)"><option value="vertical" ${config.layout !== 'horizontal' ? 'selected' : ''}>${t('widget.field.layout_vertical')}</option><option value="horizontal" ${config.layout === 'horizontal' ? 'selected' : ''}>${t('widget.field.layout_horizontal')}</option></select></div>
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowLocation" ${config.show_location === false ? '' : 'checked'}> ${t('widget.field.show_location')}</label></div>
-          <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wWeatherLocale" class="input" value="${config.locale || ''}" placeholder="es"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.weather_locale_hint')}</div></div>`;
+          <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wWeatherLocale" class="input" value="${escAttr(config.locale || '')}" placeholder="es"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.weather_locale_hint')}</div></div>`;
         break;
       case 'rss':
         html += `
-          <div class="form-group"><label>${t('widget.field.feed_url')}</label><input type="text" id="wFeedUrl" class="input" value="${config.feed_url || ''}" placeholder="https://example.com/feed.xml"></div>
-          <div class="form-group"><label>${t('widget.field.scroll_speed_seconds')}</label><input type="number" id="wScrollSpeed" class="input" value="${config.scroll_speed || 30}"></div>
-          <div class="form-group"><label>${t('widget.field.max_items')}</label><input type="number" id="wMaxItems" class="input" value="${config.max_items || 10}"></div>
-          <div class="form-group"><label>${t('widget.field.font_size')}</label><input type="number" id="wFontSize" class="input" value="${config.font_size || 24}"></div>
-          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>
-          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${config.background || '#000000'}" style="width:60px;height:32px;border:none"></div>`;
+          <div class="form-group"><label>${t('widget.field.feed_url')}</label><input type="text" id="wFeedUrl" class="input" value="${escAttr(config.feed_url || '')}" placeholder="https://example.com/feed.xml"></div>
+          <div class="form-group"><label>${t('widget.field.scroll_speed_seconds')}</label><input type="number" id="wScrollSpeed" class="input" value="${escAttr(config.scroll_speed || 30)}"></div>
+          <div class="form-group"><label>${t('widget.field.max_items')}</label><input type="number" id="wMaxItems" class="input" value="${escAttr(config.max_items || 10)}"></div>
+          <div class="form-group"><label>${t('widget.field.font_size')}</label><input type="number" id="wFontSize" class="input" value="${escAttr(config.font_size || 24)}"></div>
+          <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${escAttr(config.color || '#FFFFFF')}" style="width:60px;height:32px;border:none"></div>
+          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
         break;
       case 'text':
         html += `
-          <div class="form-group"><label>${t('widget.field.html_content')}</label><textarea id="wHtml" class="input" rows="6" style="font-family:monospace;font-size:12px">${config.html || '<h1 style="color:white;text-align:center;margin-top:40px">Hello World</h1>'}</textarea></div>
-          <div class="form-group"><label>${t('widget.field.css_optional')}</label><textarea id="wCss" class="input" rows="3" style="font-family:monospace;font-size:12px">${config.css || ''}</textarea></div>
-          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${config.background || '#000000'}" style="width:60px;height:32px;border:none"></div>`;
+          <div class="form-group"><label>${t('widget.field.html_content')}</label><textarea id="wHtml" class="input" rows="6" style="font-family:monospace;font-size:12px">${escAttr(config.html || '<h1 style="color:white;text-align:center;margin-top:40px">Hello World</h1>')}</textarea></div>
+          <div class="form-group"><label>${t('widget.field.css_optional')}</label><textarea id="wCss" class="input" rows="3" style="font-family:monospace;font-size:12px">${escAttr(config.css || '')}</textarea></div>
+          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
         break;
       case 'webpage':
         html += `
-          <div class="form-group"><label>${t('widget.field.url')}</label><input type="text" id="wUrl" class="input" value="${esc(config.url || '')}" placeholder="https://example.com"></div>
-          <div class="form-group"><label>${t('widget.field.zoom_pct')}</label><input type="number" id="wZoom" class="input" value="${Number(config.zoom) || 100}"></div>
-          <div class="form-group"><label>${t('widget.field.refresh_interval')}</label><input type="number" id="wRefresh" class="input" value="${Number(config.refresh_interval) || 0}"></div>
+          <div class="form-group"><label>${t('widget.field.url')}</label><input type="text" id="wUrl" class="input" value="${escAttr(config.url || '')}" placeholder="https://example.com"></div>
+          <div class="form-group"><label>${t('widget.field.zoom_pct')}</label><input type="number" id="wZoom" class="input" value="${escAttr(Number(config.zoom) || 100)}"></div>
+          <div class="form-group"><label>${t('widget.field.refresh_interval')}</label><input type="number" id="wRefresh" class="input" value="${escAttr(Number(config.refresh_interval) || 0)}"></div>
           <!-- #473: walk-up interactive page. Android players only; elsewhere it stays a passive page. -->
           <div class="form-group" style="padding:10px;border:1px dashed var(--border);border-radius:6px">
             <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
@@ -830,7 +841,7 @@ export async function render(container) {
           </div>
           <div class="form-group"><label>${t('widget.trans.params')}</label><div id="wTransParams"></div></div>
           <div class="form-group" style="max-width:220px"><label>${t('widget.trans.duration')}</label>
-            <input type="number" id="wTransDuration" class="input" value="${config.durationMs || 800}" min="150" max="3000" step="50"></div>
+            <input type="number" id="wTransDuration" class="input" value="${escAttr(config.durationMs || 800)}" min="150" max="3000" step="50"></div>
           <div class="form-group" style="max-width:300px"><label>${t('widget.trans.scope')}</label>
             <select id="wTransScope" class="input" style="background:var(--bg-input)">
               <option value="all" ${config.scope !== 'next' ? 'selected' : ''}>${t('widget.trans.scope_all')}</option>
