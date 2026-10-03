@@ -103,10 +103,14 @@ happens; screens beyond the Free limit simply stop until a plan covers them agai
 <p>Dan</p></div>`;
 }
 
+// planName is the plan they lapsed FROM, or null when it is no longer known (see runDunningSweep)
+// — never the current plan, which is Free by the time this is sent.
+const lapsedWhat = (planName) => (planName ? `${planName} plan` : 'subscription');
+
 function lapsedText({ name, planName, screens }) {
   return `Hi ${name},
 
-The payment for your ScreenTinker ${planName} plan did not go through, so the account has moved to
+The payment for your ScreenTinker ${lapsedWhat(planName)} did not go through, so the account has moved to
 the Free plan.
 
 Nothing has been deleted. Your playlists, content and settings are exactly as you left them${screens ? `, and ${screens} screen${screens === 1 ? '' : 's'} ${screens === 1 ? 'is' : 'are'} affected by the Free limit` : ''}.
@@ -122,7 +126,7 @@ Dan`;
 function lapsedHtml(ctx) {
   return `<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.55;color:#111">
 <p>Hi ${esc(ctx.name)},</p>
-<p>The payment for your ScreenTinker <strong>${esc(ctx.planName)}</strong> plan did not go through, so the account has
+<p>The payment for your ScreenTinker ${ctx.planName ? `<strong>${esc(ctx.planName)}</strong> plan` : 'subscription'} did not go through, so the account has
 moved to the Free plan.</p>
 <p><strong>Nothing has been deleted.</strong> Your playlists, content and settings are exactly as you left them.
 Putting a working card on the account restores everything immediately.</p>
@@ -289,8 +293,16 @@ async function runDunningSweep({ io = null } = {}) {
   }
 
   // 2. Grace expired -> Free.
+  //
+  // ⚠️ The plan's NAME is captured BEFORE the downgrade: afterwards plan_id is 'free', and the
+  // lapse email used to read it back and tell every customer that "your ScreenTinker Free plan"
+  // payment failed. Held in memory for step 3 of this same sweep; a later sweep that retries an
+  // unsent note no longer knows it and says "subscription" instead of guessing.
+  const lapsedFrom = new Map();
   for (const id of subscriptions.findLapsedSubscriberIds()) {
+    const before = db.prepare('SELECT plan_id FROM users WHERE id = ?').get(id);
     if (!subscriptions.downgradeLapsed(id)) continue;   // raced, or no longer eligible
+    if (before) lapsedFrom.set(id, planNameOf(before.plan_id));
     out.downgraded++;
     out.screensPushed += pushDowngradedUserScreens(io, id);
   }
@@ -303,14 +315,20 @@ async function runDunningSweep({ io = null } = {}) {
   }
 
   // 3. Tell the ones that just lapsed, once each.
+  //
+  // ⚠️ `plan_id = 'free'` is what makes this "lapsed". subscription_status = 'unpaid' alone is not:
+  // Stripe sends that status itself (retry policy "mark subscription unpaid"), and the webhook and
+  // the reconcile copy it straight in — so an account still INSIDE its grace, still on Pro, was
+  // told "your plan has moved to Free", and the stamp then silenced the real notice on day 7.
   const lapsed = db.prepare(`
     SELECT id, email, name, plan_id FROM users
      WHERE subscription_status = 'unpaid'
+       AND plan_id = 'free'
        AND past_due_since IS NOT NULL
        AND subscription_lapsed_email_sent_at IS NULL
        AND COALESCE(email_alerts, 1) != 0`).all();
   for (const u of lapsed) {
-    const ctx = { name: displayName(u), planName: planNameOf(u.plan_id), screens: screenCountOf(u.id) };
+    const ctx = { name: displayName(u), planName: lapsedFrom.get(u.id) || null, screens: screenCountOf(u.id) };
     const r = await emailSvc.sendEmail({
       to: u.email,
       fromName: 'Dan at ScreenTinker',
