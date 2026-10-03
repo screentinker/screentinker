@@ -1,0 +1,31 @@
+name: Sync com o original
+
+# Mantém a main deste fork igual à de screentinker/screentinker, toda semana.
+# Usa a mesma API do botão "Sync fork" do GitHub. Se houver conflito, o job
+# falha e o GitHub avisa por e-mail; aí o sync é feito à mão.
+on:
+  schedule:
+    - cron: "17 9 * * 1" # segunda-feira, 06:17 em Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.repository == 'smarthubaiagency/screentinker'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sincronizar main com screentinker/screentinker
+        env:
+          # O original muda arquivos em .github/workflows/, e o GITHUB_TOKEN
+          # não pode gravar workflows. SYNC_TOKEN é um token com permissão de
+          # Contents e Workflows neste repositório.
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Secret SYNC_TOKEN não configurado (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=main \
+            --jq '"resultado: \(.merge_type) — \(.message)"'
