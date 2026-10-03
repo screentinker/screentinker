@@ -805,6 +805,15 @@ export const api = {
   aiGenerateLayered: (prompt, dims, objects) => request('/ai/generate-layered', {
     method: 'POST', body: JSON.stringify({ prompt, ...(dims || {}), objects }),
   }),
+  /*
+   * ScreenTinker-hosted images, paid in ORG credits (server/routes/ai-hosted.js). The caller always
+   * names provider/model/resolution/quality — the server has no default — and sends a fresh
+   * idempotency_key per click so a network retry cannot charge twice.
+   */
+  aiHostedStatus: () => request('/ai/hosted/status'),
+  aiHostedUsage: () => request('/ai/hosted/usage'),
+  aiHostedGenerate: (body) => request('/ai/hosted/generate', { method: 'POST', body: JSON.stringify(body) }),
+  aiHostedCheckout: (pack_id) => request('/ai/hosted/checkout', { method: 'POST', body: JSON.stringify({ pack_id }) }),
   aiListModels: (base_url, api_key) => request('/ai/models', { method: 'POST', body: JSON.stringify({ base_url, api_key }) }),
 
   // Instance-level default branding (#15, platform admin).

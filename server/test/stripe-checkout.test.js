@@ -252,3 +252,25 @@ test('no server-side link sends anyone to /#/ instead of /app#/', () => {
   assert.deepEqual(offenders, [],
     `these link to the marketing page and drop the hash:\n  ${offenders.join('\n  ')}`);
 });
+
+/*
+ * AI credit packs are granted by the VERIFIED webhook and nothing else — and only once Stripe says
+ * the session is paid. A redelivery must not grant twice, and a pack session must never be read as
+ * a plan change (it has no subscription, and its metadata names no plan).
+ */
+test('webhook: a paid ai_credits session grants its pack once; an unpaid one grants nothing', async () => {
+  db.prepare("INSERT OR IGNORE INTO organizations (id, name, owner_user_id) VALUES ('org-pack-wh', 'Pack', ?)").run(WEBHOOK_USER);
+  const credits = require('../lib/ai-credits');
+  const session = (id, payment_status) => ({
+    type: 'checkout.session.completed',
+    data: { object: { id, mode: 'payment', payment_status,
+      metadata: { kind: 'ai_credits', org_id: 'org-pack-wh', pack_id: 'pack_25', user_id: WEBHOOK_USER } } },
+  });
+  const planBefore = db.prepare('SELECT plan_id FROM users WHERE id = ?').get(WEBHOOK_USER).plan_id;
+  for (let i = 0; i < 2; i++) assert.equal((await postWebhook(session('cs_pack_paid', 'paid'))).status, 200);
+  assert.equal(credits.balance('org-pack-wh').purchased, 2500, 'granted exactly once across a redelivery');
+  await postWebhook(session('cs_pack_unpaid', 'unpaid'));
+  assert.equal(credits.balance('org-pack-wh').purchased, 2500, 'an unpaid session grants nothing');
+  assert.equal(db.prepare('SELECT plan_id FROM users WHERE id = ?').get(WEBHOOK_USER).plan_id, planBefore,
+    'a credit pack must not touch the subscription plan');
+});

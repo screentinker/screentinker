@@ -533,8 +533,13 @@ router.post('/generate-slide', async (req, res) => {
  * Throws with the upstream's own words. Callers translate that into a status — see UPSTREAM_STATUS
  * for why it is not 502.
  */
-async function generateAndIngest({ row, prompt, width, height, name, userId, workspaceId, transform }) {
-  const dataUrl = await generateImage({
+async function generateAndIngest({ row, prompt, width, height, name, userId, workspaceId, transform, produce }) {
+  /*
+   * `produce` lets the HOSTED path (routes/ai-hosted.js) supply the bytes from a platform provider
+   * while reusing every step below — the same sniff, ingest and content row an upload gets — so a
+   * credit-paid image is an ordinary library item and no second copy of this dance exists.
+   */
+  const dataUrl = produce ? await produce() : await generateImage({
     provider: row.image_provider,
     baseUrl: row.image_base_url.replace(/\/+$/, ''),
     apiKey: row.image_api_key_enc ? decrypt(row.image_api_key_enc) : '',
@@ -1096,3 +1101,4 @@ module.exports = router;
 // and the SSRF guard).
 module.exports.normalizeDesign = normalizeDesign;
 module.exports.endpointAllowed = endpointAllowed;
+module.exports.generateAndIngest = generateAndIngest;
