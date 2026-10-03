@@ -70,6 +70,9 @@ Every time, in this order:
 
 ## Deploying: native (git + systemd)
 
+> To upgrade from the dashboard instead (Platform → System → **Update Now**, platform admins
+> only, never automatic), install the updater: [instance-updater.md](instance-updater.md).
+
 `scripts/upgrade.sh` does the whole sequence — snapshot, checkout, `npm ci --omit=dev`, restart, and
 report the running version. It defaults to the newest **stable** tag, deliberately skipping
 `-rc`/`-beta`/`-alpha` prereleases:

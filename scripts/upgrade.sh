@@ -28,7 +28,30 @@ else
 fi
 APP_DIR="$(pwd)"
 SERVICE_NAME="${SERVICE_NAME:-screentinker}"
-DB="${DB:-$APP_DIR/server/db/remote_display.db}"
+# ⚠️ THE DATABASE IS NOT ALWAYS IN THE CHECKOUT. An install with DATA_DIR elsewhere (studiolab:
+# /var/lib/screentinker, set in an EnvironmentFile) left this pointing at a file that does not
+# exist, so the backup step said "fresh install" and the upgrade ran with no way back. Ask the
+# running unit where its data is before falling back to the in-checkout default.
+unit_env() {
+  local key="$1" v="" f
+  command -v systemctl >/dev/null 2>&1 || return 0
+  v="$(systemctl show -p Environment --value "$SERVICE_NAME" 2>/dev/null | tr ' ' '\n' | sed -n "s/^$key=//p" | tail -1)"
+  for f in $(systemctl show -p EnvironmentFiles --value "$SERVICE_NAME" 2>/dev/null | sed 's/ (ignore_errors=[a-z]*)//g'); do
+    if [ -r "$f" ]; then
+      local fv
+      fv="$(sed -n "s/^[[:space:]]*$key=//p" "$f" | tail -1 | tr -d "\"'")"
+      [ -n "$fv" ] && v="$fv"
+    fi
+  done
+  printf '%s' "$v"
+}
+if [ -z "${DB:-}" ]; then
+  DB="$(unit_env DB_PATH)"
+  if [ -z "$DB" ]; then
+    _data="${DATA_DIR:-$(unit_env DATA_DIR)}"
+    DB="${_data:-$APP_DIR/server}/db/remote_display.db"
+  fi
+fi
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
 
 echo "==> Fetching tags"
@@ -91,6 +114,12 @@ if [ -f "$DB" ]; then
     exit 1
   fi
   echo "==> Backup verified ($(du -h "$BK" | cut -f1), integrity ok)"
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE_NAME"; then
+  # A RUNNING service has a database somewhere; "fresh install" would be a guess, and a wrong one
+  # means upgrading with no backup.
+  echo "ERROR: no database at $DB, but $SERVICE_NAME is running." >&2
+  echo "       Set DB=/path/to/remote_display.db (or DATA_DIR) and run again." >&2
+  exit 1
 else
   echo "==> No db at $DB yet (fresh install) - skipping backup"
 fi

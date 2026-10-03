@@ -73,6 +73,17 @@ test('⚠️ upgrade.sh can be run from outside the checkout', () => {
    * would have gone looking for the database there.
    */
   assert.match(SRC, /if \[ -n "\$\{APP_DIR:-\}" \]/, 'APP_DIR must be overridable');
-  assert.ok(SRC.indexOf('APP_DIR:-') < SRC.indexOf('DB="${DB:-$APP_DIR'),
+  assert.ok(SRC.indexOf('APP_DIR:-') < SRC.indexOf('$APP_DIR/server}/db/remote_display.db'),
     'the override has to be resolved before DB and BACKUP_DIR are derived from it');
+});
+
+test('⚠️ a DATA_DIR outside the checkout is found, and a running service is never "a fresh install"', () => {
+  // studiolab: DATA_DIR=/var/lib/screentinker in an EnvironmentFile. The in-checkout default does
+  // not exist there, so the backup was skipped as "fresh install" and the upgrade ran without one.
+  assert.match(SRC, /unit_env DB_PATH/, 'DB_PATH from the running unit');
+  assert.match(SRC, /unit_env DATA_DIR/, 'DATA_DIR from the running unit');
+  assert.match(SRC, /EnvironmentFiles/, 'EnvironmentFile= is read, not only Environment=');
+  const refuse = SRC.indexOf('systemctl is-active --quiet "$SERVICE_NAME"');
+  assert.ok(refuse > 0 && refuse < SRC.indexOf('fresh install) - skipping backup'),
+    'a missing DB with the service running must stop, before the "fresh install" branch');
 });

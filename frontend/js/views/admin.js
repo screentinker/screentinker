@@ -790,6 +790,11 @@ async function loadSystem() {
   try {
     const version = await fetch('/api/version').then(r => r.json());
     const token = localStorage.getItem('token');
+    // Platform admins only (the route enforces it); anyone else just gets the version cards.
+    const updateStatus = isPlatformAdmin()
+      ? await fetch('/api/admin/update-status', { headers: headers() }).then(r => (r.ok ? r.json() : null)).catch(() => null)
+      : null;
+    const updaterInfo = updateStatus?.updater || null;
 
     const versionComparison = version.latest_version
       ? `<div class="info-card">
@@ -809,6 +814,12 @@ async function loadSystem() {
       <div class="info-grid">
         <div class="info-card"><div class="info-card-label">${t('admin.version')}</div><div class="info-card-value small">${esc(version.version)}</div></div>
         ${versionComparison}
+        ${updaterInfo ? `<div class="info-card">
+           <div class="info-card-label">${t('admin.updater')}</div>
+           <div class="info-card-value small" style="color:${updaterInfo.available ? 'var(--success)' : 'var(--text-muted)'}">${
+             updaterInfo.available ? esc(t('admin.updater_ready', { kind: updaterInfo.kind }))
+             : updaterInfo.reason === 'not_running' ? t('admin.updater_not_running') : t('admin.updater_not_installed')}</div>
+         </div>` : ''}
       </div>
       <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" id="checkUpdateBtn">${t('admin.check_now')}</button>
@@ -839,83 +850,133 @@ async function loadSystem() {
       }
     });
 
-    // Update Now button
+    // Update Now button. Queues an upgrade for the host-side updater (docs/instance-updater.md);
+    // without one installed, the server answers with the command to run by hand instead.
     document.getElementById('triggerUpdateBtn')?.addEventListener('click', async () => {
       const btn = document.getElementById('triggerUpdateBtn');
       const resultEl = document.getElementById('updateResult');
+      const target = version.latest_version;
+      if (updaterInfo?.available
+          && !confirm(t('admin.update_confirm', { from: version.version, to: target }))) return;
       btn.disabled = true;
       btn.textContent = t('admin.updating');
       try {
-        const res = await fetch('/api/admin/trigger-update', { method: 'POST', headers: headers() });
+        const res = await fetch('/api/admin/trigger-update', {
+          method: 'POST',
+          headers: { ...headers(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target }),
+        });
         const data = await res.json();
-        if (data.docker_enabled) {
-          // Docker executed — show output with Copy button
-          resultEl.innerHTML = `
-            <div style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--bg-card)">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <strong style="font-size:13px">${data.success ? (t('admin.update_success')) : (t('admin.update_failed'))}</strong>
-                <button class="btn btn-secondary btn-sm" id="copyOutputBtn">${t('admin.copy')}</button>
-              </div>
-              <pre style="max-height:300px;overflow:auto;font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">${esc(data.output || '')}</pre>
-            </div>`;
-          document.getElementById('copyOutputBtn')?.addEventListener('click', () => {
-            const pre = resultEl.querySelector('pre');
-            const text = pre ? pre.textContent : '';
-            if (navigator.clipboard) {
-              navigator.clipboard.writeText(text).then(() => showToast(t('admin.copied'), 'success'));
-            } else {
-              // Fallback for older browsers
-              const ta = document.createElement('textarea');
-              ta.value = text;
-              ta.style.position = 'fixed';
-              ta.style.opacity = '0';
-              document.body.appendChild(ta);
-              ta.select();
-              document.execCommand('copy');
-              document.body.removeChild(ta);
-              showToast(t('admin.copied'), 'success');
-            }
-          });
-        } else if (data.instructions) {
-          // Docker disabled — show manual instructions with Copy button
-          resultEl.innerHTML = `
-            <div style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--bg-secondary)">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <strong style="font-size:13px">${t('admin.manual_update')}</strong>
-                <button class="btn btn-secondary btn-sm" id="copyCmdBtn">${t('admin.copy_command')}</button>
-              </div>
-              <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${t('admin.manual_update_desc')}</p>
-              <pre style="font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">${esc(data.instructions)}</pre>
-            </div>`;
-          document.getElementById('copyCmdBtn')?.addEventListener('click', () => {
-            const pre = resultEl.querySelector('pre');
-            const text = pre ? pre.textContent : '';
-            if (navigator.clipboard) {
-              navigator.clipboard.writeText(text).then(() => showToast(t('admin.copied'), 'success'));
-            } else {
-              const ta = document.createElement('textarea');
-              ta.value = text;
-              ta.style.position = 'fixed';
-              ta.style.opacity = '0';
-              document.body.appendChild(ta);
-              ta.select();
-              document.execCommand('copy');
-              document.body.removeChild(ta);
-              showToast(t('admin.copied'), 'success');
-            }
-          });
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        if (data.queued) {
+          watchUpdate(resultEl, data.id);
+          return;  // the button stays disabled until the job ends
         }
+        resultEl.innerHTML = `
+          <div style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--bg-secondary)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <strong style="font-size:13px">${t('admin.manual_update')}</strong>
+              <button class="btn btn-secondary btn-sm" id="copyCmdBtn">${t('admin.copy_command')}</button>
+            </div>
+            <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${t('admin.manual_update_desc')}</p>
+            <pre style="font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">${esc(data.instructions || '')}</pre>
+            <p style="font-size:12px;color:var(--text-muted);margin:8px 0 0">${t('admin.updater_hint')}</p>
+          </div>`;
+        document.getElementById('copyCmdBtn')?.addEventListener('click', () => copyText(resultEl.querySelector('pre')?.textContent || ''));
       } catch (err) {
         showToast(err.message, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = t('admin.update_now');
       }
+      btn.disabled = false;
+      btn.textContent = t('admin.update_now');
     });
+
+    // An upgrade already running (this page was reloaded, or opened mid-upgrade): pick it up.
+    if (updateStatus?.running || updateStatus?.pending?.length) {
+      const btn = document.getElementById('triggerUpdateBtn');
+      if (btn) { btn.disabled = true; btn.textContent = t('admin.updating'); }
+      watchUpdate(document.getElementById('updateResult'), updateStatus.pending?.[0] || updateStatus.job?.id);
+    } else if (updateStatus?.job && ['failed', 'rolled_back'].includes(updateStatus.job.state)
+               && Date.now() / 1000 - updateStatus.job.updated_at < 86400) {
+      renderUpdateJob(document.getElementById('updateResult'), updateStatus);
+    }
   } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
 
-export function cleanup() {}
+let updatePollTimer = null;
+
+function copyText(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => showToast(t('admin.copied'), 'success'));
+    return;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  showToast(t('admin.copied'), 'success');
+}
+
+const UPDATE_STATE_KEYS = {
+  starting: 'admin.update_state_starting', backup: 'admin.update_state_backup', fetch: 'admin.update_state_fetch',
+  pull: 'admin.update_state_fetch', install: 'admin.update_state_install', restart: 'admin.update_state_restart',
+  verify: 'admin.update_state_verify', rollback: 'admin.update_state_rollback', done: 'admin.update_success',
+  failed: 'admin.update_failed', rolled_back: 'admin.update_rolled_back',
+};
+
+function renderUpdateJob(el, s, { unreachable = false } = {}) {
+  if (!el) return;
+  const job = s?.job;
+  const state = job?.state || 'starting';
+  const color = state === 'done' ? 'var(--success)' : ['failed', 'rolled_back'].includes(state) ? 'var(--danger)' : 'var(--text-primary)';
+  const title = unreachable ? t('admin.update_state_restart') : t(UPDATE_STATE_KEYS[state] || 'admin.updating');
+  el.innerHTML = `
+    <div style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--bg-card)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+        <strong style="font-size:13px;color:${color}">${esc(title)}${job?.target ? ` · v${esc(job.from || '?')} → v${esc(job.target)}` : ''}</strong>
+        <button class="btn btn-secondary btn-sm" id="copyUpdateLogBtn">${t('admin.copy')}</button>
+      </div>
+      ${job?.message ? `<p style="font-size:12px;margin:0 0 8px;color:var(--text-muted)">${esc(job.message)}</p>` : ''}
+      <pre style="max-height:300px;overflow:auto;font-size:11px;margin:0;background:var(--bg-primary);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all">${esc(s?.log || '')}</pre>
+    </div>`;
+  document.getElementById('copyUpdateLogBtn')?.addEventListener('click', () => copyText(el.querySelector('pre')?.textContent || ''));
+}
+
+// Poll the updater's status until the job ends. The server going away mid-upgrade is the normal
+// case (it is being restarted), so a failed poll means "restarting", not an error.
+function watchUpdate(el, jobId) {
+  clearTimeout(updatePollTimer);
+  const tick = async () => {
+    let s = null;
+    try {
+      const r = await fetch('/api/admin/update-status', { headers: headers() });
+      if (r.ok) s = await r.json();
+    } catch (_) { /* restarting */ }
+    if (!s) {
+      renderUpdateJob(el, null, { unreachable: true });
+    } else {
+      const mine = !jobId || s.job?.id === jobId;
+      renderUpdateJob(el, mine ? s : { ...s, job: { state: 'starting' } });
+      if (mine && s.job && ['done', 'failed', 'rolled_back'].includes(s.job.state)) {
+        if (s.job.state === 'done') {
+          showToast(t('admin.update_success'), 'success');
+          setTimeout(() => location.reload(), 2500);  // load the new version's dashboard
+        } else {
+          const btn = document.getElementById('triggerUpdateBtn');
+          if (btn) { btn.disabled = false; btn.textContent = t('admin.update_now'); }
+        }
+        return;
+      }
+    }
+    if (document.getElementById('updateResult') === el) updatePollTimer = setTimeout(tick, 3000);
+  };
+  tick();
+}
+
+export function cleanup() { clearTimeout(updatePollTimer); }
 
 
 /* ------------------------------------------------------------------ server diagnostics */

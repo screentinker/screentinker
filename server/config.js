@@ -472,7 +472,6 @@ module.exports = {
 
   // Version update indicator — polls GHCR for the latest Docker image tag via
   // anonymous token flow. All optional with safe defaults.
-  dockerUpdateEnabled: process.env.DOCKER_UPDATE_ENABLED === 'true',
   ghcrCheckIntervalHours: parseInt(process.env.GHCR_CHECK_INTERVAL_HOURS) || 36,
   composeFilePath: process.env.COMPOSE_FILE_PATH || '/opt/screentinker/docker-compose.yml',
 
