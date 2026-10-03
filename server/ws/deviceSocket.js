@@ -2569,6 +2569,9 @@ module.exports = function setupDeviceSocket(io) {
           // rate-backoff held against it: /api/update/check is unauthenticated and takes a
           // caller-supplied ?device_id=, so that bucket can have been burned by anyone who
           // merely knows this UUID. A genuine reconnect is the proof that lets us forgive it.
+          // ⚠️ AUDIT F17: forgive clears RATE state only. It runs on every accepted register, so if
+          // it also cleared the #341 no-progress counter (it used to) a display in the reinstall
+          // loop reset that counter on each post-install reconnect and was offered forever.
           try { require('../lib/ota-breaker').forgiveDevice(device_id); } catch (_) { /* non-fatal */ }
           socket.emit('device:registered', { device_id, device_token: tokenToSend, status: 'online' });
           // #143: a device paired/claimed server-side (user_id set) that RECONNECTS must be told
