@@ -1,0 +1,70 @@
+name: Build & Deploy Android APK
+
+# Build manual (workflow_dispatch) — assinatura de release é sensível,
+# melhor disparar conscientemente do que a cada push automático.
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Enviar o APK direto pro servidor após o build?"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      # Runners ubuntu-latest já vêm com Android SDK pré-instalado.
+      - name: Confirmar Android SDK disponível
+        run: echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Restaurar keystore a partir do secret
+        working-directory: android
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release-key.jks
+
+      - name: Build APK assinado (release)
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
+      - name: Renomear artefato
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk ScreenTinker.apk
+
+      - name: Subir APK como artifact do workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenTinker-apk
+          path: ScreenTinker.apk
+          retention-days: 30
+
+      # Só roda se você marcar "deploy: true" ao disparar o workflow manualmente.
+      - name: Enviar pro servidor via SSH (opcional)
+        if: ${{ inputs.deploy }}
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Caminho no HOST que corresponde ao volume /data do container
+          # (confirmado via `docker volume inspect clipooh_clipooh_data`)
+          REMOTE_PATH: ${{ secrets.REMOTE_DATA_PATH }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          scp -i ~/.ssh/deploy_key ScreenTinker.apk "$SSH_USER@$SSH_HOST:$REMOTE_PATH/ScreenTinker.apk"
+          echo "APK enviado para $REMOTE_PATH/ScreenTinker.apk — disponível via /download/apk"
