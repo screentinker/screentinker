@@ -723,6 +723,26 @@ router.post('/promotions/:id/end', requirePlatformAdmin, async (req, res) => {
   }
 });
 
+router.put('/promotions/:id', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const out = await promotions.update(req.params.id, req.body, require('../lib/stripe-client').get());
+    res.json({ promotion: out.promo, stripe_warning: out.stripeWarning });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save the sale' });
+  }
+});
+
+router.delete('/promotions/:id', requirePlatformAdmin, async (req, res) => {
+  const promotions = require('../lib/promotions');
+  try {
+    const out = await promotions.remove(req.params.id, require('../lib/stripe-client').get());
+    res.json({ ok: true, stripe_warning: out.stripeWarning });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not delete the sale' });
+  }
+});
+
 // ─── Platform overview (frontend: views/admin.js, #/platform/overview) ─────────────
 // The numbers an operator checks first plus the things waiting on them. Counts only — no names,
 // no emails. Each count is independent and tolerant: a table an older install lacks reads as 0

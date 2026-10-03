@@ -13,7 +13,8 @@
  *   - the coupon's redeem_by is the promotion's end, so Stripe refuses it after the sale even if our
  *     clock or a cached page says otherwise;
  *   - ending a sale early deletes the coupon (existing subscribers keep what they bought — Stripe
- *     does not claw back an applied discount — but nobody new can get it).
+ *     does not claw back an applied discount — but nobody new can get it);
+ *   - an edit that changes the charge swaps in a new coupon (see update() below).
  *
  * ONE SALE AT A TIME. Overlapping windows are refused. Two banners, two countdowns and a checkout
  * that has to pick the "best" of several coupons is a confusing page and an argument with support;
@@ -211,9 +212,123 @@ async function end(id, stripe) {
   return { promo: get(id), stripeWarning };
 }
 
+/*
+ * EDITING. A Stripe coupon cannot be changed after it is made, except for its name and metadata.
+ * So when an edit changes what a customer is CHARGED (percent off, duration, months, or the end,
+ * which is the coupon's redeem_by), a NEW coupon is created first and the row switched to it; only
+ * then is the old one deleted. A failed create changes nothing, and checkout never sees a sale whose
+ * coupon is already gone. (Subscriptions that already redeemed the old coupon keep their discount;
+ * Stripe never claws one back.) Everything else (headline, plans, billing cycles, start) is ours
+ * alone: checkout reads it from this row.
+ *
+ * A FINISHED sale (ended early, or past its end) is a record of what customers were offered. Its
+ * name and headline can be corrected, but its terms cannot be rewritten after the fact. Giving it
+ * new dates runs it again: it is validated like a new sale (one sale at a time, an end in the
+ * future) and gets a new coupon.
+ */
+const COUPON_FIELDS = ['percent_off', 'duration', 'duration_in_months', 'ends_at'];
+const TERM_FIELDS = ['percent_off', 'cycles', 'duration', 'duration_in_months', 'plan_ids'];
+
+function isFinished(p, at = nowSec()) {
+  return !!(p.ended_at || (p.ends_at !== null && p.ends_at <= at));
+}
+
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+// One spelling per term, so "30" and 30, or plans in another order, do not read as a change.
+function termOf(field, v) {
+  if (field === 'plan_ids') return Array.isArray(v) ? [...new Set(v.map(String))].sort() : [];
+  if (field === 'percent_off' || field === 'duration_in_months') return v == null || v === '' ? null : Number(v);
+  return v ?? null;
+}
+
+// Stripe answers "No such coupon" for one that is already gone (ended early, or deleted by hand).
+async function deleteCoupon(stripe, couponId) {
+  if (!stripe || !couponId) return null;
+  try { await stripe.coupons.del(couponId); return null; } catch (err) {
+    if (err && (err.code === 'resource_missing' || err.statusCode === 404)) return null;
+    return err.message;
+  }
+}
+
+async function update(id, input, stripe) {
+  const p = get(id);
+  if (!p) throw Object.assign(new Error('Sale not found'), { status: 404 });
+  const at = nowSec();
+  // Unset fields keep their stored value, so a partial edit (just the headline) is fine.
+  const merged = { ...p, ...(input || {}) };
+  if (merged.duration !== 'repeating') merged.duration_in_months = null;
+  const sec = (v) => (v == null || v === '' ? null : Number(v));
+  const sameWindow = sec(merged.starts_at) === p.starts_at && sec(merged.ends_at) === p.ends_at;
+  const rerun = isFinished(p, at) && !sameWindow;
+
+  if (isFinished(p, at) && !rerun) {
+    // A record of a past sale: words only.
+    const name = String(merged.name || '').trim();
+    const headline = String(merged.headline || '').trim();
+    if (!name || name.length > 80) throw Object.assign(new Error('Give the sale a name (80 characters at most)'), { status: 400 });
+    if (!headline || headline.length > 120) throw Object.assign(new Error('Write the banner headline (120 characters at most)'), { status: 400 });
+    if (TERM_FIELDS.some((f) => !same(termOf(f, merged[f]), termOf(f, p[f])))) {
+      throw Object.assign(new Error('This sale is over, so its terms are a record of what customers were offered. To run it again, give it new dates.'), { status: 400 });
+    }
+    db.prepare('UPDATE promotions SET name = ?, headline = ? WHERE id = ?').run(name, headline, id);
+    return { promo: get(id), stripeWarning: null };
+  }
+
+  const { value, error } = validate(merged, { existingId: id, at });
+  if (error) throw Object.assign(new Error(error), { status: 400 });
+  const newCoupon = rerun || COUPON_FIELDS.some((f) => !same(value[f], p[f]));
+  if (newCoupon) {
+    const avail = salesAvailable(stripe);
+    if (!avail.ok) throw Object.assign(new Error(avail.reason), { status: 503 });
+  }
+
+  let couponId = p.stripe_coupon_id;
+  let stripeWarning = null;
+  if (newCoupon) {
+    try {
+      couponId = (await stripe.coupons.create(couponParams(value, id))).id;
+    } catch (err) {
+      throw Object.assign(new Error(`Stripe refused the coupon: ${err.message}`), { status: 502 });
+    }
+  } else if (value.name !== p.name && stripe && couponId) {
+    // The coupon's name is what Stripe shows on invoices; it is the one thing that can be changed.
+    try { await stripe.coupons.update(couponId, { name: value.name.slice(0, 40) }); } catch (err) { stripeWarning = err.message; }
+  }
+  db.prepare(`
+    UPDATE promotions SET name = ?, headline = ?, percent_off = ?, cycles = ?, duration = ?, duration_in_months = ?,
+                          plan_ids = ?, starts_at = ?, ends_at = ?, stripe_coupon_id = ?, ended_at = NULL
+     WHERE id = ?
+  `).run(value.name, value.headline, value.percent_off, value.cycles, value.duration, value.duration_in_months,
+    JSON.stringify(value.plan_ids), value.starts_at, value.ends_at, couponId, id);
+  // An early-ended sale's coupon is already deleted; one that simply expired still exists.
+  if (newCoupon && p.stripe_coupon_id && p.stripe_coupon_id !== couponId && !p.ended_at) {
+    stripeWarning = await deleteCoupon(stripe, p.stripe_coupon_id);
+  }
+  return { promo: get(id), stripeWarning };
+}
+
+/*
+ * DELETING removes a sale from the list. Only one that is not running: a live sale is what checkout
+ * is charging right now, so it is ended first (end() above), which is the step customers can see.
+ * A scheduled sale never ran, and a finished one is history the admin no longer wants. Its coupon is
+ * deleted too if it still exists. Checkout sessions and subscriptions in Stripe keep the
+ * promotion_id in their metadata; that is a historical reference and may now point at nothing.
+ */
+async function remove(id, stripe, at = nowSec()) {
+  const p = get(id);
+  if (!p) throw Object.assign(new Error('Sale not found'), { status: 404 });
+  if (!isFinished(p, at) && p.starts_at <= at) {
+    throw Object.assign(new Error('This sale is running. End it first, then delete it.'), { status: 409 });
+  }
+  db.prepare('DELETE FROM promotions WHERE id = ?').run(id);
+  const stripeWarning = p.ended_at ? null : await deleteCoupon(stripe, p.stripe_coupon_id);
+  return { stripeWarning };
+}
+
 /** A sale price, rounded to cents. */
 function salePrice(price, percentOff) {
   return Math.round(Number(price) * (100 - percentOff)) / 100;
 }
 
-module.exports = { list, get, current, publicCurrent, salesAvailable, activeFor, validate, publicView, couponParams, create, end, salePrice };
+module.exports = { list, get, current, publicCurrent, salesAvailable, activeFor, validate, publicView, couponParams, create, end, update, remove, isFinished, salePrice };
