@@ -245,9 +245,19 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const sub = event.data.object;
         const userId = sub.metadata?.user_id;
         if (userId) {
-          db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
-            .run(userId);
-          console.log(`Subscription cancelled for ${userId}`);
+          /*
+           * ⚠️ Only the subscription we are TRACKING may drop the account. Two checkouts finished
+           * before the first webhook landed (two tabs, a double click) leave two live
+           * subscriptions with the last one stored; cancelling the duplicate used to drop a paying
+           * customer to Free AND null the id of the one still billing them, which also blinded the
+           * reconcile. `IS NULL` is kept so a deletion still lands when the checkout webhook that
+           * would have stored the id was itself lost.
+           */
+          const r = db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now')
+                                 WHERE id = ? AND (stripe_subscription_id IS NULL OR stripe_subscription_id = ?)`)
+            .run(userId, sub.id);
+          if (r.changes) console.log(`Subscription cancelled for ${userId}`);
+          else console.log(`Subscription ${sub.id} deleted for ${userId}, but it is not the tracked one — account left as is`);
         }
         break;
       }
