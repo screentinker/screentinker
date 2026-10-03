@@ -25,7 +25,6 @@ const corpResolve = require('../lib/corporate/resolve');
 const capsLib = require('../lib/player-capabilities');
 const logCoalescer = require('../lib/log-coalescer');
 const loopLag = require('../services/loop-lag');
-const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings restore
 const incidentClassify = require('../lib/incident-classify'); // offline-cause log: disconnect-reason + connectivity classification
 const pluginHooks = require('../lib/plugins/hooks');
 const playerTermination = require('../lib/mesh/player-termination'); // scale-out C2: players on a replica
@@ -1111,8 +1110,9 @@ function provisionViaReplica({ pairing_code, device_info, fingerprint, hw_finger
     try {
       db.prepare("INSERT INTO device_fingerprints (fingerprint, device_id, last_seen, hw_fingerprint) VALUES (?, ?, strftime('%s','now'), ?) ON CONFLICT(fingerprint) DO UPDATE SET device_id = excluded.device_id, last_seen = excluded.last_seen, hw_fingerprint = COALESCE(excluded.hw_fingerprint, device_fingerprints.hw_fingerprint)")
         .run(fingerprint, id, hw_fingerprint || null);
-      deviceSettings.applyToDevice(id, fingerprint);
-    } catch (e) { /* settings restore is best effort */ }
+      // ⚠️ AUDIT F07: NO settings restore here — this row has no workspace yet, so the #150
+      // workspace guard cannot work. The claim (/api/provision/pair) restores instead.
+    } catch (e) { /* fingerprint bookkeeping is best effort */ }
   }
   emitToDeviceWorkspace(_dashboardNsRef, id, 'dashboard:device-added', db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
   console.log(`New device registered via replica ${nodeId}: ${id} with pairing code: ${pairing_code}`);
@@ -2670,17 +2670,19 @@ module.exports = function setupDeviceSocket(io) {
         authenticated = true;
 
         // #150: relink the fingerprint to the NEW device row (the fingerprint block above
-        // leaves device_id NULL on a post-delete re-pair) so the settings key is reliable,
-        // then restore any settings this physical device had at its last deletion —
-        // orientation/name/playlist/etc come back automatically instead of resetting. Runs
-        // BEFORE the dashboard:device-added emit below so that emit carries restored values.
+        // leaves device_id NULL on a post-delete re-pair) so the settings key is reliable.
+        //
+        // ⚠️ AUDIT F07: the settings RESTORE no longer runs here. This row was just INSERTed with
+        // no workspace_id, so applyToDevice's "same workspace only" guard could never fire and
+        // the previous tenant's playlist/layout/default content/team landed on the unclaimed row
+        // — then survived the claim into a DIFFERENT tenant. The claim (/api/provision/pair)
+        // calls deviceSettings.restoreOnClaim once the row is in its workspace; the link written
+        // here is what it keys on.
         if (fingerprint) {
           try {
             db.prepare("INSERT INTO device_fingerprints (fingerprint, device_id, last_seen, hw_fingerprint) VALUES (?, ?, strftime('%s','now'), ?) ON CONFLICT(fingerprint) DO UPDATE SET device_id = excluded.device_id, last_seen = excluded.last_seen, hw_fingerprint = COALESCE(excluded.hw_fingerprint, device_fingerprints.hw_fingerprint)")
               .run(fingerprint, id, hw_fingerprint || null);
-            const restored = deviceSettings.applyToDevice(id, fingerprint);
-            if (restored) console.log(`[#150] restored saved settings for re-paired device ${id} (fp ${fingerprint.slice(0, 8)}…)`);
-          } catch (e) { console.warn(`[#150] settings restore failed for ${id}: ${e.message}`); }
+          } catch (e) { console.warn(`[#150] fingerprint relink failed for ${id}: ${e.message}`); }
         }
 
         heartbeat.registerConnection(id, socket.id);

@@ -2693,15 +2693,40 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   // device API responses, so Math.random's recoverable state would let one tenant predict
   // another's.
   const settingsPin = sixDigitCode();
-  db.prepare("UPDATE devices SET pairing_code = NULL, name = ?, user_id = ?, workspace_id = ?, status = 'online', settings_pin = ?, updated_at = strftime('%s','now') WHERE id = ?")
+  // ⚠️ AUDIT F07: a row arriving in a workspace it did not come from carries NO tenant-scoped
+  // assignment across. The claim used to leave playlist_id/layout_id/default_content_id/team_id
+  // untouched, and the #150 restore had already written the PREVIOUS tenant's values onto the
+  // workspace-less provisioning row — device_resolved_playlist falls back to d.playlist_id and
+  // the payload builder loads it with no workspace check, so tenant B's screen played tenant A's
+  // content. Cleared whenever the row's workspace differs from the claiming one (a provisioning
+  // row's is always NULL); the same-workspace restore below puts back what genuinely belongs here.
+  const crossWorkspace = device.workspace_id !== req.workspaceId;
+  db.prepare(`UPDATE devices SET pairing_code = NULL, name = ?, user_id = ?, workspace_id = ?, status = 'online', settings_pin = ?,
+                ${crossWorkspace ? 'playlist_id = NULL, layout_id = NULL, default_content_id = NULL, team_id = NULL,' : ''}
+                updated_at = strftime('%s','now') WHERE id = ?`)
     .run(deviceName, req.user.id, req.workspaceId, settingsPin, device.id);
 
   // Link fingerprint to user
   db.prepare("UPDATE device_fingerprints SET user_id = ?, device_id = ? WHERE device_id = ?")
     .run(req.user.id, device.id, device.id);
 
+  // #150 settings restore — ⚠️ AUDIT F07: runs HERE, after workspace_id is set, not at
+  // provisioning time where the row had no workspace and the guard was a no-op. applyToDevice
+  // applies the snapshot only if it was taken in THIS workspace; a second-hand panel claimed
+  // elsewhere gets nothing of its previous owner's. An operator-typed name beats the restored one;
+  // the restored name beats the auto-generated "Display N".
+  let pairedName = deviceName;
+  try {
+    const restored = require('./lib/device-settings').restoreOnClaim(device.id);
+    if (restored) {
+      if (name) db.prepare('UPDATE devices SET name = ? WHERE id = ?').run(name, device.id);
+      else if (restored.device_name) pairedName = restored.device_name;
+      console.log(`[#150] restored saved settings for re-paired device ${device.id}`);
+    }
+  } catch (e) { console.warn(`[#150] settings restore failed for ${device.id}: ${e.message}`); }
+
   // Notify the device via WebSocket — or, scale-out C2, through the replica it is attached to.
-  const pairedMsg = { device_id: device.id, name: deviceName, settings_pin: settingsPin };
+  const pairedMsg = { device_id: device.id, name: pairedName, settings_pin: settingsPin };
   const pairedRoom = deviceNs.adapter.rooms.get(device.id);
   if (pairedRoom && pairedRoom.size > 0) deviceNs.to(device.id).emit('device:paired', pairedMsg);
   else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
