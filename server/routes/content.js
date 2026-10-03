@@ -36,6 +36,7 @@ const { finalizeUpload, INLINE_SAFE_EXTS, sniffMime, readHead: readUploadHead, M
 const { digestFile } = require('../lib/content-digest');
 const { normalizeTags, normalizeMeta, parseTags, parseMeta } = require('../lib/content-tags');
 const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-files');
+const revisionsLib = require('../lib/revisions');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
 const { LIVE_MIME, RTSP_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl } = require('../lib/remote-url');
@@ -814,7 +815,12 @@ function purgeContentRow(content) {
   }
   scrubCorporate(id, content.workspace_id, affected, scrubbed);
 
+  // Audit F22: the history goes with the row - submissions BEFORE revisions (FK), not swallowed.
+  revisionsLib.deleteHistoryRows(db, 'content', id);
   db.prepare('DELETE FROM content WHERE id = ?').run(id);
+  // ⚠️ Its own try: a filesystem error must never skip (or be mistaken for) the DB work above.
+  try { revisionsLib.removeRetainedFiles(id); }
+  catch (e) { console.warn(`[content] could not remove retained history for ${id}: ${e.message}`); }
   return affected;
 }
 
@@ -1275,12 +1281,10 @@ router.delete('/:id', (req, res) => {
 
   // #213: shared teardown (file removal + snapshot scrub + row delete). Returns the affected
   // device ids so we can push a refresh.
-  const affectedDevices = purgeContentRow(content);
-  // Deleting the item deletes its history and retained bytes with it, consistent with the file.
-  try {
-    db.prepare("DELETE FROM revisions WHERE resource_type = 'content' AND resource_id = ?").run(content.id);
-    fs.rmSync(path.join(require('../lib/revisions').historyDir(), content.id), { recursive: true, force: true });
-  } catch (_) {}
+  // Deleting the item deletes its history and retained bytes with it, consistent with the file
+  // (purgeContentRow, so POST /batch/delete does too). One transaction: the row and its history
+  // rows go together or not at all.
+  const affectedDevices = db.transaction(() => purgeContentRow(content))();
   pushContentUpdates(req, affectedDevices);
   res.json({ success: true, affectedDevices });
 });
