@@ -1051,11 +1051,21 @@ function showEditModal(contentItem, onSave) {
         const formData = new FormData();
         formData.append('file', replaceFile);
         assertLocalCallAllowed('/content', 'POST');
-        await fetch('/api/content/' + contentItem.id + '/replace', {
+        /*
+         * ⚠️ THE RESPONSE IS READ, OR A REFUSAL SHOWS AS "Content updated". This used to be a bare
+         * await, so a 400 (wrong file type, a bundle swapped for an image) ended in the success
+         * toast while the item was unchanged — the operator walked away believing the screens now
+         * showed the new file. Same idiom as the details PUT above; the catch shows the server's own
+         * reason. An approval workspace answers with a draft, so the toast must say so.
+         */
+        const rr = await fetch('/api/content/' + contentItem.id + '/replace', {
           method: 'PUT',
           headers,
           body: formData
         });
+        const rb = await rr.json().catch(() => ({}));
+        if (!rr.ok) throw new Error(rb.error || t('content.error_update_failed'));
+        if (rb.pending_review) pendingReview = true;
       }
 
       // #216: upload a new subtitle .vtt if one was chosen (skipped when "remove" is ticked).
@@ -1064,11 +1074,14 @@ function showEditModal(contentItem, onSave) {
         subForm.append('subtitle', subtitleFile);
         if (subLangEl?.value) subForm.append('subtitle_lang', subLangEl.value);
         assertLocalCallAllowed('/content', 'POST');
-        await fetch('/api/content/' + contentItem.id + '/subtitle', {
+        // ⚠️ Checked for the same reason as the replace above: a refused .vtt is not a success.
+        const sr = await fetch('/api/content/' + contentItem.id + '/subtitle', {
           method: 'POST',
           headers,
           body: subForm
         });
+        const sb = await sr.json().catch(() => ({}));
+        if (!sr.ok) throw new Error(sb.error || t('content.error_update_failed'));
       }
 
       overlay.remove();

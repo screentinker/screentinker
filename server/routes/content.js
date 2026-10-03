@@ -32,7 +32,7 @@ const { ingestUploadedFile, deriveMediaMetadata } = require('../lib/content-inge
 const uploadSession = require('../lib/upload-session');
 const subscriptionLimits = require('../middleware/subscription');
 const htmlBundle = require('../lib/html-bundle');
-const { finalizeUpload, INLINE_SAFE_EXTS } = require('../lib/upload-sniff');
+const { finalizeUpload, INLINE_SAFE_EXTS, sniffMime, readHead: readUploadHead, MIME_TO_EXT: UPLOAD_MIME_TO_EXT } = require('../lib/upload-sniff');
 const { digestFile } = require('../lib/content-digest');
 const { normalizeTags, normalizeMeta, parseTags, parseMeta } = require('../lib/content-tags');
 const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-files');
@@ -218,11 +218,43 @@ function uploadContentFilesGuarded(req, res, next) {
     return next(err);
   });
 }
-router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) => {
+/*
+ * ⚠️ MULTER HAS ALREADY WRITTEN EVERY BYTE BEFORE A ROUTE HANDLER RUNS. Each upload lands in
+ * contentDir as `<uuid>.part`, and nothing sweeps those (upload-session sweeps only incoming/,
+ * content-receive only `mesh-*`) and nothing counts them against an allowance. So every refusal a
+ * handler makes AFTER multer must remove what multer wrote, or a 404 on a made-up content id
+ * leaves 500 MB on disk for ever — at the route's rate limit, gigabytes a minute per user.
+ * `files` defaults to everything on the request; the batch loop passes only the files it has not
+ * ingested yet, because the ones before them are now rows and their bytes are live.
+ */
+function discardUploads(req, files = null) {
+  const list = files || [
+    ...(req.file ? [req.file] : []),
+    ...(Array.isArray(req.files) ? req.files : Object.values(req.files || {}).flat()),
+  ];
+  for (const f of list) {
+    if (f && f.path) { try { fs.unlinkSync(f.path); } catch (_) { /* already gone */ } }
+  }
+}
+
+/*
+ * The checks that need no request body run BEFORE multer, so a caller who would be refused never
+ * gets to put bytes on this disk at all. The post-multer handler repeats them (cheap) so it stays
+ * correct on its own, and cleans up whatever it refuses.
+ */
+function uploadPreflight(req, res, next) {
+  if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
+  if (denyReadOnly(req, res)) return;
+  next();
+}
+
+router.post('/', checkStorageLimit, uploadPreflight, uploadContentFilesGuarded, async (req, res) => {
+  const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+  // Index of the first file NOT yet ingested; everything from here on is still a `.part` on disk.
+  let next = 0;
   try {
-    if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
-    if (denyReadOnly(req, res)) return;
-    const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+    if (!req.workspaceId) { discardUploads(req); return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' }); }
+    if (denyReadOnly(req, res)) { discardUploads(req); return; }
     if (files.length === 0) return res.status(400).json({ error: 'No file uploaded' });
 
     // #73: shared ingest - identical processing + insert for dashboard and agency uploads.
@@ -232,18 +264,41 @@ router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) 
     if (folderId) {
       const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(folderId);
       if (!target || target.workspace_id !== req.workspaceId) {
+        discardUploads(req);
         return res.status(400).json({ error: 'Invalid folder_id for this workspace' });
       }
     }
-    const results = [];
+
+    /*
+     * ⚠️ SNIFF THE WHOLE BATCH BEFORE INGESTING ANY OF IT. The loop used to stop at the first
+     * unsupported file and answer 400 — but the files before it were already rows. The client saw a
+     * failure, retried, and duplicated them; the files after it were left as `.part` orphans. A
+     * wrong type is the common refusal and it is knowable from the head bytes alone, so it now
+     * refuses the batch as a unit. (A zip that is not a valid bundle can still only be found out
+     * inside ingest; the catch below at least removes the files that were never reached.)
+     */
     for (const file of files) {
-      results.push(await ingestUploadedFile({ file, userId: req.user.id, workspaceId: req.workspaceId, folderId }));
+      let mime = null;
+      try { mime = sniffMime(readUploadHead(file.path)); } catch (_) { mime = null; }
+      if (!mime || !UPLOAD_MIME_TO_EXT[mime]) {
+        discardUploads(req);
+        return res.status(400).json({
+          error: `Unsupported file type (${file.originalname || 'upload'}) — only image, video and audio files are accepted. Nothing in this upload was added.`,
+        });
+      }
+    }
+
+    const results = [];
+    for (; next < files.length; next++) {
+      results.push(await ingestUploadedFile({ file: files[next], userId: req.user.id, workspaceId: req.workspaceId, folderId }));
     }
     // Backward-compatible shape: a single upload still returns the content object (what
     // every existing caller reads); a multi-file upload returns the array of them.
     for (const c of results) { try { require('../lib/revisions').recordCurrent(db, 'content', c.id, { actor: require('../lib/releases').actorOf(req), summary: 'Uploaded' }); } catch (_) {} }
     res.status(201).json(results.length === 1 ? results[0] : results);
   } catch (err) {
+    // files[next] was being ingested (ingest removes what it refuses); the rest were never reached.
+    discardUploads(req, files.slice(next + 1));
     if (err && err.name === 'UnsupportedUploadError') return res.status(400).json({ error: err.message });
     console.error('Upload error:', err);
     res.status(500).json({ error: 'Upload failed' });
@@ -953,34 +1008,25 @@ router.put('/:id', (req, res) => {
 });
 
 // Replace content file
-router.put('/:id/replace', upload.single('file'), async (req, res) => {
+/*
+ * ⚠️ AUTHORISED BEFORE MULTER, so a caller who will be refused (a viewer, a made-up id) never puts
+ * bytes on disk. This route used to authorise AFTER upload.single had written the whole file, then
+ * return without removing it — an orphan `.part` per refused request that nothing ever sweeps.
+ */
+function replacePreflight(req, res, next) {
+  if (!checkContentWrite(req, res)) return;
+  next();
+}
+router.put('/:id/replace', replacePreflight, upload.single('file'), async (req, res) => {
+  // Re-read after the upload: the row may have changed (or gone) while the bytes were arriving.
   const content = checkContentWrite(req, res);
-  if (!content) return;
+  if (!content) { discardUploads(req); return; }
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-  // Delete old file and thumbnail — but only if no other row still points at them. A
-  // mesh-received asset is named after its bytes and can legitimately back one row per
-  // workspace; replacing one customer's copy must not empty another's screen.
-  /*
-   * Version history: the bytes being replaced are RETAINED under .history (a move when this row
-   * is their only reference, a copy otherwise), and every revision that described them is
-   * repointed there, so the previous version stays restorable. Approval on: the new bytes land as
-   * a DRAFT next to the live file and nothing a screen shows changes until the draft is reviewed
-   * and published (lib/releases.js releaseContentDraft).
-   */
   const policy = require('../lib/release-policy');
   const revisions = require('../lib/revisions');
   const actor = require('../lib/releases').actorOf(req);
   const approvalOn = !!(content.workspace_id && policy.approvalRequired(db, content.workspace_id));
-  let retainedFile = null, retainedThumb = null;
-  if (!approvalOn) {
-    const prev = revisions.latest(db, 'content', content.id);
-    const tag = prev ? `r${prev.rev_no}` : 'r0';
-    retainedFile = revisions.retainContentFile(db, content.id, content.filepath, tag);
-    retainedThumb = revisions.retainContentFile(db, content.id, content.thumbnail_path, tag);
-    if (!retainedFile) unlinkIfUnreferenced(content.filepath, content.id, 'filepath');
-    if (!retainedThumb) unlinkIfUnreferenced(content.thumbnail_path, content.id, 'thumbnail_path');
-  }
 
   // Same content-derived naming as the main ingest path (lib/upload-sniff) — the caller
   // does not choose the extension here either. A non-media upload 400s.
@@ -1066,6 +1112,30 @@ router.put('/:id/replace', upload.single('file'), async (req, res) => {
     revisions.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Replaced file (draft)' });
     return res.json({ ...db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id), draft: true, pending_review: true });
   }
+
+  // Delete old file and thumbnail — but only if no other row still points at them. A
+  // mesh-received asset is named after its bytes and can legitimately back one row per
+  // workspace; replacing one customer's copy must not empty another's screen.
+  /*
+   * Version history: the bytes being replaced are RETAINED under .history (a move when this row
+   * is their only reference, a copy otherwise), and every revision that described them is
+   * repointed there, so the previous version stays restorable. Approval on: the new bytes land as
+   * a DRAFT next to the live file and nothing a screen shows changes until the draft is reviewed
+   * and published (lib/releases.js releaseContentDraft) — that branch returned above.
+   *
+   * ⚠️ THIS RUNS ONLY ONCE THE NEW BYTES HAVE PASSED EVERY CHECK. It used to run first, before the
+   * sniffer, the bundle-boundary check and validateBundle — so a refused replace (a .zip picked for
+   * an image, a corrupt file) answered 400 with the row unchanged but its live file already moved
+   * into .history and no revision repointed at it. Every screen without a cached copy lost the
+   * item, the thumbnail vanished, and restore could not find the old bytes. Nothing may touch the
+   * live file until the replacement is certain to be written.
+   */
+  const prev = revisions.latest(db, 'content', content.id);
+  const tag = prev ? `r${prev.rev_no}` : 'r0';
+  const retainedFile = revisions.retainContentFile(db, content.id, content.filepath, tag);
+  const retainedThumb = revisions.retainContentFile(db, content.id, content.thumbnail_path, tag);
+  if (!retainedFile) unlinkIfUnreferenced(content.filepath, content.id, 'filepath');
+  if (!retainedThumb) unlinkIfUnreferenced(content.thumbnail_path, content.id, 'thumbnail_path');
 
   db.transaction(() => {
     if (retainedFile) db.prepare('UPDATE revisions SET file_ref = ? WHERE resource_type = ? AND resource_id = ? AND file_ref = ?').run(retainedFile, 'content', content.id, content.filepath);
