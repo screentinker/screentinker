@@ -173,8 +173,8 @@ app.use((req, res, next) => {
    * ⚠️ AN HTML BUNDLE IS THE SAME CASE AS A WIDGET RENDER, and it fails the same way without this.
    * The document is flattened to data: URIs, so the dashboard's `script-src 'self'` blocks every
    * script in it, and `frame-ancestors 'self'` refuses the null-origin frame a player mounts it in
-   * — a blank rectangle with nothing in any log. What contains a bundle is the frame's sandbox
-   * attribute (allow-scripts, no allow-same-origin), not this policy.
+   * — a blank rectangle with nothing in any log. What contains a bundle is BUNDLE_SANDBOX_CSP,
+   * which the two bundle routes set themselves (see there), not this policy.
    */
   if (req.path.startsWith('/api/content/') && req.path.endsWith('/bundle')) return next();
   if (/^\/api\/content\/[^/]+\/bundle-preview\//.test(req.path)) return next();
@@ -1479,9 +1479,23 @@ app.get('/api/content/:id/file', (req, res) => {
  * ephemeral id, and that id — not a token, not a session — is what the iframe loads. The mint lives
  * in routes/content.js behind auth; only the read is here, with the other public content routes.
  */
+/*
+ * ⚠️ THE ONE HEADER THAT CONTAINS A BUNDLE, on both routes that serve one. `sandbox allow-scripts`
+ * with NO allow-same-origin puts the document in an OPAQUE ORIGIN wherever it is loaded — framed by
+ * a player, or opened top-level in a tab. The second case is the one that matters: the bundle is
+ * a stranger's HTML served from the dashboard's own origin, and the dashboard's session JWT sits
+ * in localStorage there (frontend/js/api.js). A frame's sandbox attribute only applies when there
+ * IS a frame, so a bundle URL sent to an admin and opened in a tab used to run with that admin's
+ * token in reach. Same reasoning and same header as template renders (lib/templates/render.js).
+ * Scripts still run, so the bundle still works; it just cannot touch this origin. Nothing else
+ * goes in this policy: a bundle may fetch the feeds it was written for, from wherever.
+ */
+const BUNDLE_SANDBOX_CSP = 'sandbox allow-scripts';
+
 app.get('/api/content/:id/bundle-preview/:token', (req, res) => {
   const html = require('./lib/bundle-preview-store').get(req.params.token, req.params.id);
   if (html == null) return res.status(410).send('Preview expired');
+  res.setHeader('Content-Security-Policy', BUNDLE_SANDBOX_CSP);
   res.removeHeader('X-Frame-Options');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -1497,11 +1511,11 @@ app.get('/api/content/:id/bundle-preview/:token', (req, res) => {
  * So the rule is the same one those two use — the content must be referenced by a playlist, or by a
  * widget in its own workspace, or the caller must hold a session for that workspace.
  *
- * ⚠️ AND IT MUST NOT GET `Content-Security-Policy: sandbox`. Every other response from the upload
- * paths does, via hardenUploadResponse, because uploaded bytes must never execute. A bundle is the
- * one exception in the product: it is HTML whose whole purpose is to run its own scripts. What
- * keeps it contained is the frame's sandbox attribute — allow-scripts with NO allow-same-origin, so
- * an opaque origin with no access to the player's storage — chosen by the player, not by us.
+ * ⚠️ AND IT MUST NOT GET hardenUploadResponse's script-blocking `sandbox`. Every other response
+ * from the upload paths does, because uploaded bytes must never execute. A bundle is the one
+ * exception in the product: it is HTML whose whole purpose is to run its own scripts. So it gets
+ * BUNDLE_SANDBOX_CSP instead — `sandbox allow-scripts`, NO allow-same-origin — set HERE by us,
+ * not left to the player's frame attribute, because a link opened in a tab has no frame.
  *
  * The bytes are never extracted to disk; lib/bundle-inline.js reads entries out of the stored
  * archive in memory. Rate limiting comes from the /api/content mount above, which matters here
@@ -1528,6 +1542,7 @@ app.get('/api/content/:id/bundle', async (req, res) => {
     const { inlineBundle } = require('./lib/bundle-inline');
     const entry = content.bundle_entry || 'index.html';
     const out = await inlineBundle(safePath, entry);
+    res.setHeader('Content-Security-Policy', BUNDLE_SANDBOX_CSP);
     // Framed by a player at a null origin, so SAMEORIGIN would refuse it — the same reason the
     // widget render route drops this header.
     res.removeHeader('X-Frame-Options');
