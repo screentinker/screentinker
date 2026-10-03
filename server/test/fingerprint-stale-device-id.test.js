@@ -38,11 +38,13 @@ const mkDevice = (name) => {
 };
 
 // The exact statement the register handler runs, with the guard applied.
-function writeFingerprint(fingerprint, incomingDeviceId) {
+// tokenProven mirrors the handler's ⚠️ AUDIT F06 rule: the incoming id is only honoured when the
+// caller proved it owns it (fingerprint-unproven-device-id.test.js covers that end-to-end).
+function writeFingerprint(fingerprint, incomingDeviceId, tokenProven = true) {
   const existing = db.prepare('SELECT * FROM device_fingerprints WHERE fingerprint = ?').get(fingerprint);
   if (!existing) return null;
   const known = (id) => !!(id && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(id));
-  const fpDeviceId = known(incomingDeviceId) ? incomingDeviceId
+  const fpDeviceId = (tokenProven && known(incomingDeviceId)) ? incomingDeviceId
     : (known(existing.device_id) ? existing.device_id : null);
   db.prepare("UPDATE device_fingerprints SET last_seen = strftime('%s','now'), device_id = ? WHERE fingerprint = ?")
     .run(fpDeviceId, fingerprint);

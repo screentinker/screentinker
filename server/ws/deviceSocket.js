@@ -2263,8 +2263,16 @@ module.exports = function setupDeviceSocket(io) {
             // Prefer the incoming id, fall back to what is already stored, and only ever write
             // an id that still resolves. Same guard as the INSERT path below; this UPDATE was
             // missed, and it is the one that actually fires (37 FK failures on prod).
+            //
+            // ⚠️ AUDIT F06: the incoming id is honoured ONLY when the caller proved it owns that id
+            // (tokenProven). This block runs BEFORE the token check below, so an unauthenticated
+            // register naming a victim's UUID used to rebind a fingerprint the attacker controls to
+            // the victim's row; a second register with that fingerprint + any pairing_code then took
+            // the "reinstalled app" reclaim path and was minted the victim's NEW token + playlist.
+            // An unproven id leaves the existing link alone — the reclaim path must only ever see a
+            // link that a token-holding device (or the server's own provisioning) wrote.
             const known = (id) => !!(id && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(id));
-            const fpDeviceId = known(device_id) ? device_id
+            const fpDeviceId = (tokenProven && known(device_id)) ? device_id
               : (known(existing.device_id) ? existing.device_id : null);
             db.prepare("UPDATE device_fingerprints SET last_seen = strftime('%s','now'), device_id = ?, hw_fingerprint = COALESCE(?, hw_fingerprint) WHERE fingerprint = ?")
               .run(fpDeviceId, hw_fingerprint || null, fingerprint);
@@ -2428,7 +2436,11 @@ module.exports = function setupDeviceSocket(io) {
             // deleted). device_fingerprints.device_id has an FK to devices(id), and
             // INSERT OR IGNORE does NOT suppress FK violations - so null out an
             // unknown id instead of letting it throw (was a caught, noisy error).
-            const fpDeviceId = (device_id && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(device_id)) ? device_id : null;
+            // ⚠️ AUDIT F06: and never link to a client-supplied id the caller has not proved it owns
+            // (tokenProven) — see the UPDATE above. An unauthenticated register naming a victim's
+            // UUID would otherwise create (attacker-fp -> victim) and the next register with that fp
+            // + a pairing_code reclaimed the victim's row and was handed a fresh token for it.
+            const fpDeviceId = (tokenProven && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(device_id)) ? device_id : null;
             db.prepare("INSERT OR IGNORE INTO device_fingerprints (fingerprint, device_id, hw_fingerprint) VALUES (?, ?, ?)")
               .run(fingerprint, fpDeviceId, hw_fingerprint || null);
           }
