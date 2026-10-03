@@ -53,6 +53,14 @@ const NULLABLE_USER_REFS = [
 const REASSIGN_USER_TABLES = [
   'playlists', 'schedules', 'video_walls', 'device_groups', 'kiosk_pages', 'white_labels', 'alert_configs',
 ];
+// ⚠️ content_folders is NOT one of "their own memberships". Its user_id is the CREATOR of a
+// shared workspace folder (routes/folders.js lists them by workspace_id; any member can make one),
+// but the column is `NOT NULL REFERENCES users(id) ON DELETE CASCADE` - so the final DELETE FROM
+// users silently took every folder the user ever created in somebody else's org, and (parent_id is
+// CASCADE too) every subfolder OTHER members had built inside it, dropping their files back to the
+// root. It is reassigned like the tables above, but only where it belongs to a workspace: a legacy
+// workspace-less folder is visible to nobody but its creator, so it may go with them.
+const REASSIGN_WORKSPACE_ONLY_TABLES = ['content_folders'];
 
 const inClause = n => Array.from({ length: n }, () => '?').join(',');
 function tablesPresent(db) {
@@ -172,6 +180,15 @@ function deleteUserCascade(db, { targetId, actingAdminId }) {
         ) WHERE user_id = ?
       `).run(actingAdminId, targetId);
     }
+    for (const t of REASSIGN_WORKSPACE_ONLY_TABLES) {
+      if (!have.has(t)) continue;
+      db.prepare(`
+        UPDATE ${t} SET user_id = COALESCE(
+          (SELECT o.owner_user_id FROM workspaces w JOIN organizations o ON o.id = w.organization_id WHERE w.id = ${t}.workspace_id),
+          ?
+        ) WHERE user_id = ? AND workspace_id IS NOT NULL
+      `).run(actingAdminId, targetId);
+    }
 
     // 2c) Legacy teams + NOT NULL invite rows the user owns / sent.
     if (have.has('teams')) db.prepare('DELETE FROM teams WHERE owner_id = ?').run(targetId); // cascades team_members/invites
@@ -179,7 +196,8 @@ function deleteUserCascade(db, { targetId, actingAdminId }) {
     if (have.has('workspace_invites')) db.prepare('DELETE FROM workspace_invites WHERE invited_by = ?').run(targetId);
 
     // 3) Finally the user. Their own memberships (organization_members,
-    //    workspace_members, team_members, content_folders) CASCADE on this delete.
+    //    workspace_members, team_members) CASCADE on this delete - and so does any
+    //    workspace-LESS legacy folder of theirs (shared folders were reassigned in 2b).
     db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
   });
 
