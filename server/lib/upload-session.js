@@ -235,6 +235,27 @@ function sweep({ ttlMs = SESSION_TTL_MS, now = Date.now() } = {}) {
   return { swept: stale.length, bytes, orphans };
 }
 
+/**
+ * Bytes this user's OTHER open sessions have declared — the part of the storage allowance already
+ * promised to uploads that have not finished.
+ *
+ * ⚠️ EXISTS BECAUSE THE CREATE-TIME CHECK ONLY HELD FOR ONE SESSION AT A TIME. storageRoomBytes sums
+ * finished content rows, and an open session is not a row until finalize. So with 1GB of room, twenty
+ * sessions of 1GB each all passed — room was still 1GB every time — and finalized to 20GB over plan.
+ * Counting the declared sizes as a reservation makes the check mean what it says.
+ *
+ * Sessions past the sweeper's TTL are not counted: they are already collectable and the hourly
+ * sweep has simply not reached them yet; an abandoned tab should not hold an allowance hostage.
+ * Keyed on user_id, not workspace, because the allowance is the user's (subscription.js).
+ */
+function reservedBytes(userId, { excludeId = null, ttlMs = SESSION_TTL_MS, now = Date.now() } = {}) {
+  const cutoff = Math.floor((now - ttlMs) / 1000);
+  const row = db.prepare(
+    'SELECT COALESCE(SUM(declared_size), 0) AS n FROM upload_sessions WHERE user_id = ? AND updated_at >= ? AND id IS NOT ?'
+  ).get(userId, cutoff, excludeId);
+  return Number(row.n || 0);
+}
+
 let _sweepTimer = null;
 function startSweep(intervalMs = 60 * 60 * 1000) {
   if (_sweepTimer) return;
@@ -246,5 +267,5 @@ function stopSweep() { if (_sweepTimer) { clearInterval(_sweepTimer); _sweepTime
 module.exports = {
   CHUNK_SIZE, MAX_CHUNK_BYTES, SESSION_TTL_MS,
   create, get, append, offsetOf, isComplete, stageForIngest, discard, forget,
-  sweep, startSweep, stopSweep, incomingDir, partPath,
+  sweep, startSweep, stopSweep, incomingDir, partPath, reservedBytes,
 };

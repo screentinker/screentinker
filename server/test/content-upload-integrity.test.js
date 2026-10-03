@@ -186,6 +186,52 @@ test('F16: a batch with an unsupported file in the middle adds NOTHING and leave
   assert.deepEqual(partsInContentDir(), [], 'three.png must not be stranded as a .part');
 });
 
+/* ------------------------------------------------------------- F26: storage across sessions */
+
+test('F26: parallel resumable sessions cannot together exceed the storage allowance', async () => {
+  const u = 'u-upint-par';
+  addUser(u, 'tiny-upint');
+  const size = 700 * 1024;   // fits in 1 MiB once, not twice
+  const a = await fetch(`${base}/uploads`, J({ filename: 'a.png', size }, { user: u }));
+  assert.equal(a.status, 201, 'the first session fits');
+  const b = await fetch(`${base}/uploads`, J({ filename: 'b.png', size }, { user: u }));
+  const bb = await b.json();
+  assert.equal(b.status, 403, 'the second would overshoot once the first is counted');
+  assert.equal(bb.code, 'STORAGE_LIMIT');
+  assert.equal(bb.reserved_bytes, size);
+
+  // Giving up the first frees its reservation.
+  const aid = (await a.json()).id;
+  await fetch(`${base}/uploads/${aid}`, { method: 'DELETE', headers: headersFor({ user: u }) });
+  const c = await fetch(`${base}/uploads`, J({ filename: 'c.png', size }, { user: u }));
+  assert.equal(c.status, 201, 'an abandoned (deleted) session no longer holds the allowance');
+});
+
+test('F26: finalize re-checks the allowance against the staged bytes', async () => {
+  const u = 'u-upint-fin';
+  addUser(u, 'tiny-upint');
+  const bytes = pngOf(600 * 1024);
+  const cr = await fetch(`${base}/uploads`, J({ filename: 'f.png', size: bytes.length }, { user: u }));
+  assert.equal(cr.status, 201);
+  const { id } = await cr.json();
+  const p = await fetch(`${base}/uploads/${id}`, {
+    method: 'PATCH', body: bytes,
+    headers: { ...headersFor({ user: u }), 'Content-Type': 'application/octet-stream', 'Upload-Offset': '0' },
+  });
+  assert.equal(p.status, 200);
+
+  // Usage moved after the session was opened (another path, a downgrade): 600 KB is now in use.
+  db.prepare('INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(crypto.randomUUID(), u, WS, 'other.png', 'other-upint.png', 'image/png', 600 * 1024);
+
+  const fin = await fetch(`${base}/uploads/${id}/finalize`, J({}, { user: u }));
+  const fb = await fin.json();
+  assert.equal(fin.status, 403, JSON.stringify(fb));
+  assert.equal(fb.code, 'STORAGE_LIMIT');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM content WHERE user_id = ? AND filename = 'f.png'").get(u).n, 0, 'no row was created');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM upload_sessions WHERE id = ?').get(id).n, 0, 'and the session (and its bytes) are discarded');
+});
+
 /* ------------------------------------------------------------- F11: the dashboard reads the response */
 
 test('F11: the edit modal checks the replace and subtitle responses before claiming success', () => {

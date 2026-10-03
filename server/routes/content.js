@@ -351,13 +351,24 @@ router.post('/uploads', checkStorageLimit, (req, res) => {
    * at 19.9GB of 20GB could start a 500MB upload and land at 20.4GB. Knowing the size up front is
    * the one advantage a session has over a stream, and this is what it buys.
    */
-  const room = subscriptionLimits.storageRoomBytes(req.user.id);
+  /*
+   * ⚠️ ...and against what this user's OTHER open sessions have already declared. Room counts only
+   * finished rows, so without the reservation N parallel sessions each saw the same room and all
+   * passed (see uploadSession.reservedBytes). The check and the INSERT below run in one synchronous
+   * stretch with no await between them, so two concurrent creates cannot both see the same room.
+   */
+  const rawRoom = subscriptionLimits.storageRoomBytes(req.user.id);
+  const reserved = rawRoom === null ? 0 : uploadSession.reservedBytes(req.user.id);
+  const room = rawRoom === null ? null : rawRoom - reserved;
   if (room !== null && declared > room) {
     return res.status(403).json({
-      error: 'This upload would exceed your storage allowance.',
+      error: reserved > 0
+        ? 'This upload would exceed your storage allowance, counting uploads you already have in progress.'
+        : 'This upload would exceed your storage allowance.',
       code: 'STORAGE_LIMIT',
       needed_bytes: declared,
       available_bytes: Math.max(0, room),
+      reserved_bytes: reserved,
     });
   }
 
@@ -462,6 +473,25 @@ router.post('/uploads/:id/finalize', async (req, res) => {
     return res.status(409).json({
       error: `upload is incomplete: ${offset} of ${session.declared_size} bytes`,
       offset, declared_size: session.declared_size,
+    });
+  }
+
+  /*
+   * ⚠️ RE-CHECKED AT FINALIZE, against the bytes actually staged. The create-time check is a
+   * reservation made against a number the client chose, and usage can move in between (another
+   * upload finalized, a plan downgrade, an upload path that does not reserve). This is the last
+   * moment before the bytes become a row, so it is the one check that cannot be raced past. The
+   * session is discarded on refusal: the client forgets a completed session and starts a new one
+   * on retry, so keeping it would only pin a reservation until the sweeper.
+   */
+  const room = subscriptionLimits.storageRoomBytes(session.user_id);
+  if (room !== null && offset > room) {
+    uploadSession.discard(session);
+    return res.status(403).json({
+      error: 'This upload would exceed your storage allowance.',
+      code: 'STORAGE_LIMIT',
+      needed_bytes: offset,
+      available_bytes: Math.max(0, room),
     });
   }
 
