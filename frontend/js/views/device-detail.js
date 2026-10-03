@@ -2999,11 +2999,14 @@ async function setupPlaylistActions(device) {
   document.getElementById('applyLayoutBtn')?.addEventListener('click', async () => {
     const layoutId = document.getElementById('deviceLayoutSelect').value;
     try {
-      await fetch(`/api/layouts/device/${device.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ layout_id: layoutId || null })
-      });
+      /*
+       * ⚠️ api.put, NOT a bare fetch. fetch only rejects on a network failure, so the old handler
+       * showed "Layout applied" for a 403 (viewer, cross-workspace layout) or a 400 (bad id) and then
+       * reloaded onto the unchanged layout with no explanation. request() throws the server's own
+       * error for a non-2xx, and it also applies the linked-server routing a bare fetch skipped —
+       * which sent this write to the LOCAL server while a customer's server was on screen.
+       */
+      await api.put(`/layouts/device/${device.id}`, { layout_id: layoutId || null });
       showToast(layoutId ? t('device.toast.layout_applied') : t('device.toast.switched_to_fullscreen'), 'success');
       // Reload the device page to show updated zone selectors, stay on playlist tab
       loadDevice(device.id, 'playlist');

@@ -2352,6 +2352,8 @@ export default {
   'settings.toast.passwords_dont_match': 'New passwords do not match',
   'settings.toast.password_changed': 'Password changed',
   'settings.toast.branding_saved': 'Branding saved',
+  'settings.toast.branding_save_failed': 'Branding was not saved',
+  'settings.platform_admin_only': 'Only a platform administrator can change this',
   'settings.toast.preview_applied': 'Preview applied (refresh to reset)',
   'settings.toast.plan_updated': 'Plan updated',
   'settings.toast.user_removed': 'User removed',

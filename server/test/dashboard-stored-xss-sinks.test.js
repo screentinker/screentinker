@@ -158,3 +158,43 @@ test('⚠️ F18: the design is never serialised into an inline onclick attribut
   assert.match(body, /saveDesignFileBtn['"]\)\?\.addEventListener\('click'/,
     'the Save-design button must use a listener that reads the design at click time');
 });
+
+/* ============================================================= F19 White-label */
+
+test('⚠️ F19: a refused branding save is reported as a failure, not "Branding saved"', () => {
+  const src = read('views/settings.js');
+  const handler = bodyAfter(src, "getElementById('saveWhiteLabelBtn')?.addEventListener('click', async () =>");
+  const okCheck = handler.indexOf('!res.ok');
+  const success = handler.indexOf("t('settings.toast.branding_saved')");
+  assert.ok(okCheck >= 0, 'the save handler must look at the response status');
+  assert.ok(success > okCheck, 'the status check must come BEFORE the success toast');
+});
+
+test('⚠️ F19: platform-admin-only fields are not sent by anyone else', () => {
+  const src = read('views/settings.js');
+  const handler = bodyAfter(src, "getElementById('saveWhiteLabelBtn')?.addEventListener('click', async () =>");
+  // The server 403s ANY non-empty custom_domain/custom_css from a non-platform-admin before it
+  // writes anything; sending the pre-filled values unconditionally made every save fail.
+  const guarded = bodyAfter(handler, 'if (canSetDomainAndCss)');
+  assert.match(guarded, /custom_domain/);
+  assert.match(guarded, /custom_css/);
+  const outside = handler.replace(guarded, '');
+  assert.doesNotMatch(outside, /custom_domain|custom_css/,
+    'custom_domain / custom_css must only be added to the body for a platform admin');
+  const load = bodyAfter(src, 'async function loadWhiteLabel()');
+  assert.match(load, /const canSetDomainAndCss = isPlatformAdmin\(user\)/);
+});
+
+/* ============================================================ F27 Apply layout */
+
+test('⚠️ F27: applying a layout goes through api.put, so a 403/400 is an error toast', () => {
+  const src = read('views/device-detail.js');
+  const handler = bodyAfter(src, "getElementById('applyLayoutBtn')?.addEventListener('click', async () =>");
+  // A bare fetch resolves on 403 (viewer, cross-workspace layout) and 400 (bad id), and also
+  // skipped the linked-server routing that request() applies.
+  assert.doesNotMatch(handler, /\bfetch\(/, 'Apply layout must not use a bare fetch');
+  const put = handler.indexOf('await api.put(`/layouts/device/${device.id}`');
+  const toast = handler.indexOf("'success'");
+  assert.ok(put >= 0, 'Apply layout must call api.put on the device layout route');
+  assert.ok(toast > put, 'the success toast must come after the awaited request');
+});
