@@ -54,21 +54,12 @@ const subscriptions = require('../middleware/subscription');
 const { pushDowngradedUserScreens, stampAfter, displayName } = require('./trialExpiry');
 const { periodEndOf } = require('../lib/stripe-fields');
 
-/*
- * Which of our plans a Stripe subscription represents: the id we stamped into its metadata at
- * checkout, else the price it is actually billing. The price lookup is the one that still works
- * for a subscription created before we stamped metadata, or edited in the Stripe dashboard.
- */
-function planIdFromSubscription(sub) {
-  const fromMeta = sub && sub.metadata && sub.metadata.plan_id;
-  if (fromMeta) return fromMeta;
-  const priceId = sub && sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].price
-    && sub.items.data[0].price.id;
-  if (!priceId) return null;
-  const row = db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?')
-    .get(priceId, priceId);
-  return row ? row.id : null;
-}
+// Which plan a subscription represents — billed price first, metadata as the fallback. One rule,
+// shared with the subscription webhook (middleware/subscription.js explains why price wins).
+const { planIdFromSubscription, planIdFromPrice } = subscriptions;
+
+// Stripe statuses that mean the subscription will never bill again. Treated like a 404.
+const TERMINAL_STATUSES = new Set(['canceled', 'incomplete_expired']);
 
 const SWEEP_HOUR_UTC = 15;          // an hour after the trial sweep, so the two never interleave
 const BILLING_URL = 'https://screentinker.com/app#/billing';
@@ -183,7 +174,7 @@ async function sendPaymentFailedEmail(userId) {
 async function reconcileFromStripe() {
   if (!isEnabled() || !config.stripeSecretKey) return { checked: 0, corrected: 0, skipped: 'not_configured' };
   const stripe = require('stripe')(config.stripeSecretKey);
-  const rows = db.prepare(`SELECT id, plan_id, subscription_status, subscription_ends, stripe_subscription_id
+  const rows = db.prepare(`SELECT id, plan_id, subscription_status, subscription_ends, stripe_subscription_id, past_due_since
                              FROM users
                             WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id <> ''`).all();
   const out = { checked: 0, corrected: 0, errors: 0 };
@@ -210,9 +201,49 @@ async function reconcileFromStripe() {
       }
       continue;
     }
+    /*
+     * ⚠️ A CANCELLED SUBSCRIPTION IS NOT A 404. Stripe keeps cancelled subscriptions and retrieve
+     * returns them with status 'canceled' (or 'incomplete_expired' for one that never started) —
+     * the 404 branch above is the rare case, not the normal one. Before this, the exact failure the
+     * reconcile exists for (a lost customer.subscription.deleted) wrote status='canceled', left the
+     * paid plan_id in place, started no grace clock, and skipped the row as unchanged every night
+     * after: Pro for ever with nothing billing it. Terminal means the same as gone.
+     */
+    if (TERMINAL_STATUSES.has(sub.status)) {
+      db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled',
+                                   stripe_subscription_id = NULL WHERE id = ?`).run(u.id);
+      out.corrected++;
+      console.log(`[DUNNING] reconcile: ${u.id} — subscription ${sub.status} in Stripe, moved to Free`);
+      continue;
+    }
     const ends = periodEndOf(sub);
     const status = sub.status === 'active' ? 'active' : sub.status;
     const changes = [];
+    /*
+     * ⚠️ Stripe says it is failing but our grace clock never started — the invoice.payment_failed
+     * delivery was lost. Without the clock, findLapsedSubscriberIds never sees the account and it
+     * keeps its paid plan for ever. Start it now (and send the once-per-episode note, which is
+     * hosted-gated and idempotent) so the ordinary 7-day grace and downgrade take over. Started
+     * BEFORE the status write below because startGrace writes 'past_due', and Stripe's own word
+     * ('unpaid') should be what is left in the column.
+     */
+    if ((status === 'past_due' || status === 'unpaid') && u.past_due_since == null) {
+      if (subscriptions.startGrace(u.id)) {
+        changes.push('grace started');
+        try { await sendPaymentFailedEmail(u.id); }
+        catch (e) { console.error(`[DUNNING] reconcile: payment-failed note for ${u.id}: ${e && e.message}`); }
+      }
+    }
+    /*
+     * ⚠️ PLAN DRIFT. A plan change made in the billing portal arrives as a new PRICE on the same
+     * subscription; if that customer.subscription.updated delivery is lost (or was processed by an
+     * older build that trusted the stale metadata), nothing else ever moves a paying account from
+     * one paid plan to another. Only the price may overwrite a stored paid plan here — never the
+     * checkout metadata, which is exactly the stale value that caused the drift.
+     */
+    const billedPlan = status === 'active' ? planIdFromPrice(sub) : null;
+    const planDrift = !!billedPlan && billedPlan !== u.plan_id;
+    if (planDrift) changes.push(`plan ${u.plan_id} -> ${billedPlan}`);
     if (status !== u.subscription_status) changes.push(`status ${u.subscription_status} -> ${status}`);
     if (ends && ends !== u.subscription_ends) changes.push(`ends ${u.subscription_ends || 'null'} -> ${ends}`);
     if (!changes.length) continue;
@@ -224,9 +255,9 @@ async function reconcileFromStripe() {
      * that makes recovery work without depending on a webhook arriving.
      */
     if (status === 'active') {
-      const planId = planIdFromSubscription(sub);
-      if (u.plan_id === 'free' && planId) {
-        if (subscriptions.restorePlan(u.id, planId)) console.log(`[DUNNING] reconcile: ${u.id} — paid again, restored to ${planId}`);
+      const planId = planDrift ? billedPlan : planIdFromSubscription(sub);
+      if ((u.plan_id === 'free' || planDrift) && planId) {
+        if (subscriptions.restorePlan(u.id, planId)) console.log(`[DUNNING] reconcile: ${u.id} — paid, plan set to ${planId}`);
       } else {
         subscriptions.clearGrace(u.id);
       }

@@ -217,13 +217,17 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const userId = sub.metadata?.user_id;
         if (!userId) break;
 
-        // Find plan by stripe price ID
-        const priceId = sub.items?.data?.[0]?.price?.id;
-        let planId = sub.metadata?.plan_id;
-        if (priceId && !planId) {
-          const plan = db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?').get(priceId, priceId);
-          if (plan) planId = plan.id;
-        }
+        /*
+         * ⚠️ THE BILLED PRICE FIRST, metadata only as the fallback.
+         *
+         * metadata.plan_id is stamped ONCE, at checkout, and Stripe leaves subscription metadata
+         * untouched when the billing portal swaps the price — and the portal is where plan changes
+         * happen (/checkout sends every subscriber there). Reading metadata first re-wrote the
+         * ORIGINAL plan on every later event: a Pro customer who downgraded to Starter paid Starter
+         * and kept Pro, and one who upgraded paid Pro and stayed capped at Starter. The price is
+         * what Stripe is actually charging; metadata only answers for a price no plan row knows.
+         */
+        const planId = subscriptions.planIdFromSubscription(sub);
 
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
         const ends = periodEndOf(sub);   // moved to the item in Stripe 2025-03+; see lib/stripe-fields.js

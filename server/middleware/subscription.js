@@ -149,6 +149,31 @@ function restorePlan(userId, planId) {
      WHERE id = ?`).run(planId, userId).changes === 1;
 }
 
+/*
+ * Which of our plans a Stripe subscription represents.
+ *
+ * ⚠️ THE BILLED PRICE IS THE AUTHORITY; metadata.plan_id is only the fallback. Checkout stamps
+ * subscription metadata ONCE and Stripe never changes it when the billing portal swaps the price —
+ * and the portal is where every plan change happens. Metadata-first re-wrote the ORIGINAL plan
+ * after every portal upgrade or downgrade, so billing and entitlement drifted apart in both
+ * directions. Metadata still answers for a price no plan row knows (a hand-made price in the
+ * Stripe dashboard, a plan whose price id was never configured here).
+ *
+ * planIdFromPrice is the strict half — null unless a plans row carries that price — for callers
+ * that may only OVERWRITE a stored plan when Stripe's charge proves it (the reconcile).
+ */
+function planIdFromPrice(sub) {
+  const priceId = sub && sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].price
+    && sub.items.data[0].price.id;
+  if (!priceId) return null;
+  const row = db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?')
+    .get(priceId, priceId);
+  return row ? row.id : null;
+}
+function planIdFromSubscription(sub) {
+  return planIdFromPrice(sub) || (sub && sub.metadata && sub.metadata.plan_id) || null;
+}
+
 function getUserPlan(userId) {
   const user = db.prepare(`
     SELECT u.*, p.name as plan_name, p.display_name as plan_display_name,
@@ -367,6 +392,8 @@ module.exports = {
   findLapsedSubscriberIds,
   downgradeLapsed,
   restorePlan,
+  planIdFromPrice,
+  planIdFromSubscription,
   expireTrial,
   findExpiredTrialUserIds,
   getUserPlan,
