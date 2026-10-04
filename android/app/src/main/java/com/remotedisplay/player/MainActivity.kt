@@ -329,6 +329,11 @@ class MainActivity : AppCompatActivity() {
             onHold = { playlistController.hold() },
             onRelease = { playlistController.release() },
             onSkip = { playlistController.next() },
+            onError = { reason, detail -> wsService?.sendKioskError(reason, detail) },
+            onSessionEnd = { r ->
+                com.remotedisplay.player.kiosk.KioskSessionLog.add(this, r)
+                wsService?.flushKioskSessions()
+            },
         )
         // Screen-resilience: an item is playable only when its content is actually available —
         // a widget, a remote stream, or a fully-downloaded local file. A not-yet/failed download is
@@ -1403,7 +1408,7 @@ class MainActivity : AppCompatActivity() {
             !(::groupSchedule.isInitialized && groupSchedule.isActive)
         if (kioskAllowed && kiosk != null) {
             mediaPlayer.stop()
-            kiosk?.show(item.itemKey, kioskCfg!!)
+            kiosk?.show(item.itemKey, kioskCfg!!, item.widgetId)
             wsService?.sendPlaybackState(item.widgetId ?: "", 0f)
             return
         }

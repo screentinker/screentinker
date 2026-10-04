@@ -106,4 +106,88 @@ class KioskLogicTest {
         k.onTouch(0)
         assertEquals(KioskIdle.Action.Reset, k.tick(30_000))
     }
+
+    // ── v2: config ──────────────────────────────────────────────────────────────────────────
+
+    @Test fun `v2 options default sensibly and parse`() {
+        val d = KioskConfig.parse("webpage", """{"url":"https://a.example","interactive":true}""")!!
+        assertFalse(d.keepConsent)
+        assertTrue(d.homeButton)
+        assertEquals(100, d.zoomPct)
+        assertEquals(emptyList<String>(), d.keepCookieNames)
+        val c = KioskConfig.parse("webpage", """{"url":"https://a.example","interactive":true,"keep_consent":true,"keep_cookie_names":"my_consent, cc_*, bad;name, *,","home_button":false,"zoom":150}""")!!
+        assertTrue(c.keepConsent)
+        assertFalse(c.homeButton)
+        assertEquals(150, c.zoomPct)
+        assertEquals(listOf("my_consent", "cc_*"), c.keepCookieNames)
+        assertEquals(400, KioskConfig.parse("webpage", """{"url":"https://a.example","interactive":true,"zoom":9000}""")!!.zoomPct)
+        assertEquals(100, KioskConfig.parse("webpage", """{"url":"https://a.example","interactive":true,"zoom":0}""")!!.zoomPct)
+    }
+
+    // ── v2: consent cookies ─────────────────────────────────────────────────────────────────
+
+    @Test fun `THE_BUG_ only consent cookies survive, never the login or the basket`() {
+        val jar = "PHPSESSID=abc; CookieConsent={stamp:'x',necessary:true}; cart_id=42; euconsent-v2=CPx; " +
+                  "cookielawinfo-checkbox-analytics=yes; auth_token=secret; OptanonAlertBoxClosed=2026-10-04"
+        val kept = CookieKeep.select(jar, CookieKeep.BUILT_IN).map { it.first }
+        assertEquals(listOf("CookieConsent", "euconsent-v2", "cookielawinfo-checkbox-analytics", "OptanonAlertBoxClosed"), kept)
+        for (n in listOf("PHPSESSID", "cart_id", "auth_token")) assertFalse(n, n in kept)
+    }
+
+    @Test fun `operator names and prefixes extend the list, values keep their equals signs`() {
+        val got = CookieKeep.select("shop_gdpr=a=b=c; shop_gdpr_v=2; other=1", listOf("shop_gdpr*"))
+        assertEquals(listOf("shop_gdpr" to "a=b=c", "shop_gdpr_v" to "2"), got)
+        assertEquals(emptyList<Pair<String, String>>(), CookieKeep.select(null, CookieKeep.BUILT_IN))
+        assertEquals(emptyList<Pair<String, String>>(), CookieKeep.select("CookieConsent=1", emptyList()))
+        assertFalse(CookieKeep.validPattern("*"))
+        assertFalse(CookieKeep.validPattern("a;b"))
+        assertTrue(CookieKeep.validPattern("cmplz_*"))
+        assertEquals("CookieConsent=1; Domain=shop.example; Path=/; Max-Age=${CookieKeep.MAX_AGE_SEC}",
+            CookieKeep.restoreHeader("CookieConsent", "1", "shop.example"))
+    }
+
+    // ── v2: error throttle, home, session clock ─────────────────────────────────────────────
+
+    @Test fun `a site that is down reports once per window per host and reason`() {
+        val t = ErrorThrottle(windowMs = 60_000)
+        assertTrue(t.shouldReport("load_error", "https://shop.example/a", 0))
+        assertFalse(t.shouldReport("load_error", "https://shop.example/b", 30_000))
+        assertTrue(t.shouldReport("http_error", "https://shop.example/b", 30_000))
+        assertTrue(t.shouldReport("load_error", "https://other.example/", 30_000))
+        assertTrue(t.shouldReport("load_error", "https://shop.example/a", 60_000))
+    }
+
+    @Test fun `home shows only once the visitor has left the start page`() {
+        val start = "https://shop.example/menu"
+        assertTrue(isStartPage("https://shop.example/menu", start))
+        assertTrue(isStartPage("https://SHOP.example/menu/#top", start))
+        assertTrue(isStartPage(null, start))
+        assertFalse(isStartPage("https://shop.example/menu/item/3", start))
+        assertFalse(isStartPage("https://shop.example/menu?page=2", start))
+    }
+
+    @Test fun `engaged time ends at the last activity, not at the reset`() {
+        val k = KioskIdle(60_000, 10_000)
+        k.onTouch(1_000)
+        k.onTouch(20_000)
+        k.tick(90_000)
+        assertEquals(20_000, k.lastActivityAt)
+    }
+
+    // ── v2: session queue ───────────────────────────────────────────────────────────────────
+
+    private fun rec(id: String, w: String? = "w1") = KioskSessionRecord(id, w, 1_700_000_000, 42, "idle", 3)
+
+    @Test fun `session queue is bounded, ordered, deduped and survives a round trip`() {
+        val q = KioskSessionQueue(cap = 3)
+        listOf("a", "b", "b", "c", "d").forEach { q.add(rec(it)) }
+        assertEquals(listOf("b", "c", "d"), q.peek().map { it.id })      // oldest dropped, duplicate ignored
+        q.ack(listOf("c"))
+        val back = KioskSessionQueue.fromJson(q.toJson())
+        assertEquals(listOf("b", "d"), back.peek().map { it.id })
+        assertEquals(rec("b"), back.peek().first())
+        q.add(rec("n", null))
+        assertNull(KioskSessionQueue.fromJson(q.toJson()).peek().last().widgetId)
+        assertEquals(0, KioskSessionQueue.fromJson("garbage").size)
+    }
 }

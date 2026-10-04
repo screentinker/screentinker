@@ -2265,6 +2265,19 @@ paths:
       responses:
         '200':
           description: 'Summary object: overall, by_content, by_device, by_hour, by_day.'
+  /reports/kiosk-sessions:
+    get:
+      tags: [reports]
+      summary: Interactive web page usage (visitor sessions)
+      description: 'Visitor sessions on interactive webpage widgets: overall, by_widget (sessions, average engaged seconds, pages, sessions per active day) and by_day (UTC). Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: device_id, in: query, schema: { type: string } }
+        - { name: start, in: query, schema: { type: string } }
+        - { name: end, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: 'Usage object: period, overall, by_widget, by_day.'
   /reports/export:
     get:
       tags: [reports]

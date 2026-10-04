@@ -2202,6 +2202,28 @@ const migrations = [
    * has an aggregate to read instead, so it should not need to come back.
    */
   'DROP INDEX IF EXISTS idx_play_logs_content',
+  /*
+   * #473 v2: one row per visitor session on an interactive web page (Reports > Interactive
+   * sessions). client_id is the player's own record id, UNIQUE per device, so a batch the player
+   * resends after a lost ack is ignored rather than counted twice. workspace_id is snapshotted at
+   * insert, like play_logs, so moving a screen later does not move its history. Pruned on
+   * config.playLogRetentionDays (services/heartbeat).
+   */
+  `CREATE TABLE IF NOT EXISTS kiosk_sessions (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     device_id    TEXT NOT NULL,
+     workspace_id TEXT,
+     widget_id    TEXT,
+     client_id    TEXT NOT NULL,
+     started_at   INTEGER NOT NULL,
+     duration_sec INTEGER NOT NULL,
+     end_reason   TEXT,
+     pages        INTEGER,
+     received_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     UNIQUE (device_id, client_id)
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_kiosk_sessions_ws_time ON kiosk_sessions(workspace_id, started_at)',
+  'CREATE INDEX IF NOT EXISTS idx_kiosk_sessions_time ON kiosk_sessions(started_at)',
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

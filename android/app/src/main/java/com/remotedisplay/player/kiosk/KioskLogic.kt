@@ -22,6 +22,14 @@ data class KioskConfig(
     val allowedDomains: List<String>,
     /** Optional: below this Chromium major the page is not attempted and a clear card is shown. */
     val minWebView: Int?,
+    /** v2: keep the sites' cookie-consent choice across resets (see [CookieKeep]). */
+    val keepConsent: Boolean = false,
+    /** v2: extra cookie names (or `prefix*`) to keep, on top of the built-in consent list. */
+    val keepCookieNames: List<String> = emptyList(),
+    /** v2: a button back to the start page, shown once the visitor has left it. */
+    val homeButton: Boolean = true,
+    /** v2: the widget's existing Zoom %, as a layout zoom (the page sees a smaller viewport). */
+    val zoomPct: Int = 100,
 ) {
     companion object {
         const val DEFAULT_IDLE_SEC = 60
@@ -52,7 +60,18 @@ data class KioskConfig(
                 if (n !in domains) domains.add(n)
             }
             val minWv = if (o.has("min_webview")) o.optInt("min_webview", 0).takeIf { it > 0 } else null
-            return KioskConfig(url, idle, warn, domains, minWv)
+            val names: List<String> = when (val n = o.opt("keep_cookie_names")) {
+                is org.json.JSONArray -> (0 until n.length()).map { n.optString(it, "") }
+                is String -> n.split(',', '\n', ' ')
+                else -> emptyList()
+            }.map { it.trim() }.filter { CookieKeep.validPattern(it) }.distinct().take(50)
+            return KioskConfig(
+                url, idle, warn, domains, minWv,
+                keepConsent = o.optBoolean("keep_consent", false),
+                keepCookieNames = names,
+                homeButton = o.optBoolean("home_button", true),
+                zoomPct = o.optInt("zoom", 100).let { if (it <= 0) 100 else it.coerceIn(25, 400) },
+            )
         }
     }
 }
@@ -86,6 +105,86 @@ object KioskNav {
         val host = hostOf(url) ?: return false
         return allowed.any { d -> host == d || host.endsWith(".$d") }
     }
+}
+
+/**
+ * v2 "keep the cookie-consent choice". On reset everything is wiped as before EXCEPT the consent
+ * cookies of the allowed sites, which are read just before the wipe and written back after it.
+ *
+ * ⚠️ BY NAME, NEVER "ALL COOKIES OF THE ALLOWED DOMAIN". The allowed domain is also where a visitor
+ * logs in and fills a basket; keeping its cookies wholesale would hand the next visitor the last
+ * one's account, which is the thing the wipe exists to prevent. Only names known to belong to a
+ * consent tool (plus the operator's own list) survive.
+ *
+ * Android's CookieManager only returns `name=value` pairs, so the restored cookie is set on the host
+ * it was read from (Domain=host, Path=/) with a fresh Max-Age. That is enough for a consent check.
+ */
+object CookieKeep {
+    /** Consent tools seen in the wild. Exact names, or a prefix ending in `*`. */
+    val BUILT_IN: List<String> = listOf(
+        "CookieConsent", "CookieConsentBulkSetting-*",               // Cookiebot
+        "OptanonConsent", "OptanonAlertBoxClosed",                    // OneTrust
+        "euconsent-v2", "euconsent", "addtl_consent", "__cmpcc*",     // IAB TCF
+        "cookieyes-consent", "CookieLawInfoConsent", "cookielawinfo-checkbox-*", "viewed_cookie_policy",
+        "cmplz_*", "complianz_*",                                     // Complianz
+        "borlabs-cookie", "BorlabsCookie",                            // Borlabs
+        "_iub_cs-*",                                                  // iubenda
+        "didomi_token",                                               // Didomi (+ euconsent-v2)
+        "cookieconsent_status", "cookieconsent_*",                    // Osano / cookieconsent.js
+        "moove_gdpr_popup", "gdpr_consent*", "cookie_consent*", "cookie-consent*", "cookies_accepted",
+        "klaro", "axeptio_cookies", "axeptio_authorized_vendors", "axeptio_all_vendors",
+        "tarteaucitron", "CONSENT", "SOCS",                           // Google's own
+        "consentUUID", "consentDate", "_cookie_consent*",
+    ).distinct()
+
+    fun validPattern(p: String): Boolean = Regex("^[A-Za-z0-9_.-]+[*]?\$").matches(p) && p != "*"
+
+    fun matches(name: String, patterns: List<String>): Boolean = patterns.any { p ->
+        if (p.endsWith("*")) name.startsWith(p.dropLast(1)) else name == p
+    }
+
+    /** `a=1; b=2` (CookieManager.getCookie) -> the pairs whose name is kept. */
+    fun select(cookieHeader: String?, patterns: List<String>): List<Pair<String, String>> {
+        if (cookieHeader.isNullOrBlank() || patterns.isEmpty()) return emptyList()
+        return cookieHeader.split(';').mapNotNull { part ->
+            val i = part.indexOf('=')
+            if (i <= 0) return@mapNotNull null
+            val name = part.substring(0, i).trim()
+            val value = part.substring(i + 1).trim()
+            if (name.isEmpty() || !matches(name, patterns)) null else name to value
+        }.distinctBy { it.first }
+    }
+
+    /**
+     * The Set-Cookie string written back after the wipe. Domain= so a choice made on www.shop.example
+     * still applies on shop.example's other hosts, as the consent tool's own cookie normally does.
+     */
+    fun restoreHeader(name: String, value: String, domain: String): String =
+        "$name=$value; Domain=$domain; Path=/; Max-Age=$MAX_AGE_SEC"
+
+    const val MAX_AGE_SEC = 180 * 86400
+}
+
+/**
+ * v2 load-error reporting: one dashboard incident per (reason, host) per window, so a site that is
+ * down does not write an incident every time the playlist comes round to it.
+ */
+class ErrorThrottle(private val windowMs: Long = 15 * 60_000L) {
+    private val last = HashMap<String, Long>()
+    fun shouldReport(reason: String, url: String?, now: Long): Boolean {
+        val key = reason + "|" + (KioskNav.hostOf(url) ?: "")
+        val prev = last[key]
+        if (prev != null && now - prev < windowMs) return false
+        last[key] = now
+        if (last.size > 64) last.entries.removeAll { now - it.value >= windowMs }
+        return true
+    }
+}
+
+/** Is [current] still the start page? Fragment and a trailing slash don't count as leaving it. */
+fun isStartPage(current: String?, start: String): Boolean {
+    fun norm(u: String) = u.substringBefore('#').trimEnd('/').lowercase()
+    return current == null || current == "about:blank" || norm(current) == norm(start)
 }
 
 /** Chromium major version from a WebView user agent, e.g. "Chrome/83.0.4103.106" -> 83. */
@@ -126,6 +225,8 @@ class KioskIdle(private val idleMs: Long, private val warnMs: Long) {
     private var lastActivity = 0L
 
     val inSession: Boolean get() = phase != Phase.PASSIVE
+    /** The last touch or media keep-alive: where a session's ENGAGED time ends. */
+    val lastActivityAt: Long get() = lastActivity
 
     fun onTouch(now: Long): Action {
         lastActivity = now

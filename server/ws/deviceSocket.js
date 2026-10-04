@@ -155,6 +155,12 @@ const { normalizeBackfillPlay, boundBatch, closeStrandedPlays } = require('../li
 // player reports comes from its CACHED playlist and can outlive the row it names.
 const contentExists = db.prepare('SELECT 1 FROM content WHERE id = ?').pluck();
 const widgetExists = db.prepare('SELECT 1 FROM widgets WHERE id = ?').pluck();
+// #473 v2 interactive-page sessions ('kiosk-sessions' applier).
+const KIOSK_END_REASONS = new Set(['idle', 'error', 'interrupted']);
+const _deviceWorkspace = db.prepare('SELECT workspace_id FROM devices WHERE id = ?');
+const _widgetWorkspace = db.prepare('SELECT workspace_id FROM widgets WHERE id = ?');
+const _insertKioskSession = db.prepare(`INSERT OR IGNORE INTO kiosk_sessions
+  (device_id, workspace_id, widget_id, client_id, started_at, duration_sec, end_reason, pages) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
 
 // #142 dedup + #143 per-device rate budget + global loop-lag valve for content-acks
 // all live in one control: lib/content-ack-limiter.js (required above as
@@ -1349,6 +1355,41 @@ const EVENT_APPLIERS = Object.freeze({
       db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, ?, ?, ?)")
         .run(deviceId, type, reason ? String(reason).slice(0, 64) : null, detail ? String(detail).slice(0, 500) : null);
     } catch (_) { /* incident feed is best-effort; never crash the socket */ }
+  },
+
+  /*
+   * #473 v2: visitor sessions on interactive web pages, batched and queued on the player (it keeps
+   * a record until this ack names it, so sessions while offline still arrive). Every well-formed id
+   * in the batch is acked — stored, already stored, or refused as malformed — because a record the
+   * server will never accept must not sit at the head of the player's queue for ever.
+   *
+   * ⚠️ widget_id is kept only when that widget belongs to the device's workspace (or is a shared
+   * template). Otherwise a player could attribute its sessions to another tenant's widget id.
+   */
+  'kiosk-sessions'(deviceId, data, ctx) {
+    const list = Array.isArray(data && data.sessions) ? data.sessions.slice(0, 100) : [];
+    if (!list.length) return;
+    const ws = (_deviceWorkspace.get(deviceId) || {}).workspace_id || null;
+    const nowS = Math.floor(Date.now() / 1000);
+    const ids = [];
+    let written = 0;
+    for (const r of list) {
+      const id = r && typeof r.id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(r.id) ? r.id : null;
+      if (!id) continue;
+      ids.push(id);
+      const started = Number(r.started_at);
+      if (!Number.isFinite(started) || started < nowS - 400 * 86400 || started > nowS + 86400) continue;
+      const dur = Math.min(86400, Math.max(1, Math.floor(Number(r.duration_sec) || 1)));
+      const reason = KIOSK_END_REASONS.has(r.end_reason) ? r.end_reason : 'interrupted';
+      const pages = Math.min(10000, Math.max(1, Math.floor(Number(r.pages) || 1)));
+      let wid = typeof r.widget_id === 'string' ? r.widget_id.slice(0, 64) : null;
+      if (wid) {
+        const w = _widgetWorkspace.get(wid);
+        if (!w || (w.workspace_id && w.workspace_id !== ws)) wid = null;
+      }
+      try { written += _insertKioskSession.run(deviceId, ws, wid, id, Math.floor(started), dur, reason, pages).changes; } catch (_) { /* best effort */ }
+    }
+    try { ctx.reply('device:kiosk-sessions-ack', { ids, written }); } catch (_) { /* best effort */ }
   },
 
   'connectivity-report'(deviceId, data, ctx) {
@@ -2664,6 +2705,8 @@ module.exports = function setupDeviceSocket(io) {
     socket.on('device:connectivity-report', (data) => dispatch('connectivity-report', data));
 
     socket.on('device:play-event', (data) => dispatch('play-event', data));
+
+    socket.on('device:kiosk-sessions', (data) => dispatch('kiosk-sessions', data));
 
     /*
      * Interactive terminal output (lib/pty-relay.js). NOT a dispatch(): it writes nothing, is never

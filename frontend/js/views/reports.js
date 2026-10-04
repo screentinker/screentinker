@@ -170,7 +170,13 @@ export async function render(container) {
           </table>
           </div>
         </div>
+
+        <div id="kioskReportSection"></div>
       `;
+
+      // #473 v2: interactive web page usage. Its own request, so a server without the endpoint
+      // (or an error in it) leaves the play report above untouched.
+      renderKioskSessions(deviceId, start, end).catch(() => {});
 
       renderBarChart('dailyChart', summary.by_day.map(d => ({
         label: new Date(d.day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -187,6 +193,45 @@ export async function render(container) {
       content.innerHTML = `<div class="empty-state"><h3>${t('report.error')}</h3><p>${esc(err.message)}</p></div>`;
     }
   }
+}
+
+// #473 v2: "Interactive sessions". Rendered only when the range has any, so workspaces without
+// interactive pages see no change.
+async function renderKioskSessions(deviceId, start, end) {
+  const host = document.getElementById('kioskReportSection');
+  if (!host) return;
+  const k = await API(`/reports/kiosk-sessions?device_id=${encodeURIComponent(deviceId || '')}&start=${encodeURIComponent(start || '')}&end=${encodeURIComponent(end || '')}`);
+  if (!k || !k.overall || !k.overall.sessions) { host.innerHTML = ''; return; }
+  const th = (txt, right) => `<th style="padding:8px;text-align:${right ? 'right' : 'left'};color:var(--text-muted)">${txt}</th>`;
+  const td = (txt, right) => `<td style="padding:8px${right ? ';text-align:right' : ''}">${txt}</td>`;
+  host.innerHTML = `
+    <div class="settings-section" style="margin-top:20px">
+      <h3 style="font-size:14px;margin-bottom:4px">${t('report.kiosk.title')}</h3>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${t('report.kiosk.hint')}</div>
+      <div class="info-grid" style="margin-bottom:16px">
+        <div class="info-card"><div class="info-card-label">${t('report.kiosk.sessions')}</div><div class="info-card-value">${Number(k.overall.sessions).toLocaleString()}</div></div>
+        <div class="info-card"><div class="info-card-label">${t('report.kiosk.avg_length')}</div><div class="info-card-value small">${formatDuration(k.overall.avg_duration_sec)}</div></div>
+        <div class="info-card"><div class="info-card-label">${t('report.kiosk.avg_pages')}</div><div class="info-card-value small">${esc(String(k.overall.avg_pages))}</div></div>
+      </div>
+      <h3 style="font-size:13px;margin-bottom:8px">${t('report.kiosk.per_day')}</h3>
+      <div id="kioskDailyChart" style="margin-bottom:16px"></div>
+      <div class="table-wrap">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          ${th(t('report.kiosk.col.widget'))}${th(t('report.kiosk.sessions'), 1)}${th(t('report.kiosk.col.per_active_day'), 1)}${th(t('report.kiosk.avg_length'), 1)}${th(t('report.kiosk.avg_pages'), 1)}${th(t('report.kiosk.col.errors'), 1)}
+        </tr></thead>
+        <tbody>
+          ${k.by_widget.map((w) => `<tr style="border-bottom:1px solid var(--border)">
+            ${td(esc(w.widget_name || t('report.kiosk.deleted_widget')))}${td(Number(w.sessions).toLocaleString(), 1)}${td(esc(String(w.sessions_per_day)), 1)}${td(formatDuration(w.avg_duration_sec), 1)}${td(esc(String(w.avg_pages)), 1)}${td(Number(w.ended_by_error || 0), 1)}
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+  renderBarChart('kioskDailyChart', k.by_day.map((d) => ({
+    label: new Date(d.day + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+    value: d.sessions,
+  })));
 }
 
 function renderBarChart(containerId, data) {

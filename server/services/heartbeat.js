@@ -178,6 +178,14 @@ async function pruneDeviceEvents() {
   return (await chunkedDelete((lim) => _delDeviceEvents.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
 }
 
+// #473 v2: interactive-page sessions follow the proof-of-play retention window. They are small (one
+// row per visitor, not per loop) and have no rollup, so they are simply aged out.
+const _delKioskSessions = db.prepare('DELETE FROM kiosk_sessions WHERE rowid IN (SELECT rowid FROM kiosk_sessions WHERE started_at < ? LIMIT ?)');
+async function pruneKioskSessions() {
+  const cutoff = Math.floor(Date.now() / 1000) - Math.round(config.playLogRetentionDays * 86400);
+  return (await chunkedDelete((lim) => _delKioskSessions.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
+}
+
 // Per-device row cap: even within the retention window a chatty device (display on/off
 // flapping, reconnect churn) shouldn't accumulate unbounded incident rows. Trim any
 // device over the cap down to its most-recent DEVICE_EVENTS_PER_DEVICE_CAP rows. Only
@@ -331,6 +339,7 @@ async function runMaintenance() {
     await pruneStatusLog({ bandGate: true });   // per-device chunked; own re-entrancy
     await pruneTelemetryRetention({ bandGate: true });   // #240 device_telemetry age sweep (per-device chunked)
     await pruneDeviceEvents();                   // offline-cause log: incident-feed age retention (chunked)
+    await pruneKioskSessions();                  // #473 v2: interactive-page sessions, play-log retention
     await capDeviceEvents();                     // offline-cause log: per-device incident row cap
     await pruneUsageDaily();                     // #146 BILLING rollup retention (chunked)
     await expireStrandedPlaysChunked();          // #307 close plays nothing else will ever close
