@@ -3477,4 +3477,11 @@ export default {
   'repeat.every_min': 'every {n} min',
   'repeat.hint': 'Play this item more often: it is spread through the loop at about this interval. Sequential order only.',
   'repeat.toast_saved': 'Saved. Publish to put it on screens.',
+  // #473 interactive web pages (webpage widget)
+  'widget.web.interactive': 'Interactive (walk-up kiosk)',
+  'widget.web.interactive_hint': 'Visitors can tap, scroll and fill in forms. The playlist pauses while someone is using the page, and after they leave the page resets and everything they did is wiped. Android players, fullscreen only; elsewhere the page shows as usual.',
+  'widget.web.idle_timeout': 'Reset after this many seconds without a touch',
+  'widget.web.allowed_domains': 'Other sites visitors may open',
+  'widget.web.allowed_domains_ph': 'e.g. checkout.example.com, maps.example.com',
+  'widget.web.allowed_domains_hint': "The page's own site is always allowed. Links to anywhere else are blocked.",
 };

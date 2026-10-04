@@ -69,6 +69,8 @@ class MainActivity : AppCompatActivity() {
     private var slideAudioPlayer: SlideAudioPlayer? = null
     private lateinit var updateChecker: UpdateChecker
     private var zoneManager: ZoneManager? = null
+    // #473: walk-up interactive web pages (fullscreen only; passive in zones, walls and groups).
+    private var kiosk: com.remotedisplay.player.kiosk.KioskSession? = null
     private lateinit var wallController: WallController
     private lateinit var groupSchedule: GroupScheduleController
     private lateinit var pipOverlay: PipOverlay // #109: PiP overlay layer
@@ -134,6 +136,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         config = ServerConfig(this)
+        // #473: a visitor's session cut off by a power cut or crash is wiped before anything loads.
+        com.remotedisplay.player.kiosk.KioskSession.wipeIfDirty(this)
         // #device-owner: undo any prior restrictive permitted-accessibility policy set by an older
         // build. Runs on every launch (cheap, idempotent, owner-guarded) so a panel enrolled before
         // this change gets the restriction cleared after it OTA-updates — no re-provision needed.
@@ -299,12 +303,12 @@ class MainActivity : AppCompatActivity() {
         playlistController = PlaylistController(
             onItemChanged = { item -> item?.let { playItem(it) } },
             // #74/#75: clear the last frame when going idle (else a now-filtered item lingers on screen)
-            onPlaylistEmpty = { if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
+            onPlaylistEmpty = { kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
             onRequestRefresh = { wsService?.requestPlaylistRefresh() },
-            onNothingScheduled = { if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.nothing_scheduled)) },
+            onNothingScheduled = { kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.nothing_scheduled)) },
             // Screen-resilience: the defined "waiting for content" state — ONLY on a fresh device
             // with nothing to show yet (never while content is on screen; that path keeps current).
-            onWaitingForContent = { if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
+            onWaitingForContent = { kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
             // Proof-of-play: forward play_start/play_end to the server (device:play-event) so this
             // device shows Total Plays / Hours in Reports. Widgets have no content_id, so key on the
             // widget id instead — keeping play_start and play_end consistent so the row's duration closes.
@@ -317,6 +321,14 @@ class MainActivity : AppCompatActivity() {
             // restarts the playlist at item 1, so anything after it never gets a turn.
             loadResume = { config.resumeIndex.takeIf { it >= 0 }?.let { it to config.resumeAt } },
             saveResume = { index, atMs -> config.resumeIndex = index; config.resumeAt = atMs }
+        )
+        // #473: interactive web pages mount inside rootLayout, so orientation transforms apply.
+        kiosk = com.remotedisplay.player.kiosk.KioskSession(
+            activity = this,
+            container = rootView as ViewGroup,
+            onHold = { playlistController.hold() },
+            onRelease = { playlistController.release() },
+            onSkip = { playlistController.next() },
         )
         // Screen-resilience: an item is playable only when its content is actually available —
         // a widget, a remote stream, or a fully-downloaded local file. A not-yet/failed download is
@@ -862,6 +874,7 @@ class MainActivity : AppCompatActivity() {
                 val detail = data.optString("detail", "Please upgrade your plan.")
                 handler.post {
                     showStatus("$message\n$detail")
+                    kiosk?.hide()
                     if (::mediaPlayer.isInitialized) mediaPlayer.stop()
                 }
             } else {
@@ -913,6 +926,8 @@ class MainActivity : AppCompatActivity() {
                 com.remotedisplay.player.util.DebugLog.i("Player", "Layout: VIDEO-WALL (${assignments.length()} assignments)")
                 if (zoneManager?.hasZones() == true) zoneManager?.cleanup()
                 groupSchedule.exit()                 // wall and group are mutually exclusive
+                kiosk?.hide()                        // interactive pages render passively on a wall
+                playlistController.dropHold()        // a wall never holds; clear any interactive hold
                 wallController.apply(parseWallConfig(wallObj))
                 playlistController.updatePlaylist(assignments, data.optString("playback_order", "sequential"))
             } else {
@@ -1120,6 +1135,9 @@ class MainActivity : AppCompatActivity() {
         // Provide screenshot callback to service (composite capture on main thread).
         // Capture the window content (not just rootView) so the reparented #109 PiP layer
         // is included in remote-view screenshots.
+        // #473: while a visitor uses an interactive page the operator sees a blank frame and cannot
+        // inject input — they would otherwise watch (or type into) a stranger's form.
+        wsService?.privacyActive = { kiosk?.sessionActive == true }
         wsService?.onCaptureScreenshot = {
             screenshotCapture.captureView(captureRoot, 40)
         }
@@ -1375,6 +1393,22 @@ class MainActivity : AppCompatActivity() {
         // Widget content - render fullscreen in a WebView (single-zone / fullscreen
         // layouts; multi-zone widgets go through ZoneManager). Previously unhandled,
         // so widgets were blank/broken in default-fullscreen and the fullscreen template.
+        // #473: an interactive webpage item plays in its own fresh WebView (KioskSession), loading the
+        // site TOP-LEVEL so its forms, cookies and navigation work and the allowlist can see them.
+        // Fullscreen only: in a wall or a synced group one screen cannot hold the shared timeline, so
+        // there the item renders passively through the normal widget path below.
+        val kioskCfg = if (item.isWidget) com.remotedisplay.player.kiosk.KioskConfig.parse(item.widgetType, item.widgetConfig) else null
+        val kioskAllowed = kioskCfg != null && !playlistController.isFollower &&
+            !(::wallController.isInitialized && wallController.isActive) &&
+            !(::groupSchedule.isInitialized && groupSchedule.isActive)
+        if (kioskAllowed && kiosk != null) {
+            mediaPlayer.stop()
+            kiosk?.show(item.itemKey, kioskCfg!!)
+            wsService?.sendPlaybackState(item.widgetId ?: "", 0f)
+            return
+        }
+        kiosk?.hide()
+
         if (item.isWidget) {
             // rev makes the URL change when — and only when — the widget's content changed, so an
             // edit reloads while an untouched widget still hits the no-flash reuse path.
@@ -1520,6 +1554,7 @@ class MainActivity : AppCompatActivity() {
      *  later identical server payload is a no-op. Call on the main thread. */
     private fun applyMultiZoneLayout(layoutZones: org.json.JSONArray, layoutId: String, assignments: org.json.JSONArray) {
         hideStatus()
+        kiosk?.hide()
         if (::mediaPlayer.isInitialized) mediaPlayer.stop()
         playlistController.stop()
         playerView.visibility = View.GONE
@@ -2037,6 +2072,7 @@ class MainActivity : AppCompatActivity() {
         // change outside the ones we handle) TWO controllers were reporting playback for one screen
         // — inflating Total Plays and Hours in Reports, and racing over the resume position that
         // #234 relies on. Widget items also re-entered showWidget on a WebView nobody owned.
+        kiosk?.hide()
         if (::playlistController.isInitialized) playlistController.stop()
         // Belt and braces: controller.stop() already releases these, but two ExoPlayers on the main
         // looper are exactly the kind of thing that outlives an Activity if the controller never got

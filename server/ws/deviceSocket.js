@@ -442,6 +442,11 @@ function refreshWidgetRevs(assignments) {
       const rev = facts.rev ?? a.widget_rev ?? 0;
       a.widget_rev = rev;
       a.widget_allow_same_origin = Number(facts.same_origin || 0) === 1;
+      // #473: an interactive webpage is configured by its widget_config ON THE PLAYER (start URL,
+      // idle timeout, allowed domains), so the config must be as fresh as the rev that tells the
+      // player to remount — otherwise an edit reloads the page with the settings from the last
+      // publish. Webpage widgets only: other widgets render from the server and ignore it here.
+      if (a.widget_type === 'webpage' && typeof facts.config === 'string') a.widget_config = facts.config;
     } catch (_) { /* keep published */ }
   }
 }
