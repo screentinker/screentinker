@@ -47,9 +47,18 @@ const CAPABILITIES = [
   'playback.bundle',
   /* A webpage widget with `interactive: true` played as a walk-up kiosk page (#473): touch reaches
    * the site, the playlist holds while a visitor uses it, and an idle reset wipes the session.
-   * Android only, fullscreen only. In NO baseline: every other player still renders the page
-   * passively through the widget iframe, which is exactly the behaviour with the switch off. */
+   * FULL support: the site loads TOP-LEVEL in a browser the player controls, so the navigation
+   * allowlist is enforced and the wipe is real. Android, the native Pi/Windows player, and BrightSign
+   * when its host can open a second widget. Fullscreen only. In NO baseline: every other player
+   * still renders the page passively through the widget iframe, exactly as with the switch off. */
   'playback.web_interactive',
+  /* The SAME switch on a player that is itself a web page (web player, webOS, Tizen, BrightSign on
+   * an older host): the site runs in an iframe the player owns. Hold, idle reset, Home, zoom and
+   * usage counts work; but sites that refuse framing stay blank, and the player CANNOT enforce the
+   * allowlist or wipe the site's cookies/storage — so a visitor's login may survive the reset. A
+   * player declares this OR playback.web_interactive, never both, and the dashboard tells the
+   * operator which one a screen has. In NO baseline. */
+  'playback.web_interactive_framed',
   // audio
   'audio.mute', 'audio.volume',
   /* A slide's voiceover and a deck's music bed. Declared by a player that owns those audio
