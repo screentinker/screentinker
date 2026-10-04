@@ -839,7 +839,7 @@ const SMART_RULES_ERROR = 'smart_rules must be { match: "all"|"any", rules: [{ f
 router.post('/smart-preview', (req, res) => {
   if (!req.workspaceId) return res.status(400).json({ error: 'No active workspace' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
-  if (!ws || !accessContext(req.user.id, req.user.role, ws)) return res.status(403).json({ error: 'Access denied' });
+  if (!ws || !resourceAccess(req, ws)) return res.status(403).json({ error: 'Access denied' });
   const rules = smartPlaylist.normalizeRules(req.body && req.body.smart_rules);
   if (!rules) return res.status(400).json({ error: SMART_RULES_ERROR });
   const rows = smartPlaylist.matchContent(db, { workspace_id: req.workspaceId, user_id: req.user.id }, rules);
