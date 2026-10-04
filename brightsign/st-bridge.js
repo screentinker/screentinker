@@ -976,6 +976,64 @@
     onHostMessage: function (fn) { if (typeof fn === 'function') listeners.push(fn); },
 
     /*
+     * #473 interactive web pages, TOP-LEVEL. The host (autorun.brs) can open a SECOND roHtmlWidget
+     * pointed at the site, above this one, with its own storage directory per session — so the wipe
+     * and the navigation allowlist are real, which an <iframe> in this page can never make them.
+     *
+     * Only when the host SAID so in its probe answer (`kiosk_toplevel`). An older autorun.brs, a
+     * second output, or no host at all answers nothing, and the player frames the page instead.
+     *
+     * Contract (flat objects only: PostBSMessage/PostJSMessage do not carry nested values):
+     *   page -> host  kiosk-open {url, zoom, inject, session}  kiosk-close {wipe, session}
+     *                 kiosk-keepalive {session}  kiosk-home {}  kiosk-goto {url}  kiosk-eval {code}
+     *   host -> page  kiosk-opened {session, ok}  kiosk-closed {session, wiped}  and, relayed from the
+     *                 kiosk page's injected script: kiosk-activity / kiosk-nav / kiosk-blocked /
+     *                 kiosk-error / kiosk-consent / kiosk-loaded / kiosk-newwindow  (all {session, ...})
+     */
+    kioskSupported: function () {
+      // How a BrightScript Boolean arrives through PostJSMessage is not documented: accept the shapes.
+      var k = probe ? probe.kiosk_toplevel : null;
+      return !!(port && (k === true || k === 'true' || k === '1' || k === 1));
+    },
+
+    /**
+     * Ask the host to open the page. Resolves TRUE only on the host's kiosk-opened{ok:"1"} for this
+     * session within `timeoutMs` — page->host messaging has been seen to stop working after load on
+     * an XT245, and a request that silently went nowhere must fall back to the framed mode rather
+     * than leave the visitor in front of a page the player cannot hear.
+     */
+    kioskOpen: function (params, timeoutMs) {
+      var p = params || {};
+      return new Promise(function (resolve) {
+        if (!port) { resolve(false); return; }
+        var settled = false;
+        var timer = global.setTimeout(function () { if (!settled) { settled = true; resolve(false); } }, timeoutMs || 4000);
+        var onMsg = function (msg) {
+          if (settled || !msg || msg.type !== 'kiosk-opened' || msg.session !== p.session) return;
+          settled = true;
+          // One open, one listener: never accumulate. Removed after this dispatch, not during it.
+          global.setTimeout(function () { var at = listeners.indexOf(onMsg); if (at >= 0) listeners.splice(at, 1); }, 0);
+          try { global.clearTimeout(timer); } catch (e) { /* ignore */ }
+          resolve(msg.ok === '1');
+        };
+        listeners.push(onMsg);
+        if (!post({ type: 'kiosk-open', url: String(p.url || ''), zoom: String(p.zoom || '1'),
+          inject: String(p.inject || ''), session: String(p.session || '') })) {
+          settled = true;
+          try { global.clearTimeout(timer); } catch (e) { /* ignore */ }
+          resolve(false);
+        }
+      });
+    },
+    // `session` names WHICH page to close, so a retried close can never shut a newer one.
+    kioskClose: function (wipe, session) { return post({ type: 'kiosk-close', wipe: wipe ? '1' : '0', session: String(session || '') }); },
+    // While a kiosk page is open the player says it is alive; the host closes the page on silence.
+    kioskKeepAlive: function (session) { return post({ type: 'kiosk-keepalive', session: String(session || '') }); },
+    kioskHome: function () { return post({ type: 'kiosk-home' }); },
+    kioskGoto: function (url) { return post({ type: 'kiosk-goto', url: String(url || '') }); },
+    kioskEval: function (code) { return post({ type: 'kiosk-eval', code: String(code || '') }); },
+
+    /*
      * Host diagnostics, routed into the channels the player already speaks.
      *
      * The host sees things the page has no API for — the uptime, the wired IP, the video mode

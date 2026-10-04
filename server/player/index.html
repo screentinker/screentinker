@@ -318,6 +318,9 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
   <script src="/player/play-order.js"></script>
+  <!-- #473 interactive web pages: the shared rules, then the web player's session engine. -->
+  <script src="/player/kiosk-logic.js"></script>
+  <script src="/player/kiosk-player.js"></script>
   <script src="/player/unpair-gate.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
@@ -1198,6 +1201,181 @@
         socket.emit('device:event', m);
       } catch (e) {}
     }
+
+    // ==================== #473 interactive web pages ====================
+    // The playlist side of the session engine (kiosk-player.js): hold, release, skip, and the
+    // usage/incident reporting. Mirrors Android's PlaylistController hold()/release() and
+    // WebSocketService flushKioskSessions()/sendKioskError().
+    function kioskKeyOf(item) { return item ? `${itemIdentity(item)}|${item.widget_rev || 0}` : null; }
+    function kioskConfigFor(item) {
+      try {
+        if (!kiosk || !window.KioskLogic || !item || !item.widget_id || item.widget_type !== 'webpage') return null;
+        return window.KioskLogic.parse(item.widget_type, item.widget_config);
+      } catch (e) { return null; }
+    }
+    function kioskPrivacy() { try { return !!(kiosk && kiosk.sessionActive()); } catch (e) { return false; } }
+    function kioskHold() {
+      if (kioskHeld) return;
+      // Only the item the page belongs to may be held. While a buffered swap is still revealing the
+      // NEXT item, the outgoing page is on screen and can be tapped — holding then would pin the
+      // new item, and the page's teardown a moment later would leave a hold nothing ever releases.
+      const key = kioskKeyOf(playlist[currentIndex]);
+      if (!key || !kiosk || !kiosk.isShowingItem(key)) {
+        console.log('[Kiosk] touch on an outgoing interactive page — not holding (the playlist has moved on)');
+        return;
+      }
+      kioskHeld = true;
+      kioskHeldKey = key;
+      if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+      // #157's deadline would tear the page down under the visitor. It waits for the session: the
+      // deferral itself (deferredRotation) stays set, and the release's nextItem() applies it.
+      if (deferredRotationDeadline) { clearTimeout(deferredRotationDeadline); deferredRotationDeadline = null; }
+      console.log('[Kiosk] held on current item (interactive session)');
+    }
+    /*
+     * A session that ended OUTSIDE the release path (the stage was torn down, a trigger or the setup
+     * screen took over): clear the hold WITHOUT advancing — whoever ended it is already moving
+     * playback — and still apply the parked update, or it would be lost. Deferred, never re-entrant:
+     * this runs from inside teardownCurrentMedia, mid-render.
+     */
+    function kioskEndHold(why) {
+      if (!kioskHeld) return;
+      kioskHeld = false;
+      kioskHeldKey = null;
+      const parked = kioskParkedUpdate; kioskParkedUpdate = null;
+      console.log('[Kiosk] hold cleared without advancing (' + (why || 'session interrupted') + ')');
+      if (parked) setTimeout(() => { try { handlePlaylistUpdate(parked); } catch (e) { console.warn('[Kiosk] parked update failed:', e && e.message); } }, 0);
+      else if (deferredRotation && !deferredRotationDeadline) kioskArmDeferredDeadline();
+    }
+    // The #157 safety net, re-armed after a hold suspended it (same body as the one in handlePlaylistUpdate).
+    function kioskArmDeferredDeadline() {
+      deferredRotationDeadline = setTimeout(() => {
+        if (!deferredRotation) return;
+        console.warn('#157: deferred rotation never got an advance — applying it now');
+        deferredRotation = false;
+        const di = deferredSuccessorId ? playlist.findIndex(x => itemIdentity(x) === deferredSuccessorId) : -1;
+        startPlaybackAt(di === -1 ? 0 : di);
+      }, 60000);
+    }
+    // The page left the stage for any reason other than its own reset/failure.
+    function kioskLeaveStage(why) {
+      try {
+        if (!kiosk || !kiosk.isShowing()) return false;
+        kiosk.hide();
+        kioskEndHold(why);
+        return true;
+      } catch (e) { return false; }
+    }
+    /*
+     * Something is about to be shown OVER or INSTEAD OF the stage (a trigger, the status card, the
+     * setup/pairing screen, screen off, and — on BrightSign, where the page is a second widget ABOVE
+     * this whole document — a PiP). The visitor's session ends and the page closes; on BrightSign
+     * that is the only way the overlay can be seen at all. The playlist then carries on.
+     */
+    function kioskYield(why) {
+      if (!kioskLeaveStage(why)) return;
+      console.log('[Kiosk] ' + why + ' — interactive page closed');
+      const item = playlist[currentIndex];
+      if (item && kioskConfigFor(item) && !advanceTimer) scheduleAdvance(nextItem, (item.duration_sec || 30) * 1000);
+    }
+    /** Anything covering the stage now? Then an interactive item renders passively. */
+    function kioskCovered() {
+      // try: triggerActive and screenIsOff are declared below Boot, and boot can render an interactive
+      // first item — a TDZ read there must mean "nothing covers it", never a throw.
+      try {
+        if (triggerActive) return true;
+        if (screenIsOff) return true;
+        if (pipCurrent && kiosk && typeof kiosk.capability === 'function' && kiosk.capability() === 'playback.web_interactive') return true;
+      } catch (e) { return false; }
+      return false;
+    }
+    /** The cover went away: bring the interactive page back if it is still the current item. */
+    function kioskResume() {
+      try {
+        const item = playlist[currentIndex];
+        if (!kiosk || kiosk.isShowing() || !item || !kioskConfigFor(item) || kioskCovered()) return;
+        renderContent(item);
+      } catch (e) { /* the next advance mounts it */ }
+    }
+    /** Clear a hold WITHOUT advancing (the caller is replacing playback anyway). */
+    function kioskDropHold() { kioskHeld = false; kioskHeldKey = null; kioskParkedUpdate = null; }
+    function kioskRelease() {
+      if (!kioskHeld) return;
+      kioskHeld = false;
+      console.log('[Kiosk] released (interactive session over)');
+      const parked = kioskParkedUpdate; kioskParkedUpdate = null;
+      const key = kioskHeldKey; kioskHeldKey = null;
+      if (parked) handlePlaylistUpdate(parked);
+      // Advance off the page the visitor used — unless applying the parked update already moved
+      // playback elsewhere, which would make this a skip. If the update REMOVED the held item it
+      // armed a #157 deferral ("advance when it finishes"): it has finished, so take it now rather
+      // than leave the screen on a closed page until the 60 s deadline.
+      if (deferredRotation || kioskKeyOf(playlist[currentIndex]) === key) nextItem();
+    }
+    function kioskSkip() {
+      // A dead page that is the ONLY playable item would otherwise remount itself in a tight loop.
+      if (peekNextIndex(currentIndex) === currentIndex) {
+        console.log('[Kiosk] the interactive page is the only item — retrying in 60s');
+        scheduleAdvance(() => playCurrentItem(), 60000);
+        return;
+      }
+      nextItem();
+    }
+    // The BrightSign host's top-level kiosk widget, when autorun.brs announced it (probe-result
+    // kiosk_toplevel). Anything else — a browser, webOS, a host that never said so — is framed.
+    function kioskHostAdapter() {
+      if (!BS || typeof BS.kioskSupported !== 'function') return null;
+      return {
+        available: () => { try { return !!BS.kioskSupported(); } catch (e) { return false; } },
+        open: (params, ms) => BS.kioskOpen(params, ms),
+        close: (wipe, session) => BS.kioskClose(wipe, session),
+        keepAlive: (session) => (typeof BS.kioskKeepAlive === 'function' ? BS.kioskKeepAlive(session) : false),
+        event: (code) => BS.kioskEval(code),
+        goto: (url) => BS.kioskGoto(url),
+        onMessage: (fn) => BS.onHostMessage(fn),
+      };
+    }
+    function flushKioskSessions() {
+      if (!kioskQueue || kioskFlushInFlight || !socket?.connected || !config.deviceId) return;
+      const batch = kioskQueue.peek(window.KioskPlayer.BATCH);
+      if (!batch.length) return;
+      kioskFlushInFlight = true;
+      try {
+        socket.emit('device:kiosk-sessions', { device_id: config.deviceId, sessions: batch });
+      } catch (e) { kioskFlushInFlight = false; return; }
+      // An older server never acks: stop waiting after a while so a later flush can retry.
+      clearTimeout(kioskFlushTimer);
+      kioskFlushTimer = setTimeout(() => { kioskFlushInFlight = false; }, 30000);
+    }
+    function onKioskSessionsAck(d) {
+      const ids = Array.isArray(d && d.ids) ? d.ids.filter((x) => typeof x === 'string' && x) : [];
+      if (kioskQueue) kioskQueue.ack(ids);
+      kioskFlushInFlight = false;
+      clearTimeout(kioskFlushTimer);
+      if (ids.length && kioskQueue && kioskQueue.size()) setTimeout(flushKioskSessions, 0);
+    }
+    // A failed interactive page as a dashboard incident (already rate-limited by the engine). The
+    // commonest failure is "no network", exactly when it cannot be sent, so the last few are held.
+    function sendKioskError(reason, detail) {
+      const d = String(detail || '').slice(0, 400);
+      if (socket?.connected && config.deviceId) { emitDeviceEvent('web_error', reason, d); return; }
+      if (kioskHeldErrors) kioskHeldErrors.add(reason, d);
+    }
+    function flushKioskErrors() {
+      if (!kioskHeldErrors) return;
+      for (const [r, d] of kioskHeldErrors.drain()) emitDeviceEvent('web_error', r, d);
+    }
+    // During a session the operator must not watch, or type into, a stranger's form.
+    function sendBlankFrame() {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 160; c.height = 90;
+        const g = c.getContext('2d');
+        g.fillStyle = '#000'; g.fillRect(0, 0, 160, 90);
+        const base64 = c.toDataURL('image/jpeg', 0.4).split(',')[1];
+        if (base64) socket.emit('device:screenshot', { device_id: config.deviceId, image_b64: base64 });
+      } catch (e) { /* nothing sent beats a real frame */ }
+    }
     let playlist = [];
     let currentIndex = -1;
     let imgPreloadCache = {}; // src -> decoded HTMLImageElement, warmed one item ahead (feat/player-image-preload)
@@ -1427,6 +1605,42 @@
     // switch is instant (no black hold). Reused by renderContent when it reaches that index.
     let groupPreloadEl = null;
     let groupPreloadIdx = -1;
+
+    /*
+     * #473 walk-up interactive web pages. A webpage widget whose widget_config parses as interactive
+     * (KioskLogic.parse) plays, FULLSCREEN ONLY, through the session engine in kiosk-player.js
+     * instead of the server's sandboxed render. First touch HOLDS the playlist on the item (no
+     * advance, playlist updates parked and applied on release), the idle countdown resets it.
+     *
+     * ⚠️ Declared HERE, above Boot, like the rest of the player state: boot renders the cached
+     * playlist immediately, and an interactive first item reaches this state from renderContent.
+     * A `let` declared below Boot is the 1.9.32 TDZ brick (player-boot-tdz.test.js).
+     */
+    let kioskHeld = false;
+    let kioskHeldKey = null;
+    let kioskParkedUpdate = null;
+    let kioskFlushInFlight = false;
+    let kioskFlushTimer = null;
+    const kioskStorage = (() => { try { return window.localStorage || null; } catch (e) { return null; } })();
+    const kioskQueue = window.KioskPlayer
+      ? new window.KioskPlayer.SessionQueue(kioskStorage, 'st_kiosk_sessions' + SCREEN_SUFFIX) : null;
+    const kioskHeldErrors = window.KioskPlayer ? new window.KioskPlayer.ErrorHold() : null;
+    const kiosk = (window.KioskPlayer && window.KioskLogic) ? window.KioskPlayer.create({
+      logic: window.KioskLogic, win: window, doc: document,
+      container: () => document.getElementById('playerContainer'),
+      hold: kioskHold, release: kioskRelease, skip: kioskSkip,
+      report: sendKioskError,
+      sessionEnd: (r) => { if (kioskQueue) kioskQueue.add(r); flushKioskSessions(); },
+      storage: kioskStorage, keySuffix: SCREEN_SUFFIX,
+      log: (lvl, msg) => { if (lvl === 'w') console.warn(msg); else console.log(msg); },
+      host: kioskHostAdapter(),
+      // The host failed to open a page once: from now on this run is framed, and the server must
+      // hear the downgraded capability rather than keep offering what the host cannot do.
+      onHostBroken: () => { setTimeout(() => { try { if (socket && socket.connected) register(); } catch (e) {} }, 0); },
+      origin: (() => { try { return window.location.origin; } catch (e) { return ''; } })(),
+    }) : null;
+    // A session cut off by a crash or power cut still counts, as `interrupted`.
+    try { if (kiosk && kioskQueue) { const r = kiosk.recoverOpenSession(); if (r) kioskQueue.add(r); } } catch (e) {}
 
     // #group-sync clock discipline. The server is the time authority (see heartbeat-ack). We keep a
     // smoothed offset so synced_now = Date.now() + clockOffsetMs, and CACHE it in localStorage so a
@@ -2657,6 +2871,10 @@
         saveConfig(config);
         console.log('Registered:', data.device_id);
         flushOfflinePlays();   // #299: authenticated, so any offline backlog can be replayed
+        // #473: interactive-page sessions and incidents queued while offline (or before this boot).
+        kioskFlushInFlight = false;
+        flushKioskSessions();
+        flushKioskErrors();
 
         // feat/offline-cause-log: reconnected after an in-session disconnect -> report the gap length
         // + whether the local link dropped. cold_start:false because the page SURVIVED the gap (a
@@ -2690,6 +2908,9 @@
         // drop the host's boot report on the floor rather than delivering it late.
         wireHostDiagnostics();
       });
+
+      // #473: the server stored these interactive-session ids (or already had them): drop them.
+      socket.on('device:kiosk-sessions-ack', (d) => { try { onKioskSessionsAck(d); } catch (e) {} });
 
       socket.on('device:paired', (data) => {
         config.paired = true;
@@ -2740,6 +2961,7 @@
         // and repair mode would repair nothing.
         try { if (typeof clearVegaIdentity === 'function') clearVegaIdentity(); } catch (e) {}
         saveConfig(config);
+        try { kioskYield('re-pairing'); } catch (e) {}
         document.getElementById('setupScreen').style.display = 'flex';
         document.getElementById('urlForm').style.display = 'block';   // still editable
         document.getElementById('pairingSection').style.display = 'none'; // until a code arrives
@@ -2860,6 +3082,8 @@
       socket.on('device:remote-stop', () => { console.log('Remote stop received'); remoteStreaming = false; stopStreaming(); });
 
       socket.on('device:remote-touch', (data) => {
+        // #473: never type into, or tap on, a visitor's interactive session from the dashboard.
+        if (kioskPrivacy()) { console.log('[Kiosk] remote touch refused — a visitor is using the interactive page'); return; }
         // Simulate click at normalized coordinates within the player
         const container = document.getElementById('playerContainer');
         if (!container) return;
@@ -2871,6 +3095,7 @@
       });
 
       socket.on('device:remote-key', (data) => {
+        if (kioskPrivacy()) { console.log('[Kiosk] remote key refused — a visitor is using the interactive page'); return; }
         console.log('Key:', data.keycode);
         const video = document.querySelector('#playerContainer video');
         switch (data.keycode) {
@@ -3058,6 +3283,7 @@
           return;
         }
         if (action !== 'start') return;
+        if (kioskPrivacy()) { console.log('[Kiosk] live view refused — a visitor is using the interactive page'); return; }
         if (!config || !config.deviceId || !config.deviceToken || !LP.isSupported()) {
           console.log('[live] publish requested but not available on this player'); return;
         }
@@ -3244,6 +3470,7 @@
       triggerTimers = {};
       const was = triggerActive;
       triggerActive = null;
+      if (was) setTimeout(() => { try { if (typeof kioskResume === 'function') kioskResume(); } catch (e) {} }, 0);
       /*
        * ⚠️ REMOVE ONLY OUR OWN BOX. #pipContainer has TWO owners — this and the manual PiP path
        * (pipTeardown) — and both used to do `innerHTML = ''`, so each silently destroyed the
@@ -3366,6 +3593,9 @@
         return false;
       }
       triggerStop('superseded');
+      // #473: an interrupt ends a visitor's interactive session (and closes a BrightSign kiosk
+      // widget, which would otherwise sit above this overlay).
+      try { if (typeof kioskYield === 'function') kioskYield('trigger "' + (trigger.name || '') + '" fired'); } catch (e) {}
 
       const box = document.createElement('div');
       box.className = 'trigger-box';
@@ -4028,6 +4258,9 @@
     function pipShow(p) {
       const container = document.getElementById('pipContainer');
       if (!p || !container) return;
+      // #473: on BrightSign the interactive page is a widget ABOVE this document; a PiP under it
+      // would be invisible. Framed, the PiP simply sits over the frame and the session goes on.
+      try { if (kiosk && kiosk.isShowing() && kiosk.mode() === 'host') kioskYield('PiP shown'); } catch (e) {}
       try {
         pipTeardown(); // single slot, last-show-wins
         const box = document.createElement('div');
@@ -4079,6 +4312,7 @@
       if (pipId && pipCurrent && pipId !== pipCurrent) return;
       const had = !!pipCurrent;
       pipTeardown();
+      if (had) { try { kioskResume(); } catch (e) {} }
       if (had) pipReport('info', 'pip cleared' + (pipId ? ' ' + pipId : ''));
     }
 
@@ -4134,6 +4368,12 @@
         'remote.set_server_url',
         'sync.clock',
       ];
+
+      // #473 interactive web pages: playback.web_interactive only where a BrightSign host opens the
+      // site top-level (real wipe + allowlist); everywhere else the best-effort framed mode, which
+      // declares playback.web_interactive_framed INSTEAD — never both. typeof-guarded: capability
+      // tests extract this function on its own.
+      try { if (typeof kiosk !== 'undefined' && kiosk) caps.push(kiosk.capability()); } catch (e) { /* engine absent */ }
 
       /*
        * ⚠️ Declared from the BOUND LISTENER, not from the flag or the platform. A flag that is on
@@ -4904,6 +5144,16 @@
 
     // ==================== Playlist ====================
     function handlePlaylistUpdate(data) {
+      // #473: a playlist update mid-session would restart the item under someone filling in a form.
+      // Parked (latest wins) and applied by kioskRelease(). A suspension is not parked.
+      if (data && data.suspended) {
+        try { if (kiosk && kiosk.isShowing()) kiosk.hide(); } catch (e) {}
+        if (typeof kioskDropHold === 'function') kioskDropHold();   // the suspension replaces playback
+      } else if (typeof kioskHeld !== 'undefined' && kioskHeld) {
+        kioskParkedUpdate = data;
+        console.log('[Kiosk] playlist update parked until the interactive session ends');
+        return;
+      }
       // Check if device is suspended (trial expired / over limit)
       if (data.suspended) {
         isPlaying = false;
@@ -5168,7 +5418,7 @@
               : null,
             surfaceAttached: !!(container && container.querySelector('video,img,iframe,.wall-stage')),
           };
-          if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === 'function' && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {
+          if (!(typeof kiosk !== 'undefined' && kiosk && kiosk.isShowing()) && window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === 'function' && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {
             console.log('[refresh] media surface lost on no-change refresh — re-attaching current item');
             playCurrentItem();
           } else if (isPlaying) {
@@ -5475,6 +5725,10 @@
     }
 
     function nextItem() {
+      // #473: nothing moves the playlist while a visitor is using an interactive page. kioskRelease()
+      // clears the hold before it advances.
+      // typeof: playback tests extract this function on its own, without the kiosk state.
+      if (typeof kioskHeld !== 'undefined' && kioskHeld) { console.log('[Kiosk] advance ignored — a visitor is using the interactive page'); return; }
       // #157: apply a deferred rotation-out — the removed-but-live item has finished, so rotate
       // into the (already-swapped) list at the preserved successor instead of interrupting.
       if (deferredRotation) {
@@ -5728,6 +5982,9 @@
       // just before one of them mounts its ghost clip over the idle card up to 800ms later (a
       // single-video playlist unassigned while warming loops forever under "Waiting for content").
       renderSeq++;
+      // #473: whatever replaces the stage, an interactive page on it is LEFT (and a visitor's session
+      // ended) through its engine — clearing the container behind its back would strand the session.
+      try { if (typeof kioskLeaveStage === 'function') kioskLeaveStage('the stage was torn down'); } catch (e) { /* never block a teardown */ }
       // On a buffered widget reveal (keep set) the widget's advance/refresh timer was just
       // armed by renderContent and must survive; only a real teardown cancels it.
       if (!keep && advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
@@ -6593,6 +6850,26 @@
       // timer below. Multi-zone widgets go through renderZones; wall+widget keeps the legacy
       // path.
       const isZones = !!(layout && layout.zones && layout.zones.length > 1 && !wallConfig);
+      // #473: an interactive webpage, FULLSCREEN ONLY. In a zone, a wall or a synced group one screen
+      // cannot hold the shared timeline, so there it renders passively through the widget path below.
+      const kioskCfg = (!isZones && !wallConfig && !groupSync && !PREVIEW_MODE && typeof kioskConfigFor === 'function'
+        && !kioskCovered()) ? kioskConfigFor(item) : null;
+      if (kioskCfg) {
+        const key = kioskKeyOf(item);
+        if (!kiosk.isShowingItem(key)) {        // the same item re-issued keeps the visitor's page
+          discardPendingSwap();
+          teardownCurrentMedia();
+          document.getElementById('playerContainer').style.display = 'block';
+          kiosk.show(key, kioskCfg, item.widget_id);
+        }
+        // Plays like any item until touched; the first touch holds (kioskHold cancels this timer).
+        if (!kioskHeld) {
+          const held = peekNextIndex(currentIndex) === currentIndex;
+          if (held) scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
+          else scheduleAdvance(nextItem, (item.duration_sec || 30) * 1000);
+        }
+        return;
+      }
       if (item && item.widget_id && !isZones && !wallConfig) {
         renderWidgetBuffered(item);
         // Group members run no local timer (their schedule tick drives the index).
@@ -7224,6 +7501,8 @@
 
     function captureAndSend() {
       if (!socket?.connected) return;
+      // #473: a visitor's session is private. Screenshots and the live stream get a blank frame.
+      if (typeof kioskPrivacy === 'function' && kioskPrivacy()) { sendBlankFrame(); return; }
       
       // On BrightSign, prefer the HOST's framebuffer capture. An in-page canvas cannot read the
       // hardware plane, so a composite here is a screenshot with the video missing — the exact
@@ -7312,6 +7591,7 @@
     function showStatus(msg) {
       const overlay = document.getElementById('statusOverlay');
       if (!overlay) return;
+      try { if (typeof kioskYield === 'function') kioskYield('status card'); } catch (e) {}
       overlay.style.display = 'flex';
       // #statusText can be GONE: the suspended-account branch replaces the whole overlay with its
       // own markup, which does not contain it. Reading .textContent off null then threw a TypeError
@@ -7486,6 +7766,7 @@
     function toggleScreenOff() {
       let overlay = document.getElementById('screenOffOverlay');
       if (overlay) { overlay.remove(); screenIsOff = false; suppressMedia(false); setDisplayPower(true); return; }
+      try { kioskYield('screen off'); } catch (e) {}
       screenIsOff = true;
       suppressMedia(true);
       setDisplayPower(false);
@@ -7780,6 +8061,8 @@
         }
       } catch (e) { /* the local wipe is the part the operator asked for */ }
 
+      // #473: the pairing screen must not come up under a BrightSign kiosk widget.
+      try { kioskYield('unpaired at the panel'); } catch (e) {}
       // Give the round trip a moment, then wipe regardless.
       setTimeout(() => {
         try {

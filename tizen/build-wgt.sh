@@ -53,6 +53,8 @@ rm -f "$OUT"
 # .wgt always ships the canonical (byte-identical) copy, never a stale duplicate.
 cp ../server/lib/schedule-eval.js js/schedule-eval.js
 cp ../server/lib/play-order.js js/play-order.js
+# #473: the interactive-page rules, same single-source discipline (shared/kiosk-vectors.json tests the source).
+cp ../server/lib/kiosk-logic.js js/kiosk-logic.js
 
 # #299: same single-source discipline for the offline proof-of-play queue — the .wgt must never
 # carry a copy that has drifted from what the server and the web player agree on.

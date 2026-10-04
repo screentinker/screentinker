@@ -70,6 +70,14 @@ class PlaylistController:
         self._retry = _timer(self._on_retry)
         self._retry_mode = None
         self._pending_deadline = _timer(self._on_pending_deadline)
+        # #473: a visitor is using an interactive web page. While HELD nothing moves the playlist on:
+        # no advance timer, no deferred-swap deadline, and a playlist update is PARKED until release —
+        # applying it mid-session would restart the item under someone filling in a form. release()
+        # then applies whatever was parked and advances (Android PlaylistController.hold/release).
+        self.held = False
+        self.held_key = None
+        self.parked_update = None
+        self._releasing = False
 
     # ------------------------------------------------------------------ state
     @property
@@ -150,8 +158,48 @@ class PlaylistController:
         self.current_index = target
         self._play_current()
 
+    # ------------------------------------------------------------------ interactive hold (#473)
+    def hold(self):
+        if self.held:
+            return
+        self.held = True
+        cur = self.current_item
+        self.held_key = cur.key if cur else None
+        self._advance.stop()
+        log.info("held on current item (interactive session)")
+
+    def drop_hold(self):
+        """Clear a hold WITHOUT advancing (the caller is about to replace playback anyway)."""
+        self.held, self.held_key, self.parked_update = False, None, None
+
+    def release(self):
+        if not self.held:
+            return
+        self.held = False
+        log.info("released (interactive session over)")
+        parked, self.parked_update = self.parked_update, None
+        key, self.held_key = self.held_key, None
+        if parked is not None:
+            # ⚠️ Applied WITHOUT re-rendering the held item: if the parked edit bumped its widget_rev,
+            # the same-item path would remount the page only for the next() below to leave it at once
+            # (a double mount and a phantom play row). Leaving it is the point of the release.
+            self._releasing = True
+            try:
+                self.update_playlist(parked[0], parked[1])
+            finally:
+                self._releasing = False
+        # Advance off the page the visitor used — unless applying the parked update already moved
+        # playback elsewhere (it restarted, or the item was removed), which would make this a skip.
+        cur = self.current_item
+        if cur is not None and cur.key == key:
+            self.next()
+
     # ------------------------------------------------------------------ playlist updates
     def update_playlist(self, assignments, order="sequential"):
+        if self.held:
+            log.info("playlist update parked until the interactive session ends")
+            self.parked_update = (assignments, order)
+            return
         if order != self.playback_order:
             self.order_state = play_order.PlayOrderState()
         self.playback_order = order if order in ("shuffle", "weighted") else "sequential"
@@ -206,7 +254,7 @@ class PlaylistController:
                     self.current_index = ni
                     # Same item, new contents: a widget edited in place must re-render (rev is the
                     # only field that separates "same item" from "same thing on screen").
-                    if self.items[ni].widget_rev != playing_rev:
+                    if self.items[ni].widget_rev != playing_rev and not self._releasing:
                         log.info("same item at %d, widget_rev %s -> %s: re-rendering", ni, playing_rev, self.items[ni].widget_rev)
                         self._play_current()
                     return
@@ -272,6 +320,7 @@ class PlaylistController:
 
     def stop(self):
         self.is_running = False
+        self.held, self.held_key, self.parked_update = False, None, None   # a stop ends any hold
         self._advance.stop()
         self._retry.stop()
         self._pending_deadline.stop()
@@ -282,6 +331,8 @@ class PlaylistController:
         self.logged_item = None
 
     def next(self):
+        if self.held:
+            return
         if self.pending_items is not None:
             p, self.pending_items = self.pending_items, None
             self._pending_deadline.stop()
@@ -382,6 +433,9 @@ class PlaylistController:
         self.logged_item = None
 
     def _schedule_advance(self, delay_ms):
+        self._advance.stop()
+        if self.held:
+            return
         self._advance.start(int(max(delay_ms, MIN_ADVANCE_MS)))
 
     def _start_retry(self, mode, ms):

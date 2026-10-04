@@ -71,6 +71,11 @@ Function LoadConfig() As Object
         ' Mirrors the Android beta channel. Off by default; an opted-in player also HOLDS a
         ' prerelease of its own core instead of being pulled back to the release.
         allow_prerelease: false
+        ' #473 interactive web pages TOP-LEVEL (a second widget over the player). OFF until the wipe
+        ' has been proven on a bench unit (README, "Interactive web pages"): without it the host does
+        ' not announce kiosk_toplevel and the player uses its framed mode. Opt in with
+        ' "kiosk_toplevel": true in screentinker.json, or registry screentinker/kiosk_toplevel = "1".
+        kiosk_toplevel: false
     }
 
     ' 1) registry
@@ -81,6 +86,7 @@ Function LoadConfig() As Object
     if reg.Exists("output_mode") then cfg.output_mode = reg.Read("output_mode")
     if reg.Exists("self_update") then cfg.self_update = (reg.Read("self_update") = "1")
     if reg.Exists("allow_prerelease") then cfg.allow_prerelease = (reg.Read("allow_prerelease") = "1")
+    if reg.Exists("kiosk_toplevel") then cfg.kiosk_toplevel = (reg.Read("kiosk_toplevel") = "1")
 
     ' 2) a JSON file on the card wins — that is how a batch gets imaged without touching each box
     ba = CreateObject("roByteArray")
@@ -94,6 +100,10 @@ Function LoadConfig() As Object
             if json.inspector <> invalid then cfg.inspector = json.inspector
             if json.self_update <> invalid then cfg.self_update = json.self_update
             if json.allow_prerelease <> invalid then cfg.allow_prerelease = json.allow_prerelease
+            ' Only a real JSON true opts in. type() first: `if x then` on a number or a string is a
+            ' type mismatch that aborts the script (the ServerEnabledFlag lesson).
+            t$ = type(json.kiosk_toplevel)
+            if t$ = "Boolean" or t$ = "roBoolean" then cfg.kiosk_toplevel = json.kiosk_toplevel
         end if
     end if
 
@@ -507,7 +517,7 @@ Function FillStorage(result As Object, drive As String) As Boolean
 End Function
 
 ' Everything the page cannot ask the hardware directly.
-Sub SendProbeResult(widget As Object)
+Sub SendProbeResult(widget As Object, kioskOk As Boolean)
     di = CreateObject("roDeviceInfo")
     storage = StorageProbe()
 
@@ -526,6 +536,10 @@ Sub SendProbeResult(widget As Object)
         storage_total_mb: storage.total_mb
         os_version: osVer$
         model: model$
+        ' #473: this host can open an interactive web page top-level in its own widget (see the
+        ' kiosk section below). False on a dual-output player: the second widget's page would open
+        ' it over output ONE, and kiosk-open carries no screen.
+        kiosk_toplevel: kioskOk
     })
 End Sub
 
@@ -952,6 +966,192 @@ Sub SendHostTelemetry(widget As Object, cfg As Object)
     widget.PostJSMessage(t)
 End Sub
 
+'=== interactive web pages (#473) ===========================================================
+' The web player can only show a site in an <iframe> of its own page, where it can neither wipe the
+' site's cookies nor enforce the domain allowlist (it cannot see inside a cross-origin frame). On
+' this platform it does not have to: the page asks for kiosk-open and THIS script opens a second
+' roHtmlWidget pointed at the site TOP-LEVEL, over the player's widget, with:
+'
+'   storage_path         a fresh directory per session, deleted when the session closes and all of
+'                        them deleted at boot - so a power cut mid-session is wiped too
+'   javascript_injection a script the player built (base64 data: URL) that runs in EVERY document
+'                        before the site's own scripts: it reports touches, media, navigation and
+'                        consent cookies, enforces the allowlist and draws the Home button and the
+'                        "Still there?" overlay (the player's widget is underneath and cannot)
+'   brightsign_js_objects_enabled   only for BSMessagePort, which that script takes first (one per
+'                        widget) and then deletes every BS* global before the site can see it
+'   NO nodejs_enabled    a third-party web page must never get require("fs")
+'
+' Everything that arrives from the kiosk widget is RELAYED to the player and nothing else: no
+' message from a website can reach the restart / reboot / identity handlers, because those listen on
+' the player's port and the kiosk widget has its own.
+'
+' The idle clock, the session, the playlist hold and every report stay in the player (one engine
+' for every platform). This host only opens, relays and closes.
+
+Function KioskStr(v As Dynamic) As String
+    ' A missing member is invalid, a number is not a string, and comparing either to a string
+    ' literal is a type mismatch that aborts the script. Everything from a page goes through here.
+    t$ = type(v)
+    if t$ = "String" or t$ = "roString" then return v
+    return ""
+End Function
+
+Function KioskRoot() As String
+    return StorageRoot() + "/st-kiosk"
+End Function
+
+' Boot: every session's storage lives under one directory, so whatever a crash left behind goes.
+Sub KioskWipeAll()
+    DeleteDirectory(KioskRoot())
+End Sub
+
+Function KioskOpenWidget(req As Object, rect As Object, kport As Object, ks As Object) As Object
+    url$ = KioskStr(req.url)
+    if url$ = "" then return invalid
+    root$ = KioskRoot()
+    CreateDirectory(root$)
+    dir$ = root$ + "/s" + Stri(ks.seq).Trim()
+    DeleteDirectory(dir$)
+    CreateDirectory(dir$)
+    ks.dir = dir$
+    config = {
+        url: url$
+        javascript_enabled: true
+        brightsign_js_objects_enabled: true
+        mouse_enabled: true                     ' "Enables mouse/touchscreen/USB keyboard events"
+        focus_enabled: true
+        ' Off, unlike the player: the Home button and the countdown are DOM in this page, and with a
+        ' hardware video plane a playing video in the site would sit on top of them.
+        hwz_default: "off"
+        security_params: { websecurity: true }
+        storage_path: dir$
+        storage_quota: 268435456.0              ' 256MB, a DOUBLE (an integer this size is unsafe)
+        port: kport
+    }
+    inject$ = KioskStr(req.inject)
+    if inject$ <> "" then config.javascript_injection = { document_creation: [{ source: inject$ }] }
+    w = CreateObject("roHtmlWidget", rect, config)
+    if w = invalid then return invalid
+    ' LAYOUT zoom: Chromium's page zoom reflows the page, the same model as the passive render.
+    zoom$ = KioskStr(req.zoom)
+    if zoom$ <> "" and zoom$ <> "1" then
+        z = Val(zoom$)
+        ' Nested, not `and`: FindMemberFunction itself only exists when HasFindMember() says so.
+        if z > 0 and HasFindMember() then
+            if FindMemberFunction(w, "SetZoomLevel") <> invalid then w.SetZoomLevel(z)
+        end if
+    end if
+    w.Show()
+    return w
+End Function
+
+Sub KioskClose(ks As Object, player As Object, notify As Boolean)
+    if ks.widget <> invalid then
+        ks.widget.Hide()
+        ks.widget = invalid                     ' the last reference: the widget is destroyed here
+    end if
+    if ks.dir <> "" then
+        DeleteDirectory(ks.dir)
+        ks.dir = ""
+    end if
+    if notify then player.PostJSMessage({ type: "kiosk-closed", session: ks.session, wiped: "1" })
+    ks.session = ""
+    ks.start = ""
+End Sub
+
+Sub KioskFromPage(ks As Object, req As Object, rect As Object, kport As Object, player As Object, allowed As Boolean)
+    t$ = KioskStr(req.type)
+    if t$ = "kiosk-open" then
+        session$ = KioskStr(req.session)
+        if not allowed then
+            player.PostJSMessage({ type: "kiosk-opened", session: session$, ok: "0", error: "not on this output" })
+            return
+        end if
+        KioskClose(ks, player, false)
+        ks.seq = ks.seq + 1
+        w = KioskOpenWidget(req, rect, kport, ks)
+        if w = invalid then
+            KioskClose(ks, player, false)
+            player.PostJSMessage({ type: "kiosk-opened", session: session$, ok: "0", error: "could not create the widget" })
+            return
+        end if
+        ks.widget = w
+        ks.session = session$
+        ks.start = KioskStr(req.url)
+        ks.alive.Mark()
+        print "[st-kiosk] opened "; ks.start
+        player.PostJSMessage({ type: "kiosk-opened", session: session$, ok: "1" })
+    else if t$ = "kiosk-close" then
+        ' A retried close names its session: one for a page that is already gone (or a NEWER page is
+        ' open) is answered, idempotently, without touching anything.
+        s$ = KioskStr(req.session)
+        if s$ <> "" and s$ <> ks.session then
+            player.PostJSMessage({ type: "kiosk-closed", session: s$, wiped: "1" })
+        else
+            print "[st-kiosk] closed"
+            KioskClose(ks, player, true)
+        end if
+    else if t$ = "kiosk-keepalive" then
+        if ks.widget <> invalid and KioskStr(req.session) = ks.session then ks.alive.Mark()
+    else if t$ = "kiosk-home" then
+        if ks.widget <> invalid and ks.start <> "" then ks.widget.SetURL(ks.start)
+    else if t$ = "kiosk-goto" then
+        u$ = KioskStr(req.url)
+        if ks.widget <> invalid and u$ <> "" then ks.widget.SetURL(u$)
+    else if t$ = "kiosk-eval" then
+        c$ = KioskStr(req.code)
+        if ks.widget <> invalid and c$ <> "" and HasFindMember() then
+            if FindMemberFunction(ks.widget, "InjectJavaScript") <> invalid then ks.widget.InjectJavaScript(c$)
+        end if
+    end if
+End Sub
+
+' A message the kiosk page's injected script posted. Copied field by field into a FRESH flat
+' object: only known kiosk types, only string values, bounded - whatever a website does with the
+' port, the player receives nothing else.
+Sub KioskRelay(ks As Object, req As Dynamic, player As Object)
+    if type(req) <> "roAssociativeArray" then return
+    t$ = KioskStr(req.type)
+    if t$ <> "kiosk-activity" and t$ <> "kiosk-nav" and t$ <> "kiosk-blocked" and t$ <> "kiosk-error" and t$ <> "kiosk-consent" then return
+    out = { type: t$, session: ks.session }
+    for each k in ["url", "reload", "touch", "media", "home", "reason", "detail", "host", "cookies", "what"]
+        v$ = KioskStr(req[k])
+        if v$ <> "" then out[k] = Left(v$, 4000)
+    end for
+    player.PostJSMessage(out)
+End Sub
+
+' Drain the kiosk widget's own port. Called on every pass of the main loop.
+Sub KioskPump(ks As Object, kport As Object, player As Object)
+    n = 0
+    km = kport.GetMessage()
+    while km <> invalid and n < 50
+        n = n + 1
+        if type(km) = "roHtmlWidgetEvent" and ks.widget <> invalid then
+            d = km.GetData()
+            if type(d) = "roAssociativeArray" then
+                r$ = KioskStr(d.reason)
+                if r$ = "message" then
+                    KioskRelay(ks, d.message, player)
+                else if r$ = "load-error" then
+                    ' The site itself failed to load (the key is `uri` on a load-error).
+                    player.PostJSMessage({ type: "kiosk-error", session: ks.session, reason: "load_error", url: KioskStr(d.uri), detail: "load error " + KioskStr(d.message) })
+                else if r$ = "load-finished" then
+                    player.PostJSMessage({ type: "kiosk-loaded", session: ks.session })
+                else if r$ = "new-window-request" then
+                    ' The player decides (allowlist) and answers kiosk-goto to load it in place.
+                    player.PostJSMessage({ type: "kiosk-newwindow", session: ks.session, url: KioskStr(d.uri) })
+                else if r$ = "download-request" then
+                    ' Never downloaded: there is no handler, the request is only reported.
+                    player.PostJSMessage({ type: "kiosk-blocked", session: ks.session, url: KioskStr(d.url), what: "download" })
+                end if
+            end if
+        end if
+        km = kport.GetMessage()
+    end while
+End Sub
+
 '=== main ===================================================================================
 
 Sub Main()
@@ -974,6 +1174,13 @@ Sub Main()
     ApplyPendingPackage(StorageRoot(), boot)
 
     port = CreateObject("roMessagePort")
+
+    ' #473: the interactive-page widget has its OWN port, so nothing a website posts can reach the
+    ' handlers below. Leftover session storage from a crash or power cut is deleted before anything.
+    kport = CreateObject("roMessagePort")
+    ks = { widget: invalid, dir: "", session: "", start: "", seq: 0, alive: CreateObject("roTimespan") }
+    KIOSK_SILENCE_MS = 20000
+    KioskWipeAll()
 
     ' Second output. The XC5 family exposes more than one HDMI connector (XC2055 dual, XC4055
     ' quad). Do NOT trust the series-level spec blurb here: it credits the whole XT5 family with
@@ -1051,7 +1258,10 @@ Sub Main()
     HOST_TEL_MS = 60000
 
     while true
-        msg = wait(5000, port)
+        ' While an interactive page is open its touches must reach the player promptly.
+        waitMs = 5000
+        if ks.widget <> invalid then waitMs = 200
+        msg = wait(waitMs, port)
 
         if type(msg) = "roHtmlWidgetEvent" then
             data = msg.GetData()
@@ -1074,6 +1284,7 @@ Sub Main()
                 uri$ = ""
                 if data.uri <> invalid then uri$ = data.uri
                 HostEvent(widget, "app_error", "load-error", "attempt " + Stri(retries).Trim() + ": " + uri$)
+                KioskClose(ks, widget, false)
                 sleep(ChooseBackoff(retries))
                 if retries >= 3 then
                     ' The server URL rides along so the fallback page can name it on screen and
@@ -1099,6 +1310,7 @@ Sub Main()
                     ' The page asks to be restarted (deploy, version change, unrecoverable
                     ' error). NEVER let the page do this with location.reload().
                     print "[st] restart requested: "; m.reason
+                    KioskClose(ks, widget, false)
                     widget = RebuildWidget(widget, PlayerUrl(cfg, 1), rect, port, cfg)
 
                 else if m.type = "identity" then
@@ -1121,7 +1333,7 @@ Sub Main()
                 else if m.type = "probe" then
                     ' Asked once during boot, before the player registers: the answer decides which
                     ' controls the dashboard is allowed to offer for this display.
-                    SendProbeResult(widget)
+                    SendProbeResult(widget, cfg.kiosk_toplevel and (widget2 = invalid))
                     ' ...and this is the first PROOF that a page is listening, so it is the earliest
                     ' moment the buffered boot story can actually be delivered. st-bridge.js holds it
                     ' until the player's socket is up, so late here is still in time.
@@ -1150,7 +1362,21 @@ Sub Main()
                 else if m.type = "reboot" then
                     print "[st] reboot requested"
                     RebootSystem()
+
+                else if Left(KioskStr(m.type), 6) = "kiosk-" then
+                    KioskFromPage(ks, m, rect, kport, widget, cfg.kiosk_toplevel and (widget2 = invalid))
                 end if
+            end if
+        end if
+
+        ' #473: relay whatever the interactive page reported since the last pass.
+        KioskPump(ks, kport, widget)
+        ' The player keeps a kiosk page alive every 5s. Silence (player wedged or reloaded, or its
+        ' messages no longer reaching us) closes the page, so a site can never be left over the screen.
+        if ks.widget <> invalid then
+            if ks.alive.TotalMilliseconds() > KIOSK_SILENCE_MS then
+                print "[st-kiosk] no keep-alive from the player — closing the kiosk page"
+                KioskClose(ks, widget, true)
             end if
         end if
 
@@ -1160,6 +1386,7 @@ Sub Main()
             ' answering and the host restarted it. Previously this healed the panel in silence, so a
             ' display rebuilding itself every two minutes looked identical to one that was fine.
             HostEvent(widget, "crash", "watchdog", "no heartbeat for " + Stri(WATCHDOG_S).Trim() + "s — rebuilt the widget")
+            KioskClose(ks, widget, false)
             widget = RebuildWidget(widget, PlayerUrl(cfg, 1), rect, port, cfg)
             lastBeat.Mark()
         end if

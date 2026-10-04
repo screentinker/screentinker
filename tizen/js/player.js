@@ -64,7 +64,79 @@ function PlaylistPlayer(stageEl, getBase, getDeviceId) {
   // we last emitted play_start for, so we can close it with play_end on the next show.
   this.onPlayEvent = null;
   this._loggedItem = null;
+  // #473 interactive web pages (js/kiosk-session.js). app.js sets the session and decides whether
+  // this screen may run one (fullscreen only: never in a wall, a synced group or as a follower).
+  this.kiosk = null;
+  this.interactiveAllowed = true;
+  this.held = false;           // a visitor is using the page: nothing moves the playlist on
+  this._parked = null;         // the latest playlist update that arrived while held (a thunk)
+  this._playSeq = 0;           // bumped by every playCurrent, so release() can tell if a parked update moved playback
 }
+
+/*
+ * #473: hold / release, mirroring Android's PlaylistController. While HELD: no advance timer, no
+ * deferred-swap deadline, and a playlist update is PARKED (latest wins) — applying it would restart
+ * the item under someone filling in a form. release() applies whatever was parked, then advances
+ * off the page the visitor used unless the parked update already moved playback elsewhere.
+ */
+PlaylistPlayer.prototype.setKiosk = function (k) { this.kiosk = k || null; };
+PlaylistPlayer.prototype.setInteractiveAllowed = function (b) { this.interactiveAllowed = !!b; };
+PlaylistPlayer.prototype.isHeld = function () { return !!this.held; };
+PlaylistPlayer.prototype.kioskSessionActive = function () {
+  try { return !!(this.kiosk && this.kiosk.sessionActive()); } catch (e) { return false; }
+};
+PlaylistPlayer.prototype.hold = function () {
+  if (this.held) return;
+  // Only the page that is actually the current item may hold. A page still on screen after the
+  // operator removed it (deferred rotation: the index already points elsewhere) must not hold, or
+  // the deferral below is thrown away and nothing would ever release it.
+  var cur = this.items[this.index];
+  if (!cur || !this.kiosk || !this.kiosk.isShowingItem(this._kioskKey(cur))) return;
+  this.held = true;
+  this._holdSeq = this._playSeq;
+  if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  if (this._deferredDeadline) { clearTimeout(this._deferredDeadline); this._deferredDeadline = null; }
+  this._deferredRotation = false; this._deferredSuccessorId = null;
+};
+/** Park an update while held (latest wins). Returns true when parked. */
+PlaylistPlayer.prototype.park = function (thunk) {
+  if (!this.held) return false;
+  this._parked = thunk;
+  return true;
+};
+/** Clear a hold WITHOUT advancing (the caller is about to replace playback anyway). */
+PlaylistPlayer.prototype.dropHold = function () { this.held = false; this._parked = null; };
+PlaylistPlayer.prototype._kioskKey = function (item) { return this.itemIdentity(item) + '|' + (item.widget_rev || 0); };
+/*
+ * The page left the screen by some path OTHER than the session's own release (a playCurrent from a
+ * visibility resume or screen_on, a clearStage by another renderer). The hold must not outlive the
+ * page — a hold with no page behind it never releases and wedges the playlist. Release WITHOUT
+ * advancing (playback is already moving to whatever replaced it) and apply the parked update after
+ * the current render returns, never inside it.
+ */
+PlaylistPlayer.prototype._endHoldQuietly = function () {
+  if (!this.held) return;
+  this.held = false;
+  var parked = this._parked; this._parked = null;
+  if (parked) setTimeout(function () { try { parked(); } catch (e) {} }, 0);
+};
+PlaylistPlayer.prototype.release = function () {
+  if (!this.held) return;
+  this.held = false;
+  var parked = this._parked; this._parked = null;
+  if (parked) { try { parked(); } catch (e) {} }
+  // Advance off the page only if NOTHING has played or stopped since the hold began: the parked
+  // update (or a resume / screen_on re-render while the wipe was finishing) may already have moved
+  // playback, and advancing again would skip an item — or play the old list over a new layout.
+  if (this._playSeq === this._holdSeq && !this.held) this.advance();
+};
+/** The interactive config for this item on THIS screen, or null (passive render). */
+PlaylistPlayer.prototype.kioskConfigFor = function (item) {
+  if (!item || !this.kiosk || !this.interactiveAllowed || this.wallFollower || this.scheduleDriven) return null;
+  if (!(item.widget_id && !item.content_id)) return null;
+  try { return (typeof KioskLogic !== 'undefined') ? KioskLogic.parse(item.widget_type, item.widget_config) : null; }
+  catch (e) { return null; }
+};
 
 // #157 continuity helpers (mirror the web/Android players).
 PlaylistPlayer.prototype.setScheduleDriven = function (b) { this.scheduleDriven = !!b; };
@@ -145,6 +217,8 @@ PlaylistPlayer.prototype._releasePreloadImage = function () {
 };
 
 PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
+  var selfL = this;
+  if (this.park(function () { selfL.load(assignments, playbackOrder); })) return;   // #473 held: apply on release
   var nextOrder = playbackOrder || this.playbackOrder || 'sequential';
   if (nextOrder !== this.playbackOrder) this.playOrderState = {};
   this.playbackOrder = nextOrder;
@@ -244,6 +318,7 @@ PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
 
 PlaylistPlayer.prototype.stop = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  this.dropHold(); this._playSeq++;   // #473: ends any hold; "playback moved", so release() can't advance (see release)
   // Here and not in clearStage(): that runs on every advance, and the bed has to survive those.
   this.stopSlideAudio();
   this._releasePreloadImage();   // #187: drop any warmed next-image bitmap on teardown
@@ -254,6 +329,9 @@ PlaylistPlayer.prototype.stop = function () {
 
 PlaylistPlayer.prototype.clearStage = function () {
   if (this.avActive) this.avStop(); // #170: tear down any AVPlay session (portrait video)
+  // #473: the interactive page lives in the stage; leaving it must end (and wipe) the session, not
+  // just drop its DOM. hide() is a no-op when nothing is showing.
+  if (this.kiosk && this.kiosk.isShowing()) { try { this.kiosk.hide(); } catch (e) {} this._endHoldQuietly(); }
   // Pause any video before removing so audio doesn't linger.
   var v = this.stage.querySelector('video');
   if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} }
@@ -304,6 +382,7 @@ PlaylistPlayer.prototype.contentUrl = function (item) {
 };
 
 PlaylistPlayer.prototype.advance = function () {
+  if (this.held) return;   // #473: a visitor is using the page; release() advances
   // #157: apply a deferred rotation-out — the removed-but-live item just finished, so swap in the
   // stashed list and continue at the preserved successor instead of interrupting/restarting.
   if (this._deferredRotation) {
@@ -332,6 +411,7 @@ PlaylistPlayer.prototype.startPlaybackAt = function (idx) {
 };
 
 PlaylistPlayer.prototype.schedule = function (ms) {
+  if (this.held) return;   // #473: no advance timer while a visitor is using the page
   var self = this;
   if (this.timer) clearTimeout(this.timer);
   this.timer = setTimeout(function () { self.advance(); }, ms);
@@ -545,6 +625,10 @@ PlaylistPlayer.prototype.playCurrent = function () {
   this.currentVideoEl = null;        // set by renderVideo when applicable
 
   var item = this.items[this.index];
+  this._playSeq++;
+  // #473: moving to anything but the interactive page on screen ends that visitor's session now
+  // (wipe included), rather than when some later swap happens to empty the stage.
+  if (this.kiosk && this.kiosk.isShowing() && !this.kioskConfigFor(item)) { try { this.kiosk.hide(); } catch (e) {} this._endHoldQuietly(); }
 
   // Slide audio: replaces the voiceover, leaves a matching bed playing.
   this.applySlideAudio(item);
@@ -1087,6 +1171,18 @@ PlaylistPlayer.prototype.renderYouTube = function (item, single) {
 
 PlaylistPlayer.prototype.renderWidget = function (item, single) {
   var self = this;
+  // #473: an interactive webpage plays in the player's own frame of the SITE (not the server's
+  // sandboxed render), fullscreen only. Plays like any item until touched; the first touch holds.
+  var kcfg = this.kioskConfigFor(item);
+  if (kcfg) {
+    var key = this._kioskKey(item);
+    if (!this.kiosk.isShowingItem(key)) {
+      this.clearStage();                       // ends any previous page's session, empties the stage
+      this.kiosk.show(key, kcfg, item.widget_id);
+    }
+    if (!single) this.schedule(this.durationMs(item));
+    return;
+  }
   var src = this.getBase() + '/api/widgets/' + item.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (item.widget_rev || 0);
   // Anti-flash (#directory-board, parity with the web player): build the new iframe hidden ON TOP of the
   // current content and reveal it on load, THEN drop everything else — so a widget/directory-board

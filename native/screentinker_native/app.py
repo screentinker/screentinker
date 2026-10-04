@@ -15,6 +15,7 @@ dispatch_command(), the single definition, as on Android (WebSocketService's one
 import argparse
 import asyncio
 import base64
+import collections
 import logging
 import logging.handlers
 import os
@@ -30,6 +31,7 @@ from PySide6.QtQuick import QQuickWindow  # noqa: F401 — makes rootObjects() c
 
 from . import capabilities
 from .config import Config
+from .logic.kiosk import SessionQueue
 from .logic.offline_play_queue import OfflinePlayQueue, make_play, new_id
 from .net import device_http
 from .net.link import DeviceLink
@@ -40,6 +42,7 @@ from .platform import audio, brightness, deviceinfo, display, ops, privileged, s
 from .system.power_schedule import PowerSchedule
 from .system.updater import Updater
 from .ui.extras import SlideAudio, TriggerOverlay, new_frame_key, rtc_page
+from .ui.kiosk import KioskSession
 from .ui.stage import Stage
 from .version import VERSION
 
@@ -107,6 +110,15 @@ class App:
             pass
         self._offline_open = None
         self._flush_in_flight = False
+        # #473 v2: interactive-page usage records (persisted, sent on ack) and incidents held offline.
+        self.kiosk_sessions = SessionQueue(path=os.path.join(self.config.state_dir, "kiosk-sessions.json"))
+        self.kiosk_sessions.load()
+        self._kiosk_in_flight = False
+        self._kiosk_errors = collections.deque(maxlen=10)
+        c = self.engine.controller
+        self.kiosk = KioskSession(self.stage, self.config.state_dir, hold=c.hold, release=c.release,
+                                  skip=c.next, error=self.send_kiosk_error, session_end=self._kiosk_session_end)
+        self.kiosk.recover()
         self.debug_mirror = False
         self.remote_streaming = False
         self._stream_timer = QTimer()
@@ -222,6 +234,10 @@ class App:
     def on_registered(self, device_id, paired):
         self.on_ui(self.engine.on_registered)
         self.on_ui(lambda: self._status_changed("registered", paired))
+        # #473 v2: sessions queued while offline (or before this boot), and incidents held offline.
+        self._kiosk_in_flight = False
+        self.flush_kiosk_sessions()
+        self._flush_kiosk_errors()
 
     def on_paired(self, device_id, name):
         self.on_ui(lambda: self._status_changed("paired", name))
@@ -292,6 +308,8 @@ class App:
             self.pty.resize(d)
         elif event == "device:pty-close":
             asyncio.ensure_future(self.pty.close(d))
+        elif event == "device:kiosk-sessions-ack":
+            self._on_kiosk_ack(d)
 
     async def _adopt_net_payload(self, d):
         """The parts of a payload that live on the network thread."""
@@ -369,6 +387,66 @@ class App:
         self._flush_in_flight = False
         if self.play_queue.size() and self.link.connected:
             await self.flush_offline_plays()
+
+    # ------------------------------------------------------------------ #473 v2 interactive pages
+    def _kiosk_session_end(self, r):
+        self.kiosk_sessions.add(r)
+        try:
+            self.kiosk_sessions.save()
+        except OSError as e:
+            log.warning("kiosk session queue not saved: %s", e)
+        self.flush_kiosk_sessions()
+
+    def flush_kiosk_sessions(self):
+        """Send queued sessions, one batch at a time (any thread). A record leaves the queue only on
+        device:kiosk-sessions-ack; a lost ack means the batch is resent, and the server ignores the
+        duplicates (it keys on the record id)."""
+        if self._kiosk_in_flight or not self.link.connected or not self.config.device_id:
+            return
+        batch = self.kiosk_sessions.peek()
+        if not batch:
+            return
+        self._kiosk_in_flight = True
+        self.emit("device:kiosk-sessions", {"device_id": self.config.device_id, "sessions": batch})
+        log.info("device:kiosk-sessions: %d record(s)", len(batch))
+        if self.loop:
+            # An older server never acks: stop waiting after a while so a later flush can retry.
+            self.loop.call_soon_threadsafe(lambda: self.loop.call_later(30, self._kiosk_ack_timeout))
+
+    def _kiosk_ack_timeout(self):
+        self._kiosk_in_flight = False
+
+    def _on_kiosk_ack(self, d):
+        ids = [i for i in (d.get("ids") or []) if isinstance(i, str) and i]
+        self.kiosk_sessions.ack(ids)
+        try:
+            self.kiosk_sessions.save()
+        except OSError:
+            pass
+        self._kiosk_in_flight = False
+        if ids and self.kiosk_sessions.size():
+            self.flush_kiosk_sessions()
+
+    def send_kiosk_error(self, reason, detail):
+        """A failed interactive page, as a dashboard incident (already throttled by the caller).
+        ⚠️ The commonest failure is "no network", exactly when it cannot be sent: the last few are held
+        in memory and sent after the next registration."""
+        d = str(detail or "")[:400]
+        if self.link.connected and self.config.device_id:
+            self._emit_web_error(reason, d)
+            return
+        suffix = " (while offline)"
+        self._kiosk_errors.append((reason, d[:400 - len(suffix)] + suffix))
+
+    def _flush_kiosk_errors(self):
+        while self._kiosk_errors:
+            r, d = self._kiosk_errors.popleft()
+            self._emit_web_error(r, d)
+
+    def _emit_web_error(self, reason, detail):
+        self.emit("device:event", {"device_id": self.config.device_id, "type": "web_error",
+                                   "reason": reason, "detail": detail})
+        log.info("device:event web_error (%s)", reason)
 
     # ------------------------------------------------------------------ remote log
     def log_remote(self, level, tag, message, mirror=False):
@@ -694,6 +772,9 @@ class App:
             self._stream_timer.start(350)
 
     def _remote_touch(self, d):
+        if self.kiosk.session_active:
+            log.info("remote touch refused: interactive session in progress")
+            return
         steps = self.stage.inject_touch(d.get("x", 0), d.get("y", 0), str(d.get("action") or "tap"),
                                         d.get("x2"), d.get("y2"), d.get("duration"))
         delay = 0
@@ -703,6 +784,9 @@ class App:
         QTimer.singleShot(delay + 50, self._nudge_capture)
 
     def _remote_key(self, keycode):
+        if self.kiosk.session_active:
+            log.info("remote key refused: interactive session in progress")
+            return
         if keycode == "KEYCODE_POWER":
             self.stage.openMenu.emit(2)
         elif keycode == "KEYCODE_HOME":
@@ -912,6 +996,8 @@ class App:
             return 1
         win = roots[0]
         self.stage.window = win
+        # #473: every press/touch/key on the window is activity for an interactive page's idle clock.
+        win.installEventFilter(self.stage)
         # ⚠️ Shader transitions need a GPU scene graph. Qt Quick silently falls back to its SOFTWARE
         # adaptation where no GL/Vulkan is available (a VM, a Pi with the KMS driver disabled, a broken
         # Mesa), and there ShaderEffect draws NOTHING while ShaderEffectSource.hideSource still hides
@@ -1010,6 +1096,8 @@ def _main(argv=None):
 
     def _qt_msg(mode, ctx, msg):
         if "neither a QObject" in msg:          # PySide6 registration noise, one line per WebEngine type
+            return
+        if "WebEngineProfilePrototype" in msg:  # Qt >= 6.9 nags on every off-the-record kiosk profile (#473)
             return
         qtlog.log(_lvl.get(mode, logging.INFO), "%s", msg)
     qInstallMessageHandler(_qt_msg)

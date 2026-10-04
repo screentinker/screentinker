@@ -318,6 +318,9 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
   <script src="/player/play-order.js"></script>
+  <!-- #473 interactive web pages: the shared rules, then the web player's session engine. -->
+  <script src="/player/kiosk-logic.js"></script>
+  <script src="/player/kiosk-player.js"></script>
   <script src="/player/unpair-gate.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
@@ -1176,6 +1179,192 @@ function emitDeviceEvent(type, reason, detail) {
   } catch (e) {
   }
 }
+function kioskKeyOf(item) {
+  return item ? "".concat(itemIdentity(item), "|").concat(item.widget_rev || 0) : null;
+}
+function kioskConfigFor(item) {
+  try {
+    if (!kiosk || !window.KioskLogic || !item || !item.widget_id || item.widget_type !== "webpage") return null;
+    return window.KioskLogic.parse(item.widget_type, item.widget_config);
+  } catch (e) {
+    return null;
+  }
+}
+function kioskPrivacy() {
+  try {
+    return !!(kiosk && kiosk.sessionActive());
+  } catch (e) {
+    return false;
+  }
+}
+function kioskHold() {
+  if (kioskHeld) return;
+  const key = kioskKeyOf(playlist[currentIndex]);
+  if (!key || !kiosk || !kiosk.isShowingItem(key)) {
+    console.log("[Kiosk] touch on an outgoing interactive page \u2014 not holding (the playlist has moved on)");
+    return;
+  }
+  kioskHeld = true;
+  kioskHeldKey = key;
+  if (advanceTimer) {
+    clearTimeout(advanceTimer);
+    advanceTimer = null;
+  }
+  if (deferredRotationDeadline) {
+    clearTimeout(deferredRotationDeadline);
+    deferredRotationDeadline = null;
+  }
+  console.log("[Kiosk] held on current item (interactive session)");
+}
+function kioskEndHold(why) {
+  if (!kioskHeld) return;
+  kioskHeld = false;
+  kioskHeldKey = null;
+  const parked = kioskParkedUpdate;
+  kioskParkedUpdate = null;
+  console.log("[Kiosk] hold cleared without advancing (" + (why || "session interrupted") + ")");
+  if (parked) setTimeout(() => {
+    try {
+      handlePlaylistUpdate(parked);
+    } catch (e) {
+      console.warn("[Kiosk] parked update failed:", e && e.message);
+    }
+  }, 0);
+  else if (deferredRotation && !deferredRotationDeadline) kioskArmDeferredDeadline();
+}
+function kioskArmDeferredDeadline() {
+  deferredRotationDeadline = setTimeout(() => {
+    if (!deferredRotation) return;
+    console.warn("#157: deferred rotation never got an advance \u2014 applying it now");
+    deferredRotation = false;
+    const di = deferredSuccessorId ? playlist.findIndex((x) => itemIdentity(x) === deferredSuccessorId) : -1;
+    startPlaybackAt(di === -1 ? 0 : di);
+  }, 6e4);
+}
+function kioskLeaveStage(why) {
+  try {
+    if (!kiosk || !kiosk.isShowing()) return false;
+    kiosk.hide();
+    kioskEndHold(why);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function kioskYield(why) {
+  if (!kioskLeaveStage(why)) return;
+  console.log("[Kiosk] " + why + " \u2014 interactive page closed");
+  const item = playlist[currentIndex];
+  if (item && kioskConfigFor(item) && !advanceTimer) scheduleAdvance(nextItem, (item.duration_sec || 30) * 1e3);
+}
+function kioskCovered() {
+  try {
+    if (triggerActive) return true;
+    if (screenIsOff) return true;
+    if (pipCurrent && kiosk && typeof kiosk.capability === "function" && kiosk.capability() === "playback.web_interactive") return true;
+  } catch (e) {
+    return false;
+  }
+  return false;
+}
+function kioskResume() {
+  try {
+    const item = playlist[currentIndex];
+    if (!kiosk || kiosk.isShowing() || !item || !kioskConfigFor(item) || kioskCovered()) return;
+    renderContent(item);
+  } catch (e) {
+  }
+}
+function kioskDropHold() {
+  kioskHeld = false;
+  kioskHeldKey = null;
+  kioskParkedUpdate = null;
+}
+function kioskRelease() {
+  if (!kioskHeld) return;
+  kioskHeld = false;
+  console.log("[Kiosk] released (interactive session over)");
+  const parked = kioskParkedUpdate;
+  kioskParkedUpdate = null;
+  const key = kioskHeldKey;
+  kioskHeldKey = null;
+  if (parked) handlePlaylistUpdate(parked);
+  if (deferredRotation || kioskKeyOf(playlist[currentIndex]) === key) nextItem();
+}
+function kioskSkip() {
+  if (peekNextIndex(currentIndex) === currentIndex) {
+    console.log("[Kiosk] the interactive page is the only item \u2014 retrying in 60s");
+    scheduleAdvance(() => playCurrentItem(), 6e4);
+    return;
+  }
+  nextItem();
+}
+function kioskHostAdapter() {
+  if (!BS || typeof BS.kioskSupported !== "function") return null;
+  return {
+    available: () => {
+      try {
+        return !!BS.kioskSupported();
+      } catch (e) {
+        return false;
+      }
+    },
+    open: (params, ms) => BS.kioskOpen(params, ms),
+    close: (wipe, session) => BS.kioskClose(wipe, session),
+    keepAlive: (session) => typeof BS.kioskKeepAlive === "function" ? BS.kioskKeepAlive(session) : false,
+    event: (code) => BS.kioskEval(code),
+    goto: (url) => BS.kioskGoto(url),
+    onMessage: (fn) => BS.onHostMessage(fn)
+  };
+}
+function flushKioskSessions() {
+  if (!kioskQueue || kioskFlushInFlight || !(socket == null ? void 0 : socket.connected) || !config.deviceId) return;
+  const batch = kioskQueue.peek(window.KioskPlayer.BATCH);
+  if (!batch.length) return;
+  kioskFlushInFlight = true;
+  try {
+    socket.emit("device:kiosk-sessions", { device_id: config.deviceId, sessions: batch });
+  } catch (e) {
+    kioskFlushInFlight = false;
+    return;
+  }
+  clearTimeout(kioskFlushTimer);
+  kioskFlushTimer = setTimeout(() => {
+    kioskFlushInFlight = false;
+  }, 3e4);
+}
+function onKioskSessionsAck(d) {
+  const ids = Array.isArray(d && d.ids) ? d.ids.filter((x) => typeof x === "string" && x) : [];
+  if (kioskQueue) kioskQueue.ack(ids);
+  kioskFlushInFlight = false;
+  clearTimeout(kioskFlushTimer);
+  if (ids.length && kioskQueue && kioskQueue.size()) setTimeout(flushKioskSessions, 0);
+}
+function sendKioskError(reason, detail) {
+  const d = String(detail || "").slice(0, 400);
+  if ((socket == null ? void 0 : socket.connected) && config.deviceId) {
+    emitDeviceEvent("web_error", reason, d);
+    return;
+  }
+  if (kioskHeldErrors) kioskHeldErrors.add(reason, d);
+}
+function flushKioskErrors() {
+  if (!kioskHeldErrors) return;
+  for (const [r, d] of kioskHeldErrors.drain()) emitDeviceEvent("web_error", r, d);
+}
+function sendBlankFrame() {
+  try {
+    const c = document.createElement("canvas");
+    c.width = 160;
+    c.height = 90;
+    const g = c.getContext("2d");
+    g.fillStyle = "#000";
+    g.fillRect(0, 0, 160, 90);
+    const base64 = c.toDataURL("image/jpeg", 0.4).split(",")[1];
+    if (base64) socket.emit("device:screenshot", { device_id: config.deviceId, image_b64: base64 });
+  } catch (e) {
+  }
+}
 let playlist = [];
 let currentIndex = -1;
 let imgPreloadCache = {};
@@ -1296,6 +1485,65 @@ let nativeSyncBoundId = null;
 let nativeSyncAnnounced = -1;
 let groupPreloadEl = null;
 let groupPreloadIdx = -1;
+let kioskHeld = false;
+let kioskHeldKey = null;
+let kioskParkedUpdate = null;
+let kioskFlushInFlight = false;
+let kioskFlushTimer = null;
+const kioskStorage = (() => {
+  try {
+    return window.localStorage || null;
+  } catch (e) {
+    return null;
+  }
+})();
+const kioskQueue = window.KioskPlayer ? new window.KioskPlayer.SessionQueue(kioskStorage, "st_kiosk_sessions" + SCREEN_SUFFIX) : null;
+const kioskHeldErrors = window.KioskPlayer ? new window.KioskPlayer.ErrorHold() : null;
+const kiosk = window.KioskPlayer && window.KioskLogic ? window.KioskPlayer.create({
+  logic: window.KioskLogic,
+  win: window,
+  doc: document,
+  container: () => document.getElementById("playerContainer"),
+  hold: kioskHold,
+  release: kioskRelease,
+  skip: kioskSkip,
+  report: sendKioskError,
+  sessionEnd: (r) => {
+    if (kioskQueue) kioskQueue.add(r);
+    flushKioskSessions();
+  },
+  storage: kioskStorage,
+  keySuffix: SCREEN_SUFFIX,
+  log: (lvl, msg) => {
+    if (lvl === "w") console.warn(msg);
+    else console.log(msg);
+  },
+  host: kioskHostAdapter(),
+  // The host failed to open a page once: from now on this run is framed, and the server must
+  // hear the downgraded capability rather than keep offering what the host cannot do.
+  onHostBroken: () => {
+    setTimeout(() => {
+      try {
+        if (socket && socket.connected) register();
+      } catch (e) {
+      }
+    }, 0);
+  },
+  origin: (() => {
+    try {
+      return window.location.origin;
+    } catch (e) {
+      return "";
+    }
+  })()
+}) : null;
+try {
+  if (kiosk && kioskQueue) {
+    const r = kiosk.recoverOpenSession();
+    if (r) kioskQueue.add(r);
+  }
+} catch (e) {
+}
 let clockOffsetMs = 0;
 let clockRttMs = null;
 try {
@@ -2188,6 +2436,9 @@ function connect(serverUrl) {
     saveConfig(config);
     console.log("Registered:", data.device_id);
     flushOfflinePlays();
+    kioskFlushInFlight = false;
+    flushKioskSessions();
+    flushKioskErrors();
     if (disconnectedAt && config.deviceId) {
       try {
         socket.emit("device:connectivity-report", {
@@ -2214,6 +2465,12 @@ function connect(serverUrl) {
     startVersionCheck();
     wireHostDiagnostics();
   });
+  socket.on("device:kiosk-sessions-ack", (d) => {
+    try {
+      onKioskSessionsAck(d);
+    } catch (e) {
+    }
+  });
   socket.on("device:paired", (data) => {
     config.paired = true;
     config.deviceName = data.name;
@@ -2234,6 +2491,10 @@ function connect(serverUrl) {
     } catch (e) {
     }
     saveConfig(config);
+    try {
+      kioskYield("re-pairing");
+    } catch (e) {
+    }
     document.getElementById("setupScreen").style.display = "flex";
     document.getElementById("urlForm").style.display = "block";
     document.getElementById("pairingSection").style.display = "none";
@@ -2329,6 +2590,10 @@ function connect(serverUrl) {
     stopStreaming();
   });
   socket.on("device:remote-touch", (data) => {
+    if (kioskPrivacy()) {
+      console.log("[Kiosk] remote touch refused \u2014 a visitor is using the interactive page");
+      return;
+    }
     const container = document.getElementById("playerContainer");
     if (!container) return;
     const x = data.x * container.offsetWidth;
@@ -2338,6 +2603,10 @@ function connect(serverUrl) {
     console.log("Touch:", data.x, data.y, "-> element:", el == null ? void 0 : el.tagName);
   });
   socket.on("device:remote-key", (data) => {
+    if (kioskPrivacy()) {
+      console.log("[Kiosk] remote key refused \u2014 a visitor is using the interactive page");
+      return;
+    }
     console.log("Key:", data.keycode);
     const video = document.querySelector("#playerContainer video");
     switch (data.keycode) {
@@ -2530,6 +2799,10 @@ function connect(serverUrl) {
       return;
     }
     if (action !== "start") return;
+    if (kioskPrivacy()) {
+      console.log("[Kiosk] live view refused \u2014 a visitor is using the interactive page");
+      return;
+    }
     if (!config || !config.deviceId || !config.deviceToken || !LP.isSupported()) {
       console.log("[live] publish requested but not available on this player");
       return;
@@ -2682,6 +2955,12 @@ function triggerStop(reason) {
   triggerTimers = {};
   const was = triggerActive;
   triggerActive = null;
+  if (was) setTimeout(() => {
+    try {
+      if (typeof kioskResume === "function") kioskResume();
+    } catch (e) {
+    }
+  }, 0);
   try {
     const c = document.getElementById("pipContainer");
     if (c && c.querySelectorAll) c.querySelectorAll(".trigger-box").forEach((b) => {
@@ -2751,6 +3030,10 @@ function triggerFire(trigger, source, carriedLease) {
     return false;
   }
   triggerStop("superseded");
+  try {
+    if (typeof kioskYield === "function") kioskYield('trigger "' + (trigger.name || "") + '" fired');
+  } catch (e) {
+  }
   const box = document.createElement("div");
   box.className = "trigger-box";
   box.style.cssText = "position:absolute;top:0;right:0;bottom:0;left:0;background:#000;overflow:hidden;";
@@ -3220,6 +3503,10 @@ function pipShow(p) {
   const container = document.getElementById("pipContainer");
   if (!p || !container) return;
   try {
+    if (kiosk && kiosk.isShowing() && kiosk.mode() === "host") kioskYield("PiP shown");
+  } catch (e) {
+  }
+  try {
     pipTeardown();
     const box = document.createElement("div");
     box.className = "pip-box";
@@ -3270,6 +3557,12 @@ function pipClear(pipId) {
   if (pipId && pipCurrent && pipId !== pipCurrent) return;
   const had = !!pipCurrent;
   pipTeardown();
+  if (had) {
+    try {
+      kioskResume();
+    } catch (e) {
+    }
+  }
   if (had) pipReport("info", "pip cleared" + (pipId ? " " + pipId : ""));
 }
 function declaredCapabilities() {
@@ -3313,6 +3606,10 @@ function declaredCapabilities() {
     "remote.set_server_url",
     "sync.clock"
   ];
+  try {
+    if (typeof kiosk !== "undefined" && kiosk) caps.push(kiosk.capability());
+  } catch (e) {
+  }
   if (window.__stHasMic) caps.push("remote.mic");
   if (typeof triggerStats === "object" && triggerStats.listeners && triggerStats.listeners.http) {
     caps.push("trigger.http");
@@ -3922,6 +4219,17 @@ function bindWallResizeOnce() {
 }
 function handlePlaylistUpdate(data) {
   var _a;
+  if (data && data.suspended) {
+    try {
+      if (kiosk && kiosk.isShowing()) kiosk.hide();
+    } catch (e) {
+    }
+    if (typeof kioskDropHold === "function") kioskDropHold();
+  } else if (typeof kioskHeld !== "undefined" && kioskHeld) {
+    kioskParkedUpdate = data;
+    console.log("[Kiosk] playlist update parked until the interactive session ends");
+    return;
+  }
   if (data.suspended) {
     isPlaying = false;
     playlist = [];
@@ -4063,7 +4371,7 @@ function handlePlaylistUpdate(data) {
         videoEl: currentVideoEl ? { attached: document.contains(currentVideoEl), ended: !!currentVideoEl.ended, errored: !!currentVideoEl.error } : null,
         surfaceAttached: !!(container && container.querySelector("video,img,iframe,.wall-stage"))
       };
-      if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {
+      if (!(typeof kiosk !== "undefined" && kiosk && kiosk.isShowing()) && window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {
         console.log("[refresh] media surface lost on no-change refresh \u2014 re-attaching current item");
         playCurrentItem();
       } else if (isPlaying) {
@@ -4295,6 +4603,10 @@ function playCurrentItem() {
   if (wallConfig == null ? void 0 : wallConfig.is_leader) emitWallSync();
 }
 function nextItem() {
+  if (typeof kioskHeld !== "undefined" && kioskHeld) {
+    console.log("[Kiosk] advance ignored \u2014 a visitor is using the interactive page");
+    return;
+  }
   if (deferredRotation) {
     deferredRotation = false;
     if (deferredRotationDeadline) {
@@ -4509,6 +4821,10 @@ function clearZoneTimers() {
 }
 function teardownCurrentMedia(keep) {
   renderSeq++;
+  try {
+    if (typeof kioskLeaveStage === "function") kioskLeaveStage("the stage was torn down");
+  } catch (e) {
+  }
   if (!keep && advanceTimer) {
     clearTimeout(advanceTimer);
     advanceTimer = null;
@@ -5259,6 +5575,22 @@ function renderContent(item) {
     return;
   }
   const isZones = !!(layout && layout.zones && layout.zones.length > 1 && !wallConfig);
+  const kioskCfg = !isZones && !wallConfig && !groupSync && !PREVIEW_MODE && typeof kioskConfigFor === "function" && !kioskCovered() ? kioskConfigFor(item) : null;
+  if (kioskCfg) {
+    const key = kioskKeyOf(item);
+    if (!kiosk.isShowingItem(key)) {
+      discardPendingSwap();
+      teardownCurrentMedia();
+      document.getElementById("playerContainer").style.display = "block";
+      kiosk.show(key, kioskCfg, item.widget_id);
+    }
+    if (!kioskHeld) {
+      const held = peekNextIndex(currentIndex) === currentIndex;
+      if (held) scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
+      else scheduleAdvance(nextItem, (item.duration_sec || 30) * 1e3);
+    }
+    return;
+  }
   if (item && item.widget_id && !isZones && !wallConfig) {
     renderWidgetBuffered(item);
     if (!groupSync) {
@@ -5732,6 +6064,10 @@ function renderCaptureCanvas() {
 }
 function captureAndSend() {
   if (!(socket == null ? void 0 : socket.connected)) return;
+  if (typeof kioskPrivacy === "function" && kioskPrivacy()) {
+    sendBlankFrame();
+    return;
+  }
   if (BS && typeof BS.captureScreen === "function") {
     BS.captureScreen({ width: 960, height: 540 }).then((dataUrl) => {
       const base64 = String(dataUrl).split(",")[1];
@@ -5800,6 +6136,10 @@ function stopStreaming() {
 function showStatus(msg) {
   const overlay = document.getElementById("statusOverlay");
   if (!overlay) return;
+  try {
+    if (typeof kioskYield === "function") kioskYield("status card");
+  } catch (e) {
+  }
   overlay.style.display = "flex";
   let text = document.getElementById("statusText");
   if (!text) {
@@ -5922,6 +6262,10 @@ function toggleScreenOff() {
     suppressMedia(false);
     setDisplayPower(true);
     return;
+  }
+  try {
+    kioskYield("screen off");
+  } catch (e) {
   }
   screenIsOff = true;
   suppressMedia(true);
@@ -6098,6 +6442,10 @@ function unpairThisPlayer() {
       });
       socket.emit("device:self-unpair", { device_id: config.deviceId });
     }
+  } catch (e) {
+  }
+  try {
+    kioskYield("unpaired at the panel");
   } catch (e) {
   }
   setTimeout(() => {

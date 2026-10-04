@@ -651,6 +651,11 @@ app.get('/player/play-order.js', (req, res) => {
   res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'lib', 'play-order.js'));
 });
+// #473: the interactive-page rules (window.KioskLogic), from the single source the vectors test.
+app.get('/player/kiosk-logic.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'kiosk-logic.js'));
+});
 // The Esc-unpair gate, from the same single source the Node tests require — so who may unpair a
 // screen at the panel cannot drift between what is tested and what is served.
 app.get('/player/unpair-gate.js', (req, res) => {

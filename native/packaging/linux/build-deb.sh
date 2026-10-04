@@ -53,7 +53,7 @@ Section: video
 Priority: optional
 Homepage: https://screentinker.com
 Depends: python3 (>= 3.13), python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtqml,
- python3-pyside6.qtquick, python3-pyside6.qtmultimedia, python3-pyside6.qtwebenginequick,
+ python3-pyside6.qtquick, python3-pyside6.qtmultimedia, python3-pyside6.qtwebenginequick, python3-pyside6.qtnetwork,
  qml6-module-qtquick, qml6-module-qtquick-window, qml6-module-qtqml-workerscript,
  qml6-module-qtmultimedia, qml6-module-qtwebengine, qt6-qpa-plugins, qt6-shader-baker,
  python3-socketio (>= 5), python3-aiohttp, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good,

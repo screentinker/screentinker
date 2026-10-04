@@ -307,6 +307,104 @@ through, but has not run on a unit in the state that exercises it:
   and a reboot.
 - **The `SetGraphicsZOrder` experiment** above.
 
+## Interactive web pages (#473) — top-level, not framed
+
+A webpage widget marked interactive is a walk-up kiosk page: the first touch holds the playlist,
+an idle countdown resets it, and the visitor's cookies and storage are wiped before the next one.
+The web player can only do a best-effort version of that in a browser — the site sits in an
+`<iframe>` of the player's own page, which can neither wipe a cross-origin site's storage nor see
+its navigation — so it declares `playback.web_interactive_framed` there.
+
+On this platform the host can do it properly — **but only when opted in, and it is OFF by
+default** until the wipe has been proven on a bench unit (the test plan below is what turns it on):
+
+```json
+{ "kiosk_toplevel": true }
+```
+
+in `screentinker.json` (only a JSON `true` counts), or registry `screentinker/kiosk_toplevel = "1"`.
+Without it the host does not announce `kiosk_toplevel`, and the player uses the framed mode and
+declares `playback.web_interactive_framed`.
+
+Opted in, the page posts `kiosk-open`, and `autorun.brs` opens a **second `roHtmlWidget` pointed at
+the site top-level**, over the player's widget:
+
+| what | how | source |
+|---|---|---|
+| fresh storage per session | `storage_path` = `<root>/st-kiosk/s<n>`, `DeleteDirectory`'d on close; the whole `st-kiosk` tree is deleted at boot (a power cut mid-session is wiped too) | `storage_path` "creates a Local Storage subfolder"; `DeleteDirectory` "will recursively delete" |
+| touches, media, navigation, consent cookies | a script built by the player, injected with `javascript_injection.document_creation` (base64 `data:` URL) into every document, posting over `BSMessagePort` | roHtmlWidget `javascript_injection`; BSMessagePort |
+| the allowlist | the injected script leaves a document outside it (back, or the start page), and stops off-site links, form posts and `window.open` before the request; `new-window-request` loads in place only if allowed | — |
+| zoom | `SetZoomLevel(zoom/100)` (Chromium page zoom reflows, like the passive render) | ifHtmlWidget `SetZoomLevel` |
+| Home button, "Still there?" | drawn by the injected script inside the site (the player's widget is underneath); driven by a DOM `CustomEvent` sent with `InjectJavaScript`, which crosses JS worlds | ifHtmlWidget `InjectJavaScript` |
+| consent cookies | the injected script reports the consent cookies it can read (`document.cookie`, by NAME via the shared patterns), the player keeps them, and the next session's script writes them back before the site's banner runs | — |
+
+The kiosk widget has **its own message port** and **no `nodejs_enabled`**. Only `kiosk-*` messages
+are relayed to the player, copied field by field as strings; nothing a website posts can reach the
+restart, reboot or identity handlers. `brightsign_js_objects_enabled` is on only for
+`BSMessagePort`: the injected script takes the one instance the widget allows, then deletes every
+`BS*` global before the site's own scripts run.
+
+⚠️ **The risk the opt-in accepts.** That deletion only protects anything if the injected script runs
+in the SAME JavaScript world as the site's scripts. The docs give `javascript_injection` a `world`
+of `application` (the default), `user` or `main` and do not say in which world the BS* objects are
+exposed. If they are visible to the site and our script cannot remove them, a third-party page
+(and every ad or analytics script it loads) can reach `BSDeviceInfo`, `BSControlPort`,
+`BSSerialPort` and the rest. No other page→host channel was found that avoids exposing them (an
+`roHttpServer` on localhost would open a LAN-reachable listener instead). **Step 6 of the plan is
+therefore a must-pass before anyone enables this.**
+
+The player keeps an open kiosk page alive (`kiosk-keepalive` every 5 s); the host closes the page
+by itself after 20 s of silence, so a wedged or reloaded player, or page→host messages that stop
+arriving, can never leave a site over the screen. `kiosk-close` names its session and is retried
+until the host answers `kiosk-closed`; a close for a page that is already gone is answered without
+touching a newer one. The page is also closed whenever the player shows something over or instead
+of it — a trigger, a PiP, the status card, screen off, re-pairing or an unpair — because the
+player's own DOM is underneath the kiosk widget and could not be seen.
+
+The idle clock, the session record, the playlist hold, the incidents and the usage counts all stay
+in the player (`server/player/kiosk-player.js`, the same engine as the framed mode). The host only
+opens, relays and closes.
+
+**Falls back to the framed mode** — and re-registers with the downgraded capability — when the host
+did not announce `kiosk_toplevel` in its probe answer (an older `autorun.brs`, a dual-output player),
+when `kiosk-open` gets no `kiosk-opened` within 4 s (page→host messaging has been seen to stop
+after load on an XT245), or when the injected script never reports in within 15 s (a firmware that
+ignores `javascript_injection`).
+
+### Not verified on hardware — test plan
+
+Written against docs.brightsign.biz and checked with a BrightScript parser and an interpreter run
+of the relay logic, **not on a player**. On a bench unit (never one in service):
+
+1. Deploy `autorun.brs` with `screentinker.self_update = "0"` first, or the package update
+   replaces it within minutes, and opt in with `"kiosk_toplevel": true`. Assign a playlist with an interactive webpage widget (idle 15 s,
+   warning 5 s, a page with a link to a second page of the same site and one to another site).
+2. The player log should show `[Kiosk] kiosk page opened top-level by the host`, NOT `falling
+   back to the framed mode`. If it falls back: page→host messaging is the suspect (the probe is the
+   only round trip known to work after boot); `[st-kiosk] opened` on the serial console tells which half failed.
+3. **Z-order:** the site must be visible ABOVE the player. If the dark backdrop shows instead, the
+   second widget is composited below the first.
+4. Tap: `session started — playlist held`; the item must outlive its duration.
+5. Tap the off-site link: `navigation blocked: …`, and the page stays. Follow the same-site link:
+   the Home button appears bottom-left; tapping it returns to the start page.
+6. **MUST PASS.** In the inspector (`inspector: true`), in the SITE's console (its own world, not
+   an extension/isolated context): `typeof BSMessagePort`, `typeof BSDeviceInfo`,
+   `typeof BSControlPort` must all be `"undefined"`. If any is a function the site can reach the
+   player's hardware objects: do not enable this mode.
+7. Leave it: the countdown appears IN the site, then `session idle — wiping and moving on` and
+   `web storage wiped`; `SSD:/st-kiosk/` must be empty afterwards.
+8. Set a cookie on the site (`document.cookie="a=1"` in the inspector), let it reset, reload: the
+   cookie must be gone in the next session. With `keep_consent`, a `CookieConsent` cookie must survive
+   and `a` must not.
+9. Zoom 150: `innerWidth` in the site must be the screen width / 1.5.
+10. Power-cycle mid-session: the next boot must delete `st-kiosk/`, and the dashboard's interactive
+    sessions report must show the cut-off session as `interrupted`.
+11. Fire a trigger and show a PiP during a session: the kiosk page must close and the overlay be
+    visible. Send the player a `refresh`: the page must close (rebuild), or within 20 s at worst.
+
+When all of these pass on a bench unit, turning the default on is a one-line change in
+`LoadConfig()` — and the README line above should say which unit and firmware proved it.
+
 ## Offline playback
 
 Content bytes are cached by the service worker (`server/player/sw.js`) into a dedicated

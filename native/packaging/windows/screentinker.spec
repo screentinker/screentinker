@@ -36,7 +36,8 @@ if os.path.exists(qsb):
 
 hidden = (collect_submodules("screentinker_native") + collect_submodules("engineio") +
           collect_submodules("socketio") + ["aiohttp", "pycaw.pycaw", "comtypes.stream", "win32timezone",
-                                            "PySide6.QtWebEngineQuick", "PySide6.QtMultimedia"])
+                                            "PySide6.QtWebEngineQuick", "PySide6.QtMultimedia",
+                                            "PySide6.QtNetwork"])   # #473 kiosk: consent cookies (QNetworkCookie)
 
 player = Analysis([os.path.join(HERE, "player_main.py")], pathex=[NATIVE], binaries=binaries, datas=datas,
                   hiddenimports=hidden, excludes=["PyQt6", "PyQt5", "tkinter"], noarchive=False)

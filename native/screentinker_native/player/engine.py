@@ -22,6 +22,7 @@ import urllib.parse
 
 from PySide6.QtCore import QTimer
 
+from ..logic import kiosk as kiosk_logic
 from ..logic import schedule_eval
 from . import transitions
 from .controller import PlaylistController
@@ -246,7 +247,29 @@ class PlaybackEngine:
     def _save_resume(self, idx, at):
         self.config.set("resume", [idx, at])
 
+    def _kiosk(self):
+        return getattr(self.app, "kiosk", None)
+
+    def _hide_kiosk(self):
+        k = self._kiosk()
+        if k is not None:
+            k.hide()
+
+    def kiosk_config(self, it):
+        """#473: the interactive config for this item when it may play interactively HERE, else None.
+        Fullscreen only: in zones, on a video wall, in a synced group or as a follower one screen
+        cannot hold the shared timeline, so there the item renders passively as today."""
+        if not it.is_widget or self._kiosk() is None:
+            return None
+        cfg = kiosk_logic.parse(it.widget_type, it.raw.get("widget_config"))
+        if cfg is None:
+            return None
+        if self.mode != "single" or self.wall or self.group_id or self.controller.wall_follower:
+            return None
+        return cfg
+
     def _idle(self, title, detail):
+        self._hide_kiosk()
         if self.mode == "single":
             self.stage.clearSurface.emit("main")
         self.app.show_status(title, detail)
@@ -276,6 +299,12 @@ class PlaybackEngine:
         zones = [z for z in (layout or {}).get("zones") or [] if isinstance(z, dict)]
         group = (p.get("group_sync") or {}).get("group_id") if isinstance(p.get("group_sync"), dict) else None
 
+        if group and not wall and self.group_id is None:
+            # ⚠️ BEFORE update_playlist: a held controller would PARK this payload, and joining the
+            # group drops the hold — and the parked list with it — leaving the follower ticking over
+            # the old items until the next push. End the visitor's session (wiped) first.
+            self._hide_kiosk()
+            self.controller.drop_hold()
         if wall:
             self._enter_single()
             self._apply_wall(wall)
@@ -377,6 +406,7 @@ class PlaybackEngine:
         if self.mode == "zones" and getattr(self, "_zone_sig", None) == sig:
             return
         if self.mode == "single":
+            self._hide_kiosk()               # interactive pages render passively in a zone
             self.controller.stop()
             self.playing = False
             self.stage.clearSurface.emit("main")
@@ -485,6 +515,18 @@ class PlaybackEngine:
     def _on_item_changed(self, it):
         self.app.hide_status()
         self.app.slide_audio(it)
+        # #473: an interactive webpage item plays in its own fresh view (ui/kiosk.py), loading the
+        # site TOP-LEVEL so its forms, cookies and navigation work and the allowlist can see them.
+        cfg = self.kiosk_config(it)
+        if cfg is not None:
+            self.stage.clearSurface.emit("main")      # nothing keeps playing underneath it
+            self.main_token, self.main_item = None, it
+            self._kiosk().show("%s|%d" % (it.key, it.widget_rev), cfg, it.widget_id)
+            self.app.emit("device:playback-state", {"device_id": self.config.device_id,
+                                                     "current_content_id": it.widget_id or "",
+                                                     "position_sec": 0})
+            return
+        self._hide_kiosk()
         # Group/wall followers loop video so they never freeze between leader updates.
         loop = bool(self.controller.wall_follower and it.mime_type.startswith("video/"))
         tok = self.render(it, "main", loop=loop)
@@ -545,7 +587,7 @@ class PlaybackEngine:
 
     def set_muted_for(self, content_id, muted):
         it = self.main_item
-        if not it or it.content_id != content_id:
+        if not it or it.content_id != content_id or self.main_token is None:
             return
         it.muted = muted
         if it.mime_type == "video/youtube":
@@ -568,6 +610,8 @@ class PlaybackEngine:
         leader = bool(wc.get("is_leader"))
         rot = int(wc.get("rotation") or 0)
         self.wall = {"id": str(wc.get("wall_id") or ""), "leader": leader, "group": False}
+        self._hide_kiosk()                   # interactive pages render passively on a wall
+        self.controller.drop_hold()          # a wall never holds; clear any interactive hold
         if s[2] > 0 and s[3] > 0:
             self.stage.set("wall", {"cw": p[2] / s[2], "ch": p[3] / s[3],
                                     "ox": (p[0] - s[0]) / s[2], "oy": (p[1] - s[1]) / s[3]})
@@ -589,6 +633,8 @@ class PlaybackEngine:
     def _enter_group(self, gid):
         first = self.group_id is None
         self.group_id = gid
+        if first:
+            self._hide_kiosk()               # ... and in a synced group (the hold was dropped in on_payload)
         self.controller.set_wall_follower(True)
         self.align_pending, self.last_aligned = True, -1
         self.sync_timer.start()
@@ -695,6 +741,7 @@ class PlaybackEngine:
 
     # ------------------------------------------------------------------ lifecycle
     def stop_all(self):
+        self._hide_kiosk()
         self.controller.stop()
         self.playing = False
         for r in self.zone_runners.values():

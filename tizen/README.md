@@ -33,6 +33,8 @@ css/style.css
 js/app.js           device protocol client (register, pair, heartbeat, state)
 js/device-control.js Samsung B2B/system fleet control (device:command) — #125
 js/player.js        fullscreen playlist renderer
+js/kiosk-logic.js   #473 interactive-page rules (copied from server/lib by build-wgt.sh)
+js/kiosk-session.js #473 interactive-page surface (framed iframe, idle reset, usage queue)
 js/socket.io.min.js socket.io-client v4.7.5 (bundled)
 icon.png
 build-wgt.sh        package (signed if Tizen CLI present, else unsigned)
@@ -174,6 +176,36 @@ live on the device-detail screen) plus a structured `device:command-result`:
 > a `<canvas>`. So **images capture for real; video/YouTube fall back to a status card**
 > (device + timestamp). The dashboard preview shows a truthful frame rather than a dead
 > button. Full-fidelity video preview isn't feasible on the sideloaded Tizen runtime.
+
+## Interactive web pages (#473) — framed, best effort
+
+A webpage widget with **Interactive** on plays the site itself in an `<iframe>` the player owns
+(`js/kiosk-session.js`, rules from `js/kiosk-logic.js` = byte copy of `server/lib/kiosk-logic.js`),
+fullscreen only (zones, walls and synced groups render it passively). It declares
+`playback.web_interactive_framed`, never `playback.web_interactive`, because a Tizen web app cannot
+show a site top-level under its own control, and from an iframe:
+
+- **No navigation allowlist.** A cross-origin frame's navigations can't be read or vetoed
+  (`<tizen:allow-navigation>` in config.xml is one static list for the whole package).
+- **Partial wipe.** `tizen.websetting.removeAllCookies()` clears the app's cookie jar (the framed
+  site's cookies live there). Nothing on Tizen clears the framed site's localStorage, IndexedDB,
+  cache or service workers. No privilege needed: `http://tizen.org/privilege/websetting` must NOT be
+  declared since 2.4.
+- **Keep consent cookies: unsupported** — the site's cookies can't be read by name; all are removed.
+- **Activity:** the first tap into the frame (focus moves into it) and each navigation inside it
+  are visible; further taps on a page that never navigates are not, so "Still there?" can come
+  early on a single-page site (one tap resumes). Media inside the page is not visible.
+  Focus the PAGE takes by script is not a tap: with `navigator.userActivation` (Tizen 6.0+) only a
+  focus carrying user activation starts a session; older engines ignore focus within 1.5 s of a
+  frame load (a page that focuses itself later still starts one there).
+- **Wipe ordering:** `removeAllCookies` is async, so the release, the next mount (even of the same
+  page on a one-item playlist) and clearing the dirty flag all wait for its callback (5 s timeout,
+  then move on and retry at the next start).
+- **Errors:** network failures (a `no-cors` probe) and no `load` in 30 s report `load_error`;
+  HTTP status and renderer crashes are invisible from here. Sites that refuse framing stay blank.
+- While a visitor is using it: playlist held (updates parked), screenshots blank, dashboard remote
+  touch/key refused. While the frame has focus a remote's keys (Return included) most likely go to
+  the page, not to the player — unverified on a panel; focus is reclaimed after each navigation.
 
 ## Updates (#122)
 There is **no in-app OTA** for a sideloaded, signed `.wgt`. Updating a screen means
