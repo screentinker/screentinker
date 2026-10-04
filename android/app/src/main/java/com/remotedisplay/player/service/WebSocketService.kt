@@ -27,6 +27,7 @@ import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.telemetry.DeviceInfo
 import io.socket.client.IO
 import io.socket.client.Socket
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
@@ -449,6 +450,22 @@ class WebSocketService : Service() {
                     flushConnectivityReport()
                     // #299: authenticated now, so any plays recorded while offline can be replayed.
                     flushOfflinePlays()
+                    // #473 v2: interactive-page sessions queued while offline (or before this boot).
+                    kioskFlushInFlight = false
+                    flushKioskSessions()
+                    flushKioskErrors()
+                }
+
+                // #473 v2: the server stored these session ids (or already had them): drop them.
+                safeOn("device:kiosk-sessions-ack") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    val ids = data.optJSONArray("ids") ?: JSONArray()
+                    val list = (0 until ids.length()).map { ids.optString(it, "") }.filter { it.isNotEmpty() }
+                    com.remotedisplay.player.kiosk.KioskSessionLog.ack(applicationContext, list)
+                    kioskFlushInFlight = false
+                    if (list.isNotEmpty() && com.remotedisplay.player.kiosk.KioskSessionLog.peek(applicationContext).isNotEmpty()) {
+                        handler.post { flushKioskSessions() }
+                    }
                 }
 
                 // v4 degrade-safe ARM: the watchdog arms ONLY after the first heartbeat-ack, so a
@@ -1688,6 +1705,51 @@ class WebSocketService : Service() {
             socket?.emit("device:connectivity-report", data)
             Log.i("WebSocketService", "connectivity-report offline_ms=$offlineMs link_lost=$linkLost internet_ok=$internetOk cold_start=$coldStart ip_changed=$ipChanged")
         } catch (e: Throwable) { Log.w("WebSocketService", "emitConnectivityReport: ${e.message}") }
+    }
+
+    // ── #473 v2: interactive web pages ──────────────────────────────────────────────────────────
+    @Volatile private var kioskFlushInFlight = false
+
+    /**
+     * Send queued interactive-page sessions, one batch at a time. Records leave the queue only on
+     * device:kiosk-sessions-ack; a lost ack just means the batch is resent and the server ignores the
+     * duplicates (it keys on the record id).
+     */
+    fun flushKioskSessions() {
+        if (kioskFlushInFlight || socket?.connected() != true || config.deviceId.isEmpty()) return
+        val batch = com.remotedisplay.player.kiosk.KioskSessionLog.peek(applicationContext)
+        if (batch.isEmpty()) return
+        kioskFlushInFlight = true
+        try {
+            socket?.emit("device:kiosk-sessions", JSONObject().apply {
+                put("device_id", config.deviceId)
+                put("sessions", JSONArray().apply { batch.forEach { put(it.toJson()) } })
+            })
+            // An older server never acks: stop waiting after a while so a later flush can retry.
+            handler.postDelayed({ kioskFlushInFlight = false }, 30_000)
+        } catch (e: Throwable) {
+            kioskFlushInFlight = false
+            Log.w("WebSocketService", "flushKioskSessions: ${e.message}")
+        }
+    }
+
+    /**
+     * A failed interactive page, as a dashboard incident. Already rate-limited by the caller.
+     * ⚠️ The commonest failure is "no network", which is exactly when it cannot be sent, so the
+     * last few are held (in memory) and sent on the next registration.
+     */
+    private val pendingKioskErrors = ArrayDeque<Pair<String, String>>()
+    fun sendKioskError(reason: String, detail: String) {
+        val d = detail.take(400)
+        if (socket?.connected() == true && config.deviceId.isNotEmpty()) { emitEvent("web_error", reason, d); return }
+        synchronized(pendingKioskErrors) {
+            pendingKioskErrors.addLast(reason to "$d (while offline)")
+            while (pendingKioskErrors.size > 10) pendingKioskErrors.removeFirst()
+        }
+    }
+    private fun flushKioskErrors() {
+        val list = synchronized(pendingKioskErrors) { pendingKioskErrors.toList().also { pendingKioskErrors.clear() } }
+        for ((r, d) in list) emitEvent("web_error", r, d)
     }
 
     /** Emit a typed incident (device_events). Guarded + no-op when unpaired/disconnected. */

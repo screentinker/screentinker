@@ -13,6 +13,9 @@
 // dropped by the device:event handler so a forged/typo'd type can't pollute the feed.
 const ALLOWED_EVENT_TYPES = new Set([
   'offline', 'online', 'display_off', 'display_on', 'crash', 'reboot', 'network', 'app_error',
+  // #473 v2: an interactive web page failed (reason: load_error | http_error | renderer_gone |
+  // webview_too_old). Rate-limited on the player, one per host and reason per 15 minutes.
+  'web_error',
 ]);
 
 function isAllowedEventType(type) {

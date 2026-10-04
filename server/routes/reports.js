@@ -155,6 +155,50 @@ router.get('/summary', (req, res) => {
   });
 });
 
+/*
+ * #473 v2: interactive web page usage — visitor sessions per day and their average engaged length,
+ * per webpage widget. Scoped by the workspace snapshotted on each row (as play_logs is), so a
+ * screen moved between workspaces keeps its history where it happened.
+ *
+ * Days are UTC. Sessions are few (one per visitor, not one per loop), so this reads the raw table.
+ */
+router.get('/kiosk-sessions', (req, res) => {
+  const range = resolveRange(req, res, {
+    defaultStart: () => Math.floor(Date.now() / 1000) - 30 * 86400,
+    defaultEnd: () => Math.floor(Date.now() / 1000),
+  });
+  if (!range) return;
+  const { startEpoch, endEpoch } = range;
+  if (!req.workspaceId) return res.json({ overall: { sessions: 0, avg_duration_sec: 0, total_duration_sec: 0 }, by_widget: [], by_day: [] });
+  const where = 'ks.workspace_id = ? AND ks.started_at >= ? AND ks.started_at <= ?';
+  const params = [req.workspaceId, startEpoch, endEpoch];
+  const dev = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
+  const devSql = dev ? ' AND ks.device_id = ?' : '';
+  if (dev) params.push(dev);
+
+  const overall = db.prepare(`SELECT COUNT(*) AS sessions, COALESCE(SUM(duration_sec), 0) AS total_duration_sec,
+      COALESCE(AVG(duration_sec), 0) AS avg_duration_sec, COALESCE(AVG(pages), 0) AS avg_pages
+    FROM kiosk_sessions ks WHERE ${where}${devSql}`).get(...params);
+  const byWidget = db.prepare(`SELECT ks.widget_id, w.name AS widget_name, COUNT(*) AS sessions,
+      SUM(ks.duration_sec) AS total_duration_sec, AVG(ks.duration_sec) AS avg_duration_sec, AVG(ks.pages) AS avg_pages,
+      COUNT(DISTINCT date(ks.started_at, 'unixepoch')) AS active_days,
+      SUM(CASE WHEN ks.end_reason = 'error' THEN 1 ELSE 0 END) AS ended_by_error
+    FROM kiosk_sessions ks LEFT JOIN widgets w ON w.id = ks.widget_id
+    WHERE ${where}${devSql} GROUP BY ks.widget_id ORDER BY sessions DESC`).all(...params);
+  const byDay = db.prepare(`SELECT date(ks.started_at, 'unixepoch') AS day, COUNT(*) AS sessions, AVG(ks.duration_sec) AS avg_duration_sec
+    FROM kiosk_sessions ks WHERE ${where}${devSql} GROUP BY day ORDER BY day`).all(...params);
+
+  const r1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+  res.json({
+    period: { start: new Date(startEpoch * 1000).toISOString(), end: new Date(endEpoch * 1000).toISOString() },
+    overall: { sessions: overall.sessions, total_duration_sec: overall.total_duration_sec,
+      avg_duration_sec: Math.round(overall.avg_duration_sec), avg_pages: r1(overall.avg_pages) },
+    by_widget: byWidget.map((w) => ({ ...w, avg_duration_sec: Math.round(w.avg_duration_sec || 0), avg_pages: r1(w.avg_pages),
+      sessions_per_day: w.active_days ? r1(w.sessions / w.active_days) : 0 })),
+    by_day: byDay.map((d) => ({ ...d, avg_duration_sec: Math.round(d.avg_duration_sec || 0) })),
+  });
+});
+
 // Export CSV. Phase 2.2g: workspace-scoped. Previously this route had no scope
 // filter at all - any authenticated user could export the entire platform's
 // play_logs. The added WHERE clause closes that pre-existing cross-tenant leak.

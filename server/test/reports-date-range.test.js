@@ -65,7 +65,7 @@ test('⚠️ an unparseable date is a refusal, never an empty result', () => {
   }
 });
 
-test('all three report handlers use the shared parser, and none rebuilds the old expression', () => {
+test('every report handler uses the shared parser, and none rebuilds the old expression', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'reports.js'), 'utf8');
   // ⚠️ Comments stripped: the helper's own comment quotes the removed expression to explain why it
   // went, and an absence assertion against raw source fails on the note documenting the fix.
@@ -75,9 +75,9 @@ test('all three report handlers use the shared parser, and none rebuilds the old
   assert.ok(!/new Date\(\s*end\s*\+/.test(code), 'the concatenation must not come back');
   // Call sites only — the helper's own signature also matches, so it is excluded by name.
   const callSites = (code.match(/=\s*resolveRange\(req, res/g) || []).length;
-  assert.equal(callSites, 3, 'summary, plays and uptime should all resolve their range the same way');
+  assert.equal(callSites, 4, 'summary, plays, uptime and kiosk-sessions should all resolve their range the same way');
   // And each one returns early on a refusal rather than carrying on with a null range.
-  assert.equal((code.match(/if \(!range\) return;/g) || []).length, 3);
+  assert.equal((code.match(/if \(!range\) return;/g) || []).length, 4);
 });
 
 test('the MCP report tools send something this parser accepts', () => {
