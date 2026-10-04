@@ -185,6 +185,8 @@ tasks.matching { it.name == "preBuild" || it.name.startsWith("merge") && it.name
 // that breaks a vector fails ScheduleEvalTest in CI.
 tasks.withType<Test> {
     systemProperty("scheduleVectors", File(rootProject.projectDir.parentFile, "shared/schedule-vectors.json").absolutePath)
+    // #473: the interactive-page rules, shared with the JS players and the native player.
+    systemProperty("kioskVectors", File(rootProject.projectDir.parentFile, "shared/kiosk-vectors.json").absolutePath)
     // Same mechanism for the trigger fire path. ⚠️ That one decides whether an unauthenticated LAN
     // packet changes what is on a screen, and it has two implementations in two languages — so the
     // shared vectors are the contract and TriggerResolveTest holds this one to it.
