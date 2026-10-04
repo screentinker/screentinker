@@ -336,6 +336,7 @@
       authenticated = true; // #118: this socket may now send post-register events
       clearToast();         // #118: drop any stale "Not authenticated…" banner
       flushOfflinePlays();  // #299: authenticated, so any offline backlog can be replayed
+      if (kioskOutbox) kioskOutbox.onRegistered();   // #473: queued usage records + held web_error incidents
       // feat/offline-cause-log: reconnected after an in-session disconnect -> report the gap length +
       // whether the local link dropped. cold_start:false because the app SURVIVED the gap (a reboot
       // would have lost this in-process state). Browser has no SSID/RSSI to add.
@@ -388,6 +389,8 @@
     });
 
     socket.on('device:playlist-update', onPlaylist);
+    // #473 v2: the server names the usage records it stored; only those leave the queue.
+    socket.on('device:kiosk-sessions-ack', function (d) { if (kioskOutbox) kioskOutbox.onAck(d); });
 
     // ---- remote control from the dashboard (#120 / #121 / #125) ----
     // Mirror the web/Android player. The server emits device:command with the set in
@@ -442,6 +445,8 @@
     socket.on('device:remote-touch', function (data) {
       try {
         if (!data) return;
+        // #473 privacy: a visitor is using an interactive page — the dashboard may not act for them.
+        if (player.kioskSessionActive()) { kioskLog('info', 'remote touch refused: interactive session in progress'); return; }
         var x = (data.x || 0) * elStage.offsetWidth, y = (data.y || 0) * elStage.offsetHeight;
         var el = document.elementFromPoint(x, y);
         if (el && el.click) el.click();
@@ -450,6 +455,7 @@
     socket.on('device:remote-key', function (data) {
       try {
         if (!data) return;
+        if (player.kioskSessionActive()) { kioskLog('info', 'remote key refused: interactive session in progress'); return; }
         var v = player.getCurrentVideo();
         var n = player.getItemCount();
         switch (data.keycode) {
@@ -728,6 +734,17 @@
     canvas.width = 960; canvas.height = 540;
     var ctx = canvas.getContext('2d');
     var captured = false;
+    // #473 privacy: during an interactive session the preview is a BLANK frame, so nobody watching
+    // the dashboard sees what a visitor types. (A cross-origin frame could never be captured anyway;
+    // this makes the frame deliberately empty rather than a status card that names the page.)
+    if (player.kioskSessionActive()) {
+      try {
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 960, 540);
+        var b = canvas.toDataURL('image/jpeg', 0.4).split(',')[1];
+        if (b) socket.emit('device:screenshot', { device_id: deviceId, image_b64: b });
+      } catch (e) {}
+      return;
+    }
     try {
       var img = elStage.querySelector('img');
       if (img && img.complete && img.naturalWidth > 0) {
@@ -848,6 +865,46 @@
       }
     } catch (e) {}
   };
+  /* ===================== #473 interactive web pages (framed) =====================
+   * js/kiosk-session.js owns the page; this wires it to the socket: usage records (queued in
+   * localStorage, sent after registration and after each session, dropped only on ack) and
+   * web_error incidents (held in memory while offline, max 10). Rules: window.KioskLogic.
+   */
+  function kioskLog(level, msg) {
+    try { console.log('[Kiosk] ' + msg); } catch (e) {}
+    try {
+      if (socket && socket.connected && deviceId && authenticated) {
+        socket.emit('device:log', { device_id: deviceId, tag: 'Kiosk', level: level, message: msg });
+      }
+    } catch (e) {}
+  }
+  var kioskOutbox = null, kiosk = null;
+  try {
+    if (typeof KioskSession !== 'undefined' && typeof KioskOutbox !== 'undefined' && window.KioskLogic) {
+      kioskOutbox = new KioskOutbox({
+        storage: (function () { try { return localStorage; } catch (e) { return null; } })(),
+        getSocket: function () { return socket; },
+        getDeviceId: function () { return deviceId; },
+        canSend: function () { return !!(socket && socket.connected && deviceId && authenticated); },
+        log: kioskLog
+      });
+      var kioskWebsetting = function () { try { return (window.tizen && tizen.websetting) || null; } catch (e) { return null; } };
+      kiosk = new KioskSession({
+        container: elStage,
+        log: kioskLog,
+        onHold: function () { player.hold(); },
+        onRelease: function () { player.release(); },
+        onSkip: function () { player.skipSoon(); },
+        onError: function (reason, detail) { kioskOutbox.reportError(reason, detail); },
+        onSessionEnd: function (r) { kioskOutbox.addSession(r); },
+        websetting: kioskWebsetting
+      });
+      // A session cut off by a crash or power cut: count it (interrupted) and wipe before anything loads.
+      KioskSession.recover((function () { try { return localStorage; } catch (e) { return null; } })(), kioskOutbox, kioskWebsetting(), kioskLog);
+      player.setKiosk(kiosk);
+    }
+  } catch (e) { kiosk = null; kioskOutbox = null; }
+
   // Multi-zone layout renderer (matches the Android player). app.js picks the renderer
   // per playlist-update from payload.layout; the two never run at once.
   var zoneRenderer = new ZoneRenderer(elStage, function () { return serverUrl.replace(/\/+$/, ''); }, function () { return deviceId || ''; });
@@ -910,6 +967,14 @@
 
   function onPlaylist(payload) {
     if (!payload) return;
+    // #473: a visitor is using an interactive page. Park the update (latest wins) and apply it on
+    // release — a layout or wall change would otherwise restart the page under them. A suspension
+    // is the operator taking the screen away, so it applies now (stop() ends the session).
+    if (!payload.suspended && player.park(function () { onPlaylist(payload); })) return;
+    // Interactive pages are fullscreen-only: a wall or a synced group renders them passively.
+    var interactiveOk = !payload.wall_config && !payload.group_sync;
+    if (!interactiveOk) player.dropHold();
+    player.setInteractiveAllowed(interactiveOk);
     if (payload.suspended) {
       player.stop();
       zoneRenderer.clear();

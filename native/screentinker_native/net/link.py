@@ -208,7 +208,8 @@ class DeviceLink:
                    "device:talk-start", "device:talk-stop", "device:pip-show", "device:pip-clear",
                    "device:mute-changed", "device:trigger-wire",
                    "wall:sync", "wall:sync-request", "group:sync", "group:sync-request", "group:resync",
-                   "device:pty-open", "device:pty-input", "device:pty-resize", "device:pty-close"):
+                   "device:pty-open", "device:pty-input", "device:pty-resize", "device:pty-close",
+                   "device:kiosk-sessions-ack"):
             on(ev, (lambda e: (lambda d: self.h.on_event(e, d)))(ev))
 
     async def _on_connect(self):

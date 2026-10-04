@@ -98,6 +98,17 @@
       'sync.clock'
     ];
 
+    /*
+     * #473 interactive web pages: the FRAMED variant, never playback.web_interactive. This player is
+     * itself a web page, so the site runs in an iframe it owns (js/kiosk-session.js): hold, idle
+     * reset, Home, zoom and usage counts work, but a cross-origin frame's navigations cannot be
+     * vetoed (no allowlist) and Tizen can wipe only the cookie jar (tizen.websetting.
+     * removeAllCookies) — never the site's localStorage / IndexedDB / cache. Declaring the full
+     * capability would tell an operator a visitor's login is wiped when it may not be.
+     * Probed: absent if either module failed to load.
+     */
+    if (window.KioskLogic && window.KioskSession) caps.push('playback.web_interactive_framed');
+
     var f = fleet();
     // Only on a partner-signed panel with the B2B/system surface present.
     if (f && f.reboot) caps.push('system.reboot');

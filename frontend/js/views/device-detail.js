@@ -1043,6 +1043,13 @@ async function loadDevice(deviceId, activeTab = null) {
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
             ${caps ? t('device.caps.declared') : t('device.caps.assumed')}
           </div>
+          <!-- #473: interactive web pages come in two strengths, and the difference is a privacy one -->
+          <div style="font-size:12px;margin-bottom:8px">
+            <strong>${t('device.caps.web_interactive')}</strong>
+            ${can('playback.web_interactive') && caps ? esc(t('device.caps.web_interactive_full'))
+              : can('playback.web_interactive_framed') && caps ? `<span style="color:#b45309">${esc(t('device.caps.web_interactive_framed'))}</span>`
+              : esc(t('device.caps.web_interactive_none'))}
+          </div>
           <div style="display:flex;flex-wrap:wrap;gap:6px">
             ${(device.capabilities || []).map(c => `<span style="font-family:monospace;font-size:11px;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;padding:2px 6px">${esc(c)}</span>`).join('')
               || `<span style="font-size:12px;color:var(--danger)">${t('device.caps.none')}</span>`}

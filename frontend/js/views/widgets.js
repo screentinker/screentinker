@@ -715,6 +715,7 @@ export async function render(container) {
               <span><strong>${t('widget.web.interactive')}</strong><br><span style="font-size:12px;color:var(--text-muted)">${t('widget.web.interactive_hint')}</span></span>
             </label>
             <div id="wInteractiveOpts" style="margin-top:10px;${config.interactive ? '' : 'display:none'}">
+              <div id="wInteractiveSupport" style="font-size:12px;color:var(--text-muted);margin-bottom:10px"></div>
               <div class="form-group"><label>${t('widget.web.idle_timeout')}</label><input type="number" id="wIdle" class="input" min="15" max="3600" value="${Number(config.idle_timeout_sec) || 60}"></div>
               <div class="form-group"><label>${t('widget.web.allowed_domains')}</label><input type="text" id="wDomains" class="input" value="${esc(Array.isArray(config.allowed_domains) ? config.allowed_domains.join(', ') : (config.allowed_domains || ''))}" placeholder="${esc(t('widget.web.allowed_domains_ph'))}">
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.web.allowed_domains_hint')}</div></div>
@@ -841,6 +842,20 @@ export async function render(container) {
       const box = document.getElementById('wInteractive');
       const opts = document.getElementById('wInteractiveOpts');
       if (box && opts) box.addEventListener('change', () => { opts.style.display = box.checked ? '' : 'none'; });
+      // Which screens here will actually give a visitor the full kiosk (#473): full, limited, or none.
+      const sup = document.getElementById('wInteractiveSupport');
+      if (sup) {
+        api.getDevices().then((list) => {
+          const n = { full: 0, framed: 0, none: 0 };
+          for (const d of (Array.isArray(list) ? list : [])) {
+            const c = Array.isArray(d.capabilities) ? d.capabilities : [];
+            if (c.includes('playback.web_interactive')) n.full++;
+            else if (c.includes('playback.web_interactive_framed')) n.framed++;
+            else n.none++;
+          }
+          if (n.full + n.framed + n.none) sup.textContent = t('widget.web.support', n);
+        }).catch(() => {});
+      }
       const keep = document.getElementById('wKeepConsent');
       const names = document.getElementById('wKeepNamesRow');
       if (keep && names) keep.addEventListener('change', () => { names.style.display = keep.checked ? '' : 'none'; });

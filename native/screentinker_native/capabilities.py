@@ -15,7 +15,7 @@ from .platform import ops
 CAPABILITIES_ALWAYS = [
     "playback.video", "playback.image", "playback.widget", "playback.youtube", "playback.hls",
     "playback.rtsp", "playback.zones", "playback.transitions", "playback.pip", "playback.bundle",
-    "playback.slide_audio",
+    "playback.slide_audio", "playback.web_interactive",
     "audio.mute", "audio.volume",
     "display.rotation", "display.brightness", "display.power", "display.power_schedule",
     "remote.screenshot", "remote.stream", "remote.input", "remote.talk", "remote.set_server_url",

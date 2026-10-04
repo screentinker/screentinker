@@ -84,6 +84,10 @@ Window {
                     Component.onDestruction: win.unregisterSurface(surfaceId, this)
                 }
             }
+
+            // #473 interactive web page: above the playback surface, inside the rotor so the
+            // orientation applies. Fullscreen single-layout only (ui/kiosk.py + the engine decide).
+            KioskLayer { anchors.fill: parent }
         }
         }
     }

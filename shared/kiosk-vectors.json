@@ -1,0 +1,80 @@
+{
+  "_comment": "#473 interactive web pages. Every player's kiosk logic is checked against these: server/test/kiosk-logic.test.js (JS: web, Tizen, BrightSign), Android KioskVectorsTest, native tests/test_kiosk.py. Change a rule here and in all three, or a test fails.",
+  "parse": [
+    { "name": "plain webpage is passive", "type": "webpage", "config": {"url": "https://shop.example"}, "expect": null },
+    { "name": "interactive false", "type": "webpage", "config": {"url": "https://shop.example", "interactive": false}, "expect": null },
+    { "name": "not a webpage widget", "type": "clock", "config": {"url": "https://shop.example", "interactive": true}, "expect": null },
+    { "name": "non-http url", "type": "webpage", "config": {"url": "ftp://shop.example", "interactive": true}, "expect": null },
+    { "name": "config as a JSON string", "type": "webpage", "config": "{\"url\":\"https://shop.example/menu\",\"interactive\":true}",
+      "expect": {"url": "https://shop.example/menu", "idleTimeoutSec": 60, "warnSec": 10, "allowedDomains": ["shop.example"], "minWebView": null, "keepConsent": false, "keepCookieNames": [], "homeButton": true, "zoomPct": 100} },
+    { "name": "unparseable string", "type": "webpage", "config": "not json", "expect": null },
+    { "name": "clamps, domains, start host first", "type": "webpage",
+      "config": {"url": "https://Shop.Example/menu", "interactive": true, "idle_timeout_sec": 2, "allowed_domains": "cdn.example, https://pay.example/x ,bad"},
+      "expect": {"url": "https://Shop.Example/menu", "idleTimeoutSec": 15, "warnSec": 10, "allowedDomains": ["shop.example", "cdn.example", "pay.example"], "minWebView": null, "keepConsent": false, "keepCookieNames": [], "homeButton": true, "zoomPct": 100} },
+    { "name": "array domains, min_webview, idle max", "type": "webpage",
+      "config": {"url": "https://a.example", "interactive": true, "allowed_domains": ["b.example", "*.c.example", "b.example"], "min_webview": 90, "idle_timeout_sec": 99999},
+      "expect": {"url": "https://a.example", "idleTimeoutSec": 3600, "warnSec": 10, "allowedDomains": ["a.example", "b.example", "c.example"], "minWebView": 90, "keepConsent": false, "keepCookieNames": [], "homeButton": true, "zoomPct": 100} },
+    { "name": "v2 options", "type": "webpage",
+      "config": {"url": "https://a.example", "interactive": true, "keep_consent": true, "keep_cookie_names": "my_consent, cc_*, bad;name, *,", "home_button": false, "zoom": 150, "idle_warning_sec": 0},
+      "expect": {"url": "https://a.example", "idleTimeoutSec": 60, "warnSec": 0, "allowedDomains": ["a.example"], "minWebView": null, "keepConsent": true, "keepCookieNames": ["my_consent", "cc_*"], "homeButton": false, "zoomPct": 150} },
+    { "name": "zoom clamps and zero means default", "type": "webpage", "config": {"url": "https://a.example", "interactive": true, "zoom": 9000},
+      "expect": {"url": "https://a.example", "idleTimeoutSec": 60, "warnSec": 10, "allowedDomains": ["a.example"], "minWebView": null, "keepConsent": false, "keepCookieNames": [], "homeButton": true, "zoomPct": 400} },
+    { "name": "zoom zero", "type": "webpage", "config": {"url": "https://a.example", "interactive": true, "zoom": 0},
+      "expect": {"url": "https://a.example", "idleTimeoutSec": 60, "warnSec": 10, "allowedDomains": ["a.example"], "minWebView": null, "keepConsent": false, "keepCookieNames": [], "homeButton": true, "zoomPct": 100} }
+  ],
+  "isAllowed": [
+    { "url": "https://shop.example/basket", "allowed": ["shop.example"], "expect": true },
+    { "url": "https://www.shop.example/", "allowed": ["shop.example"], "expect": true },
+    { "url": "http://m.shop.example?x=1", "allowed": ["shop.example"], "expect": true },
+    { "url": "https://evilshop.example/", "allowed": ["shop.example"], "expect": false },
+    { "url": "https://shop.example.evil.com/", "allowed": ["shop.example"], "expect": false },
+    { "url": "https://other.example/", "allowed": ["shop.example"], "expect": false },
+    { "url": "intent://shop.example#Intent;end", "allowed": ["shop.example"], "expect": false },
+    { "url": "market://details?id=x", "allowed": ["shop.example"], "expect": false },
+    { "url": "tel:123", "allowed": ["shop.example"], "expect": false },
+    { "url": "mailto:a@shop.example", "allowed": ["shop.example"], "expect": false },
+    { "url": "file:///sdcard/x", "allowed": ["shop.example"], "expect": false },
+    { "url": "javascript:alert(1)", "allowed": ["shop.example"], "expect": false },
+    { "url": "https://user@evil.com/", "allowed": ["shop.example"], "expect": false },
+    { "url": "about:blank", "allowed": ["shop.example"], "expect": true },
+    { "url": "https://pay.example:8443/x", "allowed": ["shop.example", "pay.example"], "expect": true }
+  ],
+  "selectCookies": [
+    { "name": "only consent cookies survive", "header": "PHPSESSID=abc; CookieConsent={stamp:'x',necessary:true}; cart_id=42; euconsent-v2=CPx; cookielawinfo-checkbox-analytics=yes; auth_token=secret; OptanonAlertBoxClosed=2026-10-04",
+      "patterns": "BUILT_IN",
+      "expect": [["CookieConsent", "{stamp:'x',necessary:true}"], ["euconsent-v2", "CPx"], ["cookielawinfo-checkbox-analytics", "yes"], ["OptanonAlertBoxClosed", "2026-10-04"]] },
+    { "name": "operator prefix, values keep equals signs", "header": "shop_gdpr=a=b=c; shop_gdpr_v=2; other=1", "patterns": ["shop_gdpr*"],
+      "expect": [["shop_gdpr", "a=b=c"], ["shop_gdpr_v", "2"]] },
+    { "name": "no patterns keeps nothing", "header": "CookieConsent=1", "patterns": [], "expect": [] },
+    { "name": "duplicate name kept once", "header": "CookieConsent=1; CookieConsent=2", "patterns": "BUILT_IN", "expect": [["CookieConsent", "1"]] }
+  ],
+  "idle": [
+    { "name": "touch, idle, countdown, reset", "idleMs": 60000, "warnMs": 10000,
+      "steps": [["touch", 0, "started"], ["tick", 59999, "none"], ["tick", 60000, {"warn": 10}], ["tick", 69500, {"warn": 1}], ["tick", 70000, "reset"], ["tick", 80000, "none"]] },
+    { "name": "untouched page is never a session", "idleMs": 60000, "warnMs": 10000,
+      "steps": [["tick", 1000000, "none"], ["keepAlive", 1000000, "none"]] },
+    { "name": "tap during countdown resumes", "idleMs": 60000, "warnMs": 10000,
+      "steps": [["touch", 0, "started"], ["tick", 65000, {"warn": 5}], ["touch", 65000, "resumed"], ["tick", 124999, "none"], ["tick", 125000, {"warn": 10}]] },
+    { "name": "media keeps the session alive", "idleMs": 60000, "warnMs": 10000,
+      "steps": [["touch", 0, "started"], ["keepAlive", 50000, "none"], ["keepAlive", 100000, "none"], ["tick", 159999, "none"], ["tick", 170000, "reset"]] },
+    { "name": "media during the countdown resumes", "idleMs": 60000, "warnMs": 10000,
+      "steps": [["touch", 0, "started"], ["tick", 61000, {"warn": 9}], ["keepAlive", 62000, "resumed"]] },
+    { "name": "no countdown resets straight away", "idleMs": 30000, "warnMs": 0,
+      "steps": [["touch", 0, "started"], ["tick", 30000, "reset"]] }
+  ],
+  "isStartPage": [
+    { "url": "https://shop.example/menu", "start": "https://shop.example/menu", "expect": true },
+    { "url": "https://SHOP.example/menu/#top", "start": "https://shop.example/menu", "expect": true },
+    { "url": null, "start": "https://shop.example/menu", "expect": true },
+    { "url": "about:blank", "start": "https://shop.example/menu", "expect": true },
+    { "url": "https://shop.example/menu/item/3", "start": "https://shop.example/menu", "expect": false },
+    { "url": "https://shop.example/menu?page=2", "start": "https://shop.example/menu", "expect": false }
+  ],
+  "errorThrottle": [
+    { "windowMs": 60000, "steps": [["load_error", "https://shop.example/a", 0, true], ["load_error", "https://shop.example/b", 30000, false], ["http_error", "https://shop.example/b", 30000, true], ["load_error", "https://other.example/", 30000, true], ["load_error", "https://shop.example/a", 60000, true]] }
+  ],
+  "chromeMajor": [
+    { "ua": "Mozilla/5.0 (Linux; Android 11; rk3566 Build/RQ3A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36", "expect": 83 },
+    { "ua": "weird", "expect": null }
+  ]
+}

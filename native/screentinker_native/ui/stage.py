@@ -21,6 +21,8 @@ class Stage(QObject):
     toast = Signal(str)
     rtcCommand = Signal(str)
     openMenu = Signal(int)
+    kioskLoad = Signal(str)            # #473: load this URL in the interactive page
+    kioskJs = Signal(str)              # #473: run this script in the interactive page
 
     # property change notifications
     rotationChanged = Signal()
@@ -45,11 +47,23 @@ class Stage(QObject):
     rtcHtmlChanged = Signal()
     rtcBaseUrlChanged = Signal()
     shadersSupportedChanged = Signal()
+    kioskShownChanged = Signal()
+    kioskMountedChanged = Signal()
+    kioskProfileChanged = Signal()
+    kioskZoomChanged = Signal()
+    kioskOverlayChanged = Signal()
+    kioskCardChanged = Signal()
+    kioskHomeChanged = Signal()
+    kioskSeqChanged = Signal()
 
     def __init__(self, engine_cb):
         super().__init__()
         self._cb = engine_cb            # object with on_slot_event / on_slot_position / on_pip_closed / ...
         self.window = None
+        self.kiosk = None               # ui/kiosk.KioskSession, set by it
+        # True while delivering a REMOTE (dashboard) touch/key: those must never start or keep alive
+        # a visitor session (#473) — an operator testing the page would lock themselves out.
+        self.synthetic_input = False
 
     # --- properties (QML reads; python sets via set_x) -------------------------------------
     # PyQt needs the notify signal object at class-creation time, so properties are declared
@@ -79,6 +93,15 @@ class Stage(QObject):
     rtcHtml = Property(str, fget=_g("rtcHtml", ""), notify=rtcHtmlChanged)
     rtcBaseUrl = Property(str, fget=_g("rtcBaseUrl", "about:blank"), notify=rtcBaseUrlChanged)
     shadersSupported = Property(bool, fget=_g("shadersSupported", True), notify=shadersSupportedChanged)
+    # #473 interactive page (ui/kiosk.py drives these; ui/qml/KioskLayer.qml renders them)
+    kioskShown = Property(bool, fget=_g("kioskShown", False), notify=kioskShownChanged)
+    kioskMounted = Property(bool, fget=_g("kioskMounted", False), notify=kioskMountedChanged)
+    kioskProfile = Property(QObject, fget=_g("kioskProfile", None), notify=kioskProfileChanged)
+    kioskZoom = Property(float, fget=_g("kioskZoom", 1.0), notify=kioskZoomChanged)
+    kioskOverlay = Property(str, fget=_g("kioskOverlay", ""), notify=kioskOverlayChanged)
+    kioskCard = Property(str, fget=_g("kioskCard", ""), notify=kioskCardChanged)
+    kioskHome = Property(bool, fget=_g("kioskHome", False), notify=kioskHomeChanged)
+    kioskSeq = Property(int, fget=_g("kioskSeq", 0), notify=kioskSeqChanged)
     del _g
 
     def set(self, name, value):
@@ -118,14 +141,84 @@ class Stage(QObject):
     def rtcLog(self, msg):
         self._cb.on_rtc_log(msg)
 
+    # --- #473 interactive page: KioskLayer.qml -> ui/kiosk.py --------------------------------
+    @Slot(str, bool, result=bool)
+    def kioskNavAllowed(self, url, main_frame):
+        k = self.kiosk
+        return bool(k and k.nav_allowed(url, main_frame))
+
+    @Slot(str)
+    def kioskNewWindow(self, url):
+        if self.kiosk:
+            self.kiosk.new_window(url)
+
+    @Slot(str)
+    def kioskUrlChanged(self, url):
+        if self.kiosk:
+            self.kiosk.url_changed(url)
+
+    @Slot(str, bool, int, str)
+    def kioskLoadDone(self, url, ok, status, detail):
+        if self.kiosk:
+            self.kiosk.load_finished(url, ok, status, detail)
+
+    @Slot(str)
+    def kioskRendererGone(self, detail):
+        if self.kiosk:
+            self.kiosk.renderer_gone(detail)
+
+    @Slot()
+    def kioskHomeTapped(self):
+        if self.kiosk:
+            self.kiosk.home(touch=not self.synthetic_input)
+
+    @Slot()
+    def kioskOverlayTapped(self):
+        if self.kiosk and not self.synthetic_input:
+            self.kiosk.overlay_tapped()
+
+    @Slot(str)
+    def kioskConsole(self, message):
+        if self.kiosk and message == "__stkiosk:media":
+            self.kiosk.media_playing()
+
+    def eventFilter(self, obj, ev):
+        """Installed on the window: every press, touch and key is activity for the interactive page's
+        idle clock (it never consumes anything — the page gets every event)."""
+        k = self.kiosk
+        if k is not None and k.is_showing and not self.synthetic_input and ev.type() in self._INPUT_EVENTS:
+            # ⚠️ Not a press while "Still there?" is up: resuming here would hide the overlay BEFORE
+            # Qt delivers the press, so the tap meant for the overlay landed on the page underneath
+            # (it followed a link in the first e2e run). The overlay's own MouseArea resumes instead.
+            if self.kioskOverlay and ev.type() != QEvent.Type.KeyPress:
+                return False
+            try:
+                k.user_input()
+            except Exception:
+                log.exception("kiosk input")
+        return False
+
+    _INPUT_EVENTS = (QEvent.Type.MouseButtonPress, QEvent.Type.TouchBegin, QEvent.Type.KeyPress,
+                     QEvent.Type.Wheel)
+
     # --- screenshot ----------------------------------------------------------------------------
+    def _grab(self):
+        """The window as an image — or, while a visitor is using an interactive page (#473), a black
+        frame of the same size: an operator watching the panel must not see what a visitor types."""
+        if self.kiosk is not None and self.kiosk.session_active:
+            from PySide6.QtGui import QImage
+            img = QImage(max(1, self.window.width()), max(1, self.window.height()), QImage.Format.Format_RGB32)
+            img.fill(Qt.GlobalColor.black)
+            return img
+        return self.window.grabWindow()
+
     def screenshot_jpeg_b64(self, max_width=960, quality=40, rotate=0):
         """Android ScreenshotCapture parity: JPEG q40, at most 960 px wide, base64 (no wrapping).
         grabWindow() reads back the whole scene graph — video, WebEngine textures, overlays — which
         is exactly "what the panel shows", unlike a canvas snapshot that cannot see cross-origin frames."""
         if self.window is None:
             return None
-        img = self.window.grabWindow()
+        img = self._grab()
         if img.isNull():
             return None
         if img.width() > max_width:
@@ -141,7 +234,7 @@ class Stage(QObject):
         """Raw JPEG bytes of the current frame for the live-video publisher."""
         if self.window is None:
             return None
-        img = self.window.grabWindow()
+        img = self._grab()
         if img.isNull():
             return None
         if img.width() != width:
@@ -192,7 +285,16 @@ class Stage(QObject):
             buttons = Qt.MouseButton.LeftButton
         ev = QMouseEvent(etype, pos, pos, Qt.MouseButton.LeftButton if etype != QEvent.Type.MouseMove else Qt.MouseButton.NoButton,
                          buttons, Qt.KeyboardModifier.NoModifier)
-        QGuiApplication.sendEvent(w, ev)
+        self._send_synthetic(w, ev)
+
+    def _send_synthetic(self, target, ev):
+        # sendEvent delivers synchronously, so the flag covers the event filter AND any QML handler
+        # (the Home button, the overlay) that runs inside this delivery.
+        self.synthetic_input = True
+        try:
+            QGuiApplication.sendEvent(target, ev)
+        finally:
+            self.synthetic_input = False
 
     KEYMAP = {
         "KEYCODE_DPAD_UP": Qt.Key.Key_Up, "KEYCODE_DPAD_DOWN": Qt.Key.Key_Down,
@@ -215,5 +317,5 @@ class Stage(QObject):
         if k is None or self.window is None:
             return False
         for t in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
-            QGuiApplication.sendEvent(self.window, QKeyEvent(t, k, Qt.KeyboardModifier.NoModifier))
+            self._send_synthetic(self.window, QKeyEvent(t, k, Qt.KeyboardModifier.NoModifier))
         return True
