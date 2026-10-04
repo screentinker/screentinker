@@ -27,6 +27,9 @@ data class PlaylistItem(
     // the copy already on disk forever, because nothing about the id or the URL would differ.
     val contentRev: Long = 0L,
     val widgetType: String? = null,
+    // The widget's config JSON (as the server sends it: a string). Read for interactive webpage
+    // items (#473, kiosk/KioskLogic.kt); every other widget renders from the server's render page.
+    val widgetConfig: String? = null,
     val schedules: List<ScheduleEval.Block> = emptyList(),
     // Inclusive local play window (YYYY-MM-DDTHH:MM). Null = unbounded on that side.
     val playFrom: String? = null,
@@ -221,6 +224,45 @@ class PlaylistController(
 
     // Video wall: followers don't self-advance — the leader's wall:sync drives the index.
     private var wallFollower = false
+
+    /*
+     * #473: a visitor is using an interactive web page. While HELD nothing moves the playlist on:
+     * no advance timer, no deferred-swap deadline, and a playlist update is parked until release —
+     * applying it mid-session would restart the item under someone filling in a form. release()
+     * then applies whatever was parked and advances.
+     */
+    private var held = false
+    private var parkedUpdate: Pair<JSONArray, String>? = null
+    val isFollower: Boolean get() = wallFollower
+
+    private var heldKey: String? = null
+
+    fun hold() {
+        if (held) return
+        held = true
+        heldKey = currentItem?.itemKey
+        cancelAdvance()
+        Log.i("PlaylistController", "held on current item (interactive session)")
+    }
+
+    /** Clear a hold WITHOUT advancing (the caller is about to replace playback anyway). */
+    fun dropHold() {
+        held = false; heldKey = null; parkedUpdate = null
+    }
+
+    fun release() {
+        if (!held) return
+        held = false
+        Log.i("PlaylistController", "released (interactive session over)")
+        val parked = parkedUpdate
+        parkedUpdate = null
+        val key = heldKey
+        heldKey = null
+        if (parked != null) updatePlaylist(parked.first, parked.second)
+        // Advance off the page the visitor used — unless applying the parked update already moved
+        // playback elsewhere (it restarted, or the item was removed), which would make this a skip.
+        if (currentItem?.itemKey == key) next()
+    }
     // Wall-clock at which the current item started playing, for non-video sync position.
     private var itemStartedAt = 0L
 
@@ -286,6 +328,11 @@ class PlaylistController(
         get() = currentItem?.contentId
 
     fun updatePlaylist(assignmentsJson: JSONArray, order: String = "sequential") {
+        if (held) {
+            Log.i("PlaylistController", "playlist update parked until the interactive session ends")
+            parkedUpdate = assignmentsJson to order
+            return
+        }
         if (order != playbackOrder) playOrderState = PlayOrder.State()
         playbackOrder = when (order) { "shuffle", "weighted" -> order; else -> "sequential" }
         Log.i("PlaylistController", "Received JSONArray with ${assignmentsJson.length()} items")
@@ -312,6 +359,11 @@ class PlaylistController(
                     widgetRev = obj.optLong("widget_rev", 0L),
                     contentRev = obj.optLong("content_rev", 0L),
                     widgetType = if (obj.isNull("widget_type")) null else obj.optString("widget_type", "").ifEmpty { null },
+                    widgetConfig = when (val wc = obj.opt("widget_config")) {
+                        is String -> wc.ifEmpty { null }
+                        is JSONObject -> wc.toString()
+                        else -> null
+                    },
                     schedules = parseSchedules(obj.optJSONArray("schedules")),
                     playFrom = if (obj.isNull("play_from")) null else obj.optString("play_from", "").ifEmpty { null },
                     playUntil = if (obj.isNull("play_until")) null else obj.optString("play_until", "").ifEmpty { null },
@@ -529,6 +581,7 @@ class PlaylistController(
     }
 
     fun stop() {
+        held = false; heldKey = null; parkedUpdate = null   // a stop ends any interactive hold
         isRunning = false
         cancelAdvance()
         cancelRetry()
@@ -545,6 +598,7 @@ class PlaylistController(
     }
 
     fun next() {
+        if (held) return
         // #157: a deferred rotation-out — the just-finished item was removed (expired) while live.
         // Swap in the stashed list now and continue at the preserved successor (or first playable).
         pendingItems?.let { p ->
@@ -712,6 +766,7 @@ class PlaylistController(
 
     private fun scheduleAdvance(delayMs: Long) {
         cancelAdvance()
+        if (held) return
         // Backstop: never busy-loop, even if a future caller passes a tiny/zero delay.
         val safeDelayMs = maxOf(delayMs, MIN_ADVANCE_MS)
         advanceRunnable = Runnable { next() }

@@ -58,6 +58,8 @@ object PlayerCapabilities {
                 // URL, so this build can always do it. It says nothing about offline: nothing here
                 // unpacks an archive, so a bundle needs the server even on a panel that caches media.
                 "playback.bundle",
+                // #473: webpage widgets with config.interactive render as walk-up kiosk pages.
+                "playback.web_interactive",
                 // Slide decks with a voiceover / music bed. SlideAudioPlayer owns two ExoPlayers of
                 // its own, outside the widget WebView that draws the slide — so this build really
                 // does make the sound. Note the android BASELINE in player-capabilities.js does NOT

@@ -647,6 +647,7 @@ class WebSocketService : Service() {
                 }
 
                 safeOn("device:remote-touch") { args ->
+                    if (privacyOn()) { Log.i("WebSocketService", "remote touch refused: interactive session in progress"); return@safeOn }
                     val data = args.firstOrNull() as? JSONObject ?: return@safeOn
                     val x = data.optDouble("x", 0.0).toFloat()
                     val y = data.optDouble("y", 0.0).toFloat()
@@ -672,6 +673,7 @@ class WebSocketService : Service() {
                 }
 
                 safeOn("device:remote-key") { args ->
+                    if (privacyOn()) { Log.i("WebSocketService", "remote key refused: interactive session in progress"); return@safeOn }
                     val data = args.firstOrNull() as? JSONObject ?: return@safeOn
                     val keycode = data.optString("keycode", "")
                     if (keycode.isEmpty()) return@safeOn
@@ -1209,6 +1211,24 @@ class WebSocketService : Service() {
     // Callback for Activity to provide screenshot
     var onCaptureScreenshot: (() -> String?)? = null
 
+    /**
+     * #473: true while a visitor is using an interactive web page. Every capture tier then returns a
+     * blank frame and remote input is refused: the operator must not watch, or type into, a stranger's
+     * form. (FLAG_SECURE already blacks MediaProjection and the live video; this also covers the
+     * in-app view-draw tier and the accessibility screenshot, which FLAG_SECURE may not.)
+     */
+    @Volatile var privacyActive: (() -> Boolean)? = null
+    private fun privacyOn(): Boolean = try { privacyActive?.invoke() == true } catch (_: Throwable) { false }
+
+    private val blankFrame: String by lazy {
+        val bmp = android.graphics.Bitmap.createBitmap(160, 90, android.graphics.Bitmap.Config.RGB_565)
+        bmp.eraseColor(android.graphics.Color.BLACK)
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 40, out)
+        bmp.recycle()
+        android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+    }
+
     /** The tier the NEXT capture would use. Reported in telemetry so the dashboard can say why a
      *  screenshot shows only the playlist. Must stay in step with captureScreen() below. */
     fun currentCaptureMode(): CaptureMode = CaptureMode.current(onCaptureScreenshot != null)
@@ -1228,6 +1248,7 @@ class WebSocketService : Service() {
         }
 
     private fun captureScreen(): String? {
+        if (privacyOn()) return blankFrame
         // Priority 1: MediaProjection (system-wide, works in background) — needs operator consent.
         if (ScreenCaptureService.isReady) {
             val result = ScreenCaptureService.captureScreen(40)

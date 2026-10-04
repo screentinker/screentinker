@@ -45,6 +45,11 @@ const CAPABILITIES = [
    * player with an iframe can do. It does NOT imply the player can unpack an archive locally, so it
    * says nothing about whether a bundle survives an outage; that is offline.cache's job. */
   'playback.bundle',
+  /* A webpage widget with `interactive: true` played as a walk-up kiosk page (#473): touch reaches
+   * the site, the playlist holds while a visitor uses it, and an idle reset wipes the session.
+   * Android only, fullscreen only. In NO baseline: every other player still renders the page
+   * passively through the widget iframe, which is exactly the behaviour with the switch off. */
+  'playback.web_interactive',
   // audio
   'audio.mute', 'audio.volume',
   /* A slide's voiceover and a deck's music bed. Declared by a player that owns those audio
