@@ -248,6 +248,9 @@ async function meshWrite(routed, options) {
   return payload.result ?? payload;
 }
 
+// DELETE has no body: an acknowledgement rides in the query string.
+function ackQuery(opts) { return opts && opts.acknowledge_impact ? '?acknowledge_impact=1' : ''; }
+
 async function request(url, options = {}) {
   const routed = remoteRoute(url, options.method);
   if (routed && routed.refuse) throw new Error(routed.refuse);
@@ -637,10 +640,12 @@ export const api = {
   createGroup: (name, color) => request('/groups', { method: 'POST', body: JSON.stringify({ name, color }) }),
   updateGroup: (id, data) => request(`/groups/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   resyncGroup: (id) => request(`/groups/${id}/resync`, { method: 'POST' }),
-  deleteGroup: (id) => request(`/groups/${id}`, { method: 'DELETE' }),
+  // opts.acknowledge_impact: resend after the person ticked "I've checked these" (store triggers
+  // the change would hide — components/corporate-ui.js withImpactAck).
+  deleteGroup: (id, opts = {}) => request(`/groups/${id}${ackQuery(opts)}`, { method: 'DELETE' }),
   getGroupDevices: (id) => request(`/groups/${id}/devices`),
-  addDeviceToGroup: (groupId, device_id) => request(`/groups/${groupId}/devices`, { method: 'POST', body: JSON.stringify({ device_id }) }),
-  removeDeviceFromGroup: (groupId, deviceId) => request(`/groups/${groupId}/devices/${deviceId}`, { method: 'DELETE' }),
+  addDeviceToGroup: (groupId, device_id, opts = {}) => request(`/groups/${groupId}/devices`, { method: 'POST', body: JSON.stringify({ device_id, ...opts }) }),
+  removeDeviceFromGroup: (groupId, deviceId, opts = {}) => request(`/groups/${groupId}/devices/${deviceId}${ackQuery(opts)}`, { method: 'DELETE' }),
   sendGroupCommand: (groupId, type, payload) => request(`/groups/${groupId}/command`, { method: 'POST', body: JSON.stringify({ type, payload }) }),
   // #312 follow-up: fan a command out to every device in a workspace (admin-gated server-side).
   // Used for the workspace-wide server-URL rewrite when a server is relocated.
@@ -649,9 +654,12 @@ export const api = {
   // Video walls
   getWalls: () => request('/walls'),
   createWall: (data) => request('/walls', { method: 'POST', body: JSON.stringify(data) }),
-  setWallDevices: (id, devices) => request(`/walls/${id}/devices`, { method: 'PUT', body: JSON.stringify({ devices }) }),
+  setWallDevices: (id, devices, opts = {}) => request(`/walls/${id}/devices`, { method: 'PUT', body: JSON.stringify({ devices, ...opts }) }),
   updateWall: (id, data) => request(`/walls/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteWall: (id) => request(`/walls/${id}`, { method: 'DELETE' }),
+  deleteWall: (id, opts = {}) => request(`/walls/${id}${ackQuery(opts)}`, { method: 'DELETE' }),
+  // Move screens to another workspace of the same organization (admins of both).
+  previewMoveDevices: (ids, workspaceId) => request(`/devices/move-workspace/preview?device_ids=${encodeURIComponent(ids.join(','))}&workspace_id=${encodeURIComponent(workspaceId)}`),
+  moveDevices: (ids, workspaceId, opts = {}) => request('/devices/move-workspace', { method: 'POST', body: JSON.stringify({ device_ids: ids, workspace_id: workspaceId, ...opts }) }),
 
   // Playlists
   getPlaylists: () => request('/playlists'),

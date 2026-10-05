@@ -11,6 +11,7 @@ import * as gettingStarted from '../components/getting-started.js';
 import { LiveViewer, whenVisible } from '../lib/webrtc-viewer.js';
 import { renderPowerScheduleEditor, readPowerScheduleEditor, presetWindows } from '../components/power-schedule-editor.js';
 import * as cui from '../components/corporate-ui.js';
+import { openDeviceMoveDialog } from '../components/device-move-dialog.js';
 
 // The player distinguishes three cases for the Wi-Fi name, because "--" was hiding a real
 // answer: Android 8.1+ refuses to reveal the SSID to an app without location permission, and a
@@ -643,6 +644,7 @@ async function loadDevice(deviceId, activeTab = null) {
           <button class="btn btn-secondary btn-sm" id="muteTalkBtn" style="display:none">${t('device.talk.mute')}</button>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') && !isNativeDevice(device) ? `
           <button class="btn btn-secondary btn-sm" id="deviceOwnerBtn" title="${t('device.owner_provision.tip')}">${t('device.owner_provision.btn')}</button>` : ''}
+          <button class="btn btn-secondary btn-sm" id="moveDeviceBtn">${t('move.button')}</button>
           <button class="btn btn-secondary btn-sm" id="blockDeviceBtn">${device.blocked ? 'Unblock' : 'Block'}</button>
           <button class="btn btn-danger btn-sm" id="deleteDeviceBtn">${t('device.remove')}</button>
         </div>
@@ -2614,6 +2616,13 @@ function setupActions(device) {
     } catch (err) { showToast(err.message, 'error'); }
     finally { blockBtn.disabled = false; }
   });
+
+  // Move to another workspace of the organization (components/device-move-dialog.js). Once moved
+  // the screen is no longer in this workspace, so the page goes back to the dashboard.
+  document.getElementById('moveDeviceBtn')?.addEventListener('click', () => openDeviceMoveDialog([device.id], {
+    currentWorkspaceId: device.workspace_id,
+    onMoved: () => { window.location.hash = '/'; },
+  }));
 
   // Delete (double-click to confirm)
   const deleteBtn = document.getElementById('deleteDeviceBtn');

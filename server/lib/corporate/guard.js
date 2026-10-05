@@ -162,7 +162,9 @@ function toResponse(e) {
 function send(res, e, req) {
   const r = toResponse(e);
   if (!r) return false;
-  if (req) logDenied(actorLib.resolve(req), e.name === 'CorporateError' ? e : { code: r.body.code, details: {} }, req.originalUrl);
+  // A store-trigger acknowledgement prompt is a question, not a denial: not logged as one.
+  const prompt = r.body.code === 'CORPORATE_STORE_TRIGGERS_IMPACT' || r.body.code === 'CORPORATE_IMPACT_UNACKNOWLEDGED';
+  if (req && !prompt) logDenied(actorLib.resolve(req), e.name === 'CorporateError' ? e : { code: r.body.code, details: {} }, req.originalUrl);
   res.status(r.status).json(r.body);
   return true;
 }
@@ -363,20 +365,27 @@ function wallMembersOf(db, deviceIds) {
  * `describe(change)` returns the CORPORATE_MEMBERSHIP text for this action.
  * Short-circuits to fn() when the machinery is inactive.
  */
-function assertNoMandateLoss(who, deviceIds, fn, describe) {
+function assertNoMandateLoss(who, deviceIds, fn, describe, { cause = 'membership', dryRun = false } = {}) {
   const db = dbOf();
   if (!runtime.active(db)) return fn();
   const a = actorLib.resolve(who);
   const ids = wallMembersOf(db, (deviceIds || []).filter(Boolean));
   const before = new Map(ids.map((id) => [id, resolve.mandateFor(db, id)]));
+  const impactLib = require('./impact');
   let result;
+  let impact = [];
+  let restored = 0;
   db.transaction(() => {
     result = fn();
     const watch = new Set([...ids, ...wallMembersOf(db, ids)]);
+    const gained = [];
+    const lost = [];
     for (const id of watch) {
       const was = before.has(id) ? before.get(id) : null;
       const now = resolve.mandateFor(db, id);
       if (mandateKey(was) === mandateKey(now)) continue;
+      if (!was && now) gained.push(id);
+      if (was && !now) lost.push(id);
       const orgId = orgOfDevice(db, id) || (was && was.organization_id) || (now && now.organization_id);
       if (actorLib.isOrgAdminOf(a, orgId)) continue;
       const m = was || now;
@@ -384,7 +393,23 @@ function assertNoMandateLoss(who, deviceIds, fn, describe) {
         : `This would change what a screen plays (head office's ${q(m && nameOf(m))}). Ask your organization admin to do it.`;
       throw err('CORPORATE_MEMBERSHIP', { text }, mandateDetails(db, m, { device_id: id }));
     }
+    /*
+     * ⚠️ NEVER HIDE A STORE'S TRIGGER SILENTLY (lib/corporate/impact.js). Screens this change NEWLY
+     * puts under head office lose the store triggers the org's policy hides there — read now, in the
+     * new state, so a trigger of a workspace the screen just left (which stops reaching it anyway) is
+     * not counted. Unacknowledged → refuse and roll the whole change back. A system actor (mesh,
+     * import, background work) is never prompted; what it hides is still recorded below.
+     */
+    impact = gained.length ? impactLib.impactForNewlyCovered(db, gained) : [];
+    if (impact.length && a && !dryRun && !impactLib.acknowledged(who)) {
+      throw err('CORPORATE_STORE_TRIGGERS_IMPACT', { n: impact.length }, { impact });
+    }
+    restored = lost.length ? impactLib.restoredCount(db, lost) : 0;
   })();
+  if (impact.length && !dryRun) impactLib.auditLimitedByOrg(db, who && who.user ? who : null, impact, cause);
+  if (who && typeof who === 'object' && !(who.authorOrgIds instanceof Set)) {
+    who.corpMembershipImpact = { store_triggers_hidden: impact, store_triggers_showing_again: restored };
+  }
   return result;
 }
 

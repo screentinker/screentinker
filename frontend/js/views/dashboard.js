@@ -12,6 +12,7 @@ import { openGroupPowerScheduleModal } from '../components/group-power-schedule-
 import { frameDeviceOutput } from '../lib/device-frame.js';
 import { selectedRemoteOrg } from '../components/workspace-switcher.js';
 import * as cui from '../components/corporate-ui.js';
+import { openDeviceMoveDialog } from '../components/device-move-dialog.js';
 
 const DESTRUCTIVE_COMMANDS = ['reboot', 'shutdown'];
 // Command types only — labels resolved through t('dashboard.cmd.<type>')
@@ -484,6 +485,7 @@ function renderSelectionBar(scope, groupId = null) {
             </div>
           </details>`}
       <button class="btn btn-primary btn-sm" data-selection-action="wall">${t('dashboard.create_wall')}</button>
+      <button class="btn btn-secondary btn-sm" data-selection-action="move-workspace">${t('move.button')}</button>
     </div>
   `;
 }
@@ -818,11 +820,19 @@ export function render(container) {
     } else if (action.dataset.selectionAction === 'remove') {
       const ids = visible.map(card => card.dataset.deviceId).filter(id => selectedDeviceIds.has(id));
       const { done, failed } = await runBulk(ids, (deviceId) =>
-        api.removeDeviceFromGroup(bar.dataset.groupId, deviceId));
+        cui.withImpactAck((o) => api.removeDeviceFromGroup(bar.dataset.groupId, deviceId, o)));
       reportBulk(done, failed, 'dashboard.toast.removed_from_group');
       loadDashboard();
     } else if (action.dataset.selectionAction === 'wall') {
       createWallFromSelection();
+    } else if (action.dataset.selectionAction === 'move-workspace') {
+      const ids = visible.map(card => card.dataset.deviceId).filter(id => selectedDeviceIds.has(id));
+      let wsId = null;
+      try { wsId = JSON.parse(localStorage.getItem('user'))?.current_workspace_id || null; } catch (_) { wsId = null; }
+      openDeviceMoveDialog(ids, {
+        currentWorkspaceId: wsId,
+        onMoved: () => { ids.forEach((id) => selectedDeviceIds.delete(id)); loadDashboard(); },
+      });
     }
   };
   container.addEventListener('click', selectionActionHandler);
@@ -842,7 +852,7 @@ export function render(container) {
         const group = await api.createGroup(name);
         groupId = group.id;
       }
-      const { done, failed } = await runBulk(ids, (deviceId) => api.addDeviceToGroup(groupId, deviceId));
+      const { done, failed } = await runBulk(ids, (deviceId) => cui.withImpactAck((o) => api.addDeviceToGroup(groupId, deviceId, o)));
       reportBulk(done, failed, 'dashboard.toast.added_to_group');
       loadDashboard();
     } catch (err) {
@@ -986,7 +996,15 @@ async function createWallFromSelection() {
       grid_col: i % cols,
       grid_row: Math.floor(i / cols),
     }));
-    await api.setWallDevices(wall.id, placement);
+    try {
+      await cui.withImpactAck((o) => api.setWallDevices(wall.id, placement, o));
+    } catch (e) {
+      // Declined "I've checked these": the wall exists, empty — open it so the person can decide.
+      if (!e.cancelled) throw e;
+      showToast(e.message, 'info');
+      window.location.hash = `#/wall/${wall.id}`;
+      return;
+    }
     selectedDeviceIds.clear();
     showToast('Video wall created', 'success');
     window.location.hash = `#/wall/${wall.id}`;
@@ -1426,15 +1444,15 @@ function attachGroupHandlers(groupsWithDevices) {
       try {
         // Add first, then drop the old memberships: if the add fails the screen keeps the group it
         // had rather than being left ungrouped by a half-finished move.
-        await api.addDeviceToGroup(groupId, deviceId);
+        await cui.withImpactAck((o) => api.addDeviceToGroup(groupId, deviceId, o));
         for (const g of others) {
           if (g.id === groupId) continue;
-          try { await api.removeDeviceFromGroup(g.id, deviceId); }
+          try { await cui.withImpactAck((o) => api.removeDeviceFromGroup(g.id, deviceId, o)); }
           catch (e) { showToast(t('dashboard.toast.move_partial', { group: g.name }), 'warning'); }
         }
         showToast(t('dashboard.toast.moved_device', { name: deviceName, group: targetGroup.name }), 'success');
         loadDashboard();
-      } catch (err) { showToast(err.message, 'error'); }
+      } catch (err) { showToast(err.message, err.cancelled ? 'info' : 'error'); }
     });
   });
 
@@ -1458,10 +1476,10 @@ function attachGroupHandlers(groupsWithDevices) {
       const memberships = groupsByDeviceId.get(deviceId) || [];
       if (memberships.length === 0) return; // already ungrouped
       try {
-        await Promise.all(memberships.map(m => api.removeDeviceFromGroup(m.id, deviceId)));
+        for (const m of memberships) await cui.withImpactAck((o) => api.removeDeviceFromGroup(m.id, deviceId, o));
         showToast(tn('dashboard.toast.removed_device', memberships.length, { name: deviceName }), 'success');
         loadDashboard();
-      } catch (err) { showToast(err.message, 'error'); }
+      } catch (err) { showToast(err.message, err.cancelled ? 'info' : 'error'); loadDashboard(); }
     });
   });
 
@@ -1625,10 +1643,10 @@ function attachGroupHandlers(groupsWithDevices) {
       const id = btn.dataset.groupDelete;
       if (!confirm(t('dashboard.confirm_delete_group'))) return;
       try {
-        await api.deleteGroup(id);
+        await cui.withImpactAck((o) => api.deleteGroup(id, o));
         showToast(t('dashboard.toast.group_deleted'), 'success');
         loadDashboard();
-      } catch (e) { showToast(e.message, 'error'); }
+      } catch (e) { showToast(e.message, e.cancelled ? 'info' : 'error'); }
     });
   });
 

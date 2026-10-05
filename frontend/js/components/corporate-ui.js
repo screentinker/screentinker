@@ -153,15 +153,27 @@ export function ask({ title, text, confirmLabel, cancelLabel, danger = false, ex
  */
 export function storeTriggerImpactHtml(impact, policy, { ackId = 'corpTrigAck' } = {}) {
   if (!impact || !impact.length) return '';
-  const head = tn(policy === 'leased' ? 'corp.where.triggers_limited' : 'corp.where.triggers_hidden', impact.length);
+  // Two reasons a trigger stops reaching a screen: head office's policy hides it there, or the
+  // screen moves to another workspace and leaves the old store's triggers behind.
+  const left = impact.filter((i) => i.reason === 'left_store');
+  const hidden = impact.filter((i) => i.reason !== 'left_store');
+  const line = (i) => `<li>${esc(t('corp.where.triggers_line', {
+    ws: i.workspace_name || '', name: i.name || '', screens: tn('corp.n_screens', i.screens || 0),
+  }))}</li>`;
+  const block = (head, list) => `<div>${esc(head)}</div><ul class="corp-list">${list.map(line).join('')}</ul>`;
   return `<div class="corp-notice corp-notice-warn">
-    <div>${esc(head)}</div>
-    <ul class="corp-list">${impact.map((i) => `<li>${esc(t('corp.where.triggers_line', {
-      ws: i.workspace_name || '', name: i.name || '', screens: tn('corp.n_screens', i.screens || 0),
-    }))}</li>`).join('')}</ul>
-    <div class="corp-help">${esc(t('corp.where.triggers_change_policy'))}</div>
+    ${hidden.length ? block(tn(policy === 'leased' ? 'corp.where.triggers_limited' : 'corp.where.triggers_hidden', hidden.length), hidden) : ''}
+    ${left.length ? block(tn('corp.move.triggers_left', left.length), left) : ''}
+    ${hidden.length ? `<div class="corp-help">${esc(t('corp.where.triggers_change_policy'))}</div>` : ''}
     <label class="corp-check"><input type="checkbox" id="${esc(ackId)}"> ${esc(t('corp.settings.impact_ack'))}</label>
   </div>`;
+}
+
+const IMPACT_CODES = new Set(['CORPORATE_STORE_TRIGGERS_IMPACT', 'CORPORATE_IMPACT_UNACKNOWLEDGED', 'DEVICE_MOVE_TRIGGERS_IMPACT']);
+
+/** Is this a refusal that only wants "I've checked these"? */
+export function isImpactRefusal(e) {
+  return !!(e && IMPACT_CODES.has(e.code) && e.body && Array.isArray(e.body.impact) && e.body.impact.length);
 }
 
 /**
@@ -169,18 +181,36 @@ export function storeTriggerImpactHtml(impact, policy, { ackId = 'corpTrigAck' }
  * true only when the person ticked "I've checked these" and confirmed. Any other error → false.
  */
 export async function confirmStoreTriggerImpact(e, policy) {
-  const impact = e && e.body && e.body.impact;
-  if (!e || !Array.isArray(impact) || !impact.length
-      || (e.code !== 'CORPORATE_STORE_TRIGGERS_IMPACT' && e.code !== 'CORPORATE_IMPACT_UNACKNOWLEDGED')) return false;
+  if (!isImpactRefusal(e)) return false;
+  const impact = e.body.impact;
   for (;;) {
     const overlay = await ask({
-      title: t('corp.settings.store_triggers'), text: e.message, confirmLabel: t('common.save'),
+      title: t(e.code === 'DEVICE_MOVE_TRIGGERS_IMPACT' ? 'corp.move.title' : 'corp.settings.store_triggers'), text: e.message, confirmLabel: t('common.save'),
       extraHtml: storeTriggerImpactHtml(impact, policy, { ackId: 'corpTrigAckAsk' }),
     });
     if (!overlay) return false;
     const box = overlay.querySelector && overlay.querySelector('#corpTrigAckAsk');
     if (box && box.checked) return true;
     showToast(t('corp.settings.impact_need_ack'), 'error');
+  }
+}
+
+/**
+ * THE one wrapper for every change the server may refuse with a store-trigger list — joining a
+ * group or a wall head office drives, deleting a group, moving screens to another workspace:
+ * `call(opts)` makes the request; on such a refusal the list is shown, and only after "I've checked
+ * these" is it sent again with { acknowledge_impact: true }. Declining throws an error with
+ * `cancelled: true` (callers say nothing for it: nothing changed, and the person chose that).
+ */
+export async function withImpactAck(call) {
+  try {
+    return await call({});
+  } catch (e) {
+    if (!isImpactRefusal(e)) throw e;
+    const s = await corporateSettings();
+    const ok = await confirmStoreTriggerImpact(e, s && s.store_triggers_under_mandate);
+    if (!ok) throw Object.assign(new Error(t('corp.move.nothing_changed')), { cancelled: true });
+    return call({ acknowledge_impact: true });
   }
 }
 

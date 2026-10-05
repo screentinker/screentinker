@@ -92,6 +92,94 @@ router.post('/reorder', (req, res) => {
   res.json({ success: true });
 });
 
+// Move screens to another workspace of the same organization (lib/device-move.js says what goes
+// with them and what stays). Admin of every source workspace AND the target (an org admin is);
+// JWT only. Runs inside the corporate membership guard: a head office mandate gained, lost or
+// swapped needs an org admin, and store triggers newly hidden under head office need
+// acknowledge_impact (409 CORPORATE_STORE_TRIGGERS_IMPACT, nothing moved).
+function moveRequest(req, res, body) {
+  const moveLib = require('../lib/device-move');
+  const v = moveLib.validate(db, req, body || {});
+  if (v.error) { res.status(v.status).json({ error: v.error, ...(v.code ? { code: v.code } : {}) }); return null; }
+  return v;
+}
+
+// The impact list both the preview and a refused move return: what head office would hide in the
+// new workspace first, then the old store's triggers the screens leave behind.
+function moveImpact(sim) { return [...(sim.hidden || []), ...(sim.leaving || [])]; }
+
+router.get('/move-workspace/preview', (req, res) => {
+  const v = moveRequest(req, res, { device_ids: String(req.query.device_ids || '').split(',').filter(Boolean), workspace_id: req.query.workspace_id });
+  if (!v) return;
+  const corpGuard = require('../lib/corporate/guard');
+  const sim = corpGuard.guarded(req, res, () => require('../lib/device-move').simulate(db, req, v.devices, v.target));
+  if (!sim) return;
+  res.json({ workspace_id: v.target.id, workspace_name: v.target.name, ...sim, impact: moveImpact(sim) });
+});
+
+router.post('/move-workspace', (req, res) => {
+  const v = moveRequest(req, res, req.body);
+  if (!v) return;
+  const { devices, target } = v;
+  if (!devices.length) return res.json({ success: true, moved: [], workspace_id: target.id });
+  const moveLib = require('../lib/device-move');
+  const corpGuard = require('../lib/corporate/guard');
+  const impactLib = require('../lib/corporate/impact');
+  // ⚠️ Never take a screen off a store's triggers silently: the triggers it leaves behind, and those
+  // head office would hide in the new workspace, are listed and need acknowledge_impact.
+  const sim = corpGuard.guarded(req, res, () => moveLib.simulate(db, req, devices, target));
+  if (!sim) return;
+  const impact = moveImpact(sim);
+  if (impact.length && !impactLib.acknowledged(req)) {
+    const n = impact.length;
+    const code = sim.hidden.length ? 'CORPORATE_STORE_TRIGGERS_IMPACT' : 'DEVICE_MOVE_TRIGGERS_IMPACT';
+    const error = sim.hidden.length
+      ? corpGuard.MESSAGES.CORPORATE_STORE_TRIGGERS_IMPACT({ n })
+      : `After the move, ${n} store trigger${n === 1 ? '' : 's'} will no longer reach ${devices.length === 1 ? 'this screen' : 'these screens'}. Check the list, then confirm.`;
+    return res.status(409).json({ error, code, impact });
+  }
+  const moved = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, devices.map((d) => d.id),
+    () => moveLib.moveDevices(db, devices, target.id),
+    ({ name }) => `Moving this screen to "${target.name}" would change what it plays (head office's "${name || ''}"). Ask your organization admin to do it.`,
+    { cause: 'move' }));
+  if (!moved) return;
+  const after = req.corpMembershipImpact || { store_triggers_hidden: [], store_triggers_showing_again: 0 };
+  if (sim.leaving.length) {
+    // The old store hears which of its triggers no longer reach the screens it gave away.
+    const byWs = new Map();
+    for (const t of sim.leaving) { if (!byWs.has(t.workspace_id)) byWs.set(t.workspace_id, []); byWs.get(t.workspace_id).push({ id: t.trigger_id, name: t.name }); }
+    for (const [wsId, triggers] of byWs) {
+      require('../lib/audit').audit('device.move_workspace.triggers_left', { userId: req.user.id, workspaceId: wsId, ip: req.ip || null,
+        details: { to_workspace_id: target.id, device_ids: moved.map((m) => m.device_id), triggers } });
+    }
+  }
+
+  const { audit } = require('../lib/audit');
+  const io = req.app.get('io');
+  const { workspaceRoom, emitToWorkspace } = require('../lib/socket-rooms');
+  for (const m of moved) {
+    const details = { device_id: m.device_id, from_workspace_id: m.from_workspace_id, to_workspace_id: target.id, dropped: m.dropped };
+    // Both stores' activity feeds say where the screen went, so neither wonders where it is.
+    audit('device.move_workspace', { userId: req.user.id, workspaceId: m.from_workspace_id, deviceId: m.device_id, ip: req.ip || null, details });
+    audit('device.move_workspace', { userId: req.user.id, workspaceId: target.id, deviceId: m.device_id, ip: req.ip || null, details });
+    if (io) {
+      try {
+        emitToWorkspace(io.of('/dashboard'), workspaceRoom(m.from_workspace_id), 'dashboard:device-removed', { device_id: m.device_id });
+        const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(m.device_id);
+        if (row) emitToWorkspace(io.of('/dashboard'), workspaceRoom(target.id), 'dashboard:device-added', stripDeviceSecrets(row));
+        const { buildPlaylistPayload } = require('../ws/deviceSocket');
+        require('../lib/command-queue').queueOrEmitPlaylistUpdate(io.of('/device'), m.device_id, buildPlaylistPayload);
+      } catch (e) { console.warn(`[move-workspace] notify failed for ${m.device_id}: ${e && e.message}`); }
+    }
+  }
+  res.json({
+    success: true, workspace_id: target.id, moved,
+    store_triggers_hidden: after.store_triggers_hidden || [],
+    store_triggers_left_behind: sim.leaving,
+    store_triggers_showing_again: after.store_triggers_showing_again || 0,
+  });
+});
+
 // List unclaimed provisioning devices (admin only).
 // #13: read-only, so platform_operator may view the pool too (cross-org staff
 // troubleshooting). Claiming a device is a separate workspace-scoped mutation.

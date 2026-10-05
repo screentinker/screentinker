@@ -565,14 +565,9 @@ function requireMandateImpactAck(req, res, org, v, mandateId) {
   return impact;
 }
 
-/** Each store whose triggers a change hides or caps hears about it in its own activity feed. */
+/** Each store whose triggers a change hides or caps hears about it in its own activity feed (lib/corporate/impact.js). */
 function auditStoreTriggersLimited(req, org, impact, policy, cap, cause) {
-  for (const wsId of new Set(impact.map((i) => i.workspace_id))) {
-    auditCorp(req, 'corporate.store_triggers.limited', {
-      organization_id: org.id, workspace_id: wsId, policy, cap_sec: cap, cause,
-      triggers: impact.filter((i) => i.workspace_id === wsId).map((i) => ({ id: i.trigger_id, name: i.name })),
-    });
-  }
+  require('../lib/corporate/impact').auditLimited(req, org.id, impact, policy, cap, cause);
 }
 
 function summarise(deviceIds) {

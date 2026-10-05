@@ -867,7 +867,9 @@ async function renderWallEditor(container, wallId) {
         canvas_x: Math.round(s.x), canvas_y: Math.round(s.y),
         canvas_width: Math.round(s.w), canvas_height: Math.round(s.h),
       }));
-      await API(`/walls/${wallId}/devices`, { method: 'PUT', body: JSON.stringify({ devices: payload }) });
+      // Through api.js, not the local API() helper: that one never rejects, so a refusal (head office
+      // drives this wall, or store triggers it would hide) used to be reported as "Layout saved".
+      await cui.withImpactAck((o) => api.setWallDevices(wallId, payload, o));
       // Re-fetch master device list so wall_id changes propagate to the sidebar
       devices = await api.getDevices();
       dirty = false;
@@ -875,7 +877,7 @@ async function renderWallEditor(container, wallId) {
       btn.disabled = true;
       btn.classList.remove('btn-primary');
       showToast('Layout saved', 'success');
-    } catch (err) { showToast(err.message, 'error'); }
+    } catch (err) { showToast(err.message, err.cancelled ? 'info' : 'error'); }
   });
 
   document.getElementById('renameWallBtn').addEventListener('click', async () => {

@@ -155,8 +155,34 @@ affected. The other choices, in Settings → Organization → Corporate content 
 > hidden is told in its own activity feed (`corporate.store_triggers.limited`) and on its Triggers page.
 > For alerts that must reach head office's screens, use an emergency alert (below).
 >
-> Not asked: a screen that comes under an existing mandate by joining a group or workspace an org admin
-> moves it into. The store sees it on its Triggers page.
+> - moving screens so they come under an existing mandate: adding a screen to a group, seating it on a
+>   video wall, or moving it to another workspace (below). The groups and walls routes take the same
+>   `acknowledge_impact` (in the body, or `?acknowledge_impact=1` on a DELETE); the dashboard asks once
+>   per change. Taking a screen OUT from under head office never asks; its store triggers simply show
+>   again (the move result says how many).
+
+## Moving a screen to another workspace
+
+**Move to another workspace** (on a screen's page, or for a selection on the dashboard) hands screens to
+another workspace of the same organization — `POST /api/devices/move-workspace {device_ids, workspace_id}`,
+with `GET /api/devices/move-workspace/preview` for the dialog. You must be an admin of the workspace the
+screens are in **and** of the one they go to (an organization admin is); API tokens can't.
+
+What the old workspace attached to the screen stays with it: group memberships, its place on a video
+wall, its own playlist or layout or fallback picture (the screen plays the new workspace's instead), its
+schedules, power schedules, web request buttons, trigger assignments, and slot content made for that one
+screen. Head office's own settings for the screen (a screen-level mandate, an emergency scope) stay —
+the organization doesn't change. History (plays, activity) stays where it happened.
+
+The dialog previews the move before anything changes: which head office playlist will drive the screens
+in the new workspace (if any), what stays behind, and **every store trigger that will stop reaching
+them** — the old workspace's (triggers belong to a workspace, so a screen leaving it leaves them) and any
+the new workspace's head office mandate would hide. If that list isn't empty, **Move** stays disabled
+until "I've checked these" is ticked; the server refuses without `acknowledge_impact` (409
+`DEVICE_MOVE_TRIGGERS_IMPACT`, or `CORPORATE_STORE_TRIGGERS_IMPACT` when head office hides some). Both
+workspaces' activity feeds record the move, and the old one records which of its triggers no longer
+reach the screen. A move that would put a screen under head office — or take it out — needs an
+organization admin, like any membership change.
 
 ## Emergency alerts
 
