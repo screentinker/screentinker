@@ -104,17 +104,28 @@ function moveRequest(req, res, body) {
   return v;
 }
 
+function moveOpts(v) { return { bring: v.bring, crossOrg: v.crossOrg, ownerId: v.ownerId, actorId: v.actorId }; }
+
 // The impact list both the preview and a refused move return: what head office would hide in the
 // new workspace first, then the old store's triggers the screens leave behind.
 function moveImpact(sim) { return [...(sim.hidden || []), ...(sim.leaving || [])]; }
 
 router.get('/move-workspace/preview', (req, res) => {
-  const v = moveRequest(req, res, { device_ids: String(req.query.device_ids || '').split(',').filter(Boolean), workspace_id: req.query.workspace_id });
+  const v = moveRequest(req, res, { device_ids: String(req.query.device_ids || '').split(',').filter(Boolean), workspace_id: req.query.workspace_id,
+    bring_playlist: req.query.bring_playlist });
   if (!v) return;
+  const moveLib = require('../lib/device-move');
   const corpGuard = require('../lib/corporate/guard');
-  const sim = corpGuard.guarded(req, res, () => require('../lib/device-move').simulate(db, req, v.devices, v.target));
+  const budget = moveLib.bringBudget(db, v);
+  const sim = corpGuard.guarded(req, res, () => moveLib.simulate(db, req, v.devices, v.target, moveOpts(v)));
   if (!sim) return;
-  res.json({ workspace_id: v.target.id, workspace_name: v.target.name, ...sim, impact: moveImpact(sim) });
+  res.json({
+    workspace_id: v.target.id, workspace_name: v.target.name, ...sim, impact: moveImpact(sim),
+    bring_playlist: v.bring,
+    other_organization: v.crossOrg ? { id: v.targetOrg.id, name: v.targetOrg.name } : null,
+    plan_warning: moveLib.planWarning(db, v),
+    storage_refusal: budget ? { code: budget.code, error: budget.error } : null,
+  });
 });
 
 router.post('/move-workspace', (req, res) => {
@@ -127,7 +138,17 @@ router.post('/move-workspace', (req, res) => {
   const impactLib = require('../lib/corporate/impact');
   // ⚠️ Never take a screen off a store's triggers silently: the triggers it leaves behind, and those
   // head office would hide in the new workspace, are listed and need acknowledge_impact.
-  const sim = corpGuard.guarded(req, res, () => moveLib.simulate(db, req, devices, target));
+  // ⚠️ Another organization is said out loud and confirmed on its own, before anything else: the
+  // screen (and whatever is copied with it) changes tenant.
+  if (v.crossOrg && !(req.body && (req.body.acknowledge_other_org === true || req.body.acknowledge_other_org === 1))) {
+    return res.status(409).json({
+      code: 'MOVE_OTHER_ORG_CONFIRM', organization: { id: v.targetOrg.id, name: v.targetOrg.name },
+      error: `This moves ${devices.length === 1 ? 'the screen' : 'these screens'} to another organization ("${v.targetOrg.name}"). Confirm to go ahead.`,
+    });
+  }
+  const budget = moveLib.bringBudget(db, v);
+  if (budget) return res.status(budget.status).json({ error: budget.error, code: budget.code });
+  const sim = corpGuard.guarded(req, res, () => moveLib.simulate(db, req, devices, target, moveOpts(v)));
   if (!sim) return;
   const impact = moveImpact(sim);
   if (impact.length && !impactLib.acknowledged(req)) {
@@ -138,11 +159,14 @@ router.post('/move-workspace', (req, res) => {
       : `After the move, ${n} store trigger${n === 1 ? '' : 's'} will no longer reach ${devices.length === 1 ? 'this screen' : 'these screens'}. Check the list, then confirm.`;
     return res.status(409).json({ error, code, impact });
   }
+  const fileOps = [];
   const moved = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, devices.map((d) => d.id),
-    () => moveLib.moveDevices(db, devices, target.id),
+    () => moveLib.moveDevices(db, devices, target.id, { ...moveOpts(v), fileOps }),
     ({ name }) => `Moving this screen to "${target.name}" would change what it plays (head office's "${name || ''}"). Ask your organization admin to do it.`,
     { cause: 'move' }));
   if (!moved) return;
+  // Committed: now the files that are copied rather than shared (fonts).
+  if (fileOps.length) require('../lib/device-bring').runFileOps(fileOps);
   const after = req.corpMembershipImpact || { store_triggers_hidden: [], store_triggers_showing_again: 0 };
   if (sim.leaving.length) {
     // The old store hears which of its triggers no longer reach the screens it gave away.
@@ -158,7 +182,9 @@ router.post('/move-workspace', (req, res) => {
   const io = req.app.get('io');
   const { workspaceRoom, emitToWorkspace } = require('../lib/socket-rooms');
   for (const m of moved) {
-    const details = { device_id: m.device_id, from_workspace_id: m.from_workspace_id, to_workspace_id: target.id, dropped: m.dropped };
+    const details = { device_id: m.device_id, from_workspace_id: m.from_workspace_id, to_workspace_id: target.id, dropped: m.dropped,
+      ...(m.brought ? { brought: { playlist_name: m.brought.playlist_name, copied: m.brought.copied, playlist_id: m.brought.playlist_id } } : {}),
+      ...(v.crossOrg ? { other_organization: { from: v.fromOrgIds, to: target.organization_id }, new_owner_id: v.ownerId } : {}) };
     // Both stores' activity feeds say where the screen went, so neither wonders where it is.
     audit('device.move_workspace', { userId: req.user.id, workspaceId: m.from_workspace_id, deviceId: m.device_id, ip: req.ip || null, details });
     audit('device.move_workspace', { userId: req.user.id, workspaceId: target.id, deviceId: m.device_id, ip: req.ip || null, details });

@@ -251,13 +251,13 @@ test('putting a screen on a video wall head office drives asks the same question
   assert.equal(q1('SELECT wall_id FROM devices WHERE id = ?', d6).wall_id, w);
 });
 
-test('a move needs real screens, a real workspace the caller administers, in the same organization', async () => {
+test('a move needs real screens and a real workspace the caller administers; leaving the organization needs its own confirmation', async () => {
   const d = mkDevice(A, 'Spare');
-  // admin is this install's first user, a platform admin, so it gets past "admin of both": the
-  // organization check is what stops a screen leaving its organization.
+  // admin is this install's first user, a platform admin: it MAY move a screen to another
+  // organization (device-move-bring.test.js), but never without saying so — and nothing moves first.
   let r = await move('admin', [d], U.outsider.ws);
-  assert.equal(r.status, 400, JSON.stringify(r.body));
-  assert.equal(r.body.code, 'MOVE_OTHER_ORG');
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'MOVE_OTHER_ORG_CONFIRM');
   r = await move('admin', [], B);
   assert.equal(r.status, 400);
   r = await move('admin', [d], 'nope');

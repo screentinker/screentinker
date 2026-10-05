@@ -658,7 +658,7 @@ export const api = {
   updateWall: (id, data) => request(`/walls/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteWall: (id, opts = {}) => request(`/walls/${id}${ackQuery(opts)}`, { method: 'DELETE' }),
   // Move screens to another workspace of the same organization (admins of both).
-  previewMoveDevices: (ids, workspaceId) => request(`/devices/move-workspace/preview?device_ids=${encodeURIComponent(ids.join(','))}&workspace_id=${encodeURIComponent(workspaceId)}`),
+  previewMoveDevices: (ids, workspaceId, { bring = false } = {}) => request(`/devices/move-workspace/preview?device_ids=${encodeURIComponent(ids.join(','))}&workspace_id=${encodeURIComponent(workspaceId)}${bring ? '&bring_playlist=1' : ''}`),
   moveDevices: (ids, workspaceId, opts = {}) => request('/devices/move-workspace', { method: 'POST', body: JSON.stringify({ device_ids: ids, workspace_id: workspaceId, ...opts }) }),
 
   // Playlists

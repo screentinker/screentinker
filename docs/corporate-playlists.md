@@ -184,6 +184,45 @@ workspaces' activity feeds record the move, and the old one records which of its
 reach the screen. A move that would put a screen under head office — or take it out — needs an
 organization admin, like any membership change.
 
+### Bring its playlist
+
+Tick **Bring its playlist** (on by default when a screen has a playlist of its own; `bring_playlist: true`
+on the API) and the screen keeps playing exactly what it played. What the screen ITSELF uses is
+**copied** into the new workspace and kept on the screen:
+
+- its own playlist and the playlists it contains (items, order, mute, weights, "play every N", per-item
+  hours, playback order — and the published version, so the screen never blanks);
+- its own layout (not a template) and its fallback picture;
+- the media, widgets and kiosk pages those use; the data sources, shaders and fonts they name — unless
+  the new workspace already has one with the same name, which is then used instead.
+
+It is always a **copy**: the original stays in the old workspace, untouched, for whatever else uses it
+(the dialog says how many). Group, wall and schedule playlists, triggers and head office's playlists
+never travel. A smart playlist arrives as an ordinary playlist holding what it shows now (its rules
+would pick from the new workspace's library). Media bytes are shared on disk, not duplicated — deleting
+either copy leaves the other playing (every content delete counts the other rows using a file first) —
+but each copy counts against the storage allowance of the account it belongs to, and a copy that does
+not fit is refused before anything moves (403 `STORAGE_LIMIT`; move without the playlist instead).
+
+### Platform admins: any workspace, any organization
+
+A platform admin can move screens to **any** workspace, including one of another organization (the
+dialog lists them grouped by organization). Organization admins, platform operators and API tokens
+cannot cross organizations (400 `MOVE_OTHER_ORG` / 403). Moving to another organization:
+
+- is said out loud and confirmed on its own — "I understand these screens leave this organization"
+  (`acknowledge_other_org: true`, otherwise 409 `MOVE_OTHER_ORG_CONFIRM`); one move is one
+  organization, so mixing screens from both is refused (`MOVE_MIXED_ORGS`);
+- hands the screens (and anything copied) to the new organization's **owner** — device limits and
+  storage count by owner. A platform admin may move past the new owner's device limit (the preview says
+  so first); storage is enforced, because the copy needs it;
+- removes the old organization's head office settings for those screens (a screen-level mandate, an
+  emergency scope, slot content);
+- **clears copied credentials**: data source and widget passwords, tokens and keys arrive blank and
+  need re-entering — one organization never receives another's secrets.
+
+Both workspaces' activity feeds (and so both organizations) record the move, with what was copied.
+
 ## Emergency alerts
 
 An emergency alert is a trigger owned by head office, with a scope (organization, workspaces, groups,
