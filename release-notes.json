@@ -14,6 +14,19 @@
   ],
   "releases": [
     {
+      "version": "2.4.0",
+      "date": "2026-10-05",
+      "notes": [
+        "Head office playlists: org admins can require a playlist on the whole organisation, a workspace, a group or a screen, and leave local slots that store managers fill with their own content. Store managers cannot remove, skip or reorder head office's items.",
+        "Emergency alerts: org admins can create an alert that overrides what screens are playing, only on screens where triggers are enabled and the organisation's emergency switch is on.",
+        "Smart playlists fill themselves from rules over your content library, such as tags, type or folder, and stay up to date as content changes. Any item can also be set to come round every few minutes.",
+        "Interactive web pages: turn on Interactive on a webpage widget and visitors can use the site on a touch screen. After a quiet spell their session is wiped and the playlist moves on.",
+        "Screens can be moved to another workspace from the device page, with a warning when the move would hide triggers.",
+        "Android: the exit dialog always asks for the PIN, portrait images are sharp, CPU load is reported correctly, and the panel's temperature is shown.",
+        "The Raspberry Pi installer now sets up the native player correctly on Raspberry Pi OS Lite, including on a Pi that had the browser player before."
+      ]
+    },
+    {
       "version": "2.3.2",
       "date": "2026-10-01",
       "notes": [
