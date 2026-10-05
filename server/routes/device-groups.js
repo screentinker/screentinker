@@ -401,14 +401,46 @@ router.post('/:id/assign-content', requireGroupWrite, (req, res) => {
   /*
    * ⚠️ CORPORATE: a member head office's playlist plays on resolves to the CORPORATE playlist, and
    * the non-forking ensureDevicePlaylist below would insert straight into it — a store editing head
-   * office's content through the group page. Such members are skipped and reported. (Stage B adds
-   * them to the group's slot content instead.)
+   * office's content through the group page (a real bypass, spec §4.3). Instead such members get the
+   * item in the GROUP-level content of head office's local slot (ensureGroupFill: made as a copy of
+   * the workspace's, so nothing disappears), once per corporate playlist. A playlist with several
+   * slots needs slot_id (409 CORPORATE_SLOT_REQUIRED); none -> those members are skipped and listed.
+   * Video-wall members play their wall's content, never a group's: skipped too.
    */
+  const fillsLib = require('../lib/corporate/fills');
   const skipped = [];
+  const addedToSlots = [];
+  const slotOf = new Map();   // corporate playlist -> slot (or null = none)
   const transaction = db.transaction(() => {
     const seen = new Set();
     for (const m of members) {
-      if (corpGuard.activeMandateFor(db, m.device_id)) { skipped.push({ device_id: m.device_id, reason: 'no_slot' }); continue; }
+      const mandate = corpGuard.activeMandateFor(db, m.device_id);
+      if (mandate) {
+        const wall = db.prepare('SELECT wall_id FROM devices WHERE id = ?').get(m.device_id);
+        if (wall && wall.wall_id) { skipped.push({ device_id: m.device_id, reason: 'video_wall' }); continue; }
+        const P = mandate.dark ? null : mandate.playlist_id;
+        if (!slotOf.has(P)) {
+          const slots = P ? fillsLib.liveSlots(db, P) : [];
+          let slot = null;
+          if (req.body.slot_id) slot = slots.find((x) => x.id === req.body.slot_id) || null;
+          else if (slots.length === 1) slot = slots[0];
+          else if (slots.length > 1) {
+            throw corpGuard.err('CORPORATE_SLOT_REQUIRED', { name: mandate.playlist_name }, { ...corpGuard.mandateDetails(db, mandate, { group_id: req.group.id }), slots: slots.map((x) => ({ id: x.id, name: x.name })) });
+          }
+          slotOf.set(P, slot);
+          if (slot) {
+            const { fill } = fillsLib.ensureGroupFill(db, req.group, slot, { userId: req.user.id });
+            fillsLib.assertCanAdd(db, fill.fill_playlist_id, [{ content_id, duration_sec: itemDuration }]);
+            const max = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM playlist_items WHERE playlist_id = ?').get(fill.fill_playlist_id);
+            db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
+              .run(fill.fill_playlist_id, content_id, max.next, itemDuration);
+            markDraft(fill.fill_playlist_id);
+            addedToSlots.push(fillsLib.describeFill(db, fill, slot));
+          }
+        }
+        if (!slotOf.get(P)) skipped.push({ device_id: m.device_id, reason: 'no_slot' });
+        continue;
+      }
       const playlistId = ensureDevicePlaylist(m.device_id, req.user.id);
       if (seen.has(playlistId)) continue;
       seen.add(playlistId);
@@ -423,10 +455,11 @@ router.post('/:id/assign-content', requireGroupWrite, (req, res) => {
   });
   try { transaction(); } catch (e) {
     if (e && e.smartRefusal) return res.status(400).json({ error: `A screen in this group plays a smart playlist. ${e.message}` });
+    if (corpGuard.send(res, e, req)) return undefined;
     throw e;
   }
 
-  res.json({ success: true, devices_updated: members.length - skipped.length, ...(skipped.length ? { skipped } : {}) });
+  res.json({ success: true, devices_updated: members.length - skipped.length, ...(skipped.length ? { skipped } : {}), ...(addedToSlots.length ? { added_to_slots: addedToSlots } : {}) });
 });
 
 // Assign an existing playlist to all devices in a group, and persist the

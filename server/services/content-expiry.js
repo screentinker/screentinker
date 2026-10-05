@@ -42,6 +42,14 @@ function sweepExpiredContent(socketIo = io) {
     JOIN playlist_items pi ON pi.playlist_id = p.id
     WHERE p.status = 'published' AND pi.content_id IN (${ph})
   `).all(...expired).map(r => r.id);
+  // A corporate local slot's FALLBACK lives on the slot row, not in playlist_items: the join above
+  // cannot see a corporate playlist whose only use of the content is as a fallback.
+  try {
+    for (const r of db.prepare(`SELECT DISTINCT p.id FROM playlists p JOIN corporate_slots s ON s.playlist_id = p.id
+                                 WHERE p.status = 'published' AND s.retired_at IS NULL AND s.fallback_content_id IN (${ph})`).all(...expired)) {
+      if (!affected.includes(r.id)) affected.push(r.id);
+    }
+  } catch (_) { /* no corporate tables */ }
 
   // Deactivate in one statement (the once-only marker flip).
   db.prepare(`UPDATE content SET is_active = 0 WHERE id IN (${ph})`).run(...expired);

@@ -80,8 +80,12 @@ function smartItemsState(db, row) {
 }
 
 function capturePlaylist(db, row) {
-  const items = db.prepare(`SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec
-                              FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC, id ASC`).all(row.id)
+  // slot_id (a corporate local slot placement) only when set — with its name, so a restore can say
+  // which slot it could not bring back — and only where the column exists (hand-built fixtures).
+  const hasSlots = require('./corporate/schema-probe').hasColumn(db, 'playlist_items', 'slot_id');
+  const items = db.prepare(`SELECT pi.id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted, pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight, pi.repeat_every_sec
+                                   ${hasSlots ? ', pi.slot_id, (SELECT s.name FROM corporate_slots s WHERE s.id = pi.slot_id) AS slot_name' : ''}
+                              FROM playlist_items pi WHERE pi.playlist_id = ? ORDER BY pi.sort_order ASC, pi.id ASC`).all(row.id)
     .map((it) => ({
       content_id: it.content_id || null, widget_id: it.widget_id || null, child_playlist_id: it.child_playlist_id || null,
       zone_id: it.zone_id || null, sort_order: it.sort_order, duration_sec: it.duration_sec, muted: it.muted ? 1 : 0,
@@ -90,6 +94,7 @@ function capturePlaylist(db, row) {
       fit_mode: it.fit_mode || null, play_when: it.play_when || null, weight: it.weight || 1,
       // Only when set, so capturing an unchanged pre-feature playlist yields the same state as before.
       ...(it.repeat_every_sec ? { repeat_every_sec: it.repeat_every_sec } : {}),
+      ...(it.slot_id ? { slot_id: it.slot_id, slot_name: it.slot_name || null } : {}),
       schedules: scheduleBlocksFor(db, it.id),
     }));
   const state = { name: row.name, description: row.description || '', playback_order: row.playback_order || 'sequential', items };
@@ -418,6 +423,7 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
   const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
   if (!row) { const e = new Error('Resource not found'); e.status = 404; throw e; }
   const now = nowSec();
+  const dropped = [];   // local slots a playlist revision could not bring back
 
   if (type === 'content') {
     // The bytes must still exist, or this is a rename pretending to be a restore.
@@ -448,13 +454,27 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
     };
     db.prepare('UPDATE content SET draft_json = ? WHERE id = ?').run(JSON.stringify(draft), id);
   } else if (type === 'playlist') {
+    const hasSlots = require('./corporate/schema-probe').hasColumn(db, 'playlist_items', 'slot_id');
     const txn = db.transaction(() => {
       db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(id);
-      const ins = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      // ⚠️ slot_id is restored too, or a corporate revision brings its local slots back as all-NULL
+      // ghost items (spec §6.1-6).
+      const ins = db.prepare(`INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec${hasSlots ? ', slot_id' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hasSlots ? ', ?' : ''})`);
       // A smart revision's items are its matches at the time, not rows to recreate.
       for (const it of (state.smart_rules ? [] : (state.items || []))) {
+        /*
+         * A slot placement comes back only while its slot still exists in THIS playlist: a slot that
+         * was removed and then hard-deleted by the sweep (or one belonging elsewhere) is reported in
+         * `dropped` instead of being silently skipped by the FK catch below. A retired one is
+         * un-retired — with its stores' content still attached.
+         */
+        if (it.slot_id) {
+          const slot = hasSlots ? db.prepare('SELECT id, playlist_id FROM corporate_slots WHERE id = ?').get(it.slot_id) : null;
+          if (!slot || slot.playlist_id !== id) { dropped.push({ slot_id: it.slot_id, slot_name: it.slot_name || null }); continue; }
+          db.prepare('UPDATE corporate_slots SET retired_at = NULL WHERE id = ?').run(it.slot_id);
+        }
         try {
-          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0, it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null, it.play_when || null, it.weight || 1, it.repeat_every_sec || null);
+          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0, it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null, it.play_when || null, it.weight || 1, it.repeat_every_sec || null, ...(hasSlots ? [it.slot_id || null] : []));
           for (const b of it.schedules || []) {
             const cols = Object.keys(b);
             if (!cols.length) continue;
@@ -480,7 +500,7 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
   }
 
   const created = recordCurrent(db, type, id, { actor: { ...actor, kind: actor && actor.kind || 'restore' }, summary: `Restored from revision #${rev.rev_no}`, force: true });
-  return { revision: created, restoredFrom: rev };
+  return { revision: created, restoredFrom: rev, dropped };
 }
 
 /** Does this resource have a draft that is not what players see? */

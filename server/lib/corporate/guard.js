@@ -69,6 +69,22 @@ const MESSAGES = {
   CORPORATE_SMART: () => "A corporate playlist can't be a smart playlist. Put a smart playlist inside it instead.",
   CORPORATE_SLOT_FIELD: () => 'Add slots with POST /api/corporate/playlists/:id/slots.',
   CORPORATE_HQ_IN_USE: (v) => `${q(v.workspace)} is your organization's head office workspace and its corporate playlists play on ${v.screens} screen${v.screens === 1 ? '' : 's'}. Remove them from "Where it plays" first.`,
+  // Local slots (Stage B).
+  FILL_LIMIT: (v) => {
+    const cap = [v.max_items != null ? `${v.max_items} item${v.max_items === 1 ? '' : 's'}` : null, v.max_sec != null ? `${v.max_sec} seconds` : null].filter(Boolean).join(' and ');
+    const now = [v.max_items != null ? `${v.n} item${v.n === 1 ? '' : 's'}` : null, v.max_sec != null ? `${v.sec} seconds` : null].filter(Boolean).join(' and ');
+    return `Your slot ${q(v.slot)} can hold up to ${cap}. It now has ${now}. Remove something, then publish again.`;
+  },
+  FILL_FLAT: () => 'Your slot can hold pictures, videos and widgets — not other playlists.',
+  FILL_LIVE: (v) => `${q(v.item)} has no fixed length (a live stream, a YouTube video or a web video we can't measure), so it can't go in a slot.`,
+  FILL_TYPE: (v) => `Head office allows only ${v.types} in the slot ${q(v.slot)}.`,
+  CORPORATE_SLOT_SWAP: () => "A slot can't be turned into an item. Remove the slot instead.",
+  CORPORATE_SLOT_DUPLICATE: () => "A local slot can't be duplicated. Add another slot instead.",
+  CORPORATE_SLOT_REMOVE: () => 'Use "Remove slot" to take a local slot out of the playlist.',
+  CORPORATE_SLOT_SCHEDULE: () => "Set times on the slot's items, not on the slot itself.",
+  CORPORATE_SLOT_REPEAT: () => "A local slot can't repeat on its own interval. Set it on head office's items instead.",
+  CORPORATE_FILL_EXISTS: (v) => `${v.label || 'This level'} already has its own content for the slot ${q(v.slot)}. Edit that instead.`,
+  CORPORATE_FILL_SCOPE: () => "That screen, group or video wall isn't in this workspace, or head office's playlist doesn't play there.",
 };
 
 const STATUS = {
@@ -77,6 +93,9 @@ const STATUS = {
   CORPORATE_TARGET_TAKEN: 409, CORPORATE_MESH_UNSUPPORTED: 409, CORPORATE_DISABLED: 409,
   CORPORATE_HQ_IN_USE: 409, CORPORATE_UNAVAILABLE: 503,
   CORPORATE_NESTED: 400, CORPORATE_SMART: 400, CORPORATE_SLOT_FIELD: 400,
+  FILL_LIMIT: 400, FILL_FLAT: 400, FILL_LIVE: 400, FILL_TYPE: 400,
+  CORPORATE_SLOT_SWAP: 400, CORPORATE_SLOT_DUPLICATE: 400, CORPORATE_SLOT_REMOVE: 400,
+  CORPORATE_SLOT_SCHEDULE: 400, CORPORATE_SLOT_REPEAT: 400, CORPORATE_FILL_EXISTS: 409, CORPORATE_FILL_SCOPE: 400,
 };
 
 function err(code, vars = {}, details = {}, statusOverride) {
@@ -108,7 +127,7 @@ function toResponse(e) {
   if (e.name === 'CorporateError') {
     const body = { error: e.message, code: e.code };
     if (e.details && e.details.corporate) body.corporate = e.details.corporate;
-    for (const k of ['slots', 'mandates', 'skipped', 'mandated_members']) if (e.details && e.details[k] !== undefined) body[k] = e.details[k];
+    for (const k of ['slots', 'mandates', 'skipped', 'mandated_members', 'slot_id', 'fill_id', 'limits', 'fill']) if (e.details && e.details[k] !== undefined) body[k] = e.details[k];
     return { status: e.status, body };
   }
   const m = typeof e.message === 'string' && /^(CORPORATE_[A-Z_]+|FILL_[A-Z_]+)$/.exec(e.message.trim());
@@ -210,7 +229,8 @@ function corporateBlock(g, extra = {}) {
 /**
  * May the request's actor change this playlist? Governed ⇒ corporate author, never a token.
  * `op` is recorded in the refusal for the audit trail ('items'|'meta'|'publish'|'discard'|'delete'|'restore').
- * Fills are store-editable (limits arrive with slots in Stage B).
+ * Fills are store-editable; their limits are judged by lib/corporate/fills.js (assertCanAdd early,
+ * judgePublish inside publishPlaylist).
  */
 function assertPlaylistWritable(who, playlist, op = 'items') {
   const db = dbOf();

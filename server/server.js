@@ -2297,6 +2297,8 @@ startScheduler(io);
 // #157: auto-deactivate expired content + republish affected playlists
 const { startContentExpiry } = require('./services/content-expiry');
 startContentExpiry(io);
+// Corporate local slots: hourly tidy of unused compositions and unreachable retired slots.
+require('./services/corporate-sweep').startCorporateSweep();
 require('./lib/smart-playlist').start(io);
 
 // Start alert service

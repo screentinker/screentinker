@@ -18,8 +18,8 @@ const corpGuard = require('../lib/corporate/guard');
  * ⚠️ CORPORATE: a screen head office's playlist plays on (a mandate) cannot be overridden from
  * here. Its playlist IS the corporate one, so "add to this screen", reorder and copy-to would
  * otherwise either fork around the mandate (a shadowed copy nobody sees) or edit head office's
- * playlist through the back door. Stage A has no local slots, so adding content answers
- * CORPORATE_NO_SLOT; Stage B redirects it into the screen's slot.
+ * playlist through the back door. Adding content is REDIRECTED into the screen's local slot
+ * (redirectAdd below): the store's own content for head office's slot, never head office's playlist.
  */
 function mandateRefusal(req, res, deviceId, opts) {
   try { corpGuard.assertNotMandated(req, deviceId, opts); return false; } catch (e) {
@@ -143,7 +143,10 @@ router.get('/device/:deviceId', (req, res) => {
 router.post('/device/:deviceId', (req, res) => {
   const access = checkDeviceAccess(req, res, 'deviceId', true);
   if (!access) return;
-  if (mandateRefusal(req, res, req.params.deviceId, { storeCode: 'CORPORATE_NO_SLOT', authorCode: 'CORPORATE_NO_SLOT' })) return;
+  {
+    const mandate = corpGuard.activeMandateFor(db, req.params.deviceId);
+    if (mandate) return redirectAdd(req, res, access, mandate);
+  }
   const { content_id, widget_id, child_playlist_id, zone_id, sort_order } = req.body;
 
   if (!content_id && !widget_id && !child_playlist_id) return res.status(400).json({ error: 'content_id, widget_id or child_playlist_id required' });
@@ -215,6 +218,64 @@ router.post('/device/:deviceId', (req, res) => {
   }
 });
 
+/*
+ * "Add content to this screen" on a screen head office's playlist plays on (spec §4.3, critique U1).
+ * The item goes into the screen's LOCAL SLOT content, never into head office's playlist:
+ *   - no slot -> CORPORATE_NO_SLOT; several and no slot_id -> 409 CORPORATE_SLOT_REQUIRED {slots};
+ *   - fill_scope 'nearest' (default): the content this screen already plays for the slot, at
+ *     whatever level it lives (screen, video wall, group, everyone in the workspace); none yet ->
+ *     the workspace-level content, created;
+ *   - fill_scope 'device': this screen only (its video wall, for a wall member), made as a copy of
+ *     the nearest so nothing disappears.
+ * Never a silent fork: the 201 says exactly where it went and how many screens that reaches
+ * (`redirected_to`). Like any edit it lands in the draft; publishing it is what puts it on screen.
+ */
+function redirectAdd(req, res, access, mandate) {
+  const fillsLib = require('../lib/corporate/fills');
+  const { content_id, widget_id, child_playlist_id } = req.body || {};
+  if (!content_id && !widget_id && !child_playlist_id) return res.status(400).json({ error: 'content_id, widget_id or child_playlist_id required' });
+  if ([content_id, widget_id, child_playlist_id].filter(Boolean).length > 1) {
+    return res.status(400).json({ error: 'an item is content, a widget, or a child playlist — not more than one' });
+  }
+  try {
+    if (child_playlist_id) throw corpGuard.err('FILL_FLAT');
+    let content = null;
+    if (content_id) {
+      content = db.prepare('SELECT id, workspace_id, duration_sec, mime_type FROM content WHERE id = ?').get(content_id);
+      if (!content) return res.status(404).json({ error: 'Content not found' });
+      if (content.workspace_id && content.workspace_id !== access.device.workspace_id) {
+        return res.status(403).json({ error: 'Content is not in this device\'s workspace' });
+      }
+    }
+    if (widget_id) {
+      const widget = db.prepare('SELECT id, workspace_id FROM widgets WHERE id = ?').get(widget_id);
+      if (!widget) return res.status(404).json({ error: 'Widget not found' });
+      if (widget.workspace_id && widget.workspace_id !== access.device.workspace_id) {
+        return res.status(403).json({ error: 'Widget is not in this device\'s workspace' });
+      }
+    }
+    const duration_sec = resolveItemDuration(req.body.duration_sec, content);
+    const item = { content_id: content_id || null, widget_id: widget_id || null, duration_sec };
+    const scope = req.body.fill_scope === 'device' ? 'device' : 'nearest';
+    let target = null;
+    let itemId = null;
+    db.transaction(() => {
+      target = fillsLib.redirectTarget(db, mandate, req.params.deviceId, { slotId: req.body.slot_id || null, scope, userId: req.user.id });
+      fillsLib.assertCanAdd(db, target.fill.fill_playlist_id, [item]);
+      const max = db.prepare('SELECT MAX(sort_order) AS m FROM playlist_items WHERE playlist_id = ?').get(target.fill.fill_playlist_id);
+      itemId = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)')
+        .run(target.fill.fill_playlist_id, item.content_id, item.widget_id, ((max && max.m) || 0) + 1, duration_sec).lastInsertRowid;
+      markDraft(target.fill.fill_playlist_id);
+    })();
+    const out = db.prepare(`${ITEM_SELECT} WHERE pi.id = ?`).get(itemId);
+    res.status(201).json({ ...out, redirected_to: { ...fillsLib.describeFill(db, target.fill, target.slot), created: !!target.created } });
+  } catch (e) {
+    if (corpGuard.send(res, e, req)) return undefined;
+    throw e;
+  }
+  return undefined;
+}
+
 // Helper: load a playlist item and check write access via the parent
 // playlist's workspace. Returns the item row or null after sending 403/404.
 function checkItemWrite(req, res) {
@@ -250,6 +311,41 @@ function checkItemWrite(req, res) {
   return item;
 }
 
+/*
+ * An item of a store's slot content, edited "on a screen" (spec §4.3): the edit lands on the content
+ * the item lives in (every screen that plays it — the response says which level and how many), or,
+ * with fill_scope 'device', on this screen's own copy (made from it, item ids mapped).
+ * @returns null (not slot content), false (a response was sent), or {itemId, describe}
+ */
+function fillItemTarget(req, res, item, deviceId, fillScope) {
+  const fillsLib = require('../lib/corporate/fills');
+  const rows = fillsLib.fillsOfPlaylist(db, item.playlist_id);
+  if (!rows.length) return null;
+  const fill = rows[0];
+  const slot = fillsLib.slotRow(db, fill.slot_id);
+  if (fillScope !== 'device' || !slot) return { itemId: item.id, describe: fillsLib.describeFill(db, fill, slot) };
+  try {
+    const own = db.transaction(() => fillsLib.ensureFillForDevice(db, deviceId, slot, { scope: 'device', userId: req.user.id }))();
+    if (!own) return { itemId: item.id, describe: fillsLib.describeFill(db, fill, slot) };
+    let mapped = item.id;
+    if (own.fill.fill_playlist_id !== item.playlist_id) {
+      // The copy was made from the nearest content; map by id when it was this one, else by position.
+      mapped = own.itemIdMap.get(Number(item.id)) ?? own.itemIdMap.get(item.id) ?? null;
+      if (mapped === null) {
+        const srcIdx = db.prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ? AND (sort_order < ? OR (sort_order = ? AND id < ?))')
+          .get(item.playlist_id, item.sort_order, item.sort_order, item.id).n;
+        const row = db.prepare('SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC, id ASC LIMIT 1 OFFSET ?').get(own.fill.fill_playlist_id, srcIdx);
+        if (!row) { res.status(409).json({ error: 'This screen\'s own slot content no longer has that item.' }); return false; }
+        mapped = row.id;
+      }
+    }
+    return { itemId: mapped, describe: fillsLib.describeFill(db, own.fill, slot) };
+  } catch (e) {
+    if (corpGuard.send(res, e, req)) return false;
+    throw e;
+  }
+}
+
 // Per-item mute lives in lib/mute-sync.js so routes/playlists.js can share it.
 const { emitMuteChanged } = require('../lib/mute-sync');
 const { resolveDevicePlaylistId } = require('../lib/resolve-device-playlist');
@@ -269,9 +365,14 @@ router.put('/:id', (req, res) => {
    * "add content to this screen" applies here; without it (the group page, the API) the item is
    * edited where it lives, which is correct for those callers.
    */
+  let editedFill = null;
   if (req.body.device_id) {
     if (!checkDeviceAccess(req, res, 'body_device_id', true, req.body.device_id)) return;
-    const forkedItemId = forkForItemEdit(req.body.device_id, req.user.id, req.params.id);
+    // Store slot content edited on a screen: in place (default), or for this screen only.
+    const f = fillItemTarget(req, res, item, req.body.device_id, req.body.fill_scope);
+    if (f === false) return;
+    if (f) { editedFill = f.describe; if (f.itemId !== item.id) { req.params.id = f.itemId; item = db.prepare('SELECT * FROM playlist_items WHERE id = ?').get(f.itemId); } }
+    const forkedItemId = f ? item.id : forkForItemEdit(req.body.device_id, req.user.id, req.params.id);
     if (String(forkedItemId) !== String(req.params.id)) {
       req.params.id = forkedItemId;
       item = db.prepare('SELECT * FROM playlist_items WHERE id = ?').get(forkedItemId);
@@ -313,7 +414,7 @@ router.put('/:id', (req, res) => {
   }
 
   const updated = db.prepare(`${ITEM_SELECT} WHERE pi.id = ?`).get(req.params.id);
-  res.json(updated);
+  res.json(editedFill ? { ...updated, edited_fill: editedFill } : updated);
 });
 
 // Delete playlist item
@@ -325,9 +426,13 @@ router.delete('/:id', (req, res) => {
   // every screen in the group. device_id (query param here — a DELETE carries no body from the
   // dashboard) says which screen is meant.
   const deviceId = req.query.device_id;
+  let editedFill = null;
   if (deviceId) {
     if (!checkDeviceAccess(req, res, 'query_device_id', true, deviceId)) return;
-    const forkedItemId = forkForItemEdit(deviceId, req.user.id, req.params.id);
+    const f = fillItemTarget(req, res, item, deviceId, req.query.fill_scope);
+    if (f === false) return;
+    if (f) { editedFill = f.describe; if (f.itemId !== item.id) { req.params.id = f.itemId; item = db.prepare('SELECT * FROM playlist_items WHERE id = ?').get(f.itemId); } }
+    const forkedItemId = f ? item.id : forkForItemEdit(deviceId, req.user.id, req.params.id);
     if (String(forkedItemId) !== String(req.params.id)) {
       req.params.id = forkedItemId;
       item = db.prepare('SELECT * FROM playlist_items WHERE id = ?').get(forkedItemId);
@@ -337,7 +442,7 @@ router.delete('/:id', (req, res) => {
   db.prepare('DELETE FROM playlist_items WHERE id = ?').run(req.params.id);
   markDraft(item.playlist_id);
 
-  res.json({ success: true, content_id: item.content_id });
+  res.json({ success: true, content_id: item.content_id, ...(editedFill ? { edited_fill: editedFill } : {}) });
 });
 
 // Reorder items for a device's playlist
@@ -398,8 +503,12 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
   const sourceDevice = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
   if (!sourceDevice?.playlist_id) return res.status(404).json({ error: 'Source device has no playlist' });
 
-  const sourceItems = db.prepare('SELECT * FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order')
+  const allSource = db.prepare('SELECT * FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order')
     .all(sourceDevice.playlist_id);
+  // A local slot row only means something inside its corporate playlist; copied it would be a ghost
+  // item (spec §6.1-4). Skipped and counted.
+  const sourceItems = allSource.filter((a) => !a.slot_id);
+  const skippedSlots = allSource.length - sourceItems.length;
   if (!sourceItems.length) return res.status(404).json({ error: 'Source playlist is empty' });
 
   const target = db.prepare('SELECT id, user_id FROM devices WHERE id = ?').get(req.params.targetDeviceId);
@@ -448,7 +557,7 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
   transaction();
 
   markDraft(targetPlaylistId);
-  res.json({ success: true, copied: sourceItems.length });
+  res.json({ success: true, copied: sourceItems.length, ...(skippedSlots ? { skipped_slots: skippedSlots } : {}) });
 });
 
 module.exports = router;

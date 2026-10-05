@@ -4,9 +4,9 @@
  * /api/corporate — head office (corporate) playlists: settings, the corporate playlists
  * themselves, and "Where it plays" (mandates). JWT-only (config/api-surface.js, decision D12).
  *
- * Stage A of docs (spec 10, §9): no slots yet, so a mandated screen plays the corporate playlist's
- * own published snapshot. Slots, fills and per-store composition arrive in Stage B; emergency
- * alerts in Stage C — this router refuses their settings rather than storing a switch that does
+ * Stage B (spec 10, §9): local slots, the stores' content that fills them and the per-store
+ * composition live in routes/corporate-slots.js, registered on this router below. Emergency alerts
+ * arrive in Stage C — this router refuses their settings rather than storing a switch that does
  * nothing yet.
  *
  * Every write is audited (activity_log, action `corporate.*`), with before/after for mandates.
@@ -78,6 +78,13 @@ function playlistScreens(playlistId) {
 function auditCorp(req, action, details) {
   audit(action, { userId: req.user && req.user.id, workspaceId: details && details.workspace_id || req.workspaceId || null, ip: req.ip || null, details });
 }
+
+/*
+ * Local slots, fills and reports (routes/corporate-slots.js). Declared here, ABOVE every route, so no
+ * handler can ever reach `helpers` in its temporal dead zone; the functions it names are hoisted.
+ */
+const helpers = { loadOrg, refuse, requireAvailable, requireAdmin, requireAuthor, auditCorp, loadHqPlaylist, canReadHq };
+require('./corporate-slots').register(router, helpers);
 
 /* ──────────────────────────────────────────────────────────────────── settings */
 
@@ -246,6 +253,12 @@ router.post('/playlists/:id/demote', (req, res) => {
   if (!p.corporate) return res.json({ ...p, corporate: false });
   const refusal = mandatedRefusal(p.id);
   if (refusal) return guard.send(res, refusal, req);
+  // Local slots exist only in corporate playlists (the backstop refuses a slot row anywhere else),
+  // and stores' content hangs off them: they go first, explicitly.
+  const slotCount = db.prepare('SELECT COUNT(*) AS n FROM corporate_slots WHERE playlist_id = ? AND retired_at IS NULL').get(p.id).n;
+  if (slotCount) {
+    return res.status(409).json({ code: 'CORPORATE_HAS_SLOTS', error: `This playlist has ${slotCount} local slot${slotCount === 1 ? '' : 's'}. Remove ${slotCount === 1 ? 'it' : 'them'} first — stores fill them with their own content.` });
+  }
   db.prepare('UPDATE playlists SET corporate = 0 WHERE id = ?').run(p.id);
   auditCorp(req, 'corporate.playlist.demote', { organization_id: org.id, playlist_id: p.id, name: p.name, workspace_id: p.workspace_id });
   res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(p.id), corporate: false });
@@ -258,7 +271,8 @@ router.get('/playlists/:id', (req, res) => {
   const p = loadHqPlaylist(req, res, org);
   if (!p) return;
   if (!p.corporate) return res.status(404).json({ error: 'Not a corporate playlist' });
-  res.json({ ...corporatePlaylistRow(p), mandates: listMandates(org.id).filter((m) => m.playlist_id === p.id), slots: [] });
+  const slots = db.prepare('SELECT * FROM corporate_slots WHERE playlist_id = ? ORDER BY created_at, id').all(p.id).map((sl) => helpers.slotView(sl));
+  res.json({ ...corporatePlaylistRow(p), mandates: listMandates(org.id).filter((m) => m.playlist_id === p.id), slots });
 });
 
 /* ──────────────────────────────────────────────────────────────────── mandates */
@@ -487,8 +501,10 @@ router.delete('/mandates/:id', (req, res) => {
 /* ──────────────────────────────────────────────────────────────────── preview */
 
 /*
- * "Preview a screen": the loop this screen plays, tagged by origin. Stage A has no slots, so every
- * item of a mandated screen is head office's. Read by anyone who can see the device, or an org admin.
+ * "Preview a screen": the loop this screen plays, every item tagged corporate / slot (with the level
+ * it came from) / fallback, plus what each slot did (filled, fallback, skipped). draft=1 (corporate
+ * authors only) previews the corporate DRAFT: what the screen would play after the next publish.
+ * Read by anyone who can see the device, or an org admin.
  */
 router.get('/preview', (req, res) => {
   const org = loadOrg(req, res);
@@ -505,6 +521,18 @@ router.get('/preview', (req, res) => {
   const r = db.prepare('SELECT playlist_id, source FROM device_resolved_playlist WHERE device_id = ?').get(deviceId) || {};
   const m = resolve.mandateFor(db, deviceId);
   const corporate = r.source === 'corporate';
+  if (corporate && r.playlist_id) {
+    const draft = req.query && (req.query.draft === '1' || req.query.draft === 'true');
+    if (draft && !guard.canAuthor(req, org.id)) return refuse(res, 'CORPORATE_AUTHOR_REQUIRED');
+    const composable = draft ? require('./playlists').buildSnapshotItems(r.playlist_id, 0, null, { keepSlots: true, noWeave: true }) : null;
+    const ex = helpers.explainForDevice(deviceId, r.playlist_id, { composable });
+    return res.json({
+      device_id: deviceId, device_name: device.name, playlist_id: r.playlist_id, source: r.source, draft: !!draft,
+      mandate: m ? { id: m.id, target_kind: m.target_kind, target_label: guard.targetLabel(db, m), dark: !!m.dark, playlist_name: m.playlist_name || null } : null,
+      layout: payload.layout ? { id: payload.layout.id, name: payload.layout.name } : null,
+      items: ex.items, slots: ex.slots, total_sec: ex.total_sec, playback_order: ex.playback_order,
+    });
+  }
   const items = (payload.assignments || []).map((a) => ({
     content_id: a.content_id || null, widget_id: a.widget_id || null, filename: a.filename || a.widget_name || null,
     mime_type: a.mime_type || null, thumbnail_path: a.thumbnail_path || null, duration_sec: a.duration_sec || null,

@@ -561,20 +561,37 @@ function buildPlaylistPayloadUnchecked(deviceId) {
    *     (critique H1). The tag is deleted before the payload leaves the server;
    *   - default_content is null: a dark mandate, or an empty corporate loop, shows the player's own
    *     idle screen — never store-chosen content (D6);
-   *   - the layout is already the mandate's (or none) — the view decides it.
-   * Stage B replaces the snapshot read with the per-store composition (slots).
+   *   - the layout is already the mandate's (or none) — the view decides it;
+   *   - the items are this screen's COMPOSITION — head office's published playlist with the store's
+   *     slot content spliced in (lib/corporate/composition.js), cached per fill signature and
+   *     self-healing on every read. Each item already carries its own __origin_ws (head office's
+   *     items and fallbacks: HQ; slot items: the store's workspace).
    */
   const corporateSource = device?.playlist_source === 'corporate';
-  if (device?.playlist_id) {
+  if (corporateSource && device?.playlist_id) {
+    try {
+      const c = require('../lib/corporate/composition').compositionFor(db, deviceId, device.playlist_id);
+      assignments = c.items;
+      playback_order = c.playback_order || 'sequential';
+    } catch (e) {
+      // A composition fault must never cost a screen its playlist: head office's own snapshot (the
+      // fallback-only loop) is what it played before slots existed.
+      console.warn(`[corporate] composition failed for ${deviceId}: ${e && e.message}`);
+      const pl = db.prepare('SELECT published_snapshot, published_playback_order, workspace_id FROM playlists WHERE id = ?').get(device.playlist_id);
+      try { assignments = pl && pl.published_snapshot ? JSON.parse(pl.published_snapshot) : []; } catch (_) { assignments = []; }
+      for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = (pl && pl.workspace_id) || null;
+      if (pl && pl.published_playback_order) playback_order = pl.published_playback_order;
+    }
+    refreshWidgetRevs(assignments);
+    refreshContentRevs(assignments);   // re-stamps a.mime_type, so strip live AFTER it
+    assignments = dropLiveIfUnsupported(assignments);
+  } else if (device?.playlist_id) {
     const playlist = db.prepare('SELECT published_snapshot, published_playback_order, workspace_id FROM playlists WHERE id = ?').get(device.playlist_id);
     if (playlist?.published_snapshot) {
       try { assignments = JSON.parse(playlist.published_snapshot); } catch (e) { assignments = []; }
       refreshWidgetRevs(assignments);
       refreshContentRevs(assignments);   // re-stamps a.mime_type, so strip live AFTER it
       assignments = dropLiveIfUnsupported(assignments);
-      if (corporateSource && Array.isArray(assignments)) {
-        for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = playlist.workspace_id || null;
-      }
     }
     if (playlist && playlist.published_playback_order) playback_order = playlist.published_playback_order;
   }

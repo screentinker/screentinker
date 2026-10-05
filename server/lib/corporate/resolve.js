@@ -9,8 +9,10 @@
  * answering correctly in degraded mode, when the previous views are in place (the guards that call
  * it short-circuit on runtime.active anyway).
  *
- * Stage A: no slots, so a mandated screen's sync key is simply the corporate playlist id. Stage B
- * appends '|' + the fill signature (§2.4).
+ * Stage B: local slots. Each slot of a corporate playlist resolves, per screen, to the NEAREST store
+ * fill (device = video wall > group > workspace; §2.3), and the set of fills a screen plays is its
+ * SIGNATURE ("slotA=fillPlaylist1;slotB=fillPlaylist7"). The composition cache is keyed by it and
+ * the group-sync key appends it, so two screens sync only when they really play the same loop.
  */
 
 const { MANDATE_EXPR } = require('../playlist-resolver-sql');
@@ -78,18 +80,205 @@ function mandatedMembers(db, groupId) {
   return ids.filter((id) => mandateFor(db, id));
 }
 
+/* ── Local slots and the nearest fill (§2.3) ─────────────────────────────────────────────── */
+
+const _markerCache = new WeakMap();   // db -> Map(playlistId -> { rev, len, markers })
+
+/**
+ * The slot markers of a corporate playlist's PUBLISHED composable, in order: Map<slotId, marker>.
+ * Only these slots exist as far as any screen is concerned — a slot added in the draft, or removed
+ * from it, takes effect on the next corporate publish (§1.3, R19). Cached per published_rev.
+ */
+function publishedMarkers(db, playlistId) {
+  db = db || dbOf();
+  const out = new Map();
+  if (!playlistId) return out;
+  let row;
+  try { row = db.prepare('SELECT published_composable, published_rev FROM playlists WHERE id = ?').get(playlistId); } catch (_) { return out; }
+  if (!row || !row.published_composable) return out;
+  let perDb = _markerCache.get(db);
+  if (!perDb) { perDb = new Map(); _markerCache.set(db, perDb); }
+  const hit = perDb.get(playlistId);
+  if (hit && hit.rev === row.published_rev && hit.len === row.published_composable.length) return hit.markers;
+  let list = [];
+  try { list = JSON.parse(row.published_composable); } catch (_) { list = []; }
+  for (const el of Array.isArray(list) ? list : []) if (el && el.__slot) out.set(el.__slot, el);
+  if (perDb.size > 500) perDb.clear();
+  perDb.set(playlistId, { rev: row.published_rev, len: row.published_composable.length, markers: out });
+  return out;
+}
+
+const SCOPE_RANK = { device: 4, wall: 4, group: 3, workspace: 2 };
+
+/*
+ * Fill rows that could apply to slots of P. Default = only fills a screen can play right now: in
+ * state 'ok', with a published snapshot, the playlist still in the fill's workspace, the slot in P's
+ * PUBLISHED composable. The add/edit redirects pass {anyState: true}: a store adding to its slot
+ * must land in the fill it is building, even before that fill is first published.
+ *
+ * ⚠️ "In the published composable", not "not retired": removing a slot retires it in the DRAFT, and
+ * like every slot change it reaches screens on the next corporate publish (R19). Filtering on
+ * retired_at here blanked every store's slot content the moment head office clicked Remove.
+ */
+function fillCandidates(db, playlistId, { workspaceId = null, anyState = false } = {}) {
+  const markers = publishedMarkers(db, playlistId);
+  const rows = db.prepare(`
+    SELECT f.id, f.slot_id, f.workspace_id, f.scope_kind, f.scope_id, f.fill_playlist_id, f.fill_state,
+           g.priority AS g_priority, g.created_at AS g_created_at,
+           (fp.published_snapshot IS NOT NULL) AS published
+      FROM corporate_slot_fills f
+      JOIN corporate_slots s ON s.id = f.slot_id AND s.playlist_id = ?
+      JOIN playlists fp ON fp.id = f.fill_playlist_id AND fp.workspace_id = f.workspace_id
+      LEFT JOIN device_groups g ON f.scope_kind = 'group' AND g.id = f.scope_id
+     WHERE ${workspaceId ? 'f.workspace_id = ?' : '1 = 1'}`).all(...(workspaceId ? [playlistId, workspaceId] : [playlistId]));
+  return rows.filter((r) => (anyState || (r.fill_state === 'ok' && r.published)) && (anyState || markers.has(r.slot_id)));
+}
+
+/** Does fill candidate `c` apply to device `d` (in group set `groups`)? Returns its rank, 0 = no. */
+function scopeRank(c, d, groups) {
+  if (c.workspace_id !== d.workspace_id) return 0;
+  if (c.scope_kind === 'device') return !d.wall_id && c.scope_id === d.id ? SCOPE_RANK.device : 0;
+  if (c.scope_kind === 'wall') return d.wall_id && c.scope_id === d.wall_id ? SCOPE_RANK.wall : 0;
+  if (c.scope_kind === 'group') return !d.wall_id && groups && groups.has(c.scope_id) ? SCOPE_RANK.group : 0;
+  if (c.scope_kind === 'workspace') return c.scope_id === d.workspace_id ? SCOPE_RANK.workspace : 0;
+  return 0;
+}
+
+/** Nearest wins: device = wall > group (priority DESC, created_at ASC, id ASC) > workspace. */
+function better(a, ra, b, rb) {
+  if (!b) return true;
+  if (ra !== rb) return ra > rb;
+  if (a.scope_kind === 'group' && b.scope_kind === 'group') {
+    const pa = Number(a.g_priority) || 0; const pb = Number(b.g_priority) || 0;
+    if (pa !== pb) return pa > pb;
+    const ca = Number(a.g_created_at) || 0; const cb = Number(b.g_created_at) || 0;
+    if (ca !== cb) return ca < cb;
+    return String(a.scope_id) < String(b.scope_id);
+  }
+  return String(a.id) < String(b.id);
+}
+
+function pickFills(d, groups, candidates) {
+  const best = new Map();   // slotId -> { c, rank }
+  for (const c of candidates) {
+    const r = scopeRank(c, d, groups);
+    if (!r) continue;
+    const cur = best.get(c.slot_id);
+    if (better(c, r, cur && cur.c, cur && cur.rank)) best.set(c.slot_id, { c, rank: r });
+  }
+  const out = new Map();
+  for (const [slotId, { c }] of best) {
+    out.set(slotId, { fillId: c.id, playlistId: c.fill_playlist_id, scope_kind: c.scope_kind, scope_id: c.scope_id, workspace_id: c.workspace_id, fill_state: c.fill_state });
+  }
+  return out;
+}
+
+function deviceGroupsInOwnWorkspace(db, deviceId) {
+  return new Set(db.prepare(`SELECT m.group_id FROM device_group_members m
+      JOIN device_groups g ON g.id = m.group_id JOIN devices d ON d.id = m.device_id
+     WHERE m.device_id = ? AND g.workspace_id = d.workspace_id`).all(deviceId).map((r) => r.group_id));
+}
+
+/**
+ * The fill each slot of corporate playlist P resolves to on this device.
+ * @returns {Map<slotId, {fillId, playlistId, scope_kind, scope_id, workspace_id}>} — never throws
+ */
+function fillsForDevice(db, deviceId, playlistId, opts = {}) {
+  db = db || dbOf();
+  try {
+    const d = db.prepare('SELECT id, workspace_id, wall_id FROM devices WHERE id = ?').get(deviceId);
+    if (!d || !playlistId) return new Map();
+    const candidates = fillCandidates(db, playlistId, { workspaceId: d.workspace_id, anyState: !!opts.anyState });
+    if (!candidates.length) return new Map();
+    return pickFills(d, deviceGroupsInOwnWorkspace(db, deviceId), candidates);
+  } catch (_) { return new Map(); }
+}
+
+/** "slotA=pl1;slotB=pl7", sorted by slot id; '' when the screen plays no fill. */
+function signatureFor(fills) {
+  if (!fills || !fills.size) return '';
+  return [...fills.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([slot, f]) => `${slot}=${f.playlistId}`).join(';');
+}
+
+/**
+ * Every device whose resolved playlist is corporate playlist P, with its fills and signature, in
+ * THREE bulk queries (resolved devices, memberships, fill candidates) — never one query per device:
+ * a corporate publish reaches thousands of screens (risk R6, the open loop-spike issue).
+ * @returns {Map<deviceId, {signature, fills, workspace_id, wall_id}>}
+ */
+function signaturesForPlaylist(db, playlistId) {
+  db = db || dbOf();
+  const out = new Map();
+  if (!playlistId) return out;
+  try {
+    const devices = db.prepare(`SELECT d.id, d.workspace_id, d.wall_id FROM device_resolved_playlist r
+        JOIN devices d ON d.id = r.device_id WHERE r.playlist_id = ? AND r.source = 'corporate'`).all(playlistId);
+    if (!devices.length) return out;
+    const candidates = fillCandidates(db, playlistId);
+    if (!candidates.length) {
+      for (const d of devices) out.set(d.id, { signature: '', fills: new Map(), workspace_id: d.workspace_id, wall_id: d.wall_id });
+      return out;
+    }
+    const groups = new Map();
+    if (candidates.some((c) => c.scope_kind === 'group')) {
+      for (const r of db.prepare(`SELECT m.device_id, m.group_id FROM device_group_members m
+          JOIN device_groups g ON g.id = m.group_id JOIN devices d ON d.id = m.device_id
+         WHERE g.workspace_id = d.workspace_id
+           AND m.device_id IN (SELECT device_id FROM device_resolved_playlist WHERE playlist_id = ? AND source = 'corporate')`).all(playlistId)) {
+        if (!groups.has(r.device_id)) groups.set(r.device_id, new Set());
+        groups.get(r.device_id).add(r.group_id);
+      }
+    }
+    for (const d of devices) {
+      const fills = pickFills(d, groups.get(d.id) || null, candidates);
+      out.set(d.id, { signature: signatureFor(fills), fills, workspace_id: d.workspace_id, wall_id: d.wall_id });
+    }
+  } catch (_) { /* tables absent: no fills */ }
+  return out;
+}
+
 /* ── Group sync key (§2.4) ────────────────────────────────────────────────────────────────── */
+
+// A key is the playlist id, plus '|' + the fill signature when there is one. No fills -> the plain
+// playlist id, so a slot-less corporate playlist (and every Stage A expectation) keys exactly as before.
+const keyOf = (playlistId, sig) => (playlistId ? (sig ? `${playlistId}|${sig}` : playlistId) : null);
+
+/**
+ * The fills a GROUP's members share for P: this group's own fill per slot, else its workspace's
+ * (§2.4). A member with a device-level fill, or in a higher-priority group with its own, plays
+ * something else and drops out of sync.
+ */
+function groupFills(db, group, playlistId) {
+  const ws = group.workspace_id || wsOfGroup(db, group.id);
+  const out = new Map();
+  for (const c of fillCandidates(db, playlistId, { workspaceId: ws })) {
+    const rank = c.scope_kind === 'group' && c.scope_id === group.id ? 3 : c.scope_kind === 'workspace' && c.scope_id === ws ? 2 : 0;
+    if (!rank) continue;
+    const cur = out.get(c.slot_id);
+    if (!cur || rank > cur.rank) out.set(c.slot_id, { rank, playlistId: c.fill_playlist_id });
+  }
+  return out;
+}
 
 /**
  * What a group's members must share to sync. Without a covering mandate: the group's playlist id
- * (today's behaviour, byte-identical). With one: the corporate playlist id. null = cannot sync.
- * A dark mandate has nothing to play, so nothing to sync.
+ * (today's behaviour, byte-identical). With one: the corporate playlist id, plus the signature of
+ * the fills the group's members play. null = cannot sync. A dark mandate has nothing to play, so
+ * nothing to sync.
  */
 function syncKeyForGroup(db, group) {
   if (!group) return null;
-  if (!runtime.active(db || dbOf())) return group.playlist_id || null;
-  const m = groupCoverage(db, group.id ? { id: group.id, workspace_id: group.workspace_id || wsOfGroup(db, group.id) } : group);
-  if (m) return m.dark ? null : m.playlist_id;
+  db = db || dbOf();
+  if (!runtime.active(db)) return group.playlist_id || null;
+  const g = group.id ? { id: group.id, workspace_id: group.workspace_id || wsOfGroup(db, group.id) } : group;
+  const m = groupCoverage(db, g);
+  if (m) {
+    if (m.dark) return null;
+    let sig = '';
+    try { sig = signatureFor(groupFills(db, g, m.playlist_id)); } catch (_) { sig = ''; }
+    return keyOf(m.playlist_id, sig);
+  }
   return group.playlist_id || null;
 }
 
@@ -97,12 +286,26 @@ function wsOfGroup(db, groupId) {
   try { return (db || dbOf()).prepare('SELECT workspace_id FROM device_groups WHERE id = ?').get(groupId)?.workspace_id || null; } catch (_) { return null; }
 }
 
-/** A device's sync key: its resolved playlist id (Stage B adds the fill signature). */
+/** A device's sync key: its resolved playlist id, plus its fill signature on a mandated screen. */
 function syncKeyForDevice(db, deviceId) {
   db = db || dbOf();
-  const r = db.prepare('SELECT playlist_id FROM device_resolved_playlist WHERE device_id = ?').get(deviceId);
-  return (r && r.playlist_id) || null;
+  const r = db.prepare('SELECT playlist_id, source FROM device_resolved_playlist WHERE device_id = ?').get(deviceId);
+  if (!r || !r.playlist_id) return null;
+  if (r.source !== 'corporate' || !runtime.active(db)) return r.playlist_id;
+  return keyOf(r.playlist_id, signatureFor(fillsForDevice(db, deviceId, r.playlist_id)));
 }
+
+/** Does any member's key need its signature checked? Only when the base playlist has fills at all. */
+function keyNeedsSignature(db, key) {
+  if (!key || !runtime.active(db)) return false;
+  if (String(key).includes('|')) return true;
+  try {
+    return !!db.prepare(`SELECT 1 FROM corporate_slot_fills f JOIN corporate_slots s ON s.id = f.slot_id
+        WHERE s.playlist_id = ? LIMIT 1`).get(key);
+  } catch (_) { return false; }
+}
+
+const baseOf = (key) => String(key).split('|')[0];
 
 /**
  * Sync-eligible members of a group, with the given device columns. THE ONE definition used by
@@ -114,12 +317,14 @@ function syncMembers(db, group, columns) {
   if (!group) return [];
   const key = syncKeyForGroup(db, group);
   if (!key) return [];
-  return db.prepare(`
-    SELECT ${columns} FROM devices d
+  const rows = db.prepare(`
+    SELECT ${columns}${keyNeedsSignature(db, key) ? ', d.id AS __sync_id' : ''} FROM devices d
     JOIN device_group_members dgm ON dgm.device_id = d.id
     JOIN device_resolved_playlist r ON r.device_id = d.id
     WHERE dgm.group_id = ? AND r.playlist_id = ? ORDER BY d.id
-  `).all(group.id, key);
+  `).all(group.id, baseOf(key));
+  if (!keyNeedsSignature(db, key)) return rows;
+  return rows.filter((r) => syncKeyForDevice(db, r.__sync_id) === key).map((r) => { const { __sync_id, ...rest } = r; return rest; });
 }
 
 /** Is deviceId an eligible sync sender/member of this sync-enabled group? */
@@ -128,11 +333,13 @@ function isSyncMember(db, group, deviceId) {
   if (!group || !group.sync_enabled) return false;
   const key = syncKeyForGroup(db, group);
   if (!key) return false;
-  return !!db.prepare(`
+  const ok = !!db.prepare(`
     SELECT 1 FROM device_group_members dgm
     JOIN device_resolved_playlist r ON r.device_id = dgm.device_id
     WHERE dgm.group_id = ? AND dgm.device_id = ? AND r.playlist_id = ?
-  `).get(group.id, deviceId, key);
+  `).get(group.id, deviceId, baseOf(key));
+  if (!ok || !keyNeedsSignature(db, key)) return ok;
+  return syncKeyForDevice(db, deviceId) === key;
 }
 
 /**
@@ -156,11 +363,16 @@ function deviceSyncGroup(db, deviceId, devicePlaylistId) {
     WHERE dgm.device_id = ? AND g.sync_enabled = 1
     ORDER BY g.name ASC, g.id ASC
   `).all(deviceId);
+  let deviceKey;   // computed once, and only if some group's key needs the signature
   for (const g of candidates) {
-    if (syncKeyForGroup(db, g) === devicePlaylistId) {
-      const { workspace_id, ...row } = g;   // same shape as the pre-feature query
-      return row;
+    const gk = syncKeyForGroup(db, g);
+    if (!gk || baseOf(gk) !== devicePlaylistId) continue;
+    if (keyNeedsSignature(db, gk)) {
+      if (deviceKey === undefined) deviceKey = syncKeyForDevice(db, deviceId);
+      if (deviceKey !== gk) continue;
     }
+    const { workspace_id, ...row } = g;   // same shape as the pre-feature query
+    return row;
   }
   return null;
 }
@@ -196,5 +408,6 @@ function pausedCounts(db, workspaceId) {
 module.exports = {
   pausedCounts,
   mandateFor, mandatesFor, groupCoverage, mandatedMembers,
+  publishedMarkers, fillCandidates, fillsForDevice, signatureFor, signaturesForPlaylist, scopeRank,
   syncKeyForGroup, syncKeyForDevice, syncMembers, isSyncMember, deviceSyncGroup,
 };

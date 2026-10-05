@@ -170,7 +170,12 @@ router.get('/:id', (req, res) => {
   /*
    * CORPORATE: head office's playlist plays here (or head office turned the screen off). The UI
    * shows a locked badge and the playlist NAME — not a link, for users who cannot open head
-   * office's workspace (it would 404). Stage B adds the slot sections to this block.
+   * office's workspace (it would 404).
+   *
+   * The slot sections (spec §7.9): every local slot of head office's playlist with the content this
+   * screen gets for it — the nearest level, published or still a draft — so the device page knows
+   * BEFORE adding where "Add content" will land (no 409 round trip), and `items`, this screen's loop
+   * tagged by origin (corporate items are locked; slot items say which level they came from).
    */
   if (resolved.source === 'corporate') {
     const m = require('../lib/corporate/resolve').mandateFor(db, req.params.id);
@@ -183,7 +188,34 @@ router.get('/:id', (req, res) => {
       mandate: { id: m.id, target_kind: m.target_kind, target_label: corpGuard.targetLabel(db, m) },
       can_change: corpGuard.isOrgAdmin(req, m.organization_id) && !req.viaToken,
       slots: [],
+      items: [],
     } : null;
+    if (m && m.playlist_id) {
+      try {
+        const fillsLib = require('../lib/corporate/fills');
+        const corpResolve = require('../lib/corporate/resolve');
+        const markers = corpResolve.publishedMarkers(db, m.playlist_id);
+        const playing = corpResolve.fillsForDevice(db, req.params.id, m.playlist_id);
+        for (const slot of fillsLib.liveSlots(db, m.playlist_id)) {
+          const near = fillsLib.nearestFill(db, req.params.id, slot);
+          const marker = markers.get(slot.id);
+          device.corporate.slots.push({
+            id: slot.id, name: slot.name, help_text: slot.help_text || null,
+            limits: (marker && marker.limits) || fillsLib.limitsOfRow(slot),
+            has_fallback: !!(marker && marker.fallback),
+            fill: near ? { ...fillsLib.describeFill(db, near, slot), fill_state: near.fill_state, playing: !!(playing.get(slot.id) && playing.get(slot.id).fillId === near.id) } : null,
+            own: !!(near && (near.scope_kind === 'device' || near.scope_kind === 'wall')),
+          });
+        }
+        const ex = require('../lib/corporate/composition').explain(db, m.playlist_id, playing);
+        device.corporate.items = ex.items.map((a) => ({
+          content_id: a.content_id || null, widget_id: a.widget_id || null, filename: a.filename || a.widget_name || null,
+          mime_type: a.mime_type || null, duration_sec: a.duration_sec || null,
+          origin: a.__tag ? a.__tag.kind : 'corporate', slot_id: a.__tag ? a.__tag.slot_id : null,
+          locked: !a.__tag || a.__tag.kind !== 'slot',
+        }));
+      } catch (e) { console.warn(`[corporate] device slot block failed for ${req.params.id}: ${e && e.message}`); }
+    }
   }
 
   let assignments = [];

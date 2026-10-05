@@ -123,6 +123,8 @@ router.post('/:type/:id/:rev/restore', requireWorkspaceWrite, (req, res) => {
       revision: present(out.revision), restored_from: present(out.restoredFrom),
       draft: true, require_approval: policy.approvalRequired(db, req.workspaceId),
       next: policy.approvalRequired(db, req.workspaceId) ? 'submit_for_review' : (req.params.type === 'playlist' || req.params.type === 'slide_deck' ? 'publish' : 'publish_draft'),
+      // Local slots this revision had that no longer exist — said, not silently skipped.
+      ...(out.dropped && out.dropped.length ? { dropped: out.dropped } : {}),
     });
   } catch (e) {
     if (sendCorporate(res, e, req)) return;

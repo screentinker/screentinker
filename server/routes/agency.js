@@ -138,6 +138,13 @@ router.post('/playlists/:playlistId/items', (req, res) => {
   if (!(TIME_RE.test(en) || en === '24:00')) return res.status(400).json({ error: 'end must be HH:MM or 24:00' });
 
   { const smartErr = require('../lib/smart-playlist').smartAddError(db, req.params.playlistId); if (smartErr) return res.status(400).json({ error: smartErr }); }
+  // CORPORATE: an allowlisted store playlist may be the store's content for head office's local
+  // slot — the agency adds within the slot's limits like anyone else (publish re-checks them).
+  try { require('../lib/corporate/fills').assertCanAdd(db, req.params.playlistId, [{ content_id, duration_sec }]); } catch (e) {
+    const corpGuard = require('../lib/corporate/guard');
+    if (corpGuard.send(res, e, req)) return;
+    throw e;
+  }
   const order = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM playlist_items WHERE playlist_id = ?').get(req.params.playlistId).n;
   const itemId = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
     .run(req.params.playlistId, content_id, order, duration_sec).lastInsertRowid;

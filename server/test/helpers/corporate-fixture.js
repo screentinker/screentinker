@@ -30,13 +30,15 @@ function freshDb({ views = true, guards = true } = {}) {
     CREATE TABLE widgets (id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT);
     CREATE TABLE playlists (id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '',
       description TEXT, status TEXT NOT NULL DEFAULT 'draft', published_snapshot TEXT, published_structure TEXT,
-      playback_order TEXT, smart_rules TEXT, is_auto_generated INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
+      playback_order TEXT, published_playback_order TEXT, smart_rules TEXT, is_auto_generated INTEGER NOT NULL DEFAULT 0, updated_at INTEGER, user_id TEXT);
     CREATE TABLE playlist_items (id INTEGER PRIMARY KEY AUTOINCREMENT, playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
       content_id TEXT REFERENCES content(id) ON DELETE CASCADE, widget_id TEXT, child_playlist_id TEXT REFERENCES playlists(id) ON DELETE RESTRICT,
-      zone_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, duration_sec INTEGER, muted INTEGER NOT NULL DEFAULT 0);
+      zone_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, duration_sec INTEGER, muted INTEGER NOT NULL DEFAULT 0,
+      play_from TEXT, play_until TEXT, enabled INTEGER NOT NULL DEFAULT 1, log_play INTEGER NOT NULL DEFAULT 1, fit_mode TEXT,
+      play_when TEXT, weight INTEGER NOT NULL DEFAULT 1, repeat_every_sec INTEGER);
     CREATE INDEX idx_playlist_items_child ON playlist_items(child_playlist_id);
     CREATE TABLE playlist_item_schedules (id TEXT PRIMARY KEY, playlist_item_id INTEGER NOT NULL REFERENCES playlist_items(id) ON DELETE CASCADE,
-      active_days TEXT, start_time TEXT, end_time TEXT);
+      active_days TEXT, start_time TEXT, end_time TEXT, start_date TEXT, end_date TEXT, sort_order INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE video_walls (id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, playlist_id TEXT, leader_device_id TEXT);
     CREATE TABLE devices (id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, playlist_id TEXT, playlist_source TEXT, wall_id TEXT,
       layout_id TEXT, scheduled_playlist_id TEXT, scheduled_layout_id TEXT, status TEXT, platform TEXT, ip_address TEXT);
@@ -114,6 +116,33 @@ function seed(db) {
       db.prepare(`INSERT INTO corporate_mandates (id, organization_id, playlist_id, dark, target_kind, target_id, layout_id, enabled, created_at)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, orgId, playlist_id, dark, kind, targetId, layout_id, enabled, created_at);
       return id;
+    },
+    /* Local slots (Stage B). `slot` places it in corporate playlist P's draft AND, by default, in its
+     * published composable, so it is live for screens. `fill` makes a published store fill. */
+    slot(orgId, playlistId, { name = 'Promo', max_items = null, max_total_sec = null, allow_video = 1, allow_widgets = 1, live = true, fallback = null, retired_at = null } = {}) {
+      const id = uid('slot');
+      db.prepare(`INSERT INTO corporate_slots (id, organization_id, playlist_id, name, max_items, max_total_sec, allow_video, allow_widgets, retired_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, orgId, playlistId, name, max_items, max_total_sec, allow_video, allow_widgets, retired_at);
+      db.prepare('INSERT INTO playlist_items (playlist_id, slot_id, sort_order) VALUES (?, ?, 99)').run(playlistId, id);
+      if (live) {
+        const row = db.prepare('SELECT published_composable FROM playlists WHERE id = ?').get(playlistId);
+        const list = JSON.parse((row && row.published_composable) || '[]');
+        list.push({ __slot: id, zone_id: null, sort_order: list.length, limits: { max_items, max_total_sec, allow_video, allow_widgets }, fallback });
+        db.prepare('UPDATE playlists SET published_composable = ?, published_rev = published_rev + 1 WHERE id = ?').run(JSON.stringify(list), playlistId);
+      }
+      return id;
+    },
+    composable(playlistId, list) {
+      db.prepare('UPDATE playlists SET published_composable = ?, published_rev = published_rev + 1 WHERE id = ?').run(JSON.stringify(list), playlistId);
+    },
+    fill(slotId, wsId, scopeKind, scopeId, { items = [], published = true, state = 'ok' } = {}) {
+      const pl = uid('fillpl');
+      db.prepare('INSERT INTO playlists (id, workspace_id, name, status, published_snapshot) VALUES (?, ?, ?, ?, ?)')
+        .run(pl, wsId, `fill ${scopeKind}`, published ? 'published' : 'draft', published ? JSON.stringify(items) : null);
+      const id = uid('fill');
+      db.prepare('INSERT INTO corporate_slot_fills (id, slot_id, workspace_id, scope_kind, scope_id, fill_playlist_id, fill_state) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(id, slotId, wsId, scopeKind, scopeId, pl, state);
+      return { id, playlistId: pl };
     },
     user(id, role = 'user') { db.prepare('INSERT INTO users (id, email, name, role) VALUES (?, ?, ?, ?)').run(id, `${id}@x.test`, id, role); return id; },
     orgMember(orgId, userId, role) { db.prepare('INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)').run(orgId, userId, role); },
