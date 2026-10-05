@@ -490,3 +490,30 @@ test('the MCP endpoint is advertised where an agent will look', () => {
   assert.match(JSON.stringify(cat), /https:\/\/screentinker\.com\/mcp/);
   assert.match(ai.authMarkdown('https://screentinker.com'), /Model Context Protocol/);
 });
+
+test('get_playlist: a head office playlist says it is locked, and a local slot is a slot (spec §6.5)', () => {
+  // An agent told "add to this playlist" must be able to see, before it tries, that head office's
+  // playlist is read-only and which rows are local slots — and an ordinary playlist must look exactly
+  // as it did (no corporate keys at all).
+  const corp = tools.byName('get_playlist').shape({
+    id: 'P', name: 'Brand loop', status: 'published', corporate: 1,
+    items: [
+      { id: 1, filename: 'brand.png', duration_sec: 10 },
+      { id: 2, slot_id: 'S1', slot: { name: 'Store promo' }, duration_sec: 10 },
+    ],
+  }, {});
+  assert.equal(corp.corporate, true);
+  assert.deepEqual(corp.items.map((i) => i.kind), ['content', 'slot']);
+  assert.equal(corp.items[1].name, 'Store promo');
+  assert.equal(corp.items[1].slot_id, 'S1');
+  assert.ok(corp.items.every((i) => i.locked === true));
+  const fill = tools.byName('get_playlist').shape({ id: 'F', name: 'Store promo — Store 1', status: 'draft', corporate: 0,
+    corporate_slot: { slot_name: 'Store promo', playlist_name: 'Brand loop', fill_id: 'x' }, items: [{ id: 3, filename: 'a.png' }] }, {});
+  assert.deepEqual(fill.corporate_slot, { slot_name: 'Store promo', corporate_playlist: 'Brand loop' });
+  assert.ok(!('locked' in fill.items[0]));
+  const plain = tools.byName('get_playlist').shape({ id: 'Q', name: 'Lobby', status: 'draft', items: [{ id: 4, filename: 'b.png' }] }, {});
+  assert.ok(!('corporate' in plain) && !('corporate_slot' in plain) && !('locked' in plain.items[0]) && !('slot_id' in plain.items[0]));
+  for (const name of ['add_to_playlist', 'publish_playlist']) {
+    assert.match(tools.byName(name).description, /Corporate playlists are read-only; to add local content, add to the slot playlist named in the error\./);
+  }
+});

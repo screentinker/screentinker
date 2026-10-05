@@ -83,6 +83,53 @@ components:
       properties:
         error:
           type: string
+        code:
+          type: string
+          description: |
+            A machine-readable reason, when there is one. Head office (corporate) refusals use
+            codes starting `CORPORATE_` or `FILL_` (CORPORATE_LOCKED, CORPORATE_NO_SLOT, CORPORATE_SLOT_REQUIRED, CORPORATE_OVERRIDE, CORPORATE_SCHEDULE, CORPORATE_MANDATE_SHADOWS, CORPORATE_EDIT_IN_EDITOR, CORPORATE_MEDIA, CORPORATE_AUTHOR_REQUIRED, CORPORATE_TOKEN, CORPORATE_MEMBERSHIP, CORPORATE_DEVICE_CONTROL, CORPORATE_WALL_SPLIT, CORPORATE_EMERGENCY, CORPORATE_UNAVAILABLE, FILL_LIMIT, FILL_FLAT, FILL_LIVE, FILL_TYPE), and
+            the `error` text is a complete sentence written for the person in front of the screen.
+        corporate:
+          type: object
+          description: >
+            On a head office refusal: which corporate playlist is involved and, where a screen is
+            mandated, what it is set for.
+          properties:
+            playlist_id: { type: [string, "null"] }
+            playlist_name: { type: [string, "null"] }
+            mandate_target:
+              type: [object, "null"]
+              properties:
+                kind: { type: string, enum: [org, workspace, group, wall, device] }
+                label: { type: string }
+        slots:
+          type: array
+          description: With CORPORATE_SLOT_REQUIRED, the local slots to choose from.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+
+    FillRef:
+      type: object
+      description: >
+        Where an item added or edited on a head office screen actually went: the store's content for
+        one of head office's local slots, at a level (`scope_kind`): the whole workspace, a group, a
+        video wall or one screen.
+      properties:
+        slot_id: { type: string }
+        slot_name: { type: string }
+        fill_id: { type: string }
+        fill_playlist_id: { type: string, description: The store playlist that holds this slot's content at this level. }
+        scope_kind: { type: string, enum: [workspace, group, wall, device] }
+        scope_id: { type: string }
+        scope_label: { type: string, description: 'English label, e.g. Everyone in "Store 1".' }
+        scope_name: { type: [string, "null"], description: "The level's bare name, for a client that words the label itself." }
+        screens: { type: integer, description: How many screens play this content. }
+        status: { type: [string, "null"], description: 'draft | published. An add lands in the draft; publish the fill playlist to put it on screen.' }
+        has_published: { type: boolean }
+        created: { type: boolean, description: "On an add: whether this level's content was created by it." }
 
     DeckDocument:
       type: object
@@ -219,6 +266,11 @@ components:
               target_type: { type: string, enum: [device, group] }
               target_id: { type: string }
       description: |
+        A trigger as read back also carries `kind`: `normal`, or `emergency` for a head office
+        emergency alert. Emergency alerts are listed (with their codes hidden from non-admins) but
+        are managed only by organization admins in the dashboard: creating, editing or deleting one
+        here answers 403 CORPORATE_EMERGENCY.
+
         Note on geometry: `position`, `width`, `height`, `opacity` and `border_radius` are accepted
         and stored but are **not currently honoured** — every trigger renders fullscreen. They are
         omitted here deliberately rather than documented as working.
@@ -247,6 +299,13 @@ components:
           type: string
         created_at:
           type: integer
+        playlist_source:
+          type: [string, "null"]
+          enum: [device, group, wall, schedule, none, corporate, null]
+          description: >
+            Why the screen plays `playlist_id` (single-device read). `corporate` means head office's
+            playlist is mandated here and stores cannot override it; a null `playlist_id` with
+            `corporate` means head office turned the screen off.
 
         # --- Network addresses -------------------------------------------------------------
         # Two different addresses, easy to confuse, so both are spelled out. They answer
@@ -330,6 +389,14 @@ components:
           type: integer
         display_count:
           type: integer
+        corporate:
+          type: [integer, boolean]
+          description: >
+            1 = a head office (corporate) playlist. Only corporate authors change it, never with an
+            API token (403 CORPORATE_TOKEN); stores see it only through the screens it plays on.
+        paused_count:
+          type: integer
+          description: "Screens that would play this playlist but play head office's instead."
 
     PlaylistItem:
       type: object
@@ -349,6 +416,12 @@ components:
           type: integer
         duration_sec:
           type: integer
+        slot_id:
+          type: [string, "null"]
+          description: >
+            Set on a head office playlist's LOCAL SLOT row: a placeholder each store fills with its
+            own content. A slot row carries no content of its own; add slots and change their limits
+            in the dashboard, not through this API.
 
     Content:
       type: object
@@ -1016,8 +1089,47 @@ paths:
                     Omit to let the server choose: video content defaults to the clip's own
                     length (rounded up to a whole second), anything else to 10s.
                 sort_order: { type: integer }
+                slot_id:
+                  type: string
+                  description: >
+                    On a screen that plays head office's playlist: which local slot to add to (needed
+                    when there is more than one; 409 CORPORATE_SLOT_REQUIRED lists them).
+                fill_scope:
+                  type: string
+                  enum: [nearest, device]
+                  default: nearest
+                  description: >
+                    On a screen that plays head office's playlist the item goes into the store's
+                    content for a local slot, never into head office's playlist. `nearest` (default)
+                    adds to the content this screen already plays for the slot (its group's, its
+                    workspace's...), creating the workspace-level content if there is none;
+                    `device` gives this screen (or its video wall) its own copy first.
       responses:
-        '201': { description: Created item. }
+        '201':
+          description: >
+            Created item. On a head office screen it also carries `redirected_to` (a FillRef):
+            exactly where the item went and how many screens play it.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirected_to: { $ref: '#/components/schemas/FillRef' }
+        '400':
+          description: FILL_FLAT / FILL_LIVE / FILL_TYPE / FILL_LIMIT, the item cannot go in the slot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: CORPORATE_NO_SLOT (head office left no space here), CORPORATE_TOKEN, ...
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: CORPORATE_SLOT_REQUIRED, choose a slot (`slots` lists them).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /assignments/device/{deviceId}/reorder:
     post:
       tags: [assignments]
@@ -1039,6 +1151,11 @@ paths:
                   items: { type: integer }
       responses:
         '200': { description: Reordered items. }
+        '403':
+          description: "CORPORATE_LOCKED: head office's items keep their order on its screens."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /assignments/device/{deviceId}/copy-to/{targetDeviceId}:
     post:
       tags: [assignments]
@@ -1065,12 +1182,24 @@ paths:
       x-required-scope: write
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer } }
+        - name: device_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: The screen the edit is made from (a screen-level edit forks an inherited playlist).
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
+                fill_scope:
+                  type: string
+                  enum: [nearest, device]
+                  description: >
+                    Editing a store item of a head office local slot from a screen: `nearest`
+                    (default) edits the content it lives in; `device` gives the screen its own copy
+                    first. Head office's own items answer 403 CORPORATE_LOCKED.
                 sort_order: { type: integer }
                 duration_sec: { type: integer }
                 zone_id: { type: [string, "null"] }
@@ -1081,7 +1210,12 @@ paths:
                     (device:mute-changed) and persisted into the published snapshot, so it
                     also takes effect on the next playlist load. (#129)
       responses:
-        '200': { description: Updated item. }
+        '200': { description: "Updated item; `edited_fill` (a FillRef) when it belonged to a slot's content." }
+        '403':
+          description: "CORPORATE_LOCKED: part of head office's playlist."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
     delete:
       tags: [assignments]
       summary: Delete a playlist item
@@ -1089,8 +1223,15 @@ paths:
       x-required-scope: write
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: device_id, in: query, required: false, schema: { type: string } }
+        - { name: fill_scope, in: query, required: false, schema: { type: string, enum: [nearest, device] } }
       responses:
-        '200': { description: '{ success, content_id }.' }
+        '200': { description: '{ success, content_id, edited_fill? }.' }
+        '403':
+          description: "CORPORATE_LOCKED: part of head office's playlist."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   # ------------------------------------------------------------------ devices
   /devices:
@@ -1447,7 +1588,17 @@ paths:
                     Omit to let the server choose: video content defaults to the clip's own
                     length (rounded up to a whole second), anything else to 10s.
       responses:
-        '200': { description: '{ success, devices_updated }.' }
+        '200':
+          description: >
+            { success, devices_updated, added_to_slots?, skipped? }. Members that play head office's
+            playlist get the content in the group's content for its local slot (`added_to_slots`);
+            members it cannot reach that way are listed in `skipped` with a reason (`no_slot`,
+            `video_wall`).
+        '409':
+          description: "CORPORATE_SLOT_REQUIRED: head office's playlist has several local slots; pass `slot_id`."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /groups/{id}/assign-playlist:
     post:
       tags: [groups]
@@ -1466,7 +1617,12 @@ paths:
               properties:
                 playlist_id: { type: string }
       responses:
-        '200': { description: '{ success, devices_updated }.' }
+        '200': { description: "{ success, devices_updated, mandated_members? }: members head office's playlist covers keep it." }
+        '403':
+          description: "CORPORATE_OVERRIDE: head office's playlist covers this whole group."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /groups/{id}/command:
     post:
       tags: [groups]
@@ -1952,7 +2108,7 @@ paths:
                 border_radius: { type: integer, description: 'px (0-512)', default: 0 }
                 close_button: { type: boolean }
       responses:
-        '200': { description: '{ success, pip_id, target, sent, offline, total, results }.' }
+        '200': { description: "{ success, pip_id, target, sent, offline, total, results, skipped? }. `skipped` lists screens that play head office's playlist (only its organization admins may cover them)." }
         '400': { description: Validation error (type / uri scheme / position / numeric bounds / color). }
         '404': { description: Device or group not found in this workspace. }
     delete:
@@ -2806,7 +2962,7 @@ paths:
                       start: { type: string, example: '22:00', description: 'HH:MM, inclusive.' }
                       end: { type: string, example: '06:00', description: 'HH:MM or 24:00, exclusive.' }
       responses:
-        '201': { description: '{ schedule: {...} }' }
+        '201': { description: "{ schedule: {...}, mandated_members? }: members that play head office's playlist keep head office's power schedule." }
         '400': { description: 'Malformed window, unknown timezone, or target not in this workspace.' }
         '409': { description: 'This target already has a schedule; the body carries its id.' }
   /display-power-schedules/effective/{deviceId}:
