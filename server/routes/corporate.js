@@ -369,7 +369,9 @@ router.post('/playlists/:id/demote', (req, res) => {
   if (slotCount) {
     return res.status(409).json({ code: 'CORPORATE_HAS_SLOTS', error: `This playlist has ${slotCount} local slot${slotCount === 1 ? '' : 's'}. Remove ${slotCount === 1 ? 'it' : 'them'} first — stores fill them with their own content.` });
   }
-  db.prepare('UPDATE playlists SET corporate = 0 WHERE id = ?').run(p.id);
+  // The composable is head office's view of this playlist; an ordinary playlist has none. Left in
+  // place, a later promote would put this (by then stale) loop back on every mandated screen.
+  db.prepare('UPDATE playlists SET corporate = 0, published_composable = NULL, published_composable_of = NULL, published_rev = published_rev + 1 WHERE id = ?').run(p.id);
   auditCorp(req, 'corporate.playlist.demote', { organization_id: org.id, playlist_id: p.id, name: p.name, workspace_id: p.workspace_id });
   res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(p.id), corporate: false });
 });

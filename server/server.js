@@ -2299,6 +2299,9 @@ const { startContentExpiry } = require('./services/content-expiry');
 startContentExpiry(io);
 // Corporate local slots: hourly tidy of unused compositions and unreachable retired slots.
 require('./services/corporate-sweep').startCorporateSweep();
+// Corporate state an older server version may have changed (a rollback, then this upgrade): drop the
+// composition cache, republish head office playlists that version published, report empty alerts.
+try { require('./lib/corporate/reconcile').reconcileAtBoot(require('./db/database').db, io); } catch (e) { console.error('[corporate] boot reconcile:', e && e.message); }
 // Head office emergency alerts: restore any live "Activate now" from the table, arm its expiry
 // timers and the 30-second belt sweep (lib/corporate/emergency-live.js).
 require('./lib/corporate/emergency-live').init(io);

@@ -76,6 +76,7 @@ function emitMuteChanged(req, item, muted) {
         // in step, which the corporate backstop would otherwise judge as a publish by the caller.
         require('./corporate/actor').runAsSystem(() => db.prepare(`UPDATE playlists SET published_snapshot = ?${compChanged ? ', published_composable = ?' : ''}${hasRev ? ', published_rev = published_rev + 1' : ''} WHERE id = ?`)
           .run(...[JSON.stringify(snap), ...(compChanged ? [JSON.stringify(comp)] : []), playlistId]));
+        if (hasComposable) require('./corporate/digest').followSnapshot(db, playlistId, pl.published_snapshot, JSON.stringify(snap));
       }
     };
 

@@ -152,14 +152,20 @@ test('⚠️ the UDFs never query: a backstop check inside a multi-row INSERT ..
   });
 });
 
-test('the tripwire counts a write with no actor INSIDE an HTTP request, and nothing outside one', () => {
+test('the tripwire counts a governed write with no actor INSIDE an HTTP request, and nothing outside one', () => {
   actor.resetTripwire();
   db.prepare('UPDATE playlist_items SET muted = 0 WHERE playlist_id = ?').run(own);
   assert.equal(actor.tripwireCount(), 0, 'system work outside a request is not a tripwire event');
   actor.httpAls.run({ method: 'POST', path: '/x' }, () => {
     db.prepare('UPDATE playlist_items SET muted = 0 WHERE playlist_id = ?').run(own);
   });
-  assert.ok(actor.tripwireCount() >= 1, 'an actorless write inside a request must be counted');
+  // Only a write that touches head office's content is a tripwire event: an ordinary playlist's
+  // actorless write (an admin workspace delete) must not log corporate warnings (review fix).
+  assert.equal(actor.tripwireCount(), 0, 'an ordinary playlist is not governed: nothing to note');
+  actor.httpAls.run({ method: 'POST', path: '/x' }, () => {
+    db.prepare('UPDATE playlist_items SET muted = 0 WHERE playlist_id = ?').run(P);
+  });
+  assert.ok(actor.tripwireCount() >= 1, 'an actorless write to head office\'s content inside a request must be counted');
   actor.resetTripwire();
 });
 

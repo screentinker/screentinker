@@ -326,18 +326,18 @@ function violationFor(db, playlistId, items) {
  * Throw the FILL_* refusal if `proposed` (snapshot-shaped rows after the change) breaks the rules
  * of the slot this playlist fills. A no-op for any playlist that is not a fill.
  */
-function assertFillItems(db, playlistId, proposed) {
+function assertFillItems(db, playlistId, proposed, { at = 'edit' } = {}) {
   db = db || dbOf();
   const v = violationFor(db, playlistId, proposed);
   if (!v) return;
-  throw guard().err(v.code, v.vars, { slot_id: v.slot.id, fill_id: v.fill.id, limits: limitsFor(db, v.slot) });
+  throw guard().err(v.code, { ...v.vars, at }, { slot_id: v.slot.id, fill_id: v.fill.id, limits: limitsFor(db, v.slot) });
 }
 
 /** Early check for an add path: the fill's current draft plus the new items. */
 function assertCanAdd(db, playlistId, newItems) {
   db = db || dbOf();
   if (!fillsOfPlaylist(db, playlistId).length) return;
-  assertFillItems(db, playlistId, [...draftItems(db, playlistId), ...newItems.map((it) => itemShape(db, it))]);
+  assertFillItems(db, playlistId, [...draftItems(db, playlistId), ...newItems.map((it) => itemShape(db, it))], { at: 'add' });
 }
 
 /**

@@ -59,6 +59,8 @@ function register(router, h) {
       source_http: !!t.source_http, source_udp: !!t.source_udp, enabled: !!t.enabled,
       scopes: em.scopesOf(db, t.id),
       active_activation: live.liveFor(t.id),
+      // 'missing' | 'unpublished' | 'empty' | null — it would fire and show nothing (lib/corporate/reconcile.js).
+      target_problem: require('../lib/corporate/reconcile').emergencyTargetProblem(db, t),
     };
     if (withCoverage) {
       const c = em.coverage(db, t.id);
@@ -192,7 +194,7 @@ function register(router, h) {
     if (!org) return;
     const t = loadAlert(req, res, org);
     if (!t) return;
-    res.json(em.coverage(db, t.id));
+    res.json({ ...em.coverage(db, t.id), target_problem: require('../lib/corporate/reconcile').emergencyTargetProblem(db, t) });
   });
 
   router.get('/emergency/:id/installer-sheet', (req, res) => {

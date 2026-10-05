@@ -75,6 +75,9 @@ const MESSAGES = {
   FILL_LIMIT: (v) => {
     const cap = [v.max_items != null ? `${v.max_items} item${v.max_items === 1 ? '' : 's'}` : null, v.max_sec != null ? `${v.max_sec} seconds` : null].filter(Boolean).join(' and ');
     const now = [v.max_items != null ? `${v.n} item${v.n === 1 ? '' : 's'}` : null, v.max_sec != null ? `${v.sec} seconds` : null].filter(Boolean).join(' and ');
+    // At an add (or an edit) nothing changed yet: say what it WOULD make, not what it "now has".
+    if (v.at === 'add') return `Your slot ${q(v.slot)} can hold up to ${cap}. Adding this would make ${now}, so it wasn't added. Remove something first.`;
+    if (v.at === 'edit') return `Your slot ${q(v.slot)} can hold up to ${cap}. This change would make ${now}, so it wasn't made.`;
     return `Your slot ${q(v.slot)} can hold up to ${cap}. It now has ${now}. Remove something, then publish again.`;
   },
   FILL_FLAT: () => 'Your slot can hold pictures, videos and widgets — not other playlists.',
@@ -550,6 +553,9 @@ function workspaceHasCorporateState(db, workspaceId) {
   try {
     if (db.prepare('SELECT 1 FROM organizations WHERE hq_workspace_id = ?').get(workspaceId)) return 'hq';
     if (db.prepare("SELECT 1 FROM corporate_mandates WHERE target_kind = 'workspace' AND target_id = ?").get(workspaceId)) return 'mandate';
+    // An org-wide mandate covers every workspace of the org, this one included.
+    if (db.prepare(`SELECT 1 FROM corporate_mandates cm JOIN workspaces w ON w.organization_id = cm.target_id
+        WHERE cm.target_kind = 'org' AND w.id = ? LIMIT 1`).get(workspaceId)) return 'mandate';
     if (db.prepare(`SELECT 1 FROM corporate_mandates cm WHERE
         (cm.target_kind = 'group'  AND cm.target_id IN (SELECT id FROM device_groups WHERE workspace_id = ?))
      OR (cm.target_kind = 'device' AND cm.target_id IN (SELECT id FROM devices WHERE workspace_id = ?))

@@ -717,6 +717,7 @@ function purgeContentRow(content) {
       const filtered = items.filter(item => item.content_id !== id);
       if (filtered.length !== items.length) {
         db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?').run(JSON.stringify(filtered), pl.id);
+        require('../lib/corporate/digest').followSnapshot(db, pl.id, pl.published_snapshot, JSON.stringify(filtered));
         scrubbed.push(pl.id);
         // ⚠️ The snapshot, not playlist_items, is what screens play. A smart playlist (or a parent
         // that flattened one) holds this content with no playlist_items row, so the join above misses

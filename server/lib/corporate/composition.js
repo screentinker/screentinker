@@ -18,6 +18,7 @@
 
 const { compose, composeDetailed } = require('./compose');
 const resolve = require('./resolve');
+const { snapshotDigest } = require('./digest');
 
 function dbOf() { return require('../../db/database').db; }
 
@@ -56,7 +57,14 @@ function loadInputs(db, playlistId, fills) {
     for (const r of db.prepare(`SELECT id, workspace_id, published_snapshot, published_rev FROM playlists
                                  WHERE id IN (${fillIds.map(() => '?').join(',')})`).all(...fillIds)) rows.set(r.id, r);
   }
-  const inputsRev = [`P:${p.published_rev || 0}`, ...fillIds.map((id) => `${id}:${rows.has(id) ? rows.get(id).published_rev || 0 : 'gone'}`)].join(';');
+  /*
+   * ⚠️ rev AND snapshot digest per input. published_rev alone is moved only by this version's
+   * writers; an older version booted on the same database (a rollback) republishes a store's content
+   * without touching it, and the cache would keep the loop from before. The digest notices.
+   */
+  const dg = (text) => snapshotDigest(text) || '-';
+  const inputsRev = [`P:${p.published_rev || 0}:${dg(p.published_composable)}:${dg(p.published_snapshot)}`,
+    ...fillIds.map((id) => (rows.has(id) ? `${id}:${rows.get(id).published_rev || 0}:${dg(rows.get(id).published_snapshot)}` : `${id}:gone`))].join(';');
   return { p, rows, inputsRev };
 }
 

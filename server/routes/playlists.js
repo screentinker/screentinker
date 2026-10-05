@@ -402,6 +402,16 @@ function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null, opts = {}
   // The composable keeps its flags: the weave runs per store, after the splice (lib/corporate/compose.js).
   if (opts.noWeave) return flat;
   /*
+   * ⚠️ A FILL (a store's content in head office's slot) is never woven on its own. Its items are
+   * spliced into head office's loop, and a weave here would repeat the store's list several times
+   * inside one corporate cycle (a 3-item fill published as 13) and make the slot limits count the
+   * copies. compose.applyMarker drops the flag at the splice for the same reason.
+   */
+  if (_depth === 0 && !opts.keepSlots && corpFillsLib().fillsOfPlaylist(db, playlistId).length) {
+    for (const it of flat) if (it) delete it.repeat_every_sec;
+    return flat;
+  }
+  /*
    * "Play every N minutes" is woven in HERE, after nesting is flattened, so the result is still one
    * flat list and no player learns about it (lib/repeat-every.js). Sequential only: in shuffle or
    * weighted order there is no fixed spacing to keep, and the copies would just skew the odds.
@@ -621,7 +631,14 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
    * which Carousel proved requires a player release (CSL-9211). Deferred, and named in the design
    * doc so it is not rediscovered.
    */
-  const prev = db.prepare(`SELECT status, published_snapshot, published_structure, playback_order, published_playback_order, smart_rules, published_smart_rules${isCorporate ? ', published_composable' : ''} FROM playlists WHERE id = ?`).get(playlistId);
+  /*
+   * ⚠️ published_composable is written on EVERY publish once the column exists: NULL for an ordinary
+   * playlist. A corporate playlist that is demoted, republished as ordinary and promoted again would
+   * otherwise keep the composable of its LAST CORPORATE publish, and every mandated screen would play
+   * that old loop (composition.composeInputs prefers the composable over the snapshot).
+   */
+  const hasComposable = isCorporate || schemaProbe.hasColumn(db, 'playlists', 'published_composable');
+  const prev = db.prepare(`SELECT status, published_snapshot, published_structure, playback_order, published_playback_order, smart_rules, published_smart_rules${hasComposable ? ', published_composable' : ''} FROM playlists WHERE id = ?`).get(playlistId);
   const order = normalizePlaybackOrder(prev && prev.playback_order) || 'sequential';
 
   // ⚠️ Structure is captured PRE-expansion so "discard" can restore the nesting the flat snapshot
@@ -644,7 +661,7 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   }));
 
   if (prev && prev.status === 'published' && prev.published_snapshot === next && (prev.published_playback_order || 'sequential') === order
-      && (!isCorporate || prev.published_composable === composable)) {
+      && (!hasComposable || (prev.published_composable || null) === composable)) {
     /*
      * The resolved list is unchanged, so no device is touched and nothing restarts — that is the
      * point of this early exit. But STRUCTURE can differ while the flat output does not: replacing
@@ -669,8 +686,11 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
    * one knows it is stale (spec §1.1). A hand-built test schema without the column skips it.
    */
   const hasRev = schemaProbe.hasColumn(db, 'playlists', 'published_rev');
-  db.prepare(`UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, published_playback_order = ?, published_smart_rules = smart_rules${isCorporate ? ', published_composable = ?' : ''}${hasRev ? ', published_rev = published_rev + 1' : ''}, updated_at = strftime('%s','now') WHERE id = ?`)
-    .run(...[next, structure, order, ...(isCorporate ? [composable] : []), playlistId]);
+  // The composable's pairing with this snapshot, so a snapshot some other version writes is noticed.
+  const hasPair = hasComposable && schemaProbe.hasColumn(db, 'playlists', 'published_composable_of');
+  const pair = composable ? require('../lib/corporate/digest').snapshotDigest(next) : null;
+  db.prepare(`UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, published_playback_order = ?, published_smart_rules = smart_rules${hasComposable ? ', published_composable = ?' : ''}${hasPair ? ', published_composable_of = ?' : ''}${hasRev ? ', published_rev = published_rev + 1' : ''}, updated_at = strftime('%s','now') WHERE id = ?`)
+    .run(...[next, structure, order, ...(hasComposable ? [composable] : []), ...(hasPair ? [pair] : []), playlistId]);
   pushToDevices(playlistId, reqOrIo, { skipCorporate: isCorporate });
   corpFanout.afterPublish(corpCtx, reqOrIo);
   try {

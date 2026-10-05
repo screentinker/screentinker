@@ -50,31 +50,40 @@ const orgOf = (pidExpr) => `(SELECT gw.organization_id FROM main.playlists gp JO
 // Cheapest test first: one partial-index probe, so an install without corporate playlists pays nothing.
 const ANY_CORPORATE = 'EXISTS (SELECT 1 FROM main.playlists WHERE corporate = 1)';
 const lockedFor = (pidExpr) => `(${governed(pidExpr)} AND st_corp_can_author(${orgOf(pidExpr)}) = 0)`;
+/*
+ * ⚠️ ORDER MATTERS, AND ONLY A CASE GUARANTEES IT. st_corp_system() feeds the actorless-write
+ * tripwire, so it must run only once a write is known to touch something corporate: called for every
+ * write, each actorless admin path (a workspace or account delete) on an install that never used the
+ * feature logged a "[corporate] backstop" warning. An AND does not do it: when the expression holds a
+ * subquery SQLite evaluates the cheap function terms FIRST, whatever order they are written in. A CASE
+ * is evaluated in order.
+ */
+const gate = (involved, rest) => `CASE WHEN ${involved} THEN (st_corp_system() = 0 AND ${rest}) ELSE 0 END`;
+const actorGate = (pidExpr) => gate(`${ANY_CORPORATE} AND ${governed(pidExpr)}`, `st_corp_can_author(${orgOf(pidExpr)}) = 0`);
+const SCHED_PID = (row) => `(SELECT si.playlist_id FROM main.playlist_items si WHERE si.id = ${row}.playlist_item_id)`;
 
 const TRIGGERS = {
   corp_guard_pi_ins: `CREATE TEMP TRIGGER corp_guard_pi_ins BEFORE INSERT ON main.playlist_items
-    WHEN st_corp_system() = 0 AND ${ANY_CORPORATE} AND ${lockedFor('NEW.playlist_id')}
+    WHEN ${actorGate('NEW.playlist_id')}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
   corp_guard_pi_upd: `CREATE TEMP TRIGGER corp_guard_pi_upd BEFORE UPDATE ON main.playlist_items
-    WHEN st_corp_system() = 0 AND ${ANY_CORPORATE} AND (${lockedFor('OLD.playlist_id')} OR ${lockedFor('NEW.playlist_id')})
+    WHEN ${gate(`${ANY_CORPORATE} AND (${governed('OLD.playlist_id')} OR ${governed('NEW.playlist_id')})`,
+    `(${lockedFor('OLD.playlist_id')} OR ${lockedFor('NEW.playlist_id')})`)}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
   corp_guard_pi_del: `CREATE TEMP TRIGGER corp_guard_pi_del BEFORE DELETE ON main.playlist_items
-    WHEN st_corp_system() = 0 AND ${ANY_CORPORATE} AND ${lockedFor('OLD.playlist_id')}
+    WHEN ${actorGate('OLD.playlist_id')}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
 
   // Per-item schedule blocks (dayparts) belong to the item's playlist.
   corp_guard_pis_ins: `CREATE TEMP TRIGGER corp_guard_pis_ins BEFORE INSERT ON main.playlist_item_schedules
-    WHEN st_corp_system() = 0 AND ${ANY_CORPORATE}
-     AND ${lockedFor('(SELECT si.playlist_id FROM main.playlist_items si WHERE si.id = NEW.playlist_item_id)')}
+    WHEN ${actorGate(SCHED_PID('NEW'))}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
   corp_guard_pis_upd: `CREATE TEMP TRIGGER corp_guard_pis_upd BEFORE UPDATE ON main.playlist_item_schedules
-    WHEN st_corp_system() = 0 AND ${ANY_CORPORATE}
-     AND (${lockedFor('(SELECT si.playlist_id FROM main.playlist_items si WHERE si.id = OLD.playlist_item_id)')}
-       OR ${lockedFor('(SELECT si.playlist_id FROM main.playlist_items si WHERE si.id = NEW.playlist_item_id)')})
+    WHEN ${gate(`${ANY_CORPORATE} AND (${governed(SCHED_PID('OLD'))} OR ${governed(SCHED_PID('NEW'))})`,
+    `(${lockedFor(SCHED_PID('OLD'))} OR ${lockedFor(SCHED_PID('NEW'))})`)}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
   corp_guard_pis_del: `CREATE TEMP TRIGGER corp_guard_pis_del BEFORE DELETE ON main.playlist_item_schedules
-    WHEN st_corp_system() = 0 AND ${ANY_CORPORATE}
-     AND ${lockedFor('(SELECT si.playlist_id FROM main.playlist_items si WHERE si.id = OLD.playlist_item_id)')}
+    WHEN ${actorGate(SCHED_PID('OLD'))}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
 
   /* The playlist row: metadata, the corporate flag itself, a workspace move, and the PUBLISH
@@ -84,17 +93,15 @@ const TRIGGERS = {
   corp_guard_pl_upd: `CREATE TEMP TRIGGER corp_guard_pl_upd
     BEFORE UPDATE OF name, description, playback_order, smart_rules, corporate, workspace_id,
                      published_snapshot, published_composable, published_structure, status ON main.playlists
-    WHEN st_corp_system() = 0 AND (OLD.corporate = 1 OR NEW.corporate = 1 OR ${governed('OLD.id')})
-     AND (st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = OLD.workspace_id)) = 0
-       OR st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = NEW.workspace_id)) = 0)
+    WHEN ${gate(`(OLD.corporate = 1 OR NEW.corporate = 1 OR (${ANY_CORPORATE} AND ${governed('OLD.id')}))`,
+    `(st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = OLD.workspace_id)) = 0
+       OR st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = NEW.workspace_id)) = 0)`)}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
   corp_guard_pl_del: `CREATE TEMP TRIGGER corp_guard_pl_del BEFORE DELETE ON main.playlists
-    WHEN st_corp_system() = 0 AND OLD.corporate = 1
-     AND st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = OLD.workspace_id)) = 0
+    WHEN ${gate('OLD.corporate = 1', 'st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = OLD.workspace_id)) = 0')}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
   corp_guard_pl_ins: `CREATE TEMP TRIGGER corp_guard_pl_ins BEFORE INSERT ON main.playlists
-    WHEN NEW.corporate = 1 AND st_corp_system() = 0
-     AND st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = NEW.workspace_id)) = 0
+    WHEN ${gate('NEW.corporate = 1', 'st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = NEW.workspace_id)) = 0')}
     BEGIN SELECT RAISE(ABORT, 'CORPORATE_LOCKED'); END`,
 
   /* Always-on STRUCTURAL checks — no actor involved, they hold for system writers too.

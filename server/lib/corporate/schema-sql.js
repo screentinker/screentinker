@@ -128,6 +128,8 @@ const COLUMNS = [
   ['playlists', 'corporate', 'INTEGER NOT NULL DEFAULT 0'],
   ['playlists', 'published_composable', 'TEXT'],
   ['playlists', 'published_rev', 'INTEGER NOT NULL DEFAULT 0'],
+  // The digest of the published_snapshot published_composable was built with (lib/corporate/digest.js).
+  ['playlists', 'published_composable_of', 'TEXT'],
   // playlist_items — the slot placement (Stage B writes it; Stage A refuses it outside corporate).
   ['playlist_items', 'slot_id', 'TEXT REFERENCES corporate_slots(id)'],
   // triggers
