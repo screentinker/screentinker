@@ -133,6 +133,14 @@ keeps sending can still keep it on). **Don't show store triggers** hides them on
 including stores' own evacuation notices, which is why switching to either needs the impact list ticked
 "I've checked these". Screens head office doesn't drive are never affected.
 
+> ⚠️ **Under the default, a store CAN cover head office's playlist.** A store editor can create an
+> until-cleared trigger, assign it to a head office screen and keep re-sending it from its own LAN sender;
+> it then shows full screen over head office's loop for as long as it keeps sending. Only **Don't show
+> store triggers** stops that. The default stays "Allow as before" so that turning on corporate playlists
+> never silently switches off a store's own safety notices; the "Where it plays" tab says so while it is
+> on. **Limit stuck triggers** does not bound a store that keeps sending: a real cap needs a player
+> change (a first-fire wall-clock cap for until-cleared triggers), which is a follow-up.
+
 ## Emergency alerts
 
 An emergency alert is a trigger owned by head office, with a scope (organization, workspaces, groups,
@@ -175,6 +183,24 @@ The `/api/corporate` routes are dashboard-only (no API tokens). Through the publ
   content and returns `redirected_to` (where it went, how many screens). Pass `slot_id` when there is
   more than one slot, and `fill_scope: "device"` for that screen only.
 - Refusals carry `{ error, code, corporate }`. See `docs/openapi.yaml`.
+
+## Rolling back to a version without corporate playlists
+
+An older server version runs on the same database, but it doesn't know about mandates, slots or
+emergency alerts. Before downgrading:
+
+1. Remove every row on **Corporate → Where it plays** (or run `DELETE FROM corporate_mandates;` with the
+   server stopped). On the older version, deleting a playlist that a mandate names fails with a database
+   error, and the head office workspace can't be deleted, until this is done.
+2. Remove every local slot from head office's playlists and publish them. The older version publishes a
+   slot as an empty 10-second item, which a screen assigned to that playlist directly would play.
+3. Don't delete the playlist an emergency alert shows while on the older version: it won't stop you, and the
+   alert then has nothing to show. After upgrading again the Emergency tab and the server log say which
+   alerts are affected.
+
+When you upgrade again, the server notices anything the older version published: it drops its cached
+loops and republishes head office playlists whose published content changed, so every screen plays the current
+version (the server log names each one).
 
 ## Known limits
 
