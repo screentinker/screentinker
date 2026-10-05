@@ -1,13 +1,25 @@
 # Raspberry Pi native player — server contract
 
-The native Pi player (`pi/`, Python + Qt, shipped as `screentinker-pi_<ver>_all.deb`) talks to the
+The native Pi player (`native/`, Python + PySide6, shipped as `screentinker-pi_<ver>_all.deb`) talks to the
 server exactly like the Android APK: Socket.IO on `<server>/device`, `device:register`, heartbeats,
 `device:command`. This page records only what is **new or different** for it. It is not the
 Chromium-kiosk install that `scripts/raspberry-pi-setup.sh` sets up — that one is a browser and
 registers as the web player.
 
-Status: server and dashboard side implemented on `feat/pi-native-player`; the device side is being
-built to this contract. Anything marked ❓ is a question for the device side.
+Install and run modes (`scripts/raspberry-pi-setup.sh --native URL [--native-mode lite|desktop]`):
+
+| mode | chosen when | runs as | log |
+|---|---|---|---|
+| `lite` | no display manager boots (`display-manager.service` absent, or default target not `graphical.target`) | `screentinker-pi.service`, user `screentinker`, eglfs/KMS on the display; `getty@tty1` disabled | `journalctl -u screentinker-pi` |
+| `desktop` | a display manager is enabled **and** the default target is `graphical.target` | `/etc/xdg/autostart` in the login session of the lightdm autologin user (else the sudo user); the service is disabled | `~/.local/state/screentinker-pi/player.log` |
+
+⚠️ The mode is NOT taken from installed packages: the Chromium-kiosk install puts `xserver-xorg` on
+Lite, and reading that as "desktop" left the service disabled while the kiosk's X server held the
+screen (`Could not set DRM mode … Permission denied`). The native install removes the kiosk's
+launchers (`screentinker-kiosk.service`, and `~/.config/autostart/screentinker.desktop` when it runs
+`screentinker-kiosk.sh`); the All-in-One server unit is left alone.
+
+Anything marked ❓ is a question for the device side.
 
 ## 1. Identity (`device:register`)
 

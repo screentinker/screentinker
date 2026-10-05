@@ -37,18 +37,27 @@ err()  { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 # -- Parse arguments --
 PLAYER_ONLY=false
 NATIVE=false
+NATIVE_MODE=""
 SERVER_URL=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --player-only) PLAYER_ONLY=true; shift ;;
         --native) NATIVE=true; shift ;;
+        --native-mode)
+            case "$2" in
+                lite|desktop) NATIVE_MODE="$2"; shift 2 ;;
+                *) err "--native-mode takes lite or desktop" ;;
+            esac
+            ;;
         --help|-h)
             echo "Usage: sudo ./raspberry-pi-setup.sh [OPTIONS] [SERVER_URL]"
             echo ""
             echo "Options:"
             echo "  --player-only URL    Player-only mode (no local server), Chromium kiosk"
             echo "  --native URL         Native player (Qt, no browser) with Android-app parity"
+            echo "  --native-mode MODE   lite (system service on the display) or desktop (in the"
+            echo "                       desktop session); detected when omitted"
             echo "  --help               Show this help"
             echo ""
             echo "Examples:"
@@ -181,19 +190,51 @@ if [ "$NATIVE" = true ]; then
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y "$DEB" || err "Package install failed (see $LOG_FILE)"
     rm -f "$DEB"
-    NATIVE_MODE=lite
-    if dpkg -l xserver-xorg 2>/dev/null | grep -q "^ii" || dpkg -l labwc 2>/dev/null | grep -q "^ii"; then
-        NATIVE_MODE=desktop
+    # ⚠️ Desktop = a desktop that BOOTS (a display manager enabled, graphical default target), not
+    # "desktop packages are installed". The All-in-One/Player-Only install puts xserver-xorg on Lite
+    # for its Chromium kiosk, and the old package test read that as Desktop: the service was left
+    # disabled (no player after reboot) and a manual start lost the screen to the kiosk's X server
+    # ("Could not set DRM mode … Permission denied").
+    if [ -z "$NATIVE_MODE" ]; then
+        NATIVE_MODE=lite
+        if [ -e /etc/systemd/system/display-manager.service ] \
+                && [ "$(systemctl get-default 2>/dev/null)" = graphical.target ]; then
+            NATIVE_MODE=desktop
+        fi
     fi
-    DESKTOP_USER="${SUDO_USER:-$(getent passwd 1000 | cut -d: -f1)}"
+    log "Native player mode: $NATIVE_MODE (override with --native-mode lite|desktop)"
+    # The desktop login user: the display manager's autologin user, else whoever ran sudo.
+    DESKTOP_USER=$(sed -n 's/^[[:space:]]*autologin-user[[:space:]]*=[[:space:]]*//p' /etc/lightdm/lightdm.conf 2>/dev/null | tail -n1)
+    [ -z "$DESKTOP_USER" ] && DESKTOP_USER="${SUDO_USER:-$(getent passwd 1000 | cut -d: -f1)}"
+    # ⚠️ ONE player per screen. An earlier browser-kiosk install (menu option 1 or 2) left its own
+    # launcher behind — a unit that starts X on tty1 (Lite) or a session autostart entry (Desktop) —
+    # and it takes the display back from the native player. Remove both; the server unit stays.
+    if [ -f /etc/systemd/system/screentinker-kiosk.service ]; then
+        log "Removing the browser kiosk unit from an earlier install (the native player replaces it)..."
+        systemctl disable --now screentinker-kiosk.service 2>/dev/null || true
+        rm -f /etc/systemd/system/screentinker-kiosk.service
+        systemctl daemon-reload
+    fi
+    for KIOSK_ENTRY in /home/*/.config/autostart/screentinker.desktop /root/.config/autostart/screentinker.desktop; do
+        if [ -f "$KIOSK_ENTRY" ] && grep -q 'screentinker-kiosk\.sh' "$KIOSK_ENTRY"; then
+            log "Removing the browser kiosk autostart entry $KIOSK_ENTRY..."
+            rm -f "$KIOSK_ENTRY"
+        fi
+    done
     if [ "$NATIVE_MODE" = desktop ]; then
         screentinker-pi setup "$SERVER_URL" --mode desktop --user "$DESKTOP_USER"
     else
         systemctl disable getty@tty1.service 2>/dev/null || true
         screentinker-pi setup "$SERVER_URL" --mode lite
     fi
-    log "Done. The pairing code is on the display; enter it in the dashboard."
-    [ "$NATIVE_MODE" = desktop ] && log "Log out and back in (or reboot) to start the player in the desktop."
+    if [ "$NATIVE_MODE" = desktop ]; then
+        log "Done. Reboot (or log out and back in as $DESKTOP_USER) to start the player in the desktop."
+        log "Desktop-mode log: ~${DESKTOP_USER}/.local/state/screentinker-pi/player.log"
+        log "⚠️  Do not start screentinker-pi.service on a desktop — the desktop owns the screen."
+    else
+        log "Done. The pairing code is on the display; enter it in the dashboard."
+        log "Log: journalctl -u screentinker-pi -f"
+    fi
     exit 0
 fi
 
