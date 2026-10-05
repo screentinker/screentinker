@@ -54,7 +54,7 @@ export function limitsText(limits) {
   const l = limits || {};
   const parts = [];
   if (l.max_items != null) parts.push(tn('corp.limit.items', l.max_items));
-  if (l.max_total_sec != null) parts.push(t('corp.limit.seconds', { n: l.max_total_sec }));
+  if (l.max_total_sec != null) parts.push(tn('corp.limit.seconds', l.max_total_sec));
   return parts.length ? t('corp.limit.up_to', { limits: parts.join(' / ') }) : t('corp.limit.none');
 }
 

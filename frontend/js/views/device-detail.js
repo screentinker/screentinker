@@ -1269,7 +1269,7 @@ async function loadDevice(deviceId, activeTab = null) {
               ${can('display.power') ? `
               <hr style="border-color:var(--border);margin:8px 0">
               <div style="display:flex;gap:4px">
-                <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._sendCmd('screen_off')">${t('device.remote.scrn_off')}</button>
+                <button class="btn btn-secondary btn-sm" id="remoteScreenOffBtn" style="flex:1" onclick="window._sendCmd('screen_off')">${t('device.remote.scrn_off')}</button>
                 <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._sendCmd('screen_on')">${t('device.remote.scrn_on')}</button>
               </div>` : ''}
             </div>` : ''}
@@ -1383,7 +1383,11 @@ async function loadDevice(deviceId, activeTab = null) {
       if (currentDevice) sendKey(currentDevice.id, keycode);
     };
     window._sendCmd = (type) => {
-      if (currentDevice) sendCommand(currentDevice.id, type, {});
+      if (!currentDevice) return;
+      // A refusal (head office's screen, a gated command) must not vanish: say why.
+      sendCommand(currentDevice.id, type, {}, (ack) => {
+        if (ack && ack.reason === 'corporate') showToast(ack.error || t('corp.locked.title'), 'error');
+      });
     };
     window._enableSystemView = () => {
       if (!currentDevice) return;
@@ -1719,7 +1723,7 @@ function corporateSlotSection(sl) {
         <div class="corp-card-meta">${esc(t('corp.dev.from_level', { level }))} · ${esc(tn('corp.n_screens', f.screens || 0))}</div>
         ${f.fill_state === 'over_limit' ? `<div class="corp-notice corp-notice-danger">${esc(t('corp.slot.over_limit'))}</div>` : ''}
         ${f.status === 'draft' ? `<div class="corp-notice">${esc(f.has_published ? t('corp.dev.unpublished') : t('corp.dev.never_published'))}
-          <button class="btn btn-primary btn-sm" data-corp-publish="${esc(f.fill_playlist_id)}">${esc(t('corp.hq.publish_n', { n: f.screens || 0 }))}</button></div>` : ''}
+          <button class="btn btn-primary btn-sm" data-corp-publish="${esc(f.fill_playlist_id)}">${esc(tn('corp.hq.publish_n', f.screens || 0))}</button></div>` : ''}
         ${sl.own ? `<div class="corp-notice">${esc(t('corp.slot.own_chip_here', { slot: sl.name }))}
           <button class="btn btn-secondary btn-sm" data-corp-unown="${esc(f.fill_id)}">${esc(t('corp.slot.use_shared'))}</button></div>` : ''}`
         : `<div class="corp-help">${esc(sl.has_fallback ? t('corp.dev.empty_fallback') : t('corp.store.empty_slot_skip'))}</div>`}
@@ -1746,7 +1750,7 @@ function headOfficeTriggerNotes(device) {
  */
 const CORP_GATED_CONTROLS = {
   setServerUrlBtn: 'set_server_url', termRun: 'shell', apkInstall: 'install_apk', ptyConnect: 'shell',
-  launchAppBtn: 'launch', t2KioskOff: 'kiosk_unlock', screenOffBtn: 'screen_off', shutdownBtn: 'shutdown',
+  launchAppBtn: 'launch', t2KioskOff: 'kiosk_unlock', screenOffBtn: 'screen_off', remoteScreenOffBtn: 'screen_off', shutdownBtn: 'shutdown',
   sysTimeout: 'set_screen_timeout', sendPipBtn: 'pip', blockDeviceBtn: 'block', powerSave: 'power',
 };
 const CORP_TRIGGER_CONTROLS = ['trigHttp', 'trigUdp', 'trigHttpPort', 'trigUdpPort', 'trigClearAll', 'saveTrigCfgBtn', 'rotateTrigSecretBtn'];
@@ -1861,7 +1865,7 @@ async function corporateAdd(device, slotId) {
     const shared = f && f.scope_kind !== 'device' && f.scope_kind !== 'wall';
     const m = cui.openModal({
       title: t('corp.slot.add_title', { slot: slot.name }),
-      body: `<p class="corp-explain">${esc(f ? t('corp.slot.confirm_add', { slot: slot.name, level, n: f.screens || 0 }) : t('corp.slot.confirm_add_new', { slot: slot.name }))}</p>
+      body: `<p class="corp-explain">${esc(f ? tn('corp.slot.confirm_add', f.screens || 0, { slot: slot.name, level }) : t('corp.slot.confirm_add_new', { slot: slot.name }))}</p>
              <p class="corp-help">${esc(t('corp.slot.draft_note'))}</p>`,
       footer: `<button class="btn btn-secondary" data-corp-close>${esc(t('common.cancel'))}</button>
                ${!f || shared ? `<button class="btn btn-secondary" id="corpOnlyThis">${esc(t('corp.slot.only_this'))}</button>` : ''}
@@ -1884,7 +1888,7 @@ async function corporateAdd(device, slotId) {
       const to = r && r.redirected_to;
       if (to && !toastShown) {
         toastShown = true;
-        showToast(t('corp.slot.added', { slot: to.slot_name || slot.name, level: cui.levelLabel(to.scope_kind, to.scope_name, { thisScreen: to.scope_kind === 'device' }), n: to.screens || 0 }), 'success');
+        showToast(tn('corp.slot.added', to.screens || 0, { slot: to.slot_name || slot.name, level: cui.levelLabel(to.scope_kind, to.scope_name, { thisScreen: to.scope_kind === 'device' }) }), 'success');
       }
       return r;
     },

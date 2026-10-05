@@ -201,6 +201,7 @@ async function renderWhereTab(host, s) {
       ${!s.corporate_enabled ? `<span class="corp-help">${esc(t('corp.err.CORPORATE_DISABLED'))}</span>` : ''}</div>`
       : `<div class="corp-notice">${esc(t('corp.err.CORPORATE_ADMIN_REQUIRED'))}</div>`}
     <p class="corp-help">${esc(t('corp.where.prefer_levels'))}</p>
+    ${admin && (s.store_triggers_under_mandate || 'allow') === 'allow' ? `<div class="corp-notice corp-notice-warn">${esc(t('corp.where.store_triggers_allowed'))} <a href="#/settings">${esc(t('corp.page.open_settings'))}</a></div>` : ''}
     ${mandates.length ? `<div class="table-wrap"><table class="corp-table">
       <thead><tr><th>${esc(t('corp.where.col_where'))}</th><th>${esc(t('corp.where.col_playlist'))}</th><th>${esc(t('corp.where.col_layout'))}</th><th>${esc(t('corp.where.col_screens'))}</th><th>${esc(t('corp.where.col_on'))}</th><th></th></tr></thead>
       <tbody>${mandates.map((mm) => `
@@ -227,7 +228,7 @@ async function renderWhereTab(host, s) {
     if (!cb.checked) {
       let pv = null;
       try { pv = (await api.previewMandate({ mandate_id: mm.id, remove: '1' })).preview; } catch (_) { pv = null; }
-      const ok = await cui.ask({ title: t('corp.where.disable'), text: t('corp.where.disable_confirm', { n: (pv && pv.screens) || 0 }), confirmLabel: t('corp.where.disable') });
+      const ok = await cui.ask({ title: t('corp.where.disable'), text: tn('corp.where.disable_confirm', (pv && pv.screens) || 0), confirmLabel: t('corp.where.disable') });
       if (!ok) { cb.checked = true; return; }
     }
     try { const r = await api.updateMandate(mm.id, { enabled: cb.checked }); showToast(tn('corp.where.changed_screens', r.screens_changed || 0), 'success'); cui.forgetCorporateCache(); reloadTab(); }
@@ -239,7 +240,7 @@ async function renderWhereTab(host, s) {
     try { pv = (await api.previewMandate({ mandate_id: mm.id, remove: '1' })).preview; } catch (_) { pv = null; }
     const ok = await cui.ask({
       title: t('corp.where.remove'), danger: true, confirmLabel: t('corp.where.remove'),
-      text: t('corp.where.remove_confirm', { target: cui.targetLabel(mm.target_kind, mm.target_name), n: (pv && pv.screens) || 0 }),
+      text: tn('corp.where.remove_confirm', (pv && pv.screens) || 0, { target: cui.targetLabel(mm.target_kind, mm.target_name) }),
     });
     if (!ok) return;
     try { const r = await api.deleteMandate(mm.id); showToast(tn('corp.where.changed_screens', r.screens_changed || 0), 'success'); cui.forgetCorporateCache(); reloadTab(); }
@@ -328,7 +329,7 @@ async function mandateDialog(existing, playlists) {
       if (mine !== seq) return;
       const name = b.dark ? t('corp.badge.dark') : (playlists.find((p) => p.id === b.playlist_id) || {}).name || '';
       box.innerHTML = `
-        ${preview.screens ? `<p><strong>${esc(t('corp.where.preview', { n: preview.screens, w: preview.workspaces.length, name, k: preview.schedules, j: preview.screen_playlists, l: preview.store_layouts }))}</strong></p>` : ''}
+        ${preview.screens ? `<p><strong>${esc(tn('corp.where.preview', preview.screens, { w: tn('corp.n_workspaces', preview.workspaces.length), name, k: tn('corp.n_schedules', preview.schedules || 0), j: tn('corp.n_screen_playlists', preview.screen_playlists || 0), l: tn('corp.n_store_layouts', preview.store_layouts || 0) }))}</strong></p>` : ''}
         ${preview.workspaces.length ? `<ul class="corp-list">${preview.workspaces.map((w) => `<li>${esc(w.name)} — ${esc(tn('corp.n_screens', w.screens))}</li>`).join('')}</ul>
           <div class="corp-help">${esc(t('corp.where.exclude_hint'))}</div>` : `<div class="corp-help">${esc(t('corp.where.no_change'))}</div>`}`;
       save.disabled = false;
@@ -437,6 +438,9 @@ function scopeSummary(scopes) {
   return scopes.map((x) => cui.targetLabel(x.scope_kind, x.name || '')).join(', ');
 }
 
+// Why an alert would fire and show nothing (GET /api/corporate/emergency target_problem).
+const EM_TARGET_PROBLEM = { missing: 'corp.em.target_missing', unpublished: 'corp.em.target_unpublished', empty: 'corp.em.target_empty' };
+
 async function renderEmergencyTab(host, s) {
   if (!s.is_admin) { host.innerHTML = `<div class="corp-notice">${esc(t('corp.err.CORPORATE_EMERGENCY'))}</div>`; return; }
   const r = await api.getEmergencyAlerts();
@@ -457,6 +461,7 @@ async function renderEmergencyTab(host, s) {
           <strong class="corp-card-title">${esc(a.name)}</strong>
           ${live ? cui.chip(t('corp.em.live_left', { left: cui.formatSec(live.remaining_sec) }), 'emergency') : a.enabled ? cui.chip(t('corp.em.active'), 'slot') : cui.chip(t('corp.em.off'), 'muted')}
         </div>
+        ${a.target_problem ? `<div class="corp-notice corp-notice-danger">${esc(t(EM_TARGET_PROBLEM[a.target_problem] || 'corp.em.target_missing'))}</div>` : ''}
         <div class="corp-card-meta">${esc(scopeSummary(a.scopes))} · ${esc(a.mode === 'once' ? t('corp.em.mode_once_short') : t('corp.em.mode_until_short'))}</div>
         <div class="corp-card-meta">${esc(t('corp.em.cov_trigger', { r: cov.trigger_ready, t: cov.total }))}</div>
         <div class="corp-card-meta">${esc(t('corp.em.cov_activate', { a: cov.activate_ready, t: cov.total, o: cov.online }))}</div>
@@ -574,7 +579,7 @@ async function activateDialog(a) {
     footer: `<button class="btn btn-secondary" data-corp-close>${esc(t('common.cancel'))}</button><button class="btn btn-danger" id="emGo">${esc(t('corp.em.activate'))}</button>`,
   });
   const dur = m.q('#emDur');
-  const say = () => { m.q('#emAsk').textContent = t('corp.em.activate_confirm', { name: a.name, n: cov.activate_ready, duration: tn('corp.minutes', Number(dur.value) / 60) }); };
+  const say = () => { m.q('#emAsk').textContent = tn('corp.em.activate_confirm', cov.activate_ready, { name: a.name, duration: tn('corp.minutes', Number(dur.value) / 60) }); };
   dur.addEventListener('change', say);
   say();
   m.q('#emGo').addEventListener('click', async () => {
@@ -692,7 +697,7 @@ async function renderStore(container, s) {
       const k = lim.max_items != null ? f.items - lim.max_items : 0;
       slotNotices.push({
         fill: f,
-        text: k > 0 ? t('corp.store.notice_limit', { slot: sl.name, n: lim.max_items, k })
+        text: k > 0 ? tn('corp.store.notice_limit', lim.max_items, { slot: sl.name, k })
           : t('corp.store.notice_over_sec', { slot: sl.name, level: cui.levelLabel(f.scope_kind, f.scope_name), max: lim.max_total_sec || 0, sec: f.seconds }),
       });
     }
@@ -724,7 +729,7 @@ async function renderStore(container, s) {
     const f = sl.fills.find((x) => x.id === b.dataset.unfill);
     const ok = await cui.ask({
       title: t('corp.slot.remove_level'), confirmLabel: t('corp.slot.remove_level'), danger: true,
-      text: t('corp.slot.remove_level_confirm', { level: cui.levelLabel(f.scope_kind, f.scope_name), n: f.screens }),
+      text: tn('corp.slot.remove_level_confirm', f.screens || 0, { level: cui.levelLabel(f.scope_kind, f.scope_name) }),
     });
     if (!ok) return;
     try { await api.deleteFill(f.id); showToast(t('corp.slot.level_removed'), 'success'); render(container); }

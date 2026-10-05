@@ -66,6 +66,9 @@ let selectableGroups = [];
 // What head office decides in this workspace (components/corporate-ui.js workspaceCoverage): which
 // groups it covers, so a group card can say so instead of offering a playlist the server refuses.
 let corpCoverage = null;
+// The group commands only org admins may send to a screen head office's playlist drives
+// (server/lib/corporate/guard.js GATED_COMMANDS).
+const CORP_GATED_GROUP_COMMANDS = ['set_server_url', 'shell', 'install_apk', 'launch', 'kiosk_unlock', 'screen_off', 'shutdown', 'set_screen_timeout'];
 
 function formatTimeAgo(timestamp) {
   if (!timestamp) return t('common.never');
@@ -1560,6 +1563,16 @@ function attachGroupHandlers(groupsWithDevices) {
       const count = e.target.dataset.deviceCount;
       const cmdLabel = t(CMD_LABEL_KEY[type] || type);
 
+      // Head office's screens: only org admins may send these (the server refuses them per screen).
+      // When every screen in the group is one of them, explain now instead of asking to confirm a
+      // command that cannot run anywhere.
+      const cg = corpCoverage && corpCoverage.groups && corpCoverage.groups[groupId];
+      if (cg && !corpCoverage.is_admin && CORP_GATED_GROUP_COMMANDS.includes(type) && cg.members > 0 && cg.mandated_members >= cg.members) {
+        e.target.value = '';
+        cui.explainLocked({ text: t('corp.group.cmd_locked', { name: cg.playlist_name || '', action: t(`corp.ctl.${type}`) }) });
+        return;
+      }
+
       if (DESTRUCTIVE_COMMANDS.includes(type)) {
         if (!confirm(t('dashboard.confirm_destructive_command', { cmd: cmdLabel.toUpperCase(), n: count, group: groupName }))) {
           e.target.value = '';
@@ -1591,7 +1604,13 @@ function attachGroupHandlers(groupsWithDevices) {
         if (result.unsupported > 0) {
           msg += ' ' + t('dashboard.toast.command_unsupported_n', { n: result.unsupported });
         }
-        showToast(msg, (result.offline > 0 || result.unsupported > 0) ? 'warning' : 'success');
+        // Screens head office's playlist drives refuse the gated commands: say how many, and why.
+        const refused = Number(result.refused) || 0;
+        if (refused > 0) {
+          const why = (result.results || []).find((r) => r && r.status === 'refused');
+          msg += ' ' + tn('corp.group.cmd_refused', refused) + ' ' + (why && why.error ? why.error : t('corp.group.cmd_refused_why'));
+        }
+        showToast(msg, refused > 0 && !result.sent ? 'error' : (result.offline > 0 || result.unsupported > 0 || refused > 0) ? 'warning' : 'success');
       } catch (err) {
         showToast(err.message, 'error');
       }

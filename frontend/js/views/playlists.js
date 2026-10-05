@@ -578,8 +578,9 @@ function renderDetailContent(container, playlist) {
         publishBtn.textContent = t('playlist.draft.publishing');
         const updated = await api.publishPlaylist(playlist.id);
         showToast(t('playlist.toast.published'));
-        // Only GET /:id resolves a smart playlist's matches; the publish response is the bare row.
-        renderDetailContent(container, updated.smart_rules ? await api.getPlaylist(playlist.id) : updated);
+        // Only GET /:id resolves a smart playlist's matches, and decorates head office's playlist and a
+        // slot's content (corporate_slot); the publish response is the bare row.
+        renderDetailContent(container, updated.smart_rules || playlist.corporate || playlist.corporate_slot ? await api.getPlaylist(playlist.id) : updated);
       } catch (err) {
         publishBtn.disabled = false;
         publishBtn.textContent = t('playlist.draft.publish');
@@ -597,7 +598,7 @@ function renderDetailContent(container, playlist) {
       try {
         const updated = await api.discardPlaylistDraft(playlist.id);
         showToast(t('playlist.toast.draft_discarded'));
-        renderDetailContent(container, updated.smart_rules ? await api.getPlaylist(playlist.id) : updated);
+        renderDetailContent(container, updated.smart_rules || playlist.corporate || playlist.corporate_slot ? await api.getPlaylist(playlist.id) : updated);
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -707,6 +708,27 @@ function renderDetailContent(container, playlist) {
     ctaFor: { playlist: t('gs.playlist.cta_here') },
   }).catch(() => {});
 
+  // A slot's content: "delete" means "this level goes back to the next level's content or head
+  // office's fallback" — say so, with the screens it changes, as the head office page does.
+  if (playlist.corporate_slot) {
+    const delBtn = document.getElementById('deletePlaylistBtn');
+    delBtn.textContent = t('corp.slot.remove_level');
+    delBtn.addEventListener('click', async () => {
+      const cs = playlist.corporate_slot;
+      const f = (corpEditor && corpEditor.mode === 'fill' && corpEditor.fill) || {};
+      const ok = await cui.ask({
+        title: t('corp.slot.remove_level'), confirmLabel: t('corp.slot.remove_level'), danger: true,
+        text: tn('corp.slot.remove_level_confirm', f.screens || 0, { level: cui.levelLabel(f.scope_kind || cs.scope_kind, f.scope_name) }),
+      });
+      if (!ok) return;
+      try {
+        await api.deleteFill(cs.fill_id);
+        showToast(t('corp.slot.level_removed'), 'success');
+        window.location.hash = '#/corporate';
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+    return;
+  }
   document.getElementById('deletePlaylistBtn').addEventListener('click', async () => {
     if (!confirm(t('playlist.confirm_delete', { name: playlist.name }))) return;
     try {
@@ -910,7 +932,7 @@ function paintSelectBar() {
   const bar = document.getElementById('playlistSelectBar');
   if (!bar) return;
   const n = selectedItemIds.size;
-  bar.style.display = currentPlaylistItems.length ? 'flex' : 'none';
+  bar.style.display = currentPlaylistItems.length && !corpIsReadOnly() ? 'flex' : 'none';
   const clip = getClip();
   bar.innerHTML = `
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);margin:0">
@@ -1207,7 +1229,9 @@ function renderItems(items) {
   const present = new Set(currentPlaylistItems.map((it) => String(it.id)));
   selectedItemIds = new Set([...selectedItemIds].filter((id) => present.has(id)));
   const sortBar = document.getElementById('playlistSortBar');
-  if (sortBar) sortBar.style.display = items.length ? 'flex' : 'none';
+  // Head office's playlist, for someone who can't change it: no sort/order/selection tools (§7.9).
+  const corpReadOnly = corpIsReadOnly();
+  if (sortBar) sortBar.style.display = items.length && !corpReadOnly ? 'flex' : 'none';
   paintSelectBar();
 
   if (!items.length) {
@@ -1289,6 +1313,7 @@ function renderItems(items) {
   hydrateAuthImages(itemsEl);
   bindSelection(itemsEl, items);
   bindSlotRows(itemsEl);
+  if (corpReadOnly) lockCorporateRows(itemsEl);
 
   itemsEl.querySelectorAll('.item-duration').forEach(input => {
     input.addEventListener('change', async (e) => {
@@ -1473,7 +1498,7 @@ function bindSlotRows(itemsEl) {
     const sl = slotOf(b);
     const ok = await cui.ask({
       title: t('corp.hq.remove_slot'), danger: true, confirmLabel: t('corp.hq.remove_slot'),
-      text: t('corp.hq.remove_slot_confirm', { name: sl ? sl.name : '', n: sl ? sl.fills : 0 }),
+      text: tn('corp.hq.remove_slot_confirm', sl ? sl.fills || 0 : 0, { name: sl ? sl.name : '' }),
     });
     if (!ok) return;
     try { await api.deleteSlot(b.dataset.slotId); showToast(t('corp.hq.slot_removed'), 'success'); refreshAfterMutation(); }
@@ -1485,6 +1510,51 @@ function bindSlotRows(itemsEl) {
 }
 
 /** The corporate / slot editor additions, loaded after the ordinary editor has rendered. */
+/*
+ * Head office's playlist opened by someone who can't author it (a head office editor when only org
+ * admins author). Until the settings answer, it counts as read-only: an author sees the controls a
+ * moment later, a non-author never sees a control that would only fail.
+ */
+function corpIsReadOnly() {
+  return !!(corpEditor && corpEditor.mode === 'corporate' && corpEditor.canAuthor !== true);
+}
+
+/**
+ * Lock every head office item row: inputs read-only, no drag, no selection, and a click on any of
+ * them explains (corporate-ui.js: never a silently disabled control). Slot rows have their own.
+ */
+function lockCorporateRows(itemsEl) {
+  itemsEl.querySelectorAll('.playlist-item').forEach((row) => {
+    row.draggable = false;
+    row.style.cursor = 'default';
+    row.querySelectorAll('.item-select').forEach((cb) => { cb.style.display = 'none'; });
+    row.querySelectorAll('input, select, button').forEach((el) => {
+      if (el.classList.contains('item-select')) return;
+      el.dataset.corpLocked = 'hq';
+      el.title = t('corp.locked.title');
+      if (el.tagName === 'INPUT') el.readOnly = true;
+    });
+  });
+  if (itemsEl._corpLockBound) return;
+  itemsEl._corpLockBound = true;
+  const handler = (e) => {
+    if (!corpIsReadOnly()) return;
+    const el = e.target && e.target.closest && e.target.closest('[data-corp-locked="hq"]');
+    if (!el) return;
+    // A change that got through anyway (typed into a select) never reaches the row's own handler.
+    if (e.type === 'change') { e.stopImmediatePropagation(); refreshAfterMutation(); return; }
+    if (e.type === 'keydown' && !['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    // One explanation per gesture: a select opens on mousedown, everything else explains on click.
+    const isSelect = el.tagName === 'SELECT';
+    if (e.type === 'mousedown' && !isSelect) return;
+    if (e.type === 'click' && isSelect) return;
+    cui.explainLocked({ text: t('corp.hq.read_only') });
+  };
+  ['click', 'mousedown', 'keydown', 'change'].forEach((ev) => itemsEl.addEventListener(ev, handler, true));
+}
+
 async function mountCorporateEditor(container, playlist) {
   const bar = document.getElementById('corpEditorBar');
   if (!bar || !corpEditor) return;
@@ -1501,18 +1571,28 @@ async function mountCorporateEditor(container, playlist) {
     bar.innerHTML = `
       <div class="corp-notice">
         ${cui.chip(t('corp.badge.corporate'), 'hq', '', { lock: true })}
-        ${esc(t('corp.hq.banner', { n: ed.screens }))}
+        ${esc(tn('corp.hq.banner', ed.screens || 0))}
         <a class="btn btn-secondary btn-sm" href="#/corporate/where">${esc(t('corp.where.title'))}</a>
         <button class="btn btn-secondary btn-sm" id="corpPvBtn">${esc(t('corp.hq.preview'))}</button>
         ${ed.canAuthor ? '' : `<div class="corp-help" style="margin-top:6px">${esc(t('corp.hq.read_only'))}</div>`}
       </div>`;
     bar.querySelector('#corpPvBtn').addEventListener('click', () => cui.openScreenPreview({ playlistId: playlist.id, canDraft: ed.canAuthor }));
     const publishBtn = document.getElementById('publishBtn');
-    if (publishBtn && ed.canAuthor && ed.screens) publishBtn.textContent = t('corp.hq.publish_n', { n: ed.screens });
+    if (publishBtn && ed.canAuthor && ed.screens) publishBtn.textContent = tn('corp.hq.publish_n', ed.screens);
     if (!ed.canAuthor) {
       // Approve-but-not-publish (R11): a reviewer here can approve; only an admin can publish.
       if (publishBtn) publishBtn.replaceWith(Object.assign(document.createElement('span'), { className: 'corp-help', textContent: t('corp.hq.waiting_admin') }));
       ['addItemBtn', 'deletePlaylistBtn', 'discardDraftBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+      // The name and description are head office's too: a click explains instead of opening an edit.
+      ['playlistTitle', 'playlistDesc'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const copy = el.cloneNode(true);
+        copy.title = t('corp.locked.title');
+        copy.style.cursor = 'default';
+        copy.addEventListener('click', () => cui.explainLocked({ text: t('corp.hq.read_only') }));
+        el.replaceWith(copy);
+      });
     }
     const addSlot = document.getElementById('addSlotBtn');
     if (addSlot && ed.canAuthor) {
@@ -1548,7 +1628,7 @@ async function mountCorporateEditor(container, playlist) {
       </div>
       ${slot.help_text ? `<div class="corp-hq-note">${esc(t('corp.store.hq_says'))} ${esc(slot.help_text)}</div>` : ''}
       <div class="corp-meter">
-        ${limits.max_items != null ? `<span class="${overItems ? 'over' : ''}">${esc(t('corp.slot.meter_items', { n: totals.items, max: limits.max_items }))}</span>` : `<span>${esc(tn('corp.n_items', totals.items))}</span>`}
+        ${limits.max_items != null ? `<span class="${overItems ? 'over' : ''}">${esc(tn('corp.slot.meter_items', limits.max_items, { used: totals.items }))}</span>` : `<span>${esc(tn('corp.n_items', totals.items))}</span>`}
         ${limits.max_total_sec != null ? `<span class="${overSec ? 'over' : ''}">${esc(t('corp.slot.meter_sec', { s: totals.seconds, max: limits.max_total_sec }))}</span>` : `<span>${esc(t('corp.slot.loop_sec', { s: totals.seconds }))}</span>`}
       </div>
       <div class="corp-help">${esc(t('corp.slot.meter_note'))}${limits.allow_video === 0 || limits.allow_video === false ? ' ' + esc(t('corp.slot.no_video')) : ''}${limits.allow_widgets === 0 || limits.allow_widgets === false ? ' ' + esc(t('corp.slot.no_widgets')) : ''}</div>
@@ -1567,7 +1647,7 @@ async function mountCorporateEditor(container, playlist) {
       publishBtn.disabled = true;
       publishBtn.title = pv.violation.error;
       publishBtn.style.opacity = '0.55';
-    } else if (fill.screens) publishBtn.textContent = t('corp.hq.publish_n', { n: fill.screens });
+    } else if (fill.screens) publishBtn.textContent = tn('corp.hq.publish_n', fill.screens);
   }
 }
 
