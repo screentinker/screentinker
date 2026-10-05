@@ -33,32 +33,7 @@ function requireFleetWrite(req, res, next) {
   next();
 }
 
-const MODES = ['once', 'until_cleared'];
-// POSITIONS is gone: geometry is reserved (see validate). The `position` column is still written
-// as 'center' so existing rows keep a consistent value, but nothing reads it.
-const TARGET_KINDS = ['playlist'];   // 'url' is designed for and deliberately not built yet
-
-/*
- * ⚠️ THE TOKEN CHARSET IS A WIRE-FORMAT CONSTRAINT, NOT A STYLE PREFERENCE.
- *
- * The UDP payload is `ST1 <secret> <token>` — space-separated, one line, because that is what a
- * Crestron SendString or a PLC socket block can actually emit. A token containing a space would be
- * unparseable on arrival, and one containing a newline would let a single datagram look like two
- * messages. Rejecting them here is the only place that can be enforced before the field is saved;
- * on the wire it is already too late to give anyone a useful error.
- */
-const TOKEN_RE = /^[\x21-\x7E]{1,64}$/;      // printable ASCII, no space, 1-64
-const TOKEN_HINT = 'tokens must be 1-64 printable ASCII characters with no spaces — they travel in a ' +
-                   'space-separated single-line datagram';
-
-function intInRange(v, def, lo, hi) {
-  if (v === undefined || v === null || v === '') return { ok: true, val: def };
-  const n = Number(v);
-  if (!Number.isFinite(n)) return { ok: false };
-  const r = Math.round(n);
-  if (r < lo || r > hi) return { ok: false };
-  return { ok: true, val: r };
-}
+const { validateTriggerBody, columnsFrom } = require('../lib/trigger-validate');
 
 /** Shape a row for the API. Assignments come along because a trigger without them does nothing. */
 function withAssignments(row) {
@@ -68,183 +43,70 @@ function withAssignments(row) {
   return { ...row, assignments };
 }
 
-function validate(req, b, { id = null } = {}) {
-  if (!b.name || !String(b.name).trim()) return 'name required';
+function validate(req, b, opts) { return validateTriggerBody(db, req.workspaceId, b, opts); }
 
-  if (!TOKEN_RE.test(String(b.match_token || ''))) return `invalid match_token — ${TOKEN_HINT}`;
-  if (b.clear_token != null && b.clear_token !== '' && !TOKEN_RE.test(String(b.clear_token))) {
-    return `invalid clear_token — ${TOKEN_HINT}`;
-  }
-  if (b.clear_token && String(b.clear_token) === String(b.match_token)) {
-    return 'clear_token and match_token must differ, or a fire and a clear are the same message';
-  }
-
-  if (!MODES.includes(b.mode)) return `invalid mode, use one of: ${MODES.join(', ')}`;
-
-  const kind = b.target_kind == null || b.target_kind === '' ? 'playlist' : String(b.target_kind);
-  if (!TARGET_KINDS.includes(kind)) {
-    return `invalid target_kind — v1 supports ${TARGET_KINDS.join(', ')} ('url' is designed but not built)`;
-  }
-  /*
-   * ⚠️ The playlist must exist IN THIS WORKSPACE. Accepting a bare id would let a caller point a
-   * trigger at another tenant's playlist and have the device pin and display it — the assignment
-   * check on the device would never catch it, because by then it is just a playlist id.
-   */
-  const pl = db.prepare('SELECT id, published_snapshot FROM playlists WHERE id = ? AND workspace_id = ?')
-    .get(String(b.target_ref || ''), req.workspaceId);
-  if (!pl) return 'target_ref must be a playlist in this workspace';
-
-  /*
-   * ⚠️ THE TARGET MUST BE PLAYABLE OFFLINE, which is a stronger claim than "the target is a
-   * playlist" and is the one that actually matters.
-   *
-   * The reason this feature targets a playlist rather than a URL (§1) is that playlist items are
-   * library content and therefore PINNABLE. That reasoning has a hole: requestOfflineCache pins
-   * `it.filepath && !it.remote_url`, so a playlist item carrying a remote_url is never pinned, and
-   * a YouTube item cannot be pinned at all. Such a trigger passes every structural check and still
-   * fires against nothing on exactly the day the WAN is down — the failure the playlist rule was
-   * written to prevent, arriving through the front door.
-   *
-   * Caught at SAVE time, because the alternative is catching it during an alarm. YouTube is doubly
-   * disqualified: createYoutubeEmbed is a singleton shared with the base playlist, so a YouTube
-   * item in a trigger destroys the base player outright (the player drops them defensively for
-   * definitions already cached in the field).
-   */
-  /*
-   * ⚠️ FAIL CLOSED. This used to be `if (pl.published_snapshot) { … }`, so a playlist that had
-   * never been published skipped the whole check and saved with a 200 — and deviceSocket.js uses
-   * the same guard, so such a trigger syncs with `items: []` and renders nothing, forever,
-   * silently. A green save on a trigger that can never fire is the worst outcome available here.
-   */
-  if (!pl.published_snapshot) {
-    return 'that playlist has never been published — publish it first, or the trigger has nothing to render';
-  }
-  {
-    let items;
-    try { items = JSON.parse(pl.published_snapshot); } catch (e) { items = null; }
-    // A non-array parses fine and then throws on for..of — which, with no error middleware, is a
-    // 500 rather than a 400. Checked rather than caught.
-    if (!Array.isArray(items)) return "that playlist's published snapshot is unreadable — republish it";
-    if (!items.length) return 'that playlist is empty — the trigger would fire against nothing';
-    const unpinnable = [];
-    for (const it of items) {
-      if (!it) continue;
-      const label = it.filename || it.title || it.content_id || 'an item';
-      /*
-       * ⚠️ THE RULE IS "EXACTLY WHAT requestOfflineCache PINS", not a denylist of known-bad types.
-       * That function keeps `it.filepath && !it.remote_url` (server/player/index.html), so the
-       * inverse is the honest test — and it catches the two shapes a hand-written denylist missed:
-       *
-       *   • WIDGETS. A widget snapshot item has widget_id set and filepath/remote_url/mime_type
-       *     all NULL, so it matched neither branch. It is fetched LIVE from serverUrl at render
-       *     time, and sw.js documents that it cannot be service-worker cached at all — the
-       *     sandboxed iframe is an opaque origin, so the worker never sees its request. When that
-       *     fetch fails the worker serves a BLACK PAGE. An "Evacuation — proceed to Exit B" HTML
-       *     widget is the most natural thing an operator would build, and it would have produced a
-       *     fullscreen black box during a fire alarm with the WAN down.
-       *   • DANGLING CONTENT. A content row deleted after publish leaves the item in the snapshot
-       *     with every joined column NULL — no filepath, not pinnable, previously accepted.
-       */
-      if (it.mime_type === 'video/youtube' || it.youtube_id) unpinnable.push(`${label} (YouTube)`);
-      else if (it.remote_url) unpinnable.push(`${label} (remote URL)`);
-      else if (it.widget_id) unpinnable.push(`${label} (widget — re-rendered from the server on every play)`);
-      else if (!it.filepath) unpinnable.push(`${label} (no local file — deleted from the library?)`);
-    }
-    if (unpinnable.length) {
-      return `that playlist cannot be held on the device for offline playback: `
-        + `${unpinnable.slice(0, 3).join(', ')}${unpinnable.length > 3 ? `, +${unpinnable.length - 3} more` : ''}. `
-        + 'A trigger must fire with the network down, so its playlist may only contain uploaded '
-        + 'media. See docs/triggers-design.md §1.';
-    }
-  }
-
-  /*
-   * ⚠️ GEOMETRY IS RESERVED, and saying so is the point.
-   *
-   * These five were copied from the PiP contract and never wired to anything: the renderer
-   * discards them (a trigger is always fullscreen and opaque), the shared cross-platform contract
-   * omits them, and they are no longer projected to devices. Accepting them with a 200 tells an
-   * API client the overlay was positioned when it was not — a lie that only surfaces during an
-   * emergency. A 400 naming the reason is worth more than a 200 that is wrong.
-   *
-   * The columns remain (SQLite drops need a table rebuild, and this schema treats unused columns
-   * as the no-migration hook). If a non-fullscreen mode is wanted, add ONE semantic field
-   * (takeover | banner) rather than resurrecting five raw CSS primitives.
-   */
-  const geo = ['width', 'height', 'opacity', 'border_radius']
-    .filter((k) => b[k] != null && b[k] !== '');
-  if (b.position != null && b.position !== '' && b.position !== 'center') geo.unshift('position');
-  if (geo.length) {
-    return `${geo.join(', ')} ${geo.length > 1 ? 'are' : 'is'} reserved — a trigger renders `
-      + 'fullscreen; see docs/triggers-design.md §4';
-  }
-
-  if (!intInRange(b.max_duration_sec, 0, 0, 86400).ok) return 'max_duration_sec must be 0-86400 (0 = no cap)';
-  if (!intInRange(b.priority, 0, -1000, 1000).ok) return 'priority must be -1000..1000';
-
-  // lease_sec is until_cleared-only: on a `once` trigger there is nothing to renew, and accepting it
-  // would silently store a field that never applies.
-  if (b.lease_sec != null && b.lease_sec !== '') {
-    if (b.mode !== 'until_cleared') return 'lease_sec applies to until_cleared triggers only';
-    if (!intInRange(b.lease_sec, 0, 5, 86400).ok) return 'lease_sec must be 5-86400 seconds';
-  }
-
-  /*
-   * ⚠️ FIRE AND CLEAR TOKENS SHARE ONE NAMESPACE, so uniqueness has to span both columns.
-   *
-   * evaluate() walks the device's triggers in query order and, per trigger, tests match_token and
-   * then clear_token. So if trigger A's clear_token equals trigger B's match_token, the token
-   * resolves to whichever row the SELECT happened to return first — and the losing case is the bad
-   * one: an emergency trigger becomes silently UNFIRABLE because an unrelated trigger's clear
-   * shadows it. Nothing logs, because from the resolver's point of view the token matched.
-   *
-   * The unique index only covers (workspace_id, match_token), and an index error would surface as
-   * a 500 rather than something an operator can act on, so this is checked here and named.
-   */
-  const tokens = [String(b.match_token)];
-  if (b.clear_token) tokens.push(String(b.clear_token));
-  const rows = id
-    ? db.prepare('SELECT match_token, clear_token FROM triggers WHERE workspace_id = ? AND id != ?')
-      .all(req.workspaceId, id)
-    : db.prepare('SELECT match_token, clear_token FROM triggers WHERE workspace_id = ?')
-      .all(req.workspaceId);
-  const taken = new Set();
-  for (const r of rows) {
-    if (r.match_token) taken.add(r.match_token);
-    if (r.clear_token) taken.add(r.clear_token);
-  }
-  for (const tok of tokens) {
-    if (taken.has(tok)) {
-      return `"${tok}" is already used as a fire or clear token by another trigger in this `
-        + 'workspace — fire and clear tokens share one namespace, and a duplicate would resolve '
-        + 'to whichever trigger the database returned first';
-    }
-  }
-
-  return null;
+/*
+ * ⚠️ HEAD OFFICE EMERGENCY ALERTS (kind = 'emergency') live in the head office workspace and are
+ * managed ONLY through /api/corporate/emergency, by the organization's owners and admins (spec §5.4).
+ * This router lists them (with `kind`) but never creates, edits or deletes one — and their fire and
+ * clear codes are shown only to org admins: anyone who knows them and a screen's secret can set the
+ * alert off, or clear it, on that screen.
+ */
+function emergencyRefusal(res) {
+  const g = require('../lib/corporate/guard');
+  const e = g.err('CORPORATE_EMERGENCY');
+  return res.status(e.status).json({ error: e.message, code: e.code });
 }
 
-function columnsFrom(b) {
-  return {
-    name: String(b.name).trim().slice(0, 200),
-    match_token: String(b.match_token),
-    clear_token: b.clear_token ? String(b.clear_token) : null,
-    source_http: b.source_http === false || b.source_http === 0 ? 0 : 1,
-    source_udp: b.source_udp === true || b.source_udp === 1 ? 1 : 0,
-    target_kind: b.target_kind || 'playlist',
-    target_ref: String(b.target_ref),
-    position: b.position || 'center',
-    width: intInRange(b.width, null, 40, 3840).val,
-    height: intInRange(b.height, null, 40, 3840).val,
-    opacity: b.opacity == null || b.opacity === '' ? null : Math.max(0, Math.min(1, Number(b.opacity))),
-    border_radius: intInRange(b.border_radius, null, 0, 512).val,
-    mode: b.mode,
-    max_duration_sec: intInRange(b.max_duration_sec, 0, 0, 86400).val,
-    lease_sec: b.mode === 'until_cleared' && b.lease_sec != null && b.lease_sec !== ''
-      ? intInRange(b.lease_sec, null, 5, 86400).val : null,
-    priority: intInRange(b.priority, 0, -1000, 1000).val,
-    enabled: b.enabled === false || b.enabled === 0 ? 0 : 1,
-  };
+function isOrgAdminHere(req) {
+  try {
+    const g = require('../lib/corporate/guard');
+    return !req.viaToken && g.isOrgAdmin(req, g.orgOfWorkspace(db, req.workspaceId));
+  } catch (_) { return false; }
+}
+
+/** Shape a row for a listing: emergency rows get their scope, and lose their codes for non-admins. */
+function shapeRow(req, row, admin) {
+  const out = withAssignments(row);
+  if (out && out.kind === 'emergency') {
+    try { out.scopes = require('../lib/corporate/emergency').scopesOf(db, row.id); } catch (_) { out.scopes = []; }
+    if (!admin) { out.match_token = null; out.clear_token = null; out.codes_hidden = true; }
+  }
+  return out;
+}
+
+/*
+ * What a STORE's Triggers page needs to know about head office (§7.6, §5.3): the emergency alerts
+ * that reach this workspace (read-only, codes never included), and head office's policy for store
+ * triggers on its screens when it is not "allow as before". Additive keys; empty on every install
+ * that does not use either feature.
+ */
+function headOffice(req) {
+  const out = { emergency: [], store_trigger_policy: null };
+  try {
+    const org = db.prepare(`SELECT o.* FROM organizations o JOIN workspaces w ON w.organization_id = o.id WHERE w.id = ?`).get(req.workspaceId);
+    if (!org) return out;
+    if (org.emergency_triggers_enabled && org.hq_workspace_id !== req.workspaceId) {
+      const { EMERGENCY_SCOPE_MATCH } = require('../lib/device-triggers');
+      out.emergency = db.prepare(`
+        SELECT DISTINCT t.id, t.name, t.kind, t.enabled, t.mode FROM triggers t
+          JOIN workspaces tw ON tw.id = t.workspace_id
+          JOIN workspaces dw ON dw.organization_id = tw.organization_id AND dw.id = ?
+          JOIN devices d ON d.workspace_id = dw.id
+         WHERE tw.organization_id = ? AND t.kind = 'emergency' AND ${EMERGENCY_SCOPE_MATCH}
+         ORDER BY t.name`).all(req.workspaceId, org.id)
+        .map((t) => ({ ...t, enabled: !!t.enabled, live: !!require('../lib/corporate/emergency-live').liveFor(t.id) }));
+    }
+    // Only where it applies: a workspace with a screen head office drives. The default is 'off', so
+    // without this every workspace of every org would be told its triggers are hidden.
+    if (org.store_triggers_under_mandate && org.store_triggers_under_mandate !== 'allow'
+        && require('../lib/corporate/runtime').active(db)
+        && db.prepare(`SELECT 1 FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
+            WHERE d.workspace_id = ? AND r.source = 'corporate' LIMIT 1`).get(req.workspaceId)) {
+      out.store_trigger_policy = { policy: org.store_triggers_under_mandate, cap_sec: org.store_trigger_cap_sec || 300 };
+    }
+  } catch (_) { /* no corporate columns: nothing to report */ }
+  return out;
 }
 
 /** Replace a trigger's assignments, validating every target is in this workspace. */
@@ -272,7 +134,8 @@ router.get('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context' });
   const rows = db.prepare('SELECT * FROM triggers WHERE workspace_id = ? ORDER BY priority DESC, name')
     .all(req.workspaceId);
-  res.json({ triggers: rows.map(withAssignments) });
+  const admin = rows.some((r) => r.kind === 'emergency') && isOrgAdminHere(req);
+  res.json({ triggers: rows.map((r) => shapeRow(req, r, admin)), head_office: headOffice(req) });
 });
 
 router.get('/:id', (req, res) => {
@@ -280,7 +143,7 @@ router.get('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM triggers WHERE id = ? AND workspace_id = ?')
     .get(req.params.id, req.workspaceId);
   if (!row) return res.status(404).json({ error: 'trigger not found' });
-  res.json(withAssignments(row));
+  res.json(shapeRow(req, row, row.kind === 'emergency' && isOrgAdminHere(req)));
 });
 
 /**
@@ -317,6 +180,8 @@ function pushTrigger(req, triggerId, before) {
 
 router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
   const b = req.body || {};
+  if (b.kind === 'emergency') return emergencyRefusal(res);
+  if (b.kind != null && b.kind !== '' && b.kind !== 'normal') return res.status(400).json({ error: 'invalid kind — use normal (emergency alerts are made under Corporate → Emergency)' });
   const bad = validate(req, b);
   if (bad) return res.status(400).json({ error: bad });
 
@@ -343,8 +208,10 @@ router.put('/:id', requireScope('full'), requireFleetWrite, (req, res) => {
   const existing = db.prepare('SELECT * FROM triggers WHERE id = ? AND workspace_id = ?')
     .get(req.params.id, req.workspaceId);
   if (!existing) return res.status(404).json({ error: 'trigger not found' });
+  if (existing.kind === 'emergency') return emergencyRefusal(res);
 
   const b = req.body || {};
+  if (b.kind === 'emergency') return emergencyRefusal(res);
   const bad = validate(req, b, { id: existing.id });
   if (bad) return res.status(400).json({ error: bad });
 
@@ -374,9 +241,10 @@ router.put('/:id', requireScope('full'), requireFleetWrite, (req, res) => {
 });
 
 router.delete('/:id', requireScope('full'), requireFleetWrite, (req, res) => {
-  const existing = db.prepare('SELECT id FROM triggers WHERE id = ? AND workspace_id = ?')
+  const existing = db.prepare('SELECT * FROM triggers WHERE id = ? AND workspace_id = ?')
     .get(req.params.id, req.workspaceId);
   if (!existing) return res.status(404).json({ error: 'trigger not found' });
+  if (existing.kind === 'emergency') return emergencyRefusal(res);
   // ⚠️ Read the affected devices BEFORE the row goes: trigger_assignments cascades on this delete
   // (FK declared inline, foreign_keys is ON), so afterwards there is nothing left to ask.
   const { devicesForTrigger } = require('../lib/device-triggers');

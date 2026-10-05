@@ -664,14 +664,18 @@ router.post('/:id/command', (req, res) => {
   if (!deviceNs) return res.status(503).json({ error: 'The realtime layer is not available.' });
 
   const devices = db.prepare('SELECT * FROM devices WHERE workspace_id = ?').all(ws.id);
+  // ⚠️ This router does not pass resolveTenancy, so there is no ambient actor: pass it explicitly,
+  // or deliverCommand would judge the call as system and skip the head office device-control rule.
+  const actor = require('../lib/corporate/actor').fromReq(req);
   const results = devices.map((device) => ({
-    device_id: device.id, name: device.name, ...deliverCommand(deviceNs, device, type, payload),
+    device_id: device.id, name: device.name, ...deliverCommand(deviceNs, device, type, payload, { actor }),
   }));
   const sent = results.filter(r => r.status === 'sent' || r.status === 'relayed').length;
   const offline = results.filter(r => r.status === 'offline' || r.status === 'queued').length;
   const unsupported = results.filter(r => r.status === 'unsupported').length;
+  const refused = results.filter(r => r.status === 'refused').length;
   logActivity(req.user.id, 'workspace_command', `workspace: ${ws.name} (${ws.id}) type=${type} sent=${sent}`, null, getClientIp(req), ws.id);
-  res.json({ success: true, type, total: results.length, sent, offline, unsupported, results });
+  res.json({ success: true, type, total: results.length, sent, offline, unsupported, ...(refused ? { refused } : {}), results });
 });
 
 module.exports = router;

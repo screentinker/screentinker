@@ -1,6 +1,7 @@
 import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
+import { workspaceCoverage } from '../components/corporate-ui.js';
 import {
   HOUR_PX, pxToMinutes, minutesToPx, rangeFromDrag, moveRange, resizeRange,
   toLocalStamp, formatRange, canMoveAcrossDays, editsWholeSeries, isDrag,
@@ -196,9 +197,20 @@ export async function render(container) {
    * date_desc, the hidden ones are the OLDEST, which in a library built up over time are the ones
    * already filed into folders — so a customer sees content in the library and cannot schedule it.
    */
-  const [devices, contentPage, groups, playlists, layoutsRaw] = await Promise.all([
+  const [devices, contentPage, groups, playlists, layoutsRaw, corpCov] = await Promise.all([
     api.getDevices(), api.getAllContent(), api.getGroups(), api.getPlaylists(), API('/layouts'),
+    workspaceCoverage({ force: true }),
   ]);
+  /*
+   * Head office (spec §7.10): a schedule on a screen or group head office's playlist covers would
+   * never show (the mandate ranks above every schedule), so the pickers mark those targets, the
+   * dialog says so before saving (the server refuses: CORPORATE_SCHEDULE), and existing schedules
+   * head office shadows are drawn hatched — "Paused by head office's playlist" — not as if live.
+   */
+  const corpDevice = (id) => !!(corpCov.devices && corpCov.devices[id]);
+  const corpGroup = (id) => !!(corpCov.groups && corpCov.groups[id] && corpCov.groups[id].covered);
+  const corpShadowed = new Set(corpCov.shadowed_schedules || []);
+  const corpMark = (on) => (on ? ` — ${t('corp.picker.plays_hq')}` : '');
   const content = contentPage.items;
   const layouts = (Array.isArray(layoutsRaw) ? layoutsRaw : []).filter((l) => !l.is_template);
 
@@ -269,11 +281,12 @@ export async function render(container) {
               </label>
             </div>
             <select id="schedDeviceSelect" class="input" style="background:var(--bg-input)">
-              ${devices.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}
+              ${devices.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}${esc(corpMark(corpDevice(d.id)))}</option>`).join('')}
             </select>
             <select id="schedGroupSelect" class="input" style="background:var(--bg-input);display:none">
-              ${groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)} (${t('schedule.group_devices_count', { n: g.device_count })})</option>`).join('')}
+              ${groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)} (${t('schedule.group_devices_count', { n: g.device_count })})${esc(corpMark(corpGroup(g.id)))}</option>`).join('')}
             </select>
+            <div id="schedCorpNote" class="corp-notice corp-notice-warn" style="display:none;margin-top:6px"></div>
             ${groups.length === 0 ? `<div id="schedNoGroups" style="display:none;color:var(--text-muted);font-size:12px;margin-top:4px">${t('schedule.no_groups_msg')}</div>` : ''}
             <div id="schedZoneNote" style="display:none;color:var(--text-muted);font-size:11px;margin-top:4px">${t('schedule.zone_note')}</div>
           </div>
@@ -392,9 +405,21 @@ export async function render(container) {
     groupSelect.style.display = isGroup ? '' : 'none';
     if (noGroupsMsg) noGroupsMsg.style.display = (isGroup && groups.length === 0) ? '' : 'none';
     zoneNote.style.display = isGroup ? '' : 'none';
+    updateCorpNote();
+  }
+  const corpNote = document.getElementById('schedCorpNote');
+  function updateCorpNote() {
+    if (!corpNote) return;
+    const isGroup = groupRadio.checked;
+    const id = isGroup ? groupSelect.value : deviceSelect.value;
+    const hit = isGroup ? (corpGroup(id) && corpCov.groups[id]) : (corpDevice(id) && corpCov.devices[id]);
+    corpNote.style.display = hit ? '' : 'none';
+    corpNote.textContent = hit ? t('corp.err.CORPORATE_SCHEDULE', { name: hit.playlist_name || t('corp.badge.dark') }) : '';
   }
   deviceRadio.addEventListener('change', updateTargetVisibility);
   groupRadio.addEventListener('change', updateTargetVisibility);
+  deviceSelect.addEventListener('change', updateCorpNote);
+  groupSelect.addEventListener('change', updateCorpNote);
 
   const tzNote = document.getElementById('schedTzNote');
   function updateTzNote() {
@@ -639,7 +664,7 @@ export async function render(container) {
         if (seg.dayIdx < days.length) perCol[seg.dayIdx].push({ ev, ...seg });
       }
     }
-    allDayHost.innerHTML = `<div class="sched-allday-label">${t('schedule.all_day')}</div>` + allDayCells.map((list, i) => `<div class="sched-allday-cell" data-allday="${i}">${list.map((ev) => `<button type="button" class="sched-chip${ev.group_id ? ' group' : ''}" data-sched-id="${esc(ev.id)}" style="background:${colorOf(ev)}" title="${esc(labelOf(ev))}">${esc(targetOf(ev).name)} · ${esc(labelOf(ev))}</button>`).join('')}</div>`).join('');
+    allDayHost.innerHTML = `<div class="sched-allday-label">${t('schedule.all_day')}</div>` + allDayCells.map((list, i) => `<div class="sched-allday-cell" data-allday="${i}">${list.map((ev) => `<button type="button" class="sched-chip${ev.group_id ? ' group' : ''}${corpShadowed.has(ev.id) ? ' corp-shadowed' : ''}" data-sched-id="${esc(ev.id)}" style="background:${colorOf(ev)}" title="${esc(labelOf(ev))}">${esc(targetOf(ev).name)} · ${esc(labelOf(ev))}</button>`).join('')}</div>`).join('');
     allDayHost.querySelectorAll('.sched-chip').forEach((chip) => {
       const ev = events.find((x) => String(x.id) === chip.dataset.schedId);
       chip.onclick = () => openPeek(ev, chip);
@@ -669,13 +694,15 @@ export async function render(container) {
           const extraHtml = (extras.length && durationPx >= 56)
             ? extras.map((it) => `<div class="what" style="opacity:.85">${esc(it.filename || it.widget_name || 'item')} · ${esc(itemWindowLabel(it))}</div>`).join('')
             : '';
-          block.innerHTML = `<div class="who">${esc(target.name)}</div><div class="what">${esc(labelOf(ev))}</div>${extraHtml}`;
+          block.innerHTML = `<div class="who">${esc(target.name)}</div><div class="what">${esc(labelOf(ev))}</div>${corpShadowed.has(ev.id) ? `<div class="what">${esc(t('corp.sched.paused'))}</div>` : ''}${extraHtml}`;
         } else {
           block.textContent = `${target.name} · ${labelOf(ev)}`;
         }
         block.title = `${target.isGroup ? t('schedule.target_group') : t('schedule.target_device')}: ${target.name}\n${labelOf(ev)}\n${formatRange(minsOf(evStart(ev)), minsOf(evEnd(ev)))}`
           + ((continues || continued) ? `\n${t('schedule.overnight_note')}` : '')
-          + `\n${t('schedule.tooltip_priority', { n: ev.priority })}`;
+          + `\n${t('schedule.tooltip_priority', { n: ev.priority })}`
+          + (corpShadowed.has(ev.id) ? `\n${t('corp.sched.paused')}` : '');
+        if (corpShadowed.has(ev.id)) block.classList.add('corp-shadowed');
         block.dataset.schedId = ev.id;
         block.dataset.overnight = (continues || continued) ? '1' : '';
         block._ev = ev;
@@ -739,7 +766,7 @@ export async function render(container) {
     }
     for (const list of byDay.values()) list.sort((a, b) => evStart(a) - evStart(b));
     const narrow = isNarrow();
-    const pill = (ev) => `<button type="button" class="sched-pill${ev.group_id ? ' group' : ''}" data-sched-id="${esc(ev.id)}" style="background:${colorOf(ev)}" title="${esc(targetOf(ev).name)} · ${esc(labelOf(ev))}">`
+    const pill = (ev) => `<button type="button" class="sched-pill${ev.group_id ? ' group' : ''}${corpShadowed.has(ev.id) ? ' corp-shadowed' : ''}" data-sched-id="${esc(ev.id)}" style="background:${colorOf(ev)}" title="${esc(targetOf(ev).name)} · ${esc(labelOf(ev))}">`
       + `<span class="tm">${fmt12(minsOf(evStart(ev))).replace(':00', '')}</span><span class="lbl">${esc(labelOf(ev))}</span></button>`;
     host.innerHTML = DAYS.map((d) => `<div class="sched-month-dow">${d}</div>`).join('')
       + g.weeks.flat().map(({ date, inMonth }) => {
@@ -901,8 +928,8 @@ export async function render(container) {
   // values to the full dialog.
   function openCompose(dayDate, startMin, endMin, anchorRect) {
     const hhmm = (m) => `${p2(Math.floor(m / 60) % 24)}:${p2(m % 60)}`;
-    const opts = `<optgroup label="${t('schedule.calendars_screens')}">${devices.map((d) => `<option value="d:${esc(d.id)}">${esc(d.name)}</option>`).join('')}</optgroup>`
-      + (groups.length ? `<optgroup label="${t('schedule.calendars_groups')}">${groups.map((g) => `<option value="g:${esc(g.id)}">${esc(g.name)}</option>`).join('')}</optgroup>` : '');
+    const opts = `<optgroup label="${t('schedule.calendars_screens')}">${devices.map((d) => `<option value="d:${esc(d.id)}">${esc(d.name)}${esc(corpMark(corpDevice(d.id)))}</option>`).join('')}</optgroup>`
+      + (groups.length ? `<optgroup label="${t('schedule.calendars_groups')}">${groups.map((g) => `<option value="g:${esc(g.id)}">${esc(g.name)}${esc(corpMark(corpGroup(g.id)))}</option>`).join('')}</optgroup>` : '');
     const pop = openPopover(`
       <h3>${t('schedule.compose_title')}</h3>
       <div class="meta">${esc(t('schedule.compose_date', { date: fmtDate(dayDate, { weekday: 'short', month: 'short', day: 'numeric' }) }))}</div>

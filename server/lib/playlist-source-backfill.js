@@ -58,6 +58,11 @@ function backfillPlaylistSource(db) {
  *
  * Called by the boot migration (which aborts on a non-empty result) and by the tests. A backfill
  * whose only verification lives in a test file is a backfill nobody checks against real data.
+ *
+ * ⚠️ Deliberately STRICT (raw column vs view, no exceptions) and run ONCE, guarded by
+ * schema_migrations, before any head office mandate can exist — so it never meets a 'corporate'
+ * row. It is NOT the check for a change to the view itself: that is applyResolverViews({verify}),
+ * which diffs the previous definition against the new one on every boot the SQL changes.
  */
 function verifyNoDeviceChanged(db) {
   return db.prepare(`

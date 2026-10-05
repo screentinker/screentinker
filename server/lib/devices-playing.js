@@ -57,6 +57,26 @@ function devicesPlayingItem(column, value) {
     }
   } catch (e) { console.warn(`[devices-playing] trigger fan-out failed: ${e && e.message}`); }
 
+  /*
+   * ⚠️ CORPORATE — the fourth and fifth cases, same rule: kept in this helper, not a new call site.
+   *   (a) STORE SLOT CONTENT. A fill playlist is never any screen's resolved playlist: mandated
+   *       screens resolve to head office's playlist and play the fill spliced into it. So a widget
+   *       or file inside a store's slot content reaches no screen through the join above.
+   *   (b) SLOT FALLBACKS. A fallback lives on the slot row (corporate_slots), not in playlist_items.
+   * Head office's own items need nothing extra: the resolved playlist IS the corporate one.
+   */
+  try {
+    const fillsLib = require('./corporate/fills');
+    for (const f of db.prepare(`SELECT DISTINCT f.fill_playlist_id FROM corporate_slot_fills f
+        JOIN playlist_items pi ON pi.playlist_id = f.fill_playlist_id WHERE pi.${column} = ?`).all(value)) {
+      for (const devId of fillsLib.devicesPlayingFill(db, f.fill_playlist_id)) ids.add(devId);
+    }
+    const fb = column === 'content_id' ? 'fallback_content_id' : 'fallback_widget_id';
+    for (const s of db.prepare(`SELECT DISTINCT playlist_id FROM corporate_slots WHERE ${fb} = ?`).all(value)) {
+      for (const devId of devicesOnPlaylist(s.playlist_id)) ids.add(devId);
+    }
+  } catch (e) { /* no corporate tables (a hand-built fixture) */ }
+
   return [...ids];
 }
 

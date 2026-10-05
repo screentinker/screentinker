@@ -21,6 +21,23 @@ const REQUIRED_COLUMNS = [
   ['users', 'must_change_password', "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"],
   ['users', 'role', null],
   ['users', 'plan_id', "ALTER TABLE users ADD COLUMN plan_id TEXT DEFAULT 'free'"],
+  /*
+   * ⚠️ Every column the playlist resolver views name (lib/playlist-resolver-sql.js). The views are
+   * recreated at the END of boot and SQLite rejects a CREATE VIEW naming a missing column — so a
+   * partial schema would otherwise fail there, after this check said the database was healthy.
+   * Only the tables listed in REQUIRED_TABLES are checked; the rest are created by schema.sql.
+   */
+  ['devices', 'workspace_id', 'ALTER TABLE devices ADD COLUMN workspace_id TEXT'],
+  ['devices', 'playlist_id', 'ALTER TABLE devices ADD COLUMN playlist_id TEXT'],
+  ['devices', 'playlist_source', 'ALTER TABLE devices ADD COLUMN playlist_source TEXT'],
+  ['devices', 'wall_id', 'ALTER TABLE devices ADD COLUMN wall_id TEXT'],
+  ['devices', 'layout_id', 'ALTER TABLE devices ADD COLUMN layout_id TEXT'],
+  ['devices', 'scheduled_playlist_id', 'ALTER TABLE devices ADD COLUMN scheduled_playlist_id TEXT'],
+  ['devices', 'scheduled_layout_id', 'ALTER TABLE devices ADD COLUMN scheduled_layout_id TEXT'],
+  ['workspaces', 'organization_id', 'ALTER TABLE workspaces ADD COLUMN organization_id TEXT'],
+  ['playlists', 'workspace_id', 'ALTER TABLE playlists ADD COLUMN workspace_id TEXT'],
+  // Corporate (head office) playlists — lib/corporate/schema-sql.js is the one definition.
+  ...require('./corporate/schema-sql').REQUIRED_CORPORATE_COLUMNS,
 ];
 
 function defaultOnMissing(missing) {

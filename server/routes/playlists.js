@@ -12,6 +12,11 @@ const { parseTags, parseMeta } = require('../lib/content-tags');
 const smartPlaylist = require('../lib/smart-playlist');
 const { applyRepeatEvery, normalizeRepeatEvery } = require('../lib/repeat-every');
 const { emitMuteChanged } = require('../lib/mute-sync');
+const corpGuard = require('../lib/corporate/guard');
+const corpActor = require('../lib/corporate/actor');
+const schemaProbe = require('../lib/corporate/schema-probe');
+// Local slots and their store content (lazy: lib/corporate/fills requires the guard, which loads late).
+function corpFillsLib() { return require('../lib/corporate/fills'); }
 
 // Per-item play window: local YYYY-MM-DDTHH:MM, inclusive. Empty/null clears.
 const PLAY_STAMP_RE = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/;
@@ -28,16 +33,8 @@ function normalizePlayStamp(v) {
   if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== da) return false;
   return v;
 }
-function laterStamp(a, b) {
-  if (!a) return b || null;
-  if (!b) return a;
-  return a >= b ? a : b;
-}
-function earlierStamp(a, b) {
-  if (!a) return b || null;
-  if (!b) return a;
-  return a <= b ? a : b;
-}
+// The merge rules live in lib/play-stamps.js, shared with corporate slot composition.
+const { laterStamp, earlierStamp } = require('../lib/play-stamps');
 
 const FIT_MODES = new Set(['contain', 'cover', 'fill']);
 function normalizeFitMode(v) {
@@ -147,6 +144,18 @@ function loadPlaylistAccess(req, res, requireWrite) {
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
   }
+  /*
+   * ⚠️ CORPORATE: the ONE call that covers every write route in this file — PUT /:id, publish,
+   * discard, DELETE, every item route, selection, bulk, reorder, item schedules and /:id/assign all
+   * pass through requirePlaylistWrite. A governed playlist (corporate, or a child of one) may be
+   * changed only by a corporate author; never by an API token. lib/corporate/guard.js.
+   */
+  if (requireWrite) {
+    try { corpGuard.assertPlaylistWritable(req, playlist, req.method === 'DELETE' ? 'delete' : 'items'); } catch (e) {
+      if (corpGuard.send(res, e, req)) return null;
+      throw e;
+    }
+  }
   req.playlist = playlist;
   req.playlistCtx = ctx;
   return playlist;
@@ -202,8 +211,108 @@ function attachSlideAudio(it) {
   };
 }
 
+// The media columns every snapshot item carries, joined from content (c) and widgets (w). Shared by
+// the playlist query below and snapshotItemForRef (a slot's fallback item), so a fallback is
+// denormalized exactly like any other item and the two cannot drift.
+const SNAPSHOT_MEDIA_COLS = `COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
+           c.duration_sec as content_duration, c.remote_url, c.unstable_connection,
+           c.captions_enabled, c.captions_lang, c.subtitle_url, c.subtitle_lang,
+           c.tags AS content_tags, c.meta AS content_meta,
+           w.name as widget_name, w.widget_type, w.config as widget_config, w.updated_at as widget_rev`;
+
+/*
+ * Per-row decoration of a snapshot item (dayparts, play window, tags/meta, weight, slide audio).
+ * #74/#75: per-item schedule blocks are attached here (the player honours them in its own local
+ * time via the shared evaluator); an item with zero blocks gets no `schedules` field -> always on.
+ * _iid is only used to fetch blocks and is then dropped (snapshot stays id-free). widget_rev is
+ * widgets.updated_at, and a data-source change bumps that for the widgets bound to the changed slug
+ * (lib/data-sources/service.js bumpDependentWidgets); no workspace-wide MAX(data_sources.updated_at)
+ * here, which re-revved unrelated widgets on any rename.
+ */
+function decorateSnapshotItem(it) {
+  const blocks = it._iid ? schedulesForItem(it._iid) : [];
+  if (blocks.length) it.schedules = blocks;
+  if (!it.play_from) delete it.play_from;
+  if (!it.play_until) delete it.play_until;
+  if (it.enabled === 0) { /* kept out by the WHERE; belt */ }
+  delete it.enabled;
+  if (it.log_play === 0) it.log_play = 0; else delete it.log_play;
+  if (!it.fit_mode) delete it.fit_mode;
+  attachPlayWhen(it);
+  const tags = parseTags(it.content_tags);
+  if (tags.length) it.tags = tags;
+  delete it.content_tags;
+  const meta = parseMeta(it.content_meta);
+  if (meta && Object.keys(meta).length) it.meta = meta;
+  delete it.content_meta;
+  if (it.weight && Number(it.weight) !== 1) it.weight = Number(it.weight); else delete it.weight;
+  if (!it.repeat_every_sec) delete it.repeat_every_sec;
+  delete it._iid;
+  attachSlideAudio(it);
+  return it;
+}
+
+/**
+ * One fully denormalized snapshot item for a bare content/widget reference — a local slot's
+ * fallback (spec §3.1). The same columns and the same decoration as a playlist row, and the same
+ * live is_active/expiry rule: deactivated or expired content (or a deleted row) gives null, so an
+ * expired fallback means "skip the slot", never a dead item on screen.
+ */
+function snapshotItemForRef({ content_id = null, widget_id = null, duration_sec = null, zone_id = null } = {}) {
+  if (!content_id && !widget_id) return null;
+  if (content_id) {
+    const c = db.prepare('SELECT id, is_active, expires_at, duration_sec, mime_type FROM content WHERE id = ?').get(content_id);
+    if (!c || c.is_active === 0 || (c.expires_at !== null && c.expires_at !== undefined && Number(c.expires_at) <= Math.floor(Date.now() / 1000))) return null;
+    duration_sec = resolveItemDuration(duration_sec, c);
+  } else {
+    if (!db.prepare('SELECT 1 FROM widgets WHERE id = ?').get(widget_id)) return null;
+    duration_sec = resolveItemDuration(duration_sec, null);
+  }
+  const it = db.prepare(`
+    SELECT NULL AS _iid, ? AS content_id, ? AS widget_id, NULL AS child_playlist_id, ? AS zone_id, 0 AS sort_order,
+           ? AS duration_sec, 0 AS muted, NULL AS play_from, NULL AS play_until, 1 AS enabled, 1 AS log_play,
+           NULL AS fit_mode, NULL AS play_when, 1 AS weight, NULL AS repeat_every_sec,
+           ${SNAPSHOT_MEDIA_COLS}
+      FROM (SELECT 1) one
+      LEFT JOIN content c ON c.id = ?
+      LEFT JOIN widgets w ON w.id = ?
+  `).get(content_id, widget_id, zone_id, duration_sec, content_id, widget_id);
+  return it ? decorateSnapshotItem(it) : null;
+}
+
+/*
+ * A LOCAL SLOT row of a corporate playlist, as the snapshot sees it (spec §3.1).
+ *   keepSlots — a marker the composition replaces with each store's content
+ *               (`published_composable`; never sent to a player);
+ *   otherwise — its fallback item, or nothing. So a corporate playlist's own published_snapshot,
+ *               its preview, a trigger targeting it and an HQ screen assigned it directly NEVER
+ *               see a marker.
+ * A retired (removed) or missing slot plays nothing.
+ */
+function slotSnapshotEntry(row, slot, keepSlots) {
+  if (!slot || slot.retired_at) return null;
+  const corpFills = require('../lib/corporate/fills');
+  const fallback = (slot.fallback_content_id || slot.fallback_widget_id)
+    ? snapshotItemForRef({ content_id: slot.fallback_content_id, widget_id: slot.fallback_widget_id, duration_sec: slot.fallback_duration_sec, zone_id: row.zone_id || null })
+    : null;
+  const marker = { __slot: slot.id, zone_id: row.zone_id || null, sort_order: row.sort_order };
+  if (row.play_from) marker.play_from = row.play_from;
+  if (row.play_until) marker.play_until = row.play_until;
+  if (row.weight && Number(row.weight) !== 1) marker.weight = Number(row.weight);
+  marker.limits = corpFills.limitsOfRow(slot);
+  marker.fallback = fallback;
+  if (keepSlots) return marker;
+  return fallback ? require('../lib/corporate/compose').applyMarker({ ...fallback }, marker) : null;
+}
+
 // Build the snapshot item list for a playlist (denormalized for device payload)
-function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null) {
+/*
+ * opts (corporate playlists, spec §3.1):
+ *   keepSlots — emit local slots as markers instead of their fallbacks (published_composable)
+ *   noWeave   — skip "play every N": the weave runs after each store's content is spliced in
+ * Every existing caller passes neither, and for a playlist without slots the output is unchanged.
+ */
+function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null, opts = {}) {
   // A nesting cycle (A contains B contains A) would recurse here until the stack overflows and
   // publish/preview 500s. The old MAX_NEST_DEPTH guard was DEAD: this function recursed via
   // expandChildPlaylists which called back in with depth reset to 0. Thread the depth, and also
@@ -225,14 +334,13 @@ function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null) {
     try { userId = (db.prepare('SELECT user_id FROM playlists WHERE id = ?').get(playlistId) || {}).user_id || null; } catch (_) { userId = null; }
     return smartPlaylist.snapshotItems(db, { ...own, user_id: userId });
   }
+  // slot_id is selected LAST and deleted from ordinary rows, so a playlist without slots produces a
+  // snapshot byte-identical to one built before the column existed.
+  const hasSlots = schemaProbe.hasColumn(db, 'playlist_items', 'slot_id');
   const items = db.prepare(`
     SELECT pi.id AS _iid, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
            pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight, pi.repeat_every_sec,
-           COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
-           c.duration_sec as content_duration, c.remote_url, c.unstable_connection,
-           c.captions_enabled, c.captions_lang, c.subtitle_url, c.subtitle_lang,
-           c.tags AS content_tags, c.meta AS content_meta,
-           w.name as widget_name, w.widget_type, w.config as widget_config, w.updated_at as widget_rev
+           ${SNAPSHOT_MEDIA_COLS}${hasSlots ? ', pi.slot_id' : ''}
     FROM playlist_items pi
     LEFT JOIN content c ON pi.content_id = c.id
     LEFT JOIN widgets w ON pi.widget_id = w.id
@@ -250,33 +358,23 @@ function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null) {
       AND COALESCE(pi.enabled, 1) = 1
     ORDER BY pi.sort_order ASC
   `).all(playlistId);
-  // #74/#75: attach per-item schedule blocks (the player honours these in its own
-  // local time via the shared evaluator). An item with zero blocks gets no
-  // `schedules` field -> always on. Additive: old players ignore the field. _iid is
-  // only used here to fetch blocks and is then dropped (snapshot stays id-free).
-  // widget_rev is widgets.updated_at, and a data-source change bumps that for the widgets bound
-  // to the changed slug (lib/data-sources/service.js bumpDependentWidgets); no workspace-wide
-  // MAX(data_sources.updated_at) here, which re-revved unrelated widgets on any rename.
-  for (const it of items) {
-    const blocks = schedulesForItem(it._iid);
-    if (blocks.length) it.schedules = blocks;
-    if (!it.play_from) delete it.play_from;
-    if (!it.play_until) delete it.play_until;
-    if (it.enabled === 0) { /* kept out by the WHERE; belt */ }
-    delete it.enabled;
-    if (it.log_play === 0) it.log_play = 0; else delete it.log_play;
-    if (!it.fit_mode) delete it.fit_mode;
-    attachPlayWhen(it);
-    const tags = parseTags(it.content_tags);
-    if (tags.length) it.tags = tags;
-    delete it.content_tags;
-    const meta = parseMeta(it.content_meta);
-    if (meta && Object.keys(meta).length) it.meta = meta;
-    delete it.content_meta;
-    if (it.weight && Number(it.weight) !== 1) it.weight = Number(it.weight); else delete it.weight;
-    if (!it.repeat_every_sec) delete it.repeat_every_sec;
-    delete it._iid;
-    attachSlideAudio(it);
+  // Local slots (corporate playlists only): their rows carry no content, so they skip the item
+  // decoration and become a marker or their fallback below.
+  const slotIds = hasSlots ? [...new Set(items.filter((it) => it.slot_id).map((it) => it.slot_id))] : [];
+  const slots = new Map();
+  if (slotIds.length) {
+    for (const r of db.prepare(`SELECT * FROM corporate_slots WHERE id IN (${slotIds.map(() => '?').join(',')})`).all(...slotIds)) slots.set(r.id, r);
+  }
+  let resolved = items;
+  if (slotIds.length) {
+    resolved = [];
+    for (const it of items) {
+      if (it.slot_id) { const e = slotSnapshotEntry(it, slots.get(it.slot_id), !!opts.keepSlots); if (e) resolved.push(e); continue; }
+      delete it.slot_id;
+      resolved.push(decorateSnapshotItem(it));
+    }
+  } else {
+    for (const it of items) { if (hasSlots) delete it.slot_id; decorateSnapshotItem(it); }
   }
 
   /*
@@ -300,7 +398,19 @@ function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null) {
    * The `depth` guard below is belt-and-braces against a row written by some other path (an
    * import, a migration, a manual fix-up). It is not the primary defence and must not become it.
    */
-  const flat = expandChildPlaylists(items, _depth, [...ancestors, playlistId]);
+  const flat = expandChildPlaylists(resolved, _depth, [...ancestors, playlistId]);
+  // The composable keeps its flags: the weave runs per store, after the splice (lib/corporate/compose.js).
+  if (opts.noWeave) return flat;
+  /*
+   * ⚠️ A FILL (a store's content in head office's slot) is never woven on its own. Its items are
+   * spliced into head office's loop, and a weave here would repeat the store's list several times
+   * inside one corporate cycle (a 3-item fill published as 13) and make the slot limits count the
+   * copies. compose.applyMarker drops the flag at the splice for the same reason.
+   */
+  if (_depth === 0 && !opts.keepSlots && corpFillsLib().fillsOfPlaylist(db, playlistId).length) {
+    for (const it of flat) if (it) delete it.repeat_every_sec;
+    return flat;
+  }
   /*
    * "Play every N minutes" is woven in HERE, after nesting is flattened, so the result is still one
    * flat list and no player learns about it (lib/repeat-every.js). Sequential only: in shuffle or
@@ -308,9 +418,13 @@ function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null) {
    */
   if ((own && own.playback_order || 'sequential') !== 'sequential') {
     for (const it of flat) if (it) delete it.repeat_every_sec;
+    if (slotIds.length) flat.forEach((it, i) => { it.sort_order = i; });
     return flat;
   }
-  return applyRepeatEvery(flat);
+  const woven = applyRepeatEvery(flat);
+  // A slot that expanded to nothing leaves a gap; Tizen re-sorts by sort_order, so close it.
+  if (slotIds.length) woven.forEach((it, i) => { it.sort_order = i; });
+  return woven;
 }
 
 /** Max nesting depth. 1 = a playlist may contain playlists, but those may not. */
@@ -405,7 +519,7 @@ function markDraft(playlistId, req, summary) {
 
 // Push playlist update to all devices using this playlist. Accepts either an Express `req`
 // (route path) or a raw Socket.IO `io` (background sweep path — #157 has no request).
-function pushToDevices(playlistId, reqOrIo) {
+function pushToDevices(playlistId, reqOrIo, { skipCorporate = false } = {}) {
   try {
     const io = reqOrIo && reqOrIo.app ? reqOrIo.app.get('io') : reqOrIo;
     if (!io) return;
@@ -419,8 +533,13 @@ function pushToDevices(playlistId, reqOrIo) {
        * is for. Same shape as the trigger fan-out that selected WHERE playlist_id = ? and missed
        * every device referencing the playlist only as a trigger target.
        */
-      db.prepare('SELECT device_id AS id FROM device_resolved_playlist WHERE playlist_id = ?').all(playlistId).map((d) => d.id)
+      db.prepare(`SELECT device_id AS id FROM device_resolved_playlist WHERE playlist_id = ?${skipCorporate ? " AND IFNULL(source, '') != 'corporate'" : ''}`)
+        .all(playlistId).map((d) => d.id)
     );
+    // ⚠️ skipCorporate: a corporate publish reaches its MANDATED screens through
+    // lib/corporate/fanout.js afterPublish instead, which pushes only the screens whose composed loop
+    // (head office's items + that store's slot content) actually changed. Pushing them all here would
+    // restart every store's loop for an edit that changed nothing they play.
     /*
      * ⚠️ ALSO the devices that hold this playlist as a TRIGGER TARGET. The base-playlist query
      * alone misses them entirely: a screen can reference a playlist solely through a trigger, and
@@ -445,11 +564,14 @@ function pushToDevices(playlistId, reqOrIo) {
     try {
       // ⚠️ And it bit a FOURTH time, in the fan-out this comment is attached to: the join was on
       // devices.playlist_id, so every screen that INHERITS the parent playlist was skipped.
+      // ⚠️ Except screens a head office mandate drives: they are reached ONCE, by the corporate
+      // ancestor's own republish below, after its snapshot is fresh. Pushing them here first sent
+      // the parent's STALE snapshot and restarted their loop for nothing (critique R13).
       for (const r of db.prepare(`
         SELECT DISTINCT d.id FROM devices d
           JOIN device_resolved_playlist rp ON rp.device_id = d.id
           JOIN playlist_items pi ON pi.playlist_id = rp.playlist_id
-         WHERE pi.child_playlist_id = ?
+         WHERE pi.child_playlist_id = ? AND IFNULL(rp.source, '') != 'corporate'
       `).all(playlistId)) ids.add(r.id);
     } catch (e) { console.warn(`[playlist] ancestor fan-out failed: ${e && e.message}`); }
     for (const id of ids) {
@@ -463,8 +585,35 @@ function pushToDevices(playlistId, reqOrIo) {
 // auto-publish path both call this, so they can never drift (a "published" playlist that
 // wasn't snapshotted would be live-on-no-screen).
 function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
+  /*
+   * ⚠️ CORPORATE: the publish permission lives HERE, not only at the route (critique H6). Approvals
+   * publish, agency auto-publish, schedules and slide decks all reach this without passing
+   * loadPlaylistAccess; one check covers them all. Only judged when a request actor is present —
+   * system republishes (ancestors below, smart refresh, content expiry) run as system.
+   */
+  corpGuard.assertCanPublish(playlistId);
   const snapshotItems = buildSnapshotItems(playlistId);
   const next = JSON.stringify(snapshotItems);
+  /*
+   * ⚠️ CORPORATE (Stage B). A corporate playlist also stores its COMPOSABLE — the same list with each
+   * local slot kept as a marker, unwoven — which every mandated screen's composition is built from
+   * (lib/corporate/composition.js). Its published_snapshot stays the fallback-only list, for anything
+   * that plays the playlist directly (an HQ screen, a trigger, the preview).
+   */
+  const isCorporate = schemaProbe.hasColumn(db, 'playlists', 'corporate')
+    && !!(db.prepare('SELECT corporate FROM playlists WHERE id = ?').get(playlistId) || {}).corporate;
+  const composable = isCorporate ? JSON.stringify(buildSnapshotItems(playlistId, 0, null, { keepSlots: true, noWeave: true })) : null;
+  const corpFanout = require('../lib/corporate/fanout');
+  // What the affected mandated screens compose to NOW, before this publish changes it (null when
+  // nothing corporate is involved), so only screens whose loop really changes are pushed afterwards.
+  const corpCtx = corpFanout.beforePublish(playlistId);
+  /*
+   * ⚠️ A FILL (store content in head office's slot) is judged against the slot's limits HERE, the
+   * one chokepoint every publish passes — dashboard, approvals release, agency auto-publish, slide
+   * decks (spec §3.1, §6.2). A person is refused with the rule; system work (content expiry) marks
+   * the fill over_limit instead, so it stops playing rather than breaking the limit.
+   */
+  require('../lib/corporate/fills').judgePublish(db, playlistId, snapshotItems, { actorPresent: !!corpActor.current() });
 
   /*
    * ⚠️ CHANGE-TRIGGERED, NOT PUBLISH-TRIGGERED. If the resolved snapshot is byte-identical, write
@@ -482,13 +631,23 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
    * which Carousel proved requires a player release (CSL-9211). Deferred, and named in the design
    * doc so it is not rediscovered.
    */
-  const prev = db.prepare('SELECT status, published_snapshot, published_structure, playback_order, published_playback_order, smart_rules, published_smart_rules FROM playlists WHERE id = ?').get(playlistId);
+  /*
+   * ⚠️ published_composable is written on EVERY publish once the column exists: NULL for an ordinary
+   * playlist. A corporate playlist that is demoted, republished as ordinary and promoted again would
+   * otherwise keep the composable of its LAST CORPORATE publish, and every mandated screen would play
+   * that old loop (composition.composeInputs prefers the composable over the snapshot).
+   */
+  const hasComposable = isCorporate || schemaProbe.hasColumn(db, 'playlists', 'published_composable');
+  const prev = db.prepare(`SELECT status, published_snapshot, published_structure, playback_order, published_playback_order, smart_rules, published_smart_rules${hasComposable ? ', published_composable' : ''} FROM playlists WHERE id = ?`).get(playlistId);
   const order = normalizePlaybackOrder(prev && prev.playback_order) || 'sequential';
 
   // ⚠️ Structure is captured PRE-expansion so "discard" can restore the nesting the flat snapshot
   // cannot describe. Device-facing data stays in published_snapshot; this is never sent anywhere.
+  // ⚠️ slot_id too (a local slot placement), or discard brings a slot back as an all-NULL ghost item —
+  // the nesting audit's exact shape. Only present when set, so every other structure is unchanged.
+  const hasSlots = schemaProbe.hasColumn(db, 'playlist_items', 'slot_id');
   const structureRows = db.prepare(`
-    SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec
+    SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec${hasSlots ? ', slot_id' : ''}
       FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC
   `).all(playlistId);
   // ⚠️ Per-item schedule blocks (dayparting/validity) must be captured too, or a discard rebuilds
@@ -496,11 +655,13 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   // fetch the blocks and is dropped from the stored structure.
   const structure = JSON.stringify(structureRows.map((row) => {
     const blocks = schedulesForItem(row.id);
-    const { id, ...rest } = row;
-    return blocks.length ? { ...rest, schedules: blocks } : rest;
+    const { id, slot_id, ...rest } = row;
+    const out = blocks.length ? { ...rest, schedules: blocks } : rest;
+    return slot_id ? { ...out, slot_id } : out;
   }));
 
-  if (prev && prev.status === 'published' && prev.published_snapshot === next && (prev.published_playback_order || 'sequential') === order) {
+  if (prev && prev.status === 'published' && prev.published_snapshot === next && (prev.published_playback_order || 'sequential') === order
+      && (!hasComposable || (prev.published_composable || null) === composable)) {
     /*
      * The resolved list is unchanged, so no device is touched and nothing restarts — that is the
      * point of this early exit. But STRUCTURE can differ while the flat output does not: replacing
@@ -516,11 +677,22 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
     if ((prev.published_smart_rules || null) !== (prev.smart_rules || null)) {
       db.prepare('UPDATE playlists SET published_smart_rules = smart_rules WHERE id = ?').run(playlistId);
     }
+    // A fill whose limit state flipped (judgePublish) changes what screens play with no new snapshot.
+    corpFanout.afterPublish(corpCtx, reqOrIo);
     return { changed: false, items: snapshotItems.length };
   }
-  db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, published_playback_order = ?, published_smart_rules = smart_rules, updated_at = strftime('%s','now') WHERE id = ?")
-    .run(next, structure, order, playlistId);
-  pushToDevices(playlistId, reqOrIo);
+  /*
+   * published_rev moves on every write of the snapshot, so a cached composition built from the old
+   * one knows it is stale (spec §1.1). A hand-built test schema without the column skips it.
+   */
+  const hasRev = schemaProbe.hasColumn(db, 'playlists', 'published_rev');
+  // The composable's pairing with this snapshot, so a snapshot some other version writes is noticed.
+  const hasPair = hasComposable && schemaProbe.hasColumn(db, 'playlists', 'published_composable_of');
+  const pair = composable ? require('../lib/corporate/digest').snapshotDigest(next) : null;
+  db.prepare(`UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, published_playback_order = ?, published_smart_rules = smart_rules${hasComposable ? ', published_composable = ?' : ''}${hasPair ? ', published_composable_of = ?' : ''}${hasRev ? ', published_rev = published_rev + 1' : ''}, updated_at = strftime('%s','now') WHERE id = ?`)
+    .run(...[next, structure, order, ...(hasComposable ? [composable] : []), ...(hasPair ? [pair] : []), playlistId]);
+  pushToDevices(playlistId, reqOrIo, { skipCorporate: isCorporate });
+  corpFanout.afterPublish(corpCtx, reqOrIo);
   try {
     const row = db.prepare('SELECT name, workspace_id FROM playlists WHERE id = ?').get(playlistId);
     require('../lib/plugins/hooks').emit('playlist.published', {
@@ -551,7 +723,10 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   `).all(playlistId)) {
     if (seen.has(anc.id)) continue;
     seen.add(anc.id);
-    publishPlaylist(anc.id, reqOrIo, seen);
+    // As system: the CHILD's publish was the authorised act; refreshing the parent's copy of it is
+    // bookkeeping that must not be re-judged against the parent (a store's child can never sit in
+    // a corporate parent — nesting refuses a cross-workspace child).
+    corpActor.runAsSystem(() => publishPlaylist(anc.id, reqOrIo, seen));
   }
 
   return { changed: true, items: snapshotItems.length };
@@ -579,6 +754,23 @@ function emptyChildReference(playlistId) {
   return null;
 }
 
+/** Map<fillPlaylistId, {slot_id, slot_name, playlist_id, playlist_name, scope_kind, scope_id, fill_state}> for a workspace. */
+function fillInfoByPlaylist(workspaceId) {
+  const out = new Map();
+  if (!workspaceId) return out;
+  try {
+    for (const r of db.prepare(`SELECT f.id AS fill_id, f.fill_playlist_id, f.scope_kind, f.scope_id, f.fill_state,
+                                       s.id AS slot_id, s.name AS slot_name, p.id AS playlist_id, p.name AS playlist_name
+                                  FROM corporate_slot_fills f JOIN corporate_slots s ON s.id = f.slot_id
+                                  JOIN playlists p ON p.id = s.playlist_id
+                                 WHERE f.workspace_id = ?`).all(workspaceId)) {
+      const { fill_playlist_id, ...rest } = r;
+      out.set(fill_playlist_id, rest);
+    }
+  } catch (_) { /* no corporate tables */ }
+  return out;
+}
+
 // Phase 2.2k: list scoped to caller's current workspace. No platform_admin
 // bypass - cross-workspace view comes from switch-workspace, matching the
 // precedent established across all other migrated routes.
@@ -603,6 +795,12 @@ router.get('/', (req, res) => {
     GROUP BY p.id
     ORDER BY p.name ASC
   `).all(req.workspaceId);
+  // Screens a head office mandate has paused this playlist on (would play it, play head office's).
+  const paused = require('../lib/corporate/resolve').pausedCounts(db, req.workspaceId);
+  for (const p of playlists) p.paused_count = paused.get(p.id) || 0;
+  // Store content for head office's local slots: the list badges it "Your slot" (spec §7.10).
+  const fillOf = fillInfoByPlaylist(req.workspaceId);
+  for (const p of playlists) if (fillOf.has(p.id)) p.corporate_slot = fillOf.get(p.id);
   res.json(playlists);
 });
 
@@ -693,7 +891,16 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
       })),
     };
   }
-  res.json({ ...req.playlist, items: decorateEditorItems(items), item_count: items.length, display_count: displayCount, layout, smart });
+  const pausedCount = require('../lib/corporate/resolve').pausedCounts(db, req.playlist.workspace_id).get(req.params.id) || 0;
+  // Corporate: slot rows carry their slot (name, limits, fallback) so the editor can draw them as
+  // slots; store slot content says which slot it fills.
+  const slotIds = [...new Set(items.map((it) => it.slot_id).filter(Boolean))];
+  if (slotIds.length) {
+    const slots = new Map(db.prepare(`SELECT * FROM corporate_slots WHERE id IN (${slotIds.map(() => '?').join(',')})`).all(...slotIds).map((r) => [r.id, r]));
+    for (const it of items) if (it.slot_id && slots.has(it.slot_id)) it.slot = slots.get(it.slot_id);
+  }
+  const corporateSlot = fillInfoByPlaylist(req.playlist.workspace_id).get(req.params.id) || null;
+  res.json({ ...req.playlist, items: decorateEditorItems(items), item_count: items.length, display_count: displayCount, paused_count: pausedCount, layout, smart, ...(corporateSlot ? { corporate_slot: corporateSlot } : {}) });
 });
 
 // #104: device-free draft preview payload. Same shape the device player consumes
@@ -741,6 +948,14 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
   if (req.body.smart_rules !== undefined) {
     // A generated playlist (a slide deck's, a schedule's throwaway) is rebuilt by its owner; rules
     // there would silently override what that owner publishes.
+    if (req.body.smart_rules !== null && req.playlist.corporate) {
+      return corpGuard.send(res, corpGuard.err('CORPORATE_SMART'), req);
+    }
+    // Store slot content is a plain list of items (decision D4): rules would pick items the slot's
+    // limits were never checked against.
+    if (req.body.smart_rules !== null && corpFillsLib().fillsOfPlaylist(db, req.params.id).length) {
+      return corpGuard.send(res, corpGuard.err('FILL_FLAT'), req);
+    }
     if (req.body.smart_rules !== null && req.playlist.is_auto_generated) {
       return res.status(400).json({ error: 'Auto-generated playlists cannot become smart playlists' });
     }
@@ -849,15 +1064,20 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
     // Re-insert from snapshot, skipping items whose content/widget was deleted
     // muted rides along too: #129's per-item mute was dropped by the old restore, so discarding an
     // unrelated draft edit silently un-muted every item that had been muted before publish.
-    const insert = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    // ⚠️ slot_id rides along (a local slot placement, published_structure carries it): without it a
+    // discarded corporate draft brought every slot back as an all-NULL ghost item (spec §6.1-1).
+    const hasSlots = schemaProbe.hasColumn(db, 'playlist_items', 'slot_id');
+    const insert = db.prepare(`INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec${hasSlots ? ', slot_id' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hasSlots ? ', ?' : ''})`);
     const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
+    const restoredSlots = [];
     for (const item of publishedItems) {
       try {
         const r = insert.run(req.params.id, item.content_id || null, item.widget_id || null,
                    item.child_playlist_id || null, item.zone_id || null, item.sort_order, item.duration_sec,
                    item.muted ? 1 : 0, item.play_from || null, item.play_until || null,
                    item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when ? (typeof item.play_when === 'string' ? item.play_when : JSON.stringify(item.play_when)) : null, item.weight || 1,
-                   item.repeat_every_sec || null);
+                   item.repeat_every_sec || null, ...(hasSlots ? [item.slot_id || null] : []));
+        if (item.slot_id) restoredSlots.push(item.slot_id);
         // Restore per-item schedule blocks (DELETE above cascaded them away). Both the structure and
         // the snapshot carry them in the same {days,start,end,...} shape.
         const blocks = Array.isArray(item.schedules) ? item.schedules : [];
@@ -873,6 +1093,9 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
         throw e;
       }
     }
+    // A slot removed in the draft was retired (kept, with its stores' content); bringing its placement
+    // back un-retires it (spec §1.3).
+    for (const sid of restoredSlots) db.prepare('UPDATE corporate_slots SET retired_at = NULL WHERE id = ?').run(sid);
     // A smart playlist's rules are part of what was published; discarding a rule edit restores them.
     db.prepare("UPDATE playlists SET status = 'published', playback_order = COALESCE(published_playback_order, playback_order, 'sequential'), smart_rules = published_smart_rules, updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
   });
@@ -923,6 +1146,19 @@ router.delete('/:id', requirePlaylistWrite, (req, res) => {
      WHERE pi.child_playlist_id = ?
      ORDER BY p.name
   `).all(req.params.id).map((r) => r.name);
+  /*
+   * ⚠️ And refuse a corporate playlist that head office has assigned somewhere: the mandate's
+   * foreign key is NO ACTION precisely so this cannot delete the content out from under the
+   * screens. Answered before the DELETE, naming where it plays.
+   */
+  if (req.playlist.corporate) {
+    const mandates = db.prepare('SELECT id, target_kind, target_id FROM corporate_mandates WHERE playlist_id = ?').all(req.params.id);
+    if (mandates.length) {
+      const screens = db.prepare("SELECT COUNT(*) AS n FROM device_resolved_playlist WHERE playlist_id = ? AND source = 'corporate'").get(req.params.id).n;
+      return corpGuard.send(res, corpGuard.err('CORPORATE_MANDATED', { n: mandates.length, screens },
+        { mandates: mandates.map((m) => ({ ...m, label: corpGuard.targetLabel(db, m) })) }), req);
+    }
+  }
   if (usedBy.length) {
     const shown = usedBy.slice(0, 3).map((n) => `"${n}"`).join(', ');
     const more = usedBy.length > 3 ? ` and ${usedBy.length - 3} more` : '';
@@ -933,7 +1169,14 @@ router.delete('/:id', requirePlaylistWrite, (req, res) => {
     });
   }
 
+  // CORPORATE: a store's slot content plays on screens that never resolve to it (they resolve to
+  // head office's playlist), so `affected` above misses them. Collected BEFORE the delete — the FK
+  // cascade removes the fill row with it, and those screens fall back to the next level or the slot's
+  // fallback (spec §3.4).
+  const fillScreens = corpFillsLib().devicesPlayingFill(db, req.params.id);
+
   db.prepare('DELETE FROM playlists WHERE id = ?').run(req.params.id);
+  if (fillScreens.length) require('../lib/corporate/fanout').pushDevices(req, fillScreens);
 
   // Tell them. The database detaches correctly, but nothing was emitted — so a screen kept showing
   // the deleted playlist until it happened to reconnect or was restarted. You delete a playlist to
@@ -998,6 +1241,11 @@ function validateBlocks(blocks) {
 function itemInPlaylist(itemId, playlistId) {
   return db.prepare('SELECT id FROM playlist_items WHERE id = ? AND playlist_id = ?').get(itemId, playlistId);
 }
+/** Is this row a local slot placement (corporate playlists only)? */
+function isSlotRow(itemId) {
+  if (!schemaProbe.hasColumn(db, 'playlist_items', 'slot_id')) return false;
+  return !!(db.prepare('SELECT slot_id FROM playlist_items WHERE id = ?').get(itemId) || {}).slot_id;
+}
 
 router.get('/:id/items/:itemId/schedules', requirePlaylistRead, (req, res) => {
   const item = itemInPlaylist(req.params.itemId, req.params.id);
@@ -1009,6 +1257,9 @@ router.get('/:id/items/:itemId/schedules', requirePlaylistRead, (req, res) => {
 router.put('/:id/items/:itemId/schedules', requirePlaylistWrite, (req, res) => {
   const item = itemInPlaylist(req.params.itemId, req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
+  // A slot's times are its store items' times; a block on the slot row would be dropped silently at
+  // composition (the R9 shape nested rows already have), so it is refused.
+  if (isSlotRow(item.id)) return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_SCHEDULE'), req);
   const blocks = req.body.blocks;
   const err = validateBlocks(blocks);
   if (err) return res.status(400).json({ error: err });
@@ -1036,6 +1287,10 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
     }
     const { content_id, widget_id, child_playlist_id, sort_order, zone_id } = req.body;
     let { duration_sec } = req.body;
+    // A slot placement is made by the corporate slot routes (Stage B), never as an ordinary item.
+    if (req.body.slot_id !== undefined && req.body.slot_id !== null) {
+      return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_FIELD'), req);
+    }
 
     if (!content_id && !widget_id && !child_playlist_id) {
       return res.status(400).json({ error: 'content_id, widget_id or child_playlist_id required' });
@@ -1061,7 +1316,7 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
      */
     if (child_playlist_id) {
       const bad = require('../lib/playlist-nesting').nestingError(db, req.params.id, child_playlist_id, req.playlist.workspace_id);
-      if (bad) return res.status(bad.status).json({ error: bad.error });
+      if (bad) return res.status(bad.status).json({ error: bad.error, ...(bad.code ? { code: bad.code } : {}) });
     }
     // 0 is allowed through here (it is the live "stay until skipped" dwell); resolveItemDuration
     // below coerces a 0 on any NON-live item back to a safe default, so a 0ms advance can never
@@ -1124,6 +1379,10 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
       if (!zone) return res.status(400).json({ error: 'zone_id not found in this workspace' });
     }
 
+    // CORPORATE: store content for head office's slot is flat, bounded and within the slot's limits.
+    // Early, for a good message; publishPlaylist holds the authoritative check.
+    corpFillsLib().assertCanAdd(db, req.params.id, [{ content_id: content_id || null, widget_id: widget_id || null, child_playlist_id: child_playlist_id || null, duration_sec }]);
+
     // Auto-increment sort_order if not specified
     let order = sort_order;
     if (order === undefined || order === null) {
@@ -1156,6 +1415,8 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
 
     res.status(201).json(item);
   } catch (err) {
+    // A backstop refusal is an answer, not a server fault.
+    if (corpGuard.send(res, err, req)) return;
     console.error('Failed to add playlist item:', err);
     res.status(500).json({ error: 'Failed to add item' });
   }
@@ -1166,6 +1427,33 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
   const item = db.prepare('SELECT * FROM playlist_items WHERE id = ? AND playlist_id = ?')
     .get(req.params.itemId, req.params.id);
   if (!item) return res.status(404).json({ error: 'item not found' });
+  const has = (k) => Object.prototype.hasOwnProperty.call(req.body, k);
+  /*
+   * ⚠️ A LOCAL SLOT ROW (spec §4.7). Swapping content into it would leave slot_id standing beside a
+   * content_id — the nesting audit's ghost-row shape — so it is refused; a slot has no interval of
+   * its own; and mute belongs to the items stores put in it, so it is ignored here.
+   */
+  if (item.slot_id) {
+    if (has('content_id') || has('widget_id')) return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_SWAP'), req);
+    if (has('repeat_every_sec') && normalizeRepeatEvery(req.body.repeat_every_sec)) return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_REPEAT'), req);
+    delete req.body.muted;
+  }
+  // A swap inside store slot content: the new item must be a kind the slot allows (limits are
+  // judged at publish, where an over-limit draft is refused with the totals).
+  if (has('content_id') || has('widget_id')) {
+    try {
+      const fl = corpFillsLib();
+      if (fl.fillsOfPlaylist(db, req.params.id).length) {
+        const shape = fl.itemShape(db, { content_id: req.body.content_id || null, widget_id: req.body.widget_id || null, duration_sec: item.duration_sec });
+        const others = fl.draftItems(db, req.params.id).filter((r) => String(r.id) !== String(item.id));
+        fl.assertFillItems(db, req.params.id, [...others, shape]);
+      }
+    } catch (e) {
+      // Over the count/seconds limit already (head office lowered it) must not block a swap that
+      // fixes the TYPE; only a FLAT/LIVE/TYPE refusal of the new item stops it.
+      if (!(e && e.code === 'FILL_LIMIT')) { if (corpGuard.send(res, e, req)) return; throw e; }
+    }
+  }
 
   const { sort_order, duration_sec, zone_id } = req.body;
   const updates = [];
@@ -1318,6 +1606,9 @@ router.delete('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
   const item = db.prepare('SELECT * FROM playlist_items WHERE id = ? AND playlist_id = ?')
     .get(req.params.itemId, req.params.id);
   if (!item) return res.status(404).json({ error: 'item not found' });
+  // "Remove slot" (DELETE /api/corporate/slots/:id) retires the slot so discard/restore can bring it
+  // back with its stores' content; a bare row delete would orphan it instead.
+  if (item.slot_id) return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_REMOVE'), req);
 
   db.prepare('DELETE FROM playlist_items WHERE id = ?').run(req.params.itemId);
   markDraft(req.params.id, req, 'Removed item');
@@ -1330,6 +1621,9 @@ router.post('/:id/items/:itemId/duplicate', requirePlaylistWrite, (req, res) => 
   const item = db.prepare('SELECT * FROM playlist_items WHERE id = ? AND playlist_id = ?')
     .get(req.params.itemId, req.params.id);
   if (!item) return res.status(404).json({ error: 'item not found' });
+  // A slot is placed once (unique index): copying the row would 500, dropping slot_id a ghost.
+  if (item.slot_id) return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_DUPLICATE'), req);
+  try { corpFillsLib().assertCanAdd(db, req.params.id, [item]); } catch (e) { if (corpGuard.send(res, e, req)) return; throw e; }
 
   const copy = db.transaction(() => {
     const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
@@ -1423,6 +1717,15 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
         return val;
       };
       const added = [];
+      // CORPORATE: store slot content stays flat and within head office's limits. A pasted nested
+      // playlist is refused outright (the backstop's FILL_FLAT would refuse the row anyway); the rest
+      // is counted against the slot before anything is written. A slot row never pastes: it has no
+      // content of its own, so the kinds check below already drops it (and slot_id is never read).
+      if (corpFillsLib().fillsOfPlaylist(db, req.params.id).length) {
+        if (incoming.some((it) => it && it.child_playlist_id)) return corpGuard.send(res, corpGuard.err('FILL_FLAT'), req);
+        corpFillsLib().assertCanAdd(db, req.params.id, incoming.filter((it) => it && [it.content_id, it.widget_id].filter(Boolean).length === 1)
+          .map((it) => ({ content_id: it.content_id || null, widget_id: it.widget_id || null, duration_sec: it.duration_sec || 10 })));
+      }
       db.transaction(() => {
         for (const it of incoming) {
           const kinds = [it.content_id, it.widget_id, it.child_playlist_id].filter(Boolean);
@@ -1475,6 +1778,16 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
     const sel = loadSelectionItems(req.params.id, req.body.ids);
     if (sel.error) return res.status(sel.status).json({ error: sel.error });
     const rows = sel.rows;
+    // Local slot rows (spec §4.7): removed only by "Remove slot", never copied, never dayparted.
+    if (rows.some((r) => r.slot_id)) {
+      if (action === 'delete') return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_REMOVE'), req);
+      if (action === 'duplicate') return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_DUPLICATE'), req);
+      if (action === 'schedules') return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_SCHEDULE'), req);
+    }
+    if (action === 'duplicate') corpFillsLib().assertCanAdd(db, req.params.id, rows);
+    if (action === 'transition' && req.body.widget_id) {
+      corpFillsLib().assertCanAdd(db, req.params.id, rows.map(() => ({ widget_id: req.body.widget_id, duration_sec: 1 })));
+    }
 
     if (action === 'delete') {
       const del = db.prepare('DELETE FROM playlist_items WHERE id = ? AND playlist_id = ?');
@@ -1621,6 +1934,8 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
 
     return res.status(400).json({ error: 'unknown action' });
   } catch (err) {
+    // A corporate refusal (fill limits, or a backstop RAISE) is an answer, not a server fault.
+    if (corpGuard.send(res, err, req)) return undefined;
     console.error('selection action failed:', err);
     return res.status(500).json({ error: 'Failed to apply selection' });
   }
@@ -1690,6 +2005,24 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
       ready.push({ content_id: cid, duration_sec: resolveItemDuration(undefined, content) });
     }
 
+    /*
+     * CORPORATE: into store slot content, each item must be a kind the slot allows (refused ones are
+     * itemised like any other skip), and the whole batch must fit the slot's limits — refused whole,
+     * because which half of a party to keep is the operator's call, not ours.
+     */
+    const fl = corpFillsLib();
+    if (ready.length && fl.fillsOfPlaylist(db, req.params.id).length) {
+      const fitting = [];
+      for (const r of ready) {
+        const v = fl.violationFor(db, req.params.id, [fl.itemShape(db, r)]);
+        if (v && v.code !== 'FILL_LIMIT') skipped.push({ content_id: r.content_id, reason: corpGuard.err(v.code, v.vars).message, code: v.code });
+        else fitting.push(r);
+      }
+      ready.length = 0;
+      ready.push(...fitting);
+      if (ready.length) fl.assertCanAdd(db, req.params.id, ready);
+    }
+
     let inserted = [];
     if (ready.length) {
       const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
@@ -1726,6 +2059,7 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
 
     res.status(inserted.length ? 201 : 400).json({ added: inserted, skipped });
   } catch (err) {
+    if (corpGuard.send(res, err, req)) return;
     console.error('Failed to bulk-add playlist items:', err);
     res.status(500).json({ error: 'Failed to add items' });
   }
@@ -1773,6 +2107,11 @@ router.post('/:id/assign', requirePlaylistWrite, (req, res) => {
   if (!device) return res.status(404).json({ error: 'Device not found' });
   if (device.workspace_id !== req.playlist.workspace_id) {
     return res.status(403).json({ error: 'Device is not in this playlist\'s workspace' });
+  }
+  // CORPORATE: a device override on a mandated screen would never play (the mandate outranks it).
+  try { corpGuard.assertNotMandated(req, device_id); } catch (e) {
+    if (corpGuard.send(res, e, req)) return;
+    throw e;
   }
 
   // The one action that genuinely means "this screen, this playlist" — stamp it as an override so

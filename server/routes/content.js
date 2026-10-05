@@ -604,6 +604,16 @@ function checkContentWrite(req, res) {
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
   }
+  /*
+   * ⚠️ CORPORATE: media head office's playlist plays (directly, through a child, as a slot
+   * fallback, or still in its published copy) may be changed only by a corporate author. Every
+   * caller of this helper mutates — PUT, replace (same id, new bytes), subtitle, delete — and the
+   * delete would otherwise cascade the item out of the corporate playlist.
+   */
+  try { require('../lib/corporate/guard').assertMediaWritable(req, 'content', content.id); } catch (e) {
+    if (require('../lib/corporate/guard').send(res, e, req)) return null;
+    throw e;
+  }
   return content;
 }
 
@@ -616,6 +626,11 @@ function contentWritable(req, content) {
   const ctx = ws && accessContext(req.user.id, req.user.role, ws);
   if (!ctx) return false;
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return false;
+  // CORPORATE: same rule as checkContentWrite (batch delete / move of head office's media).
+  try { require('../lib/corporate/guard').assertMediaWritable(req, 'content', content.id); } catch (e) {
+    if (e && e.name === 'CorporateError') return false;
+    throw e;
+  }
   return true;
 }
 
@@ -626,6 +641,46 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // playlist_items). Returns the device ids whose playlists referenced it so the caller can push
 // updates. Pure DB+FS, no HTTP. `content.id` MUST be a validated UUID (LIKE scrub) and the
 // caller MUST have authorized the write. File unlinks are wrapped so they never throw.
+/*
+ * ⚠️ CORPORATE (spec §3.4). The same scrub for what a mandated screen plays, which no snapshot holds
+ * whole: a corporate playlist's published_composable (its items, and its slots' fallbacks) and every
+ * cached composition. Each scrubbed playlist's published_rev moves, so any composition built from the
+ * old copy is stale on its next read; the cache rows naming the content are dropped outright. The
+ * screens of a scrubbed store fill are added to `affected`: they never resolve to the fill itself.
+ */
+function scrubCorporate(id, workspaceId, affected, scrubbed) {
+  try {
+    const probe = require('../lib/corporate/schema-probe');
+    if (!probe.hasColumn(db, 'playlists', 'published_composable')) return;
+    // ⚠️ `scrubbed` (the snapshots the caller just rewrote) is passed in rather than re-queried: by now
+    // those snapshots no longer contain the id, so a LIKE here would find none of them.
+    const touched = new Set(scrubbed || []);
+    for (const pl of db.prepare('SELECT id, published_composable FROM playlists WHERE workspace_id = ? AND published_composable LIKE ?').all(workspaceId, `%${id}%`)) {
+      let list;
+      try { list = JSON.parse(pl.published_composable); } catch (_) { continue; }
+      if (!Array.isArray(list)) continue;
+      let changed = false;
+      const out = [];
+      for (const el of list) {
+        if (el && el.__slot) {
+          if (el.fallback && el.fallback.content_id === id) { out.push({ ...el, fallback: null }); changed = true; } else out.push(el);
+        } else if (el && el.content_id === id) { changed = true; } else out.push(el);
+      }
+      if (changed) { db.prepare('UPDATE playlists SET published_composable = ? WHERE id = ?').run(JSON.stringify(out), pl.id); touched.add(pl.id); }
+    }
+    // Every playlist whose published copy named it (snapshot or composable) moves its rev, so any
+    // composition built from the old copy is stale on its next read.
+    const bump = db.prepare('UPDATE playlists SET published_rev = published_rev + 1 WHERE id = ?');
+    const fills = require('../lib/corporate/fills');
+    for (const pid of touched) {
+      bump.run(pid);
+      // A store's slot content: its screens resolve to head office's playlist, never to the fill.
+      for (const d of fills.devicesPlayingFill(db, pid)) affected.push(d);
+    }
+    db.prepare('DELETE FROM corporate_compositions WHERE snapshot LIKE ?').run(`%${id}%`);
+  } catch (e) { console.warn(`[content] corporate scrub failed for ${id}: ${e && e.message}`); }
+}
+
 function purgeContentRow(content) {
   const id = content.id;
   unlinkIfUnreferenced(content.filepath, id, 'filepath');
@@ -655,12 +710,15 @@ function purgeContentRow(content) {
   const snapshotPlaylists = db.prepare(
     "SELECT id, published_snapshot FROM playlists WHERE workspace_id = ? AND published_snapshot LIKE ?"
   ).all(content.workspace_id, `%${id}%`);
+  const scrubbed = [];
   for (const pl of snapshotPlaylists) {
     try {
       const items = JSON.parse(pl.published_snapshot);
       const filtered = items.filter(item => item.content_id !== id);
       if (filtered.length !== items.length) {
         db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?').run(JSON.stringify(filtered), pl.id);
+        require('../lib/corporate/digest').followSnapshot(db, pl.id, pl.published_snapshot, JSON.stringify(filtered));
+        scrubbed.push(pl.id);
         // ⚠️ The snapshot, not playlist_items, is what screens play. A smart playlist (or a parent
         // that flattened one) holds this content with no playlist_items row, so the join above misses
         // its screens; and the later smart refresh rebuilds a list identical to this scrubbed one, so
@@ -669,6 +727,7 @@ function purgeContentRow(content) {
       }
     } catch (e) { /* corrupt snapshot, skip */ }
   }
+  scrubCorporate(id, content.workspace_id, affected, scrubbed);
 
   db.prepare('DELETE FROM content WHERE id = ?').run(id);
   return affected;
@@ -1022,6 +1081,9 @@ router.put('/:id/replace', upload.single('file'), async (req, res) => {
 
   const affected = devicesPlayingContent(req.params.id);
   pushContentUpdates(req, affected);
+  // CORPORATE: a replaced video can be LONGER than a store slot allows. Re-judge every slot fill that
+  // plays it; one now over the limit stops playing (over_limit) until the store fixes it (spec §3.4).
+  try { require('../lib/corporate/fanout').recheckFillsForContent(req, req.params.id); } catch (e) { console.warn(`[content] fill re-check failed: ${e && e.message}`); }
 
   res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
 });

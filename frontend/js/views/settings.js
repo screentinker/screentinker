@@ -4,6 +4,7 @@ import { showToast } from '../components/toast.js';
 import { getLanguage, setLanguage, getAvailableLanguages, t } from '../i18n.js';
 import { esc, isPlatformAdmin } from '../utils.js';
 import { resetBranding, applyAccent } from '../branding.js';
+import { mountCorporateSettings } from '../components/corporate-settings.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
@@ -84,6 +85,10 @@ export async function render(container) {
          is the most security-relevant setting a tenant has, so it is not shown to members who
          cannot change it. Instance-wide providers are the operator's business and are configured
          by environment, not here. -->
+    <!-- Head office (corporate) playlists and emergency alerts. Org owners and admins only;
+         components/corporate-settings.js fills it, and leaves it hidden for everyone else. -->
+    <div class="settings-section" id="corporateCard" style="display:none"></div>
+
     <div class="settings-section" id="ssoCard" style="display:none">
       <h3>${t('sso.title')}</h3>
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${t('sso.blurb')}</p>
@@ -1395,6 +1400,7 @@ export async function render(container) {
   });
 
   loadSso();
+  mountCorporateSettings(document.getElementById('corporateCard'));
 
 
   document.getElementById('createTokenBtn')?.addEventListener('click', async () => {

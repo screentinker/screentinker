@@ -3,6 +3,7 @@ import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge } from '../utils.js';
 import { t } from '../i18n.js';
+import * as cui from '../components/corporate-ui.js';
 
 const API = (url, opts = {}) => {
   // ⚠️ This helper bypasses api.js's routing, so it must ask the same question itself.
@@ -110,6 +111,7 @@ async function renderWallEditor(container, wallId) {
       api.getDevices(),
       api.getPlaylists(),
     ]);
+    wall.__corp = (await cui.workspaceCoverage({ force: true })).walls[wallId] || null;
   } catch { container.innerHTML = `<div class="empty-state"><h3>${t('wall.not_found')}</h3></div>`; return; }
 
   // Local state — server-roundtripped on Save. Backfill from grid math when
@@ -294,6 +296,35 @@ async function renderWallEditor(container, wallId) {
       </div>
     </div>
   `;
+
+  /*
+   * Head office (spec §4.4, §7.10): its playlist plays across this wall, and a geometry, member,
+   * playlist or delete change could split the wall or push a panel off the canvas — so for anyone
+   * but an org admin those are head office's (the server refuses: CORPORATE_MEMBERSHIP). Save layout,
+   * Set playlist and Delete carry the lock and explain on click; arranging on the canvas is local
+   * until saved, so it stays usable as a preview.
+   */
+  if (wall.__corp) {
+    const c = wall.__corp;
+    const banner = document.createElement('div');
+    banner.className = 'corp-notice';
+    banner.innerHTML = `${cui.chip(c.dark ? t('corp.badge.dark') : t('corp.badge.locked'), c.dark ? 'dark' : 'hq', t('corp.tip.locked'), { lock: true })}
+      ${esc(c.dark ? t('corp.wall.dark') : t('corp.wall.plays', { name: c.playlist_name || '' }))}${c.locked ? ' ' + esc(t('corp.wall.locked')) : ''}`;
+    container.querySelector('.page-header').after(banner);
+    if (c.locked) {
+      const ids = ['saveLayoutBtn', 'deleteWallBtn', 'setPlaylistBtn'];
+      ids.forEach((id) => { const el = document.getElementById(id); if (el) { el.dataset.corpLocked = 'wall'; el.title = t('corp.wall.locked'); } });
+      const guardClick = (e) => {
+        const el = e.target.closest && e.target.closest('[data-corp-locked]');
+        if (!el) return;
+        e.preventDefault(); e.stopImmediatePropagation();
+        cui.explainLocked({ text: t('corp.wall.locked_detail', { wall: wall.name, name: c.playlist_name || '' }) });
+      };
+      // On the ancestors, in the capture phase, so it runs before the buttons' own handlers.
+      container.querySelector('.page-header').addEventListener('click', guardClick, true);
+      document.getElementById('setPlaylistBtn')?.parentElement.addEventListener('click', guardClick, true);
+    }
+  }
 
   const canvas = document.getElementById('wallCanvas');
 
@@ -836,7 +867,9 @@ async function renderWallEditor(container, wallId) {
         canvas_x: Math.round(s.x), canvas_y: Math.round(s.y),
         canvas_width: Math.round(s.w), canvas_height: Math.round(s.h),
       }));
-      await API(`/walls/${wallId}/devices`, { method: 'PUT', body: JSON.stringify({ devices: payload }) });
+      // Through api.js, not the local API() helper: that one never rejects, so a refusal (head office
+      // drives this wall, or store triggers it would hide) used to be reported as "Layout saved".
+      await cui.withImpactAck((o) => api.setWallDevices(wallId, payload, o));
       // Re-fetch master device list so wall_id changes propagate to the sidebar
       devices = await api.getDevices();
       dirty = false;
@@ -844,7 +877,7 @@ async function renderWallEditor(container, wallId) {
       btn.disabled = true;
       btn.classList.remove('btn-primary');
       showToast('Layout saved', 'success');
-    } catch (err) { showToast(err.message, 'error'); }
+    } catch (err) { showToast(err.message, err.cancelled ? 'info' : 'error'); }
   });
 
   document.getElementById('renameWallBtn').addEventListener('click', async () => {

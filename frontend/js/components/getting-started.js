@@ -19,7 +19,7 @@ import { api } from '../api.js';
 // Pure: given what the account holds, which steps are done and which is next. Separated from the
 // DOM so the logic that decides "you are finished" is testable — a checklist that congratulates
 // you too early is worse than none.
-export function computeSteps({ devices = [], content = [], playlists = [] } = {}) {
+export function computeSteps({ devices = [], content = [], playlists = [], headOfficeDeviceIds = [] } = {}) {
   const hasDevice = devices.length > 0;
   const hasContent = content.length > 0;
   /*
@@ -56,7 +56,14 @@ export function computeSteps({ devices = [], content = [], playlists = [] } = {}
    * A layout with no playlist is still not "live", so layout_id alone no longer counts either.
    */
   const publishedIds = new Set(playlists.filter((p) => p.published_snapshot).map((p) => p.id));
-  const isAssigned = devices.some((d) => d.playlist_id && publishedIds.has(d.playlist_id));
+  /*
+   * A screen head office's playlist drives is live too — and it is the store's only possible state:
+   * the store can't assign anything to it, so without this the step could never be ticked and its
+   * button would point at something the store may not do. (A mandate needs a published playlist;
+   * the caller leaves out screens head office turned off.)
+   */
+  const headOffice = new Set(headOfficeDeviceIds || []);
+  const isAssigned = devices.some((d) => (d.playlist_id && publishedIds.has(d.playlist_id)) || headOffice.has(d.id));
 
   const steps = [
     {
@@ -247,7 +254,7 @@ export async function mount(host, opts = {}) {
   if (isDismissed()) return hide();
 
   try {
-    const [d, c, p] = await Promise.all([
+    const [d, c, p, corp] = await Promise.all([
       devices || api.getDevices().catch(() => []),
       /*
        * ⚠️ A BARE getContent() ON PURPOSE, and the only one left in the app. Everywhere else this
@@ -259,8 +266,12 @@ export async function mount(host, opts = {}) {
        */
       content || api.getContent().catch(() => []),
       playlists || api.getPlaylists().catch(() => []),
+      // Which screens head office drives (empty on every install that never uses the feature).
+      (api.getCorporateWorkspace ? api.getCorporateWorkspace() : Promise.resolve(null)).catch(() => null),
     ]);
-    const state = computeSteps({ devices: d || [], content: c || [], playlists: p || [] });
+    // A screen head office turned off ("dark") is not live.
+    const headOfficeDeviceIds = corp && corp.devices ? Object.keys(corp.devices).filter((id) => !corp.devices[id].dark) : [];
+    const state = computeSteps({ devices: d || [], content: c || [], playlists: p || [], headOfficeDeviceIds });
     if (state.complete) { dismiss(); return hide(); }   // finished: never costs a fetch again
     /*
      * ctaFor lets a view relabel the button for where the user actually is. Step 3 reads "New

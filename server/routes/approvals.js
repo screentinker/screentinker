@@ -13,6 +13,8 @@ const releases = require('../lib/releases');
 const { ReleaseError } = require('../lib/release-policy');
 
 function fail(res, e) {
+  // A head office refusal (the guard, or the backstop's RAISE) keeps its code and corporate block.
+  if (require('../lib/corporate/guard').send(res, e)) return undefined;
   if (e && (e.name === 'ApprovalError' || e.name === 'ReleaseError' || e.status)) {
     return res.status(e.status || 409).json({ error: e.message, code: e.code || null });
   }
@@ -86,9 +88,24 @@ router.get('/:id', requireWorkspaceRead, (req, res) => {
     diff_from_live: state ? revisions.diffStates(s.resource_type, live, state) : null,
     authors: [...approvals.authorsOf(db, s)],
     is_reviewer: approvals.isReviewer(db, req.workspaceId, req.user.id),
-    can_publish: canWrite(req),
+    ...publishRight(req, s),
   });
 });
+
+/*
+ * Head office (spec §6.2, R11): a reviewer in the HQ workspace may APPROVE a corporate playlist, but
+ * only a corporate author may PUBLISH it — publishPlaylist refuses anyone else. The queue says so
+ * ("Waiting for an admin to publish") instead of offering a Publish button that is refused.
+ */
+function publishRight(req, s) {
+  const write = canWrite(req);
+  if (s.resource_type !== 'playlist') return { can_publish: write };
+  const corpGuard = require('../lib/corporate/guard');
+  const g = corpGuard.governanceOf(db, s.resource_id);
+  if (g.kind !== 'corporate' && g.kind !== 'corporate_child') return { can_publish: write };
+  const author = !req.viaToken && corpGuard.canAuthor(req, g.orgId);
+  return { can_publish: write && author, waiting_for_author: !author, corporate: true };
+}
 
 router.post('/:id/withdraw', requireWorkspaceWrite, (req, res) => {
   if (!loadSubmission(req, res)) return;

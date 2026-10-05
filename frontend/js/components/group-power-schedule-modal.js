@@ -1,4 +1,4 @@
-import { t } from '../i18n.js';
+import { t, tn } from '../i18n.js';
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc } from '../utils.js';
@@ -118,9 +118,10 @@ export function openGroupPowerScheduleModal(group, devices = []) {
       const s = readPowerScheduleEditor(host);
       if (!s) return;
       try {
-        if (current?.id) await api.updatePowerSchedule(current.id, s);
-        else await api.createPowerSchedule({ group_id: group.id, ...s });
+        const r = current?.id ? await api.updatePowerSchedule(current.id, s) : await api.createPowerSchedule({ group_id: group.id, ...s });
         showToast(t('power.saved'), 'success');
+        // Head office: members playing its playlist keep head office's power schedule, not this one.
+        if (r && r.mandated_members) showToast(tn('corp.skipped.power', r.mandated_members), 'info');
         close();
       } catch (err) {
         showToast(`${t('power.save_failed')}: ${err.message}`, 'error');

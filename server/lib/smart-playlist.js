@@ -328,7 +328,10 @@ function refreshNow(db, publish, workspaceId, opts = {}) {
         if (addsSomething) continue;
       }
       seen.add(id);
-      try { if (publish(id, seen).changed) changed++; } catch (e) { console.warn(`[smart-playlist] refresh ${id} failed: ${e && e.message}`); }
+      // As system: a rule-driven refresh is bookkeeping, not the act of whoever's upload set it off.
+      // A smart playlist inside a corporate one must refresh even when a non-author's upload in the
+      // head office workspace triggered it (lib/corporate/actor.js).
+      try { if (require('./corporate/actor').runAsSystem(() => publish(id, seen)).changed) changed++; } catch (e) { console.warn(`[smart-playlist] refresh ${id} failed: ${e && e.message}`); }
     }
   } finally {
     contentCache = null;
@@ -342,10 +345,10 @@ function scheduleRefresh(db, publish, workspaceId) {
   const entry = pending.get(key) || { first: now, timer: null };
   if (entry.timer) clearTimeout(entry.timer);
   const wait = Math.max(0, Math.min(QUIET_MS, entry.first + MAX_WAIT_MS - now));
-  entry.timer = setTimeout(() => {
+  entry.timer = setTimeout(require('./corporate/actor').bindSystem(() => {
     pending.delete(key);
     try { refreshNow(db, publish, workspaceId); } catch (e) { console.warn(`[smart-playlist] refresh failed: ${e && e.message}`); }
-  }, wait);
+  }), wait);
   if (entry.timer.unref) entry.timer.unref();
   pending.set(key, entry);
 }

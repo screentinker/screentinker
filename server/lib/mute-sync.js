@@ -29,6 +29,14 @@ const { db } = require('../db/database');
  * every parent playing the old flag. This is the same tax publishPlaylist pays by republishing
  * ancestors; it has to be paid here too, or mute is silently a no-op for any screen on the parent.
  * Depth is capped at 1, so this is one hop and cannot recurse.
+ *
+ * ⚠️ (4) CORPORATE COMPOSITIONS. A mandated screen plays a composition (head office's published
+ * composable + the store's slot content), not any one snapshot. So the patch also covers a corporate
+ * playlist's published_composable (its items and its slots' fallbacks), every patch bumps
+ * published_rev — which makes each cached composition built from the old flag stale, so the very
+ * next payload recomposes (lib/corporate/composition.js) — and a muted item inside a store's slot
+ * content notifies the screens playing that fill, which `notify(fill)` cannot find (a fill is never
+ * any screen's resolved playlist).
  */
 function emitMuteChanged(req, item, muted) {
   try {
@@ -38,21 +46,37 @@ function emitMuteChanged(req, item, muted) {
     const m = !!muted;
 
     // (2) PERSIST: patch the published snapshot the device reads from.
+    const probe = require('./corporate/schema-probe');
+    const hasComposable = probe.hasColumn(db, 'playlists', 'published_composable');
+    const hasRev = probe.hasColumn(db, 'playlists', 'published_rev');
+    const matches = (s) => (item.content_id ? s.content_id === item.content_id
+      : (item.widget_id ? s.widget_id === item.widget_id : false));
+    // Flip the flag on matching items of a parsed list (a slot marker's fallback included).
+    const flip = (list) => {
+      let changed = false;
+      for (const s of list) {
+        if (!s || typeof s !== 'object') continue;
+        const target = s.__slot ? s.fallback : s;
+        if (target && matches(target) && (target.muted ? 1 : 0) !== (m ? 1 : 0)) { target.muted = m ? 1 : 0; changed = true; }
+      }
+      return changed;
+    };
     const patch = (playlistId) => {
-      const pl = db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(playlistId);
+      const pl = db.prepare(`SELECT published_snapshot${hasComposable ? ', published_composable' : ''} FROM playlists WHERE id = ?`).get(playlistId);
       if (!pl || !pl.published_snapshot) return;
       let snap = null;
       try { snap = JSON.parse(pl.published_snapshot); } catch (e) { snap = null; }
       if (!Array.isArray(snap)) return;
-      let changed = false;
-      for (const s of snap) {
-        const match = item.content_id ? s.content_id === item.content_id
-          : (item.widget_id ? s.widget_id === item.widget_id : false);
-        if (match && (s.muted ? 1 : 0) !== (m ? 1 : 0)) { s.muted = m ? 1 : 0; changed = true; }
-      }
-      if (changed) {
-        db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
-          .run(JSON.stringify(snap), playlistId);
+      let comp = null;
+      if (hasComposable && pl.published_composable) { try { comp = JSON.parse(pl.published_composable); } catch (_) { comp = null; } }
+      const changed = flip(snap);
+      const compChanged = Array.isArray(comp) && flip(comp);
+      if (changed || compChanged) {
+        // As system: the route already authorised the mute; this keeps head office's flattened copy
+        // in step, which the corporate backstop would otherwise judge as a publish by the caller.
+        require('./corporate/actor').runAsSystem(() => db.prepare(`UPDATE playlists SET published_snapshot = ?${compChanged ? ', published_composable = ?' : ''}${hasRev ? ', published_rev = published_rev + 1' : ''} WHERE id = ?`)
+          .run(...[JSON.stringify(snap), ...(compChanged ? [JSON.stringify(comp)] : []), playlistId]));
+        if (hasComposable) require('./corporate/digest').followSnapshot(db, playlistId, pl.published_snapshot, JSON.stringify(snap));
       }
     };
 
@@ -74,6 +98,15 @@ function emitMuteChanged(req, item, muted) {
 
     patch(item.playlist_id);
     let reached = notify(item.playlist_id);
+
+    // (4) A store's slot content: the screens composing it in.
+    try {
+      for (const id of require('./corporate/fills').devicesPlayingFill(db, item.playlist_id)) {
+        deviceNs.to(id).emit('device:mute-changed', payload);
+        commandQueue.queueOrEmitPlaylistUpdate(deviceNs, id, buildPlaylistPayload);
+        reached++;
+      }
+    } catch (_) { /* no corporate tables */ }
 
     // (3) ANCESTORS: playlists that include this one as a child hold a flattened copy.
     for (const anc of db.prepare(`

@@ -1,0 +1,295 @@
+# Head office (corporate) playlists
+
+Head office makes playlists that stores **can't change**, chooses where they play, and leaves
+**local slots** in them that each store fills with its own content, within limits head office sets.
+Head office can also run **emergency alerts** that take over screens with triggers turned on.
+
+Everything here is enforced on the server. The dashboard explains what the server will do; it never
+decides on its own that something is allowed. The design and every decision behind it is in the
+build spec (Revision 2, with the security and regression critiques answered); this page is the
+operator's view plus enough of the design to reason about it.
+
+Words used in the product, one per idea:
+
+| Idea | Store sees | Head office sees | Code |
+|---|---|---|---|
+| The organization's authority | **Head office** | Head office / Corporate | `corporate` |
+| A corporate playlist assigned somewhere | "Head office's playlist plays here" | **Where it plays** | mandate |
+| The placeholder in it | **Your slot** | **Local slot** | slot |
+| What a store puts in a slot | "What plays in your slot" | "Store content" | fill (never shown) |
+| A level | "Everyone in {workspace}", "Group {name}", "Video wall {name}", "This screen" | same | `scope_kind` |
+
+## Setting it up
+
+**Settings → Organization → Corporate content** (organization owners and admins only):
+
+1. Choose (or create) the **head office workspace**. Corporate playlists, their media and emergency
+   alerts live there. It can't be changed while it holds corporate playlists or emergency alerts, and
+   a workspace shared with another server (mesh) can't be chosen.
+2. Turn on **Use corporate playlists**.
+3. Choose **who can edit corporate playlists**: organization owners and admins, or also the editors of
+   the head office workspace. Only owners and admins ever decide **where** a playlist plays, change these
+   settings, or run emergency alerts. API tokens never can.
+4. Optional: **store triggers on head office's screens** and **emergency alerts** (below).
+
+Turning **Use corporate playlists** off is the kill switch: every store screen goes back to its own
+playlist immediately; corporate playlists and where they play are kept for when it is turned on again.
+
+### Workspace per store, or group per store?
+
+A store can be a **workspace** or a **device group** inside one workspace; both work.
+
+- **One workspace per store** keeps stores apart: a store's editors can only see and change their own
+  screens and their own slot content. Recommended whenever stores must not touch each other.
+- **Groups inside one workspace**: everyone who can edit that workspace can change every group's slot
+  content. There is no group-scoped role. Fine for one manager running several sites.
+
+## Head office: the Corporate page
+
+Opening **Corporate** switches the active workspace to head office's. A bar says "You are editing in
+Head office" (with one click back) for as long as you work there, because the playlist editor, media
+pickers and uploads all work in the active workspace.
+
+Tabs:
+
+- **Playlists**: make a corporate playlist, or make an existing head office playlist corporate. It
+  opens in the normal playlist editor with a banner, slot rows and **+ Add local slot**. A corporate
+  playlist can contain ordinary nested playlists (smart ones too) and local slots. It can't be smart
+  itself, and it can't be nested inside another playlist.
+- **Where it plays**: assign a published corporate playlist to the whole organization, a workspace, a
+  group, a video wall or one screen, with an optional head office layout (otherwise full screen, and
+  stores' layouts pause). "Turn these screens off instead" blanks them. Before saving, the preview says
+  how many screens in which workspaces will switch, and how many store schedules, screen-specific
+  playlists and layouts pause. The most specific assignment wins: screen = video wall > group >
+  workspace > organization. Screens in a video wall are only ever assigned as the whole wall.
+- **Store slots**: per slot and workspace, whether the stores filled it, use the fallback, skip it, or are
+  over the limit (not playing). Export as CSV. **Corporate airtime** shows how often head office's own
+  content played, per workspace and per corporate playlist.
+- **Emergency alerts**: below.
+
+**Preview a screen** (on the playlist card, in the editor, and on screen rows of Where it plays) shows
+exactly what one screen plays, every item tagged Corporate, Slot "…": {level}, or Fallback, with the loop
+length. Authors can preview the draft ("what it plays after I publish").
+
+### Local slots
+
+A slot has a name, a note for stores ("What to tell stores"), limits (most items, most seconds per
+loop, videos allowed, widgets allowed) and an optional **fallback** that plays when a store leaves it
+empty; with no fallback an empty slot is skipped.
+
+Slot changes apply when head office **publishes**. When you lower a limit, the slot dialog shows the
+line *Live: up to 5 items · After you publish: up to 3 · 2 stores have more than that*. After
+publishing, those stores' content stops playing (the fallback plays instead) until they remove some, and
+their Head office page tells them so.
+
+Only items with a known play length go in a slot: pictures, widgets, slides and videos whose length
+the server has measured. Live streams, YouTube and unmeasured videos can't. A video always plays to its
+end, so it counts at its full length.
+
+### Approvals in the head office workspace
+
+If the head office workspace requires approval, its reviewers can approve a corporate playlist, but only
+a corporate author can publish it. The review queue says "Waiting for an admin to publish".
+
+## Stores: how a store manager fills a slot
+
+Store users see **Head office** in the sidebar when head office plays something on their screens.
+
+1. **Head office** page → *Your slots* → **Fill this slot**. Choose who it is for: **Everyone in
+   {workspace}** (the usual choice), a group, a video wall, or one screen. A narrower level starts as a
+   copy of what it plays now, so nothing changes on screen until you publish.
+2. The slot editor is the normal playlist editor with head office's limits on top: "*2 of 3 items · 40
+   of 60 seconds per loop*", head office's note, and **Preview with head office's loop** (your draft
+   spliced into what the screen will really play). Items set for other times of day count too: limits
+   are per loop.
+3. Use **Days & hours** on your items to schedule within the slot. Store schedules can't target a screen
+   head office drives (they would never show).
+4. **Publish to {n} screens**. Publish is disabled, with the reason, while the slot is over its limit.
+
+From a **screen's own page** (Playlist tab), **Add content** asks first: *Add to "Store promo" for
+Everyone in Store 1 (12 screens)?*, with **Only this screen** as the other choice. The item goes into
+your slot's draft, never into head office's playlist. The slot section shows where this screen's content
+comes from ("From: Group Tills") and offers **Publish** when there are unpublished changes. **Give this
+screen its own content** makes a copy just for it. **Use the shared content again** goes back.
+
+## What store managers can still do on a head office screen
+
+| Still yours | Head office's (organization admins only) |
+|---|---|
+| Restart, volume, brightness (not below 20 %), remote key/touch, screenshot, time zone, orientation | Move to another server, shell / terminal, install apps, launch apps, kiosk unlock, screen off, shutdown, screen timeout |
+| Your slot content, its schedule (Days & hours), publishing it | Head office's items, their order, the layout (head office's or full screen) |
+| Your own triggers (unless head office limits them, below) | Overlays (PiP), power schedules, block, local control, playlist/layout overrides |
+| Delete the screen (recorded in head office's activity) | Changing which group or video wall a screen is in, when that would change what it plays |
+
+Everything locked shows a lock and, on click, says why and what you can change instead. The server
+refuses regardless (HTTP 403 with a `CORPORATE_*` code and a sentence written for the person in front
+of the screen).
+
+## Store triggers on head office's screens
+
+By default (**Don't show store triggers**) a store's own triggers don't show on screens head office
+drives, so no store can cover head office's playlist. Screens head office doesn't drive are never
+affected. The other choices, in Settings → Organization → Corporate content → Store triggers:
+
+- **Limit stuck triggers to N minutes** ends a trigger whose sender stopped. A store that keeps sending
+  can still keep it on: a real cap needs a player change (a first-fire wall-clock cap for until-cleared
+  triggers), which is a follow-up.
+- **Show store triggers** shows them over head office's playlist exactly as over any playlist. A store
+  editor can then create an until-cleared trigger, assign it to a head office screen and keep re-sending
+  it from its own LAN sender to cover head office's loop for as long as it likes. The "Where it plays"
+  tab warns while this is on.
+
+> ⚠️ **A store trigger is never hidden silently.** Hiding includes stores' own safety notices, such as an
+> evacuation relay. So every change that NEWLY puts screens under head office lists the store triggers
+> that would stop showing (or be limited) there, and is refused until an admin ticks "I've checked these":
+>
+> - creating a mandate, changing its target, or turning a disabled one back on
+>   (`POST`/`PUT /api/corporate/mandates` → 409 `CORPORATE_STORE_TRIGGERS_IMPACT` with `impact: [...]`;
+>   resend with `acknowledge_impact: true`). `GET /api/corporate/mandates/preview` returns the same list
+>   as `store_triggers_affected`, and the dialog shows it before Save;
+> - switching corporate playlists on (or moving head office) while mandates exist, and changing the
+>   policy itself (`PUT /api/corporate/settings` → 409 `CORPORATE_IMPACT_UNACKNOWLEDGED`).
+>
+> Screens head office already drove don't count: nothing changes for their triggers. The acknowledged
+> list is kept in the activity log (`store_triggers_acknowledged`), and each store whose triggers are
+> hidden is told in its own activity feed (`corporate.store_triggers.limited`) and on its Triggers page.
+> For alerts that must reach head office's screens, use an emergency alert (below).
+>
+> - moving screens so they come under an existing mandate: adding a screen to a group, seating it on a
+>   video wall, or moving it to another workspace (below). The groups and walls routes take the same
+>   `acknowledge_impact` (in the body, or `?acknowledge_impact=1` on a DELETE); the dashboard asks once
+>   per change. Taking a screen OUT from under head office never asks; its store triggers simply show
+>   again (the move result says how many).
+
+## Moving a screen to another workspace
+
+**Move to another workspace** (on a screen's page, or for a selection on the dashboard) hands screens to
+another workspace of the same organization — `POST /api/devices/move-workspace {device_ids, workspace_id}`,
+with `GET /api/devices/move-workspace/preview` for the dialog. You must be an admin of the workspace the
+screens are in **and** of the one they go to (an organization admin is); API tokens can't.
+
+What the old workspace attached to the screen stays with it: group memberships, its place on a video
+wall, its own playlist or layout or fallback picture (the screen plays the new workspace's instead), its
+schedules, power schedules, web request buttons, trigger assignments, and slot content made for that one
+screen. Head office's own settings for the screen (a screen-level mandate, an emergency scope) stay —
+the organization doesn't change. History (plays, activity) stays where it happened.
+
+The dialog previews the move before anything changes: which head office playlist will drive the screens
+in the new workspace (if any), what stays behind, and **every store trigger that will stop reaching
+them** — the old workspace's (triggers belong to a workspace, so a screen leaving it leaves them) and any
+the new workspace's head office mandate would hide. If that list isn't empty, **Move** stays disabled
+until "I've checked these" is ticked; the server refuses without `acknowledge_impact` (409
+`DEVICE_MOVE_TRIGGERS_IMPACT`, or `CORPORATE_STORE_TRIGGERS_IMPACT` when head office hides some). Both
+workspaces' activity feeds record the move, and the old one records which of its triggers no longer
+reach the screen. A move that would put a screen under head office — or take it out — needs an
+organization admin, like any membership change.
+
+### Bring its playlist
+
+Tick **Bring its playlist** (on by default when a screen has a playlist of its own; `bring_playlist: true`
+on the API) and the screen keeps playing exactly what it played. What the screen ITSELF uses is
+**copied** into the new workspace and kept on the screen:
+
+- its own playlist and the playlists it contains (items, order, mute, weights, "play every N", per-item
+  hours, playback order — and the published version, so the screen never blanks);
+- its own layout (not a template) and its fallback picture;
+- the media, widgets and kiosk pages those use; the data sources, shaders and fonts they name — unless
+  the new workspace already has one with the same name, which is then used instead.
+
+It is always a **copy**: the original stays in the old workspace, untouched, for whatever else uses it
+(the dialog says how many). Group, wall and schedule playlists, triggers and head office's playlists
+never travel. A smart playlist arrives as an ordinary playlist holding what it shows now (its rules
+would pick from the new workspace's library). Media bytes are shared on disk, not duplicated — deleting
+either copy leaves the other playing (every content delete counts the other rows using a file first) —
+but each copy counts against the storage allowance of the account it belongs to, and a copy that does
+not fit is refused before anything moves (403 `STORAGE_LIMIT`; move without the playlist instead).
+
+### Platform admins: any workspace, any organization
+
+A platform admin can move screens to **any** workspace, including one of another organization (the
+dialog lists them grouped by organization). Organization admins, platform operators and API tokens
+cannot cross organizations (400 `MOVE_OTHER_ORG` / 403). Moving to another organization:
+
+- is said out loud and confirmed on its own — "I understand these screens leave this organization"
+  (`acknowledge_other_org: true`, otherwise 409 `MOVE_OTHER_ORG_CONFIRM`); one move is one
+  organization, so mixing screens from both is refused (`MOVE_MIXED_ORGS`);
+- hands the screens (and anything copied) to the new organization's **owner** — device limits and
+  storage count by owner. A platform admin may move past the new owner's device limit (the preview says
+  so first); storage is enforced, because the copy needs it;
+- removes the old organization's head office settings for those screens (a screen-level mandate, an
+  emergency scope, slot content);
+- **clears copied credentials**: data source and widget passwords, tokens and keys arrive blank and
+  need re-entering — one organization never receives another's secrets.
+
+Both workspaces' activity feeds (and so both organizations) record the move, with what was copied.
+
+## Emergency alerts
+
+An emergency alert is a trigger owned by head office, with a scope (organization, workspaces, groups,
+screens). It shows **only on screens that have triggers turned on**, and only while the organization's
+**Emergency alerts** switch is on. It outranks every store trigger on every player.
+
+Two ways to set one off:
+
+- **Activate now** (Corporate → Emergency alerts): every covered screen that is online switches at
+  once; offline ones switch when they reconnect while it is on. It always ends on its own (1-60
+  minutes) or with **End now**.
+- **From an alarm system**: the fire panel or alarm sends the alert's code to each screen on the
+  store's network (HTTP or UDP), so it works with the internet down. **Download installer sheet** gives
+  each store's installer the screen addresses, ports, secrets and ready-made `curl` / UDP lines. Opening
+  it is recorded. **Rotate secrets** makes any secret a store learnt earlier stop working.
+
+Once the switch is on, stores can no longer change trigger settings (listener, ports, secret, clear-all
+code) on in-scope screens. A screen whose triggers the store had already turned off stays that way and
+is listed under **Who it reaches**, with the reason, like screens that can't receive triggers at all
+(Samsung Tizen), have no secret, or haven't connected since the alert changed.
+
+### How to run an emergency drill
+
+1. Corporate → Emergency alerts → your alert → **Who it reaches**. Fix or accept every screen listed.
+2. Tell the stores in scope that a drill is coming.
+3. **Activate now** for 1-2 minutes. Walk a store: the alert should be on every in-scope screen with
+   triggers on.
+4. **End now** (or let it expire). Screens go back to what they were playing.
+5. For the alarm path, have the store's installer send the code from the installer sheet to one screen
+   and clear it the same way. Then check the store's activity log and the Triggers page on that screen
+   (diagnostics show what the screen received).
+
+## For integrators (public API)
+
+The `/api/corporate` routes are dashboard-only (no API tokens). Through the public API:
+
+- Playlists carry `corporate`; items carry `slot_id` (a local slot row). Changing a corporate playlist
+  with a token answers 403 `CORPORATE_TOKEN`.
+- Adding to a screen head office drives (`POST /assignments/device/{id}`) goes into the store's slot
+  content and returns `redirected_to` (where it went, how many screens). Pass `slot_id` when there is
+  more than one slot, and `fill_scope: "device"` for that screen only.
+- Refusals carry `{ error, code, corporate }`. See `docs/openapi.yaml`.
+
+## Rolling back to a version without corporate playlists
+
+An older server version runs on the same database, but it doesn't know about mandates, slots or
+emergency alerts. Before downgrading:
+
+1. Remove every row on **Corporate → Where it plays** (or run `DELETE FROM corporate_mandates;` with the
+   server stopped). On the older version, deleting a playlist that a mandate names fails with a database
+   error, and the head office workspace can't be deleted, until this is done.
+2. Remove every local slot from head office's playlists and publish them. The older version publishes a
+   slot as an empty 10-second item, which a screen assigned to that playlist directly would play.
+3. Don't delete the playlist an emergency alert shows while on the older version: it won't stop you, and the
+   alert then has nothing to show. After upgrading again the Emergency tab and the server log say which
+   alerts are affected.
+
+When you upgrade again, the server notices anything the older version published: it drops its cached
+loops and republishes head office playlists whose published content changed, so every screen plays the current
+version (the server log names each one).
+
+## Known limits
+
+- A trigger-path emergency that keeps being re-sent stays on (no player caps an until-cleared trigger by
+  wall clock); its lease (5-300 s) ends it once the sender stops. Activate now always ends on its own.
+- Tizen screens can't receive triggers, so neither emergency path reaches them.
+- A screen that is unpaired and paired again is a new screen: prefer workspace, group or video wall
+  assignments over single screens.
+- Workspaces shared with another server (mesh) can't take part yet.
+- New text is in English; other languages fall back to English until translated.

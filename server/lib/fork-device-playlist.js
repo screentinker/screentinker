@@ -38,6 +38,10 @@ function forkInheritedPlaylist(deviceId, userId) {
   const resolved = resolveDevicePlaylist(deviceId);
   // Nothing to fork from: no playlist at all, or this screen already owns the one it plays.
   if (!resolved.playlist_id || resolved.source === 'device' || resolved.source === 'schedule') return null;
+  // ⚠️ NEVER fork head office's playlist. A private copy would be a store playlist the mandate
+  // shadows — the edit would appear to succeed and change nothing on the screen — and its items
+  // would be corporate content a store could then edit. Callers are refused before they get here.
+  if (resolved.source === 'corporate') return null;
 
   const device = db.prepare('SELECT workspace_id, name FROM devices WHERE id = ?').get(deviceId);
   const source = db.prepare('SELECT name, status, published_snapshot, published_structure, playback_order, published_playback_order, smart_rules FROM playlists WHERE id = ?')

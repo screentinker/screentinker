@@ -113,6 +113,27 @@ function parseCalendarDate(value) {
     : new Date(NaN);
 }
 
+/*
+ * CORPORATE: false = refused (response sent); otherwise the number of the target's screens a head
+ * office mandate shadows (a partly covered group). Store users get 403, authors 409, both coded
+ * CORPORATE_SCHEDULE.
+ */
+function scheduleTargetRefusal(req, res, deviceId, groupId) {
+  const corpGuard = require('../lib/corporate/guard');
+  try {
+    if (deviceId) { corpGuard.assertNotMandated(req, deviceId, { storeCode: 'CORPORATE_SCHEDULE', authorCode: 'CORPORATE_SCHEDULE' }); return 0; }
+    if (groupId) {
+      const group = db.prepare('SELECT id, workspace_id, name FROM device_groups WHERE id = ?').get(groupId);
+      if (!group) return 0;
+      return corpGuard.assertGroupNotCovered(req, group, { storeCode: 'CORPORATE_SCHEDULE', authorCode: 'CORPORATE_SCHEDULE' }).mandated_members || 0;
+    }
+    return 0;
+  } catch (e) {
+    if (corpGuard.send(res, e, req)) return false;
+    throw e;
+  }
+}
+
 // Load a schedule + access context, sending 403/404 on failure.
 function loadScheduleAccess(req, res, requireWrite) {
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
@@ -302,6 +323,18 @@ router.post('/', (req, res) => {
     return res.status(403).json({ error: 'Read-only access' });
   }
 
+  /*
+   * ⚠️ CORPORATE: a screen head office's playlist plays on would never show this schedule — the
+   * mandate outranks it (lib/playlist-resolver-sql.js). Refused rather than saved as a silent
+   * no-op; a partly covered group is allowed and the response says how many screens it skips.
+   */
+  let shadowedDevices = 0;
+  {
+    const corp = scheduleTargetRefusal(req, res, device_id, group_id);
+    if (corp === false) return;
+    shadowedDevices = corp;
+  }
+
   // Payload refs must live in the same workspace. Platform templates
   // (workspace_id IS NULL) on content / widget / layout / playlist are allowed.
   const refChecks = [
@@ -364,7 +397,7 @@ router.post('/', (req, res) => {
     recurrence || null, recurrence_end || null, priority || 0, color || '#3B82F6');
 
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
-  res.status(201).json(schedule);
+  res.status(201).json(shadowedDevices ? { ...schedule, shadowed_devices: shadowedDevices } : schedule);
 });
 
 // Update schedule. Phase 2.2m: every polymorphic target that is changing must
@@ -380,6 +413,13 @@ router.put('/:id', requireScheduleWrite, (req, res) => {
   }
   if (!newDeviceId && !newGroupId) {
     return res.status(400).json({ error: 'Either device_id or group_id is required' });
+  }
+
+  // CORPORATE: retargeting a schedule onto a screen/group head office's playlist covers is refused
+  // like creating one there. Editing a schedule that is already shadowed stays allowed.
+  if ((req.body.device_id !== undefined && req.body.device_id !== schedule.device_id)
+      || (req.body.group_id !== undefined && req.body.group_id !== schedule.group_id)) {
+    if (scheduleTargetRefusal(req, res, newDeviceId, newGroupId) === false) return;
   }
 
   // For each field changing to a non-null value, verify the referenced row

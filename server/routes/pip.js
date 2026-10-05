@@ -138,6 +138,26 @@ router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
   const targets = resolveTargets(req, b.device_id);
   if (!targets) return res.status(404).json({ error: 'device or group not found in this workspace' });
 
+  /*
+   * ⚠️ CORPORATE (D13): an overlay can cover head office's content, so on a screen its playlist
+   * plays on PiP is the organization's admins' only. One named screen -> 403 with the reason; a
+   * group -> the other members still get it and the mandated ones are listed as skipped.
+   */
+  const corpGuard = require('../lib/corporate/guard');
+  const skipped = [];
+  if (targets.kind === 'device') {
+    try { corpGuard.assertDeviceRouteControl(req, targets.devices[0].id, 'show an overlay on it'); } catch (e) {
+      if (corpGuard.send(res, e, req)) return;
+      throw e;
+    }
+  } else {
+    targets.devices = targets.devices.filter((d) => {
+      if (!corpGuard.isControlledFor(req, d.id)) return true;
+      skipped.push({ device_id: d.id, name: d.name, reason: 'corporate' });
+      return false;
+    });
+  }
+
   const pip_id = uuidv4();
   const payload = {
     pip_id,
@@ -158,7 +178,7 @@ router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
   const results = emitToTargets(req, targets.devices, 'device:pip-show', payload);
   const summary = summarize(results);
   console.log(`[pip] show ${pip_id} (${b.type}) -> ${targets.kind} ${b.device_id}: ${summary.sent} sent, ${summary.offline} offline`);
-  res.json({ success: true, pip_id, target: targets.kind, ...summary });
+  res.json({ success: true, pip_id, target: targets.kind, ...summary, ...(skipped.length ? { skipped } : {}) });
 });
 
 // Clear an overlay. DELETE /api/pip and POST /api/pip/clear are equivalent; an omitted

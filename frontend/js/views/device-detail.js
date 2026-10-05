@@ -10,6 +10,8 @@ import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
 import * as gettingStarted from '../components/getting-started.js';
 import { LiveViewer, whenVisible } from '../lib/webrtc-viewer.js';
 import { renderPowerScheduleEditor, readPowerScheduleEditor, presetWindows } from '../components/power-schedule-editor.js';
+import * as cui from '../components/corporate-ui.js';
+import { openDeviceMoveDialog } from '../components/device-move-dialog.js';
 
 // The player distinguishes three cases for the Wi-Fi name, because "--" was hiding a real
 // answer: Android 8.1+ refuses to reveal the SSID to an app without location permission, and a
@@ -642,6 +644,7 @@ async function loadDevice(deviceId, activeTab = null) {
           <button class="btn btn-secondary btn-sm" id="muteTalkBtn" style="display:none">${t('device.talk.mute')}</button>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') && !isNativeDevice(device) ? `
           <button class="btn btn-secondary btn-sm" id="deviceOwnerBtn" title="${t('device.owner_provision.tip')}">${t('device.owner_provision.btn')}</button>` : ''}
+          <button class="btn btn-secondary btn-sm" id="moveDeviceBtn">${t('move.button')}</button>
           <button class="btn btn-secondary btn-sm" id="blockDeviceBtn">${device.blocked ? 'Unblock' : 'Block'}</button>
           <button class="btn btn-danger btn-sm" id="deleteDeviceBtn">${t('device.remove')}</button>
         </div>
@@ -713,6 +716,9 @@ async function loadDevice(deviceId, activeTab = null) {
 
       <!-- Playlist Tab -->
       <div class="tab-content" id="tab-playlist">
+        ${/* Head office decides what plays here: its own section replaces the picker, the layout
+              selector, the draft banner (head office's draft, not the store's) and the item list. */ ''}
+        ${device.playlist_source === 'corporate' ? corporatePlaylistTab(device) : `
         ${device.playlist_status === 'draft' ? `
         <div id="deviceDraftBanner" style="background:#78350f;border:1px solid #92400e;border-radius:var(--radius);padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px">
           <div style="display:flex;align-items:center;gap:10px;color:#fbbf24">
@@ -762,7 +768,7 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
         <div class="playlist-container" id="playlistContainer">
           ${renderPlaylist(device.assignments || [])}
-        </div>
+        </div>`}
       </div>
 
       <!-- Info Tab -->
@@ -1265,7 +1271,7 @@ async function loadDevice(deviceId, activeTab = null) {
               ${can('display.power') ? `
               <hr style="border-color:var(--border);margin:8px 0">
               <div style="display:flex;gap:4px">
-                <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._sendCmd('screen_off')">${t('device.remote.scrn_off')}</button>
+                <button class="btn btn-secondary btn-sm" id="remoteScreenOffBtn" style="flex:1" onclick="window._sendCmd('screen_off')">${t('device.remote.scrn_off')}</button>
                 <button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._sendCmd('screen_on')">${t('device.remote.scrn_on')}</button>
               </div>` : ''}
             </div>` : ''}
@@ -1379,7 +1385,11 @@ async function loadDevice(deviceId, activeTab = null) {
       if (currentDevice) sendKey(currentDevice.id, keycode);
     };
     window._sendCmd = (type) => {
-      if (currentDevice) sendCommand(currentDevice.id, type, {});
+      if (!currentDevice) return;
+      // A refusal (head office's screen, a gated command) must not vanish: say why.
+      sendCommand(currentDevice.id, type, {}, (ack) => {
+        if (ack && ack.reason === 'corporate') showToast(ack.error || t('corp.locked.title'), 'error');
+      });
     };
     window._enableSystemView = () => {
       if (!currentDevice) return;
@@ -1440,6 +1450,7 @@ async function loadDevice(deviceId, activeTab = null) {
     setupActions(device);
     setupRemote(device);
     setupPlaylistActions(device);
+    setupCorporateDevice(device);
     setupEnrolKey(device);
 
     /*
@@ -1523,6 +1534,7 @@ function renderTriggerConfig(device) {
       <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
         <div style="font-weight:600;margin-bottom:4px">${t('device.trigcfg.title')}</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${esc(t('device.trigcfg.intro'))}</div>
+        ${headOfficeTriggerNotes(device)}
 
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
           <label style="display:flex;gap:6px;align-items:center;font-size:13px">
@@ -1627,6 +1639,19 @@ function playlistSourceBadge(device) {
     `<span title="${esc(title)}" style="font-size:11px;padding:2px 8px;border-radius:10px;`
     + `background:var(--bg-input);color:${color};white-space:nowrap">${esc(text)}</span>`;
 
+  /*
+   * Head office (corporate) decides what plays here. The playlist is NAMED, as plain text — not a
+   * link: a store user cannot open head office's workspace, so a link would 404. A dark mandate
+   * says the screen was turned off by head office rather than looking unassigned.
+   */
+  if (device.playlist_source === 'corporate') {
+    const corp = device.corporate || {};
+    if (corp.dark) return chip(t('corp.badge.dark'), t('corp.tip.dark'), 'var(--warning, #f59e0b)');
+    const name = corp.playlist_name;
+    return chip(t('corp.badge.locked'), t('corp.tip.locked'), 'var(--warning, #f59e0b)')
+      + (name ? ` <span class="corp-playlist-name" style="font-size:12px;color:var(--text-secondary)">${esc(name)}</span>` : '');
+  }
+
   if (device.playlist_source === 'device') {
     return chip(t('device.playlist.overridden'), t('device.playlist.overridden_tip'), 'var(--text-secondary)')
       + `<button class="btn btn-secondary btn-sm" id="revertPlaylistBtn" title="${esc(t('device.playlist.revert_tip'))}"`
@@ -1641,6 +1666,236 @@ function playlistSourceBadge(device) {
     );
   }
   return '';
+}
+
+/* ── Head office (corporate) on the device page (spec §7.9) ───────────────────────────────────
+ *
+ * A store manager must be able to answer "why can't I change this?" and "what CAN I change?" from
+ * this page. Head office's items are listed locked (a click explains, and points at the slot), each
+ * local slot is a section with this screen's content for it and where that content is set, and
+ * Add content asks which slot and for how many screens BEFORE adding (no 409 round trip, no silent
+ * fork — critique U1). Everything comes from the `corporate` block of GET /api/devices/:id.
+ */
+function corporatePlaylistTab(device) {
+  const corp = device.corporate || {};
+  const target = corp.mandate ? corp.mandate.target_label : '';
+  if (corp.dark) {
+    return `<div class="corp-notice">${cui.chip(t('corp.badge.dark'), 'dark', '', { lock: true })} ${esc(t('corp.dev.dark', { target }))}
+      ${corp.can_change ? `<a class="btn btn-secondary btn-sm" href="#/corporate/where">${esc(t('corp.dev.change_in_corporate'))}</a>` : ''}</div>`;
+  }
+  const slots = corp.slots || [];
+  const items = corp.items || [];
+  const slotName = (id) => (slots.find((x) => x.id === id) || {}).name || '';
+  return `
+    <div class="corp-notice">
+      ${cui.chip(t('corp.badge.locked'), 'hq', t('corp.tip.locked'), { lock: true })}
+      ${esc(t('corp.dev.plays_here', { name: corp.playlist_name || '', target }))}
+      · ${esc(corp.layout_id ? t('corp.dev.layout_hq') : t('corp.dev.layout_full'))}
+      ${corp.can_change ? `<a class="btn btn-secondary btn-sm" href="#/corporate/where">${esc(t('corp.dev.change_in_corporate'))}</a>` : ''}
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0">
+      <h3 style="font-size:16px">${esc(t('corp.dev.loop_title'))}</h3>
+      <button class="btn btn-primary btn-sm" id="corpAddContentBtn">${esc(t('device.playlist.add_content_btn'))}</button>
+    </div>
+    <div class="playlist-container" id="corpLoop">
+      ${items.length ? items.map((a, i) => `
+        <div class="playlist-item ${a.locked ? 'corp-locked-item' : ''}" data-corp-item="${i}" ${a.locked ? 'role="button" tabindex="0"' : ''}>
+          <div class="playlist-item-info">
+            <div class="playlist-item-name">${a.locked ? cui.LOCK_SVG + ' ' : ''}${esc(a.filename || t('common.unknown'))}</div>
+            <div class="playlist-item-meta">${a.origin === 'slot' ? cui.chip(t('corp.dev.from_slot', { slot: slotName(a.slot_id) }), 'slot') : a.origin === 'fallback' ? cui.chip(t('corp.preview.tag_fallback'), 'muted') : cui.chip(t('corp.preview.tag_corporate'), 'hq')}
+              ${a.duration_sec ? ` &middot; ${esc(cui.formatSec(a.duration_sec))}` : ''}</div>
+          </div>
+        </div>`).join('') : `<div class="empty-state"><p>${esc(t('corp.preview.empty'))}</p></div>`}
+    </div>
+    <h3 style="font-size:16px;margin:18px 0 10px">${esc(t('corp.store.slots'))}</h3>
+    ${slots.length ? slots.map((sl) => corporateSlotSection(sl)).join('') : `<div class="corp-help">${esc(t('corp.err.CORPORATE_NO_SLOT', { name: corp.playlist_name || '' }))}</div>`}`;
+}
+
+function corporateSlotSection(sl) {
+  const f = sl.fill;
+  const level = f ? cui.levelLabel(f.scope_kind, f.scope_name, { thisScreen: f.scope_kind === 'device' }) : '';
+  return `
+    <div class="corp-card corp-slot-card" data-corp-slot="${esc(sl.id)}">
+      <div class="corp-card-head">
+        <strong class="corp-card-title">${esc(t('corp.store.slot_title', { slot: sl.name }))}</strong>
+        <span class="corp-help">${esc(cui.limitsText(sl.limits))}</span>
+      </div>
+      ${sl.help_text ? `<div class="corp-hq-note">${esc(t('corp.store.hq_says'))} ${esc(sl.help_text)}</div>` : ''}
+      ${f ? `
+        <div class="corp-card-meta">${esc(t('corp.dev.from_level', { level }))} · ${esc(tn('corp.n_screens', f.screens || 0))}</div>
+        ${f.fill_state === 'over_limit' ? `<div class="corp-notice corp-notice-danger">${esc(t('corp.slot.over_limit'))}</div>` : ''}
+        ${f.status === 'draft' ? `<div class="corp-notice">${esc(f.has_published ? t('corp.dev.unpublished') : t('corp.dev.never_published'))}
+          <button class="btn btn-primary btn-sm" data-corp-publish="${esc(f.fill_playlist_id)}">${esc(tn('corp.hq.publish_n', f.screens || 0))}</button></div>` : ''}
+        ${sl.own ? `<div class="corp-notice">${esc(t('corp.slot.own_chip_here', { slot: sl.name }))}
+          <button class="btn btn-secondary btn-sm" data-corp-unown="${esc(f.fill_id)}">${esc(t('corp.slot.use_shared'))}</button></div>` : ''}`
+        : `<div class="corp-help">${esc(sl.has_fallback ? t('corp.dev.empty_fallback') : t('corp.store.empty_slot_skip'))}</div>`}
+      <div class="corp-card-actions">
+        <button class="btn btn-secondary btn-sm" data-corp-add="${esc(sl.id)}">${esc(t('device.playlist.add_content_btn'))}</button>
+        ${f ? `<a class="btn btn-secondary btn-sm" href="#/playlists/${esc(f.fill_playlist_id)}">${esc(t('corp.locked.edit_slot'))}</a>` : ''}
+        ${!sl.own ? `<button class="btn btn-secondary btn-sm" data-corp-own="${esc(sl.id)}">${esc(t('corp.slot.give_own'))}</button>` : ''}
+      </div>
+    </div>`;
+}
+
+/** Trigger panel: why head office's emergency alerts cannot reach this screen, and who manages it. */
+function headOfficeTriggerNotes(device) {
+  const h = device.head_office_triggers;
+  if (!h) return '';
+  return `${h.listeners_off ? `<div class="corp-notice corp-notice-warn">${esc(t('corp.em.device_warn'))}</div>` : ''}
+    ${h.settings_locked ? `<div class="corp-notice">${cui.LOCK_SVG} ${esc(t('corp.em.locked_settings'))}</div>` : ''}`;
+}
+
+/*
+ * D13: the device controls only org admins may use on a screen head office drives. Each carries a
+ * lock, and a click explains instead of sending a command the server refuses. Restart, volume and
+ * the other everyday controls stay as they are.
+ */
+const CORP_GATED_CONTROLS = {
+  setServerUrlBtn: 'set_server_url', termRun: 'shell', apkInstall: 'install_apk', ptyConnect: 'shell',
+  launchAppBtn: 'launch', t2KioskOff: 'kiosk_unlock', screenOffBtn: 'screen_off', remoteScreenOffBtn: 'screen_off', shutdownBtn: 'shutdown',
+  sysTimeout: 'set_screen_timeout', sendPipBtn: 'pip', blockDeviceBtn: 'block', powerSave: 'power',
+};
+const CORP_TRIGGER_CONTROLS = ['trigHttp', 'trigUdp', 'trigHttpPort', 'trigUdpPort', 'trigClearAll', 'saveTrigCfgBtn', 'rotateTrigSecretBtn'];
+let corpLockHandler = null;
+let corpLockObserver = null;
+
+function teardownCorporateLocks() {
+  if (corpLockHandler) { ['click', 'mousedown', 'keydown'].forEach((ev) => document.removeEventListener(ev, corpLockHandler, true)); corpLockHandler = null; }
+  if (corpLockObserver) { corpLockObserver.disconnect(); corpLockObserver = null; }
+}
+
+function setupCorporateDevice(device) {
+  teardownCorporateLocks();
+  const corp = device.corporate;
+  const gated = corp && corp.controls_locked ? CORP_GATED_CONTROLS : {};
+  const trig = device.head_office_triggers && device.head_office_triggers.settings_locked ? CORP_TRIGGER_CONTROLS : [];
+  const ids = [...Object.keys(gated), ...trig];
+  if (ids.length) {
+    const mark = () => ids.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.corpLocked) return;
+      el.dataset.corpLocked = gated[id] ? 'mandate' : 'emergency';
+      el.title = t('corp.locked.title');
+      if (el.tagName === 'INPUT' && el.type !== 'checkbox') el.readOnly = true;
+    });
+    mark();
+    // Some sections (power schedule, terminal) render after this runs.
+    const host = document.getElementById('deviceContent') || document.getElementById('app');
+    if (host && window.MutationObserver) { corpLockObserver = new MutationObserver(mark); corpLockObserver.observe(host, { childList: true, subtree: true }); }
+    corpLockHandler = (e) => {
+      const el = e.target && e.target.closest && e.target.closest('[data-corp-locked]');
+      if (!el) return;
+      if (e.type === 'keydown' && !['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      // One explanation per gesture: a select opens on mousedown (so it explains there and its click
+      // is swallowed); everything else explains on the click that follows the mousedown.
+      const isSelect = el.tagName === 'SELECT';
+      if (e.type === 'mousedown' && !isSelect) return;
+      if (e.type === 'click' && isSelect) return;
+      const emergency = el.dataset.corpLocked === 'emergency';
+      const action = t(`corp.ctl.${gated[el.id] || 'other'}`);
+      const name = corp && corp.playlist_name ? corp.playlist_name : '';
+      cui.explainLocked({ text: emergency ? t('corp.em.locked_settings') : t('corp.dev.control_locked', { name, action }) });
+    };
+    ['click', 'mousedown', 'keydown'].forEach((ev) => document.addEventListener(ev, corpLockHandler, true));
+  }
+  if (!corp || device.playlist_source !== 'corporate') return;
+
+  // Locked items: one explanation, with the way to what the store CAN change.
+  document.querySelectorAll('[data-corp-item]').forEach((row) => {
+    const it = (corp.items || [])[Number(row.dataset.corpItem)];
+    if (!it || !it.locked) return;
+    const open = () => cui.explainLocked({
+      text: t('corp.err.CORPORATE_LOCKED', { name: corp.playlist_name || '' }) + ' ' + t('corp.locked.volume'),
+      actions: (corp.slots || []).length ? [{ label: t('corp.locked.edit_slot'), primary: true, onClick: () => document.querySelector('[data-corp-slot]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }] : [],
+    });
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  });
+  document.getElementById('corpAddContentBtn')?.addEventListener('click', () => corporateAdd(device, null));
+  document.querySelectorAll('[data-corp-add]').forEach((b) => b.addEventListener('click', () => corporateAdd(device, b.dataset.corpAdd)));
+  document.querySelectorAll('[data-corp-publish]').forEach((b) => b.addEventListener('click', async () => {
+    try { b.disabled = true; await api.publishPlaylist(b.dataset.corpPublish); showToast(t('corp.dev.published'), 'success'); loadDevice(device.id, 'playlist'); }
+    catch (e) { b.disabled = false; showToast(e.message, 'error'); }
+  }));
+  document.querySelectorAll('[data-corp-own]').forEach((b) => b.addEventListener('click', async () => {
+    const sl = (corp.slots || []).find((x) => x.id === b.dataset.corpOwn);
+    const ok = await cui.ask({ title: t('corp.slot.give_own'), text: t('corp.slot.give_own_confirm', { slot: sl ? sl.name : '' }), confirmLabel: t('corp.slot.give_own') });
+    if (!ok) return;
+    try {
+      const f = await api.createFill(sl.id, { scope_kind: device.wall_id ? 'wall' : 'device', scope_id: device.wall_id || device.id });
+      showToast(t('corp.slot.own_created'), 'success');
+      window.location.hash = `#/playlists/${f.fill_playlist_id}`;
+    } catch (e) { showToast(e.message, 'error'); }
+  }));
+  document.querySelectorAll('[data-corp-unown]').forEach((b) => b.addEventListener('click', async () => {
+    const ok = await cui.ask({ title: t('corp.slot.use_shared'), text: t('corp.slot.use_shared_confirm'), confirmLabel: t('corp.slot.use_shared'), danger: true });
+    if (!ok) return;
+    try { await api.deleteFill(b.dataset.corpUnown); showToast(t('corp.slot.level_removed'), 'success'); loadDevice(device.id, 'playlist'); }
+    catch (e) { showToast(e.message, 'error'); }
+  }));
+}
+
+/*
+ * Add content on a screen head office drives: it goes into one of head office's local slots. The
+ * question is asked first — which slot, and for whom: the level this screen already takes its slot
+ * content from ("Everyone in Store 1 (12 screens)") or only this screen.
+ */
+async function corporateAdd(device, slotId) {
+  const corp = device.corporate || {};
+  const slots = corp.slots || [];
+  if (!slots.length) { cui.explainLocked({ text: t('corp.err.CORPORATE_NO_SLOT', { name: corp.playlist_name || '' }) }); return; }
+  let slot = slotId ? slots.find((x) => x.id === slotId) : slots.length === 1 ? slots[0] : null;
+  if (!slot) {
+    slot = await new Promise((resolve) => {
+      let picked = null;
+      const m = cui.openModal({
+        title: t('corp.slot.which'),
+        body: `<select id="corpWhich" class="input" style="width:100%">${slots.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select>`,
+        footer: `<button class="btn btn-secondary" data-corp-close>${esc(t('common.cancel'))}</button><button class="btn btn-primary" id="corpWhichGo">${esc(t('corp.slot.next'))}</button>`,
+        onClose: () => resolve(picked),
+      });
+      m.q('#corpWhichGo').addEventListener('click', () => { picked = slots.find((x) => x.id === m.q('#corpWhich').value) || null; m.close(); });
+    });
+    if (!slot) return;
+  }
+  const f = slot.fill;
+  const level = f ? cui.levelLabel(f.scope_kind, f.scope_name, { thisScreen: f.scope_kind === 'device' }) : t('corp.level.this_workspace');
+  const scope = await new Promise((resolve) => {
+    let chosen = null;
+    const shared = f && f.scope_kind !== 'device' && f.scope_kind !== 'wall';
+    const m = cui.openModal({
+      title: t('corp.slot.add_title', { slot: slot.name }),
+      body: `<p class="corp-explain">${esc(f ? tn('corp.slot.confirm_add', f.screens || 0, { slot: slot.name, level }) : t('corp.slot.confirm_add_new', { slot: slot.name }))}</p>
+             <p class="corp-help">${esc(t('corp.slot.draft_note'))}</p>`,
+      footer: `<button class="btn btn-secondary" data-corp-close>${esc(t('common.cancel'))}</button>
+               ${!f || shared ? `<button class="btn btn-secondary" id="corpOnlyThis">${esc(t('corp.slot.only_this'))}</button>` : ''}
+               <button class="btn btn-primary" id="corpForLevel">${esc(f ? t('corp.slot.add_for', { level }) : t('corp.slot.add_for_ws'))}</button>`,
+      onClose: () => resolve(chosen),
+    });
+    m.q('#corpOnlyThis')?.addEventListener('click', () => { chosen = 'device'; m.close(); });
+    m.q('#corpForLevel').addEventListener('click', () => { chosen = 'nearest'; m.close(); });
+  });
+  if (!scope) return;
+  const lim = slot.limits || {};
+  let toastShown = false;
+  await openContentPicker({
+    title: t('corp.slot.add_title', { slot: slot.name }),
+    targetPlaylistId: f ? f.fill_playlist_id : null,
+    slotMode: { allowVideo: !(lim.allow_video === 0 || lim.allow_video === false), allowWidgets: !(lim.allow_widgets === 0 || lim.allow_widgets === false) },
+    add: async (item) => {
+      const body = { ...(item.type === 'widget' ? { widget_id: item.id } : { content_id: item.id }), slot_id: slot.id, fill_scope: scope };
+      const r = await api.addAssignment(device.id, body);
+      const to = r && r.redirected_to;
+      if (to && !toastShown) {
+        toastShown = true;
+        showToast(tn('corp.slot.added', to.screens || 0, { slot: to.slot_name || slot.name, level: cui.levelLabel(to.scope_kind, to.scope_name, { thisScreen: to.scope_kind === 'device' }) }), 'success');
+      }
+      return r;
+    },
+    onClose: (changed) => { if (changed) loadDevice(device.id, 'playlist'); },
+  });
 }
 
 function renderPlaylist(assignments) {
@@ -2361,6 +2616,13 @@ function setupActions(device) {
     } catch (err) { showToast(err.message, 'error'); }
     finally { blockBtn.disabled = false; }
   });
+
+  // Move to another workspace of the organization (components/device-move-dialog.js). Once moved
+  // the screen is no longer in this workspace, so the page goes back to the dashboard.
+  document.getElementById('moveDeviceBtn')?.addEventListener('click', () => openDeviceMoveDialog([device.id], {
+    currentWorkspaceId: device.workspace_id,
+    onMoved: () => { window.location.hash = '/'; },
+  }));
 
   // Delete (double-click to confirm)
   const deleteBtn = document.getElementById('deleteDeviceBtn');
@@ -3276,6 +3538,7 @@ export function cleanup() {
   debugFrozen = false;
   debugHeld = [];
   remoteActive = false;
+  teardownCorporateLocks();
   currentDevice = null;
   window._sendKey = null;
 }

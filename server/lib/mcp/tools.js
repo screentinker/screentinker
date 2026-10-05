@@ -104,14 +104,14 @@ const TOOLS = [
   {
     name: 'list_playlists',
     scope: 'read',
-    description: 'List the playlists in this workspace, with how many items each holds and whether it has unpublished changes.',
+    description: 'List the playlists in this workspace, with how many items each holds and whether it has unpublished changes. `corporate` marks a head office playlist (read-only unless you are a corporate author); `corporate_slot` marks this workspace\'s content for one of head office\'s local slots.',
     input: { type: 'object', properties: {} },
     call: { method: 'GET', path: '/api/playlists' },
   },
   {
     name: 'get_playlist',
     scope: 'read',
-    description: 'A playlist with its items in order, including each item duration and any per-item schedule.',
+    description: 'A playlist with its items in order, including each item duration and any per-item schedule. On a head office (corporate) playlist every item is `locked`, and a `kind: "slot"` item is a local slot that stores fill with their own content.',
     input: { type: 'object', required: ['playlist_id'], properties: { playlist_id: { type: 'string' } } },
     call: { method: 'GET', path: '/api/playlists/{playlist_id}' },
     shape: shapePlaylist,
@@ -244,7 +244,7 @@ const TOOLS = [
   {
     name: 'add_to_playlist',
     scope: 'write',
-    description: 'Append a content item to a playlist. Changes are a DRAFT until publish_playlist is called.',
+    description: 'Append a content item to a playlist. Changes are a DRAFT until publish_playlist is called. Corporate playlists are read-only; to add local content, add to the slot playlist named in the error.',
     input: {
       type: 'object', required: ['playlist_id', 'content_id'],
       properties: {
@@ -271,7 +271,7 @@ const TOOLS = [
     scope: 'write',
     // ⚠️ The step people forget. Edits are a draft; screens keep playing the last published snapshot
     // until this runs, so an agent that adds items and stops has changed nothing anyone can see.
-    description: 'Publish a playlist: snapshot the draft and push it to every screen using it. Nothing an agent changes appears on a screen until this is called.',
+    description: 'Publish a playlist: snapshot the draft and push it to every screen using it. Nothing an agent changes appears on a screen until this is called. Corporate playlists are read-only; to add local content, add to the slot playlist named in the error.',
     input: { type: 'object', required: ['playlist_id'], properties: { playlist_id: { type: 'string' } } },
     call: { method: 'POST', path: '/api/playlists/{playlist_id}/publish' },
     shape: shapePlaylist,
@@ -359,8 +359,9 @@ function toolsForScope(scope) {
  * LAST PUBLISHED version while being asked about the draft, which is the one distinction the tool
  * instructions go out of their way to explain.
  */
-const itemName = (i) => i.filename || i.child_playlist_name || i.widget_name || null;
-const itemKind = (i) => (i.child_playlist_id ? 'playlist' : (i.widget_id ? 'widget' : 'content'));
+const itemName = (i) => i.filename || i.child_playlist_name || i.widget_name || (i.slot_id && i.slot && i.slot.name) || null;
+// A head office local slot is a placeholder the stores fill, not content of its own.
+const itemKind = (i) => (i.slot_id ? 'slot' : i.child_playlist_id ? 'playlist' : (i.widget_id ? 'widget' : 'content'));
 
 function shapePlaylist(p) {
   if (!p || typeof p !== 'object') return p;
@@ -372,11 +373,17 @@ function shapePlaylist(p) {
     // draft vs published is the distinction that decides whether anybody can SEE the change.
     status: p.status,
     playback_order: p.playback_order,
+    // Head office: a corporate playlist is read-only to anyone but its authors (the server refuses
+    // with a sentence naming why); a store's slot content says which slot it fills.
+    ...(p.corporate ? { corporate: true } : {}),
+    ...(p.corporate_slot ? { corporate_slot: { slot_name: p.corporate_slot.slot_name, corporate_playlist: p.corporate_slot.playlist_name } } : {}),
     item_count: items.length,
     items: items.map((i) => ({
       id: i.id,
       name: itemName(i),
       kind: itemKind(i),
+      ...(i.slot_id ? { slot_id: i.slot_id } : {}),
+      ...(p.corporate ? { locked: true } : {}),
       duration: i.content_duration ?? i.duration_sec ?? null,
       ...(i.enabled === 0 ? { enabled: false } : {}),
       ...(i.play_from || i.play_until ? { play_from: i.play_from || null, play_until: i.play_until || null } : {}),

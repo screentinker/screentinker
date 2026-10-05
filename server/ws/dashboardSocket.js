@@ -29,6 +29,14 @@ const ptyRelay = require('../lib/pty-relay');   // interactive terminal (system.
 // Permission gate for inbound socket commands. Read tier = workspace_viewer+;
 // write tier = workspace_editor+. Platform_admin and org_owner/admin always
 // pass via actingAs.
+const corpActor = require('../lib/corporate/actor');
+const corpGuard = require('../lib/corporate/guard');
+// The corporate actor for this dashboard socket (it does not pass resolveTenancy, so there is no
+// AsyncLocalStorage store to fall back on). Rebuilt per call: memberships can change mid-session.
+function socketActor(socket) {
+  return corpActor.fromUser({ id: socket.userId, role: socket.userRole });
+}
+
 function canActOnDevice(socket, deviceId, tier /* 'read' | 'write' */) {
   const device = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);
   if (!device || !device.workspace_id) return false;
@@ -51,7 +59,13 @@ module.exports = function setupDashboardSocket(io) {
    * one-shot shell, so it must never be reachable by anyone the shell command would refuse.
    */
   ptyRelay.bind(io);
-  ptyRelay.setAuthorizer((socket, deviceId) => canActOnDevice(socket, deviceId, 'write'));
+  /*
+   * ⚠️ CORPORATE (D13): a PTY is `shell` with a keyboard, so on a screen head office's playlist
+   * plays on it is the organization's admins' only — the same rule deliverCommand applies to shell.
+   * The actor is built explicitly: this socket never passes resolveTenancy.
+   */
+  ptyRelay.setAuthorizer((socket, deviceId) => canActOnDevice(socket, deviceId, 'write')
+    && !corpGuard.isControlledFor(socketActor(socket), deviceId));
   const pty = ptyRelay.relay();
 
   dashboardNs.use((socket, next) => {
@@ -175,6 +189,8 @@ module.exports = function setupDashboardSocket(io) {
       const { device_id, x, y, x2, y2, duration, action } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
       if (capabilityRefused(device_id, 'remote.input', ack)) return;
+      // Allowed on a head office screen (D13), and recorded so head office can see who did it.
+      corpGuard.auditMandatedAction(socketActor(socket), { id: device_id }, 'remote_touch');
       // #159: a swipe/drag carries an end point + duration (for scrolling); tap is just x/y.
       deviceNs.to(device_id).emit('device:remote-touch', { x, y, x2, y2, duration, action });
       if (typeof ack === 'function') ack({ delivered: true });
@@ -184,6 +200,7 @@ module.exports = function setupDashboardSocket(io) {
       const { device_id, keycode } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
       if (capabilityRefused(device_id, 'remote.input', ack)) return;
+      corpGuard.auditMandatedAction(socketActor(socket), { id: device_id }, 'remote_key');
       console.log(`Remote key: ${keycode} -> ${device_id}`);
       deviceNs.to(device_id).emit('device:remote-key', { keycode });
       if (typeof ack === 'function') ack({ delivered: true });
@@ -390,8 +407,12 @@ module.exports = function setupDashboardSocket(io) {
       }
       // ⚠️ One definition of "deliver a command", shared with the group route and the mesh path —
       // see lib/device-command.js for why it was extracted.
-      const r = deliverCommand(deviceNs, devRow, type, payload);
+      const r = deliverCommand(deviceNs, devRow, type, payload, { actor: socketActor(socket) });
 
+      if (r.status === 'refused') {
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'corporate', code: r.code, error: r.error });
+        return;
+      }
       if (r.status === 'unsupported') {
         console.warn(`Command ${type} refused for device ${device_id}: needs ${r.capability}`);
         if (typeof ack === 'function') ack({ delivered: false, reason: 'unsupported', capability: r.capability });

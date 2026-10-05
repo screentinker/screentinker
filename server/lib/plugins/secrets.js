@@ -125,6 +125,7 @@ function redactConfigJson(json, fields) {
 }
 
 module.exports = {
+  SECRETY_NAME_RE,
   secretNames,
   redactSecrets,
   mergeSecrets,

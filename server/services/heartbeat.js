@@ -331,6 +331,8 @@ async function runMaintenance() {
   _maintRunning = true;
   try {
     await pruneProvisioningDevices();
+    // Head office mandates / slot content naming a screen the prune just removed (no FK cascades them).
+    try { require('../lib/corporate/cleanup').sweepDanglingTargets(); } catch (_) { /* never fatal */ }
     // Aggregate before pruning. prunePlayLogs() enforces this independently via the watermark,
     // so the ORDER here is an optimisation (prune the hours we just rolled up on the same pass),
     // not the safety property.

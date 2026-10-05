@@ -66,16 +66,24 @@ db.exec(`
   -- resolves inheritance rather than reading devices.playlist_id, because a screen that INHERITS
   -- the playlist holding this content has no copy of the id on its row — and would otherwise be
   -- left showing a file that no longer exists on disk.
-  CREATE TABLE devices (id TEXT PRIMARY KEY, playlist_id TEXT, playlist_source TEXT, wall_id TEXT, layout_id TEXT, scheduled_playlist_id TEXT, scheduled_layout_id TEXT);
+  CREATE TABLE devices (id TEXT PRIMARY KEY, workspace_id TEXT, playlist_id TEXT, playlist_source TEXT, wall_id TEXT, layout_id TEXT, scheduled_playlist_id TEXT, scheduled_layout_id TEXT);
   CREATE TABLE playlists (id TEXT PRIMARY KEY, workspace_id TEXT, published_snapshot TEXT);
-  CREATE TABLE playlist_items (id INTEGER PRIMARY KEY AUTOINCREMENT, playlist_id TEXT, content_id TEXT);
-  CREATE TABLE video_walls (id TEXT PRIMARY KEY, playlist_id TEXT);
-  CREATE TABLE device_groups (id TEXT PRIMARY KEY, playlist_id TEXT, priority INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE playlist_items (id INTEGER PRIMARY KEY AUTOINCREMENT, playlist_id TEXT, content_id TEXT, child_playlist_id TEXT);
+  CREATE TABLE playlist_item_schedules (id TEXT PRIMARY KEY, playlist_item_id INTEGER);
+  CREATE TABLE video_walls (id TEXT PRIMARY KEY, workspace_id TEXT, playlist_id TEXT);
+  CREATE TABLE device_groups (id TEXT PRIMARY KEY, workspace_id TEXT, playlist_id TEXT, priority INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE device_group_members (device_id TEXT, group_id TEXT);
+  -- The corporate (head office) tier of the resolver reads organizations and the corporate tables.
+  CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '');
+  CREATE TABLE layouts (id TEXT PRIMARY KEY);
+  CREATE TABLE widgets (id TEXT PRIMARY KEY);
 `);
-// The SAME view definition the migration applies — imported, not pasted, so this fixture cannot
-// drift into proving things about a database that does not exist.
+// The SAME definitions the migration applies — imported, not pasted, so this fixture cannot drift
+// into proving things about a database that does not exist: the corporate schema (its columns on
+// the tables above, and its own tables), the resolver views, and the corporate backstop.
+require('../lib/corporate/schema-sql').applyCorporateSchema(db, { skipMissingTables: true, log: null });
 require('../lib/playlist-resolver-sql').applyResolverViews(db);
+require('../lib/corporate/backstop').applyCorporateGuards(db);
 
 const dbModulePath = require.resolve('../db/database');
 require.cache[dbModulePath] = {
@@ -89,6 +97,7 @@ const { resolveTenancy } = require('../lib/tenancy');
 const contentRouter = require('../routes/content');
 
 // Seed: org + workspace, a platform_operator user, and two content rows.
+db.prepare("INSERT INTO organizations (id, name) VALUES ('org-a','Org A')").run();
 db.prepare("INSERT INTO workspaces (id, organization_id, name) VALUES ('ws-a','org-a','Workspace A')").run();
 db.prepare("INSERT INTO users (id, email, role) VALUES ('u-op','op@test.local','platform_operator')").run();
 const operator = { id: 'u-op', email: 'op@test.local', role: 'platform_operator' };

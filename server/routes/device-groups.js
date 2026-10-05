@@ -17,6 +17,9 @@ const { stripDeviceSecretsForList } = require('../lib/device-sanitize');
 const go2rtc = require('../lib/go2rtc');
 const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
 const appConfig = require('../config');
+const corpGuard = require('../lib/corporate/guard');
+const corpResolve = require('../lib/corporate/resolve');
+const corpCleanup = require('../lib/corporate/cleanup');
 const express_ = express; // for express.text() below
 
 const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
@@ -57,16 +60,14 @@ function requireGroupWrite(req, res, next) {
 // by the resolver. Sending the decision alongside the request is what lets the UI explain the
 // refusal instead of showing a setting that quietly isn't in force.
 function syncDecisionFor(group) {
-  if (!group?.playlist_id) return { sync_effective: null, sync_reason: null, sync_downgraded: false };
+  // The sync key is the group's playlist — or, when a head office mandate covers the group, the
+  // corporate playlist its members actually play (lib/corporate/resolve.js; identical to the
+  // group's playlist id when no mandate exists).
+  if (!group || !corpResolve.syncKeyForGroup(db, group)) return { sync_effective: null, sync_reason: null, sync_downgraded: false };
   // Resolved playlist, matching ws/deviceSocket.js's groupSyncMembers exactly. Reading the raw
   // column here would report "sync off / downgraded" for a group whose members all inherit — the
   // dashboard explaining a refusal that never happened.
-  const members = db.prepare(`
-    SELECT d.id, d.platform, d.ip_address FROM devices d
-    JOIN device_group_members dgm ON dgm.device_id = d.id
-    JOIN device_resolved_playlist r ON r.device_id = d.id
-    WHERE dgm.group_id = ? AND r.playlist_id = ?
-  `).all(group.id, group.playlist_id);
+  const members = corpResolve.syncMembers(db, group, 'd.id, d.platform, d.ip_address');
   const d = resolveSyncBackend(group.sync_backend, members);
   return { sync_effective: d.backend, sync_reason: d.reason, sync_downgraded: d.downgraded };
 }
@@ -214,7 +215,18 @@ router.delete('/:id', requireGroupWrite, (req, res) => {
     return { converted, devices: members.length };
   });
 
-  const result = convert();
+  /*
+   * ⚠️ CORPORATE: deleting a group that head office's playlist plays through would change what its
+   * screens play. Only an org admin may; everyone else gets the per-action explanation.
+   */
+  const memberIds = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(groupId).map((r) => r.device_id);
+  const result = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, memberIds, () => {
+    const out = convert();
+    corpCleanup.removeTargets(db, 'group', groupId);
+    return out;
+  }, () => `Deleting the group "${req.group.name}" would change what ${memberIds.length} screen${memberIds.length === 1 ? '' : 's'} play (head office's playlist). Ask your organization admin to do it.`));
+  if (!result) return;
+  for (const id of memberIds) pushPlaylistToDevice(req, id);
   res.json({ success: true, schedules_converted: result.converted, devices: result.devices });
 });
 
@@ -259,7 +271,12 @@ router.post('/:id/devices', requireGroupWrite, (req, res) => {
     return res.status(403).json({ error: 'Device is not in this group\'s workspace' });
   }
   try {
-    db.prepare('INSERT OR IGNORE INTO device_group_members (device_id, group_id) VALUES (?, ?)').run(device_id, req.params.id);
+    // CORPORATE: joining is refused when it would change which head office playlist this screen plays.
+    const joined = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, [device_id], () => {
+      db.prepare('INSERT OR IGNORE INTO device_group_members (device_id, group_id) VALUES (?, ?)').run(device_id, req.params.id);
+      return true;
+    }, (c) => `Adding this screen to "${req.group.name}" would change what it plays (head office's "${c.name}"). Ask your organization admin to do it.`));
+    if (!joined) return;
 
     /*
      * ⚠️ Nothing is copied. Membership IS the assignment; the resolver reads it.
@@ -288,10 +305,15 @@ router.post('/:id/devices', requireGroupWrite, (req, res) => {
 // from the group it just left.
 router.delete('/:id/devices/:deviceId', requireGroupWrite, (req, res) => {
   const deviceId = req.params.deviceId;
-  db.prepare('DELETE FROM device_group_members WHERE device_id = ? AND group_id = ?').run(deviceId, req.params.id);
-  // Drop a leftover copy of the group's playlist so the last-resort branch of the resolver cannot
-  // resurrect it once the membership that justified it is gone. A device's OWN choice is untouched.
-  clearInheritedCopy(deviceId);
+  // CORPORATE: leaving is refused when it would change which head office playlist this screen plays.
+  const left = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, [deviceId], () => {
+    db.prepare('DELETE FROM device_group_members WHERE device_id = ? AND group_id = ?').run(deviceId, req.params.id);
+    // Drop a leftover copy of the group's playlist so the last-resort branch of the resolver cannot
+    // resurrect it once the membership that justified it is gone. A device's OWN choice is untouched.
+    clearInheritedCopy(deviceId);
+    return true;
+  }, (c) => `Removing this screen from "${req.group.name}" would change what it plays (head office's "${c.name}"). Ask your organization admin to do it.`));
+  if (!left) return;
 
   /*
    * ⚠️ No re-derivation here either. This used to pick "any remaining group with a playlist",
@@ -376,9 +398,49 @@ router.post('/:id/assign-content', requireGroupWrite, (req, res) => {
    * identical too), and the resolver does not change it: the fix is to insert once per distinct
    * playlist.
    */
+  /*
+   * ⚠️ CORPORATE: a member head office's playlist plays on resolves to the CORPORATE playlist, and
+   * the non-forking ensureDevicePlaylist below would insert straight into it — a store editing head
+   * office's content through the group page (a real bypass, spec §4.3). Instead such members get the
+   * item in the GROUP-level content of head office's local slot (ensureGroupFill: made as a copy of
+   * the workspace's, so nothing disappears), once per corporate playlist. A playlist with several
+   * slots needs slot_id (409 CORPORATE_SLOT_REQUIRED); none -> those members are skipped and listed.
+   * Video-wall members play their wall's content, never a group's: skipped too.
+   */
+  const fillsLib = require('../lib/corporate/fills');
+  const skipped = [];
+  const addedToSlots = [];
+  const slotOf = new Map();   // corporate playlist -> slot (or null = none)
   const transaction = db.transaction(() => {
     const seen = new Set();
     for (const m of members) {
+      const mandate = corpGuard.activeMandateFor(db, m.device_id);
+      if (mandate) {
+        const wall = db.prepare('SELECT wall_id FROM devices WHERE id = ?').get(m.device_id);
+        if (wall && wall.wall_id) { skipped.push({ device_id: m.device_id, reason: 'video_wall' }); continue; }
+        const P = mandate.dark ? null : mandate.playlist_id;
+        if (!slotOf.has(P)) {
+          const slots = P ? fillsLib.liveSlots(db, P) : [];
+          let slot = null;
+          if (req.body.slot_id) slot = slots.find((x) => x.id === req.body.slot_id) || null;
+          else if (slots.length === 1) slot = slots[0];
+          else if (slots.length > 1) {
+            throw corpGuard.err('CORPORATE_SLOT_REQUIRED', { name: mandate.playlist_name }, { ...corpGuard.mandateDetails(db, mandate, { group_id: req.group.id }), slots: slots.map((x) => ({ id: x.id, name: x.name })) });
+          }
+          slotOf.set(P, slot);
+          if (slot) {
+            const { fill } = fillsLib.ensureGroupFill(db, req.group, slot, { userId: req.user.id });
+            fillsLib.assertCanAdd(db, fill.fill_playlist_id, [{ content_id, duration_sec: itemDuration }]);
+            const max = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM playlist_items WHERE playlist_id = ?').get(fill.fill_playlist_id);
+            db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
+              .run(fill.fill_playlist_id, content_id, max.next, itemDuration);
+            markDraft(fill.fill_playlist_id);
+            addedToSlots.push(fillsLib.describeFill(db, fill, slot));
+          }
+        }
+        if (!slotOf.get(P)) skipped.push({ device_id: m.device_id, reason: 'no_slot' });
+        continue;
+      }
       const playlistId = ensureDevicePlaylist(m.device_id, req.user.id);
       if (seen.has(playlistId)) continue;
       seen.add(playlistId);
@@ -393,10 +455,11 @@ router.post('/:id/assign-content', requireGroupWrite, (req, res) => {
   });
   try { transaction(); } catch (e) {
     if (e && e.smartRefusal) return res.status(400).json({ error: `A screen in this group plays a smart playlist. ${e.message}` });
+    if (corpGuard.send(res, e, req)) return undefined;
     throw e;
   }
 
-  res.json({ success: true, devices_updated: members.length });
+  res.json({ success: true, devices_updated: members.length - skipped.length, ...(skipped.length ? { skipped } : {}), ...(addedToSlots.length ? { added_to_slots: addedToSlots } : {}) });
 });
 
 // Assign an existing playlist to all devices in a group, and persist the
@@ -418,6 +481,11 @@ router.post('/:id/assign-playlist', requireGroupWrite, (req, res) => {
     return res.status(403).json({ error: 'Playlist is not in this group\'s workspace' });
   }
 
+  // CORPORATE: a group head office's playlist covers would never show this; a partly covered one
+  // is allowed and says how many of its screens keep playing head office's.
+  const coverage = corpGuard.guarded(req, res, () => corpGuard.assertGroupNotCovered(req, req.group));
+  if (!coverage) return;
+
   const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(req.params.id);
 
   /*
@@ -429,7 +497,7 @@ router.post('/:id/assign-playlist', requireGroupWrite, (req, res) => {
   db.prepare('UPDATE device_groups SET playlist_id = ? WHERE id = ?').run(playlist_id, req.params.id);
 
   for (const m of members) pushPlaylistToDevice(req, m.device_id);
-  res.json({ success: true, devices_updated: members.length });
+  res.json({ success: true, devices_updated: members.length, ...(coverage.mandated_members ? { mandated_members: coverage.mandated_members } : {}) });
 });
 
 // Send command to all devices in a group (reboot/shutdown/screen on/off etc.)
@@ -464,8 +532,10 @@ router.post('/:id/command', requireScope('full'), requireGroupWrite, (req, res) 
   const sent = results.filter(r => r.status === 'sent' || r.status === 'relayed').length;
   const offline = results.filter(r => r.status === 'offline' || r.status === 'queued').length;
   const unsupported = results.filter(r => r.status === 'unsupported').length;
-  console.log(`Group command '${type}' sent to group '${req.group.name}': ${sent} sent, ${offline} offline, ${unsupported} unsupported`);
-  res.json({ success: true, sent, offline, unsupported, total: devices.length, results });
+  // Screens head office's playlist plays on refuse the commands that would blank or detach them.
+  const refused = results.filter(r => r.status === 'refused').length;
+  console.log(`Group command '${type}' sent to group '${req.group.name}': ${sent} sent, ${offline} offline, ${unsupported} unsupported${refused ? `, ${refused} refused (head office)` : ''}`);
+  res.json({ success: true, sent, offline, unsupported, ...(refused ? { refused } : {}), total: devices.length, results });
 });
 
 /*

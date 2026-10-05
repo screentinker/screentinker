@@ -62,6 +62,13 @@ const BLOCKLIST = Object.freeze({
     'local_api_secret',
   ],
   triggers: ['match_token', 'clear_token'],
+  /*
+   * ⚠️ Not a secret — a BELT. A slot placement references corporate_slots, which is not replicated
+   * (corporate state does not travel in v1), so a copied row carrying one would violate the foreign
+   * key on the replica. The HQ workspace cannot be shared at all (lib/corporate/guard.js
+   * workspaceHasCorporateState); this keeps a row written by any other path from breaking apply.
+   */
+  playlist_items: ['slot_id'],
 });
 
 /**

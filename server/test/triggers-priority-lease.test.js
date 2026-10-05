@@ -297,3 +297,34 @@ test('⚠️ active and held state are NEVER written to localStorage', () => {
   assert.doesNotMatch(engine, /triggerHeld\s*=\s*JSON\.parse/,
     'held triggers must not survive a restart');
 });
+
+// ───────────────────────── head office emergency alerts (spec §5.3) ─────────────────────────
+//
+// The server PROJECTS an emergency alert at 100000 + p (lib/device-triggers.js projectTrigger) and
+// clamps every normal trigger to -1000..1000. Fed through the REAL player engine here, so the claim
+// "no player change needed" is checked against the code that decides, not against a number.
+
+const { projectTrigger } = require('../lib/device-triggers');
+const proj = (row) => projectTrigger({ source_http: 1, source_udp: 0, mode: 'until_cleared', ...row },
+  [{ content_id: 'c1', duration_sec: 5 }]);
+
+test('⚠️ emergency vs 1000: a store trigger at the top normal priority is DROPPED while an emergency shows', () => {
+  const b = boot([proj({ id: 'em', name: 'Evacuate', kind: 'emergency', match_token: 'EM', clear_token: 'EM_C', priority: 0 }),
+                  proj({ id: 'st', name: 'Store', match_token: 'ST', priority: 1000 })]);
+  b.fire('EM');
+  b.fire('ST');
+  assert.equal(b.api.active().trigger.id, 'em', 'a store trigger displaced head office\'s emergency');
+  assert.equal(b.api.held().length, 0);
+});
+
+test('emergency vs 1000: an emergency takes the screen from a store trigger, which is held and comes back after', () => {
+  const b = boot([proj({ id: 'em', name: 'Evacuate', kind: 'emergency', match_token: 'EM', clear_token: 'EM_C', priority: 0 }),
+                  // A row that skipped the validator (import, mesh) at an absurd priority is clamped too.
+                  proj({ id: 'st', name: 'Store', match_token: 'ST', clear_token: 'ST_C', priority: 500000 })]);
+  b.fire('ST');
+  b.fire('EM');
+  assert.equal(b.api.active().trigger.id, 'em');
+  assert.equal(b.api.held().length, 1, 'the store\'s still-true condition is held, not lost');
+  b.fire('EM_C');
+  assert.equal(b.api.active().trigger.id, 'st');
+});

@@ -30,8 +30,11 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 
+// #/corporate: a fresh account owns its organization and has no head office workspace yet, so this
+// renders the head office setup prompt — the path every new organization sees first.
 const VIEWS = ['#/', '#/content', '#/playlists', '#/layouts', '#/widgets', '#/schedule',
-  '#/walls', '#/reports', '#/kiosk', '#/designer', '#/activity', '#/members', '#/help', '#/settings'];
+  '#/walls', '#/reports', '#/kiosk', '#/designer', '#/activity', '#/members', '#/help', '#/settings',
+  '#/corporate'];
 
 function findChrome() {
   if (process.env.CHROME && fs.existsSync(process.env.CHROME)) return process.env.CHROME;

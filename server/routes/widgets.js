@@ -226,6 +226,16 @@ function checkWidgetRead(req, res) {
   return widget;
 }
 
+// CORPORATE: a widget head office's playlist plays may be changed or deleted only by a corporate
+// author (duplicating one is a read, and stays open). Returns true when refused.
+function corpMediaRefused(req, res, widget) {
+  const corpGuard = require('../lib/corporate/guard');
+  try { corpGuard.assertMediaWritable(req, 'widget', widget.id); return false; } catch (e) {
+    if (corpGuard.send(res, e, req)) return true;
+    throw e;
+  }
+}
+
 function checkWidgetWrite(req, res) {
   const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
   if (!widget) { res.status(404).json({ error: 'Widget not found' }); return null; }
@@ -297,6 +307,7 @@ router.get('/:id', (req, res) => {
 router.put('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
   if (!widget) return;
+  if (corpMediaRefused(req, res, widget)) return;
 
   const { name } = req.body;
   let { config } = req.body;
@@ -369,6 +380,7 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
   if (!widget) return;
+  if (corpMediaRefused(req, res, widget)) return;
   db.prepare('DELETE FROM widgets WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });

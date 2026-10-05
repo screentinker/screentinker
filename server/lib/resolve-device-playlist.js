@@ -31,7 +31,7 @@ const SELECT = 'SELECT playlist_id, source FROM device_resolved_playlist WHERE d
  * objects. Callers comparing or spreading the row should not have to know which driver is loaded,
  * and a missing device should look like a device that resolves to nothing rather than `undefined`.
  *
- * @returns {{playlist_id: string|null, source: 'device'|'wall'|'group'|null}}
+ * @returns {{playlist_id: string|null, source: 'corporate'|'schedule'|'device'|'wall'|'group'|null}}
  */
 function resolveDevicePlaylist(deviceId) {
   if (!deviceId) return { playlist_id: null, source: null };

@@ -139,6 +139,13 @@ const dashboardCsp = helmet.contentSecurityPolicy({
   },
 });
 
+/*
+ * FIRST: mark "an HTTP request is being served", for the corporate backstop's tripwire — a write to
+ * playlist_items with no actor INSIDE a request means some path lost its async context and was
+ * judged as system. See lib/corporate/actor.js. Costs one AsyncLocalStorage.run per request.
+ */
+app.use(require('./lib/corporate/actor').httpMarker);
+
 app.use(helmet({
   contentSecurityPolicy: false,        // we apply our own below, scoped to non-render paths
   crossOriginEmbedderPolicy: false,    // allow loading external widget content
@@ -1759,6 +1766,14 @@ for (const r of AGENCY_ROUTERS) {
 }
 
 /*
+ * Corporate refusals that escaped a route as an exception — a CorporateError from the guard, or the
+ * backstop's RAISE(ABORT, 'CORPORATE_LOCKED') surfacing as a SqliteError — answered as the JSON a
+ * client can act on (403/409 + code) instead of Express's default 500 page with a stack trace.
+ * Anything else is passed on untouched, so every other error behaves exactly as before.
+ */
+app.use(require('./lib/corporate/guard').errorHandler);
+
+/*
  * Plugins (P1). Off unless PLUGINS_ENABLED is set: boot() returns without scanning or
  * require() of plugin code. Must run after migrations (db was required at the top of
  * this file) and after the JWT_ONLY mount so /api/admin/plugins is already behind
@@ -2282,6 +2297,14 @@ startScheduler(io);
 // #157: auto-deactivate expired content + republish affected playlists
 const { startContentExpiry } = require('./services/content-expiry');
 startContentExpiry(io);
+// Corporate local slots: hourly tidy of unused compositions and unreachable retired slots.
+require('./services/corporate-sweep').startCorporateSweep();
+// Corporate state an older server version may have changed (a rollback, then this upgrade): drop the
+// composition cache, republish head office playlists that version published, report empty alerts.
+try { require('./lib/corporate/reconcile').reconcileAtBoot(require('./db/database').db, io); } catch (e) { console.error('[corporate] boot reconcile:', e && e.message); }
+// Head office emergency alerts: restore any live "Activate now" from the table, arm its expiry
+// timers and the 30-second belt sweep (lib/corporate/emergency-live.js).
+require('./lib/corporate/emergency-live').init(io);
 require('./lib/smart-playlist').start(io);
 
 // Start alert service

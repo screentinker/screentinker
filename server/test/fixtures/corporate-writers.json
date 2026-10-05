@@ -1,0 +1,25 @@
+{
+  "_doc": "Every statement in the server tree that writes playlist_items or playlist_item_schedules, by file, with how the corporate (head office) lock covers it. test/corporate-writers-inventory.test.js fails when a count changes: classify the new writer here (spec 10 §4.7) before it can ship. JS = the guard call that gives the 403; BS = the SQLite backstop (lib/corporate/backstop.js), which fails closed inside any request whose actor cannot author.",
+  "files": {
+    "routes/playlists.js": { "count": 27, "coverage": "JS: loadPlaylistAccess(requireWrite) -> assertPlaylistWritable on every write route (items, selection, bulk, reorder, discard, duplicate, item schedules). BS." },
+    "routes/assignments.js": { "count": 7, "coverage": "JS: mandated device -> add REDIRECTED into the screen's local slot content (lib/corporate/fills.js redirectTarget + assertCanAdd), never head office's playlist; reorder/copy-to refused, copy-to skips slot rows; checkItemWrite -> assertPlaylistWritable. BS." },
+    "routes/device-groups.js": { "count": 2, "coverage": "JS: assign-content puts mandated members' item into the GROUP-level slot content (ensureGroupFill + assertCanAdd), never into head office's playlist. BS." },
+    "routes/schedules.js": { "count": 1, "coverage": "New store playlist (auto-generated), not governed; schedules on mandated targets refused. BS." },
+    "routes/agency.js": { "count": 2, "coverage": "JS: assertPlaylistWritable with the agency token actor -> CORPORATE_TOKEN; governed playlists cannot be allowlisted (lib/agency-targets.js). BS." },
+    "routes/slide-decks.js": { "count": 1, "coverage": "JS: checkDeckAccess(write) -> assertMediaWritable('slide_deck'). BS." },
+    "routes/status.js": { "count": 4, "coverage": "Import / v1 conversion into NEW playlists. corporate = 1 and slot placements only when the importer is a corporate author importing into the org's HQ (spec 6.3); otherwise slots become their fallback item or are dropped. BS." },
+    "routes/corporate-slots.js": { "count": 2, "coverage": "Slot placement INSERT/DELETE in a corporate playlist after requireAuthor (corporate author, never a token; JWT-only router). BS (structural trigger refuses slot_id outside a corporate playlist)." },
+    "lib/corporate/fills.js": { "count": 2, "coverage": "Copies flat rows into a NEW store fill playlist (createFill/copyItems), reached from the store redirects and fill routes after their access checks; fills are not governed. BS (FILL_FLAT structural trigger)." },
+    "lib/slide-deck.js": { "count": 3, "coverage": "Reached only from the deck routes above (JS) or as system. BS." },
+    "lib/fork-device-playlist.js": { "count": 3, "coverage": "Never forks a corporate source (resolved.source === 'corporate' -> null); writes a NEW device playlist. BS." },
+    "lib/revisions.js": { "count": 3, "coverage": "routes/revisions.js restore -> assertPlaylistWritable(op='restore') / assertMediaWritable. BS." },
+    "lib/device-bring.js": { "count": 1, "coverage": "Move-workspace 'bring its playlist': copies the screen's OWN playlist into NEW playlists in the target workspace (item schedules here; the items themselves through the dynamic copyRow, listed under dynamic). Never copies a corporate playlist or slot content (ownPlaylistOf -> governanceOf), never writes the source. Reached only from POST /api/devices/move-workspace after validate (admin of both workspaces; another organization = platform admin) and inside assertNoMandateLoss. BS." },
+    "lib/auto-playlist.js": { "count": 3, "coverage": "NEW auto-generated playlists, not governed. BS." },
+    "db/database.js": { "count": 3, "coverage": "Boot migrations — system (no actor)." }
+  },
+  "dynamic": {
+    "lib/mesh/replication.js": "Generic replicated writes (table name is data). System actor on apply; corporate workspaces cannot be replicated (guard.workspaceHasCorporateState), playlist_items.slot_id is on the BLOCKLIST as a belt.",
+    "lib/device-bring.js copyRow": "INSERT INTO ${table} with table = 'playlist_items' (and content/widgets/playlists...): new rows in NEW playlists of the target workspace only, slot_id always NULL, corporate always 0 — see the lib/device-bring.js entry above.",
+    "FK cascades": "content/widget delete and playlist delete cascade playlist_items: JS media protection + BS (cascades fire the TEMP triggers)."
+  }
+}

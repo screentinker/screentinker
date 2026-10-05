@@ -160,11 +160,25 @@ function isMeshCommand(type) {
  * long enough to be rendering controls the panel no longer declares. A command delivered and
  * silently ignored is the failure the capability mechanism exists to end.
  *
- * @returns {{status:'sent'|'relayed'|'queued'|'offline'|'unsupported', capability?:string, via?:string}}
+ * @returns {{status:'sent'|'relayed'|'queued'|'offline'|'unsupported'|'refused', capability?:string, via?:string, code?:string}}
  */
-function deliverCommand(deviceNs, device, type, payload) {
+function deliverCommand(deviceNs, device, type, payload, opts = {}) {
   const verdict = playerCapabilities.commandAllowed(device, type);
   if (!verdict.ok) return { status: 'unsupported', capability: verdict.capability };
+
+  /*
+   * ⚠️ CORPORATE (D13): on a screen head office's playlist plays on, the commands that blank,
+   * cover or detach it (screen_off, shutdown, set_server_url, shell, install_apk, launch,
+   * kiosk_unlock, ...) are for the organization's admins only; brightness is floored at 20% and a
+   * power schedule can only be the server-resolved one. Checked HERE, the single delivery path, so
+   * the REST route, group and workspace fan-outs, the mesh re-entry and the dashboard socket are
+   * all covered. `opts.actor` is explicit for callers outside an HTTP request (the dashboard
+   * socket); otherwise the request's actor (AsyncLocalStorage). System callers have none.
+   */
+  const corpActor = opts.actor !== undefined ? opts.actor : require('./corporate/actor').current();
+  const corp = require('./corporate/guard').assertDeviceControl(corpActor, device, type, payload);
+  if (!corp.ok) return { status: 'refused', code: corp.code, error: corp.error, corporate: corp.corporate };
+  payload = corp.payload;
 
   // #312/#313: a web player (browser tab) has origin-scoped storage, so it cannot follow a server
   // move without carrying its identity in the URL. On an operator's set_server_url — and ONLY then,

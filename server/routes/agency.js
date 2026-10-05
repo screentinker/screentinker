@@ -102,6 +102,16 @@ router.post('/playlists/:playlistId/items', (req, res) => {
     return res.status(409).json({ error: "This playlist can't accept uploads right now — it's been assigned to a zone on a screen. Ask your contact." });
   }
 
+  // CORPORATE: a token never writes head office's playlist, even one allowlisted before it became
+  // corporate (CORPORATE_TOKEN). The backstop would refuse the INSERT too; this is the clear answer.
+  {
+    const corpGuard = require('../lib/corporate/guard');
+    try { corpGuard.assertPlaylistWritable(req, { id: req.params.playlistId }, 'items'); } catch (e) {
+      if (corpGuard.send(res, e, req)) return;
+      throw e;
+    }
+  }
+
   const content = db.prepare('SELECT id, workspace_id, duration_sec FROM content WHERE id = ?').get(content_id);
   if (!content) return res.status(404).json({ error: 'Content not found' });
   // cross-tenant guard: content must be in the token's bound workspace (or a template)
@@ -128,6 +138,13 @@ router.post('/playlists/:playlistId/items', (req, res) => {
   if (!(TIME_RE.test(en) || en === '24:00')) return res.status(400).json({ error: 'end must be HH:MM or 24:00' });
 
   { const smartErr = require('../lib/smart-playlist').smartAddError(db, req.params.playlistId); if (smartErr) return res.status(400).json({ error: smartErr }); }
+  // CORPORATE: an allowlisted store playlist may be the store's content for head office's local
+  // slot — the agency adds within the slot's limits like anyone else (publish re-checks them).
+  try { require('../lib/corporate/fills').assertCanAdd(db, req.params.playlistId, [{ content_id, duration_sec }]); } catch (e) {
+    const corpGuard = require('../lib/corporate/guard');
+    if (corpGuard.send(res, e, req)) return;
+    throw e;
+  }
   const order = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM playlist_items WHERE playlist_id = ?').get(req.params.playlistId).n;
   const itemId = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
     .run(req.params.playlistId, content_id, order, duration_sec).lastInsertRowid;

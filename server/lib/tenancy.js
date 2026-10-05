@@ -167,7 +167,14 @@ function resolveTenancy(req, res, next) {
     return;
   }
 
-  next();
+  /*
+   * Corporate playlists: the request's ACTOR rides the async call chain from here on, so the guard
+   * deep in a lib writer — and the SQLite backstop's UDFs, which cannot query — can ask "may this
+   * person change head office's content?" without being handed req. Computed now, in full: see
+   * lib/corporate/actor.js for why it can never be lazy.
+   */
+  const corpActor = require('./corporate/actor');
+  corpActor.als.run(corpActor.fromReq(req), next);
 }
 
 // Enumerate every workspace_id the given user has any path into:

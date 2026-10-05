@@ -61,10 +61,20 @@ function powerScheduleForDevice(db, deviceId) {
    * from a group schedule is to remove it from the group — and the operator who unticked the box
    * would watch it sleep anyway.
    */
+  /*
+   * ⚠️ CORPORATE (D13): on a screen head office's playlist plays on, only a schedule an org admin
+   * set counts. A store's backlight clock would otherwise be a way to blank head office's screen;
+   * the store's rows are kept, merely not obeyed, and come back the moment the mandate goes.
+   */
+  let adminOnly = '';
+  try {
+    if (require('./corporate/runtime').active(db) && require('./corporate/resolve').mandateFor(db, deviceId)) adminOnly = ' AND set_by_org_admin = 1';
+  } catch (_) { adminOnly = ''; }
+
   let row = db.prepare(
     `SELECT id, enabled, timezone, windows, 'device' AS source
        FROM display_power_schedules
-      WHERE device_id = ? AND workspace_id = ?`
+      WHERE device_id = ? AND workspace_id = ?${adminOnly}`
   ).get(deviceId, device.workspace_id);
 
   if (!row) {
@@ -72,7 +82,7 @@ function powerScheduleForDevice(db, deviceId) {
       `SELECT s.id, s.enabled, s.timezone, s.windows, 'group' AS source
          FROM display_power_schedules s
          JOIN device_group_members m ON m.group_id = s.group_id
-        WHERE m.device_id = ? AND s.workspace_id = ?
+        WHERE m.device_id = ? AND s.workspace_id = ?${adminOnly.replace('set_by', 's.set_by')}
         ORDER BY s.group_id ASC
         LIMIT 1`
     ).get(deviceId, device.workspace_id);
