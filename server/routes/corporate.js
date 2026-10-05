@@ -287,9 +287,11 @@ router.put('/settings', (req, res) => {
 function corporatePlaylistRow(p) {
   const mandates = db.prepare('SELECT COUNT(*) AS n FROM corporate_mandates WHERE playlist_id = ?').get(p.id).n;
   const items = db.prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ?').get(p.id).n;
+  // Slots placed in the draft (what the editor shows); a removed slot stays retired, not counted.
+  const slots = db.prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ? AND slot_id IS NOT NULL').get(p.id).n;
   return {
     id: p.id, name: p.name, description: p.description, status: p.status, workspace_id: p.workspace_id,
-    corporate: true, item_count: items, places: mandates, screens: playlistScreens(p.id),
+    corporate: true, item_count: items, slot_count: slots, places: mandates, screens: playlistScreens(p.id),
     has_published: p.published_snapshot !== null && p.published_snapshot !== undefined,
     updated_at: p.updated_at,
   };
@@ -606,6 +608,89 @@ router.delete('/mandates/:id', (req, res) => {
   res.json({ success: true, screens_changed: changed.length });
 });
 
+/* ─────────────────────────────────────────────── what the dashboard needs to say why (§7.10) */
+
+/*
+ * What head office decides in the ACTIVE workspace, for the badges and pickers that must explain a
+ * refusal BEFORE it happens: which screens play head office's playlist, which groups it covers
+ * (and how many of a covered group's synced members drop out because they have their own slot
+ * content), which video walls it locks, and which of the workspace's schedules it shadows.
+ *
+ * Read by anyone who can read the workspace — it names only things they can already see, plus the
+ * name of head office's playlist, which the device page shows them anyway. Empty maps when nothing
+ * is mandated (and in degraded mode), so a caller never has to special-case "no corporate".
+ */
+router.get('/workspace', (req, res) => {
+  const wsId = req.workspaceId;
+  const out = { workspace_id: wsId || null, active: false, is_admin: false, devices: {}, groups: {}, walls: {}, shadowed_schedules: [] };
+  if (!wsId) return res.json(out);
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(wsId);
+  if (!ws || !accessContext(req.user.id, req.user.role, ws)) return res.status(403).json({ error: 'Access denied' });
+  out.is_admin = !req.viaToken && guard.isOrgAdmin(req, ws.organization_id);
+  if (!runtime.active(db)) return res.json(out);
+  const describe = (m) => ({
+    mandate_id: m.id, playlist_id: m.playlist_id || null, playlist_name: m.playlist_name || null, dark: !!m.dark,
+    target_kind: m.target_kind, target_label: guard.targetLabel(db, m),
+  });
+  let mandated = [];
+  try {
+    mandated = db.prepare(`SELECT r.device_id FROM devices d JOIN device_resolved_playlist r ON r.device_id = d.id
+        WHERE d.workspace_id = ? AND r.source = 'corporate'`).all(wsId).map((r) => r.device_id);
+  } catch (_) { mandated = []; }
+  for (const id of mandated) {
+    const m = resolve.mandateFor(db, id);
+    if (m) out.devices[id] = describe(m);
+  }
+  out.active = mandated.length > 0;
+  for (const g of db.prepare('SELECT id, name, workspace_id, playlist_id, sync_enabled FROM device_groups WHERE workspace_id = ?').all(wsId)) {
+    const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(g.id).map((r) => r.device_id);
+    const inMandate = members.filter((id) => out.devices[id]);
+    const cov = resolve.groupCoverage(db, g);
+    if (!cov && !inMandate.length) continue;
+    let syncExcluded = 0;
+    if (cov && g.sync_enabled) {
+      // A member that plays a different loop from the group (its own slot content) drops out of sync.
+      const key = resolve.syncKeyForGroup(db, g);
+      if (key) syncExcluded = inMandate.filter((id) => resolve.syncKeyForDevice(db, id) !== key).length;
+    }
+    out.groups[g.id] = { covered: !!cov, ...(cov ? describe(cov) : {}), mandated_members: inMandate.length, members: members.length, sync_excluded: syncExcluded };
+  }
+  for (const w of db.prepare('SELECT id, name FROM video_walls WHERE workspace_id = ?').all(wsId)) {
+    const member = db.prepare('SELECT id FROM devices WHERE wall_id = ?').all(w.id).map((r) => r.id).find((id) => out.devices[id]);
+    if (!member) continue;
+    // Locked = the same rule the wall routes enforce (A11): mandated, and the viewer is not an org admin.
+    out.walls[w.id] = { ...out.devices[member], locked: guard.isControlledFor(req, member) };
+  }
+  const coveredGroups = Object.keys(out.groups).filter((id) => out.groups[id].covered);
+  for (const s of db.prepare('SELECT id, device_id, group_id FROM schedules WHERE workspace_id = ? AND enabled = 1').all(wsId)) {
+    if ((s.device_id && out.devices[s.device_id]) || (s.group_id && coveredGroups.includes(s.group_id))) out.shadowed_schedules.push(s.id);
+  }
+  res.json(out);
+});
+
+/*
+ * Everything an org admin can point "Where it plays" or an emergency alert's scope at: the org's
+ * workspaces with their groups, video walls and screens. Screens in a wall carry the wall, because
+ * a wall member is never a target of its own (D8) — the dialog says "Part of video wall {name}".
+ * Corporate authors read it too: "Preview a screen" picks from the same list.
+ */
+router.get('/targets', (req, res) => {
+  const org = loadOrg(req, res);
+  if (!org) return;
+  if (req.viaToken) return refuse(res, 'CORPORATE_TOKEN');
+  if (!guard.isOrgAdmin(req, org.id) && !guard.canAuthor(req, org.id)) return refuse(res, 'CORPORATE_ADMIN_REQUIRED');
+  const workspaces = orgWorkspaces(org.id).map((w) => ({
+    ...w,
+    hq: w.id === org.hq_workspace_id,
+    replicated: guard.isReplicatedWorkspace(db, w.id),
+    groups: db.prepare('SELECT id, name FROM device_groups WHERE workspace_id = ? ORDER BY name').all(w.id),
+    walls: db.prepare('SELECT id, name FROM video_walls WHERE workspace_id = ? ORDER BY name').all(w.id),
+    devices: db.prepare(`SELECT d.id, d.name, d.status, d.wall_id, vw.name AS wall_name FROM devices d
+        LEFT JOIN video_walls vw ON vw.id = d.wall_id WHERE d.workspace_id = ? ORDER BY d.name`).all(w.id),
+  }));
+  res.json({ organization_id: org.id, organization_name: org.name, hq_workspace_id: org.hq_workspace_id || null, workspaces });
+});
+
 /* ──────────────────────────────────────────────────────────────────── preview */
 
 /*
@@ -623,7 +708,10 @@ router.get('/preview', (req, res) => {
       JOIN workspaces w ON w.id = d.workspace_id WHERE d.id = ?`).get(deviceId);
   if (!device || device.organization_id !== org.id) return res.status(404).json({ error: 'Device not found' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
-  if (!guard.isOrgAdmin(req, org.id) && !(ws && accessContext(req.user.id, req.user.role, ws))) return res.status(403).json({ error: 'Access denied' });
+  // Role matrix §4.10 "Preview any screen's composed loop": org admins and corporate authors for any
+  // screen of the org; everyone else for the screens of a workspace they can read.
+  const hqReader = !req.viaToken && (guard.isOrgAdmin(req, org.id) || guard.canAuthor(req, org.id));
+  if (!hqReader && !(ws && accessContext(req.user.id, req.user.role, ws))) return res.status(403).json({ error: 'Access denied' });
   const { buildPlaylistPayloadUnchecked } = require('../ws/deviceSocket');
   const payload = buildPlaylistPayloadUnchecked(deviceId);
   const r = db.prepare('SELECT playlist_id, source FROM device_resolved_playlist WHERE device_id = ?').get(deviceId) || {};

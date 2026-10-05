@@ -305,7 +305,8 @@ function register(router, h) {
     const p = db.prepare('SELECT name, status, updated_at FROM playlists WHERE id = ?').get(f.fill_playlist_id) || {};
     return {
       id: f.id, slot_id: f.slot_id, workspace_id: f.workspace_id, scope_kind: f.scope_kind, scope_id: f.scope_id,
-      scope_label: fills.scopeLabel(db, f.scope_kind, f.scope_id), fill_playlist_id: f.fill_playlist_id,
+      scope_label: fills.scopeLabel(db, f.scope_kind, f.scope_id), scope_name: fills.scopeName(db, f.scope_kind, f.scope_id),
+      fill_playlist_id: f.fill_playlist_id,
       fill_playlist_name: p.name || null, status: p.status || null, fill_state: f.fill_state,
       published: t.published, items: t.items, seconds: t.seconds,
       screens: fills.screensForFill(db, f).length, updated_at: p.updated_at || f.updated_at, created_by: f.created_by,
@@ -511,6 +512,31 @@ function register(router, h) {
         playing.set(r.playlist_id || '__dark__', { playlist_id: r.playlist_id || null, playlist_name: r.playlist_id ? r.name : null, dark: !r.playlist_id, screens: r.n });
       }
     }
+    /*
+     * For the store's notice "Head office now plays "{name}" on {n} of your screens since {date}.
+     * {k} of your schedules are paused." (§7.7): when the oldest enabled mandate reaching this
+     * workspace with that playlist was made, and how many of the workspace's own schedules target a
+     * screen head office now drives.
+     */
+    const mandatedHere = new Set();
+    try {
+      for (const r of db.prepare(`SELECT r.device_id FROM devices d JOIN device_resolved_playlist r ON r.device_id = d.id
+          WHERE d.workspace_id = ? AND r.source = 'corporate'`).all(ws)) mandatedHere.add(r.device_id);
+    } catch (_) { /* degraded: nothing is mandated */ }
+    for (const p of playing.values()) {
+      let since = null;
+      for (const m of db.prepare('SELECT * FROM corporate_mandates WHERE organization_id = ? AND enabled = 1 AND (playlist_id IS ? OR (? IS NULL AND dark = 1))')
+        .all(org.id, p.playlist_id, p.playlist_id)) {
+        if (!fanout.workspacesForTarget(db, org.id, m.target_kind, m.target_id).includes(ws)) continue;
+        if (since === null || m.created_at < since) since = m.created_at;
+      }
+      p.since = since;
+    }
+    let pausedSchedules = 0;
+    for (const s of db.prepare('SELECT device_id, group_id FROM schedules WHERE workspace_id = ? AND enabled = 1').all(ws)) {
+      if (s.device_id && mandatedHere.has(s.device_id)) { pausedSchedules++; continue; }
+      if (s.group_id && resolve.groupCoverage(db, s.group_id)) pausedSchedules++;
+    }
     const slots = [];
     for (const p of playing.values()) {
       if (!p.playlist_id) continue;
@@ -527,7 +553,7 @@ function register(router, h) {
         slots.push(v);
       }
     }
-    res.json({ workspace_id: ws, mandates: [...playing.values()], slots });
+    res.json({ workspace_id: ws, mandates: [...playing.values()], slots, paused_schedules: pausedSchedules });
   });
 
   /* ── compliance and airtime (§7.5) ────────────────────────────────────────────────────────── */

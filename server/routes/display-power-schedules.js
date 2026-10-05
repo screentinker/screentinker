@@ -94,7 +94,7 @@ function corporatePowerCheck(req, res, target) {
   const admin = corpGuard.isOrgAdmin(req, orgId) && !req.viaToken;
   try {
     if (target.deviceId) {
-      corpGuard.assertDeviceRouteControl(req, target.deviceId, 'set a power schedule on');
+      corpGuard.assertDeviceRouteControl(req, target.deviceId, 'set a power schedule on it');
       return { mandated_members: 0, admin };
     }
     const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(target.groupId).map((r) => r.device_id);

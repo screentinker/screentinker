@@ -187,6 +187,10 @@ router.get('/:id', (req, res) => {
       layout_id: m.layout_id || null,
       mandate: { id: m.id, target_kind: m.target_kind, target_label: corpGuard.targetLabel(db, m) },
       can_change: corpGuard.isOrgAdmin(req, m.organization_id) && !req.viaToken,
+      // The device controls only org admins may use here (D13), so the page can show a lock and the
+      // reason on the control itself instead of letting the command bounce. The server still refuses.
+      controls_locked: corpGuard.isControlledFor(req, req.params.id),
+      gated_commands: Object.keys(corpGuard.GATED_COMMANDS),
       slots: [],
       items: [],
     } : null;
@@ -217,6 +221,24 @@ router.get('/:id', (req, res) => {
       } catch (e) { console.warn(`[corporate] device slot block failed for ${req.params.id}: ${e && e.message}`); }
     }
   }
+
+  /*
+   * Head office's emergency alerts that reach this screen (org switch on, screen in scope). While any
+   * does, the trigger listener, ports, secret and clear-all token are org-admin-only (§5.2), and a
+   * screen whose listeners are off cannot be reached at all — the trigger panel says both.
+   */
+  try {
+    const em = require('../lib/corporate/emergency');
+    const locking = em.lockingTriggers(db, req.params.id);
+    if (locking.length) {
+      const corpGuard = require('../lib/corporate/guard');
+      device.head_office_triggers = {
+        alerts: locking.map((t) => ({ id: t.id, name: t.name })),
+        settings_locked: !corpGuard.isOrgAdmin(req, corpGuard.orgOfDevice(db, req.params.id)) || !!req.viaToken,
+        listeners_off: !device.triggers_accept_http && !device.triggers_accept_udp,
+      };
+    }
+  } catch (_) { /* no emergency tables: nothing to say */ }
 
   let assignments = [];
   let playlist_status = null;
@@ -759,7 +781,7 @@ router.post('/:id/trigger-secret', requireScope('full'), (req, res) => {
 router.post('/:id/local-api', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
-  if (corpDeviceRouteRefused(req, res, 'change the local control settings of')) return;
+  if (corpDeviceRouteRefused(req, res, 'change its local control settings')) return;
   const b = req.body || {};
   if (b.enabled === undefined) return res.status(400).json({ error: 'enabled is required' });
   const enabled = !!b.enabled;
@@ -820,7 +842,7 @@ router.post('/:id/local-api', requireScope('full'), (req, res) => {
 router.post('/:id/local-api-secret', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
-  if (corpDeviceRouteRefused(req, res, 'change the local control settings of')) return;
+  if (corpDeviceRouteRefused(req, res, 'change its local control settings')) return;
   const b = req.body || {};
   let secret;
   if (b.rotate || b.secret === undefined) {
@@ -947,7 +969,7 @@ router.delete('/:id/enrol-key', requireScope('full'), (req, res) => {
 router.post('/:id/block', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
-  if (corpDeviceRouteRefused(req, res, 'block')) return;
+  if (corpDeviceRouteRefused(req, res, 'block it')) return;
   db.prepare("UPDATE devices SET blocked = 1, updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
   // Mirror onto the saved settings so the block survives a delete + re-pair on purpose rather than
   // by accident of whatever the saved copy happened to hold.

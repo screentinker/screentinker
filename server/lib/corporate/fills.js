@@ -79,6 +79,13 @@ function scopeLabel(db, kind, id) {
   return kind;
 }
 
+/** The bare name of a level (workspace, group, wall or screen), for a UI that words the label itself. */
+function scopeName(db, kind, id) {
+  const table = { workspace: 'workspaces', group: 'device_groups', wall: 'video_walls', device: 'devices' }[kind];
+  if (!table) return null;
+  try { return (db || dbOf()).prepare(`SELECT name FROM ${table} WHERE id = ?`).get(id)?.name || null; } catch (_) { return null; }
+}
+
 /* ── Who plays a fill ────────────────────────────────────────────────────────────────────────── */
 
 /** Mandated screens on the fill's corporate playlist inside the fill's scope (whatever they pick). */
@@ -398,7 +405,12 @@ function redirectTarget(db, mandate, deviceId, { slotId = null, scope = 'nearest
 
 /** Describe a fill for a response body (redirected_to / edited_fill). */
 function describeFill(db, fill, slot) {
+  // Whether the store's content has unpublished changes: an add from a screen lands in the DRAFT,
+  // and the device page offers Publish right there rather than sending the store to look for it.
+  const pl = (db || dbOf()).prepare('SELECT status, published_snapshot IS NOT NULL AS has_published FROM playlists WHERE id = ?').get(fill.fill_playlist_id) || {};
   return {
+    status: pl.status || null,
+    has_published: !!pl.has_published,
     slot_id: slot ? slot.id : fill.slot_id,
     slot_name: slot ? slot.name : (slotRow(db, fill.slot_id) || {}).name || null,
     fill_id: fill.id,
@@ -406,12 +418,13 @@ function describeFill(db, fill, slot) {
     scope_kind: fill.scope_kind,
     scope_id: fill.scope_id,
     scope_label: scopeLabel(db, fill.scope_kind, fill.scope_id),
+    scope_name: scopeName(db, fill.scope_kind, fill.scope_id),
     screens: screensForFill(db, fill).length,
   };
 }
 
 module.exports = {
-  slotRow, limitsOfRow, limitsFor, liveSlots, scopeLabel,
+  slotRow, limitsOfRow, limitsFor, liveSlots, scopeLabel, scopeName,
   devicesInFillScope, devicesPlayingFill, screensForFill,
   copyItems, createFill, fillAt, nearestFill, ensureFillForDevice, ensureGroupFill, deleteFill, playlistReferencedElsewhere,
   draftItems, itemShape, fillsOfPlaylist, violationFor, assertFillItems, assertCanAdd, judgePublish, setFillStates, publishedTotals,

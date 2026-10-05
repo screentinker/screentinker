@@ -146,7 +146,7 @@ router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
   const corpGuard = require('../lib/corporate/guard');
   const skipped = [];
   if (targets.kind === 'device') {
-    try { corpGuard.assertDeviceRouteControl(req, targets.devices[0].id, 'show an overlay on'); } catch (e) {
+    try { corpGuard.assertDeviceRouteControl(req, targets.devices[0].id, 'show an overlay on it'); } catch (e) {
       if (corpGuard.send(res, e, req)) return;
       throw e;
     }

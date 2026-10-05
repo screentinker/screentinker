@@ -61,7 +61,7 @@ const MESSAGES = {
   CORPORATE_MEMBERSHIP: (v) => v.text,
   CORPORATE_DEVICE_CONTROL: (v) => v.emergency
     ? "Head office manages trigger settings on this screen because of its emergency alerts. Ask your organization's admins to change them."
-    : `This screen plays your head office's playlist ${q(v.name)}, so only your organization's admins can ${v.action_label || 'do that to'} it. You can still restart it and change its volume.`,
+    : `This screen plays your head office's playlist ${q(v.name)}, so only your organization's admins can ${v.action_label || 'do that'}. You can still restart it and change its volume.`,
   CORPORATE_NOT_PUBLISHED: () => 'Publish this playlist before assigning it, or the screens would have nothing to play.',
   CORPORATE_TARGET_TAKEN: (v) => `${v.target} already has a corporate playlist (${q(v.name)}). Change that assignment instead.`,
   CORPORATE_MESH_UNSUPPORTED: (v) => `${v.workspace || 'This workspace'} is shared with another server. Corporate playlists don't work across servers yet.`,
@@ -386,10 +386,11 @@ function assertNoMandateLoss(who, deviceIds, fn, describe) {
 /* ── Device controls (D13) ──────────────────────────────────────────────────────────────────── */
 
 const GATED_COMMANDS = Object.freeze({
-  set_server_url: 'move', shell: 'run commands on', install_apk: 'install apps on', launch: 'launch apps on',
-  kiosk_unlock: 'unlock', screen_off: 'turn off', shutdown: 'shut down',
+  // Each label is a whole phrase, object included ("turn it off", not "turn off" + " it").
+  set_server_url: 'move it to another server', shell: 'run commands on it', install_apk: 'install apps on it', launch: 'launch apps on it',
+  kiosk_unlock: 'unlock it', screen_off: 'turn it off', shutdown: 'shut it down',
   // Not in the spec's list, same class: it can blank the panel after N ms of "inactivity".
-  set_screen_timeout: 'change the screen timeout of',
+  set_screen_timeout: 'change its screen timeout',
 });
 const BRIGHTNESS_FLOOR = 0.2;
 const _ctlAudit = new Map();
