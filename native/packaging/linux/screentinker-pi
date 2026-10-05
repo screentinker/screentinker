@@ -128,6 +128,19 @@ def cmd_autostart(args):
     me = pwd.getpwuid(os.getuid()).pw_name
     if cfg.get("mode") != "desktop" or cfg.get("desktop_user") != me:
         return 0
+    # An autostart entry has no journal: without a file, a player that dies at login leaves no trace.
+    state = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), SERVICE)
+    try:
+        os.makedirs(state, exist_ok=True)
+        path = os.path.join(state, "player.log")
+        if os.path.exists(path) and os.path.getsize(path) > 5_000_000:
+            os.replace(path, path + ".1")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        os.dup2(fd, 1)
+        os.dup2(fd, 2)
+        os.close(fd)
+    except OSError:
+        pass
     args.rest = []
     cmd_run(args)
 

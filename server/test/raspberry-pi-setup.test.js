@@ -333,3 +333,117 @@ test('#409: the cursor keypress is guarded like every other optional tool', () =
   assert.match(code, /command -v wtype >\/dev\/null 2>&1 && wtype .* \|\| true/,
     'wtype must be probed before it is called, and must never fail the launcher');
 });
+
+// The native-player arm of the installer: from `if [ "$NATIVE" = true ]` to its `exit 0`.
+function nativeArm() {
+  const m = SRC.match(/\nif \[ "\$NATIVE" = true \]; then\n([\s\S]*?)\n    exit 0\nfi\n/);
+  assert.ok(m, 'native arm not found — did the installer restructure?');
+  return m[1];
+}
+
+test('native: Desktop vs Lite is decided by what BOOTS, not by which packages are installed', () => {
+  // The browser kiosk (option 1/2) installs xserver-xorg on Lite. Reading that as Desktop left
+  // the native service disabled and the kiosk's X server holding the screen (DRM Permission denied).
+  const arm = nativeArm();
+  assert.doesNotMatch(arm, /dpkg -l (xserver-xorg|labwc)/, 'installed packages say nothing about whether a desktop runs');
+  assert.match(arm, /display-manager\.service/);
+  assert.match(arm, /systemctl get-default[^\n]*\n?[^\n]*graphical\.target/);
+  assert.match(arm, /if \[ -z "\$NATIVE_MODE" \]/, '--native-mode must override the detection');
+  assert.match(SRC, /--native-mode\)\n[\s\S]*?lite\|desktop\) NATIVE_MODE="\$2"/);
+});
+
+test('native: an earlier browser-kiosk install cannot keep the screen', () => {
+  const arm = nativeArm();
+  assert.match(arm, /systemctl disable --now screentinker-kiosk\.service/);
+  assert.match(arm, /rm -f \/etc\/systemd\/system\/screentinker-kiosk\.service/);
+  assert.match(arm, /\.config\/autostart\/screentinker\.desktop/);
+  assert.match(arm, /grep -q 'screentinker-kiosk\\\.sh'/, 'only remove an autostart entry that is the kiosk one');
+  assert.doesNotMatch(arm, /screentinker-server\.service/, 'the All-in-One server must keep running');
+  // The cleanup runs before either mode is set up, so both modes get it.
+  assert.ok(arm.indexOf('screentinker-kiosk.service') < arm.indexOf('screentinker-pi setup'));
+});
+
+test('native: the desktop autostart writes a log file (an autostart entry has no journal)', () => {
+  const launcher = fs.readFileSync(path.join(ROOT, 'native', 'packaging', 'linux', 'screentinker-pi'), 'utf8');
+  const fn = launcher.match(/def cmd_autostart\(args\):\n([\s\S]*?)\n\ndef /);
+  assert.ok(fn);
+  assert.match(fn[1], /player\.log/);
+  assert.match(fn[1], /os\.dup2\(fd, 2\)/);
+  assert.ok(fn[1].indexOf('dup2') < fn[1].indexOf('cmd_run(args)'), 'redirect before exec');
+});
+
+// Runs the native arm's REAL mode detection + kiosk cleanup against a fake root, with systemctl
+// stubbed: the scenario from the field (browser kiosk installed first, then the native player).
+function runNativeDetect({ files = {}, defaultTarget = 'multi-user.target', mode = '' }) {
+  const arm = nativeArm();
+  const start = arm.indexOf('    if [ -z "$NATIVE_MODE" ]; then');
+  const end = arm.indexOf('    if [ "$NATIVE_MODE" = desktop ]; then\n        screentinker-pi setup');
+  assert.ok(start > 0 && end > start, 'detection block not found');
+  const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'st-native-'));
+  for (const [p, body] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(fake, p)), { recursive: true });
+    fs.writeFileSync(path.join(fake, p), body);
+  }
+  const block = arm.slice(start, end).replace(/(?<![\w.~])\/(etc|home|root)\//g, `${fake}/$1/`);
+  const script = [
+    `NATIVE_MODE='${mode}'; SUDO_USER=sudoer`,
+    'log() { :; }',
+    `systemctl() { echo "systemctl $*" >> "${fake}/calls"; [ "$1" = get-default ] && echo ${defaultTarget}; return 0; }`,
+    'getent() { echo "uid1000:x:1000"; }',
+    block,
+    'echo "MODE=$NATIVE_MODE USER=$DESKTOP_USER"',
+  ].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
+    // Snapshot BEFORE the fake root is removed below.
+    const left = new Set(fs.readdirSync(fake, { recursive: true }).map(String));
+    const exists = (p) => left.has(p);
+    const calls = exists('calls') ? fs.readFileSync(path.join(fake, 'calls'), 'utf8') : '';
+    return { out: out.trim().split('\n').pop(), exists, calls };
+  } finally {
+    fs.rmSync(fake, { recursive: true, force: true });
+  }
+}
+
+const KIOSK_UNIT = 'etc/systemd/system/screentinker-kiosk.service';
+const KIOSK_ENTRY = 'home/pi/.config/autostart/screentinker.desktop';
+
+test('native (run): Lite after a browser-kiosk install → lite, and the kiosk unit is gone', () => {
+  // xserver-xorg is installed (the kiosk put it there) but no display manager boots.
+  const r = runNativeDetect({ files: { [KIOSK_UNIT]: '[Unit]\n', 'etc/keep': '' } });
+  assert.match(r.out, /^MODE=lite /);
+  assert.equal(r.exists('etc/keep'), true, 'snapshot sanity');
+  assert.equal(r.exists(KIOSK_UNIT), false);
+  assert.match(r.calls, /disable --now screentinker-kiosk\.service/);
+});
+
+test('native (run): a desktop that boots → desktop, user from the autologin, kiosk entry removed', () => {
+  const r = runNativeDetect({
+    defaultTarget: 'graphical.target',
+    files: {
+      'etc/systemd/system/display-manager.service': '',
+      'etc/lightdm/lightdm.conf': '[Seat:*]\nautologin-user=kioskuser\n',
+      [KIOSK_ENTRY]: '[Desktop Entry]\nExec=/home/pi/screentinker-kiosk.sh\n',
+      'home/pi/.config/autostart/other.desktop': 'Exec=/usr/bin/other\n',
+    },
+  });
+  assert.equal(r.out, 'MODE=desktop USER=kioskuser');
+  assert.equal(r.exists(KIOSK_ENTRY), false);
+  assert.equal(r.exists('home/pi/.config/autostart/other.desktop'), true, 'only the kiosk entry goes');
+});
+
+test('native (run): a desktop image set to boot to console → lite; an unrelated screentinker.desktop is kept', () => {
+  const r = runNativeDetect({
+    files: {
+      'etc/systemd/system/display-manager.service': '',
+      [KIOSK_ENTRY]: '[Desktop Entry]\nExec=/usr/bin/something-else\n',
+    },
+  });
+  assert.match(r.out, /^MODE=lite USER=sudoer$/);
+  assert.equal(r.exists(KIOSK_ENTRY), true);
+});
+
+test('native (run): --native-mode overrides the detection', () => {
+  const r = runNativeDetect({ mode: 'desktop' });
+  assert.match(r.out, /^MODE=desktop /);
+});

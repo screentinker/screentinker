@@ -70,7 +70,11 @@
     </ul>
 
     <h2>Step 1: Install Raspberry Pi OS</h2>
-    <p>Use <a href="https://www.raspberrypi.com/software/" target="_blank" rel="noopener">Raspberry Pi Imager</a> to flash <strong>Raspberry Pi OS (64-bit)</strong> to your microSD card. Choose the standard Desktop edition (not Lite - we need a desktop environment for the browser).</p>
+    <p>Use <a href="https://www.raspberrypi.com/software/" target="_blank" rel="noopener">Raspberry Pi Imager</a> to flash <strong>Raspberry Pi OS (64-bit)</strong> to your microSD card. Which edition depends on the player you want:</p>
+    <ul>
+      <li><strong>Browser player (Chromium kiosk):</strong> the standard <strong>Desktop</strong> edition. This is the setup most people run today.</li>
+      <li><strong>Native player:</strong> <strong>Lite</strong> is enough, and recommended — no desktop to load. It needs Raspberry Pi OS based on Debian 13 (Trixie). See <a href="#native-player">The native player</a> below.</li>
+    </ul>
     <p>In the Imager's advanced options (gear icon), pre-set:</p>
     <ul>
       <li>Hostname (e.g. <code>signage-lobby</code>)</li>
@@ -99,6 +103,24 @@
     </ul>
     <p>On reboot the Pi will launch directly into the ScreenTinker player and show a 6-digit pairing code.</p>
 
+    <h2 id="native-player">The native player (optional)</h2>
+    <p>Besides the Chromium kiosk there is a native player: a small app that draws straight to the
+    screen, with no browser and, on Lite, no desktop. It adds reboot, a remote terminal, screen
+    power control and self-update from the dashboard. It connects to an existing ScreenTinker
+    server (the installer's option 3, or):</p>
+    <pre><code>curl -sL https://screentinker.com/scripts/raspberry-pi-setup.sh | sudo bash -s -- --native https://your-server</code></pre>
+    <ul>
+      <li><strong>Needs</strong> Raspberry Pi OS 64-bit based on Debian 13 (Trixie). Older releases are refused with a message.</li>
+      <li><strong>On Lite</strong> it runs as a system service (<code>screentinker-pi.service</code>) that owns the display. Logs: <code>journalctl -u screentinker-pi -f</code>.</li>
+      <li><strong>On Desktop</strong> it starts full screen when the desktop user logs in. Do not start the service by hand there — the desktop owns the screen. Logs: <code>~/.local/state/screentinker-pi/player.log</code>.</li>
+      <li>The installer picks the mode from whether a desktop actually boots. Force it with <code>--native-mode lite</code> or <code>--native-mode desktop</code>.</li>
+      <li><strong>Switching from the browser player</strong> on the same Pi: run the installer with <code>--native</code>. It removes the browser kiosk's launcher (an All-in-One server on the Pi keeps running). Then reboot.</li>
+    </ul>
+    <p>The native player is newer than the browser player and has had less field time, especially on
+    Lite. Known issue: a playlist can stop rotating on a website or HTML widget item
+    (<a href="https://github.com/screentinker/screentinker/issues/487" target="_blank" rel="noopener">#487</a>).
+    Reports with your Pi model and OS version help.</p>
+
     <h2>Step 3: Pair the Pi to your dashboard</h2>
     <p>Sign in to <a href="/app#/login">your ScreenTinker dashboard</a> and click <strong>+ Add Display</strong>. Enter the 6-digit code shown on the Pi and give the display a name (e.g. "Lobby TV"). The Pi will switch from the pairing screen to "Waiting for content".</p>
 
@@ -123,6 +145,13 @@
     <h2>Troubleshooting</h2>
     <h3>The Pi reboots into the desktop, not the player</h3>
     <p>Check that the autostart file <code>~/.config/autostart/screentinker.desktop</code> exists. The installer creates this; if it's missing, re-run the installer.</p>
+
+    <h3>Native player: no pairing code after reboot, or "Could not set DRM mode … Permission denied"</h3>
+    <p>Something else owns the screen — usually the browser kiosk from an earlier install, or the
+    desktop. Re-run the installer with <code>--native</code> (it removes the old kiosk launcher), or on
+    Lite: <code>sudo systemctl disable --now screentinker-kiosk.service getty@tty1.service</code> then
+    <code>sudo screentinker-pi setup https://your-server --mode lite</code>. Check with
+    <code>screentinker-pi status</code>.</p>
 
     <h3>The screen goes dark after a few minutes</h3>
     <p>The installer should disable screen blanking, but some monitors sleep based on their own timer. Disable sleep mode on the monitor itself, or use a dummy HDMI plug if the Pi negotiates a low-power mode.</p>
