@@ -130,8 +130,10 @@ test('settings: only org owners/admins change them; the HQ workspace must be the
   assert.equal(r.status, 400, 'no HQ yet');
   r = await api('/api/corporate/settings', J('admin', { hq_workspace_id: U.store.ws }, 'PUT', HQ));
   assert.equal(r.status, 400, 'another org\'s workspace cannot be HQ');
-  r = await api('/api/corporate/settings', J('admin', { emergency_triggers_enabled: true }, 'PUT', HQ));
-  assert.equal(r.status, 400, 'emergency arrives in a later stage; refused, not silently stored');
+  r = await api('/api/corporate/settings', J('admin', { store_triggers_under_mandate: 'sometimes' }, 'PUT', HQ));
+  assert.equal(r.status, 400, 'an unknown store-trigger policy is refused, not silently stored');
+  r = await api('/api/corporate/settings', J('admin', { store_trigger_cap_sec: 5 }, 'PUT', HQ));
+  assert.equal(r.status, 400, 'the store-trigger cap is 30-3600 s');
   r = await api('/api/corporate/settings', J('admin', { corporate_enabled: true, hq_workspace_id: HQ }, 'PUT', HQ));
   assert.equal(r.status, 200, JSON.stringify(r.body));
   r = await get('store', '/api/corporate/settings', STORE);

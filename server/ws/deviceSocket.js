@@ -568,7 +568,31 @@ function buildPlaylistPayloadUnchecked(deviceId) {
    *     items and fallbacks: HQ; slot items: the store's workspace).
    */
   const corporateSource = device?.playlist_source === 'corporate';
-  if (corporateSource && device?.playlist_id) {
+  /*
+   * ⚠️ EMERGENCY "ACTIVATE NOW" (spec §5.6): while head office has an alert live and this screen is
+   * covered (in scope, org switch on, triggers enabled here), the BASE is the alert's playlist — no
+   * layout, no default content, no group sync, and no store trigger can overlay it (normal triggers
+   * are left out below). The wall canvas is kept so a wall shows the alert across all its screens.
+   * One Map.size test when nothing is live (lib/corporate/emergency-live.js).
+   */
+  let emergencyNow = null;
+  try { emergencyNow = require('../lib/corporate/emergency-live').activationFor(db, deviceId); } catch (e) {
+    console.warn(`[emergency] activation check failed for ${deviceId}: ${e && e.message}`);
+    emergencyNow = null;
+  }
+  if (emergencyNow) {
+    const t = emergencyNow.trigger;
+    const pl = db.prepare('SELECT published_snapshot, published_playback_order FROM playlists WHERE id = ? AND workspace_id = ?')
+      .get(t.target_ref, t.workspace_id);
+    try { assignments = pl && pl.published_snapshot ? JSON.parse(pl.published_snapshot) : []; } catch (_) { assignments = []; }
+    if (!Array.isArray(assignments)) assignments = [];
+    // Head office's content: its data sources and shaders, never the store's (per-origin, §3.2).
+    for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = t.workspace_id;
+    refreshWidgetRevs(assignments);
+    refreshContentRevs(assignments);
+    assignments = dropLiveIfUnsupported(assignments);
+    playback_order = (pl && pl.published_playback_order) || 'sequential';
+  } else if (corporateSource && device?.playlist_id) {
     try {
       const c = require('../lib/corporate/composition').compositionFor(db, deviceId, device.playlist_id);
       assignments = c.items;
@@ -605,7 +629,10 @@ function buildPlaylistPayloadUnchecked(deviceId) {
    */
   let triggers = [];
   try {
-    for (const t of triggersForDevice(db, deviceId)) {
+    // During an Activate-now alert only head office's emergency alerts stay armed (§5.6).
+    const rows = emergencyNow ? triggersForDevice(db, deviceId, { emergencyOnly: true })
+      : triggersForDevice(db, deviceId, { mandated: corporateSource });
+    for (const t of rows) {
       let items = [];
       if (t.target_kind === 'playlist' && t.target_ref) {
         // ⚠️ Scoped to the tenant. triggersForDevice already constrains the TRIGGER row to the
@@ -647,6 +674,17 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     multicast_group: device?.trigger_multicast_group || null,
     clear_all_token: device?.trigger_clear_all_token || null,
   };
+  /*
+   * Belt for the emergency token namespace (§5.2): the clear-all token is checked BEFORE every
+   * trigger on the player, so one equal to an emergency alert's code would make the alert unfirable
+   * (or clear it) on this screen. The routes refuse that in both directions; a collision that
+   * predates the alert (or arrived by moving the screen into scope) is reported by coverage
+   * (`clear_all_collision`) — and the store's clear-all simply isn't sent while it lasts.
+   */
+  if (trigger_config.clear_all_token && triggers.some((t) => t && t.kind === 'emergency'
+      && (t.match_token === trigger_config.clear_all_token || t.clear_token === trigger_config.clear_all_token))) {
+    trigger_config.clear_all_token = null;
+  }
 
   /*
    * The inbound control door. ⚠️ A SIBLING OF trigger_config, NOT A FIELD IN IT, even though they
@@ -665,7 +703,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   };
 
   let layout = null;
-  if (device?.layout_id) {
+  if (device?.layout_id && !emergencyNow) {
     layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(device.layout_id);
     if (layout) {
       layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
@@ -744,7 +782,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   const timezone = effectiveDeviceTz(device);
   // #group-sync: synchronized group playback (wall takes precedence — a wall member is never
   // also group-synced). Null unless the device is on a sync-enabled group's matching playlist.
-  const group_sync = wall_config ? null : resolveGroupSync(device, deviceId);
+  const group_sync = wall_config || emergencyNow ? null : resolveGroupSync(device, deviceId);
 
   // Device default / standby content: what a screen shows when it would otherwise be IDLE — no
   // playlist assigned, or a playlist whose every item is filtered out by its schedule (LED-wall
@@ -762,7 +800,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   }
   // ⚠️ CORPORATE (D6): a screen head office's playlist drives never shows store-chosen content — a
   // dark mandate, or an empty corporate loop, falls to the player's own idle screen.
-  if (corporateSource) default_content = null;
+  if (corporateSource || emergencyNow) default_content = null;
 
   // #104: shared shape + zone-reset tail so the device payload and the dashboard
   // preview payload (GET /api/playlists/:id/preview-payload) can never drift.
@@ -771,7 +809,9 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   // playing, and a missing schedule means "stay lit" everywhere in this feature.
   let power_schedule = null;
   try {
-    power_schedule = require('../lib/device-power-schedule').powerScheduleForDevice(db, deviceId);
+    // An emergency alert that is live here must not sit behind a dark backlight window: no schedule
+    // means "stay lit" on every player.
+    if (!emergencyNow) power_schedule = require('../lib/device-power-schedule').powerScheduleForDevice(db, deviceId);
   } catch (e) {
     console.warn(`[power-schedule] resolve failed for ${deviceId}: ${e.message}`);
   }

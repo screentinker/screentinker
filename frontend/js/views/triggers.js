@@ -311,7 +311,9 @@ export async function render(app) {
       api.get('/triggers'), api.get('/playlists'), api.get('/devices'), api.get('/groups'),
     ]);
     cache = {
-      triggers: trg.triggers || [],
+      // Head office emergency alerts (kind 'emergency') are listed by the API but managed only under
+      // Corporate → Emergency; this editor would offer an Edit/Delete the server refuses.
+      triggers: (trg.triggers || []).filter((x) => x && x.kind !== 'emergency'),
       playlists: Array.isArray(pls) ? pls : (pls.playlists || []),
       devices: Array.isArray(devs) ? devs : (devs.devices || []),
       groups: Array.isArray(grps) ? grps : (grps.groups || []),

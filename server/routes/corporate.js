@@ -5,9 +5,9 @@
  * themselves, and "Where it plays" (mandates). JWT-only (config/api-surface.js, decision D12).
  *
  * Stage B (spec 10, §9): local slots, the stores' content that fills them and the per-store
- * composition live in routes/corporate-slots.js, registered on this router below. Emergency alerts
- * arrive in Stage C — this router refuses their settings rather than storing a switch that does
- * nothing yet.
+ * composition live in routes/corporate-slots.js, registered on this router below. Stage C:
+ * emergency alerts live in routes/corporate-emergency.js (registered the same way); this router
+ * holds their org switch and the store-trigger policy (settings).
  *
  * Every write is audited (activity_log, action `corporate.*`), with before/after for mandates.
  * Every write answers 503 CORPORATE_UNAVAILABLE in degraded mode (the per-boot resolver check
@@ -85,6 +85,7 @@ function auditCorp(req, action, details) {
  */
 const helpers = { loadOrg, refuse, requireAvailable, requireAdmin, requireAuthor, auditCorp, loadHqPlaylist, canReadHq };
 require('./corporate-slots').register(router, helpers);
+require('./corporate-emergency').register(router, helpers);
 
 /* ──────────────────────────────────────────────────────────────────── settings */
 
@@ -123,24 +124,75 @@ router.get('/settings', (req, res) => {
   res.json(out);
 });
 
+const STORE_TRIGGER_POLICIES = new Set(['allow', 'leased', 'off']);
+const EMERGENCY_KEYS = ['emergency_triggers_enabled'];
+
+/** Devices of an org whose resolved playlist is head office's (mandated), for a policy push. */
+function mandatedDevicesOfOrg(orgId) {
+  if (!runtime.active(db)) return [];
+  try {
+    return db.prepare(`SELECT r.device_id FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
+        JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = ? AND r.source = 'corporate'`).all(orgId).map((r) => r.device_id);
+  } catch (_) { return []; }
+}
+
+/** Every device of an org in the scope of any of its emergency alerts. */
+function emergencyScopedDevicesOfOrg(orgId) {
+  const { devicesInEmergencyScope } = require('../lib/device-triggers');
+  const ids = new Set();
+  for (const t of db.prepare(`SELECT t.id FROM triggers t JOIN workspaces w ON w.id = t.workspace_id
+      WHERE w.organization_id = ? AND t.kind = 'emergency'`).all(orgId)) {
+    for (const id of devicesInEmergencyScope(db, t.id)) ids.add(id);
+  }
+  return [...ids];
+}
+
+/*
+ * What head office's store-trigger policy would change (§5.3): every store trigger that a policy
+ * would cap ('leased') or hide ('off') on the org's mandated screens — including until_cleared ones
+ * fired by one-shot senders such as evacuation relays, which would END after the cap. The settings
+ * PUT requires acknowledge_impact: true whenever this list is not empty.
+ */
+router.get('/settings/store-trigger-impact', (req, res) => {
+  const org = loadOrg(req, res);
+  if (!org) return;
+  if (!requireAdmin(req, res, org)) return;
+  const policy = String(req.query.policy || '');
+  if (!STORE_TRIGGER_POLICIES.has(policy)) return res.status(400).json({ error: 'policy must be one of: allow, leased, off' });
+  const cap = req.query.cap_sec !== undefined ? Number(req.query.cap_sec) : (org.store_trigger_cap_sec || 300);
+  if (!Number.isInteger(cap) || cap < 30 || cap > 3600) return res.status(400).json({ error: 'cap_sec must be 30-3600' });
+  const impact = require('../lib/corporate/emergency').storeTriggerImpact(db, org.id, policy, cap);
+  res.json({ policy, cap_sec: cap, impact, workspaces: [...new Set(impact.map((i) => i.workspace_id))].length });
+});
+
 router.put('/settings', (req, res) => {
   const org = loadOrg(req, res);
   if (!org) return;
-  if (!requireAvailable(res) || !requireAdmin(req, res, org)) return;
   const b = req.body || {};
-
-  // Stage C owns these; refusing is better than storing a switch that does nothing yet.
-  for (const k of ['emergency_triggers_enabled', 'store_triggers_under_mandate', 'store_trigger_cap_sec']) {
-    if (b[k] !== undefined) return res.status(400).json({ error: `${k} is not available on this server yet.`, code: 'CORPORATE_NOT_AVAILABLE' });
-  }
+  /*
+   * Emergency alerts do not depend on the resolver views, so the emergency switch keeps working in
+   * degraded mode (§2.7); everything else here is corporate-playlist machinery and answers 503.
+   */
+  const onlyEmergency = Object.keys(b).every((k) => EMERGENCY_KEYS.includes(k));
+  if (!onlyEmergency && !requireAvailable(res)) return;
+  if (!requireAdmin(req, res, org)) return;
 
   const next = {
     corporate_enabled: b.corporate_enabled !== undefined ? (b.corporate_enabled ? 1 : 0) : (org.corporate_enabled ? 1 : 0),
     hq_workspace_id: b.hq_workspace_id !== undefined ? (b.hq_workspace_id || null) : (org.hq_workspace_id || null),
     corporate_authors: b.corporate_authors !== undefined ? b.corporate_authors : (org.corporate_authors || 'org_admins'),
+    emergency_triggers_enabled: b.emergency_triggers_enabled !== undefined ? (b.emergency_triggers_enabled ? 1 : 0) : (org.emergency_triggers_enabled ? 1 : 0),
+    store_triggers_under_mandate: b.store_triggers_under_mandate !== undefined ? b.store_triggers_under_mandate : (org.store_triggers_under_mandate || 'allow'),
+    store_trigger_cap_sec: b.store_trigger_cap_sec !== undefined ? Number(b.store_trigger_cap_sec) : (org.store_trigger_cap_sec || 300),
   };
   if (!AUTHOR_MODES.has(next.corporate_authors)) {
     return res.status(400).json({ error: `corporate_authors must be one of: ${[...AUTHOR_MODES].join(', ')}` });
+  }
+  if (!STORE_TRIGGER_POLICIES.has(next.store_triggers_under_mandate)) {
+    return res.status(400).json({ error: 'store_triggers_under_mandate must be one of: allow, leased, off' });
+  }
+  if (!Number.isInteger(next.store_trigger_cap_sec) || next.store_trigger_cap_sec < 30 || next.store_trigger_cap_sec > 3600) {
+    return res.status(400).json({ error: 'store_trigger_cap_sec must be a whole number of seconds, 30-3600' });
   }
   if (next.hq_workspace_id !== (org.hq_workspace_id || null)) {
     if (next.hq_workspace_id) {
@@ -149,7 +201,8 @@ router.put('/settings', (req, res) => {
       if (guard.isReplicatedWorkspace(db, ws.id)) return refuse(res, 'CORPORATE_MESH_UNSUPPORTED', { workspace: `"${ws.name}"` });
     }
     // Locked once corporate playlists exist: they live in the HQ workspace, and moving the label
-    // would leave them corporate in a workspace that is no longer head office.
+    // would leave them corporate in a workspace that is no longer head office. Emergency alerts
+    // live there too.
     if (org.hq_workspace_id) {
       const n = db.prepare('SELECT COUNT(*) AS n FROM playlists WHERE workspace_id = ? AND corporate = 1').get(org.hq_workspace_id).n;
       if (n) {
@@ -158,20 +211,75 @@ router.put('/settings', (req, res) => {
           error: `The head office workspace can't be changed while it holds ${n} corporate playlist${n === 1 ? '' : 's'}. Make them ordinary playlists first.`,
         });
       }
+      const e = db.prepare("SELECT COUNT(*) AS n FROM triggers WHERE workspace_id = ? AND kind = 'emergency'").get(org.hq_workspace_id).n;
+      if (e) {
+        return res.status(409).json({
+          code: 'CORPORATE_HQ_LOCKED',
+          error: `The head office workspace can't be changed while it holds ${e} emergency alert${e === 1 ? '' : 's'}. Delete them first.`,
+        });
+      }
     }
   }
   if (next.corporate_enabled && !next.hq_workspace_id) {
     return res.status(400).json({ error: 'Choose a head office workspace before turning corporate playlists on.' });
   }
 
-  const before = { corporate_enabled: !!org.corporate_enabled, hq_workspace_id: org.hq_workspace_id || null, corporate_authors: org.corporate_authors };
-  const wsIds = orgWorkspaces(org.id).map((w) => w.id);
-  const { changed } = fanout.withResolutionDiff(req, wsIds, () => {
-    db.prepare('UPDATE organizations SET corporate_enabled = ?, hq_workspace_id = ?, corporate_authors = ? WHERE id = ?')
-      .run(next.corporate_enabled, next.hq_workspace_id, next.corporate_authors, org.id);
-  });
-  auditCorp(req, 'corporate.settings', { organization_id: org.id, before, after: { ...next, corporate_enabled: !!next.corporate_enabled }, screens_changed: changed.length });
-  res.json({ success: true, screens_changed: changed.length, ...next, corporate_enabled: !!next.corporate_enabled });
+  /*
+   * Store-trigger policy: limiting or hiding store triggers on head office's screens can END a store's
+   * own safety notice (an evacuation relay that sends once). The admin must have seen the list.
+   */
+  const policyChanged = next.store_triggers_under_mandate !== (org.store_triggers_under_mandate || 'allow')
+    || (next.store_triggers_under_mandate === 'leased' && next.store_trigger_cap_sec !== (org.store_trigger_cap_sec || 300));
+  let impact = [];
+  if (policyChanged && next.store_triggers_under_mandate !== 'allow') {
+    impact = require('../lib/corporate/emergency').storeTriggerImpact(db, org.id, next.store_triggers_under_mandate, next.store_trigger_cap_sec);
+    if (impact.length && b.acknowledge_impact !== true) {
+      return refuse(res, 'CORPORATE_IMPACT_UNACKNOWLEDGED', { n: impact.length }, { impact });
+    }
+  }
+
+  const before = {
+    corporate_enabled: !!org.corporate_enabled, hq_workspace_id: org.hq_workspace_id || null, corporate_authors: org.corporate_authors,
+    emergency_triggers_enabled: !!org.emergency_triggers_enabled,
+    store_triggers_under_mandate: org.store_triggers_under_mandate || 'allow', store_trigger_cap_sec: org.store_trigger_cap_sec || 300,
+  };
+  const emergencyChanged = next.emergency_triggers_enabled !== (org.emergency_triggers_enabled ? 1 : 0);
+  // Who must hear about the emergency switch: turning it ON reaches every screen in an alert's scope;
+  // turning it OFF must reach the same screens (to drop the definitions and their pinned media).
+  const emergencyPush = emergencyChanged ? emergencyScopedDevicesOfOrg(org.id) : [];
+  if (emergencyChanged && !next.emergency_triggers_enabled) {
+    // Off ends any live "Activate now" first — its screens go back to their own playlist.
+    require('../lib/corporate/emergency-live').endAllForOrg(db, org.id, { userId: req.user.id, reason: 'switch_off' });
+  }
+  const policyPushBefore = policyChanged ? mandatedDevicesOfOrg(org.id) : [];
+  const write = () => {
+    db.prepare(`UPDATE organizations SET corporate_enabled = ?, hq_workspace_id = ?, corporate_authors = ?,
+        emergency_triggers_enabled = ?, store_triggers_under_mandate = ?, store_trigger_cap_sec = ? WHERE id = ?`)
+      .run(next.corporate_enabled, next.hq_workspace_id, next.corporate_authors, next.emergency_triggers_enabled,
+        next.store_triggers_under_mandate, next.store_trigger_cap_sec, org.id);
+  };
+  let changed = [];
+  if (runtime.isViewsDegraded()) write();   // emergency-only (checked above): no resolution to diff
+  else changed = fanout.withResolutionDiff(req, orgWorkspaces(org.id).map((w) => w.id), write).changed;
+  const extra = [...new Set([...emergencyPush, ...policyPushBefore, ...(policyChanged ? mandatedDevicesOfOrg(org.id) : [])])]
+    .filter((id) => !changed.includes(id));
+  fanout.pushDevices(req, extra);
+
+  const after = { ...next, corporate_enabled: !!next.corporate_enabled, emergency_triggers_enabled: !!next.emergency_triggers_enabled };
+  auditCorp(req, 'corporate.settings', { organization_id: org.id, before, after, screens_changed: changed.length });
+  if (emergencyChanged) {
+    auditCorp(req, 'corporate.emergency.switch', { organization_id: org.id, enabled: !!next.emergency_triggers_enabled, screens: emergencyPush.length });
+  }
+  if (policyChanged && impact.length) {
+    // The stores whose triggers this limits are told in their own activity feed.
+    for (const wsId of new Set(impact.map((i) => i.workspace_id))) {
+      auditCorp(req, 'corporate.store_triggers.limited', {
+        organization_id: org.id, workspace_id: wsId, policy: next.store_triggers_under_mandate, cap_sec: next.store_trigger_cap_sec,
+        triggers: impact.filter((i) => i.workspace_id === wsId).map((i) => ({ id: i.trigger_id, name: i.name })),
+      });
+    }
+  }
+  res.json({ success: true, screens_changed: changed.length, ...after, store_triggers_affected: impact.length });
 });
 
 /* ──────────────────────────────────────────────────────────── corporate playlists */

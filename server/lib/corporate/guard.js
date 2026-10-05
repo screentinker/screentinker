@@ -59,7 +59,9 @@ const MESSAGES = {
   CORPORATE_WALL_SPLIT: (v) => `This would split the video wall ${q(v.wall)}: some of its screens would play head office's playlist and others would not. Change the whole wall together.`,
   CORPORATE_MANDATED: (v) => `This corporate playlist plays in ${v.n} place${v.n === 1 ? '' : 's'} (${v.screens} screen${v.screens === 1 ? '' : 's'}). Remove it from "Where it plays" first.`,
   CORPORATE_MEMBERSHIP: (v) => v.text,
-  CORPORATE_DEVICE_CONTROL: (v) => `This screen plays your head office's playlist ${q(v.name)}, so only your organization's admins can ${v.action_label || 'do that to'} it. You can still restart it and change its volume.`,
+  CORPORATE_DEVICE_CONTROL: (v) => v.emergency
+    ? "Head office manages trigger settings on this screen because of its emergency alerts. Ask your organization's admins to change them."
+    : `This screen plays your head office's playlist ${q(v.name)}, so only your organization's admins can ${v.action_label || 'do that to'} it. You can still restart it and change its volume.`,
   CORPORATE_NOT_PUBLISHED: () => 'Publish this playlist before assigning it, or the screens would have nothing to play.',
   CORPORATE_TARGET_TAKEN: (v) => `${v.target} already has a corporate playlist (${q(v.name)}). Change that assignment instead.`,
   CORPORATE_MESH_UNSUPPORTED: (v) => `${v.workspace || 'This workspace'} is shared with another server. Corporate playlists don't work across servers yet.`,
@@ -84,6 +86,12 @@ const MESSAGES = {
   CORPORATE_SLOT_SCHEDULE: () => "Set times on the slot's items, not on the slot itself.",
   CORPORATE_SLOT_REPEAT: () => "A local slot can't repeat on its own interval. Set it on head office's items instead.",
   CORPORATE_FILL_EXISTS: (v) => `${v.label || 'This level'} already has its own content for the slot ${q(v.slot)}. Edit that instead.`,
+  // Emergency alerts (Stage C).
+  CORPORATE_EMERGENCY_OFF: () => "Emergency alerts are switched off for your organization. An owner or admin can switch them on in Settings → Organization → Corporate content.",
+  CORPORATE_EMERGENCY_ACTIVE: (v) => `${q(v.name)} is already showing. End it first, or wait for it to finish.`,
+  CORPORATE_EMERGENCY_DISABLED: (v) => `${q(v.name)} is turned off. Turn it on before you activate it.`,
+  CORPORATE_EMERGENCY_TOKEN: (v) => v.text,
+  CORPORATE_IMPACT_UNACKNOWLEDGED: (v) => `This changes ${v.n} store trigger${v.n === 1 ? '' : 's'} on screens that play head office's playlist. Check the list, then confirm.`,
   CORPORATE_FILL_SCOPE: () => "That screen, group or video wall isn't in this workspace, or head office's playlist doesn't play there.",
 };
 
@@ -96,6 +104,8 @@ const STATUS = {
   FILL_LIMIT: 400, FILL_FLAT: 400, FILL_LIVE: 400, FILL_TYPE: 400,
   CORPORATE_SLOT_SWAP: 400, CORPORATE_SLOT_DUPLICATE: 400, CORPORATE_SLOT_REMOVE: 400,
   CORPORATE_SLOT_SCHEDULE: 400, CORPORATE_SLOT_REPEAT: 400, CORPORATE_FILL_EXISTS: 409, CORPORATE_FILL_SCOPE: 400,
+  CORPORATE_EMERGENCY_OFF: 409, CORPORATE_EMERGENCY_ACTIVE: 409, CORPORATE_EMERGENCY_DISABLED: 409,
+  CORPORATE_EMERGENCY_TOKEN: 409, CORPORATE_IMPACT_UNACKNOWLEDGED: 409,
 };
 
 function err(code, vars = {}, details = {}, statusOverride) {
@@ -127,7 +137,7 @@ function toResponse(e) {
   if (e.name === 'CorporateError') {
     const body = { error: e.message, code: e.code };
     if (e.details && e.details.corporate) body.corporate = e.details.corporate;
-    for (const k of ['slots', 'mandates', 'skipped', 'mandated_members', 'slot_id', 'fill_id', 'limits', 'fill']) if (e.details && e.details[k] !== undefined) body[k] = e.details[k];
+    for (const k of ['slots', 'mandates', 'skipped', 'mandated_members', 'slot_id', 'fill_id', 'limits', 'fill', 'impact']) if (e.details && e.details[k] !== undefined) body[k] = e.details[k];
     return { status: e.status, body };
   }
   const m = typeof e.message === 'string' && /^(CORPORATE_[A-Z_]+|FILL_[A-Z_]+)$/.exec(e.message.trim());

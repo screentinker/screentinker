@@ -124,6 +124,10 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   // interceptor all apply to that request exactly as they would to curl. test/mcp.test.js asserts
   // both halves: one SQL statement in the file, and it is the scope lookup.
   'mcp.js': 'MCP transport; performs no writes — tool calls re-enter the public API over loopback with the caller token',
+  // Not routers of their own: each exports register(router, helpers) and adds its handlers to
+  // routes/corporate.js's router, which IS mounted with tenancy (JWT_ONLY_ROUTERS, '/api/corporate').
+  'corporate-slots.js': 'handlers registered on routes/corporate.js (JWT_ONLY tenancy mount, /api/corporate)',
+  'corporate-emergency.js': 'handlers registered on routes/corporate.js (JWT_ONLY tenancy mount, /api/corporate)',
 });
 
 const INLINE_NOT_WORKSPACE_SCOPED = Object.freeze({

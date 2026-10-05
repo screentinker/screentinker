@@ -2299,6 +2299,9 @@ const { startContentExpiry } = require('./services/content-expiry');
 startContentExpiry(io);
 // Corporate local slots: hourly tidy of unused compositions and unreachable retired slots.
 require('./services/corporate-sweep').startCorporateSweep();
+// Head office emergency alerts: restore any live "Activate now" from the table, arm its expiry
+// timers and the 30-second belt sweep (lib/corporate/emergency-live.js).
+require('./lib/corporate/emergency-live').init(io);
 require('./lib/smart-playlist').start(io);
 
 // Start alert service

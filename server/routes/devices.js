@@ -342,6 +342,25 @@ router.get('/:id/preview-payload', (req, res) => {
   const { buildPlaylistPayloadUnchecked } = require('../ws/deviceSocket');
   const payload = buildPlaylistPayloadUnchecked(req.params.id);
   payload.wall_config = null; // v1: wall members preview full-frame (no socket-free follower freeze)
+  /*
+   * ⚠️ Secrets out of a PREVIEW (spec §5.2). This is a read route a workspace viewer and an API
+   * token can call, and the payload carries what lets a LAN host change the screen:
+   *   - head office emergency alert codes go only to the organization's admins — a store that knows
+   *     the clear code and its screen's secret could clear the alert during an emergency;
+   *   - the trigger and local-API secrets go to no viewer and no token (an editor still sees the
+   *     trigger secret where it is set, the device's own trigger panel).
+   */
+  try {
+    const corpGuard = require('../lib/corporate/guard');
+    if (Array.isArray(payload.triggers) && payload.triggers.some((t) => t && t.kind === 'emergency')
+        && (req.viaToken || !corpGuard.isOrgAdmin(req, corpGuard.orgOfWorkspace(db, device.workspace_id)))) {
+      payload.triggers = payload.triggers.map((t) => (t && t.kind === 'emergency' ? { ...t, match_token: null, clear_token: null } : t));
+    }
+  } catch (_) { /* never fail a preview over this */ }
+  if (req.viaToken || (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer')) {
+    if (payload.trigger_config) payload.trigger_config = { ...payload.trigger_config, secret: null };
+    if (payload.local_api) payload.local_api = { ...payload.local_api, secret: null };
+  }
   res.json(payload);
 });
 
@@ -546,9 +565,24 @@ router.post('/:id/command', requireScope('full'), (req, res) => {
   res.json({ success: true, status: r.status, device_id: device.id, ...(r.id ? { id: r.id } : {}) });
 });
 
+/*
+ * HEAD OFFICE EMERGENCY ALERTS (spec §5.2, D13): once an organization switches emergency alerts on,
+ * a screen in an enabled alert's scope has its trigger listener, ports, secret and clear-all token
+ * managed by the organization's admins only — a store must not be able to quietly make itself
+ * unreachable. Returns true when refused (403 CORPORATE_DEVICE_CONTROL).
+ */
+function emergencyTriggerSettingsRefused(req, res) {
+  const corpGuard = require('../lib/corporate/guard');
+  try { require('../lib/corporate/emergency').assertTriggerSettingsWritable(req, req.params.id); return false; } catch (e) {
+    if (corpGuard.send(res, e, req)) return true;
+    throw e;
+  }
+}
+
 router.post('/:id/trigger-config', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
+  if (emergencyTriggerSettingsRefused(req, res)) return;
   const b = req.body || {};
   const sets = [];
   const vals = {};
@@ -611,6 +645,11 @@ router.post('/:id/trigger-config', requireScope('full'), (req, res) => {
             + 'resolved before per-trigger tokens, so it would silently shadow it',
         });
       }
+      // …and head office's emergency alerts, org-wide (they live in the head office workspace, so the
+      // query above never sees them). Both directions are checked: lib/corporate/emergency.js
+      // tokenClash refuses an alert token equal to an in-scope screen's clear-all.
+      const emClash = require('../lib/corporate/emergency').clearAllClash(db, device.id, t);
+      if (emClash) return res.status(400).json({ error: emClash, code: 'CORPORATE_EMERGENCY_TOKEN' });
       sets.push('trigger_clear_all_token = @clear_all_token'); vals.clear_all_token = t;
     }
   }
@@ -662,6 +701,7 @@ router.post('/:id/trigger-config', requireScope('full'), (req, res) => {
 router.post('/:id/trigger-secret', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
+  if (emergencyTriggerSettingsRefused(req, res)) return;
   const b = req.body || {};
   let secret;
   if (b.rotate || b.secret === undefined) {
