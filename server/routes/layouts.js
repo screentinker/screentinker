@@ -70,6 +70,12 @@ function checkLayoutWrite(req, res) {
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
   }
+  // CORPORATE: a layout head office's mandate uses may be changed only by a corporate author. Every
+  // caller of this helper mutates (PUT, DELETE, zone add/edit/delete).
+  try { require('../lib/corporate/guard').assertMediaWritable(req, 'layout', layout.id); } catch (e) {
+    if (require('../lib/corporate/guard').send(res, e, req)) return null;
+    throw e;
+  }
   return layout;
 }
 
@@ -408,6 +414,15 @@ router.put('/device/:deviceId', (req, res) => {
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     return res.status(403).json({ error: 'Read-only access' });
+  }
+
+  // CORPORATE: head office's mandate decides this screen's layout; a store layout would never show.
+  {
+    const corpGuard = require('../lib/corporate/guard');
+    try { corpGuard.assertNotMandated(req, req.params.deviceId); } catch (e) {
+      if (corpGuard.send(res, e, req)) return;
+      throw e;
+    }
   }
 
   const { layout_id } = req.body;

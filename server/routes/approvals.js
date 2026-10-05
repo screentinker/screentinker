@@ -13,6 +13,8 @@ const releases = require('../lib/releases');
 const { ReleaseError } = require('../lib/release-policy');
 
 function fail(res, e) {
+  // A head office refusal (the guard, or the backstop's RAISE) keeps its code and corporate block.
+  if (require('../lib/corporate/guard').send(res, e)) return undefined;
   if (e && (e.name === 'ApprovalError' || e.name === 'ReleaseError' || e.status)) {
     return res.status(e.status || 409).json({ error: e.message, code: e.code || null });
   }

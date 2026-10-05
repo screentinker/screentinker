@@ -135,6 +135,28 @@ router.post('/', (req, res) => {
   res.status(201).json(wall);
 });
 
+/*
+ * ⚠️ CORPORATE: a video wall head office's playlist plays on. Its members, geometry and playlist
+ * are the organization's admins' to change: a geometry edit can push a panel off the canvas without
+ * changing any mandate (so the mandate-loss guard cannot see it), and a membership change splits or
+ * moves the mandate. Returns the mandate (truthy) when the actor may NOT touch the wall.
+ */
+const corpGuard = require('../lib/corporate/guard');
+function wallLockedFor(req, wallId) {
+  const ids = db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(wallId).map((r) => r.device_id);
+  for (const id of ids) {
+    const m = corpGuard.activeMandateFor(db, id);
+    if (m && !corpGuard.isOrgAdmin(req, m.organization_id)) return m;
+  }
+  return null;
+}
+function refuseWall(req, res, wall) {
+  return corpGuard.send(res, corpGuard.err('CORPORATE_MEMBERSHIP', { text: `Head office manages the layout of the video wall "${wall.name}".` },
+    { wall_id: wall.id }), req);
+}
+const WALL_GEOMETRY = ['grid_cols', 'grid_rows', 'bezel_h_mm', 'bezel_v_mm', 'screen_w_mm', 'screen_h_mm',
+  'player_x', 'player_y', 'player_width', 'player_height'];
+
 // Update wall (name, grid, bezels, playlist, leader, sync_mode). Phase 2.2l:
 // closes pre-existing leaks where playlist_id / content_id / leader_device_id
 // were accepted without any cross-tenant check.
@@ -161,6 +183,12 @@ router.put('/:id', requireWallWrite, (req, res) => {
     if (d.workspace_id !== wall.workspace_id) {
       return res.status(403).json({ error: 'Leader device is not in this workspace' });
     }
+  }
+
+  // CORPORATE: geometry and the wall's own playlist/content on a head office wall (see wallLockedFor).
+  if ((WALL_GEOMETRY.some((f) => req.body[f] !== undefined) || req.body.playlist_id !== undefined || req.body.content_id !== undefined)
+      && wallLockedFor(req, wall.id)) {
+    return refuseWall(req, res, wall);
   }
 
   const fields = ['name', 'grid_cols', 'grid_rows', 'bezel_h_mm', 'bezel_v_mm',
@@ -196,13 +224,18 @@ router.put('/:id', requireWallWrite, (req, res) => {
 router.delete('/:id', requireWallWrite, (req, res) => {
   const wallWorkspaceId = req.wall.workspace_id; // capture before the DELETE
   const members = db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(req.params.id);
+  if (wallLockedFor(req, req.params.id)) return refuseWall(req, res, req.wall);
   const tx = db.transaction(() => {
     // Leaving the wall clears the INHERITED copy but never a device's own choice — see
     // clearInheritedCopy. wall_id going NULL is what actually ends the inheritance.
     db.prepare("UPDATE devices SET wall_id = NULL, playlist_id = CASE WHEN playlist_source = 'device' THEN playlist_id ELSE NULL END WHERE wall_id = ?").run(req.params.id);
     db.prepare('DELETE FROM video_walls WHERE id = ?').run(req.params.id);
+    require('../lib/corporate/cleanup').removeTargets(db, 'wall', req.params.id);
   });
-  tx();
+  // CORPORATE: and the ex-members' head office playlist must not change by this (org admins excepted).
+  const ok = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, members.map((m) => m.device_id), () => { tx(); return true; },
+    () => `Deleting the video wall "${req.wall.name}" would change what its screens play (head office's playlist). Ask your organization admin to do it.`));
+  if (!ok) return;
 
   // Push fresh (now wall-less, playlist-less) payloads to ex-members so they
   // exit wall mode and clear content immediately.
@@ -232,6 +265,9 @@ router.put('/:id/devices', requireWallWrite, (req, res) => {
       return res.status(403).json({ error: `Device ${d.device_id} is not in this workspace` });
     }
   }
+
+  // CORPORATE: membership and geometry of a head office wall are the organization's admins'.
+  if (wallLockedFor(req, req.params.id)) return refuseWall(req, res, wall);
 
   const previous = db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(req.params.id);
   const previousIds = new Set(previous.map(p => p.device_id));
@@ -279,7 +315,12 @@ router.put('/:id/devices', requireWallWrite, (req, res) => {
       db.prepare('UPDATE video_walls SET leader_device_id = NULL WHERE id = ?').run(req.params.id);
     }
   });
-  tx();
+  // CORPORATE: joining (or leaving) the wall must not change any screen's head office playlist —
+  // a wall-level mandate gained, a group mandate lost by the implied group exit, in either direction.
+  const affected = [...new Set([...previousIds, ...incomingIds])];
+  const done = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, affected, () => { tx(); return true; },
+    () => `Changing the screens of the video wall "${wall.name}" would change what they play (head office's playlist). Ask your organization admin to do it.`));
+  if (!done) return;
 
   // Push wall-aware payload to current members, and a wall-less payload to
   // ex-members so they exit wall mode.

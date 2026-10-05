@@ -12,6 +12,8 @@ const { parseTags, parseMeta } = require('../lib/content-tags');
 const smartPlaylist = require('../lib/smart-playlist');
 const { applyRepeatEvery, normalizeRepeatEvery } = require('../lib/repeat-every');
 const { emitMuteChanged } = require('../lib/mute-sync');
+const corpGuard = require('../lib/corporate/guard');
+const corpActor = require('../lib/corporate/actor');
 
 // Per-item play window: local YYYY-MM-DDTHH:MM, inclusive. Empty/null clears.
 const PLAY_STAMP_RE = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/;
@@ -146,6 +148,18 @@ function loadPlaylistAccess(req, res, requireWrite) {
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
+  }
+  /*
+   * ⚠️ CORPORATE: the ONE call that covers every write route in this file — PUT /:id, publish,
+   * discard, DELETE, every item route, selection, bulk, reorder, item schedules and /:id/assign all
+   * pass through requirePlaylistWrite. A governed playlist (corporate, or a child of one) may be
+   * changed only by a corporate author; never by an API token. lib/corporate/guard.js.
+   */
+  if (requireWrite) {
+    try { corpGuard.assertPlaylistWritable(req, playlist, req.method === 'DELETE' ? 'delete' : 'items'); } catch (e) {
+      if (corpGuard.send(res, e, req)) return null;
+      throw e;
+    }
   }
   req.playlist = playlist;
   req.playlistCtx = ctx;
@@ -445,11 +459,14 @@ function pushToDevices(playlistId, reqOrIo) {
     try {
       // ⚠️ And it bit a FOURTH time, in the fan-out this comment is attached to: the join was on
       // devices.playlist_id, so every screen that INHERITS the parent playlist was skipped.
+      // ⚠️ Except screens a head office mandate drives: they are reached ONCE, by the corporate
+      // ancestor's own republish below, after its snapshot is fresh. Pushing them here first sent
+      // the parent's STALE snapshot and restarted their loop for nothing (critique R13).
       for (const r of db.prepare(`
         SELECT DISTINCT d.id FROM devices d
           JOIN device_resolved_playlist rp ON rp.device_id = d.id
           JOIN playlist_items pi ON pi.playlist_id = rp.playlist_id
-         WHERE pi.child_playlist_id = ?
+         WHERE pi.child_playlist_id = ? AND IFNULL(rp.source, '') != 'corporate'
       `).all(playlistId)) ids.add(r.id);
     } catch (e) { console.warn(`[playlist] ancestor fan-out failed: ${e && e.message}`); }
     for (const id of ids) {
@@ -463,6 +480,13 @@ function pushToDevices(playlistId, reqOrIo) {
 // auto-publish path both call this, so they can never drift (a "published" playlist that
 // wasn't snapshotted would be live-on-no-screen).
 function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
+  /*
+   * ⚠️ CORPORATE: the publish permission lives HERE, not only at the route (critique H6). Approvals
+   * publish, agency auto-publish, schedules and slide decks all reach this without passing
+   * loadPlaylistAccess; one check covers them all. Only judged when a request actor is present —
+   * system republishes (ancestors below, smart refresh, content expiry) run as system.
+   */
+  corpGuard.assertCanPublish(playlistId);
   const snapshotItems = buildSnapshotItems(playlistId);
   const next = JSON.stringify(snapshotItems);
 
@@ -551,7 +575,10 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   `).all(playlistId)) {
     if (seen.has(anc.id)) continue;
     seen.add(anc.id);
-    publishPlaylist(anc.id, reqOrIo, seen);
+    // As system: the CHILD's publish was the authorised act; refreshing the parent's copy of it is
+    // bookkeeping that must not be re-judged against the parent (a store's child can never sit in
+    // a corporate parent — nesting refuses a cross-workspace child).
+    corpActor.runAsSystem(() => publishPlaylist(anc.id, reqOrIo, seen));
   }
 
   return { changed: true, items: snapshotItems.length };
@@ -603,6 +630,9 @@ router.get('/', (req, res) => {
     GROUP BY p.id
     ORDER BY p.name ASC
   `).all(req.workspaceId);
+  // Screens a head office mandate has paused this playlist on (would play it, play head office's).
+  const paused = require('../lib/corporate/resolve').pausedCounts(db, req.workspaceId);
+  for (const p of playlists) p.paused_count = paused.get(p.id) || 0;
   res.json(playlists);
 });
 
@@ -693,7 +723,8 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
       })),
     };
   }
-  res.json({ ...req.playlist, items: decorateEditorItems(items), item_count: items.length, display_count: displayCount, layout, smart });
+  const pausedCount = require('../lib/corporate/resolve').pausedCounts(db, req.playlist.workspace_id).get(req.params.id) || 0;
+  res.json({ ...req.playlist, items: decorateEditorItems(items), item_count: items.length, display_count: displayCount, paused_count: pausedCount, layout, smart });
 });
 
 // #104: device-free draft preview payload. Same shape the device player consumes
@@ -741,6 +772,9 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
   if (req.body.smart_rules !== undefined) {
     // A generated playlist (a slide deck's, a schedule's throwaway) is rebuilt by its owner; rules
     // there would silently override what that owner publishes.
+    if (req.body.smart_rules !== null && req.playlist.corporate) {
+      return corpGuard.send(res, corpGuard.err('CORPORATE_SMART'), req);
+    }
     if (req.body.smart_rules !== null && req.playlist.is_auto_generated) {
       return res.status(400).json({ error: 'Auto-generated playlists cannot become smart playlists' });
     }
@@ -923,6 +957,19 @@ router.delete('/:id', requirePlaylistWrite, (req, res) => {
      WHERE pi.child_playlist_id = ?
      ORDER BY p.name
   `).all(req.params.id).map((r) => r.name);
+  /*
+   * ⚠️ And refuse a corporate playlist that head office has assigned somewhere: the mandate's
+   * foreign key is NO ACTION precisely so this cannot delete the content out from under the
+   * screens. Answered before the DELETE, naming where it plays.
+   */
+  if (req.playlist.corporate) {
+    const mandates = db.prepare('SELECT id, target_kind, target_id FROM corporate_mandates WHERE playlist_id = ?').all(req.params.id);
+    if (mandates.length) {
+      const screens = db.prepare("SELECT COUNT(*) AS n FROM device_resolved_playlist WHERE playlist_id = ? AND source = 'corporate'").get(req.params.id).n;
+      return corpGuard.send(res, corpGuard.err('CORPORATE_MANDATED', { n: mandates.length, screens },
+        { mandates: mandates.map((m) => ({ ...m, label: corpGuard.targetLabel(db, m) })) }), req);
+    }
+  }
   if (usedBy.length) {
     const shown = usedBy.slice(0, 3).map((n) => `"${n}"`).join(', ');
     const more = usedBy.length > 3 ? ` and ${usedBy.length - 3} more` : '';
@@ -1036,6 +1083,10 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
     }
     const { content_id, widget_id, child_playlist_id, sort_order, zone_id } = req.body;
     let { duration_sec } = req.body;
+    // A slot placement is made by the corporate slot routes (Stage B), never as an ordinary item.
+    if (req.body.slot_id !== undefined && req.body.slot_id !== null) {
+      return corpGuard.send(res, corpGuard.err('CORPORATE_SLOT_FIELD'), req);
+    }
 
     if (!content_id && !widget_id && !child_playlist_id) {
       return res.status(400).json({ error: 'content_id, widget_id or child_playlist_id required' });
@@ -1061,7 +1112,7 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
      */
     if (child_playlist_id) {
       const bad = require('../lib/playlist-nesting').nestingError(db, req.params.id, child_playlist_id, req.playlist.workspace_id);
-      if (bad) return res.status(bad.status).json({ error: bad.error });
+      if (bad) return res.status(bad.status).json({ error: bad.error, ...(bad.code ? { code: bad.code } : {}) });
     }
     // 0 is allowed through here (it is the live "stay until skipped" dwell); resolveItemDuration
     // below coerces a 0 on any NON-live item back to a safe default, so a 0ms advance can never
@@ -1156,6 +1207,8 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
 
     res.status(201).json(item);
   } catch (err) {
+    // A backstop refusal is an answer, not a server fault.
+    if (corpGuard.send(res, err, req)) return;
     console.error('Failed to add playlist item:', err);
     res.status(500).json({ error: 'Failed to add item' });
   }
@@ -1773,6 +1826,11 @@ router.post('/:id/assign', requirePlaylistWrite, (req, res) => {
   if (!device) return res.status(404).json({ error: 'Device not found' });
   if (device.workspace_id !== req.playlist.workspace_id) {
     return res.status(403).json({ error: 'Device is not in this playlist\'s workspace' });
+  }
+  // CORPORATE: a device override on a mandated screen would never play (the mandate outranks it).
+  try { corpGuard.assertNotMandated(req, device_id); } catch (e) {
+    if (corpGuard.send(res, e, req)) return;
+    throw e;
   }
 
   // The one action that genuinely means "this screen, this playlist" — stamp it as an override so

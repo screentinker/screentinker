@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { db } = require('../db/database');
 const { generateToken, hashToken, displayPrefix } = require('../middleware/apiToken');
 const { accessContext } = require('../lib/tenancy');
-const { isZonedPlaylist } = require('../lib/agency-targets'); // #73: full-screen-only guardrail
+const { isZonedPlaylist, isGovernedPlaylist } = require('../lib/agency-targets'); // #73: full-screen-only guardrail
 const { isPlatformRole } = require('../middleware/auth');       // #146: billing:read mint gate
 
 // #73: 'agency' is OFF the read/write/full ladder (not in apiToken.js SCOPE_RANK), so a
@@ -103,6 +103,8 @@ router.post('/', (req, res) => {
       if (!inWs.get(pid, req.workspaceId)) return res.status(400).json({ error: `playlist ${pid} is not in this workspace` });
       // #73: agencies get FULL-SCREEN playlists only - a zoned playlist can't take full-screen uploads.
       if (isZonedPlaylist(db, pid)) return res.status(400).json({ error: 'A selected playlist is assigned to a zone on a screen — agency uploads play full-screen, so it can\'t be shared with an agency. Use a full-screen playlist.' });
+      // CORPORATE: head office's playlists (and their children) are changed by its admins, never by a token.
+      if (isGovernedPlaylist(db, pid)) return res.status(400).json({ error: 'A selected playlist is head office\'s (corporate), so it can\'t be shared with an agency. Share the slot playlist instead.', code: 'CORPORATE_TOKEN' });
     }
   }
   const secret = generateToken();
@@ -153,6 +155,8 @@ router.put('/:id/targets', (req, res) => {
     if (!inWs.get(pid, tok.workspace_id)) return res.status(400).json({ error: `playlist ${pid} is not in this token's workspace` });
     // #73: full-screen-only - a zoned playlist can't be (re-)designated to an agency.
     if (isZonedPlaylist(db, pid)) return res.status(400).json({ error: 'A selected playlist is assigned to a zone on a screen — agency uploads play full-screen, so it can\'t be shared with an agency. Use a full-screen playlist.' });
+    // CORPORATE: head office's playlists (and their children) are changed by its admins, never by a token.
+    if (isGovernedPlaylist(db, pid)) return res.status(400).json({ error: 'A selected playlist is head office\'s (corporate), so it can\'t be shared with an agency. Share the slot playlist instead.', code: 'CORPORATE_TOKEN' });
   }
   const ins = db.prepare('INSERT OR IGNORE INTO api_token_targets (token_id, playlist_id) VALUES (?, ?)');
   db.transaction(() => {

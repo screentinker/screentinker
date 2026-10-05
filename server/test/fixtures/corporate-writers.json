@@ -1,0 +1,21 @@
+{
+  "_doc": "Every statement in the server tree that writes playlist_items or playlist_item_schedules, by file, with how the corporate (head office) lock covers it. test/corporate-writers-inventory.test.js fails when a count changes: classify the new writer here (spec 10 §4.7) before it can ship. JS = the guard call that gives the 403; BS = the SQLite backstop (lib/corporate/backstop.js), which fails closed inside any request whose actor cannot author.",
+  "files": {
+    "routes/playlists.js": { "count": 27, "coverage": "JS: loadPlaylistAccess(requireWrite) -> assertPlaylistWritable on every write route (items, selection, bulk, reorder, discard, duplicate, item schedules). BS." },
+    "routes/assignments.js": { "count": 6, "coverage": "JS: mandated device -> CORPORATE_NO_SLOT / LOCKED / OVERRIDE before any write; checkItemWrite -> assertPlaylistWritable. BS." },
+    "routes/device-groups.js": { "count": 1, "coverage": "JS: assign-content skips mandated members (never resolves to head office's playlist). BS." },
+    "routes/schedules.js": { "count": 1, "coverage": "New store playlist (auto-generated), not governed; schedules on mandated targets refused. BS." },
+    "routes/agency.js": { "count": 2, "coverage": "JS: assertPlaylistWritable with the agency token actor -> CORPORATE_TOKEN; governed playlists cannot be allowlisted (lib/agency-targets.js). BS." },
+    "routes/slide-decks.js": { "count": 1, "coverage": "JS: checkDeckAccess(write) -> assertMediaWritable('slide_deck'). BS." },
+    "routes/status.js": { "count": 2, "coverage": "Import / v1 conversion into NEW playlists (corporate = 0), never governed. BS." },
+    "lib/slide-deck.js": { "count": 3, "coverage": "Reached only from the deck routes above (JS) or as system. BS." },
+    "lib/fork-device-playlist.js": { "count": 3, "coverage": "Never forks a corporate source (resolved.source === 'corporate' -> null); writes a NEW device playlist. BS." },
+    "lib/revisions.js": { "count": 3, "coverage": "routes/revisions.js restore -> assertPlaylistWritable(op='restore') / assertMediaWritable. BS." },
+    "lib/auto-playlist.js": { "count": 3, "coverage": "NEW auto-generated playlists, not governed. BS." },
+    "db/database.js": { "count": 3, "coverage": "Boot migrations — system (no actor)." }
+  },
+  "dynamic": {
+    "lib/mesh/replication.js": "Generic replicated writes (table name is data). System actor on apply; corporate workspaces cannot be replicated (guard.workspaceHasCorporateState), playlist_items.slot_id is on the BLOCKLIST as a belt.",
+    "FK cascades": "content/widget delete and playlist delete cascade playlist_items: JS media protection + BS (cascades fire the TEMP triggers)."
+  }
+}

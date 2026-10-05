@@ -139,6 +139,13 @@ const dashboardCsp = helmet.contentSecurityPolicy({
   },
 });
 
+/*
+ * FIRST: mark "an HTTP request is being served", for the corporate backstop's tripwire — a write to
+ * playlist_items with no actor INSIDE a request means some path lost its async context and was
+ * judged as system. See lib/corporate/actor.js. Costs one AsyncLocalStorage.run per request.
+ */
+app.use(require('./lib/corporate/actor').httpMarker);
+
 app.use(helmet({
   contentSecurityPolicy: false,        // we apply our own below, scoped to non-render paths
   crossOriginEmbedderPolicy: false,    // allow loading external widget content
@@ -1757,6 +1764,14 @@ for (const r of AGENCY_ROUTERS) {
   // reach ONLY here; agencyGate enforces the playlist allowlist + bound workspace.
   app.use(r.path, bearerAuth, resolveTenancy, agencyGate, require(r.mod));
 }
+
+/*
+ * Corporate refusals that escaped a route as an exception — a CorporateError from the guard, or the
+ * backstop's RAISE(ABORT, 'CORPORATE_LOCKED') surfacing as a SqliteError — answered as the JSON a
+ * client can act on (403/409 + code) instead of Express's default 500 page with a stack trace.
+ * Anything else is passed on untouched, so every other error behaves exactly as before.
+ */
+app.use(require('./lib/corporate/guard').errorHandler);
 
 /*
  * Plugins (P1). Off unless PLUGINS_ENABLED is set: boot() returns without scanning or

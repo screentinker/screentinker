@@ -35,6 +35,15 @@ function checkDeckAccess(req, res, requireWrite) {
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
   }
+  // CORPORATE: a deck whose playlist head office plays (inside a corporate playlist) is authored by
+  // head office's corporate authors only — save, publish and delete alike.
+  if (requireWrite) {
+    const corpGuard = require('../lib/corporate/guard');
+    try { corpGuard.assertMediaWritable(req, 'slide_deck', deck.id); } catch (e) {
+      if (corpGuard.send(res, e, req)) return null;
+      throw e;
+    }
+  }
   return deck;
 }
 
@@ -220,6 +229,7 @@ router.post('/:id/publish', (req, res) => {
     out = require('../lib/releases').releaseSlideDeck(db, deck.id, req, { actor: require('../lib/releases').actorOf(req) });
   } catch (e) {
     if (e && e.name === 'ReleaseError') return res.status(e.status || 409).json({ error: e.message, code: e.code });
+    if (require('../lib/corporate/guard').send(res, e, req)) return;
     console.error('[slide-deck] publish failed:', e && e.message);
     return res.status(500).json({ error: 'Could not publish this deck.' });
   }

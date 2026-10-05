@@ -20,6 +20,8 @@ const flapLimiter = require('../lib/flap-limiter');
 const sessionSettle = require('../lib/session-settle');   // #148 patch2: eviction-storm debounce
 const { resolveIdentity } = require('../lib/device-identity');
 const { resolveSyncBackend } = require('../lib/sync-backend');
+// Corporate (head office): the group-sync key and its one definition of sync membership.
+const corpResolve = require('../lib/corporate/resolve');
 const capsLib = require('../lib/player-capabilities');
 const logCoalescer = require('../lib/log-coalescer');
 const loopLag = require('../services/loop-lag');
@@ -335,20 +337,20 @@ function logDeviceStatus(deviceId, status, reason, detail) {
 // platform + ip_address are selected for the sync-backend resolver, not for election: it decides
 // native-vs-ours from what the members ARE (BrightSign?) and where they are (one L2 network?).
 function groupSyncMembers(group) {
-  if (!group || !group.playlist_id) return [];
   /*
    * ⚠️ Membership is decided on the RESOLVED playlist. This used to read d.playlist_id, i.e. the
    * copy the old fan-out left on each device — so once group and wall playlists stopped being
    * copied down, every member would have failed this match and no group would ever have synced.
    * Five readers of that column lived here, none of them listed in the inheritance design doc;
    * they were found by grepping before the writers were changed, not after.
+   *
+   * ⚠️ And on the SYNC KEY, not the group's raw playlist id: when a head office mandate covers the
+   * group its members play the corporate playlist, which is what they must share. With no mandate
+   * the key IS group.playlist_id and the query is the one that was here. ONE helper serves all four
+   * readers (this, deviceSyncGroup, syncDecisionFor, groupSenderEligible) — see
+   * lib/corporate/resolve.js.
    */
-  return db.prepare(`
-    SELECT d.id, d.status, d.platform, d.ip_address FROM devices d
-    JOIN device_group_members dgm ON dgm.device_id = d.id
-    JOIN device_resolved_playlist r ON r.device_id = d.id
-    WHERE dgm.group_id = ? AND r.playlist_id = ? ORDER BY d.id
-  `).all(group.id, group.playlist_id);
+  return corpResolve.syncMembers(db, group, 'd.id, d.status, d.platform, d.ip_address');
 }
 
 // Elect the group's sync leader: the pinned leader if it's an online, playlist-matching member;
@@ -366,13 +368,8 @@ function resolveGroupLeader(group) {
 // The device's sync group: a sync-enabled group it belongs to (m2m) whose shared playlist THIS
 // device is on. Deterministic pick if it's somehow in several. Returns the group row or null.
 function deviceSyncGroup(deviceId, devicePlaylistId) {
-  if (!devicePlaylistId) return null;
-  return db.prepare(`
-    SELECT g.id, g.sync_enabled, g.playlist_id, g.leader_device_id, g.sync_backend
-    FROM device_groups g JOIN device_group_members dgm ON dgm.group_id = g.id
-    WHERE dgm.device_id = ? AND g.sync_enabled = 1 AND g.playlist_id = ?
-    ORDER BY g.name ASC, g.id ASC LIMIT 1
-  `).get(deviceId, devicePlaylistId) || null;
+  // Same sync key as groupSyncMembers; identical to the old query when no mandate exists.
+  return corpResolve.deviceSyncGroup(db, deviceId, devicePlaylistId);
 }
 
 // Build the group_sync block for a device, or null (the playlist-match guard lives in deviceSyncGroup).
@@ -555,13 +552,29 @@ function buildPlaylistPayloadUnchecked(deviceId) {
 
   let assignments = [];
   let playback_order = 'sequential';
+  /*
+   * ⚠️ CORPORATE: a head office mandate drives this screen (source 'corporate', with or without a
+   * playlist — a DARK mandate has none). Three things differ from an ordinary payload:
+   *   - every item is tagged with the workspace it came from (__origin_ws = head office), so
+   *     assemblePayload resolves play_when data sources and custom shaders in HEAD OFFICE's
+   *     workspace: a store data source with the same slug must never gate a corporate item
+   *     (critique H1). The tag is deleted before the payload leaves the server;
+   *   - default_content is null: a dark mandate, or an empty corporate loop, shows the player's own
+   *     idle screen — never store-chosen content (D6);
+   *   - the layout is already the mandate's (or none) — the view decides it.
+   * Stage B replaces the snapshot read with the per-store composition (slots).
+   */
+  const corporateSource = device?.playlist_source === 'corporate';
   if (device?.playlist_id) {
-    const playlist = db.prepare('SELECT published_snapshot, published_playback_order FROM playlists WHERE id = ?').get(device.playlist_id);
+    const playlist = db.prepare('SELECT published_snapshot, published_playback_order, workspace_id FROM playlists WHERE id = ?').get(device.playlist_id);
     if (playlist?.published_snapshot) {
       try { assignments = JSON.parse(playlist.published_snapshot); } catch (e) { assignments = []; }
       refreshWidgetRevs(assignments);
       refreshContentRevs(assignments);   // re-stamps a.mime_type, so strip live AFTER it
       assignments = dropLiveIfUnsupported(assignments);
+      if (corporateSource && Array.isArray(assignments)) {
+        for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = playlist.workspace_id || null;
+      }
     }
     if (playlist && playlist.published_playback_order) playback_order = playlist.published_playback_order;
   }
@@ -730,6 +743,9 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       FROM content WHERE id = ?`).get(device.default_content_id);
     if (c) default_content = c;
   }
+  // ⚠️ CORPORATE (D6): a screen head office's playlist drives never shows store-chosen content — a
+  // dark mandate, or an empty corporate loop, falls to the player's own idle screen.
+  if (corporateSource) default_content = null;
 
   // #104: shared shape + zone-reset tail so the device payload and the dashboard
   // preview payload (GET /api/playlists/:id/preview-payload) can never drift.
@@ -821,15 +837,62 @@ function attachDataSourceBag(items, workspaceId) {
   }
 }
 
+/*
+ * Corporate per-origin helpers. A store screen playing head office's items must run head office's
+ * uploaded shaders (they live in the HQ workspace), and a store shader must never be swapped in for
+ * one of the same id. Origins come first, the device's workspace last, first match wins.
+ */
+function mergedShaderRegistry(origins, deviceWs) {
+  const merged = new Map();
+  for (const ws of [...origins, deviceWs]) {
+    const reg = customShaderRegistry(ws);
+    if (!reg) continue;
+    for (const [k, v] of reg) if (!merged.has(k)) merged.set(k, v);
+  }
+  return merged.size ? merged : null;
+}
+
+function perOriginShaderSources(items, deviceWs) {
+  const out = {};
+  const byWs = new Map();
+  for (const it of items) {
+    const ws = (it && it.__origin_ws) || deviceWs;
+    if (!byWs.has(ws)) byWs.set(ws, []);
+    byWs.get(ws).push(it);
+  }
+  for (const [ws, group] of byWs) {
+    const src = customShaderSources(ws, group);
+    if (src) for (const [k, v] of Object.entries(src)) if (!(k in out)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints }) {
   let a = Array.isArray(assignments) ? assignments : [];
+  /*
+   * ⚠️ PER-ORIGIN, for corporate payloads. An item tagged __origin_ws (head office's content on a
+   * store screen) resolves its data source and custom shaders in the workspace it CAME FROM; an
+   * untagged item — every non-corporate payload — uses the device's workspace exactly as before.
+   * With no tags this whole block reduces to the single-workspace calls it replaced.
+   */
+  const origins = [...new Set(a.map((x) => (x && x.__origin_ws) || null).filter(Boolean))];
   // Transition widgets are normalized OUT here (the single device+preview chokepoint): each is dropped
   // from the visible list and its config attached as an opaque `transition` on the item it plays into.
   // Old players simply see no transition widget and ignore the field (hard cut) — no regression.
   // #320: the workspace's own uploaded shaders, consulted after the shipped manifest. Built here
   // rather than inside the resolver so the lookup stays a pure function of what it is given.
-  a = normalizeTransitions(a, customShaderRegistry(workspace_id));
-  attachDataSourceBag(a, workspace_id);
+  a = normalizeTransitions(a, origins.length ? mergedShaderRegistry(origins, workspace_id) : customShaderRegistry(workspace_id));
+  if (!origins.length) {
+    attachDataSourceBag(a, workspace_id);
+  } else {
+    // Each origin's items against that origin's data sources; untagged items against the device's.
+    for (const ws of [...origins, null]) {
+      const group = a.filter((x) => ((x && x.__origin_ws) || null) === ws);
+      if (group.length) attachDataSourceBag(group, ws || workspace_id);
+    }
+  }
+  const customShaders = origins.length ? perOriginShaderSources(a, workspace_id) : customShaderSources(workspace_id, a);
+  if (origins.length) a = a.map((x) => { if (x && x.__origin_ws !== undefined) { const { __origin_ws, ...rest } = x; return rest; } return x; });
   const zoneCount = layout?.zones?.length || 0;
   if (zoneCount < 2) a = a.map(x => (x && x.zone_id != null ? { ...x, zone_id: null } : x));
   return {
@@ -886,7 +949,7 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
     // playlist rather than fetched separately. Every player already resolves a shader as an id
     // to a source string, so merging these into that lookup is all any of them needs — no new
     // endpoint, no second round trip, and nothing sent for a workspace that uploaded nothing.
-    custom_shaders: customShaderSources(workspace_id, a),
+    custom_shaders: customShaders,
     playback_order: playback_order || 'sequential',
   };
 }
@@ -2770,14 +2833,11 @@ module.exports = function setupDeviceSocket(io) {
     // wall:sync. The device_id is stamped with the authenticated id so followers can trust it.
     // Sender must be an eligible member: in the group (m2m) AND on the group's shared playlist.
     function groupSenderEligible(group) {
-      if (!group || !group.sync_enabled || !group.playlist_id) return false;
       // Resolved playlist, for the same reason as groupSyncMembers: the raw column is stale for
-      // any device that inherits, and this guard decides whose sync broadcasts are trusted.
-      return !!db.prepare(`
-        SELECT 1 FROM device_group_members dgm
-        JOIN device_resolved_playlist r ON r.device_id = dgm.device_id
-        WHERE dgm.group_id = ? AND dgm.device_id = ? AND r.playlist_id = ?
-      `).get(group.id, currentDeviceId, group.playlist_id);
+      // any device that inherits, and this guard decides whose sync broadcasts are trusted. Keyed on
+      // the SYNC KEY (critique R2: this fourth reader was the one first missed), so a group whose
+      // members play head office's playlist can relay at all.
+      return corpResolve.isSyncMember(db, group, currentDeviceId);
     }
 
     socket.on('group:sync', (data) => {

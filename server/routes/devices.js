@@ -167,6 +167,25 @@ router.get('/:id', (req, res) => {
           .get(req.params.id, resolved.playlist_id)?.name || null
       : null;
 
+  /*
+   * CORPORATE: head office's playlist plays here (or head office turned the screen off). The UI
+   * shows a locked badge and the playlist NAME — not a link, for users who cannot open head
+   * office's workspace (it would 404). Stage B adds the slot sections to this block.
+   */
+  if (resolved.source === 'corporate') {
+    const m = require('../lib/corporate/resolve').mandateFor(db, req.params.id);
+    const corpGuard = require('../lib/corporate/guard');
+    device.corporate = m ? {
+      playlist_id: m.playlist_id || null,
+      playlist_name: m.playlist_name || null,
+      dark: !!m.dark,
+      layout_id: m.layout_id || null,
+      mandate: { id: m.id, target_kind: m.target_kind, target_label: corpGuard.targetLabel(db, m) },
+      can_change: corpGuard.isOrgAdmin(req, m.organization_id) && !req.viaToken,
+      slots: [],
+    } : null;
+  }
+
   let assignments = [];
   let playlist_status = null;
   let playlist_has_published = false;
@@ -239,6 +258,18 @@ router.get('/:id', (req, res) => {
 
   res.json({ ...stripDeviceSecrets(device), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
 });
+
+/*
+ * CORPORATE (D13): a gated device control on a screen head office's playlist plays on — answered
+ * 403 CORPORATE_DEVICE_CONTROL for anyone but the organization's admins. Returns true when refused.
+ */
+function corpDeviceRouteRefused(req, res, actionLabel) {
+  const corpGuard = require('../lib/corporate/guard');
+  try { corpGuard.assertDeviceRouteControl(req, req.params.id, actionLabel); return false; } catch (e) {
+    if (corpGuard.send(res, e, req)) return true;
+    throw e;
+  }
+}
 
 // Helper: check device write access via the workspace the device belongs to.
 // Phase 2.2a: replaces user_id + team_members check. Allows: platform_admin,
@@ -322,7 +353,9 @@ router.delete('/:id/playlist', (req, res) => {
     }
   } catch (e) { /* silent — the DB is the source of truth, the push is best-effort */ }
 
-  res.json({ success: true });
+  // Clearing a shadowed override is harmless; say that head office's playlist still plays here.
+  const stillMandated = !!require('../lib/corporate/guard').activeMandateFor(db, req.params.id);
+  res.json({ success: true, ...(stillMandated ? { still_mandated: true } : {}) });
 });
 
 router.put('/:id', (req, res) => {
@@ -358,6 +391,11 @@ router.put('/:id', (req, res) => {
   // PUT /api/layouts/device/:id). Validate it's a template or in the device's
   // workspace; null clears it (fullscreen).
   if (layout_id !== undefined) {
+    // CORPORATE: head office's mandate decides a mandated screen's layout (refused, not a silent no-op).
+    try { require('../lib/corporate/guard').assertNotMandated(req, req.params.id); } catch (e) {
+      if (require('../lib/corporate/guard').send(res, e, req)) return;
+      throw e;
+    }
     if (layout_id !== null) {
       const layout = db.prepare('SELECT id FROM layouts WHERE id = ? AND (is_template = 1 OR workspace_id = ?)').get(layout_id, device.workspace_id);
       if (!layout) return res.status(400).json({ error: 'layout_id not found in this workspace' });
@@ -394,6 +432,10 @@ router.put('/:id', (req, res) => {
   if (updates.length > 0) {
     values.push(req.params.id);
     db.prepare(`UPDATE devices SET ${updates.join(', ')}, updated_at = strftime('%s','now') WHERE id = ?`).run(...values);
+    // Allowed on a head office screen, and recorded so head office can see who changed it.
+    if (orientation !== undefined || timezone !== undefined) {
+      require('../lib/corporate/guard').auditMandatedAction(req, device, orientation !== undefined ? 'orientation' : 'timezone');
+    }
   }
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
@@ -460,6 +502,10 @@ router.post('/:id/command', requireScope('full'), (req, res) => {
   if (!deviceNs) return res.status(503).json({ error: 'The realtime layer is not available.' });
 
   const r = deliverCommand(deviceNs, device, type, payload);
+  if (r.status === 'refused') {
+    // A screen head office's playlist plays on: this command is for the organization's admins.
+    return res.status(403).json({ error: r.error, code: r.code, corporate: r.corporate });
+  }
   if (r.status === 'unsupported') {
     // Named rather than generic: "this panel cannot do that" is actionable, "failed" is not.
     return res.status(400).json({ error: 'That screen cannot do that', capability: r.capability });
@@ -641,6 +687,7 @@ router.post('/:id/trigger-secret', requireScope('full'), (req, res) => {
 router.post('/:id/local-api', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
+  if (corpDeviceRouteRefused(req, res, 'change the local control settings of')) return;
   const b = req.body || {};
   if (b.enabled === undefined) return res.status(400).json({ error: 'enabled is required' });
   const enabled = !!b.enabled;
@@ -701,6 +748,7 @@ router.post('/:id/local-api', requireScope('full'), (req, res) => {
 router.post('/:id/local-api-secret', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
+  if (corpDeviceRouteRefused(req, res, 'change the local control settings of')) return;
   const b = req.body || {};
   let secret;
   if (b.rotate || b.secret === undefined) {
@@ -827,6 +875,7 @@ router.delete('/:id/enrol-key', requireScope('full'), (req, res) => {
 router.post('/:id/block', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
+  if (corpDeviceRouteRefused(req, res, 'block')) return;
   db.prepare("UPDATE devices SET blocked = 1, updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
   // Mirror onto the saved settings so the block survives a delete + re-pair on purpose rather than
   // by accident of whatever the saved copy happened to hold.
@@ -879,8 +928,13 @@ router.delete('/:id', (req, res) => {
   // of silently resetting to defaults. No-op if the device has no fingerprint link yet.
   try { deviceSettings.snapshot(req.params.id); } catch (e) { console.warn(`[#150] settings snapshot failed for ${req.params.id}: ${e.message}`); }
 
+  // Allowed on a head office screen (physical access is out of the threat model), but recorded.
+  require('../lib/corporate/guard').auditMandatedAction(req, device, 'delete');
+
   // Clean up related data (playlist is NOT deleted — may be shared with other devices)
   db.prepare('DELETE FROM schedules WHERE device_id = ?').run(req.params.id);
+  // Head office mandates / slot content / emergency scopes naming this screen (no FK cascades them).
+  require('../lib/corporate/cleanup').removeTargets(db, 'device', req.params.id);
   db.prepare('DELETE FROM screenshots WHERE device_id = ?').run(req.params.id);
   db.prepare('DELETE FROM device_telemetry WHERE device_id = ?').run(req.params.id);
   db.prepare('DELETE FROM video_wall_devices WHERE device_id = ?').run(req.params.id);

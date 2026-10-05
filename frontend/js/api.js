@@ -1,5 +1,44 @@
 const API_BASE = '/api';
 
+/*
+ * The Error a failed request throws. ⚠️ Its MESSAGE IS UNCHANGED from what every caller has always
+ * read (the server's `error` text), so `catch (e) { showToast(e.message) }` behaves exactly as
+ * before. What is new rides beside it: `status`, `code` and the whole `body`, so a caller that needs
+ * more — the corporate slot list, which mandate shadows a screen — no longer loses it here.
+ *
+ * Head office (corporate) refusals carry a `code` (CORPORATE_*, FILL_*) and are shown in the
+ * viewer's language from i18n (`corp.err.<CODE>`), falling back to the server's own text when no
+ * key exists — never the raw key.
+ *
+ * ⚠️ The translator is INJECTED (app.js calls setErrorTranslator(t) at startup) rather than imported:
+ * api.js is loaded on its own by tests and tools with nothing but fetch/localStorage stubbed, and an
+ * i18n import would drag navigator/locale state into every one of them.
+ */
+let translate = null;
+export function setErrorTranslator(fn) { translate = typeof fn === 'function' ? fn : null; }
+
+export function requestError(status, body) {
+  const b = body && typeof body === 'object' ? body : {};
+  let msg = b.error || 'Request failed';
+  const code = typeof b.code === 'string' ? b.code : null;
+  if (code && translate && /^(CORPORATE_|FILL_)/.test(code)) {
+    const t = translate;
+    const key = `corp.err.${code}`;
+    const corp = b.corporate || {};
+    const vars = {
+      name: corp.playlist_name || '', target: (corp.mandate_target && corp.mandate_target.label) || '',
+    };
+    const template = t(key);
+    if (template !== key) {
+      // Only when every placeholder the translation needs can be filled; otherwise the server's
+      // own sentence (which always names things correctly) is the better message.
+      const needed = [...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+      if (needed.every((k) => vars[k])) msg = t(key, vars);
+    }
+  }
+  return Object.assign(new Error(msg), { status, code, body: b });
+}
+
 export function getAuthHeaders() {
   const token = localStorage.getItem('token');
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -245,7 +284,7 @@ async function request(url, options = {}) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || 'Request failed');
+    throw requestError(res.status, err);
   }
   return res.json();
 }

@@ -266,8 +266,35 @@ router.put('/orgs/:id/talk', requirePlatformAdmin, (req, res) => {
 router.delete('/workspaces/:id', requirePlatformAdmin, (req, res) => {
   const ws = db.prepare('SELECT id, name, organization_id FROM workspaces WHERE id = ?').get(req.params.id);
   if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+  /*
+   * ⚠️ CORPORATE (risk R17): an org's head office workspace holds the corporate playlists its
+   * mandates point at (a NO ACTION foreign key — the delete would fail at COMMIT with a bare
+   * FOREIGN KEY error). Refuse while any mandate uses them, saying where; otherwise let it go and
+   * clear the org's pointer to it.
+   */
+  {
+    let hqOf = [];
+    try { hqOf = db.prepare('SELECT id FROM organizations WHERE hq_workspace_id = ?').all(ws.id); } catch (_) { hqOf = []; /* pre-corporate schema */ }
+    if (hqOf.length) {
+      const inUse = db.prepare(`SELECT COUNT(*) AS n FROM corporate_mandates cm JOIN playlists p ON p.id = cm.playlist_id
+          WHERE p.workspace_id = ?`).get(ws.id).n;
+      if (inUse) {
+        const screens = db.prepare(`SELECT COUNT(*) AS n FROM device_resolved_playlist r JOIN playlists p ON p.id = r.playlist_id
+            WHERE p.workspace_id = ? AND r.source = 'corporate'`).get(ws.id).n;
+        const corpGuard = require('../lib/corporate/guard');
+        return corpGuard.send(res, corpGuard.err('CORPORATE_HQ_IN_USE', { workspace: ws.name, screens }), req);
+      }
+    }
+  }
   try {
-    deleteWorkspaceCascade(db, { workspaceId: ws.id });
+    // One transaction: the corporate cleanup commits only with the delete it belongs to.
+    db.transaction(() => {
+      require('../lib/corporate/cleanup').removeWorkspaceTargets(db, ws.id);
+      try {
+        db.prepare('UPDATE organizations SET hq_workspace_id = NULL, corporate_enabled = 0 WHERE hq_workspace_id = ?').run(ws.id);
+      } catch (_) { /* pre-corporate schema: nothing points at it */ }
+      deleteWorkspaceCascade(db, { workspaceId: ws.id });
+    })();
   } catch (e) {
     return res.status(500).json({ error: 'Failed to delete workspace' });
   }

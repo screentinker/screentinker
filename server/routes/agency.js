@@ -102,6 +102,16 @@ router.post('/playlists/:playlistId/items', (req, res) => {
     return res.status(409).json({ error: "This playlist can't accept uploads right now — it's been assigned to a zone on a screen. Ask your contact." });
   }
 
+  // CORPORATE: a token never writes head office's playlist, even one allowlisted before it became
+  // corporate (CORPORATE_TOKEN). The backstop would refuse the INSERT too; this is the clear answer.
+  {
+    const corpGuard = require('../lib/corporate/guard');
+    try { corpGuard.assertPlaylistWritable(req, { id: req.params.playlistId }, 'items'); } catch (e) {
+      if (corpGuard.send(res, e, req)) return;
+      throw e;
+    }
+  }
+
   const content = db.prepare('SELECT id, workspace_id, duration_sec FROM content WHERE id = ?').get(content_id);
   if (!content) return res.status(404).json({ error: 'Content not found' });
   // cross-tenant guard: content must be in the token's bound workspace (or a template)

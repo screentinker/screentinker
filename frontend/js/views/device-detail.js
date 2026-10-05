@@ -1627,6 +1627,19 @@ function playlistSourceBadge(device) {
     `<span title="${esc(title)}" style="font-size:11px;padding:2px 8px;border-radius:10px;`
     + `background:var(--bg-input);color:${color};white-space:nowrap">${esc(text)}</span>`;
 
+  /*
+   * Head office (corporate) decides what plays here. The playlist is NAMED, as plain text — not a
+   * link: a store user cannot open head office's workspace, so a link would 404. A dark mandate
+   * says the screen was turned off by head office rather than looking unassigned.
+   */
+  if (device.playlist_source === 'corporate') {
+    const corp = device.corporate || {};
+    if (corp.dark) return chip(t('corp.badge.dark'), t('corp.tip.dark'), 'var(--warning, #f59e0b)');
+    const name = corp.playlist_name;
+    return chip(t('corp.badge.locked'), t('corp.tip.locked'), 'var(--warning, #f59e0b)')
+      + (name ? ` <span class="corp-playlist-name" style="font-size:12px;color:var(--text-secondary)">${esc(name)}</span>` : '');
+  }
+
   if (device.playlist_source === 'device') {
     return chip(t('device.playlist.overridden'), t('device.playlist.overridden_tip'), 'var(--text-secondary)')
       + `<button class="btn btn-secondary btn-sm" id="revertPlaylistBtn" title="${esc(t('device.playlist.revert_tip'))}"`

@@ -99,6 +99,12 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/admin/diagnostics', mod: './routes/diagnostics' },
   { path: '/api/tokens',      mod: './routes/tokens',       tenancy: true },
+  /*
+   * Corporate (head office) playlists, mandates and their settings. JWT-only (decision D12): a
+   * token acts as its owner with role 'user', and an org admin's token would otherwise be able to
+   * repoint every store's screens. Authoring is a signed-in human action.
+   */
+  { path: '/api/corporate',   mod: './routes/corporate',    tenancy: true },
 ];
 
 // #73: AGENCY_ROUTERS - capability-restricted ('agency' scope) surface. Mounted with

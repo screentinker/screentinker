@@ -86,8 +86,11 @@ function renderRemoteOrgBanner() {
   el.querySelector('#leaveRemoteOrg').onclick = () => { clearRemoteOrg(); window.location.reload(); };
 }
 import { showToast } from './components/toast.js';
-import { api, meshCapability } from './api.js';
+import { api, meshCapability, setErrorTranslator } from './api.js';
 import { esc } from './utils.js';
+
+// Head office (corporate) refusals arrive with a code; show them in the viewer's language.
+setErrorTranslator(t);
 
 const app = document.getElementById('app');
 const sidebar = document.querySelector('.sidebar');

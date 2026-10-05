@@ -51,8 +51,10 @@ function emitMuteChanged(req, item, muted) {
         if (match && (s.muted ? 1 : 0) !== (m ? 1 : 0)) { s.muted = m ? 1 : 0; changed = true; }
       }
       if (changed) {
-        db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
-          .run(JSON.stringify(snap), playlistId);
+        // As system: the route already authorised the mute; this keeps head office's flattened copy
+        // in step, which the corporate backstop would otherwise judge as a publish by the caller.
+        require('./corporate/actor').runAsSystem(() => db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
+          .run(JSON.stringify(snap), playlistId));
       }
     };
 

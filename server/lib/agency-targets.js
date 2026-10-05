@@ -22,6 +22,14 @@ function listDesignatedPlaylists(db, tokenId, workspaceId) {
 // with an agency. Checked at BOTH designation (reject the grant) AND upload (block the add) -
 // the upload check is mandatory because auto-publish has no draft step to catch a playlist
 // that becomes zoned after designation.
+// Corporate: a governed playlist (corporate, or a child of one) can never be an agency target —
+// tokens never author head office's content (decision D12). Checked at designation; the upload
+// route's assertPlaylistWritable is the second line.
+function isGovernedPlaylist(db, playlistId) {
+  const g = require('./corporate/guard').governanceOf(db, playlistId);
+  return g.kind === 'corporate' || g.kind === 'corporate_child';
+}
+
 function isZonedPlaylist(db, playlistId) {
   return !!db.prepare('SELECT 1 FROM playlist_items WHERE playlist_id = ? AND zone_id IS NOT NULL LIMIT 1').get(playlistId);
 }
@@ -48,4 +56,4 @@ function folderSubtree(db, rootFolderId, workspaceId) {
   `).all(rootFolderId, workspaceId);
 }
 
-module.exports = { listDesignatedPlaylists, isZonedPlaylist, folderSubtree };
+module.exports = { listDesignatedPlaylists, isZonedPlaylist, folderSubtree, isGovernedPlaylist };

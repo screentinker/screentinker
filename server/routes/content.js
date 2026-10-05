@@ -604,6 +604,16 @@ function checkContentWrite(req, res) {
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
   }
+  /*
+   * ⚠️ CORPORATE: media head office's playlist plays (directly, through a child, as a slot
+   * fallback, or still in its published copy) may be changed only by a corporate author. Every
+   * caller of this helper mutates — PUT, replace (same id, new bytes), subtitle, delete — and the
+   * delete would otherwise cascade the item out of the corporate playlist.
+   */
+  try { require('../lib/corporate/guard').assertMediaWritable(req, 'content', content.id); } catch (e) {
+    if (require('../lib/corporate/guard').send(res, e, req)) return null;
+    throw e;
+  }
   return content;
 }
 
@@ -616,6 +626,11 @@ function contentWritable(req, content) {
   const ctx = ws && accessContext(req.user.id, req.user.role, ws);
   if (!ctx) return false;
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return false;
+  // CORPORATE: same rule as checkContentWrite (batch delete / move of head office's media).
+  try { require('../lib/corporate/guard').assertMediaWritable(req, 'content', content.id); } catch (e) {
+    if (e && e.name === 'CorporateError') return false;
+    throw e;
+  }
   return true;
 }
 

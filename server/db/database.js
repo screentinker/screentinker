@@ -26,6 +26,15 @@ db.pragma('foreign_keys = ON');
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
+/*
+ * ⚠️ The resolver views are DROPPED before any migration runs and recreated as the LAST step
+ * (applyResolverViews, below). SQLite refuses to drop or rename a table a view references, and the
+ * views now name eight tables — so a table-rebuilding migration (the tenant-cascade rebuild of
+ * playlists today, any rebuild tomorrow) must never run with them present. The SQL they had is
+ * kept so the per-boot verifier can prove the new definition changes no screen.
+ */
+const _previousResolverSql = require('../lib/playlist-resolver-sql').dropResolverViews(db);
+
 // Auto-apply Phase 1 multi-tenancy migration if not yet applied. Without this
 // a self-hoster who pulls latest and restarts hits a crash in
 // migrateFolderWorkspaceIds (queries workspaces table that doesn't exist).
@@ -3101,6 +3110,15 @@ try {
   }
 } catch (e) { console.error('[migrate] template-zone dedupe failed:', e.message); }
 
+/*
+ * Corporate (head office) playlists: every table and column of the feature, applied here because
+ * organizations only exists once the multi-tenancy phase above has run. Idempotent; see
+ * lib/corporate/schema-sql.js.
+ */
+try {
+  require('../lib/corporate/schema-sql').applyCorporateSchema(db);
+} catch (e) { console.error('[migrate] corporate schema failed:', e.message); }
+
 // #37: fail fast (loud) if migrations left the DB missing schema the code needs.
 const { verifyAndRepairSchema } = require('../lib/schema-check');
 verifyAndRepairSchema(db);
@@ -3119,7 +3137,20 @@ verifyAndRepairSchema(db);
  * schema applies the SAME definition rather than a copy of it.
  */
 const { applyResolverViews } = require('../lib/playlist-resolver-sql');
-applyResolverViews(db);
+/*
+ * verify: when the definition changed since the last boot, prove no device changes what it plays
+ * (only devices a head office mandate now covers may differ) before keeping it; otherwise keep the
+ * previous views and switch corporate playlists off (lib/corporate/runtime.js). Never exits.
+ */
+applyResolverViews(db, { verify: true, previousSql: _previousResolverSql });
+/*
+ * The corporate backstop: per-connection TEMP triggers that make a write to head office's content
+ * by anyone who may not author it fail closed, whichever writer forgot the JS guard. TEMP, so it
+ * exists only on this process's connection and never in the file. See lib/corporate/backstop.js.
+ */
+try {
+  require('../lib/corporate/backstop').applyCorporateGuards(db);
+} catch (e) { console.error('[corporate] backstop not installed:', e.message); }
 
 /*
  * Playlist inheritance: classify every existing devices.playlist_id as chosen or copied.

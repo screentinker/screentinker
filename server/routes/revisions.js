@@ -99,9 +99,24 @@ router.get('/:type/:id/:rev/render', requireWorkspaceRead, (req, res) => {
   res.send(html);
 });
 
+/*
+ * CORPORATE (critique H7): a restore rewrites the draft — a governed playlist's items, or an
+ * org-owned asset's bytes (via file_ref). The same author rule as the resource's own routes, applied
+ * before acting. Throws a CorporateError the catch below answers with its code.
+ */
+function assertCorporateWritable(req) {
+  const corpGuard = require('../lib/corporate/guard');
+  if (req.params.type === 'playlist') corpGuard.assertPlaylistWritable(req, { id: req.params.id }, 'restore');
+  else corpGuard.assertMediaWritable(req, req.params.type, req.params.id);
+}
+function sendCorporate(res, e, req) {
+  return require('../lib/corporate/guard').send(res, e, req);
+}
+
 router.post('/:type/:id/:rev/restore', requireWorkspaceWrite, (req, res) => {
   if (!loadResource(req, res)) return;
   try {
+    assertCorporateWritable(req);
     const out = revisions.restoreToDraft(db, { type: req.params.type, id: req.params.id, revisionId: req.params.rev, actor: { ...releases.actorOf(req), kind: 'restore' } });
     audit('history:restored', { userId: req.user.id, workspaceId: req.workspaceId, ip: req.ip, details: { resource_type: req.params.type, resource_id: req.params.id, from_revision: out.restoredFrom.id, to_revision: out.revision.id } });
     res.json({
@@ -109,7 +124,10 @@ router.post('/:type/:id/:rev/restore', requireWorkspaceWrite, (req, res) => {
       draft: true, require_approval: policy.approvalRequired(db, req.workspaceId),
       next: policy.approvalRequired(db, req.workspaceId) ? 'submit_for_review' : (req.params.type === 'playlist' || req.params.type === 'slide_deck' ? 'publish' : 'publish_draft'),
     });
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch (e) {
+    if (sendCorporate(res, e, req)) return;
+    res.status(e.status || 500).json({ error: e.message, code: e.code || null });
+  }
 });
 
 // Widgets, layouts and content: publish (or discard) the separate draft. Gated like any release.
@@ -119,16 +137,22 @@ router.post('/:type/:id/publish-draft', requireWorkspaceWrite, (req, res) => {
   try {
     const out = releases.releaseDraft(db, req.params.type, req.params.id, req, { actor: releases.actorOf(req) });
     res.json({ released: true, mode: out.gate.mode });
-  } catch (e) { res.status(e.status || 500).json({ error: e.message, code: e.code || null }); }
+  } catch (e) {
+    if (sendCorporate(res, e, req)) return;
+    res.status(e.status || 500).json({ error: e.message, code: e.code || null });
+  }
 });
 
 router.post('/:type/:id/discard-draft', requireWorkspaceWrite, (req, res) => {
   if (!loadResource(req, res)) return;
   try {
-    releases.discardDraft(db, req.params.type, req.params.id);
+    releases.discardDraft(db, req.params.type, req.params.id, req);
     revisions.recordCurrent(db, req.params.type, req.params.id, { actor: releases.actorOf(req), summary: 'Draft discarded' });
     res.json({ discarded: true });
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch (e) {
+    if (sendCorporate(res, e, req)) return;
+    res.status(e.status || 500).json({ error: e.message, code: e.code || null });
+  }
 });
 
 module.exports = router;

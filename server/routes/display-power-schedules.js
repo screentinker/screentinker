@@ -82,6 +82,29 @@ function validate(b, { partial = false } = {}) {
   return null;
 }
 
+/*
+ * CORPORATE (D13): a power schedule on a screen head office's playlist plays on is the
+ * organization's admins' to set. One named screen -> 403; a group -> allowed, and the response says
+ * how many of its screens ignore it (lib/device-power-schedule.js obeys only admin-set schedules
+ * there). Returns false when refused (response sent), else { mandated_members, admin }.
+ */
+function corporatePowerCheck(req, res, target) {
+  const corpGuard = require('../lib/corporate/guard');
+  const orgId = corpGuard.orgOfWorkspace(db, req.workspaceId);
+  const admin = corpGuard.isOrgAdmin(req, orgId) && !req.viaToken;
+  try {
+    if (target.deviceId) {
+      corpGuard.assertDeviceRouteControl(req, target.deviceId, 'set a power schedule on');
+      return { mandated_members: 0, admin };
+    }
+    const members = db.prepare('SELECT device_id FROM device_group_members WHERE group_id = ?').all(target.groupId).map((r) => r.device_id);
+    return { mandated_members: admin ? 0 : members.filter((id) => corpGuard.activeMandateFor(db, id)).length, admin };
+  } catch (e) {
+    if (corpGuard.send(res, e, req)) return false;
+    throw e;
+  }
+}
+
 /** The target must exist IN THIS WORKSPACE — the check that makes cross-tenant addressing fail. */
 function resolveTarget(req, b) {
   const deviceId = b.device_id || null;
@@ -217,6 +240,8 @@ router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
   if (bad) return res.status(400).json({ error: bad });
   const target = resolveTarget(req, b);
   if (target.error) return res.status(400).json({ error: target.error });
+  const corp = corporatePowerCheck(req, res, target);
+  if (!corp) return;
 
   const existing = db.prepare(
     `SELECT id FROM display_power_schedules
@@ -230,16 +255,16 @@ router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
 
   const id = uuidv4();
   db.prepare(
-    `INSERT INTO display_power_schedules (id, workspace_id, name, device_id, group_id, timezone, enabled, windows)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO display_power_schedules (id, workspace_id, name, device_id, group_id, timezone, enabled, windows, set_by_org_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, req.workspaceId, (b.name || '').trim(), target.deviceId, target.groupId,
-    b.timezone || null, b.enabled === false ? 0 : 1, JSON.stringify(b.windows)
+    b.timezone || null, b.enabled === false ? 0 : 1, JSON.stringify(b.windows), corp.admin ? 1 : 0
   );
 
   pushSchedule(req, id);
   const row = db.prepare('SELECT * FROM display_power_schedules WHERE id = ?').get(id);
-  res.status(201).json({ schedule: shape(row) });
+  res.status(201).json({ schedule: shape(row), ...(corp.mandated_members ? { mandated_members: corp.mandated_members } : {}) });
 });
 
 router.put('/:id', requireScope('full'), requireFleetWrite, (req, res) => {
@@ -265,11 +290,13 @@ router.put('/:id', requireScope('full'), requireFleetWrite, (req, res) => {
     deviceId = target.deviceId;
     groupId = target.groupId;
   }
+  const corp = corporatePowerCheck(req, res, { deviceId, groupId });
+  if (!corp) return;
 
   db.prepare(
     `UPDATE display_power_schedules
         SET name = ?, device_id = ?, group_id = ?, timezone = ?, enabled = ?, windows = ?,
-            updated_at = CAST(strftime('%s','now') AS INTEGER)
+            set_by_org_admin = ?, updated_at = CAST(strftime('%s','now') AS INTEGER)
       WHERE id = ? AND workspace_id = ?`
   ).run(
     b.name !== undefined ? String(b.name || '').trim() : row.name,
@@ -277,12 +304,13 @@ router.put('/:id', requireScope('full'), requireFleetWrite, (req, res) => {
     b.timezone !== undefined ? (b.timezone || null) : row.timezone,
     b.enabled !== undefined ? (b.enabled ? 1 : 0) : row.enabled,
     b.windows !== undefined ? JSON.stringify(b.windows) : row.windows,
+    corp.admin ? 1 : 0,
     row.id, req.workspaceId
   );
 
   pushSchedule(req, row.id, before);
   const out = db.prepare('SELECT * FROM display_power_schedules WHERE id = ?').get(row.id);
-  res.json({ schedule: shape(out) });
+  res.json({ schedule: shape(out), ...(corp.mandated_members ? { mandated_members: corp.mandated_members } : {}) });
 });
 
 router.delete('/:id', requireScope('full'), requireFleetWrite, (req, res) => {

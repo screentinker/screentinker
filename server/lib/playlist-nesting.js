@@ -17,6 +17,10 @@ function nestingError(db, parentId, childId, workspaceId) {
   if (childId === parentId) return { status: 400, error: 'a playlist cannot contain itself' };
   const child = db.prepare('SELECT id, name, workspace_id FROM playlists WHERE id = ?').get(childId);
   if (!child) return { status: 404, error: 'Child playlist not found' };
+  // A corporate playlist is assigned to stores, never nested: as a child it would be editable
+  // through its parent's rules and would carry head office's lock into somebody else's playlist.
+  const corporate = require('./corporate/guard').nestingRefusal(db, childId);
+  if (corporate) return corporate;
   if (child.workspace_id && child.workspace_id !== workspaceId) {
     return { status: 403, error: 'Child playlist is not in this playlist\'s workspace' };
   }

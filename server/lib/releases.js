@@ -164,6 +164,14 @@ function releaseContentDraft(db, contentId, req, { actor } = {}) {
 }
 
 function releaseDraft(db, type, id, req, opts) {
+  /*
+   * ⚠️ CORPORATE (critique H7): approvals publish and revisions publish-draft release here without
+   * passing the media routes' write checks, so the org-owned media rule is applied at the release
+   * itself. Playlists are checked inside publishPlaylist; a deck through its playlist here.
+   */
+  if (type === 'widget' || type === 'layout' || type === 'content' || type === 'slide_deck') {
+    require('./corporate/guard').assertMediaWritable(req, type, id);
+  }
   if (type === 'widget') return releaseWidgetDraft(db, id, req, opts);
   if (type === 'layout') return releaseLayoutDraft(db, id, req, opts);
   if (type === 'content') return releaseContentDraft(db, id, req, opts);
@@ -172,7 +180,8 @@ function releaseDraft(db, type, id, req, opts) {
   const e = new Error('Unknown resource type'); e.status = 400; throw e;
 }
 
-function discardDraft(db, type, id) {
+function discardDraft(db, type, id, req) {
+  if (req) require('./corporate/guard').assertMediaWritable(req, type, id);
   if (type === 'widget') db.prepare('UPDATE widgets SET draft_config = NULL WHERE id = ?').run(id);
   else if (type === 'layout') db.prepare('UPDATE layouts SET draft_zones = NULL WHERE id = ?').run(id);
   else if (type === 'content') {
