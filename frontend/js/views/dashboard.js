@@ -11,6 +11,7 @@ import { openMoveServerModal } from '../components/move-server-modal.js';
 import { openGroupPowerScheduleModal } from '../components/group-power-schedule-modal.js';
 import { frameDeviceOutput } from '../lib/device-frame.js';
 import { selectedRemoteOrg } from '../components/workspace-switcher.js';
+import * as cui from '../components/corporate-ui.js';
 
 const DESTRUCTIVE_COMMANDS = ['reboot', 'shutdown'];
 // Command types only — labels resolved through t('dashboard.cmd.<type>')
@@ -62,6 +63,9 @@ const playbackByDevice = new Map();
 // Multi-select state for actions on the dashboard cards.
 const selectedDeviceIds = new Set();
 let selectableGroups = [];
+// What head office decides in this workspace (components/corporate-ui.js workspaceCoverage): which
+// groups it covers, so a group card can say so instead of offering a playlist the server refuses.
+let corpCoverage = null;
 
 function formatTimeAgo(timestamp) {
   if (!timestamp) return t('common.never');
@@ -349,9 +353,23 @@ function getGroupPlaylistLabel(devices, playlists) {
   return t('dashboard.mixed_playlists');
 }
 
+/*
+ * Head office on a group card (spec §7.10): "Head office: {name}" when its playlist covers the
+ * group, in place of the playlist picker (assigning one would be refused: CORPORATE_OVERRIDE), and
+ * how many synced members drop out because they have their own slot content.
+ */
+function corpGroupBadge(group) {
+  const g = corpCoverage && corpCoverage.groups && corpCoverage.groups[group.id];
+  if (!g) return '';
+  if (!g.covered) return cui.chip(tn('corp.group.partial', g.mandated_members), 'hq', t('corp.tip.locked'), { lock: true });
+  return cui.chip(g.dark ? t('corp.badge.dark') : t('corp.group.badge', { name: g.playlist_name || '' }), g.dark ? 'dark' : 'hq', t('corp.group.badge_tip', { target: g.target_label || '' }), { lock: true })
+    + (g.sync_excluded ? ` <span style="font-size:11px;color:var(--warning)">${esc(tn('corp.group.sync_excluded', g.sync_excluded))}</span>` : '');
+}
+const corpGroupCovered = (group) => !!(corpCoverage && corpCoverage.groups && corpCoverage.groups[group.id] && corpCoverage.groups[group.id].covered);
+
 function renderGroupSection(group, devices, playlists) {
   const onlineCount = devices.filter(d => d.status === 'online').length;
-  const playlistLabel = getGroupPlaylistLabel(devices, playlists);
+  const playlistLabel = corpGroupCovered(group) ? '' : getGroupPlaylistLabel(devices, playlists);
   return `
     <div class="group-section" data-group-id="${group.id}" style="margin-bottom:24px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#3B82F6')}">
@@ -359,13 +377,15 @@ function renderGroupSection(group, devices, playlists) {
           <strong style="font-size:15px">${esc(group.name)}</strong>
           <span style="color:var(--text-muted);font-size:12px">${tn('dashboard.devices_count', devices.length)} &middot; ${t('dashboard.online_count', { n: onlineCount })}</span>
           ${playlistLabel ? `<span style="font-size:11px;color:var(--text-secondary);background:var(--bg-primary);padding:2px 8px;border-radius:10px">${t('dashboard.playlist_label', { name: playlistLabel })}</span>` : ''}
+          ${corpGroupBadge(group)}
         </div>
         <div style="display:flex;gap:6px;align-items:center">
+          ${devices.length > 0 && corpGroupCovered(group) ? `<button type="button" class="btn btn-secondary btn-sm corp-group-why" data-group-id="${group.id}" style="padding:4px 8px;font-size:12px;white-space:nowrap">${cui.LOCK_SVG} ${esc(t('corp.group.why'))}</button>` : ''}
           ${devices.length > 0 ? `
-          <select class="input group-playlist-select" data-group-id="${group.id}" data-group-name="${esc(group.name)}" style="width:160px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
+          ${corpGroupCovered(group) ? '' : `<select class="input group-playlist-select" data-group-id="${group.id}" data-group-name="${esc(group.name)}" style="width:160px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
             <option value="">${t('dashboard.set_playlist_placeholder')}</option>
             ${(playlists || []).map(p => `<option value="${esc(p.id)}">${esc(p.name)}${p.status === 'draft' ? ' ' + t('dashboard.draft_suffix') : ''}</option>`).join('')}
-          </select>
+          </select>`}
           <select class="input group-cmd-select" data-group-id="${group.id}" data-group-name="${esc(group.name)}" data-device-count="${devices.length}" style="width:150px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
             <option value="">${t('dashboard.send_command_placeholder')}</option>
             ${GROUP_COMMANDS.map(c => `<option value="${c.type}" ${c.destructive ? 'style="color:var(--danger)"' : ''}>${t(CMD_LABEL_KEY[c.type])}</option>`).join('')}
@@ -1088,9 +1108,10 @@ async function loadDashboard() {
     const remoteOrg = selectedRemoteOrg();
     if (remoteOrg) return loadRemoteDashboard(remoteOrg);
 
-    const [rawDevices, groups, playlists, walls] = await Promise.all([
-      api.getDevices(), api.getGroups(), api.getPlaylists(), api.getWalls(),
+    const [rawDevices, groups, playlists, walls, coverage] = await Promise.all([
+      api.getDevices(), api.getGroups(), api.getPlaylists(), api.getWalls(), cui.workspaceCoverage({ force: true }),
     ]);
+    corpCoverage = coverage;
     selectableGroups = groups || [];
 
     // Deduplicate devices by id — a stale reconnect race can briefly cause the same
@@ -1440,6 +1461,16 @@ function attachGroupHandlers(groupsWithDevices) {
       } catch (err) { showToast(err.message, 'error'); }
     });
   });
+
+  // Head office covers this group: explain, and say where it is changed.
+  document.querySelectorAll('.corp-group-why').forEach((btn) => btn.addEventListener('click', () => {
+    const g = corpCoverage && corpCoverage.groups[btn.dataset.groupId];
+    if (!g) return;
+    cui.explainLocked({
+      text: t('corp.err.CORPORATE_OVERRIDE', { name: g.playlist_name || '' }) + ' ' + t('corp.group.why_detail', { target: g.target_label || '' }),
+      actions: corpCoverage.is_admin ? [{ label: t('corp.dev.change_in_corporate'), primary: true, onClick: () => { window.location.hash = '#/corporate/where'; } }] : [],
+    });
+  }));
 
   // Playlist assignment handlers
   document.querySelectorAll('.group-playlist-select').forEach(select => {

@@ -866,7 +866,56 @@ export const api = {
   deleteDataSource: (id) => request(`/data-sources/${id}`, {
     method: 'DELETE'
   }),
+
+  // ── Head office (corporate) playlists — /api/corporate, JWT-only. docs/corporate-playlists.md
+  getCorporateSettings: () => request('/corporate/settings'),
+  updateCorporateSettings: (data) => request('/corporate/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  getStoreTriggerImpact: (policy, capSec) => request(`/corporate/settings/store-trigger-impact?policy=${encodeURIComponent(policy)}${capSec ? `&cap_sec=${capSec}` : ''}`),
+  getCorporateWorkspace: () => request('/corporate/workspace'),
+  getCorporateTargets: () => request('/corporate/targets'),
+  getCorporatePlaylists: () => request('/corporate/playlists'),
+  getCorporatePlaylist: (id) => request(`/corporate/playlists/${id}`),
+  createCorporatePlaylist: (name, description) => request('/corporate/playlists', { method: 'POST', body: JSON.stringify({ name, description }) }),
+  promoteCorporatePlaylist: (id) => request(`/corporate/playlists/${id}/promote`, { method: 'POST' }),
+  demoteCorporatePlaylist: (id) => request(`/corporate/playlists/${id}/demote`, { method: 'POST' }),
+  getMandates: () => request('/corporate/mandates'),
+  previewMandate: (params) => request(`/corporate/mandates/preview?${new URLSearchParams(params).toString()}`),
+  createMandate: (data) => request('/corporate/mandates', { method: 'POST', body: JSON.stringify(data) }),
+  updateMandate: (id, data) => request(`/corporate/mandates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMandate: (id) => request(`/corporate/mandates/${id}`, { method: 'DELETE' }),
+  previewCorporateScreen: (deviceId, draft) => request(`/corporate/preview?device_id=${encodeURIComponent(deviceId)}${draft ? '&draft=1' : ''}`),
+  createSlot: (playlistId, data) => request(`/corporate/playlists/${playlistId}/slots`, { method: 'POST', body: JSON.stringify(data) }),
+  getSlot: (id) => request(`/corporate/slots/${id}`),
+  updateSlot: (id, data) => request(`/corporate/slots/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSlot: (id) => request(`/corporate/slots/${id}`, { method: 'DELETE' }),
+  getSlotImpact: (id, params) => request(`/corporate/slots/${id}/impact?${new URLSearchParams(params).toString()}`),
+  getSlotFills: (id) => request(`/corporate/slots/${id}/fills`),
+  createFill: (slotId, data) => request(`/corporate/slots/${slotId}/fills`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteFill: (id) => request(`/corporate/fills/${id}`, { method: 'DELETE' }),
+  previewFill: (id, deviceId) => request(`/corporate/fills/${id}/preview${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''}`),
+  getCorporateStore: () => request('/corporate/store'),
+  getSlotReport: (problemsOnly) => request(`/corporate/reports/slots${problemsOnly ? '?problems=1' : ''}`),
+  getAirtimeReport: (from, to) => request(`/corporate/reports/plays?from=${from}&to=${to}`),
+  getEmergencyAlerts: () => request('/corporate/emergency'),
+  createEmergencyAlert: (data) => request('/corporate/emergency', { method: 'POST', body: JSON.stringify(data) }),
+  updateEmergencyAlert: (id, data) => request(`/corporate/emergency/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteEmergencyAlert: (id) => request(`/corporate/emergency/${id}`, { method: 'DELETE' }),
+  getEmergencyCoverage: (id) => request(`/corporate/emergency/${id}/coverage`),
+  getInstallerSheet: (id) => request(`/corporate/emergency/${id}/installer-sheet`),
+  rotateEmergencySecrets: (id) => request(`/corporate/emergency/${id}/rotate-secrets`, { method: 'POST' }),
+  activateEmergency: (id, durationSec, note) => request(`/corporate/emergency/${id}/activate`, { method: 'POST', body: JSON.stringify({ duration_sec: durationSec, note }) }),
+  clearEmergency: (id) => request(`/corporate/emergency/${id}/clear`, { method: 'POST' }),
 };
+
+/**
+ * The store-slots compliance report as a CSV download. A bearer header cannot ride on an <a href>,
+ * so it is fetched and handed to the browser as a blob.
+ */
+export async function downloadSlotReportCsv(problemsOnly) {
+  const r = await fetch(`${API_BASE}/corporate/reports/slots?format=csv${problemsOnly ? '&problems=1' : ''}`, { headers: getAuthHeaders() });
+  if (!r.ok) throw requestError(r.status, await r.json().catch(() => ({})));
+  return r.blob();
+}
 
 
 // Raw, authenticated fetches for history previews: a widget revision rendered as HTML (for an

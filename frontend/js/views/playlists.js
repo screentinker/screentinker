@@ -7,6 +7,8 @@ import { t, tn } from '../i18n.js';
 import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
 import { openSmartRulesModal, rulesSummary, loadFolders, DEFAULT_RULES } from '../components/smart-rules.js';
+import * as cui from '../components/corporate-ui.js';
+import { openSlotDialog } from '../components/corporate-slot-dialog.js';
 
 function formatDate(ts) {
   if (!ts) return '--';
@@ -63,6 +65,14 @@ let currentPlaybackOrder = 'sequential';
 // #319: the items exactly as last rendered. Sorting needs the list the operator is looking at, and
 // every path that changes it already funnels through renderItems, so that is where it is kept.
 let currentPlaylistItems = [];
+/*
+ * Head office (corporate) editor state, or null for an ordinary playlist (docs/corporate-playlists.md):
+ *   { mode: 'corporate', playlistId, slots: Map<slotId, slotView>, canAuthor, screens }
+ *   { mode: 'fill', playlistId, slot (slotView), fill (fill view), limits, preview }
+ * 'corporate' is head office's own playlist: slot rows render as slots, only authors edit it.
+ * 'fill' is a store's content for one local slot: limits, meters, no nesting / repeat / order.
+ */
+let corpEditor = null;
 let selectedItemIds = new Set();
 let selectAnchorId = null;
 const CLIP_KEY = 'st.playlistClipboard';
@@ -81,6 +91,7 @@ export function render(container) {
 
 export function cleanup() {
   currentPlaylistId = null;
+  corpEditor = null;
 }
 
 // Deliberately default-ON (commit aca1558): per-device "<Device> playlist" rows and every
@@ -196,6 +207,8 @@ function renderPlaylistGrid(playlists) {
                   BrightSign's pattern; the one thing Appspace conspicuously lacks. */ ''}
             ${p.used_by_count ? `<span title="${esc(tn('playlist.used_by_tip', p.used_by_count))}" style="font-size:10px;padding:2px 6px;border-radius:4px;background:#1e3a2f;color:#6ee7b7">🔒 ${esc(tn('playlist.used_by', p.used_by_count))}</span>` : ''}
             ${p.has_children ? `<span title="${esc(t('playlist.contains_tip'))}" style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted)">☰ ${t('playlist.tag_nested')}</span>` : ''}
+            ${p.corporate ? cui.chip(t('corp.badge.corporate'), 'hq', t('corp.tip.corporate'), { lock: true }) : ''}
+            ${p.corporate_slot ? cui.chip(t('corp.badge.your_slot'), 'slot', t('corp.tip.your_slot', { slot: p.corporate_slot.slot_name || '', playlist: p.corporate_slot.playlist_name || '' })) : ''}
           </div>
           <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;margin-left:12px">${p.smart_rules ? t('smart.by_rules') : tn('playlist.item_count', p.item_count)}</div>
         </div>
@@ -203,6 +216,9 @@ function renderPlaylistGrid(playlists) {
         <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted)">
           <span>${t('playlist.created_at', { date: formatDate(p.created_at) })}</span>
           ${p.display_count ? `<span>${tn('playlist.display_count', p.display_count)}</span>` : ''}
+          ${/* ⚠️ "Paused", not "Not used": head office's playlist plays where this one would, and the
+                store must not delete it thinking nothing needs it (critique R13). */ ''}
+          ${!p.display_count && p.paused_count ? `<span title="${esc(t('corp.tip.paused'))}" style="color:var(--warning)">${esc(tn('corp.badge.paused', p.paused_count))}</span>` : ''}
         </div>
       </a>
     `).join('');
@@ -466,6 +482,11 @@ function renderDetailContent(container, playlist) {
   const isDraft = playlist.status === 'draft';
   const hasPublished = !!playlist.published_snapshot;
   currentPlaybackOrder = playlist.playback_order || 'sequential';
+  // Head office: keep what the last render learnt about this playlist's slots, so a re-render after
+  // every edit does not flash slot rows back to their bare form while the details reload.
+  const corpMode = playlist.corporate ? 'corporate' : playlist.corporate_slot ? 'fill' : null;
+  const prev = corpEditor && corpEditor.playlistId === playlist.id ? corpEditor : null;
+  corpEditor = corpMode ? { ...(prev || {}), mode: corpMode, playlistId: playlist.id, slots: (prev && prev.slots) || new Map() } : null;
 
   container.innerHTML = `
     ${isDraft ? `
@@ -474,7 +495,7 @@ function renderDetailContent(container, playlist) {
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <div>
           <div style="font-weight:600;font-size:14px">${t('playlist.draft.banner_title')}</div>
-          <div style="font-size:12px;color:#fcd34d;opacity:0.85">${hasPublished ? t('playlist.draft.devices_showing_published') : t('playlist.draft.never_published')}</div>
+          <div style="font-size:12px;color:#fcd34d;opacity:0.85">${hasPublished ? t('playlist.draft.devices_showing_published') : corpMode === 'fill' ? t('corp.fill.never_published') : t('playlist.draft.never_published')}</div>
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-shrink:0">
@@ -498,10 +519,12 @@ function renderDetailContent(container, playlist) {
         ${playlist.smart_rules
           ? `<button class="btn btn-primary" id="editRulesBtn">${t('smart.edit_rules')}</button>`
           : `<button class="btn btn-primary" id="addItemBtn">${t('playlist.add_content')}</button>`}
+        ${corpMode === 'corporate' ? `<button class="btn btn-secondary" id="addSlotBtn" style="display:none">+ ${esc(t('corp.hq.add_slot'))}</button>` : ''}
         <button class="btn btn-secondary" id="deletePlaylistBtn" style="color:var(--danger)">${t('playlist.delete_playlist')}</button>
       </div>
     </div>
     <div id="playlistApprovalBar" style="margin:-8px 0 12px"></div>
+    ${corpMode ? '<div id="corpEditorBar"></div>' : ''}
 
     <!-- Step 3 sends you here by creating a playlist, and this is where you fill it. Losing the
          checklist at exactly this hop is what made the flow feel like it ended. -->
@@ -524,8 +547,9 @@ function renderDetailContent(container, playlist) {
       </select>
       <button class="btn btn-secondary btn-sm" id="playlistSortApply">${t('playlist.sort_apply')}</button>
       <span style="width:12px"></span>
-      <span style="font-size:13px;color:var(--text-muted)">${t('playlist.order_label')}</span>
-      <select id="playlistOrder" class="input" style="width:auto;background:var(--bg-input)">
+      ${/* A slot's own order is ignored: head office's playback order applies to the whole loop. */ ''}
+      <span style="font-size:13px;color:var(--text-muted);${corpMode === 'fill' ? 'display:none' : ''}">${t('playlist.order_label')}</span>
+      <select id="playlistOrder" class="input" style="width:auto;background:var(--bg-input);${corpMode === 'fill' ? 'display:none' : ''}">
         <option value="sequential" ${playlist.playback_order === 'sequential' || !playlist.playback_order ? 'selected' : ''}>${t('playlist.order.sequential')}</option>
         <option value="shuffle" ${playlist.playback_order === 'shuffle' ? 'selected' : ''}>${t('playlist.order.shuffle')}</option>
         <option value="weighted" ${playlist.playback_order === 'weighted' ? 'selected' : ''}>${t('playlist.order.weighted')}</option>
@@ -540,6 +564,7 @@ function renderDetailContent(container, playlist) {
 
   if (playlist.smart_rules) renderSmart(playlist);
   else renderItems(playlist.items || []);
+  if (corpMode) mountCorporateEditor(container, playlist);
 
   renderApprovalBar(document.getElementById('playlistApprovalBar'), {
     type: 'playlist', id: playlist.id, name: playlist.name,
@@ -1195,7 +1220,8 @@ function renderItems(items) {
     return;
   }
 
-  itemsEl.innerHTML = items.map((item, i) => `
+  const fillMode = !!(corpEditor && corpEditor.mode === 'fill');
+  itemsEl.innerHTML = items.map((item, i) => item.slot_id ? slotRowHtml(item, i, items.length) : `
     <div class="playlist-item" data-item-id="${item.id}" data-index="${i}" draggable="true" style="background:var(--bg-card);border:1px solid ${selectedItemIds.has(String(item.id)) ? 'var(--accent, #3B82F6)' : 'var(--border)'};border-radius:var(--radius);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:grab;transition:border-color 0.15s;${item.enabled === 0 ? 'opacity:0.55' : ''}">
       <input type="checkbox" class="item-select" data-item-id="${item.id}" data-index="${i}" ${selectedItemIds.has(String(item.id)) ? 'checked' : ''} style="flex-shrink:0" onclick="event.stopPropagation()">
       <div style="color:var(--text-muted);font-size:12px;min-width:24px;text-align:center;user-select:none">${i + 1}</div>
@@ -1211,6 +1237,8 @@ function renderItems(items) {
         <div style="font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.child_playlist_name || item.filename || item.widget_name || t('common.unknown'))}</div>
         <div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:8px;min-width:0">
           <span style="white-space:nowrap">${item.child_playlist_id ? t('playlist.item_nested') : item.widget_id ? t('playlist.item_widget') : esc(item.mime_type || t('playlist.unknown_type'))}</span>
+          ${/* In a slot a video counts at its full length (it always plays to the end), so say so. */ ''}
+          ${fillMode && item.content_duration && /^(video|audio)\//.test(item.mime_type || '') ? `<span style="font-size:11px;white-space:nowrap;color:var(--warning)">${esc(t('corp.slot.video_len', { len: cui.formatSec(item.content_duration) }))}</span>` : ''}
           ${item.play_from || item.play_until ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#1a2e1a;color:#86efac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(windowSummary(item))}">${esc(windowSummary(item))}</span>` : ''}
           ${item.schedules && item.schedules.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#0c2a3f;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(scheduleSummary(item.schedules))}">🕐 ${esc(scheduleSummary(item.schedules))}</span>` : ''}
           ${Array.isArray(item.tags) && item.tags.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.tags.map((tg) => '#' + esc(tg)).join(' ')}</span>` : ''}
@@ -1230,7 +1258,7 @@ function renderItems(items) {
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`}
         ${currentPlaybackOrder === 'weighted' && !item.child_playlist_id ? `<label style="font-size:12px;color:var(--text-muted)">${t('playlist.weight')}</label>
         <input type="number" class="input item-weight" data-item-id="${item.id}" value="${item.weight || 1}" min="1" max="1000" style="width:56px;padding:4px 8px;font-size:13px;text-align:center">` : ''}
-        ${currentPlaybackOrder === 'sequential' && !item.child_playlist_id ? repeatSelect(item) : ''}
+        ${currentPlaybackOrder === 'sequential' && !item.child_playlist_id && !fillMode ? repeatSelect(item) : ''}
         <label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.play_window_hint'))}">${t('playlist.play_from')}</label>
         <input type="datetime-local" class="input item-play-from" data-item-id="${item.id}" value="${esc(item.play_from || '')}" style="width:168px;padding:4px 6px;font-size:12px">
         <label style="font-size:12px;color:var(--text-muted)">${t('playlist.play_until')}</label>
@@ -1260,6 +1288,7 @@ function renderItems(items) {
   `).join('');
   hydrateAuthImages(itemsEl);
   bindSelection(itemsEl, items);
+  bindSlotRows(itemsEl);
 
   itemsEl.querySelectorAll('.item-duration').forEach(input => {
     input.addEventListener('change', async (e) => {
@@ -1401,6 +1430,164 @@ function renderItems(items) {
   setupDragReorder(itemsEl);
 }
 
+/* ── Head office (corporate) editor ──────────────────────────────────────────────────────────── */
+
+/*
+ * A LOCAL SLOT row of head office's playlist: the space each store fills (spec §7.3). Drawn as a
+ * dashed card with its limits and what plays when a store leaves it empty, and only the controls a
+ * slot has — settings, remove, move, preview. Duration, repeat, dayparts, mute and swap belong to
+ * the stores' items inside the slot, not the slot.
+ */
+function slotRowHtml(item, i, total) {
+  const view = (corpEditor && corpEditor.slots && corpEditor.slots.get(item.slot_id)) || null;
+  const raw = item.slot || {};
+  const name = (view && view.name) || raw.name || t('corp.hq.slot_unnamed');
+  const limits = (view && view.limits) || { max_items: raw.max_items ?? null, max_total_sec: raw.max_total_sec ?? null };
+  const fb = view && view.fallback;
+  const empty = fb ? t('corp.hq.slot_empty_fallback', { name: fb.name || '' }) : (raw.fallback_content_id || raw.fallback_widget_id) && !view ? '' : t('corp.hq.slot_empty_skip');
+  const author = !!(corpEditor && corpEditor.canAuthor);
+  const btn = (cls, label, extra = '') => `<button class="btn btn-secondary btn-sm ${cls}" data-slot-id="${esc(item.slot_id)}" ${extra}>${esc(label)}</button>`;
+  return `
+    <div class="playlist-item corp-slot-row" data-item-id="${item.id}" data-index="${i}" draggable="${author ? 'true' : 'false'}" style="background:var(--bg-card);border:1px dashed;border-radius:var(--radius);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="color:var(--text-muted);font-size:12px;min-width:24px;text-align:center;user-select:none">${i + 1}</div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:14px;color:var(--text-primary)">${cui.chip(t('corp.badge.local_slot'), 'slot')} ${esc(t('corp.hq.slot_row', { name, limits: cui.limitsText(limits) }))}</div>
+        <div class="corp-help">${esc(empty)}${view && view.fills ? ' · ' + esc(tn('corp.hq.slot_levels', view.fills)) : ''}${view && !view.live ? ' · ' + esc(t('corp.hq.slot_not_live')) : ''}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${author ? btn('slot-settings', t('corp.hq.slot_settings')) + btn('slot-remove', t('corp.hq.remove_slot')) : ''}
+        ${btn('slot-preview', t('corp.hq.preview'))}
+        ${author ? `<button class="btn-icon item-move" data-item-id="${item.id}" data-dir="up" title="${t('playlist.move_up')}" aria-label="${t('playlist.move_up')}" ${i === 0 ? 'disabled' : ''} style="color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px;${i === 0 ? 'opacity:0.3;cursor:not-allowed' : ''}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg></button>
+        <button class="btn-icon item-move" data-item-id="${item.id}" data-dir="down" title="${t('playlist.move_down')}" aria-label="${t('playlist.move_down')}" ${i === total - 1 ? 'disabled' : ''} style="color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px;${i === total - 1 ? 'opacity:0.3;cursor:not-allowed' : ''}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}
+      </div>
+    </div>`;
+}
+
+function bindSlotRows(itemsEl) {
+  const slotOf = (b) => (corpEditor && corpEditor.slots.get(b.dataset.slotId)) || null;
+  itemsEl.querySelectorAll('.slot-settings').forEach((b) => b.addEventListener('click', async () => {
+    const pl = await api.getPlaylist(currentPlaylistId).catch(() => null);
+    openSlotDialog(pl || { id: currentPlaylistId }, slotOf(b), () => refreshAfterMutation());
+  }));
+  itemsEl.querySelectorAll('.slot-remove').forEach((b) => b.addEventListener('click', async () => {
+    const sl = slotOf(b);
+    const ok = await cui.ask({
+      title: t('corp.hq.remove_slot'), danger: true, confirmLabel: t('corp.hq.remove_slot'),
+      text: t('corp.hq.remove_slot_confirm', { name: sl ? sl.name : '', n: sl ? sl.fills : 0 }),
+    });
+    if (!ok) return;
+    try { await api.deleteSlot(b.dataset.slotId); showToast(t('corp.hq.slot_removed'), 'success'); refreshAfterMutation(); }
+    catch (e) { showToast(e.message, 'error'); }
+  }));
+  itemsEl.querySelectorAll('.slot-preview').forEach((b) => b.addEventListener('click', () => {
+    cui.openScreenPreview({ playlistId: currentPlaylistId, canDraft: !!(corpEditor && corpEditor.canAuthor) });
+  }));
+}
+
+/** The corporate / slot editor additions, loaded after the ordinary editor has rendered. */
+async function mountCorporateEditor(container, playlist) {
+  const bar = document.getElementById('corpEditorBar');
+  if (!bar || !corpEditor) return;
+  const ed = corpEditor;
+  const s = await cui.corporateSettings();
+  if (ed.mode === 'corporate') {
+    let detail;
+    try { detail = await api.getCorporatePlaylist(playlist.id); }
+    catch (e) { bar.innerHTML = `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; return; }
+    if (corpEditor !== ed || currentPlaylistId !== playlist.id) return;
+    ed.slots = new Map((detail.slots || []).map((sl) => [sl.id, sl]));
+    ed.screens = detail.screens || 0;
+    ed.canAuthor = !!(s && s.can_author);
+    bar.innerHTML = `
+      <div class="corp-notice">
+        ${cui.chip(t('corp.badge.corporate'), 'hq', '', { lock: true })}
+        ${esc(t('corp.hq.banner', { n: ed.screens }))}
+        <a class="btn btn-secondary btn-sm" href="#/corporate/where">${esc(t('corp.where.title'))}</a>
+        <button class="btn btn-secondary btn-sm" id="corpPvBtn">${esc(t('corp.hq.preview'))}</button>
+        ${ed.canAuthor ? '' : `<div class="corp-help" style="margin-top:6px">${esc(t('corp.hq.read_only'))}</div>`}
+      </div>`;
+    bar.querySelector('#corpPvBtn').addEventListener('click', () => cui.openScreenPreview({ playlistId: playlist.id, canDraft: ed.canAuthor }));
+    const publishBtn = document.getElementById('publishBtn');
+    if (publishBtn && ed.canAuthor && ed.screens) publishBtn.textContent = t('corp.hq.publish_n', { n: ed.screens });
+    if (!ed.canAuthor) {
+      // Approve-but-not-publish (R11): a reviewer here can approve; only an admin can publish.
+      if (publishBtn) publishBtn.replaceWith(Object.assign(document.createElement('span'), { className: 'corp-help', textContent: t('corp.hq.waiting_admin') }));
+      ['addItemBtn', 'deletePlaylistBtn', 'discardDraftBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    }
+    const addSlot = document.getElementById('addSlotBtn');
+    if (addSlot && ed.canAuthor) {
+      addSlot.style.display = '';
+      addSlot.onclick = () => openSlotDialog(playlist, null, () => refreshAfterMutation());
+    }
+    renderItems(currentPlaylistItems);
+    return;
+  }
+
+  // ── fill mode: the store's content for one local slot (§7.8)
+  const cs = playlist.corporate_slot;
+  let slotsResp = null;
+  let pv = null;
+  try {
+    [slotsResp, pv] = await Promise.all([api.getSlotFills(cs.slot_id), api.previewFill(cs.fill_id).catch(() => null)]);
+  } catch (e) { bar.innerHTML = `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; return; }
+  if (corpEditor !== ed || currentPlaylistId !== playlist.id) return;
+  const slot = slotsResp.slot || {};
+  const fill = (slotsResp.fills || []).find((f) => f.id === cs.fill_id) || {};
+  const limits = slot.live_limits || slot.limits || {};
+  const totals = (pv && pv.draft_totals) || { items: 0, seconds: 0 };
+  ed.slot = slot; ed.fill = fill; ed.limits = limits; ed.preview = pv;
+  const overItems = limits.max_items != null && totals.items > limits.max_items;
+  const overSec = limits.max_total_sec != null && totals.seconds > limits.max_total_sec;
+  const level = cui.levelLabel(fill.scope_kind || cs.scope_kind, fill.scope_name);
+  bar.innerHTML = `
+    <div class="corp-card corp-slot-card">
+      <div class="corp-card-head">
+        <strong class="corp-card-title">${esc(t('corp.fill.title', { slot: cs.slot_name || '', playlist: cs.playlist_name || '' }))}</strong>
+        ${cui.chip(level, 'slot')}
+        <span class="corp-help">${esc(tn('corp.fill.plays_on', fill.screens || 0))}</span>
+      </div>
+      ${slot.help_text ? `<div class="corp-hq-note">${esc(t('corp.store.hq_says'))} ${esc(slot.help_text)}</div>` : ''}
+      <div class="corp-meter">
+        ${limits.max_items != null ? `<span class="${overItems ? 'over' : ''}">${esc(t('corp.slot.meter_items', { n: totals.items, max: limits.max_items }))}</span>` : `<span>${esc(tn('corp.n_items', totals.items))}</span>`}
+        ${limits.max_total_sec != null ? `<span class="${overSec ? 'over' : ''}">${esc(t('corp.slot.meter_sec', { s: totals.seconds, max: limits.max_total_sec }))}</span>` : `<span>${esc(t('corp.slot.loop_sec', { s: totals.seconds }))}</span>`}
+      </div>
+      <div class="corp-help">${esc(t('corp.slot.meter_note'))}${limits.allow_video === 0 || limits.allow_video === false ? ' ' + esc(t('corp.slot.no_video')) : ''}${limits.allow_widgets === 0 || limits.allow_widgets === false ? ' ' + esc(t('corp.slot.no_widgets')) : ''}</div>
+      ${pv && pv.violation ? `<div class="corp-notice corp-notice-danger" style="margin-top:8px">${esc(pv.violation.error)}</div>` : ''}
+      ${fill.fill_state === 'over_limit' ? `<div class="corp-notice corp-notice-danger" style="margin-top:8px">${esc(t('corp.slot.over_limit'))}</div>` : ''}
+      <div class="corp-card-actions">
+        <button class="btn btn-secondary btn-sm" id="corpFillPreview">${esc(t('corp.fill.preview'))}</button>
+        <a class="btn btn-secondary btn-sm" href="#/corporate">${esc(t('nav.head_office'))}</a>
+      </div>
+    </div>`;
+  bar.querySelector('#corpFillPreview').addEventListener('click', () => openFillPreview(cs.fill_id));
+  const publishBtn = document.getElementById('publishBtn');
+  if (publishBtn) {
+    if (pv && pv.violation) {
+      // Refused at publish anyway (FILL_LIMIT); the reason is on the page, not only on click.
+      publishBtn.disabled = true;
+      publishBtn.title = pv.violation.error;
+      publishBtn.style.opacity = '0.55';
+    } else if (fill.screens) publishBtn.textContent = t('corp.hq.publish_n', { n: fill.screens });
+  }
+}
+
+/** In a slot's editor, the picker offers only what the slot can hold (content-picker.js slotMode). */
+function fillSlotMode() {
+  if (!corpEditor || corpEditor.mode !== 'fill') return null;
+  const l = corpEditor.limits || {};
+  return { allowVideo: !(l.allow_video === 0 || l.allow_video === false), allowWidgets: !(l.allow_widgets === 0 || l.allow_widgets === false) };
+}
+
+/** Head office's loop with this slot's DRAFT spliced in, for a screen that plays it (critique U3). */
+async function openFillPreview(fillId) {
+  const m = cui.openModal({ title: t('corp.fill.preview'), wide: true, body: `<div id="corpFpOut">${esc(t('common.loading'))}</div>` });
+  try {
+    const r = await api.previewFill(fillId);
+    m.q('#corpFpOut').innerHTML = `${r.device_id ? '' : `<div class="corp-help">${esc(t('corp.fill.preview_no_screen'))}</div>`}${cui.previewHtml({ ...r, mandate: null, total_sec: r.total_sec != null ? r.total_sec : (r.items || []).reduce((a, i) => a + (i.seconds || 0), 0) })}`;
+    hydrateAuthImages(m.overlay);
+  } catch (e) { m.q('#corpFpOut').innerHTML = `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; }
+}
+
 function setupDragReorder(container) {
   let dragEl = null;
 
@@ -1533,6 +1720,7 @@ function showAddItemModal(playlistId, opts = {}) {
   return openContentPicker({
     targetPlaylistId: playlistId,
     replaceItemId,
+    slotMode: opts.slotMode || fillSlotMode(),
     add: (item) => api.addPlaylistItem(playlistId, toData(item)),
     addBulk: (ids) => api.addPlaylistItemsBulk(playlistId, ids),
     // #105: PUT swaps content/widget in place; the server nulls the opposite FK and keeps

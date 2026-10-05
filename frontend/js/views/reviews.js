@@ -88,6 +88,8 @@ export async function render(container) {
     if (canDecide) a += btn('data-approve', t('review.approve'), 'btn-primary') + btn('data-changes', t('review.request_changes'));
     else if (sub.is_reviewer && sub.status === 'submitted') a += `<span style="font-size:12px;color:#fbbf24">${esc(t('review.self_approval_note'))}</span>`;
     if (sub.status === 'approved' && sub.can_publish) a += btn('data-publish', t('review.publish_approved'), 'btn-primary');
+    // Head office: approving a corporate playlist is a reviewer's call, publishing it an admin's (R11).
+    else if (sub.status === 'approved' && sub.waiting_for_author) a += `<span style="font-size:12px;color:#fbbf24">${esc(t('corp.hq.waiting_admin'))}</span>`;
     if (['submitted', 'changes_requested', 'approved'].includes(sub.status) && (sub.submitted_by === currentUserId() || s.can_admin)) a += btn('data-withdraw', t('review.withdraw'));
     actions.innerHTML = a;
     actions.onclick = async (e) => {

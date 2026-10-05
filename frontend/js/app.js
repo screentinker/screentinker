@@ -17,6 +17,7 @@ import * as reports from './views/reports.js';
 import * as servers from './views/servers.js';
 import * as noc from './views/noc.js';
 import * as triggers from './views/triggers.js';
+import * as corporate from './views/corporate.js';
 import * as activity from './views/activity.js';
 import * as kiosk from './views/kiosk.js';
 import * as onboarding from './views/onboarding.js';
@@ -34,6 +35,7 @@ import { t } from './i18n.js';
 import { isPlatformAdmin } from './utils.js';
 import { initNavGroups } from './components/nav-groups.js';
 import { renderWorkspaceSwitcher, selectedRemoteOrg, clearRemoteOrg } from './components/workspace-switcher.js';
+import { corporateSettings, renderHqContextBar } from './components/corporate-ui.js';
 
 /*
  * ⚠️ A PERSISTENT BANNER WHILE VIEWING SOMEBODY ELSE'S SERVER, and it is not decoration.
@@ -241,6 +243,7 @@ const NAV_LABEL_KEYS = {
   reports: 'nav.reports',
   servers: 'nav.servers',
   triggers: 'nav.triggers',
+  // corporate is relabelled per viewer (Corporate / Head office) by syncCorporateNav.
   kiosk: 'nav.kiosk',
   designer: 'nav.designer',
   activity: 'nav.activity',
@@ -578,6 +581,7 @@ function route() {
     else if (hash.startsWith('#/platform/') && link.dataset.view === 'platform-' + hash.slice(11).split(/[/?]/)[0]) link.classList.add('active');
     else if (hash.startsWith('#/admin/player-debug') && link.dataset.view === 'platform-system') link.classList.add('active');
     else if ((hash === '#/members' || (hash.startsWith('#/workspace/') && hash.includes('/members'))) && link.dataset.view === 'members') link.classList.add('active');
+    else if ((hash === '#/corporate' || hash.startsWith('#/corporate/')) && link.dataset.view === 'corporate') link.classList.add('active');
   });
 
   // Route to view
@@ -621,6 +625,10 @@ function route() {
   } else if (hash === '#/triggers') {
     currentView = triggers;
     triggers.render(app);
+  } else if (hash === '#/corporate' || hash.startsWith('#/corporate/')) {
+    // Head office (corporate) playlists: head office's face or a store's, chosen inside the view.
+    currentView = corporate;
+    corporate.render(app);
   } else if (hash === '#/servers') {
     /*
      * ⚠️ Its own route, deliberately NOT behind the workspace switcher. The switcher
@@ -703,6 +711,31 @@ function route() {
   }
 }
 
+/*
+ * Head office (corporate) playlists in the sidebar (spec §7.1). Two labels for one route: "Corporate"
+ * for the people who make head office's playlists (authors, org admins), "Head office" for a store
+ * whose screens head office drives. Hidden for everyone else — an install that never turns the
+ * feature on never sees it.
+ *
+ * ⚠️ ASKED ONCE PER PAGE LOAD (the settings read is cached in components/corporate-ui.js) and it
+ * never throws: no organization, a server without the route, or a remote org all mean "hidden".
+ * Admins see it while a head office workspace is set even with corporate playlists off, because
+ * emergency alerts work without them.
+ */
+function syncCorporateNav() {
+  const li = document.getElementById('corporateNavItem');
+  if (!li) return;
+  if (selectedRemoteOrg()) { li.style.display = 'none'; return; }
+  corporateSettings().then((s) => {
+    const hqFace = !!s && (s.can_author || s.is_admin);
+    const show = !!s && ((s.corporate_enabled && (hqFace || s.active_workspace_mandated)) || (s.is_admin && !!s.hq_workspace_id));
+    li.style.display = show ? '' : 'none';
+    const span = li.querySelector('span');
+    if (span) span.textContent = hqFace ? t('nav.corporate') : t('nav.head_office');
+    renderHqContextBar(s);
+  });
+}
+
 function updateSidebarUser() {
   const user = getCurrentUser();
   if (!user) return;
@@ -777,6 +810,8 @@ function updateSidebarUser() {
     const role = (() => { try { return JSON.parse(localStorage.getItem('user') || '{}').role; } catch (_) { return null; } })();
     nocNav.style.display = serversNav.style.display !== 'none' && role === 'platform_admin' ? '' : 'none';
   }
+
+  syncCorporateNav();
 
   let userEl = document.getElementById('sidebarUser');
   if (!userEl) {

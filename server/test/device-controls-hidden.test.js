@@ -109,6 +109,9 @@ function render(device, telemetry) {
     // window"). It explains a capture STATE the panel reported, not a control the platform is or
     // is not offered, so it is not this file's subject; it is covered in test/capture-mode.test.js.
     captureModeNotice: () => '',
+    // Same again for the head office (corporate) playlist section that replaces the picker on a
+    // screen head office drives. A recognisable marker, so the test below can see it was chosen.
+    corporatePlaylistTab: () => '<!--corporate-playlist-tab-->',
     localStorage: { getItem: () => null, setItem: () => {} },
     Math, Date, JSON, String, Array, Object,
   };
@@ -793,4 +796,22 @@ test('the shipped isWindowsDevice / terminalPresets agree with the harness stubs
   // And the real Windows presets are PowerShell, including the helper-service check.
   const presets = SRC.slice(SRC.indexOf('const WINDOWS_TERMINAL_PRESETS'), SRC.indexOf('];', SRC.indexOf('const WINDOWS_TERMINAL_PRESETS')));
   for (const cmd of ['Get-ComputerInfo', 'Get-PSDrive C', 'Get-Service ScreenTinkerHelper', 'Get-WinEvent']) assert.ok(presets.includes(cmd), cmd);
+});
+
+/*
+ * Head office (corporate) playlists, spec §7.9: on a screen head office drives, the playlist tab is
+ * head office's section — NOT the store's playlist picker, layout selector or draft banner. The
+ * draft banner there would be head office's draft, offering a store a Publish the server refuses.
+ * MUTATION CHECK (verified once): make the template's `playlist_source === 'corporate'` branch
+ * `false` -> this test goes red.
+ */
+test('a screen head office drives gets the head office section instead of the picker, layout and draft banner', () => {
+  const corp = render({ ...ANDROID_FULL, playlist_source: 'corporate', playlist_status: 'draft', playlist_id: 'P', corporate: { playlist_name: 'Brand' } }, {});
+  assert.ok(corp.includes('<!--corporate-playlist-tab-->'), 'the corporate section was not chosen');
+  for (const id of ['playlistPicker', 'deviceLayoutSelect', 'applyLayoutBtn', 'devicePublishBtn', 'copyPlaylistBtn', 'addContentBtn']) {
+    assert.ok(!corp.includes(`id="${id}"`), `${id} must not render on a mandated screen`);
+  }
+  const plain = render({ ...ANDROID_FULL, playlist_source: 'group', playlist_status: 'draft', playlist_id: 'P' }, {});
+  assert.ok(!plain.includes('<!--corporate-playlist-tab-->'), 'an ordinary screen must not get the corporate section');
+  for (const id of ['playlistPicker', 'deviceLayoutSelect', 'devicePublishBtn', 'addContentBtn']) assert.ok(plain.includes(`id="${id}"`), `${id} vanished from an ordinary screen`);
 });

@@ -22,7 +22,14 @@
  *     readExtras(modal),          // reads extraFieldsHtml's values
  *     onPick(item, modal),        // optional: a row was clicked (the display uses it for clip length)
  *     onChanged(), onClose(changed)
+ *     slotMode: { allowVideo, allowWidgets }  // head office local slot: see below
  *   })
+ *
+ * slotMode — the store's content for a head office LOCAL SLOT (docs/corporate-playlists.md). A slot
+ * holds only items whose play length the server knows (spec D15), so the picker leaves out nested
+ * playlists, kiosk pages, live streams, YouTube and any video with no measured length, plus videos
+ * or widgets when head office does not allow them — and says why in one line, so nothing looks
+ * missing by accident. The server refuses all of them anyway (FILL_FLAT / FILL_LIVE / FILL_TYPE).
  */
 import { api } from '../api.js';
 import { showToast } from './toast.js';
@@ -33,10 +40,24 @@ import {
 } from '../lib/folder-tree.js';
 import { t, tn } from '../i18n.js';
 
+/** Can this library item go in a head office slot? Mirrors server lib/corporate/compose.js isUnboundedItem. */
+function slotPlayableItem(item, allowVideo) {
+  const mime = String(item.mime_type || '').toLowerCase();
+  if (mime === 'video/hls' || mime === 'video/rtsp' || mime === 'video/youtube') return false;
+  const timed = mime.startsWith('video/') || mime.startsWith('audio/');
+  if (timed && !allowVideo) return false;
+  if (timed && !(Number(item.duration_sec) > 0)) return false;
+  return true;
+}
+
 export async function openContentPicker(opts = {}) {
   const replaceItemId = opts.replaceItemId || null;
   const targetPlaylistId = opts.targetPlaylistId || null;
   const readExtras = typeof opts.readExtras === 'function' ? opts.readExtras : () => ({});
+  const slotMode = opts.slotMode || null;
+  const slotAllowVideo = !slotMode || slotMode.allowVideo !== false;
+  const slotAllowWidgets = !slotMode || slotMode.allowWidgets !== false;
+  const slotPlayable = (item) => slotPlayableItem(item, slotAllowVideo);
   let changed = false;
 
   const modal = document.createElement('div');
@@ -48,10 +69,11 @@ export async function openContentPicker(opts = {}) {
       ${opts.extraFieldsHtml || ''}
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
         <button class="btn btn-primary btn-sm tab-btn active" data-tab="content">${t('playlist.tab_content')}</button>
-        <button class="btn btn-secondary btn-sm tab-btn" data-tab="widgets">${t('playlist.tab_widgets')}</button>
-        ${replaceItemId ? '' : `<button class="btn btn-secondary btn-sm tab-btn" data-tab="playlists">${t('playlist.tab_playlists')}</button>`}
-        ${replaceItemId ? '' : `<button class="btn btn-secondary btn-sm tab-btn" data-tab="kiosk">${t('playlist.tab_kiosk')}</button>`}
+        ${slotAllowWidgets ? `<button class="btn btn-secondary btn-sm tab-btn" data-tab="widgets">${t('playlist.tab_widgets')}</button>` : ''}
+        ${replaceItemId || slotMode ? '' : `<button class="btn btn-secondary btn-sm tab-btn" data-tab="playlists">${t('playlist.tab_playlists')}</button>`}
+        ${replaceItemId || slotMode ? '' : `<button class="btn btn-secondary btn-sm tab-btn" data-tab="kiosk">${t('playlist.tab_kiosk')}</button>`}
       </div>
+      ${slotMode ? `<div style="font-size:12px;color:var(--text-muted);margin:-4px 0 10px">${esc(t('corp.slot.no_live'))}${slotAllowVideo ? '' : ' ' + esc(t('corp.slot.no_video'))}${slotAllowWidgets ? '' : ' ' + esc(t('corp.slot.no_widgets'))}</div>` : ''}
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <input type="text" id="addItemSearch" class="input" placeholder="${t('playlist.search_placeholder')}" style="flex:1">
         <!-- Folder filter. Hidden on the tabs that have no folders. -->
@@ -140,7 +162,7 @@ export async function openContentPicker(opts = {}) {
       api.getFolders ? api.getFolders().catch(() => []) : Promise.resolve([]),
       api.getKioskPages().catch(() => []),
     ]);
-    allContent = content.items;
+    allContent = slotMode ? content.items.filter(slotPlayable) : content.items;
     contentTruncated = content.truncated;
     allWidgets = Array.isArray(widgets) ? widgets : [];
     allPlaylists = Array.isArray(playlists) ? playlists : [];

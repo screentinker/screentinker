@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc } from '../utils.js';
 import { t, tn } from '../i18n.js';
+import { chip } from '../components/corporate-ui.js';
 
 /*
  * Triggers — externally-fired interrupt content. docs/triggers-design.md.
@@ -12,7 +13,7 @@ import { t, tn } from '../i18n.js';
  * database that will never fire anywhere.
  */
 
-let cache = { triggers: [], playlists: [], devices: [], groups: [] };
+let cache = { triggers: [], playlists: [], devices: [], groups: [], headOffice: null, hqAlerts: 0 };
 
 function modeLabel(m) {
   return m === 'until_cleared' ? t('trigger.mode_until_cleared') : t('trigger.mode_once');
@@ -301,6 +302,30 @@ function openForm(app, tr) {
   });
 }
 
+/*
+ * Head office on the Triggers page (spec §7.6, §5.3): its emergency alerts that reach this
+ * workspace's screens, read-only with a red "Emergency · Head office" badge and no codes; and, when
+ * head office limits store triggers on the screens its playlist plays on, the rule in one line. In
+ * the head office workspace itself, where the alerts live, a pointer to where they are managed.
+ */
+function headOfficeHtml() {
+  const h = cache.headOffice || {};
+  const parts = [];
+  const p = h.store_trigger_policy;
+  if (p && p.policy === 'leased') parts.push(`<div class="corp-notice">${esc(t('corp.trig.policy_note_leased', { n: Math.round((p.cap_sec || 300) / 60) }))}</div>`);
+  if (p && p.policy === 'off') parts.push(`<div class="corp-notice">${esc(t('corp.trig.policy_note_off'))}</div>`);
+  if (cache.hqAlerts) parts.push(`<div class="corp-notice">${esc(tn('corp.trig.hq_alerts', cache.hqAlerts))} <a href="#/corporate/emergency">${esc(t('corp.em.title'))}</a></div>`);
+  if ((h.emergency || []).length) {
+    parts.push(`<div class="corp-card"><div class="corp-card-head"><strong class="corp-card-title">${esc(t('corp.trig.hq_title'))}</strong></div>
+      <div class="corp-help" style="margin-bottom:6px">${esc(t('corp.trig.hq_help'))}</div>
+      ${h.emergency.map((e) => `<div class="corp-row" style="padding:4px 0">${chip(t('corp.badge.emergency'), 'emergency')} <strong>${esc(e.name)}</strong>
+        ${e.live ? chip(t('corp.em.live'), 'emergency') : e.enabled ? '' : chip(t('corp.em.off'), 'muted')}
+        <span class="corp-help">${esc(e.mode === 'once' ? t('corp.em.mode_once_short') : t('corp.em.mode_until_short'))}</span></div>`).join('')}
+    </div>`);
+  }
+  return parts.join('');
+}
+
 export async function render(app) {
   app.innerHTML = `<div class="view"><h1>${esc(t('nav.triggers'))}</h1>
     <p class="muted">${esc(t('trigger.intro'))}</p><div id="trigBody"></div></div>`;
@@ -314,6 +339,8 @@ export async function render(app) {
       // Head office emergency alerts (kind 'emergency') are listed by the API but managed only under
       // Corporate → Emergency; this editor would offer an Edit/Delete the server refuses.
       triggers: (trg.triggers || []).filter((x) => x && x.kind !== 'emergency'),
+      hqAlerts: (trg.triggers || []).filter((x) => x && x.kind === 'emergency').length,
+      headOffice: trg.head_office || null,
       playlists: Array.isArray(pls) ? pls : (pls.playlists || []),
       devices: Array.isArray(devs) ? devs : (devs.devices || []),
       groups: Array.isArray(grps) ? grps : (grps.groups || []),
@@ -325,6 +352,7 @@ export async function render(app) {
 
   const risky = cache.triggers.filter(leaseRisk).length;
   body.innerHTML = `
+    ${headOfficeHtml()}
     <div class="toolbar">
       <button class="btn btn-primary" id="tgNew">${esc(t('trigger.new'))}</button>
     </div>
