@@ -158,7 +158,11 @@ function register(router, h) {
           name=@name, match_token=@match_token, clear_token=@clear_token,
           source_http=@source_http, source_udp=@source_udp, target_kind=@target_kind, target_ref=@target_ref,
           mode=@mode, max_duration_sec=@max_duration_sec, lease_sec=@lease_sec, priority=@priority, enabled=@enabled,
-          updated_at=strftime('%s','now') WHERE id=@id`).run({ id: existing.id, ...c });
+          updated_at=strftime('%s','now') WHERE id=@id`).run({
+          id: existing.id, name: c.name, match_token: c.match_token, clear_token: c.clear_token,
+          source_http: c.source_http, source_udp: c.source_udp, target_kind: c.target_kind, target_ref: c.target_ref,
+          mode: c.mode, max_duration_sec: c.max_duration_sec, lease_sec: c.lease_sec, priority: c.priority, enabled: c.enabled,
+        });   // ⚠️ exactly the bound names: node:sqlite refuses an unknown named parameter (columnsFrom also returns position/width/...), better-sqlite3 ignores it
       if (ok.scopeRows) em.setScopes(db, existing.id, ok.scopeRows);
     })();
     // Turning an alert off ends it if it is live: an "off" alert must not keep a screen.
