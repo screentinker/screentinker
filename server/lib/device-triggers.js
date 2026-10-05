@@ -75,9 +75,12 @@ function emergencyTriggersForDevice(db, deviceId) {
 
 /**
  * Store triggers on a screen head office's playlist drives (§5.3), by the org's
- * `store_triggers_under_mandate`: 'allow' (default) = unchanged; 'leased' = a stuck sender's
- * trigger ends after the cap (it does NOT bound a store that keeps sending — re-fires renew); 'off'
- * = not projected at all, the only setting that stops a store covering corporate content.
+ * `store_triggers_under_mandate`: 'off' (default) = not projected at all, the only setting that
+ * stops a store covering corporate content; 'leased' = a stuck sender's trigger ends after the cap
+ * (it does NOT bound a store that keeps sending — re-fires renew); 'allow' = unchanged.
+ * ⚠️ The default never hides a trigger SILENTLY: every change that brings a screen under head office
+ * (mandate create/update/enable, switching corporate playlists on) lists the store triggers it would
+ * hide and refuses without acknowledge_impact (routes/corporate.js).
  * Returns null whenever nothing changes: no corporate machinery, no mandate, or 'allow'.
  */
 function storeTriggerPolicyFor(db, deviceId, mandated) {

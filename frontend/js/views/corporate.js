@@ -201,7 +201,7 @@ async function renderWhereTab(host, s) {
       ${!s.corporate_enabled ? `<span class="corp-help">${esc(t('corp.err.CORPORATE_DISABLED'))}</span>` : ''}</div>`
       : `<div class="corp-notice">${esc(t('corp.err.CORPORATE_ADMIN_REQUIRED'))}</div>`}
     <p class="corp-help">${esc(t('corp.where.prefer_levels'))}</p>
-    ${admin && (s.store_triggers_under_mandate || 'allow') === 'allow' ? `<div class="corp-notice corp-notice-warn">${esc(t('corp.where.store_triggers_allowed'))} <a href="#/settings">${esc(t('corp.page.open_settings'))}</a></div>` : ''}
+    ${admin && (s.store_triggers_under_mandate || 'off') === 'allow' ? `<div class="corp-notice corp-notice-warn">${esc(t('corp.where.store_triggers_allowed'))} <a href="#/settings">${esc(t('corp.page.open_settings'))}</a></div>` : ''}
     ${mandates.length ? `<div class="table-wrap"><table class="corp-table">
       <thead><tr><th>${esc(t('corp.where.col_where'))}</th><th>${esc(t('corp.where.col_playlist'))}</th><th>${esc(t('corp.where.col_layout'))}</th><th>${esc(t('corp.where.col_screens'))}</th><th>${esc(t('corp.where.col_on'))}</th><th></th></tr></thead>
       <tbody>${mandates.map((mm) => `
@@ -231,8 +231,15 @@ async function renderWhereTab(host, s) {
       const ok = await cui.ask({ title: t('corp.where.disable'), text: tn('corp.where.disable_confirm', (pv && pv.screens) || 0), confirmLabel: t('corp.where.disable') });
       if (!ok) { cb.checked = true; return; }
     }
-    try { const r = await api.updateMandate(mm.id, { enabled: cb.checked }); showToast(tn('corp.where.changed_screens', r.screens_changed || 0), 'success'); cui.forgetCorporateCache(); reloadTab(); }
-    catch (e) { cb.checked = !cb.checked; showToast(e.message, 'error'); }
+    try {
+      let r;
+      try { r = await api.updateMandate(mm.id, { enabled: cb.checked }); } catch (e) {
+        // Turning it back on would hide store triggers: list them and ask first.
+        if (!await cui.confirmStoreTriggerImpact(e)) throw e;
+        r = await api.updateMandate(mm.id, { enabled: cb.checked, acknowledge_impact: true });
+      }
+      showToast(tn('corp.where.changed_screens', r.screens_changed || 0), 'success'); cui.forgetCorporateCache(); reloadTab();
+    } catch (e) { cb.checked = !cb.checked; if (e.code !== 'CORPORATE_STORE_TRIGGERS_IMPACT') showToast(e.message, 'error'); }
   }));
   host.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', async () => {
     const mm = mandates.find((x) => x.id === b.dataset.remove);
@@ -312,8 +319,10 @@ async function mandateDialog(existing, playlists) {
     };
   };
   let seq = 0;
+  let impact = [];
   const refreshPreview = async () => {
     const mine = ++seq;
+    impact = [];
     const b = body();
     const box = m.q('#mdPreview');
     const save = m.q('#mdSave');
@@ -331,8 +340,13 @@ async function mandateDialog(existing, playlists) {
       box.innerHTML = `
         ${preview.screens ? `<p><strong>${esc(tn('corp.where.preview', preview.screens, { w: tn('corp.n_workspaces', preview.workspaces.length), name, k: tn('corp.n_schedules', preview.schedules || 0), j: tn('corp.n_screen_playlists', preview.screen_playlists || 0), l: tn('corp.n_store_layouts', preview.store_layouts || 0) }))}</strong></p>` : ''}
         ${preview.workspaces.length ? `<ul class="corp-list">${preview.workspaces.map((w) => `<li>${esc(w.name)} — ${esc(tn('corp.n_screens', w.screens))}</li>`).join('')}</ul>
-          <div class="corp-help">${esc(t('corp.where.exclude_hint'))}</div>` : `<div class="corp-help">${esc(t('corp.where.no_change'))}</div>`}`;
-      save.disabled = false;
+          <div class="corp-help">${esc(t('corp.where.exclude_hint'))}</div>` : `<div class="corp-help">${esc(t('corp.where.no_change'))}</div>`}
+        ${cui.storeTriggerImpactHtml(preview.store_triggers_affected, preview.store_trigger_policy, { ackId: 'mdTrigAck' })}`;
+      // Store triggers this would hide: Save waits for "I've checked these".
+      impact = preview.store_triggers_affected || [];
+      const ack = m.q('#mdTrigAck');
+      save.disabled = !!(impact.length && ack && !ack.checked);
+      if (ack) ack.addEventListener('change', () => { save.disabled = !ack.checked; });
     } catch (e) {
       if (mine !== seq) return;
       box.innerHTML = `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`;
@@ -343,13 +357,24 @@ async function mandateDialog(existing, playlists) {
   refreshPreview();
   m.q('#mdSave').addEventListener('click', async () => {
     const b = body();
+    if (impact.length) {
+      const ack = m.q('#mdTrigAck');
+      if (!ack || !ack.checked) { showToast(t('corp.settings.impact_need_ack'), 'error'); return; }
+      b.acknowledge_impact = true;
+    }
+    const save = (data) => (existing ? api.updateMandate(existing.id, data) : api.createMandate(data));
     try {
-      const r = existing ? await api.updateMandate(existing.id, b) : await api.createMandate(b);
+      let r;
+      try { r = await save(b); } catch (e) {
+        // The screens' triggers changed since the preview: show the server's list and ask again.
+        if (!await cui.confirmStoreTriggerImpact(e)) throw e;
+        r = await save({ ...b, acknowledge_impact: true });
+      }
       m.close();
       showToast(tn('corp.where.changed_screens', r.screens_changed || 0), 'success');
       cui.forgetCorporateCache();
       reloadTab();
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) { if (e.code !== 'CORPORATE_STORE_TRIGGERS_IMPACT') showToast(e.message, 'error'); }
   });
 }
 

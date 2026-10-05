@@ -143,6 +143,47 @@ export function ask({ title, text, confirmLabel, cancelLabel, danger = false, ex
   });
 }
 
+/* ── store triggers a change would hide or limit ────────────────────────────────────────────── */
+
+/*
+ * ⚠️ NEVER HIDE A STORE'S TRIGGER SILENTLY. The default policy is "Don't show store triggers", so
+ * anything that brings a screen under head office lists the store triggers that stop showing there
+ * (an evacuation relay among them) and is only saved once someone ticked "I've checked these".
+ * The server refuses without that (409 CORPORATE_STORE_TRIGGERS_IMPACT / _IMPACT_UNACKNOWLEDGED).
+ */
+export function storeTriggerImpactHtml(impact, policy, { ackId = 'corpTrigAck' } = {}) {
+  if (!impact || !impact.length) return '';
+  const head = tn(policy === 'leased' ? 'corp.where.triggers_limited' : 'corp.where.triggers_hidden', impact.length);
+  return `<div class="corp-notice corp-notice-warn">
+    <div>${esc(head)}</div>
+    <ul class="corp-list">${impact.map((i) => `<li>${esc(t('corp.where.triggers_line', {
+      ws: i.workspace_name || '', name: i.name || '', screens: tn('corp.n_screens', i.screens || 0),
+    }))}</li>`).join('')}</ul>
+    <div class="corp-help">${esc(t('corp.where.triggers_change_policy'))}</div>
+    <label class="corp-check"><input type="checkbox" id="${esc(ackId)}"> ${esc(t('corp.settings.impact_ack'))}</label>
+  </div>`;
+}
+
+/**
+ * A save the server refused for unacknowledged store-trigger impact: show the list, and resolve
+ * true only when the person ticked "I've checked these" and confirmed. Any other error → false.
+ */
+export async function confirmStoreTriggerImpact(e, policy) {
+  const impact = e && e.body && e.body.impact;
+  if (!e || !Array.isArray(impact) || !impact.length
+      || (e.code !== 'CORPORATE_STORE_TRIGGERS_IMPACT' && e.code !== 'CORPORATE_IMPACT_UNACKNOWLEDGED')) return false;
+  for (;;) {
+    const overlay = await ask({
+      title: t('corp.settings.store_triggers'), text: e.message, confirmLabel: t('common.save'),
+      extraHtml: storeTriggerImpactHtml(impact, policy, { ackId: 'corpTrigAckAsk' }),
+    });
+    if (!overlay) return false;
+    const box = overlay.querySelector && overlay.querySelector('#corpTrigAckAsk');
+    if (box && box.checked) return true;
+    showToast(t('corp.settings.impact_need_ack'), 'error');
+  }
+}
+
 /* ── cached reads ───────────────────────────────────────────────────────────────────────────── */
 
 const EMPTY_COVERAGE = Object.freeze({ active: false, is_admin: false, devices: {}, groups: {}, walls: {}, shadowed_schedules: [] });

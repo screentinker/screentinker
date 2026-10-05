@@ -346,15 +346,22 @@ function rotateSecrets(db, triggerId) {
  * Store triggers that a policy would cap ('leased') or hide ('off') on the org's mandated screens.
  * Empty when nothing is mandated (the policy only ever touches mandated screens).
  */
-function storeTriggerImpact(db, orgId, policy, cap) {
+function storeTriggerImpact(db, orgId, policy, cap, onlyDeviceIds) {
   db = db || dbOf();
   if (policy !== 'leased' && policy !== 'off') return [];
-  if (!require('./runtime').active(db)) return [];
   let mandated;
-  try {
-    mandated = db.prepare(`SELECT r.device_id FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
-        JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = ? AND r.source = 'corporate'`).all(orgId).map((r) => r.device_id);
-  } catch (_) { return []; }
+  if (onlyDeviceIds) {
+    // The caller already knows which screens it is asking about (the ones a change NEWLY brings
+    // under head office — computed inside a rolled-back simulation, where runtime.active() may not
+    // yet be true).
+    mandated = [...onlyDeviceIds];
+  } else {
+    if (!require('./runtime').active(db)) return [];
+    try {
+      mandated = db.prepare(`SELECT r.device_id FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
+          JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = ? AND r.source = 'corporate'`).all(orgId).map((r) => r.device_id);
+    } catch (_) { return []; }
+  }
   if (!mandated.length) return [];
   const mset = new Set(mandated);
   const rows = db.prepare(`SELECT t.*, w.name AS workspace_name FROM triggers t JOIN workspaces w ON w.id = t.workspace_id

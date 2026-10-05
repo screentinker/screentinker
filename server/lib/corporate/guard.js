@@ -95,6 +95,7 @@ const MESSAGES = {
   CORPORATE_EMERGENCY_DISABLED: (v) => `${q(v.name)} is turned off. Turn it on before you activate it.`,
   CORPORATE_EMERGENCY_TOKEN: (v) => v.text,
   CORPORATE_IMPACT_UNACKNOWLEDGED: (v) => `This changes ${v.n} store trigger${v.n === 1 ? '' : 's'} on screens that play head office's playlist. Check the list, then confirm.`,
+  CORPORATE_STORE_TRIGGERS_IMPACT: (v) => `This hides or limits ${v.n} store trigger${v.n === 1 ? '' : 's'} on screens head office will start driving. Check the list, then confirm.`,
   CORPORATE_FILL_SCOPE: () => "That screen, group or video wall isn't in this workspace, or head office's playlist doesn't play there.",
 };
 
@@ -109,6 +110,7 @@ const STATUS = {
   CORPORATE_SLOT_SCHEDULE: 400, CORPORATE_SLOT_REPEAT: 400, CORPORATE_FILL_EXISTS: 409, CORPORATE_FILL_SCOPE: 400,
   CORPORATE_EMERGENCY_OFF: 409, CORPORATE_EMERGENCY_ACTIVE: 409, CORPORATE_EMERGENCY_DISABLED: 409,
   CORPORATE_EMERGENCY_TOKEN: 409, CORPORATE_IMPACT_UNACKNOWLEDGED: 409,
+  CORPORATE_STORE_TRIGGERS_IMPACT: 409,
 };
 
 function err(code, vars = {}, details = {}, statusOverride) {

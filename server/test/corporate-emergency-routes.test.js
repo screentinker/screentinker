@@ -408,7 +408,9 @@ test('edit: partial PUT keeps the rest; the scope and token rules apply again', 
 
 test('store-trigger policy: impact list, acknowledgement, the stores told, and what a mandated screen receives', async () => {
   const CORP = mkPlaylist(HQ, 'Brand', alarmContent, 1);
-  run('UPDATE organizations SET corporate_enabled = 1 WHERE id = ?', ORG);
+  // This test walks the policy CHANGES, starting from "Show store triggers" ('allow'); the default
+  // ('off') and the mandate-time acknowledgement are covered in corporate-store-trigger-default.test.js.
+  run("UPDATE organizations SET corporate_enabled = 1, store_triggers_under_mandate = 'allow' WHERE id = ?", ORG);
   run("INSERT INTO corporate_mandates (id, organization_id, playlist_id, target_kind, target_id) VALUES (?, ?, ?, 'device', ?)", crypto.randomUUID(), ORG, CORP, DEV2);
   const st = await api('/api/triggers', J('store', { name: 'Fire relay', match_token: 'FIRE', mode: 'until_cleared', target_ref: STORE_PL,
     assignments: [{ target_type: 'device', target_id: DEV2 }] }, 'POST', STORE));

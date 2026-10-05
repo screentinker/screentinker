@@ -127,19 +127,36 @@ of the screen).
 
 ## Store triggers on head office's screens
 
-By default (**Allow as before**) a store's trigger shows over head office's playlist exactly as it shows
-over any playlist. **Limit stuck triggers to N minutes** ends a trigger whose sender stopped (a store that
-keeps sending can still keep it on). **Don't show store triggers** hides them on head office's screens,
-including stores' own evacuation notices, which is why switching to either needs the impact list ticked
-"I've checked these". Screens head office doesn't drive are never affected.
+By default (**Don't show store triggers**) a store's own triggers don't show on screens head office
+drives, so no store can cover head office's playlist. Screens head office doesn't drive are never
+affected. The other choices, in Settings → Organization → Corporate content → Store triggers:
 
-> ⚠️ **Under the default, a store CAN cover head office's playlist.** A store editor can create an
-> until-cleared trigger, assign it to a head office screen and keep re-sending it from its own LAN sender;
-> it then shows full screen over head office's loop for as long as it keeps sending. Only **Don't show
-> store triggers** stops that. The default stays "Allow as before" so that turning on corporate playlists
-> never silently switches off a store's own safety notices; the "Where it plays" tab says so while it is
-> on. **Limit stuck triggers** does not bound a store that keeps sending: a real cap needs a player
-> change (a first-fire wall-clock cap for until-cleared triggers), which is a follow-up.
+- **Limit stuck triggers to N minutes** ends a trigger whose sender stopped. A store that keeps sending
+  can still keep it on: a real cap needs a player change (a first-fire wall-clock cap for until-cleared
+  triggers), which is a follow-up.
+- **Show store triggers** shows them over head office's playlist exactly as over any playlist. A store
+  editor can then create an until-cleared trigger, assign it to a head office screen and keep re-sending
+  it from its own LAN sender to cover head office's loop for as long as it likes. The "Where it plays"
+  tab warns while this is on.
+
+> ⚠️ **A store trigger is never hidden silently.** Hiding includes stores' own safety notices, such as an
+> evacuation relay. So every change that NEWLY puts screens under head office lists the store triggers
+> that would stop showing (or be limited) there, and is refused until an admin ticks "I've checked these":
+>
+> - creating a mandate, changing its target, or turning a disabled one back on
+>   (`POST`/`PUT /api/corporate/mandates` → 409 `CORPORATE_STORE_TRIGGERS_IMPACT` with `impact: [...]`;
+>   resend with `acknowledge_impact: true`). `GET /api/corporate/mandates/preview` returns the same list
+>   as `store_triggers_affected`, and the dialog shows it before Save;
+> - switching corporate playlists on (or moving head office) while mandates exist, and changing the
+>   policy itself (`PUT /api/corporate/settings` → 409 `CORPORATE_IMPACT_UNACKNOWLEDGED`).
+>
+> Screens head office already drove don't count: nothing changes for their triggers. The acknowledged
+> list is kept in the activity log (`store_triggers_acknowledged`), and each store whose triggers are
+> hidden is told in its own activity feed (`corporate.store_triggers.limited`) and on its Triggers page.
+> For alerts that must reach head office's screens, use an emergency alert (below).
+>
+> Not asked: a screen that comes under an existing mandate by joining a group or workspace an org admin
+> moves it into. The store sees it on its Triggers page.
 
 ## Emergency alerts
 

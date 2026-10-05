@@ -107,7 +107,7 @@ router.get('/settings', (req, res) => {
     hq_workspace_name: hq ? hq.name : null,
     corporate_authors: org.corporate_authors || 'org_admins',
     emergency_triggers_enabled: !!org.emergency_triggers_enabled,
-    store_triggers_under_mandate: org.store_triggers_under_mandate || 'allow',
+    store_triggers_under_mandate: org.store_triggers_under_mandate || 'off',
     store_trigger_cap_sec: org.store_trigger_cap_sec || 300,
     available: !runtime.isViewsDegraded(),
     can_author: guard.canAuthor(req, org.id) && !req.viaToken,
@@ -182,7 +182,7 @@ router.put('/settings', (req, res) => {
     hq_workspace_id: b.hq_workspace_id !== undefined ? (b.hq_workspace_id || null) : (org.hq_workspace_id || null),
     corporate_authors: b.corporate_authors !== undefined ? b.corporate_authors : (org.corporate_authors || 'org_admins'),
     emergency_triggers_enabled: b.emergency_triggers_enabled !== undefined ? (b.emergency_triggers_enabled ? 1 : 0) : (org.emergency_triggers_enabled ? 1 : 0),
-    store_triggers_under_mandate: b.store_triggers_under_mandate !== undefined ? b.store_triggers_under_mandate : (org.store_triggers_under_mandate || 'allow'),
+    store_triggers_under_mandate: b.store_triggers_under_mandate !== undefined ? b.store_triggers_under_mandate : (org.store_triggers_under_mandate || 'off'),
     store_trigger_cap_sec: b.store_trigger_cap_sec !== undefined ? Number(b.store_trigger_cap_sec) : (org.store_trigger_cap_sec || 300),
   };
   if (!AUTHOR_MODES.has(next.corporate_authors)) {
@@ -228,20 +228,34 @@ router.put('/settings', (req, res) => {
    * Store-trigger policy: limiting or hiding store triggers on head office's screens can END a store's
    * own safety notice (an evacuation relay that sends once). The admin must have seen the list.
    */
-  const policyChanged = next.store_triggers_under_mandate !== (org.store_triggers_under_mandate || 'allow')
+  const policyChanged = next.store_triggers_under_mandate !== (org.store_triggers_under_mandate || 'off')
     || (next.store_triggers_under_mandate === 'leased' && next.store_trigger_cap_sec !== (org.store_trigger_cap_sec || 300));
   let impact = [];
   if (policyChanged && next.store_triggers_under_mandate !== 'allow') {
     impact = require('../lib/corporate/emergency').storeTriggerImpact(db, org.id, next.store_triggers_under_mandate, next.store_trigger_cap_sec);
-    if (impact.length && b.acknowledge_impact !== true) {
-      return refuse(res, 'CORPORATE_IMPACT_UNACKNOWLEDGED', { n: impact.length }, { impact });
-    }
+  }
+  /*
+   * Switching corporate playlists ON (or moving head office) can bring screens under existing
+   * mandates at once. Under 'off'/'leased' that hides or caps their store triggers, so it is asked
+   * exactly like a policy change: simulate the write, list what it newly covers.
+   */
+  const coverageMayGrow = (next.corporate_enabled && !org.corporate_enabled) || next.hq_workspace_id !== (org.hq_workspace_id || null);
+  if (coverageMayGrow && next.store_triggers_under_mandate !== 'allow' && !runtime.isViewsDegraded()) {
+    const sim = simulate(org, [], () => {
+      db.prepare(`UPDATE organizations SET corporate_enabled = ?, hq_workspace_id = ?, store_triggers_under_mandate = ?, store_trigger_cap_sec = ? WHERE id = ?`)
+        .run(next.corporate_enabled, next.hq_workspace_id, next.store_triggers_under_mandate, next.store_trigger_cap_sec, org.id);
+    }, (newlyCovered) => storeTriggersNewlyAffected(org, newlyCovered, next.store_triggers_under_mandate, next.store_trigger_cap_sec));
+    const seen = new Set(impact.map((i) => i.trigger_id));
+    for (const i of (sim && sim.inspected) || []) if (!seen.has(i.trigger_id)) impact.push(i);
+  }
+  if (impact.length && b.acknowledge_impact !== true) {
+    return refuse(res, 'CORPORATE_IMPACT_UNACKNOWLEDGED', { n: impact.length }, { impact });
   }
 
   const before = {
     corporate_enabled: !!org.corporate_enabled, hq_workspace_id: org.hq_workspace_id || null, corporate_authors: org.corporate_authors,
     emergency_triggers_enabled: !!org.emergency_triggers_enabled,
-    store_triggers_under_mandate: org.store_triggers_under_mandate || 'allow', store_trigger_cap_sec: org.store_trigger_cap_sec || 300,
+    store_triggers_under_mandate: org.store_triggers_under_mandate || 'off', store_trigger_cap_sec: org.store_trigger_cap_sec || 300,
   };
   const emergencyChanged = next.emergency_triggers_enabled !== (org.emergency_triggers_enabled ? 1 : 0);
   // Who must hear about the emergency switch: turning it ON reaches every screen in an alert's scope;
@@ -270,14 +284,9 @@ router.put('/settings', (req, res) => {
   if (emergencyChanged) {
     auditCorp(req, 'corporate.emergency.switch', { organization_id: org.id, enabled: !!next.emergency_triggers_enabled, screens: emergencyPush.length });
   }
-  if (policyChanged && impact.length) {
+  if (impact.length) {
     // The stores whose triggers this limits are told in their own activity feed.
-    for (const wsId of new Set(impact.map((i) => i.workspace_id))) {
-      auditCorp(req, 'corporate.store_triggers.limited', {
-        organization_id: org.id, workspace_id: wsId, policy: next.store_triggers_under_mandate, cap_sec: next.store_trigger_cap_sec,
-        triggers: impact.filter((i) => i.workspace_id === wsId).map((i) => ({ id: i.trigger_id, name: i.name })),
-      });
-    }
+    auditStoreTriggersLimited(req, org, impact, next.store_triggers_under_mandate, next.store_trigger_cap_sec, policyChanged ? 'policy' : 'coverage');
   }
   res.json({ success: true, screens_changed: changed.length, ...after, store_triggers_affected: impact.length });
 });
@@ -482,29 +491,88 @@ function validateMandate(req, res, org, b, existing) {
   return { kind, tid, dark: dark ? 1 : 0, playlistId, layoutId, enabled, note, wsIds, target };
 }
 
-function previewOf(org, v, mandateId) {
-  // Simulate inside a transaction that is always rolled back: the view itself answers the question,
-  // so the preview can never disagree with what the save will do.
+/** The org's screens whose resolved source is head office's ('corporate'), read straight off the view. */
+function corporateSourcedDevices(orgId) {
+  try {
+    return new Set(db.prepare(`SELECT r.device_id FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
+        JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = ? AND r.source = 'corporate'`).all(orgId).map((r) => r.device_id));
+  } catch (_) { return new Set(); }
+}
+
+/**
+ * Run `write` inside a transaction that is ALWAYS rolled back and report what it would do: which
+ * screens' resolution changes (`changed`, over `wsIds`) and which screens it would NEWLY put under
+ * head office (`newlyCovered`, across the whole org). The view itself answers, so a preview can
+ * never disagree with what the save will do. `inspect(newlyCovered)` runs while the simulated state
+ * is still in place (store-trigger assignments and policies are read there).
+ */
+function simulate(org, wsIds, write, inspect) {
   const ROLLBACK = new Error('preview-rollback');
-  let stats = null;
+  let out = null;
   try {
     db.transaction(() => {
-      const before = fanout.snapshotResolution(db, v.wsIds);
-      if (mandateId) {
-        db.prepare('UPDATE corporate_mandates SET playlist_id = ?, dark = ?, target_kind = ?, target_id = ?, layout_id = ?, enabled = ? WHERE id = ?')
-          .run(v.playlistId, v.dark, v.kind, v.tid, v.layoutId, v.enabled, mandateId);
-      } else {
-        db.prepare('INSERT INTO corporate_mandates (id, organization_id, playlist_id, dark, target_kind, target_id, layout_id, enabled) VALUES (?,?,?,?,?,?,?,?)')
-          .run('preview-' + uuidv4(), org.id, v.playlistId, v.dark, v.kind, v.tid, v.layoutId, v.enabled);
-        db.prepare('UPDATE organizations SET corporate_enabled = 1 WHERE id = ?').run(org.id);
-      }
-      const after = fanout.snapshotResolution(db, v.wsIds);
+      const before = fanout.snapshotResolution(db, wsIds);
+      const coveredBefore = corporateSourcedDevices(org.id);
+      write();
+      const after = fanout.snapshotResolution(db, wsIds);
       const changed = [...after.keys()].filter((id) => before.get(id) !== after.get(id));
-      stats = summarise(changed);
+      const newlyCovered = [...corporateSourcedDevices(org.id)].filter((id) => !coveredBefore.has(id));
+      out = { changed, newlyCovered, inspected: inspect ? inspect(newlyCovered) : undefined };
       throw ROLLBACK;
     })();
   } catch (e) { if (e !== ROLLBACK) throw e; }
-  return stats;
+  return out;
+}
+
+/*
+ * The store triggers a change would hide or cap because it NEWLY brings their screens under head
+ * office, under the org's current policy ('off' by default). Screens head office already drove
+ * are not counted: nothing changes for their triggers. Empty under 'allow'.
+ */
+function storeTriggersNewlyAffected(org, newlyCovered, policy, cap) {
+  const p = policy || org.store_triggers_under_mandate || 'off';
+  if (p === 'allow' || !newlyCovered.length) return [];
+  return require('../lib/corporate/emergency').storeTriggerImpact(db, org.id, p, cap || org.store_trigger_cap_sec || 300, newlyCovered);
+}
+
+function previewOf(org, v, mandateId) {
+  const sim = simulate(org, v.wsIds, () => {
+    if (mandateId) {
+      db.prepare('UPDATE corporate_mandates SET playlist_id = ?, dark = ?, target_kind = ?, target_id = ?, layout_id = ?, enabled = ? WHERE id = ?')
+        .run(v.playlistId, v.dark, v.kind, v.tid, v.layoutId, v.enabled, mandateId);
+    } else {
+      db.prepare('INSERT INTO corporate_mandates (id, organization_id, playlist_id, dark, target_kind, target_id, layout_id, enabled) VALUES (?,?,?,?,?,?,?,?)')
+        .run('preview-' + uuidv4(), org.id, v.playlistId, v.dark, v.kind, v.tid, v.layoutId, v.enabled);
+      db.prepare('UPDATE organizations SET corporate_enabled = 1 WHERE id = ?').run(org.id);
+    }
+  }, (newlyCovered) => storeTriggersNewlyAffected(org, newlyCovered));
+  if (!sim) return null;
+  return { ...summarise(sim.changed), store_triggers_affected: sim.inspected || [], store_trigger_policy: org.store_triggers_under_mandate || 'off' };
+}
+
+/**
+ * Refuse a mandate save that would hide or cap store triggers without the admin having seen them
+ * (409 CORPORATE_STORE_TRIGGERS_IMPACT, nothing written). Returns the acknowledged list, or null
+ * when a refusal was sent.
+ */
+function requireMandateImpactAck(req, res, org, v, mandateId) {
+  const pv = previewOf(org, v, mandateId);
+  const impact = (pv && pv.store_triggers_affected) || [];
+  if (impact.length && (req.body || {}).acknowledge_impact !== true) {
+    refuse(res, 'CORPORATE_STORE_TRIGGERS_IMPACT', { n: impact.length }, { impact });
+    return null;
+  }
+  return impact;
+}
+
+/** Each store whose triggers a change hides or caps hears about it in its own activity feed. */
+function auditStoreTriggersLimited(req, org, impact, policy, cap, cause) {
+  for (const wsId of new Set(impact.map((i) => i.workspace_id))) {
+    auditCorp(req, 'corporate.store_triggers.limited', {
+      organization_id: org.id, workspace_id: wsId, policy, cap_sec: cap, cause,
+      triggers: impact.filter((i) => i.workspace_id === wsId).map((i) => ({ id: i.trigger_id, name: i.name })),
+    });
+  }
 }
 
 function summarise(deviceIds) {
@@ -557,6 +625,8 @@ router.post('/mandates', (req, res) => {
   if (!org.corporate_enabled) return refuse(res, 'CORPORATE_DISABLED');
   const v = validateMandate(req, res, org, req.body || {}, null);
   if (!v) return;
+  const impact = requireMandateImpactAck(req, res, org, v, null);
+  if (!impact) return;
   const id = uuidv4();
   const { changed } = fanout.withResolutionDiff(req, v.wsIds, () => {
     db.prepare(`INSERT INTO corporate_mandates (id, organization_id, playlist_id, dark, target_kind, target_id, layout_id, enabled, note, created_by)
@@ -564,13 +634,17 @@ router.post('/mandates', (req, res) => {
       .run(id, org.id, v.playlistId, v.dark, v.kind, v.tid, v.layoutId, v.enabled, v.note, req.user.id);
   });
   const row = listMandates(org.id).find((m) => m.id === id);
-  auditCorp(req, 'corporate.mandate.create', { organization_id: org.id, mandate_id: id, after: row, screens_changed: changed.length });
+  auditCorp(req, 'corporate.mandate.create', {
+    organization_id: org.id, mandate_id: id, after: row, screens_changed: changed.length,
+    store_triggers_acknowledged: impact.map((i) => ({ id: i.trigger_id, name: i.name, workspace_id: i.workspace_id, screens: i.screens })),
+  });
+  auditStoreTriggersLimited(req, org, impact, org.store_triggers_under_mandate || 'off', org.store_trigger_cap_sec || 300, 'mandate');
   for (const w of v.wsIds) {
     if (w === org.hq_workspace_id) continue;
     // The store's own activity feed says head office took over, so nobody wonders why a schedule stopped.
     audit('corporate.mandate.store_notice', { userId: req.user.id, workspaceId: w, details: { mandate_id: id, playlist_name: row && row.playlist_name, dark: !!v.dark } });
   }
-  res.status(201).json({ ...row, screens_changed: changed.length });
+  res.status(201).json({ ...row, screens_changed: changed.length, store_triggers_affected: impact.length });
 });
 
 router.put('/mandates/:id', (req, res) => {
@@ -582,6 +656,8 @@ router.put('/mandates/:id', (req, res) => {
   if (!org.corporate_enabled) return refuse(res, 'CORPORATE_DISABLED');
   const v = validateMandate(req, res, org, req.body || {}, existing);
   if (!v) return;
+  const impact = requireMandateImpactAck(req, res, org, v, existing.id);
+  if (!impact) return;
   const before = listMandates(org.id).find((m) => m.id === existing.id);
   const wsIds = [...new Set([...v.wsIds, ...fanout.workspacesForTarget(db, org.id, existing.target_kind, existing.target_id)])];
   const { changed } = fanout.withResolutionDiff(req, wsIds, () => {
@@ -591,8 +667,12 @@ router.put('/mandates/:id', (req, res) => {
   });
   const after = listMandates(org.id).find((m) => m.id === existing.id);
   const action = before && after && before.enabled !== after.enabled ? (after.enabled ? 'corporate.mandate.enable' : 'corporate.mandate.disable') : 'corporate.mandate.update';
-  auditCorp(req, action, { organization_id: org.id, mandate_id: existing.id, before, after, screens_changed: changed.length });
-  res.json({ ...after, screens_changed: changed.length });
+  auditCorp(req, action, {
+    organization_id: org.id, mandate_id: existing.id, before, after, screens_changed: changed.length,
+    store_triggers_acknowledged: impact.map((i) => ({ id: i.trigger_id, name: i.name, workspace_id: i.workspace_id, screens: i.screens })),
+  });
+  auditStoreTriggersLimited(req, org, impact, org.store_triggers_under_mandate || 'off', org.store_trigger_cap_sec || 300, 'mandate');
+  res.json({ ...after, screens_changed: changed.length, store_triggers_affected: impact.length });
 });
 
 router.delete('/mandates/:id', (req, res) => {

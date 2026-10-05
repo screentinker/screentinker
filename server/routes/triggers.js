@@ -97,7 +97,12 @@ function headOffice(req) {
          ORDER BY t.name`).all(req.workspaceId, org.id)
         .map((t) => ({ ...t, enabled: !!t.enabled, live: !!require('../lib/corporate/emergency-live').liveFor(t.id) }));
     }
-    if (org.store_triggers_under_mandate && org.store_triggers_under_mandate !== 'allow') {
+    // Only where it applies: a workspace with a screen head office drives. The default is 'off', so
+    // without this every workspace of every org would be told its triggers are hidden.
+    if (org.store_triggers_under_mandate && org.store_triggers_under_mandate !== 'allow'
+        && require('../lib/corporate/runtime').active(db)
+        && db.prepare(`SELECT 1 FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
+            WHERE d.workspace_id = ? AND r.source = 'corporate' LIMIT 1`).get(req.workspaceId)) {
       out.store_trigger_policy = { policy: org.store_triggers_under_mandate, cap_sec: org.store_trigger_cap_sec || 300 };
     }
   } catch (_) { /* no corporate columns: nothing to report */ }

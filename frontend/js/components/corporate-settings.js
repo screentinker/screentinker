@@ -12,7 +12,7 @@ import { api } from '../api.js';
 import { t, tn } from '../i18n.js';
 import { esc } from '../utils.js';
 import { showToast } from './toast.js';
-import { ask, forgetCorporateCache } from './corporate-ui.js';
+import { ask, forgetCorporateCache, confirmStoreTriggerImpact } from './corporate-ui.js';
 import { openWorkspaceCreateModal } from './workspace-create-modal.js';
 
 export async function mountCorporateSettings(host) {
@@ -48,13 +48,13 @@ export async function mountCorporateSettings(host) {
     <div class="corp-hq-note">${esc(t('corp.settings.store_shape'))}</div>
 
     <div class="form-group" style="margin-top:12px"><label>${esc(t('corp.settings.store_triggers'))}</label>
-      <label class="corp-check" style="display:flex"><input type="radio" name="csPolicy" value="allow" ${s.store_triggers_under_mandate === 'allow' ? 'checked' : ''}> ${esc(t('corp.settings.policy_allow'))}</label>
-      <div class="corp-help" style="margin:0 0 6px 22px">${esc(t('corp.settings.policy_allow_help'))}</div>
+      <label class="corp-check" style="display:flex"><input type="radio" name="csPolicy" value="off" ${s.store_triggers_under_mandate === 'off' ? 'checked' : ''}> ${esc(t('corp.settings.policy_off'))}</label>
+      <div class="corp-help" style="margin:0 0 6px 22px">${esc(t('corp.settings.policy_off_help'))}</div>
       <label class="corp-check" style="display:flex"><input type="radio" name="csPolicy" value="leased" ${s.store_triggers_under_mandate === 'leased' ? 'checked' : ''}>
         ${esc(t('corp.settings.policy_leased'))} <input type="number" id="csCap" class="input" min="1" max="60" value="${esc(String(capMin))}" style="width:64px;padding:2px 6px"> ${esc(t('corp.settings.minutes'))}</label>
       <div class="corp-help" style="margin:0 0 6px 22px">${esc(t('corp.settings.policy_leased_help'))}</div>
-      <label class="corp-check" style="display:flex"><input type="radio" name="csPolicy" value="off" ${s.store_triggers_under_mandate === 'off' ? 'checked' : ''}> ${esc(t('corp.settings.policy_off'))}</label>
-      <div class="corp-help" style="margin:0 0 6px 22px">${esc(t('corp.settings.policy_off_help'))}</div>
+      <label class="corp-check" style="display:flex"><input type="radio" name="csPolicy" value="allow" ${s.store_triggers_under_mandate === 'allow' ? 'checked' : ''}> ${esc(t('corp.settings.policy_allow'))}</label>
+      <div class="corp-help" style="margin:0 0 6px 22px">${esc(t('corp.settings.policy_allow_help'))}</div>
       <div id="csImpact"></div>
     </div>
 
@@ -65,7 +65,7 @@ export async function mountCorporateSettings(host) {
     <button type="button" class="btn btn-primary" id="csSave">${esc(t('common.save'))}</button>`;
 
   const q = (sel) => host.querySelector(sel);
-  const policy = () => (host.querySelector('input[name="csPolicy"]:checked') || {}).value || 'allow';
+  const policy = () => (host.querySelector('input[name="csPolicy"]:checked') || {}).value || 'off';
   const capSec = () => Math.min(3600, Math.max(30, Math.round(Number(q('#csCap').value || 5) * 60)));
   let impact = [];
 
@@ -110,7 +110,8 @@ export async function mountCorporateSettings(host) {
     if (!Object.keys(body).length) { showToast(t('corp.settings.nothing'), 'info'); return; }
     if (impact.length && (body.store_triggers_under_mandate || body.store_trigger_cap_sec)) {
       if (!q('#csAck') || !q('#csAck').checked) { showToast(t('corp.settings.impact_need_ack'), 'error'); return; }
-      body.acknowledge_impact = true;
+      // Not when coverage may grow too: then the server answers with the whole list, asked below.
+      if (body.corporate_enabled === undefined && body.hq_workspace_id === undefined) body.acknowledge_impact = true;
     }
     // The kill switch: say exactly what happens before it happens.
     if (body.corporate_enabled === false) {
@@ -120,12 +121,17 @@ export async function mountCorporateSettings(host) {
       if (!await ask({ title: t('corp.settings.emergency'), text: t('corp.settings.emergency_on_confirm'), confirmLabel: t('corp.settings.emergency_on') })) return;
     }
     try {
-      const r = await api.updateCorporateSettings(body);
+      let r;
+      try { r = await api.updateCorporateSettings(body); } catch (e) {
+        // Switching corporate playlists on can bring screens under existing mandates at once.
+        if (!await confirmStoreTriggerImpact(e, p)) throw e;
+        r = await api.updateCorporateSettings({ ...body, acknowledge_impact: true });
+      }
       forgetCorporateCache();
       showToast(tn('corp.settings.saved', r.screens_changed || 0), 'success');
       mountCorporateSettings(host);
       // The sidebar's Corporate item and the head office bar follow these settings.
       if (body.corporate_enabled !== undefined || body.hq_workspace_id !== undefined) setTimeout(() => window.location.reload(), 600);
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) { if (e.code !== 'CORPORATE_IMPACT_UNACKNOWLEDGED' || !(e.body && e.body.impact)) showToast(e.message, 'error'); }
   });
 }

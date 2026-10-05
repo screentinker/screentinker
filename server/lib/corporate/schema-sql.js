@@ -122,7 +122,7 @@ const COLUMNS = [
   ['organizations', 'hq_workspace_id', 'TEXT'],
   ['organizations', 'corporate_authors', "TEXT NOT NULL DEFAULT 'org_admins'"],
   ['organizations', 'emergency_triggers_enabled', 'INTEGER NOT NULL DEFAULT 0'],
-  ['organizations', 'store_triggers_under_mandate', "TEXT NOT NULL DEFAULT 'allow'"],
+  ['organizations', 'store_triggers_under_mandate', "TEXT NOT NULL DEFAULT 'off'"],
   ['organizations', 'store_trigger_cap_sec', 'INTEGER NOT NULL DEFAULT 300'],
   // playlists
   ['playlists', 'corporate', 'INTEGER NOT NULL DEFAULT 0'],
