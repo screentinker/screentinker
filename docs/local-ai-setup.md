@@ -13,6 +13,11 @@ This guide sets up a fully **local, free** stack:
 
 Prefer the cloud? Skip to [Using OpenAI instead](#using-openai-instead).
 
+> [!NOTE]
+> On ScreenTinker-hosted servers there is also a second path, **ScreenTinker credits**: images
+> generated with platform keys and paid in organization credits. The bring-your-own setup on this
+> page never uses credits. See [ai-credits.md](ai-credits.md).
+
 > [!IMPORTANT]
 > To use **localhost / LAN** AI endpoints, your instance must run with
 > **`SELF_HOSTED=true`**. ScreenTinker blocks private/internal addresses for the

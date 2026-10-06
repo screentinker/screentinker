@@ -165,6 +165,24 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object;
+        /*
+         * AI credit packs (routes/ai-hosted.js). Granted HERE and only here — after the signature
+         * check above — and only once Stripe says the money moved. Idempotent on the session id,
+         * because Stripe redelivers. A one-off payment never has a subscription, so this cannot be
+         * confused with the plan branch below.
+         */
+        if (session.metadata?.kind === 'ai_credits') {
+          if (session.mode === 'payment' && session.payment_status === 'paid') {
+            const r = require('../lib/ai-credits').recordPurchase({
+              orgId: session.metadata.org_id, packId: session.metadata.pack_id,
+              ref: session.id, userId: session.metadata.user_id,
+            });
+            console.log(`[ai-credits] pack ${session.metadata.pack_id} for org ${session.metadata.org_id}: ${r.applied ? `+${r.credits} credits` : r.reason}`);
+          } else {
+            console.warn(`[ai-credits] checkout ${session.id} completed unpaid (${session.payment_status}) — no credits granted`);
+          }
+          break;
+        }
         const userId = session.metadata?.user_id;
         const planId = session.metadata?.plan_id;
         if (userId && session.subscription) {

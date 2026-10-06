@@ -3,6 +3,7 @@ import { esc } from '../utils.js';
 import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
+import { mountHostedPicker } from '../components/ai-hosted-picker.js';
 
 /*
  * The slide deck editor.
@@ -571,6 +572,9 @@ function renderEditor(container) {
         </button>
         <span id="aiStatus" style="font-size:12px;color:var(--text-muted);margin-left:4px"></span>
       </div>
+      <!-- Hosted AI (ScreenTinker credits). Stays hidden unless the server has a platform image
+           provider configured; then "Generate background" follows whichever path is picked here. -->
+      <div id="aiHostedRow" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"></div>
     </div>
     <div style="display:grid;grid-template-columns:42px minmax(0,1fr) 290px;gap:12px;align-items:start">
       <div class="settings-section" id="tools" style="padding:7px;display:flex;flex-direction:column;gap:5px"></div>
@@ -688,6 +692,8 @@ function renderEditor(container) {
   container.querySelector('#aiPrompt').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); aiGenerate(container); }
   });
+  hostedCtl = null;
+  mountHostedPicker(container.querySelector('#aiHostedRow')).then((ctl) => { hostedCtl = ctl; }).catch(() => {});
   container.querySelector('#aiCfgBtn').addEventListener('click', async () => {
     const { openAiSettingsModal } = await import('../components/ai-settings-modal.js');
     openAiSettingsModal();
@@ -1788,6 +1794,12 @@ async function publish(container) {
 let aiBusy = false;
 let aiBgBusy = false;   // an image generation costs money per click; never let two run
 let aiLayerBusy = false; // and this one is up to FIVE generations per click
+/*
+ * The hosted-images picker for the open editor, or null (hosted AI off / not loaded yet). Only the
+ * single-image background uses it: layered generation is several images plus a text-model plan,
+ * and stays on the workspace's own endpoints in this version.
+ */
+let hostedCtl = null;
 
 /*
  * Generate a background PICTURE for the slide you are on.
@@ -1829,7 +1841,14 @@ async function aiGenerateBackground(container) {
      * crops to a centre band, which is exactly the complaint that made xAI's aspect_ratio matter
      * in the first place — repeating it locally would be worse, because here we know the answer.
      */
-    const out = await api.aiGenerateBackground(prompt, aspectPixels());
+    let out;
+    if (hostedCtl && hostedCtl.isHosted()) {
+      // Confirms the exact cost first; null = the user declined or was sent to buy credits.
+      out = await hostedCtl.generate(prompt, aspectPixels());
+      if (!out) { say(''); return; }
+    } else {
+      out = await api.aiGenerateBackground(prompt, aspectPixels());
+    }
     if (!out || !out.content_id) throw new Error('no image came back');
     const idx = state.deck.doc.slides.indexOf(target);
     if (idx < 0) { say('That slide is gone — nothing changed.', true); return; }
@@ -1860,7 +1879,7 @@ async function aiGenerateBackground(container) {
      * two symptoms, and the half-committed state made it look like two separate bugs.
      */
     paintAll(container);
-    say('Background applied.');
+    say(out.credits_spent ? `Background applied — ${out.credits_spent} credits spent, ${out.balance} left.` : 'Background applied.');
   } catch (e) {
     say(String((e && e.message) || e).slice(0, 200), true);
   } finally {

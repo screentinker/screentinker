@@ -400,6 +400,34 @@ module.exports = {
     accrualBatch: parseInt(process.env.BILLING_ACCRUAL_BATCH) || 2000,
     accrualCapSeconds: parseInt(process.env.BILLING_ACCRUAL_CAP_SECONDS) || 30,
   },
+
+  /*
+   * Hosted AI images (docs/ai-credits.md). Platform-level provider hooks that spend ORG credits —
+   * separate from the bring-your-own ai_settings path, which never touches credits.
+   *
+   * ⚠️ NO API KEYS LIVE IN THIS OBJECT. lib/ai-hosted.js reads XAI_API_KEY / OPENAI_API_KEY /
+   * AI_HOSTED_COMPAT_API_KEY from process.env at call time, so a JSON.stringify(config) anywhere
+   * (diagnostics, a debug log) cannot leak one. A provider is offered only when its key is set.
+   */
+  aiHosted: {
+    xaiBaseUrl: (process.env.XAI_BASE_URL || 'https://api.x.ai/v1').replace(/\/+$/, ''),
+    openaiBaseUrl: (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, ''),
+    // Optional future OpenAI-compatible image provider. Both this AND its key must be set.
+    compatBaseUrl: (process.env.AI_HOSTED_COMPAT_BASE_URL || '').replace(/\/+$/, ''),
+    // Customer price = provider cost × markup, rounded up to the cent.
+    markup: 2,
+    // Included monthly allotment = this share of the org's screen bill (lib/billing.js formula).
+    includedShare: 0.10,
+    // Extra rate-card rows (JSON array, same shape as config/ai-rate-card.js) — add a verified
+    // model without a code change.
+    extraRateCard: (() => {
+      try { const v = JSON.parse(process.env.AI_HOSTED_RATE_CARD || '[]'); return Array.isArray(v) ? v : []; }
+      catch { console.warn('[config] AI_HOSTED_RATE_CARD is not valid JSON — ignored'); return []; }
+    })(),
+    // A reservation still pending after this long is a crashed attempt: refunded at boot / on sweep.
+    reservationStaleSec: parseInt(process.env.AI_HOSTED_RESERVATION_STALE_SEC) || 900,
+    providerTimeoutMs: parseInt(process.env.AI_HOSTED_TIMEOUT_MS) || 120000,
+  },
   // #146 Item E — coalescing log flush + batched event_loop_lag telemetry.
   logCoalesceFlushMs: parseInt(process.env.LOG_COALESCE_FLUSH_MS) || 30000,
   lagFlushMs: parseInt(process.env.LAG_FLUSH_MS) || 10000,

@@ -1739,6 +1739,28 @@ app.use('/api/ai/generate-design', rateLimit(60000, 10));
  * generations a minute from a held Enter key.
  */
 app.use('/api/ai/generate-layered', rateLimit(60000, 3));
+/*
+ * Hosted images spend real money on a PLATFORM key, so they get the same cap as the BYO image
+ * routes. The ledger already refuses to overdraw; this stops a loop from burning a balance down.
+ */
+app.use('/api/ai/hosted/generate', rateLimit(60000, 10));
+app.use('/api/ai/hosted/checkout', rateLimit(60000, 10));
+{
+  /*
+   * Hosted-AI housekeeping. A reservation left 'pending' is an attempt a crash interrupted: refund
+   * it (fail closed, in the customer's favour). Also nags daily while the rate card is past its
+   * re-verify date. Both are no-ops on an instance with no platform provider keys.
+   */
+  const aiHousekeeping = () => {
+    try {
+      const n = require('./lib/ai-credits').sweepStale();
+      if (n) console.warn(`[ai-hosted] refunded ${n} abandoned reservation(s)`);
+      require('./lib/ai-hosted').warnIfRateCardStale();
+    } catch (e) { console.error('[ai-hosted] housekeeping failed:', e && e.message); }
+  };
+  setTimeout(aiHousekeeping, 30000).unref();
+  setInterval(aiHousekeeping, 10 * 60 * 1000).unref();
+}
 app.use('/api/widgets/preview', rateLimit(60000, 30)); // base64 inline = memory-intensive
 app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview session creation retains rendered HTML in memory for 5min
 // `/test` triggers an outbound fetch of an arbitrary calendar feed; cap it so a single

@@ -687,7 +687,9 @@ function route() {
   } else if (hash.startsWith('#/platform/')) {
     currentView = admin;
     admin.render(app, hash.slice(11).split(/[/?]/)[0]);
-  } else if (hash === '#/settings') {
+  } else if (hash === '#/settings' || hash.startsWith('#/settings?')) {
+    // `?` prefix too: a credit-pack Checkout returns to `#/settings?credits=success` (the same trap
+    // the #/billing route below documents). Not a bare startsWith, so no future #/settings-x matches.
     currentView = settings;
     settings.render(app);
   } else if (hash.startsWith('#/billing')) {
