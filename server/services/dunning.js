@@ -178,7 +178,7 @@ async function sendPaymentFailedEmail(userId) {
 async function reconcileFromStripe() {
   if (!isEnabled() || !config.stripeSecretKey) return { checked: 0, corrected: 0, skipped: 'not_configured' };
   const stripe = require('stripe')(config.stripeSecretKey);
-  const rows = db.prepare(`SELECT id, plan_id, subscription_status, subscription_ends, stripe_subscription_id, past_due_since
+  const rows = db.prepare(`SELECT id, plan_id, plan_comped, subscription_status, subscription_ends, stripe_subscription_id, past_due_since
                              FROM users
                             WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id <> ''`).all();
   const out = { checked: 0, corrected: 0, errors: 0 };
@@ -195,7 +195,7 @@ async function reconcileFromStripe() {
          * left the account on Pro for ever with nothing left to bill it — the mirror image of the
          * customer.subscription.deleted handler, which has always dropped the plan.
          */
-        db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled',
+        db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled',
                                      stripe_subscription_id = NULL WHERE id = ?`).run(u.id);
         out.corrected++;
         console.log(`[DUNNING] reconcile: ${u.id} — subscription gone from Stripe, moved to Free`);
@@ -214,7 +214,7 @@ async function reconcileFromStripe() {
      * after: Pro for ever with nothing billing it. Terminal means the same as gone.
      */
     if (TERMINAL_STATUSES.has(sub.status)) {
-      db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled',
+      db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled',
                                    stripe_subscription_id = NULL WHERE id = ?`).run(u.id);
       out.corrected++;
       console.log(`[DUNNING] reconcile: ${u.id} — subscription ${sub.status} in Stripe, moved to Free`);
@@ -246,7 +246,7 @@ async function reconcileFromStripe() {
      * checkout metadata, which is exactly the stale value that caused the drift.
      */
     const billedPlan = status === 'active' ? planIdFromPrice(sub) : null;
-    const planDrift = !!billedPlan && billedPlan !== u.plan_id;
+    const planDrift = !!billedPlan && billedPlan !== u.plan_id && !u.plan_comped;   // a comp is not drift
     if (planDrift) changes.push(`plan ${u.plan_id} -> ${billedPlan}`);
     if (status !== u.subscription_status) changes.push(`status ${u.subscription_status} -> ${status}`);
     if (ends && ends !== u.subscription_ends) changes.push(`ends ${u.subscription_ends || 'null'} -> ${ends}`);

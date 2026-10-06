@@ -2038,6 +2038,13 @@ const migrations = [
   // activity" (MAX(activity_log.created_at) per user) is not a table scan on a big log.
   'ALTER TABLE users ADD COLUMN cleanup_warned_at INTEGER',
   'ALTER TABLE users ADD COLUMN cleanup_delete_after INTEGER',
+  /*
+   * A plan a platform admin granted by hand (POST /api/subscription/assign). While set, nothing
+   * automatic changes plan_id — not the Stripe webhooks, the nightly reconcile or the dunning
+   * lapse — because a comp is an agreement Stripe knows nothing about. Cleared by the customer's
+   * own completed checkout, or by an admin assigning Free.
+   */
+  'ALTER TABLE users ADD COLUMN plan_comped INTEGER NOT NULL DEFAULT 0',
   'CREATE INDEX IF NOT EXISTS idx_activity_log_user_time ON activity_log(user_id, created_at)',
   `CREATE TABLE IF NOT EXISTS template_seen (
     user_id      TEXT NOT NULL,

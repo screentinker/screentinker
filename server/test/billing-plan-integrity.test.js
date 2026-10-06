@@ -284,3 +284,61 @@ test('F25: a hand-assigned plan on a past-due account is not downgraded by the d
   assert.equal(u.past_due_since, null);
   assert.equal(u.payment_failed_email_sent_at, null, 'a genuine future failure is announced again');
 });
+
+/* ============ Comps: a hand-granted plan is changed only by an admin or the customer's own checkout ============ */
+
+test('comp: the nightly reconcile does not "correct" a comped plan back to the billed price', async () => {
+  const subId = uid('sub');
+  const id = mkUser({ plan: 'starter', subId });                 // pays Starter...
+  assert.equal((await assign(id, 'pro')).status, 200);           // ...comped Pro
+  const s = stripeSub({ id: subId, userId: id, price: 'price_starter_m' });
+  db.prepare('UPDATE users SET subscription_ends = ? WHERE id = ?').run(s.items.data[0].current_period_end, id);
+  stripeSubs.set(subId, s);
+  await dunning.reconcileFromStripe();
+  assert.equal(read(id).plan_id, 'pro');
+  stripeSubs.delete(subId);
+});
+
+test('comp: the subscription webhook keeps the comped plan but still records Stripe\'s status', async () => {
+  const subId = uid('sub');
+  const id = mkUser({ plan: 'starter', subId });
+  await assign(id, 'pro');
+  await webhook('customer.subscription.updated', stripeSub({ id: subId, userId: id, price: 'price_starter_m', status: 'past_due' }));
+  const u = read(id);
+  assert.equal(u.plan_id, 'pro');
+  assert.equal(u.subscription_status, 'past_due', 'what Stripe says is still recorded truthfully');
+});
+
+test('comp: cancelling the Stripe subscription (webhook, or found terminal by the reconcile) keeps the comp', async () => {
+  const a = uid('sub');
+  const viaWebhook = mkUser({ plan: 'starter', subId: a });
+  await assign(viaWebhook, 'pro');
+  await webhook('customer.subscription.deleted', stripeSub({ id: a, userId: viaWebhook, price: 'price_starter_m', status: 'canceled' }));
+  assert.equal(read(viaWebhook).plan_id, 'pro');
+  assert.equal(read(viaWebhook).stripe_subscription_id, null);
+
+  const b = uid('sub');
+  const viaReconcile = mkUser({ plan: 'starter', subId: b });
+  await assign(viaReconcile, 'pro');
+  stripeSubs.set(b, stripeSub({ id: b, userId: viaReconcile, price: 'price_starter_m', status: 'canceled' }));
+  await dunning.reconcileFromStripe();
+  assert.equal(read(viaReconcile).plan_id, 'pro');
+  stripeSubs.delete(b);
+});
+
+test('comp: the customer\'s own completed checkout ends the comp; assigning Free never sets one', async () => {
+  const id = mkUser({ plan: 'starter' });
+  await assign(id, 'pro');
+  assert.equal(read(id).plan_comped, 1);
+  await webhook('checkout.session.completed', {
+    id: uid('cs'), mode: 'subscription', subscription: uid('sub'), customer: `cus_${id}`,
+    metadata: { user_id: id, plan_id: 'starter' }, payment_status: 'paid',
+  });
+  const u = read(id);
+  assert.equal(u.plan_id, 'starter', 'they chose and paid for a plan themselves');
+  assert.equal(u.plan_comped, 0);
+
+  const free = mkUser({ plan: 'pro' });
+  await assign(free, 'free');
+  assert.equal(read(free).plan_comped, 0);
+});

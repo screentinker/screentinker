@@ -191,7 +191,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           // because the only other writer that clears it — expireTrial — skips anyone with a
           // subscription. trial_expired_at stays NULL: that column means "lapsed to Free", which
           // this is not.
-          db.prepare(`UPDATE users SET stripe_subscription_id = ?, plan_id = ?, subscription_status = 'active', trial_started = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
+          db.prepare(`UPDATE users SET stripe_subscription_id = ?, plan_id = ?, plan_comped = 0, subscription_status = 'active', trial_started = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
             .run(session.subscription, planId || 'starter', userId);
           console.log(`User ${userId} subscribed to ${planId} (sub: ${session.subscription})`);
         }
@@ -232,7 +232,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
         const ends = periodEndOf(sub);   // moved to the item in Stripe 2025-03+; see lib/stripe-fields.js
 
-        db.prepare(`UPDATE users SET plan_id = COALESCE(?, plan_id), subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
+        db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE COALESCE(?, plan_id) END, subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
           .run(planId, status, ends, userId);
         // Back in good standing: end the dunning episode, including its email stamps, so a lapse
         // next year is announced rather than silently suppressed by a stale one.
@@ -253,7 +253,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
            * reconcile. `IS NULL` is kept so a deletion still lands when the checkout webhook that
            * would have stored the id was itself lost.
            */
-          const r = db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now')
+          const r = db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now')
                                  WHERE id = ? AND (stripe_subscription_id IS NULL OR stripe_subscription_id = ?)`)
             .run(userId, sub.id);
           if (r.changes) console.log(`Subscription cancelled for ${userId}`);

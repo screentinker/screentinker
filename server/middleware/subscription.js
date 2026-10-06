@@ -118,7 +118,8 @@ function downgradeLapsed(userId) {
      WHERE id = ?
        AND past_due_since IS NOT NULL
        AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
-       AND plan_id != 'free'`);
+       AND plan_id != 'free'
+       AND plan_comped = 0`);
   return _downgradeLapsedStmt.run(userId).changes === 1;
 }
 
@@ -144,7 +145,7 @@ function restorePlan(userId, planId) {
   }
   return db.prepare(`
     UPDATE users
-       SET plan_id = ?, subscription_status = 'active', past_due_since = NULL,
+       SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE ? END, subscription_status = 'active', past_due_since = NULL,
            payment_failed_email_sent_at = NULL, subscription_lapsed_email_sent_at = NULL
      WHERE id = ?`).run(planId, userId).changes === 1;
 }

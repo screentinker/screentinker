@@ -122,11 +122,11 @@ router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
    *     lapse is still announced.
    */
   db.prepare(`UPDATE users
-                 SET plan_id = ?, subscription_status = 'active', trial_started = NULL,
+                 SET plan_id = ?, plan_comped = ?, subscription_status = 'active', trial_started = NULL,
                      past_due_since = NULL, payment_failed_email_sent_at = NULL,
                      subscription_lapsed_email_sent_at = NULL, updated_at = strftime('%s','now')
                WHERE id = ?`)
-    .run(plan_id, user_id);
+    .run(plan_id, plan_id === 'free' ? 0 : 1, user_id);
 
   res.json({ success: true, plan: plan.display_name });
 });
