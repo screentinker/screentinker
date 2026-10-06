@@ -153,7 +153,10 @@ function renderUnsafe(widget, opts) {
         ? render.slideImageResolver(env, null)(v)
         : readContentImage(v, widget.workspace_id);
     }
-    if (p.type === 'data_source' && v && widget.workspace_id) {
+    // opts.dataFor: the public gallery's demo render supplies its own values and has no workspace.
+    if (p.type === 'data_source' && v && typeof opts.dataFor === 'function') {
+      data[p.name] = boundedData(opts.dataFor(v));
+    } else if (p.type === 'data_source' && v && widget.workspace_id) {
       if (!dataMap) {
         try { dataMap = require('../data-sources/service').getWorkspaceDataMapSync(widget.workspace_id); } catch { dataMap = {}; }
       }

@@ -167,6 +167,7 @@ app.use((req, res, next) => {
   // Template previews carry their own sandboxing CSP (lib/templates/render.js).
   if (req.path.startsWith('/api/templates/preview/')) return next();
   if (req.path.startsWith('/api/templates/asset/')) return next();   // sets its own `sandbox` CSP
+  if (req.path.startsWith('/api/templates/demo/')) return next();    // the gallery preview: same CSP as a render
   if (req.path.startsWith('/api/kiosk/') && req.path.endsWith('/render')) return next();
   /*
    * ⚠️ AN HTML BUNDLE IS THE SAME CASE AS A WIDGET RENDER, and it fails the same way without this.
@@ -468,6 +469,16 @@ function sendMarkdown(req, res, file, canonicalPath) {
   }
 }
 
+// /templates is rendered from the live catalog, so its rendition is too (the file on disk is only
+// the shell and its fallback copy).
+app.get('/templates.md', (req, res) => {
+  const base = aiSurface.origin(req);
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Link', aiSurface.linkHeader(base));
+  res.send(mdRendition.toMarkdown(require('./routes/templates-gallery').build(), { url: `${base}/templates`, origin: base }));
+});
+
 app.get(/\.md$/, (req, res, next) => {
   const file = aiSurface.markdownSource(config.frontendDir, req.path);
   if (!file) return next();
@@ -560,6 +571,10 @@ app.get('/docs', (req, res) => {
 // The router falls back to the committed static page if that merge fails, because a URL named in a
 // contract should degrade to "our entries only" rather than to an error.
 app.use('/certified-hardware', require('./routes/certified-hardware'));
+// The public template gallery: the committed shell plus cards from the live official catalog.
+// Exact paths only, so nothing under /templates/ is claimed from the static files.
+app.get('/templates.html', (req, res) => res.redirect(301, '/templates'));
+app.get('/templates', require('./routes/templates-gallery').page);
 app.get('/certified-hardware/submit', (req, res) => {
   res.sendFile(path.join(config.frontendDir, 'certified-hardware-submit.html'));
 });
@@ -1742,6 +1757,7 @@ app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; nex
   const tplRoutes = require('./routes/templates');
   tplPublic.get('/preview/:token', (req, res, next) => tplRoutes.handle(req, res, next));
   tplPublic.get('/thumb/:sha', (req, res, next) => tplRoutes.handle(req, res, next));
+  tplPublic.get('/demo/:sha', (req, res, next) => tplRoutes.handle(req, res, next));
   tplPublic.get(/^\/asset\/[0-9a-f]{64}\/.+$/, (req, res, next) => tplRoutes.handle(req, res, next));
   app.use('/api/templates', rateLimit(60000, 120), tplPublic);
 }
