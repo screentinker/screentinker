@@ -63,6 +63,22 @@ function providerStatus() {
   };
 }
 
+/*
+ * A provider failure. `message` is the scrubbed detail for the server log; `publicMessage` is what
+ * a customer is told — never the provider's own words, which describe the platform's account.
+ */
+class ProviderError extends Error {
+  constructor(detail, status) {
+    super(detail);
+    this.name = 'ProviderError';
+    this.status = status || null;
+    this.publicMessage = status === 400 || status === 422
+      ? 'the image provider refused this prompt. Try rewording it.'
+      : status === 'timeout' ? 'the image provider took too long to answer.'
+      : 'the image provider is unavailable right now.';
+  }
+}
+
 function scrub(text, key) {
   let s = String(text || '');
   if (key) s = s.split(key).join('[redacted]');
@@ -78,7 +94,7 @@ function scrub(text, key) {
 async function generate({ row, prompt, width, height, fetchImpl = fetch }) {
   const p = PROVIDERS[row.provider];
   const key = keyFor(row.provider);
-  if (!p || !key) throw new Error('This hosted provider is not enabled.');
+  if (!p || !key) throw new ProviderError('This hosted provider is not enabled.');
   const body = { model: row.model, prompt, n: 1, ...row.request };
   if (p.dialect === 'xai') {
     body.response_format = 'b64_json';
@@ -96,20 +112,21 @@ async function generate({ row, prompt, width, height, fetchImpl = fetch }) {
     });
     if (!res.ok) {
       const t = await res.text().catch(() => '');
-      throw new Error(`Provider error ${res.status}: ${scrub(t, key).slice(0, 200)}`);
+      throw new ProviderError(`Provider error ${res.status}: ${scrub(t, key).slice(0, 200)}`, res.status);
     }
     const j = await res.json();
     const d = j && j.data && j.data[0];
     if (d && d.b64_json) return 'data:image/png;base64,' + d.b64_json;
     if (d && d.url && /^https:\/\//.test(d.url)) {
       const img = await fetchImpl(d.url, { signal: controller.signal });
-      if (!img.ok) throw new Error(`Provider image download failed (${img.status})`);
+      if (!img.ok) throw new ProviderError(`Provider image download failed (${img.status})`, img.status);
       return 'data:image/png;base64,' + Buffer.from(await img.arrayBuffer()).toString('base64');
     }
-    throw new Error('Provider returned no image.');
+    throw new ProviderError('Provider returned no image.');
   } catch (e) {
-    if (e && e.name === 'AbortError') throw new Error('Provider timed out.');
-    throw new Error(scrub(e && e.message, key));
+    if (e && e.name === 'AbortError') throw new ProviderError('Provider timed out.', 'timeout');
+    if (e instanceof ProviderError) { e.message = scrub(e.message, key); throw e; }
+    throw new ProviderError(scrub(e && e.message, key));
   } finally {
     clearTimeout(timer);
   }
@@ -126,4 +143,4 @@ function warnIfRateCardStale(nowMs = Date.now()) {
   return true;
 }
 
-module.exports = { PROVIDERS, catalog, enabled, providerEnabled, providerStatus, generate, scrub, warnIfRateCardStale };
+module.exports = { PROVIDERS, ProviderError, catalog, enabled, providerEnabled, providerStatus, generate, scrub, warnIfRateCardStale };
