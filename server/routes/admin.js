@@ -591,9 +591,9 @@ router.put('/telemetry', requirePlatformAdmin, async (req, res) => {
 
 // ===================== Version update indicator =====================
 // check-update = requireAdmin — a read-only GHCR poll, operational.
-// trigger-update = requirePlatformAdmin — it runs `docker compose up -d` on the
-// HOST via docker.sock (root-equivalent), so it's restricted to platform-owner
-// level; DOCKER_UPDATE_ENABLED gates it further (off by default).
+// trigger-update / update-status = requirePlatformAdmin — they queue and watch an upgrade of
+// the whole instance. The work is done by the separate host-side updater (lib/instance-updater.js,
+// docs/instance-updater.md), never by this process.
 
 const ghcrCheck = require('../lib/ghcr-check');
 const VERSION = require('../version');
@@ -645,29 +645,48 @@ function detectInstall() {
   return { kind: 'unknown', command: null };
 }
 
-// POST /api/admin/trigger-update — run docker compose pull && up -d where this instance is
-// actually docker-managed, otherwise hand back the command that suits how it IS installed.
-router.post('/trigger-update', requirePlatformAdmin, async (req, res) => {
-  const { exec } = require('child_process');
-  const install = detectInstall();
-  const cmd = install.command;
-
-  if (install.kind !== 'docker' || !require('../config').dockerUpdateEnabled) {
+// POST /api/admin/trigger-update — queue an upgrade for the host-side updater, when one is
+// installed; otherwise hand back the command that suits how this instance IS installed.
+//
+// ⚠️ This used to exec `docker compose pull && up -d` from inside the app (DOCKER_UPDATE_ENABLED).
+// That could never work: the image has no docker CLI, and a container recreating itself kills the
+// command half way. The updater is a separate process precisely so the upgrade outlives the restart.
+router.post('/trigger-update', requirePlatformAdmin, (req, res) => {
+  const updater = require('../lib/instance-updater');
+  const u = updater.info();
+  if (!u.available) {
+    const install = detectInstall();
     return res.json({
-      docker_enabled: false,
+      queued: false,
+      updater: u,
       install: install.kind,
-      instructions: cmd
+      instructions: install.command
         || 'This instance was not installed in a way the server recognises, so there is no safe command to suggest. See docs/operations.md for the upgrade steps.',
     });
   }
+  const target = (req.body && req.body.target) || ghcrCheck.getLatestVersion();
+  try {
+    const job = updater.requestUpdate({ target, current: VERSION, userId: req.user.id });
+    logActivity(req.user.id, 'admin_trigger_update', `queued upgrade v${VERSION} -> v${job.target} (${job.kind} updater)`, null, getClientIp(req), null);
+    res.json({ queued: true, ...job });
+  } catch (e) {
+    if (e instanceof updater.UpdaterError) return res.status(e.code === 'busy' ? 409 : 400).json({ error: e.message, code: e.code });
+    console.error('[updater] could not queue the request:', e && e.message);
+    res.status(500).json({ error: 'Could not queue the upgrade request' });
+  }
+});
 
-  exec(cmd, { timeout: 60000 }, (err, stdout, stderr) => {
-    const output = (stdout || '') + (stderr || '');
-    if (err) {
-      return res.json({ success: false, output, docker_enabled: true, error: err.message });
-    }
-    logActivity(req.user.id, 'admin_trigger_update', `docker compose up -d`, null, getClientIp(req), null);
-    res.json({ success: true, output, docker_enabled: true });
+// GET /api/admin/update-status — what the dashboard polls while an upgrade runs (and across the
+// restart: the status lives outside this process).
+router.get('/update-status', requirePlatformAdmin, (req, res) => {
+  const updater = require('../lib/instance-updater');
+  const latest = ghcrCheck.getLatestVersion();
+  res.json({
+    current: VERSION,
+    latest: latest || null,
+    update_available: latest ? ghcrCheck.compareVersions(latest, VERSION) > 0 : false,
+    updater: updater.info(),
+    ...updater.status(),
   });
 });
 

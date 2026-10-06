@@ -26,6 +26,7 @@ services:
       #                                      # (an org can also set its own STUN/TURN there, overriding GO2RTC_* for its video + talk)
     volumes:
       - st-data:/data               # db, uploads, and the jwt secret persist here
+      # - st-updater:/updater:ro    # uncomment with the updater service below (read-only here)
       # To enable OTA APK downloads, mount a built APK read-only:
       # - ./ScreenTinker.apk:/data/ScreenTinker.apk:ro
     healthcheck:
@@ -63,8 +64,30 @@ services:
 #     #   - "8555:8555/tcp"
 #     #   - "8555:8555/udp"
 
+# ---- Optional: one-click upgrades (Platform -> System -> "Update Now") -----------------------
+# Without this, "Update Now" shows the commands to run by hand. With it, a platform admin can
+# upgrade from the dashboard: the updater backs up the database, pulls the release, pins this file
+# to it, recreates the screentinker service and rolls back if the new version does not get healthy.
+# It never upgrades on its own - only when someone presses the button. See docs/instance-updater.md.
+#
+# ⚠️ It holds docker.sock (root on this host), which is why it is a separate container and the app
+# is not. Uncomment the service, the st-updater volume (here and on screentinker above), and set
+# both paths to where THIS file lives, mounted at the SAME path inside the container.
+#
+#   updater:
+#     build: { context: ., dockerfile: docker/updater/Dockerfile }   # from a checkout of the repo
+#     restart: unless-stopped
+#     environment:
+#       COMPOSE_FILE: /opt/screentinker/docker-compose.yml   # this file's absolute host path
+#     volumes:
+#       - /var/run/docker.sock:/var/run/docker.sock
+#       - /opt/screentinker:/opt/screentinker                 # this file's directory, same path
+#       - st-data:/data                                       # reads requests from /data/updater
+#       - st-updater:/updater                                 # writes status the app shows
+
 # Locked out of the admin account? Reset it with:
 #   docker exec -it screentinker node scripts/reset-admin.js
 
 volumes:
   st-data:
+  # st-updater:
