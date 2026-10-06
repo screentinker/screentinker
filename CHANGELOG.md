@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.4.3
+
+Three dashboard fixes, found while capturing a real 2.4.2 server for the release video. Server and
+dashboard only: no player changes, no database changes.
+
+### Fixed
+
+- **Platform → System showed nothing about the updater (#497).** The page asked whether you are a
+  platform admin without saying who you are, which always answered no, so it never fetched the
+  updater's status. With the updater installed:
+  - the **Updater ready** card now shows;
+  - **Update Now** asks for confirmation before it queues an upgrade;
+  - reloading the page mid-upgrade picks the progress back up, and a failed or rolled-back upgrade
+    from the last day is shown again.
+
+  Upgrades always needed an admin to press the button; that is unchanged.
+- **Reports → Top Content showed "NaN%" completion for every item (#497).** The column divided by a
+  count the report has not returned since the hourly proof-of-play rollup in 2.3.0. Nothing
+  measures whether a play completed (the rollup keeps no such count, and the raw flag is set on
+  every advance), so the column is removed rather than replaced with a number nobody measured. The
+  raw-plays CSV export is unchanged.
+- **Reports → Interactive sessions: the "Sessions per day" bars stacked down the page (#497)**
+  instead of standing side by side like the other charts.
+
 ## 2.4.2
 
 One-click upgrades from the dashboard, hosted AI slide images paid in organization credits, and
