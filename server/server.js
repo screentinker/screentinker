@@ -472,6 +472,7 @@ function sendMarkdown(req, res, file, canonicalPath) {
 // /templates is rendered from the live catalog, so its rendition is too (the file on disk is only
 // the shell and its fallback copy).
 app.get('/templates.md', (req, res) => {
+  if (config.disableHomepage) return res.status(404).type('text/plain').send('not found');
   const base = aiSurface.origin(req);
   res.type('text/markdown; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
