@@ -29,8 +29,15 @@ object WebViewSupport {
     // context ("This video is unavailable / Error 152"). A real third-party domain
     // is what legitimate embeds use.
     const val EMBED_BASE = "https://screentinker.com"
+    // How long the YouTube wrapper waits for its embed iframe to fail before calling the load good.
+    private const val EMBED_SETTLE_MS = 5_000L
 
-    fun configure(webView: WebView, tag: String) {
+    /**
+     * [onLoadState] hears whether the frame the viewer would SEE loaded (true) or failed (false):
+     * the main frame, or for the YouTube wrapper the embed iframe inside it. Null for callers that
+     * only want the retry behaviour.
+     */
+    fun configure(webView: WebView, tag: String, onLoadState: ((ok: Boolean) -> Unit)? = null) {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -61,15 +68,34 @@ object WebViewSupport {
          */
         var retryAttempt = 0
         var pendingRetry: Runnable? = null
+        /*
+         * ⚠️ A FAILED LOAD IS ALSO HIDDEN, not just retried. Between retries — and for as long as an
+         * outage lasts — the WebView is showing Chrome's error document, and on a signage panel that
+         * is the product telling a shop floor "webpage not available". Transparent instead: what is
+         * behind it (the stage's black, or a zone's background) is what a broken frame should look
+         * like. Shown again only when a load FINISHES clean, so a retry that half-paints and fails
+         * again never flashes the error page either. A page that already loaded is never touched
+         * here: its own failing requests are subresources, and only the frame the viewer sees
+         * counts (OfflineGate, point 2).
+         */
+        var failedThisLoad = false
+        var loadGeneration = 0
+        webView.alpha = 1f
+
+        fun markFailed(view: WebView?) {
+            failedThisLoad = true
+            view?.alpha = 0f
+            try { onLoadState?.invoke(false) } catch (t: Throwable) { DebugLog.e(tag, "onLoadState threw: ${t.message}") }
+        }
 
         fun cancelRetry(view: WebView?) {
             pendingRetry?.let { view?.removeCallbacks(it) }
             pendingRetry = null
         }
 
-        fun scheduleRetry(view: WebView?, url: String?, why: String) {
+        fun scheduleRetry(view: WebView?, url: String?, why: String, reloadDocument: Boolean = false) {
             if (view == null) return
-            if (!WebViewRetryPolicy.isRetryableUrl(url)) return
+            if (!reloadDocument && !WebViewRetryPolicy.isRetryableUrl(url)) return
             retryAttempt += 1
             val delay = WebViewRetryPolicy.delayMsFor(retryAttempt)
             DebugLog.w(tag, "load failed ($why) — retry #$retryAttempt in ${delay}ms url=$url")
@@ -78,8 +104,10 @@ object WebViewSupport {
                 pendingRetry = null
                 // Re-request the URL rather than reload(): after an error the WebView's current
                 // page is Chrome's error document, and reload() on some builds re-renders that
-                // instead of fetching again.
-                try { view.loadUrl(url!!) } catch (t: Throwable) {
+                // instead of fetching again. The exception is a failed IFRAME (reloadDocument): the
+                // main document is our own wrapper and still intact, and loading the embed URL
+                // top-level instead would trade the outage for YouTube's Error 153.
+                try { if (reloadDocument) view.reload() else view.loadUrl(url!!) } catch (t: Throwable) {
                     DebugLog.e(tag, "retry load threw: ${t.message}")
                 }
             }
@@ -96,6 +124,8 @@ object WebViewSupport {
                  * and puts a frame back on screen that nothing is expecting.
                  */
                 cancelRetry(view)
+                failedThisLoad = false
+                loadGeneration++
                 super.onPageStarted(view, url, favicon)
             }
 
@@ -103,19 +133,52 @@ object WebViewSupport {
                 // A page that loaded is the end of the backoff: the next fault starts from 2s again,
                 // so a screen that drops out for a moment recovers quickly rather than inheriting a
                 // 30s wait from an outage hours ago.
-                if (WebViewRetryPolicy.isRetryableUrl(url) && retryAttempt > 0) {
+                // Not for the YouTube wrapper (see below): it "finishes" even while its embed fails.
+                val wrapper = url?.startsWith(EMBED_BASE) == true
+                if (WebViewRetryPolicy.isRetryableUrl(url) && retryAttempt > 0 && !wrapper && !failedThisLoad) {
                     DebugLog.i(tag, "load recovered after $retryAttempt retry(s) url=$url")
                 }
-                if (WebViewRetryPolicy.isRetryableUrl(url)) retryAttempt = 0
+                // Nor is the backoff reset for it: resetting here would pin an offline embed to the
+                // 2s first retry forever. Its reset waits for the settled success below.
+                if (WebViewRetryPolicy.isRetryableUrl(url) && !wrapper) retryAttempt = 0
+                // onPageFinished also fires for Chrome's error document after a failed load; only a
+                // load with no failure since onPageStarted is a success worth showing and reporting.
+                // about:blank is a teardown, not content.
+                if (!failedThisLoad && url != null && !url.startsWith("about:")) {
+                    view?.alpha = 1f
+                    /*
+                     * The YouTube wrapper "finishes" before its embed iframe has even tried, so a
+                     * success reported here would arrive just ahead of the iframe's failure every
+                     * retry — and a run of failures that keeps being interrupted by successes never
+                     * lasts long enough to bring up the standby cover. Wait for the iframe to settle.
+                     */
+                    val gen = ++loadGeneration
+                    val report = Runnable {
+                        if (gen == loadGeneration && !failedThisLoad) {
+                            if (wrapper) {
+                                if (retryAttempt > 0) DebugLog.i(tag, "embed recovered after $retryAttempt retry(s)")
+                                retryAttempt = 0
+                            }
+                            try { onLoadState?.invoke(true) } catch (t: Throwable) { DebugLog.e(tag, "onLoadState threw: ${t.message}") }
+                        }
+                    }
+                    if (wrapper) view?.postDelayed(report, EMBED_SETTLE_MS) else report.run()
+                }
                 super.onPageFinished(view, url)
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                if (request?.isForMainFrame != true) return
+                if (request == null) return
                 val code = error?.errorCode ?: WebViewClient.ERROR_UNKNOWN
-                DebugLog.e(tag, "WebView load error $code ${error?.description} url=${request.url}")
+                // A YouTube item's main frame is our own data: wrapper and cannot fail; what fails
+                // offline is the embed iframe inside it, which paints the same error page. For that
+                // one subframe, a failure is the item failing.
+                val embed = !request.isForMainFrame && isYoutubeEmbed(request.url?.toString())
+                if (!request.isForMainFrame && !embed) return
+                DebugLog.e(tag, "WebView load error $code ${error?.description} url=${request.url}${if (embed) " (embed)" else ""}")
                 if (WebViewRetryPolicy.shouldRetryError(code)) {
-                    scheduleRetry(view, request.url?.toString(), "error $code")
+                    markFailed(view)
+                    scheduleRetry(view, request.url?.toString(), "error $code", reloadDocument = embed)
                 }
             }
 
@@ -124,6 +187,9 @@ object WebViewSupport {
                 val status = errorResponse?.statusCode ?: 0
                 DebugLog.e(tag, "WebView HTTP $status url=${request.url}")
                 if (WebViewRetryPolicy.shouldRetryHttp(status)) {
+                    // A 502/503 here is a gateway or a server that is not up: as broken to a viewer
+                    // as no network at all, so hidden the same way.
+                    markFailed(view)
                     scheduleRetry(view, request.url?.toString(), "HTTP $status")
                 }
             }
@@ -136,6 +202,12 @@ object WebViewSupport {
                 return super.onConsoleMessage(msg)
             }
         }
+    }
+
+    /** The embed iframe youtubeEmbedHtml builds: https://www.youtube.com/embed/<id>. */
+    internal fun isYoutubeEmbed(url: String?): Boolean {
+        if (url.isNullOrEmpty()) return false
+        return url.startsWith("$YT_BASE/embed/") || url.startsWith("https://youtube.com/embed/")
     }
 
     fun extractYoutubeId(url: String): String? {

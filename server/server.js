@@ -1407,6 +1407,7 @@ app.get('/api/devices/:id/screenshot', (req, res) => {
 // send an Authorization header, so the dashboard fetches these with the Bearer
 // token; this verifies it and checks workspace membership. Anonymous players
 // (no token) still fall back to the playlist/widget reference gate. (#39)
+const { isReferencedForPlayers } = require('./lib/content-reference');
 function requesterCanAccessContent(req, content) {
   try {
     const m = (req.headers.authorization || '').match(/^Bearer (.+)$/);
@@ -1431,14 +1432,9 @@ app.get('/api/content/:id/file', (req, res) => {
   const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
   if (!content) return res.status(404).json({ error: 'Content not found' });
   if (!content.filepath) return res.status(404).json({ error: 'No file (remote URL content)' });
-  const inPlaylist = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
-  // Scope widget lookup to widgets in the content's workspace — prevents a user
-  // in another workspace from unlocking this content by creating a widget that
-  // references the UUID. Phase 2.2d: keyed off content.workspace_id (was user_id).
-  // Perf note: LIKE scan on widgets.config is O(n) per request. Fine at current scale
-  // (<100 widgets); revisit with a content_widget_refs join table if this grows.
-  const inWidget = inPlaylist ? null : db.prepare('SELECT id FROM widgets WHERE workspace_id = ? AND config LIKE ? LIMIT 1').get(content.workspace_id, `%/api/content/${req.params.id}/%`);
-  if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
+  // In a playlist, a widget in the content's workspace, or a device's standby image — see
+  // lib/content-reference.js for why each, and for the workspace scoping.
+  if (!isReferencedForPlayers(db, content) && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
   // Scale-out (docs/scale-out.md): the row was copied, the bytes were not — fetch through, or (C3,
@@ -1529,9 +1525,7 @@ app.get('/api/content/:id/bundle', async (req, res) => {
   if (content.mime_type !== htmlBundle.BUNDLE_MIME || !content.filepath) {
     return res.status(404).json({ error: 'Not an HTML bundle' });
   }
-  const inPlaylist = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
-  const inWidget = inPlaylist ? null : db.prepare('SELECT id FROM widgets WHERE workspace_id = ? AND config LIKE ? LIMIT 1').get(content.workspace_id, `%/api/content/${req.params.id}/%`);
-  if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) {
+  if (!isReferencedForPlayers(db, content) && !requesterCanAccessContent(req, content)) {
     return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   }
 
@@ -1596,9 +1590,7 @@ app.get('/api/content/:id/thumbnail', (req, res) => {
   // referenced by a playlist or by a widget IN THE CONTENT'S WORKSPACE. Without
   // this, any anonymous caller holding a content UUID could pull any tenant's
   // thumbnail (the /file route already had this check; the thumbnail route did not).
-  const inPlaylist = db.prepare('SELECT id FROM playlist_items WHERE content_id = ? LIMIT 1').get(req.params.id);
-  const inWidget = inPlaylist ? null : db.prepare('SELECT id FROM widgets WHERE workspace_id = ? AND config LIKE ? LIMIT 1').get(content.workspace_id, `%/api/content/${req.params.id}/%`);
-  if (!inPlaylist && !inWidget && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
+  if (!isReferencedForPlayers(db, content) && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   // YouTube (and any future remote-sourced) content stores thumbnail_path as a remote
   // http(s) URL, not a local file. Proxy it instead of resolving it to a local path that
   // doesn't exist (contentDir/hqdefault.jpg -> ENOENT spam). Local thumbnails are

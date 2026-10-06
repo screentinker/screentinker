@@ -59,6 +59,9 @@ class MainActivity : AppCompatActivity() {
     // #170: content-id signature of the last processed playlist, to detect a genuine content change
     // (first load / reassignment / toggle-back) vs the routine 60s same-playlist refresh.
     private var lastDownloadSig: String? = null
+    private lateinit var cacheJanitor: com.remotedisplay.player.data.CacheJanitor
+    private var lastCacheSweepMs = 0L
+    private val webHealth = com.remotedisplay.player.player.OfflineGate.WebHealth()
     private lateinit var screenshotCapture: ScreenshotCapture
     private lateinit var touchInjector: TouchInjector
 
@@ -204,6 +207,7 @@ class MainActivity : AppCompatActivity() {
         try { systemControl.applyPersistedWindowBrightness(window) } catch (_: Throwable) {}
 
         contentCache = ContentCache(this)
+        cacheJanitor = com.remotedisplay.player.data.CacheJanitor(java.io.File(filesDir, "content_cache"))
         bundleCache = com.remotedisplay.player.data.BundleCache(this)
         // Coordinated background downloads (single-flight + bounded pool + backoff) — reconnect-safe.
         downloadCoordinator = com.remotedisplay.player.data.DownloadCoordinator(
@@ -393,6 +397,23 @@ class MainActivity : AppCompatActivity() {
             },
             transitionView = transitionView
         )
+
+        /*
+         * Offline fallback (OfflineGate). An item cannot load when the socket to the server is down,
+         * or when that item just failed by itself — decided here rather than from Android's VALIDATED
+         * flag, which took minutes to notice an unplugged modem. The failure is recorded BEFORE the
+         * controller hears about it, so the selection it makes next already passes over the item.
+         */
+        playlistController.setOfflineCheck { item ->
+            com.remotedisplay.player.player.OfflineGate.cannotLoad(item, wsService?.isConnected() == true, webHealth, System.currentTimeMillis())
+        }
+        mediaPlayer.onWebLoadState = { ok ->
+            val key = playlistController.currentItem?.itemKey
+            if (key != null) {
+                if (ok) { webHealth.reportSuccess(key); playlistController.onNetworkItemRecovered() }
+                else { webHealth.reportFailure(key, System.currentTimeMillis()); playlistController.onNetworkItemFailed() }
+            }
+        }
 
         // #344: applyOrientation() may have already run before mediaPlayer existed (its isInitialized
         // guard skipped the geometry push then), so seed the transition-stage geometry now from
@@ -1013,6 +1034,28 @@ class MainActivity : AppCompatActivity() {
             // Runs for wall + single-zone; multi-zone drives its own rendering via ZoneManager
             // (the startIfNeeded below is guarded so it won't run behind zones).
             thread {
+                /*
+                 * Reclaim media nothing references any more. The media cache had no eviction at all: a
+                 * removed item's file stayed on disk forever, until a small stick filled up and every
+                 * new download failed. See CacheJanitor for the grace period and the low-space rule.
+                 *
+                 * ⚠️ ONLY FROM A PAYLOAD WITH ASSIGNMENTS — the same rule as the offline playlist copy
+                 * above. An empty push (suspended, unassigned, still draining) says nothing about what
+                 * the next offline period will need, and sweeping on it would empty the cache that
+                 * copy exists to play from. The item on screen is kept too: a #157 deferred removal
+                 * is still playing it. FIRST in this thread, so a disk that is already full is cleared
+                 * before the downloads below need the room.
+                 */
+                if (assignments.length() > 0 && (contentChanged || System.currentTimeMillis() - lastCacheSweepMs > CACHE_SWEEP_EVERY_MS)) {
+                    lastCacheSweepMs = System.currentTimeMillis()
+                    try {
+                        val keep = com.remotedisplay.player.data.CacheJanitor.referencedIds(data).toMutableSet()
+                        playlistController.currentContentId?.takeIf { it.isNotEmpty() }?.let { keep.add(it) }
+                        val swept = cacheJanitor.sweep(keep)
+                        swept.deletedIds.forEach { downloadCoordinator.forget(it) }
+                    } catch (e: Exception) { Log.w("MainActivity", "cache sweep failed: ${e.message}") }
+                }
+
                 for (i in 0 until assignments.length()) {
                     val item = assignments.getJSONObject(i)
                     // Widget assignments have no downloadable content file - skip
@@ -1082,9 +1125,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) { /* standby pin is best-effort */ }
 
-                // Reclaim renders for bundles that have left the playlist. The media cache has no
-                // eviction at all, but this store is small and bounded by the playlist, so keeping
-                // it tidy costs one pass and stops a long-lived panel accreting dead documents.
+                // Reclaim renders for bundles that have left the playlist. Unlike the media cache
+                // (CacheJanitor, above) this store is small and bounded by the playlist, so it is
+                // pruned on sight: one pass stops a long-lived panel accreting dead documents.
                 try {
                     val live = mutableSetOf<String>()
                     for (i in 0 until assignments.length()) {
@@ -1093,6 +1136,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (live.isNotEmpty()) bundleCache.pruneToPlaylist(live)
                 } catch (e: Exception) { /* reclaim is best-effort */ }
+
 
                 // Start/resume playback immediately — do NOT wait on downloads (they're async now).
                 // Screen-resilience plays whatever is cached and skips not-yet-ready items; the 3s
@@ -2129,5 +2173,11 @@ class MainActivity : AppCompatActivity() {
                 View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
             )
         }
+    }
+
+    private companion object {
+        // The routine refresh lands every ~60s with an unchanged playlist; a sweep then has nothing
+        // new to decide, so it runs on a real change or at most this often.
+        const val CACHE_SWEEP_EVERY_MS = 30L * 60 * 1000
     }
 }
