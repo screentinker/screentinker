@@ -18,7 +18,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 const guard = require('../lib/corporate/guard');
 const runtime = require('../lib/corporate/runtime');
 const fanout = require('../lib/corporate/fanout');
@@ -702,7 +702,7 @@ router.get('/workspace', (req, res) => {
   const out = { workspace_id: wsId || null, active: false, is_admin: false, devices: {}, groups: {}, walls: {}, shadowed_schedules: [] };
   if (!wsId) return res.json(out);
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(wsId);
-  if (!ws || !accessContext(req.user.id, req.user.role, ws)) return res.status(403).json({ error: 'Access denied' });
+  if (!ws || !resourceAccess(req, ws)) return res.status(403).json({ error: 'Access denied' });
   out.is_admin = !req.viaToken && guard.isOrgAdmin(req, ws.organization_id);
   if (!runtime.active(db)) return res.json(out);
   const describe = (m) => ({
@@ -788,7 +788,7 @@ router.get('/preview', (req, res) => {
   // Role matrix §4.10 "Preview any screen's composed loop": org admins and corporate authors for any
   // screen of the org; everyone else for the screens of a workspace they can read.
   const hqReader = !req.viaToken && (guard.isOrgAdmin(req, org.id) || guard.canAuthor(req, org.id));
-  if (!hqReader && !(ws && accessContext(req.user.id, req.user.role, ws))) return res.status(403).json({ error: 'Access denied' });
+  if (!hqReader && !(ws && resourceAccess(req, ws))) return res.status(403).json({ error: 'Access denied' });
   const { buildPlaylistPayloadUnchecked } = require('../ws/deviceSocket');
   const payload = buildPlaylistPayloadUnchecked(deviceId);
   const r = db.prepare('SELECT playlist_id, source FROM device_resolved_playlist WHERE device_id = ?').get(deviceId) || {};
