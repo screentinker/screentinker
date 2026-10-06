@@ -1,5 +1,52 @@
 # Changelog
 
+## 2.4.1
+
+A public template gallery for the website, and three follow-ups to interactive web pages.
+
+The interactive page changes (#491) are the ones **@visimpres-glitch** asked for on #473, each with
+the design already worked out against the code and the kiosk browsers they compared it with. Thanks
+again for the testing on real panels.
+
+### Added
+
+- **Public template gallery at `/templates` (#490)**, linked from the homepage nav and from the
+  reworked "Turnkey App & Template Library" feature card.
+  - Built from the official template catalog this server last accepted (signature-verified), not a
+    list in the page. Templates are published to the catalog independently of releases, so a new
+    one appears on the next catalog poll with no upgrade.
+  - Filters: Corporate, Retail & Hospitality, Data & Dashboards, Utilities, Interactive.
+  - **Interactive web preview** (`GET /api/templates/demo/<sha256>`, public): renders an installed,
+    active, official template with its own defaults plus demo weather. It never reads a workspace's
+    data, images or fonts, gets the same `sandbox allow-scripts` CSP as a widget on a screen, and is
+    limited like the other public template routes. It previews screen shapes at their real sizes:
+    1920×1080, 1080×1920 and 1920×200.
+  - Never fails. With no accepted catalog (library off, or never fetched) the page serves its
+    committed fallback. Also in the sitemap and `llms.txt`, with a live `/templates.md` rendition.
+  - `DISABLE_HOMEPAGE=true` turns the gallery and its previews off with the homepage.
+    See `docs/templates.md`.
+- **Interactive web pages: "Wipe the site's cookies and storage after each visitor" (#491)**, per
+  item, default on as before. Off is for information pages with nothing to protect (menus, price
+  lists, maps): the cookie banner and the chosen language then stay. Each visitor still gets a
+  fresh page, and history, form data, HTTP auth and the cache are still cleared.
+  - Android skips the cookie and WebStorage wipe, including the wipe after a power cut.
+  - The native Pi/Windows player carries every cookie of the allowed sites to the next visitor.
+    Its site storage still cannot survive.
+  - Tizen skips its cookie wipe.
+  - BrightSign's opt-in top-level mode always wipes.
+  - Storage is shared by every web page on a screen, so another item's wipe clears it too.
+- **Interactive web pages: a "Still there?" choice in the widget editor (#491)**: Off, 5, 10 or 20
+  seconds. Any other value set through the API is kept and shown.
+
+### Fixed
+
+- **Saving a webpage widget in the dashboard dropped settings the form has no field for (#491)**,
+  for example `min_webview`, or an `idle_warning_sec` set through the API. The form now starts from
+  the widget's existing config.
+- **Interactive pages using orestbida/cookieconsent kept showing the consent banner (#491).** Its
+  `cc_cookie` is now in the built-in list of consent cookies that "Keep the site's cookie-consent
+  choice" preserves.
+
 ## 2.4.0
 
 Head office playlists, smart playlists, interactive walk-up web pages on every player, moving a screen

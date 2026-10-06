@@ -14,6 +14,16 @@
   ],
   "releases": [
     {
+      "version": "2.4.1",
+      "date": "2026-10-05",
+      "notes": [
+        "Interactive web pages have a new switch, \"Wipe the site's cookies and storage after each visitor\". Turn it off for information pages such as menus or maps, so the cookie banner and the chosen language stay between visitors.",
+        "Interactive web pages: you can now choose how long the \"Still there?\" warning shows before a page resets, or turn it off.",
+        "Saving a web page widget no longer drops settings that the form does not show.",
+        "The ScreenTinker website has a public template gallery with live previews. On a self-hosted server it is on with the homepage; set DISABLE_HOMEPAGE to hide both."
+      ]
+    },
+    {
       "version": "2.4.0",
       "date": "2026-10-05",
       "notes": [
