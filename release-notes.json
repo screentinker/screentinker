@@ -14,6 +14,16 @@
   ],
   "releases": [
     {
+      "version": "2.4.2",
+      "date": "2026-10-06",
+      "notes": [
+        "Platform admins can upgrade the server from the dashboard (Platform → System → Update Now) once the host-side updater is installed. It backs up the database first, and rolls back on its own, database included, if the new version doesn't come up.",
+        "AI slide images can now be paid for in organization credits, with no API key of your own. This appears only on servers where the operator has configured it. Paying organizations get 10% of last month's screen bill in included credits each month.",
+        "Security and billing fixes from an internal audit: API tokens stay inside their workspace, stored values are escaped in the dashboard, plans changed in the Stripe billing portal are applied correctly, and plans an administrator grants by hand are no longer reverted.",
+        "Accounts that converted from a trial are now held to their plan's screen limit. Self-hosted operators: check the upgrade notes in CHANGELOG.md before upgrading."
+      ]
+    },
+    {
       "version": "2.4.1",
       "date": "2026-10-05",
       "notes": [

@@ -1,5 +1,115 @@
 # Changelog
 
+## 2.4.2
+
+One-click upgrades from the dashboard, hosted AI slide images paid in organization credits, and
+the fixes from an internal code audit and a pre-release review: tenant isolation, billing,
+content and deletion integrity, and dashboard escaping.
+
+⚠️ Read **Upgrade notes** below before upgrading a server with paying customers.
+
+### Added
+
+- **Update Now, through a host-side updater (#493, #496).** Platform → System → **Update Now**
+  (platform admins only, never automatic) queues an upgrade. A separate root-owned updater carries
+  it out:
+  - It backs up the database and checks the backup's integrity, installs the release, restarts,
+    and confirms the new version answers.
+  - If the new version doesn't come up, it rolls back. When the new release had already started,
+    the rollback also restores the pre-upgrade database and keeps the one the new release left as
+    `<db>.failed-v<version>-<time>`.
+  - There are two install shapes: a systemd path unit for git installs, and a `docker:cli`
+    sidecar for Docker.
+  - It takes only a version number from the app. "Newer" is measured against the release the
+    updater finds installed, never against what the app reports. It works only inside the real
+    path of its request directory.
+  - The old in-app `docker compose pull` path (`DOCKER_UPDATE_ENABLED`) could never have worked
+    and is gone.
+  - Without the updater installed, the button shows the command to run, as before. See
+    `docs/instance-updater.md`.
+  - `upgrade.sh` now finds a `DATA_DIR` outside the checkout from the running unit. If the service
+    is running but the database isn't where it looked, it refuses instead of skipping the backup.
+- **Hosted AI slide images, paid in organization credits (#494, #495).** This is a second AI path
+  beside bring-your-own-key, which is unchanged.
+  - It appears only when a provider key is set in the server environment (`XAI_API_KEY`, …).
+    Keys are never stored, sent to the browser or logged. With no keys, nothing is shown and
+    nothing is for sale.
+  - You always pick the provider, model, resolution and quality. Each image costs 2× the
+    provider's price for that exact combination (1 credit = $0.01). A combination that isn't on
+    the rate card is refused.
+  - A paying organization gets **10% of last month's final screen bill** in included credits
+    each month. They expire at month end.
+  - Organization owners and admins can buy $10, $25 and $50 packs through Stripe. Purchased
+    credits never expire.
+  - A failure is refunded in full, a retry is charged once, and the balance never goes negative.
+  - Platform operators acting as an organization can't spend its credits. Only organization
+    admins see the organization's screen bill and usage. A provider's own error text stays in the
+    server log. See `docs/ai-credits.md`.
+
+### Fixed
+
+- **Tenant isolation (audit F01, F06, F12, F24; #492).**
+  - An API token's workspace binding now holds on every by-id route, the head office routes
+    included, and never falls back to the token owner's other workspaces.
+  - A fingerprint is never linked to an unproven `device_id`.
+  - Workspace viewers can no longer create device groups or root folders.
+- **Stored cross-site scripting in the dashboard (#492).**
+  - Stored values are now escaped before they reach the page: widget configs, designer
+    properties, report names, and device fields (audit F08, F09, F10, F18).
+  - This includes the screen owner's display name and the screen size a player reports. The
+    server now stores only whole pixel counts.
+- **HTML bundles are sandboxed by a CSP,** so opening one at the top level gets an opaque origin
+  (audit F04).
+- **Content and uploads (audit F05, F11, F16, F22, F26).**
+  - A refused replace no longer breaks the live item, and refusals leave no orphan uploads.
+  - The resumable-upload storage allowance holds across parallel sessions and is re-checked at
+    finalize.
+  - Deleting an item also deletes its submissions, revisions and retained files.
+- **Deleting users, workspaces and organizations (audit F20, F23).** Shared content folders survive
+  their creator's deletion. A workspace or tenant delete removes its files and history, only after
+  the delete has committed, and keeps files that another tenant still uses.
+- **Devices (audit F07, F17, F21).**
+  - #150 settings are restored at the claim, never onto a row with no workspace.
+  - The heartbeat sweep never removes a provisioning device that belongs to a workspace.
+  - Forgiving a device in the OTA breaker keeps its #341 no-progress counter.
+- **Billing (audit F02, F03, F13, F14, F15, F25; #492).**
+  - A trial that converted is held to its plan's screen limit.
+  - A plan change made in the Stripe billing portal now reaches the plan, because the billed price
+    is trusted over stale checkout metadata. The nightly reconcile fixes the same drift when a
+    webhook is lost.
+  - A subscription that Stripe reports as `canceled` or `incomplete_expired` is treated as gone,
+    and a lost payment-failed webhook still starts the grace period.
+  - The lapse email names the plan the customer is losing, and arrives only once the downgrade has
+    actually happened.
+  - Deleting a duplicate subscription no longer drops an account that is still paying.
+  - **A plan an administrator grants by hand is now changed only by an administrator, or by the
+    customer's own new checkout.** Previously the subscription webhooks, the nightly reconcile and
+    the dunning lapse could revert it. Paid plans with no subscription and no trial are treated as
+    granted by hand.
+- **Refused saves are no longer reported as saved:** branding and layout saves the server refuses
+  now say so (audit F19, F27).
+
+### Upgrade notes
+
+- ⚠️ **Screen limits on converted trials (audit F02).** Accounts that signed up through a trial
+  and then paid, or later dropped to Free, used to skip the per-plan screen limit forever. From
+  2.4.2 they are held to it, so screens beyond the limit show "Device Limit Reached" as soon as
+  they reconnect after the upgrade. To see who this affects before upgrading:
+
+  ```sql
+  SELECT u.email, u.plan_id, p.max_devices, COUNT(d.id) AS screens
+    FROM users u JOIN plans p ON p.id = u.plan_id JOIN devices d ON d.user_id = u.id
+   WHERE u.trial_started IS NOT NULL AND p.max_devices > 0
+     AND NOT (u.trial_started + 1209600 > CAST(strftime('%s','now') AS INT)
+              AND u.plan_id = u.trial_plan AND u.stripe_subscription_id IS NULL)
+   GROUP BY u.id HAVING screens > p.max_devices;
+  ```
+
+- The nightly Stripe reconcile now corrects plan drift and canceled subscriptions for every
+  subscriber, at its first run after the upgrade.
+- New tables (`ai_credit_ledger`, `ai_credit_reservations`) and one new column
+  (`users.plan_comped`). All are additive, and 2.4.1 runs on a 2.4.2 database.
+
 ## 2.4.1
 
 A public template gallery for the website, and three follow-ups to interactive web pages.
