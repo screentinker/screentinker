@@ -133,7 +133,6 @@ export async function render(container) {
               <th style="padding:8px;text-align:left;color:var(--text-muted)">${t('report.col.content')}</th>
               <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('report.col.plays')}</th>
               <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('report.col.total_hours')}</th>
-              <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('report.col.completion')}</th>
             </tr></thead>
             <tbody>
               ${summary.by_content.map(c => `
@@ -141,9 +140,8 @@ export async function render(container) {
                   <td style="padding:8px">${esc(c.content_name || t('common.unknown'))}</td>
                   <td style="padding:8px;text-align:right">${c.plays}</td>
                   <td style="padding:8px;text-align:right">${(c.total_seconds / 3600).toFixed(1)}</td>
-                  <td style="padding:8px;text-align:right">${c.plays > 0 ? Math.round((c.completed_plays / c.plays) * 100) : 0}%</td>
                 </tr>
-              `).join('') || `<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-muted)">${t('report.no_data')}</td></tr>`}
+              `).join('') || `<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--text-muted)">${t('report.no_data')}</td></tr>`}
             </tbody>
           </table>
           </div>
@@ -214,7 +212,7 @@ async function renderKioskSessions(deviceId, start, end) {
         <div class="info-card"><div class="info-card-label">${t('report.kiosk.avg_pages')}</div><div class="info-card-value small">${esc(String(k.overall.avg_pages))}</div></div>
       </div>
       <h3 style="font-size:13px;margin-bottom:8px">${t('report.kiosk.per_day')}</h3>
-      <div id="kioskDailyChart" style="margin-bottom:16px"></div>
+      <div id="kioskDailyChart" style="height:200px;display:flex;align-items:flex-end;gap:2px;margin-bottom:16px"></div>
       <div class="table-wrap">
       <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">
         <thead><tr style="border-bottom:1px solid var(--border)">

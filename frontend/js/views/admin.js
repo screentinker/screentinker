@@ -791,7 +791,9 @@ async function loadSystem() {
     const version = await fetch('/api/version').then(r => r.json());
     const token = localStorage.getItem('token');
     // Platform admins only (the route enforces it); anyone else just gets the version cards.
-    const updateStatus = isPlatformAdmin()
+    // ⚠️ isPlatformAdmin needs the user. Called bare it was always false, so this page never asked:
+    // no "Updater ready" card, no confirm before Update Now, and no progress after a reload.
+    const updateStatus = isPlatformAdmin(JSON.parse(localStorage.getItem('user') || '{}'))
       ? await fetch('/api/admin/update-status', { headers: headers() }).then(r => (r.ok ? r.json() : null)).catch(() => null)
       : null;
     const updaterInfo = updateStatus?.updater || null;
