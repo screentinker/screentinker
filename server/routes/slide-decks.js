@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 const deckLib = require('../lib/slide-deck');
 const slideRender = require('../lib/slide-render');
 
@@ -26,7 +26,7 @@ function checkDeckAccess(req, res, requireWrite) {
   const deck = db.prepare('SELECT * FROM slide_decks WHERE id = ?').get(req.params.id);
   if (!deck) { res.status(404).json({ error: 'Deck not found' }); return null; }
   const ws = deck.workspace_id ? db.prepare('SELECT * FROM workspaces WHERE id = ?').get(deck.workspace_id) : null;
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   // A read-only member may VIEW a deck but not author, publish, or delete it — the same rule
   // playlists (loadPlaylistAccess) and schedules already enforce, and which was missing here. Publish

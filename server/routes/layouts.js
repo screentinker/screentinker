@@ -6,7 +6,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2h: workspace-aware access. Templates (is_template=1) are the
 // platform-shared pair (NULL user_id, NULL workspace_id) and are visible
 // everywhere, writable only by platform_admin.
-const { accessContext, denyReadOnly } = require('../lib/tenancy');
+const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 
 // List layouts in the caller's current workspace plus all templates.
 // Phase 2.2h: workspace-scoped. Templates (is_template=1) remain visible to
@@ -45,7 +45,7 @@ function checkLayoutRead(req, res) {
     res.status(403).json({ error: 'Layout not assigned to a workspace' }); return null;
   }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(layout.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   return layout;
 }
@@ -65,7 +65,7 @@ function checkLayoutWrite(req, res) {
     res.status(403).json({ error: 'Layout not assigned to a workspace' }); return null;
   }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(layout.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
@@ -410,7 +410,7 @@ router.put('/device/:deviceId', (req, res) => {
   if (!device.workspace_id) return res.status(403).json({ error: 'Device not assigned to a workspace' });
 
   const deviceWs = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
-  const ctx = deviceWs && accessContext(req.user.id, req.user.role, deviceWs);
+  const ctx = deviceWs && resourceAccess(req, deviceWs);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     return res.status(403).json({ error: 'Read-only access' });

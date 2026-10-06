@@ -13,7 +13,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { PLATFORM_ROLES } = require('../middleware/auth');
 // Phase 2.2c: workspace-aware access. Mirrors devices.js / content.js.
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess, denyReadOnly } = require('../lib/tenancy');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -42,7 +42,7 @@ function accessibleFolder(req, folderId, requireWrite = false) {
   }
 
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(row.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return null;
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return null;
   return { row, ctx };
@@ -61,6 +61,10 @@ router.get('/', (req, res) => {
 // Create a folder in the caller's current workspace.
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating folders.' });
+  // ⚠️ A read-only member cannot create (audit F24). Update/delete were already gated by the
+  // resource-scoped write check, but a create has no resource to load, so nothing stopped a viewer
+  // adding rows here — and burning the per-workspace folder cap that then 429s editors.
+  if (denyReadOnly(req, res)) return;
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
   if (name.length > 100) return res.status(400).json({ error: 'name too long' });

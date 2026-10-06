@@ -421,14 +421,21 @@ async function pruneUsageDaily() {
   return (await chunkedDelete((lim) => _delUsage.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
 }
 
-// #142: sweep unclaimed provisioning devices older than 24h (imported devices keep a
-// user_id and are preserved). #146: now async + CHUNKED (rides idx_devices_provisioning)
-// so a provisioning-junk flood can't delete-cascade a huge batch in one synchronous
-// statement. Returns rows deleted. NOTE: async now — callers must await.
+// #142: sweep unclaimed provisioning devices older than 24h. #146: now async + CHUNKED (rides
+// idx_devices_provisioning) so a provisioning-junk flood can't delete-cascade a huge batch in one
+// synchronous statement. Returns rows deleted. NOTE: async now — callers must await.
+//
+// ⚠️ "Unclaimed" means NO WORKSPACE, not "no user_id". Every real pairing row (ws/deviceSocket.js
+// insertProvisioningRow, routes/embedded.js) is inserted without a workspace; a workspace import
+// (routes/status.js) creates provisioning placeholders WITH one, user_id = importer and created_at
+// copied from the export, so they are usually >24h old on arrival. user_id alone was protecting
+// them, and deleteUserCascade NULLs devices.user_id in orgs the user doesn't own - so deleting the
+// member who imported a workspace let the next sweep delete those screens (and cascade away their
+// assignments, groups and schedules). A row with a workspace has been claimed, whoever made it.
 const _delProvisioning = db.prepare(`
   DELETE FROM devices WHERE rowid IN (
     SELECT rowid FROM devices
-    WHERE status = 'provisioning' AND user_id IS NULL AND created_at < ?
+    WHERE status = 'provisioning' AND user_id IS NULL AND workspace_id IS NULL AND created_at < ?
     LIMIT ?
   )
 `);

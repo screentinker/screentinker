@@ -118,7 +118,8 @@ function downgradeLapsed(userId) {
      WHERE id = ?
        AND past_due_since IS NOT NULL
        AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
-       AND plan_id != 'free'`);
+       AND plan_id != 'free'
+       AND plan_comped = 0`);
   return _downgradeLapsedStmt.run(userId).changes === 1;
 }
 
@@ -144,9 +145,34 @@ function restorePlan(userId, planId) {
   }
   return db.prepare(`
     UPDATE users
-       SET plan_id = ?, subscription_status = 'active', past_due_since = NULL,
+       SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE ? END, subscription_status = 'active', past_due_since = NULL,
            payment_failed_email_sent_at = NULL, subscription_lapsed_email_sent_at = NULL
      WHERE id = ?`).run(planId, userId).changes === 1;
+}
+
+/*
+ * Which of our plans a Stripe subscription represents.
+ *
+ * ⚠️ THE BILLED PRICE IS THE AUTHORITY; metadata.plan_id is only the fallback. Checkout stamps
+ * subscription metadata ONCE and Stripe never changes it when the billing portal swaps the price —
+ * and the portal is where every plan change happens. Metadata-first re-wrote the ORIGINAL plan
+ * after every portal upgrade or downgrade, so billing and entitlement drifted apart in both
+ * directions. Metadata still answers for a price no plan row knows (a hand-made price in the
+ * Stripe dashboard, a plan whose price id was never configured here).
+ *
+ * planIdFromPrice is the strict half — null unless a plans row carries that price — for callers
+ * that may only OVERWRITE a stored plan when Stripe's charge proves it (the reconcile).
+ */
+function planIdFromPrice(sub) {
+  const priceId = sub && sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].price
+    && sub.items.data[0].price.id;
+  if (!priceId) return null;
+  const row = db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?')
+    .get(priceId, priceId);
+  return row ? row.id : null;
+}
+function planIdFromSubscription(sub) {
+  return planIdFromPrice(sub) || (sub && sub.metadata && sub.metadata.plan_id) || null;
 }
 
 function getUserPlan(userId) {
@@ -367,6 +393,8 @@ module.exports = {
   findLapsedSubscriberIds,
   downgradeLapsed,
   restorePlan,
+  planIdFromPrice,
+  planIdFromSubscription,
   expireTrial,
   findExpiredTrialUserIds,
   getUserPlan,

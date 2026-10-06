@@ -38,6 +38,9 @@ app.set('io', io);
 for (const r of ['widgets', 'content', 'fonts', 'custom-shaders', 'kiosk', 'layouts']) {
   app.use('/api/' + r, requireAuth, resolveTenancy, require('../routes/' + r));
 }
+// audit F24: the two create routes the first sweep missed. Mounted at their real paths.
+app.use('/api/groups', requireAuth, resolveTenancy, require('../routes/device-groups'));
+app.use('/api/folders', requireAuth, resolveTenancy, require('../routes/folders'));
 const server = app.listen(0);
 test.after(() => { server.close(); });
 
@@ -61,6 +64,8 @@ const CREATES = [
   ['POST', '/api/custom-shaders', { source: 'x', name: 's' }],
   ['POST', '/api/kiosk', { name: 'k' }],
   ['POST', '/api/layouts', { name: 'L' }],
+  ['POST', '/api/groups', { name: 'g' }],
+  ['POST', '/api/folders', { name: 'f' }],   // a ROOT folder: the parent_id path was already gated
 ];
 
 test('a read-only member cannot create in its workspace (widgets/content/fonts/shaders/kiosk/layouts)', async () => {
@@ -75,4 +80,11 @@ test('an editor is not over-blocked by the create gate', async () => {
   assert.notEqual(await call('POST', '/api/widgets', 'u-vc-editor', { widget_type: 'clock', name: 'w' }), 403);
   assert.notEqual(await call('POST', '/api/kiosk', 'u-vc-editor', { name: 'k' }), 403);
   assert.notEqual(await call('POST', '/api/layouts', 'u-vc-editor', { name: 'L' }), 403);
+  assert.equal(await call('POST', '/api/groups', 'u-vc-editor', { name: 'g' }), 201);
+  assert.equal(await call('POST', '/api/folders', 'u-vc-editor', { name: 'f' }), 201);
+});
+
+test('audit F24: a viewer leaves no group or folder row behind', () => {
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM device_groups WHERE user_id = 'u-vc-viewer'").get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM content_folders WHERE workspace_id = ? AND name = ? AND user_id = ?').get(WS, 'f', 'u-vc-viewer').n, 0);
 });

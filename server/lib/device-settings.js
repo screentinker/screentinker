@@ -90,7 +90,15 @@ function applyToDevice(deviceId, fingerprint) {
   // legitimate thing to do, it just must not drag the previous owner's configuration along.
   const dev = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);
   if (!dev) return null;
-  if (s.workspace_id && dev.workspace_id && s.workspace_id !== dev.workspace_id) return null;
+  // ⚠️ AUDIT F07: a row with NO workspace is never a restore target. The automatic re-pair path
+  // used to call this on the freshly INSERTed provisioning row, which never has a workspace_id
+  // (it only gets one at the claim), so the `dev.workspace_id &&` below short-circuited the guard
+  // to "apply" on EVERY automatic restore: workspace A's playlist/layout/default content/team were
+  // written onto the unclaimed row, the claim never cleared them, and tenant B's screen played A's
+  // content. The restore now runs from the claim (restoreOnClaim), after workspace_id is set, where
+  // the comparison below actually means something.
+  if (!dev.workspace_id) return null;
+  if (s.workspace_id && s.workspace_id !== dev.workspace_id) return null;
   const sets = [], vals = [];
   const put = (col, val) => { sets.push(`${col} = ?`); vals.push(val); };
 
@@ -110,6 +118,16 @@ function applyToDevice(deviceId, fingerprint) {
   vals.push(deviceId);
   db.prepare(`UPDATE devices SET ${sets.join(', ')}, updated_at = strftime('%s','now') WHERE id = ?`).run(...vals);
   return s;
+}
+
+// #150 automatic restore, run by the pairing CLAIM (/api/provision/pair) once the row has been
+// moved into the claiming workspace. Looks up the fingerprint the device registered with (the
+// provisioning path links it to the new row) and applies the snapshot — which applyToDevice only
+// does when the snapshot was taken in that SAME workspace. Returns the applied snapshot or null.
+function restoreOnClaim(deviceId) {
+  const fpRow = _fpForDevice.get(deviceId);
+  if (!fpRow || !fpRow.fingerprint) return null;
+  return applyToDevice(deviceId, fpRow.fingerprint);
 }
 
 // The "previously removed devices" browser — snapshots for the given workspace(s).
@@ -156,4 +174,4 @@ function setBlockedByDevice(deviceId, blocked) {
   return r.changes > 0;
 }
 
-module.exports = { snapshot, applyToDevice, listRemoved, getByFingerprint, purgeWorkspaces, setBlockedByDevice, validOrientation, ORIENTATIONS };
+module.exports = { snapshot, applyToDevice, restoreOnClaim, listRemoved, getByFingerprint, purgeWorkspaces, setBlockedByDevice, validOrientation, ORIENTATIONS };

@@ -6,7 +6,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2j: workspace-aware access. Underlying tables (devices, playlists)
 // already carry workspace_id from Phase 1; this route can use them even
 // though playlists.js itself isn't yet workspace-filtered.
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 const { zoneInLayout } = require('../lib/zone-validate');
 // #237 + #widget zero-duration loop: one place decides what duration a new item gets —
 // explicit value, else the content's own length, else the 10s default (and never a 0).
@@ -63,7 +63,7 @@ function checkDeviceAccess(req, res, paramName = 'deviceId', requireWrite = true
   if (!device) { res.status(404).json({ error: 'Device not found' }); return null; }
   if (!device.workspace_id) { res.status(403).json({ error: 'Device not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (requireWrite && !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
@@ -283,7 +283,7 @@ function checkItemWrite(req, res) {
   if (!item) { res.status(404).json({ error: 'Item not found' }); return null; }
   if (!item.pl_workspace_id) { res.status(403).json({ error: 'Playlist not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(item.pl_workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;

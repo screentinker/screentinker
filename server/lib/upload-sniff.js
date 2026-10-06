@@ -199,6 +199,6 @@ function finalizeUpload(file) {
 }
 
 module.exports = {
-  finalizeUpload, sniffMime, UnsupportedUploadError,
+  finalizeUpload, sniffMime, readHead, UnsupportedUploadError,
   MIME_TO_EXT, INLINE_SAFE_EXTS, SNIFF_BYTES,
 };

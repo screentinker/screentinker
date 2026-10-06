@@ -77,6 +77,51 @@ db.exec(`
   CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '');
   CREATE TABLE layouts (id TEXT PRIMARY KEY);
   CREATE TABLE widgets (id TEXT PRIMARY KEY);
+  -- Deleting content deletes its history (audit F22), submissions before revisions, and that step
+  -- no longer swallows errors - so a fixture without these tables would 500 the delete, exactly as
+  -- a real DB missing them should. Real DDL from db/schema.sql (the update path writes revisions).
+  CREATE TABLE IF NOT EXISTS revisions (
+      id              TEXT PRIMARY KEY,
+      workspace_id    TEXT,
+      resource_type   TEXT NOT NULL,
+      resource_id     TEXT NOT NULL,
+      rev_no          INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      actor_user_id   TEXT,
+      actor_kind      TEXT NOT NULL DEFAULT 'user',
+      actor_label     TEXT,
+      summary         TEXT NOT NULL DEFAULT '',
+      state           TEXT NOT NULL,
+      state_hash      TEXT NOT NULL,
+      file_ref        TEXT,
+      thumb_ref       TEXT,
+      parent_id       TEXT,
+      submission_id   TEXT,
+      published_at    INTEGER,
+      published_by    TEXT,
+      is_baseline     INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(resource_type, resource_id, rev_no)
+  );
+  CREATE TABLE IF NOT EXISTS submissions (
+      id              TEXT PRIMARY KEY,
+      workspace_id    TEXT NOT NULL,
+      resource_type   TEXT NOT NULL,
+      resource_id     TEXT NOT NULL,
+      revision_id     TEXT NOT NULL,
+      state_hash      TEXT NOT NULL,
+      deps            TEXT NOT NULL DEFAULT '{}',
+      note            TEXT,
+      submitted_by    TEXT,
+      submitted_at    INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'submitted',
+      reviewer_id     TEXT,
+      decided_at      INTEGER,
+      comment         TEXT,
+      published_at    INTEGER,
+      published_by    TEXT,
+      version         INTEGER NOT NULL DEFAULT 1,
+      updated_at      INTEGER NOT NULL
+  );
 `);
 // The SAME definitions the migration applies — imported, not pasted, so this fixture cannot drift
 // into proving things about a database that does not exist: the corporate schema (its columns on

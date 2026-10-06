@@ -26,16 +26,17 @@ const { checkStorageLimit, checkRemoteUrl } = require('../middleware/subscriptio
 const { cleanUserText } = require('../middleware/sanitize');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2b: workspace-aware access. Mirrors the pattern from devices.js.
-const { accessContext, denyReadOnly } = require('../lib/tenancy');
+const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 // #73: the upload ingest (processing + insert) is now shared with the agency router.
 const { ingestUploadedFile, deriveMediaMetadata } = require('../lib/content-ingest');
 const uploadSession = require('../lib/upload-session');
 const subscriptionLimits = require('../middleware/subscription');
 const htmlBundle = require('../lib/html-bundle');
-const { finalizeUpload, INLINE_SAFE_EXTS } = require('../lib/upload-sniff');
+const { finalizeUpload, INLINE_SAFE_EXTS, sniffMime, readHead: readUploadHead, MIME_TO_EXT: UPLOAD_MIME_TO_EXT } = require('../lib/upload-sniff');
 const { digestFile } = require('../lib/content-digest');
 const { normalizeTags, normalizeMeta, parseTags, parseMeta } = require('../lib/content-tags');
 const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-files');
+const revisionsLib = require('../lib/revisions');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
 const { LIVE_MIME, RTSP_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl } = require('../lib/remote-url');
@@ -218,11 +219,43 @@ function uploadContentFilesGuarded(req, res, next) {
     return next(err);
   });
 }
-router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) => {
+/*
+ * ⚠️ MULTER HAS ALREADY WRITTEN EVERY BYTE BEFORE A ROUTE HANDLER RUNS. Each upload lands in
+ * contentDir as `<uuid>.part`, and nothing sweeps those (upload-session sweeps only incoming/,
+ * content-receive only `mesh-*`) and nothing counts them against an allowance. So every refusal a
+ * handler makes AFTER multer must remove what multer wrote, or a 404 on a made-up content id
+ * leaves 500 MB on disk for ever — at the route's rate limit, gigabytes a minute per user.
+ * `files` defaults to everything on the request; the batch loop passes only the files it has not
+ * ingested yet, because the ones before them are now rows and their bytes are live.
+ */
+function discardUploads(req, files = null) {
+  const list = files || [
+    ...(req.file ? [req.file] : []),
+    ...(Array.isArray(req.files) ? req.files : Object.values(req.files || {}).flat()),
+  ];
+  for (const f of list) {
+    if (f && f.path) { try { fs.unlinkSync(f.path); } catch (_) { /* already gone */ } }
+  }
+}
+
+/*
+ * The checks that need no request body run BEFORE multer, so a caller who would be refused never
+ * gets to put bytes on this disk at all. The post-multer handler repeats them (cheap) so it stays
+ * correct on its own, and cleans up whatever it refuses.
+ */
+function uploadPreflight(req, res, next) {
+  if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
+  if (denyReadOnly(req, res)) return;
+  next();
+}
+
+router.post('/', checkStorageLimit, uploadPreflight, uploadContentFilesGuarded, async (req, res) => {
+  const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+  // Index of the first file NOT yet ingested; everything from here on is still a `.part` on disk.
+  let next = 0;
   try {
-    if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
-    if (denyReadOnly(req, res)) return;
-    const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+    if (!req.workspaceId) { discardUploads(req); return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' }); }
+    if (denyReadOnly(req, res)) { discardUploads(req); return; }
     if (files.length === 0) return res.status(400).json({ error: 'No file uploaded' });
 
     // #73: shared ingest - identical processing + insert for dashboard and agency uploads.
@@ -232,18 +265,41 @@ router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) 
     if (folderId) {
       const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(folderId);
       if (!target || target.workspace_id !== req.workspaceId) {
+        discardUploads(req);
         return res.status(400).json({ error: 'Invalid folder_id for this workspace' });
       }
     }
-    const results = [];
+
+    /*
+     * ⚠️ SNIFF THE WHOLE BATCH BEFORE INGESTING ANY OF IT. The loop used to stop at the first
+     * unsupported file and answer 400 — but the files before it were already rows. The client saw a
+     * failure, retried, and duplicated them; the files after it were left as `.part` orphans. A
+     * wrong type is the common refusal and it is knowable from the head bytes alone, so it now
+     * refuses the batch as a unit. (A zip that is not a valid bundle can still only be found out
+     * inside ingest; the catch below at least removes the files that were never reached.)
+     */
     for (const file of files) {
-      results.push(await ingestUploadedFile({ file, userId: req.user.id, workspaceId: req.workspaceId, folderId }));
+      let mime = null;
+      try { mime = sniffMime(readUploadHead(file.path)); } catch (_) { mime = null; }
+      if (!mime || !UPLOAD_MIME_TO_EXT[mime]) {
+        discardUploads(req);
+        return res.status(400).json({
+          error: `Unsupported file type (${file.originalname || 'upload'}) — only image, video and audio files are accepted. Nothing in this upload was added.`,
+        });
+      }
+    }
+
+    const results = [];
+    for (; next < files.length; next++) {
+      results.push(await ingestUploadedFile({ file: files[next], userId: req.user.id, workspaceId: req.workspaceId, folderId }));
     }
     // Backward-compatible shape: a single upload still returns the content object (what
     // every existing caller reads); a multi-file upload returns the array of them.
     for (const c of results) { try { require('../lib/revisions').recordCurrent(db, 'content', c.id, { actor: require('../lib/releases').actorOf(req), summary: 'Uploaded' }); } catch (_) {} }
     res.status(201).json(results.length === 1 ? results[0] : results);
   } catch (err) {
+    // files[next] was being ingested (ingest removes what it refuses); the rest were never reached.
+    discardUploads(req, files.slice(next + 1));
     if (err && err.name === 'UnsupportedUploadError') return res.status(400).json({ error: err.message });
     console.error('Upload error:', err);
     res.status(500).json({ error: 'Upload failed' });
@@ -296,13 +352,24 @@ router.post('/uploads', checkStorageLimit, (req, res) => {
    * at 19.9GB of 20GB could start a 500MB upload and land at 20.4GB. Knowing the size up front is
    * the one advantage a session has over a stream, and this is what it buys.
    */
-  const room = subscriptionLimits.storageRoomBytes(req.user.id);
+  /*
+   * ⚠️ ...and against what this user's OTHER open sessions have already declared. Room counts only
+   * finished rows, so without the reservation N parallel sessions each saw the same room and all
+   * passed (see uploadSession.reservedBytes). The check and the INSERT below run in one synchronous
+   * stretch with no await between them, so two concurrent creates cannot both see the same room.
+   */
+  const rawRoom = subscriptionLimits.storageRoomBytes(req.user.id);
+  const reserved = rawRoom === null ? 0 : uploadSession.reservedBytes(req.user.id);
+  const room = rawRoom === null ? null : rawRoom - reserved;
   if (room !== null && declared > room) {
     return res.status(403).json({
-      error: 'This upload would exceed your storage allowance.',
+      error: reserved > 0
+        ? 'This upload would exceed your storage allowance, counting uploads you already have in progress.'
+        : 'This upload would exceed your storage allowance.',
       code: 'STORAGE_LIMIT',
       needed_bytes: declared,
       available_bytes: Math.max(0, room),
+      reserved_bytes: reserved,
     });
   }
 
@@ -407,6 +474,25 @@ router.post('/uploads/:id/finalize', async (req, res) => {
     return res.status(409).json({
       error: `upload is incomplete: ${offset} of ${session.declared_size} bytes`,
       offset, declared_size: session.declared_size,
+    });
+  }
+
+  /*
+   * ⚠️ RE-CHECKED AT FINALIZE, against the bytes actually staged. The create-time check is a
+   * reservation made against a number the client chose, and usage can move in between (another
+   * upload finalized, a plan downgrade, an upload path that does not reserve). This is the last
+   * moment before the bytes become a row, so it is the one check that cannot be raced past. The
+   * session is discarded on refusal: the client forgets a completed session and starts a new one
+   * on retry, so keeping it would only pin a reservation until the sweeper.
+   */
+  const room = subscriptionLimits.storageRoomBytes(session.user_id);
+  if (room !== null && offset > room) {
+    uploadSession.discard(session);
+    return res.status(403).json({
+      error: 'This upload would exceed your storage allowance.',
+      code: 'STORAGE_LIMIT',
+      needed_bytes: offset,
+      available_bytes: Math.max(0, room),
     });
   }
 
@@ -582,7 +668,7 @@ function checkContentRead(req, res) {
   // Platform-template row: readable by anyone authenticated.
   if (!content.workspace_id) return content;
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   return content;
 }
@@ -598,7 +684,7 @@ function checkContentWrite(req, res) {
     return content;
   }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   // Workspace_viewer is read-only; acting-as (platform_admin or org owner/admin) and editor/admin pass.
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
@@ -623,7 +709,7 @@ function contentWritable(req, content) {
   if (!content) return false;
   if (!content.workspace_id) return PLATFORM_ROLES.includes(req.user.role);
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return false;
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return false;
   // CORPORATE: same rule as checkContentWrite (batch delete / move of head office's media).
@@ -729,7 +815,12 @@ function purgeContentRow(content) {
   }
   scrubCorporate(id, content.workspace_id, affected, scrubbed);
 
+  // Audit F22: the history goes with the row - submissions BEFORE revisions (FK), not swallowed.
+  revisionsLib.deleteHistoryRows(db, 'content', id);
   db.prepare('DELETE FROM content WHERE id = ?').run(id);
+  // ⚠️ Its own try: a filesystem error must never skip (or be mistaken for) the DB work above.
+  try { revisionsLib.removeRetainedFiles(id); }
+  catch (e) { console.warn(`[content] could not remove retained history for ${id}: ${e.message}`); }
   return affected;
 }
 
@@ -953,34 +1044,25 @@ router.put('/:id', (req, res) => {
 });
 
 // Replace content file
-router.put('/:id/replace', upload.single('file'), async (req, res) => {
+/*
+ * ⚠️ AUTHORISED BEFORE MULTER, so a caller who will be refused (a viewer, a made-up id) never puts
+ * bytes on disk. This route used to authorise AFTER upload.single had written the whole file, then
+ * return without removing it — an orphan `.part` per refused request that nothing ever sweeps.
+ */
+function replacePreflight(req, res, next) {
+  if (!checkContentWrite(req, res)) return;
+  next();
+}
+router.put('/:id/replace', replacePreflight, upload.single('file'), async (req, res) => {
+  // Re-read after the upload: the row may have changed (or gone) while the bytes were arriving.
   const content = checkContentWrite(req, res);
-  if (!content) return;
+  if (!content) { discardUploads(req); return; }
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-  // Delete old file and thumbnail — but only if no other row still points at them. A
-  // mesh-received asset is named after its bytes and can legitimately back one row per
-  // workspace; replacing one customer's copy must not empty another's screen.
-  /*
-   * Version history: the bytes being replaced are RETAINED under .history (a move when this row
-   * is their only reference, a copy otherwise), and every revision that described them is
-   * repointed there, so the previous version stays restorable. Approval on: the new bytes land as
-   * a DRAFT next to the live file and nothing a screen shows changes until the draft is reviewed
-   * and published (lib/releases.js releaseContentDraft).
-   */
   const policy = require('../lib/release-policy');
   const revisions = require('../lib/revisions');
   const actor = require('../lib/releases').actorOf(req);
   const approvalOn = !!(content.workspace_id && policy.approvalRequired(db, content.workspace_id));
-  let retainedFile = null, retainedThumb = null;
-  if (!approvalOn) {
-    const prev = revisions.latest(db, 'content', content.id);
-    const tag = prev ? `r${prev.rev_no}` : 'r0';
-    retainedFile = revisions.retainContentFile(db, content.id, content.filepath, tag);
-    retainedThumb = revisions.retainContentFile(db, content.id, content.thumbnail_path, tag);
-    if (!retainedFile) unlinkIfUnreferenced(content.filepath, content.id, 'filepath');
-    if (!retainedThumb) unlinkIfUnreferenced(content.thumbnail_path, content.id, 'thumbnail_path');
-  }
 
   // Same content-derived naming as the main ingest path (lib/upload-sniff) — the caller
   // does not choose the extension here either. A non-media upload 400s.
@@ -1066,6 +1148,30 @@ router.put('/:id/replace', upload.single('file'), async (req, res) => {
     revisions.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Replaced file (draft)' });
     return res.json({ ...db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id), draft: true, pending_review: true });
   }
+
+  // Delete old file and thumbnail — but only if no other row still points at them. A
+  // mesh-received asset is named after its bytes and can legitimately back one row per
+  // workspace; replacing one customer's copy must not empty another's screen.
+  /*
+   * Version history: the bytes being replaced are RETAINED under .history (a move when this row
+   * is their only reference, a copy otherwise), and every revision that described them is
+   * repointed there, so the previous version stays restorable. Approval on: the new bytes land as
+   * a DRAFT next to the live file and nothing a screen shows changes until the draft is reviewed
+   * and published (lib/releases.js releaseContentDraft) — that branch returned above.
+   *
+   * ⚠️ THIS RUNS ONLY ONCE THE NEW BYTES HAVE PASSED EVERY CHECK. It used to run first, before the
+   * sniffer, the bundle-boundary check and validateBundle — so a refused replace (a .zip picked for
+   * an image, a corrupt file) answered 400 with the row unchanged but its live file already moved
+   * into .history and no revision repointed at it. Every screen without a cached copy lost the
+   * item, the thumbnail vanished, and restore could not find the old bytes. Nothing may touch the
+   * live file until the replacement is certain to be written.
+   */
+  const prev = revisions.latest(db, 'content', content.id);
+  const tag = prev ? `r${prev.rev_no}` : 'r0';
+  const retainedFile = revisions.retainContentFile(db, content.id, content.filepath, tag);
+  const retainedThumb = revisions.retainContentFile(db, content.id, content.thumbnail_path, tag);
+  if (!retainedFile) unlinkIfUnreferenced(content.filepath, content.id, 'filepath');
+  if (!retainedThumb) unlinkIfUnreferenced(content.thumbnail_path, content.id, 'thumbnail_path');
 
   db.transaction(() => {
     if (retainedFile) db.prepare('UPDATE revisions SET file_ref = ? WHERE resource_type = ? AND resource_id = ? AND file_ref = ?').run(retainedFile, 'content', content.id, content.filepath);
@@ -1175,12 +1281,10 @@ router.delete('/:id', (req, res) => {
 
   // #213: shared teardown (file removal + snapshot scrub + row delete). Returns the affected
   // device ids so we can push a refresh.
-  const affectedDevices = purgeContentRow(content);
-  // Deleting the item deletes its history and retained bytes with it, consistent with the file.
-  try {
-    db.prepare("DELETE FROM revisions WHERE resource_type = 'content' AND resource_id = ?").run(content.id);
-    fs.rmSync(path.join(require('../lib/revisions').historyDir(), content.id), { recursive: true, force: true });
-  } catch (_) {}
+  // Deleting the item deletes its history and retained bytes with it, consistent with the file
+  // (purgeContentRow, so POST /batch/delete does too). One transaction: the row and its history
+  // rows go together or not at all.
+  const affectedDevices = db.transaction(() => purgeContentRow(content))();
   pushContentUpdates(req, affectedDevices);
   res.json({ success: true, affectedDevices });
 });

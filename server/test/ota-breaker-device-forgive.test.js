@@ -92,3 +92,38 @@ test('the breaker still does its real job after a forgive', () => {
   assert.equal(hammer(d, breaker.THRESHOLD + 2).reason, 'rate-backoff',
     'a looping client is still rate-limited');
 });
+
+// AUDIT F17 — forgiveDevice runs on EVERY authenticated register, and it used to delete the whole
+// bucket, #341 no-progress counter included. A display stuck in the reinstall loop restarts after
+// each install and reconnects, so it was forgiven back to offers=0 before every check and the
+// no-progress hold could never trip — the exact 493-reinstall loop #341 exists to stop.
+test('AUDIT F17: a reconnect between checks does NOT reset the #341 no-progress counter', () => {
+  const d = 'reinstall-loop-device';
+  const T0 = 1_000_000_000_000;
+  const verdicts = [];
+  for (let i = 0; i < 20; i++) {
+    verdicts.push(breaker.decide(OLD, LATEST, d, T0 + i * 15 * 60_000).reason);   // ~15 min polls
+    breaker.forgiveDevice(d);                       // install -> restart -> authenticated reconnect
+  }
+  assert.deepEqual(verdicts.slice(0, 6), Array(6).fill('offer'), 'offered a bounded number of times');
+  assert.ok(verdicts.slice(6).every(r => r === 'no-progress'),
+    `then held off despite the reconnects (got ${verdicts.join(',')})`);
+});
+
+test('AUDIT F17: forgive still clears the rate backoff when the no-progress counter is kept', () => {
+  const d = 'poisoned-and-counted';
+  assert.equal(hammer(d, breaker.THRESHOLD + 2).reason, 'rate-backoff');
+  assert.equal(breaker.forgiveDevice(d), true);
+  assert.equal(breaker.decide(OLD, LATEST, d).update_available, true, 'the rate block is gone');
+});
+
+test('AUDIT F17: genuine progress after a forgive still re-arms the offer', () => {
+  const d = 'progressing-device';
+  const T0 = 2_000_000_000_000;
+  for (let i = 0; i < 7; i++) breaker.decide(OLD, LATEST, d, T0 + i * 15 * 60_000);
+  assert.equal(breaker.decide(OLD, LATEST, d, T0 + 8 * 15 * 60_000).reason, 'no-progress');
+  breaker.forgiveDevice(d);
+  // The display moved (an operator fixed the APK it could install, or it updated by hand).
+  assert.equal(breaker.decide('1.0.1', LATEST, d, T0 + 9 * 15 * 60_000).reason, 'offer',
+    'a changed reported version resets the counter, which is the only reset it needs');
+});

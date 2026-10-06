@@ -24,7 +24,7 @@
  */
 
 const { db } = require('../db/database');
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 const guard = require('../lib/corporate/guard');
 const runtime = require('../lib/corporate/runtime');
 const fanout = require('../lib/corporate/fanout');
@@ -60,14 +60,14 @@ function register(router, h) {
   /** Workspace write access for a store action (editor+, or org/platform acting-as). */
   function wsWrite(req, wsId) {
     const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(wsId);
-    const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+    const ctx = ws && resourceAccess(req, ws);
     if (!ctx) return { ok: false, status: 403, error: 'Access denied' };
     if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') return { ok: false, status: 403, error: 'Read-only access' };
     return { ok: true, ws };
   }
   function wsRead(req, wsId) {
     const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(wsId);
-    return !!(ws && accessContext(req.user.id, req.user.role, ws));
+    return !!(ws && resourceAccess(req, ws));
   }
 
   /** Validate a slot body. @returns {error} | normalized fields (only those present, unless `full`). */

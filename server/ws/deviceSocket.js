@@ -25,7 +25,6 @@ const corpResolve = require('../lib/corporate/resolve');
 const capsLib = require('../lib/player-capabilities');
 const logCoalescer = require('../lib/log-coalescer');
 const loopLag = require('../services/loop-lag');
-const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings restore
 const incidentClassify = require('../lib/incident-classify'); // offline-cause log: disconnect-reason + connectivity classification
 const pluginHooks = require('../lib/plugins/hooks');
 const playerTermination = require('../lib/mesh/player-termination'); // scale-out C2: players on a replica
@@ -190,6 +189,9 @@ let lastScreenshots = {};
 // dashboard reflects it without a full re-register / playlist push). Older APKs omit newer fields.
 function applyDeviceInfo(deviceId, di) {
   const num = (v) => (typeof v === 'number' ? v : null);
+  // Pixel sizes are a player's own report and reach the dashboard's HTML: whole, plausible numbers
+  // or nothing. SQLite would otherwise keep a string in an INTEGER column as TEXT, markup and all.
+  const px = (v) => (Number.isInteger(v) && v > 0 && v <= 100000 ? v : null);
   // Upgrade incident: if the reported app_version differs from what we had stored, log it
   // (old → new) in the incident feed. Server-side, so it covers every client (Android/Tizen/web)
   // with no client change. Only when we HAD a prior version (a fresh pair isn't an "upgrade").
@@ -206,7 +208,7 @@ function applyDeviceInfo(deviceId, di) {
     ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
     can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, capture_mode = ?,
     media_volume = ?, system_brightness = ?, window_brightness = ?, screen_off_timeout_ms = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
-    .run(di.android_version, di.app_version, di.screen_width, di.screen_height, di.render_width ?? null, di.render_height ?? null,
+    .run(di.android_version, di.app_version, px(di.screen_width), px(di.screen_height), px(di.render_width), px(di.render_height),
       di.ota_status ?? 'none', di.ota_target_version ?? null, di.ota_attempts ?? 0,
       Number.isInteger(di.tier) ? di.tier : 0, di.foreign_device_owner ? 1 : 0,
       di.can_write_settings ? 1 : 0, di.accessibility_enabled ? 1 : 0, di.overlay_granted ? 1 : 0,
@@ -1042,8 +1044,16 @@ function checkDeviceAccess(deviceId) {
     }
   }
 
-  // Check if over plan device limit (non-trial)
-  if (!plan.trial_started && plan.max_devices > 0) {
+  // Check if over plan device limit — for everyone EXCEPT a trial that is genuinely still running.
+  //
+  // ⚠️ Keyed on "the trial is running", NOT on `!plan.trial_started`. trial_started is stamped at
+  // signup and only expireTrial() ever cleared it, and expireTrial only fires for an account still
+  // on its trial plan with no subscription — so a trial that CONVERTED (paid, then downgraded or
+  // cancelled to Free) kept trial_started for ever and this branch never ran: 20 screens playing on
+  // a 2-screen Free plan. "Running" = inside the 14 days, still on the plan the trial granted, and
+  // nothing paid for; anything else is held to its plan like any other account.
+  const trialRunning = plan.trial_active && plan.plan_id === plan.trial_plan && !plan.stripe_subscription_id;
+  if (!trialRunning && plan.max_devices > 0) {
     const userDevices = db.prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at ASC').all(device.user_id);
     const deviceIndex = userDevices.findIndex(d => d.id === deviceId);
     if (deviceIndex >= plan.max_devices) {
@@ -1111,8 +1121,9 @@ function provisionViaReplica({ pairing_code, device_info, fingerprint, hw_finger
     try {
       db.prepare("INSERT INTO device_fingerprints (fingerprint, device_id, last_seen, hw_fingerprint) VALUES (?, ?, strftime('%s','now'), ?) ON CONFLICT(fingerprint) DO UPDATE SET device_id = excluded.device_id, last_seen = excluded.last_seen, hw_fingerprint = COALESCE(excluded.hw_fingerprint, device_fingerprints.hw_fingerprint)")
         .run(fingerprint, id, hw_fingerprint || null);
-      deviceSettings.applyToDevice(id, fingerprint);
-    } catch (e) { /* settings restore is best effort */ }
+      // ⚠️ AUDIT F07: NO settings restore here — this row has no workspace yet, so the #150
+      // workspace guard cannot work. The claim (/api/provision/pair) restores instead.
+    } catch (e) { /* fingerprint bookkeeping is best effort */ }
   }
   emitToDeviceWorkspace(_dashboardNsRef, id, 'dashboard:device-added', db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
   console.log(`New device registered via replica ${nodeId}: ${id} with pairing code: ${pairing_code}`);
@@ -2263,8 +2274,16 @@ module.exports = function setupDeviceSocket(io) {
             // Prefer the incoming id, fall back to what is already stored, and only ever write
             // an id that still resolves. Same guard as the INSERT path below; this UPDATE was
             // missed, and it is the one that actually fires (37 FK failures on prod).
+            //
+            // ⚠️ AUDIT F06: the incoming id is honoured ONLY when the caller proved it owns that id
+            // (tokenProven). This block runs BEFORE the token check below, so an unauthenticated
+            // register naming a victim's UUID used to rebind a fingerprint the attacker controls to
+            // the victim's row; a second register with that fingerprint + any pairing_code then took
+            // the "reinstalled app" reclaim path and was minted the victim's NEW token + playlist.
+            // An unproven id leaves the existing link alone — the reclaim path must only ever see a
+            // link that a token-holding device (or the server's own provisioning) wrote.
             const known = (id) => !!(id && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(id));
-            const fpDeviceId = known(device_id) ? device_id
+            const fpDeviceId = (tokenProven && known(device_id)) ? device_id
               : (known(existing.device_id) ? existing.device_id : null);
             db.prepare("UPDATE device_fingerprints SET last_seen = strftime('%s','now'), device_id = ?, hw_fingerprint = COALESCE(?, hw_fingerprint) WHERE fingerprint = ?")
               .run(fpDeviceId, hw_fingerprint || null, fingerprint);
@@ -2428,7 +2447,11 @@ module.exports = function setupDeviceSocket(io) {
             // deleted). device_fingerprints.device_id has an FK to devices(id), and
             // INSERT OR IGNORE does NOT suppress FK violations - so null out an
             // unknown id instead of letting it throw (was a caught, noisy error).
-            const fpDeviceId = (device_id && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(device_id)) ? device_id : null;
+            // ⚠️ AUDIT F06: and never link to a client-supplied id the caller has not proved it owns
+            // (tokenProven) — see the UPDATE above. An unauthenticated register naming a victim's
+            // UUID would otherwise create (attacker-fp -> victim) and the next register with that fp
+            // + a pairing_code reclaimed the victim's row and was handed a fresh token for it.
+            const fpDeviceId = (tokenProven && db.prepare('SELECT 1 FROM devices WHERE id = ?').get(device_id)) ? device_id : null;
             db.prepare("INSERT OR IGNORE INTO device_fingerprints (fingerprint, device_id, hw_fingerprint) VALUES (?, ?, ?)")
               .run(fingerprint, fpDeviceId, hw_fingerprint || null);
           }
@@ -2549,6 +2572,9 @@ module.exports = function setupDeviceSocket(io) {
           // rate-backoff held against it: /api/update/check is unauthenticated and takes a
           // caller-supplied ?device_id=, so that bucket can have been burned by anyone who
           // merely knows this UUID. A genuine reconnect is the proof that lets us forgive it.
+          // ⚠️ AUDIT F17: forgive clears RATE state only. It runs on every accepted register, so if
+          // it also cleared the #341 no-progress counter (it used to) a display in the reinstall
+          // loop reset that counter on each post-install reconnect and was offered forever.
           try { require('../lib/ota-breaker').forgiveDevice(device_id); } catch (_) { /* non-fatal */ }
           socket.emit('device:registered', { device_id, device_token: tokenToSend, status: 'online' });
           // #143: a device paired/claimed server-side (user_id set) that RECONNECTS must be told
@@ -2658,17 +2684,19 @@ module.exports = function setupDeviceSocket(io) {
         authenticated = true;
 
         // #150: relink the fingerprint to the NEW device row (the fingerprint block above
-        // leaves device_id NULL on a post-delete re-pair) so the settings key is reliable,
-        // then restore any settings this physical device had at its last deletion —
-        // orientation/name/playlist/etc come back automatically instead of resetting. Runs
-        // BEFORE the dashboard:device-added emit below so that emit carries restored values.
+        // leaves device_id NULL on a post-delete re-pair) so the settings key is reliable.
+        //
+        // ⚠️ AUDIT F07: the settings RESTORE no longer runs here. This row was just INSERTed with
+        // no workspace_id, so applyToDevice's "same workspace only" guard could never fire and
+        // the previous tenant's playlist/layout/default content/team landed on the unclaimed row
+        // — then survived the claim into a DIFFERENT tenant. The claim (/api/provision/pair)
+        // calls deviceSettings.restoreOnClaim once the row is in its workspace; the link written
+        // here is what it keys on.
         if (fingerprint) {
           try {
             db.prepare("INSERT INTO device_fingerprints (fingerprint, device_id, last_seen, hw_fingerprint) VALUES (?, ?, strftime('%s','now'), ?) ON CONFLICT(fingerprint) DO UPDATE SET device_id = excluded.device_id, last_seen = excluded.last_seen, hw_fingerprint = COALESCE(excluded.hw_fingerprint, device_fingerprints.hw_fingerprint)")
               .run(fingerprint, id, hw_fingerprint || null);
-            const restored = deviceSettings.applyToDevice(id, fingerprint);
-            if (restored) console.log(`[#150] restored saved settings for re-paired device ${id} (fp ${fingerprint.slice(0, 8)}…)`);
-          } catch (e) { console.warn(`[#150] settings restore failed for ${id}: ${e.message}`); }
+          } catch (e) { console.warn(`[#150] fingerprint relink failed for ${id}: ${e.message}`); }
         }
 
         heartbeat.registerConnection(id, socket.id);

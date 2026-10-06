@@ -93,4 +93,23 @@ test('a snapshot with no workspace recorded is still applied, so legacy rows kee
   assert.equal(deviceRow(dev).name, 'Legacy Name');
 });
 
+test('AUDIT F07: a row with NO workspace (the real provisioning row) gets nothing applied', () => {
+  // The automatic restore used to run on the freshly INSERTed provisioning row, whose workspace_id
+  // is always NULL — so `dev.workspace_id &&` short-circuited the guard and A's playlist landed on
+  // the unclaimed row. The tests above all seeded a workspace and never saw that row.
+  const dev = makeDevice('dev-unclaimed', null);
+  assert.equal(deviceSettings.applyToDevice(dev, FP), null);
+  const d = deviceRow(dev);
+  assert.equal(d.playlist_id, null, "A's playlist must not land on a workspace-less row");
+  assert.equal(d.name, 'Screen');
+});
+
+test('AUDIT F07: restoreOnClaim applies via the linked fingerprint once the row is in its workspace', () => {
+  const dev = makeDevice('dev-claimed-A', A.ws);
+  db.prepare("INSERT OR REPLACE INTO device_fingerprints (fingerprint, device_id, last_seen) VALUES (?, ?, strftime('%s','now'))").run(FP, dev);
+  assert.ok(deviceSettings.restoreOnClaim(dev));
+  assert.equal(deviceRow(dev).playlist_id, A.pl);
+  assert.equal(deviceSettings.restoreOnClaim('no-such-device'), null, 'no fingerprint link -> no-op');
+});
+
 test.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {} });

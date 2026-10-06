@@ -230,10 +230,24 @@ function reset() { state.clear(); loggedBad.clear(); Object.assign(rateBackoffCt
 //
 // This cannot be used to evade the breaker's real job: a device stuck in an OTA loop is
 // re-registering legitimately, and clearing its rate state on each genuine reconnect is exactly
-// what a healthy device looks like — the loop protection is the DOWNLOAD guard, not this.
+// what a healthy device looks like. The loop protection for a SLOW loop is the #341 progress
+// counter, which is why that counter survives a forgive (below).
+//
+// ⚠️ AUDIT F17: forgive clears the RATE fields only (hits, blockedUntil, level) — NOT the #341
+// no-progress counter (offerFrom/offerTo/offers) that shares this bucket. It used to delete the
+// whole bucket, and deviceSocket calls this on EVERY authenticated register: a display stuck in
+// the reinstall loop restarts after each install, reconnects, and was forgiven back to offers=0
+// before its next check, so NO_PROGRESS_LIMIT could never be reached and 'no-progress' never
+// fired — the exact loop #341 exists to stop. The counter needs no forgiving: decide() already
+// resets it the moment the reported version or the advertised target actually moves. (An
+// attacker poking ?device_id= can only advance it by the offers they trigger, and it is cleared
+// by the device's own first real progress.)
 function forgiveDevice(deviceId) {
   if (!deviceId) return false;
-  return state.delete('d:' + deviceId);
+  const b = state.get('d:' + deviceId);
+  if (!b) return false;
+  b.hits = []; b.blockedUntil = 0; b.level = 0;
+  return true;
 }
 function _size() { return state.size; }
 // #146 observability — how many update checks the breaker is rate-backing-off (total +

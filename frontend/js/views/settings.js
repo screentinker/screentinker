@@ -1696,22 +1696,46 @@ async function loadWhiteLabel() {
     if (wl.hide_branding) document.getElementById('wlHideBranding').checked = true;
   } catch {}
 
+  /*
+   * ⚠️ custom_domain and custom_css are PLATFORM-ADMIN-ONLY on the server (routes/white-label.js
+   * 403s any non-empty value from anyone else, before writing anything). They used to be sent on
+   * every save, pre-filled from GET — so once the platform team had set either one, every later
+   * save by the workspace admin was refused outright and the brand name never changed. For
+   * everyone else they are shown read-only and LEFT OUT of the body (undefined = "don't touch").
+   */
+  const canSetDomainAndCss = isPlatformAdmin(user);
+  if (!canSetDomainAndCss) {
+    for (const id of ['wlDomain', 'wlCustomCss']) {
+      const f = document.getElementById(id);
+      if (f) { f.readOnly = true; f.title = t('settings.platform_admin_only'); }
+    }
+  }
+
   document.getElementById('saveWhiteLabelBtn')?.addEventListener('click', async () => {
     try {
-      await fetch('/api/white-label', {
+      const body = {
+        brand_name: document.getElementById('wlBrandName').value,
+        logo_url: document.getElementById('wlLogoUrl').value,
+        primary_color: document.getElementById('wlPrimaryColor').value,
+        bg_color: document.getElementById('wlBgColor').value,
+        favicon_url: document.getElementById('wlFavicon').value,
+        hide_branding: document.getElementById('wlHideBranding').checked ? 1 : 0,
+      };
+      if (canSetDomainAndCss) {
+        body.custom_domain = document.getElementById('wlDomain').value;
+        body.custom_css = document.getElementById('wlCustomCss').value;
+      }
+      const res = await fetch('/api/white-label', {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          brand_name: document.getElementById('wlBrandName').value,
-          logo_url: document.getElementById('wlLogoUrl').value,
-          primary_color: document.getElementById('wlPrimaryColor').value,
-          bg_color: document.getElementById('wlBgColor').value,
-          custom_domain: document.getElementById('wlDomain').value,
-          favicon_url: document.getElementById('wlFavicon').value,
-          custom_css: document.getElementById('wlCustomCss').value,
-          hide_branding: document.getElementById('wlHideBranding').checked ? 1 : 0,
-        })
+        body: JSON.stringify(body),
       });
+      // ⚠️ fetch resolves on a 403 too. Without this a refused save (an editor, or the fields above)
+      // still said "Branding saved" while nothing at all had been written.
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || t('settings.toast.branding_save_failed'));
+      }
       await resetBranding();
       showToast(t('settings.toast.branding_saved'), 'success');
     } catch (err) {

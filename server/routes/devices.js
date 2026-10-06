@@ -7,7 +7,7 @@ const { resolveDevicePlaylist, resolvedLayoutId } = require('../lib/resolve-devi
 const { PLATFORM_ROLES, ELEVATED_ROLES, isPlatformStaff } = require('../middleware/auth');
 // Phase 2.2a: workspace-aware access. accessContext returns { workspaceRole, actingAs }
 // or null based on the caller's reach into a specific workspace.
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 // requireScope gates by API-token scope; the workspace WRITE gate is checkDeviceOwnership, which
 // already rejects workspace_viewer — the same check requireFleetWrite performs in routes/triggers.js.
 const { requireScope } = require('../middleware/apiToken');
@@ -239,7 +239,7 @@ router.get('/:id', (req, res) => {
   // to the device's workspace.
   if (!device.workspace_id) return res.status(403).json({ error: 'Device not assigned to a workspace' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (ctx.workspaceRole) device._workspaceRole = ctx.workspaceRole; // Pass to frontend
   if (ctx.actingAs) device._actingAs = true;
@@ -448,7 +448,7 @@ function checkDeviceOwnership(req, res) {
   if (!device) { res.status(404).json({ error: 'Device not found' }); return null; }
   if (!device.workspace_id) { res.status(403).json({ error: 'Device not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   // ctx.actingAs covers platform_admin and org_owner/admin paths (always writable).
   // Direct workspace members: workspace_viewer is read-only.
@@ -471,7 +471,7 @@ router.get('/:id/preview-payload', (req, res) => {
   if (!device) return res.status(404).json({ error: 'Device not found' });
   if (!device.workspace_id) return res.status(403).json({ error: 'Device not assigned to a workspace' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   // Unchecked on purpose: this is the dashboard's "what would it play" preview, not a delivery
   // channel. The gated buildPlaylistPayload would render a suspended card for a blocked screen.
@@ -1173,7 +1173,7 @@ function checkDeviceRead(req, res) {
   if (!device) { res.status(404).json({ error: 'Device not found' }); return null; }
   if (!device.workspace_id) { res.status(403).json({ error: 'Device not assigned to a workspace' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   device._workspace = ws;
   return device;

@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { db } = require('../db/database');
 const config = require('../config');
-const { accessContext, denyReadOnly } = require('../lib/tenancy');
+const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 const { validateFont, UnsupportedFontError, MAX_FONT_BYTES, FORMATS } = require('../lib/font-sniff');
 
 /*
@@ -125,7 +125,7 @@ router.delete('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM custom_fonts WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Font not found' });
   const ws = row.workspace_id ? db.prepare('SELECT * FROM workspaces WHERE id = ?').get(row.workspace_id) : null;
-  if (!ws || !accessContext(req.user.id, req.user.role, ws)) {
+  if (!ws || !resourceAccess(req, ws)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 

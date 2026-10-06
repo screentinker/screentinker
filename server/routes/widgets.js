@@ -8,7 +8,7 @@ const { devicesPlayingWidget } = require('../lib/devices-playing');
 const slideRender = require('../lib/slide-render');
 const appConfig = require('../config');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
-const { accessContext, denyReadOnly } = require('../lib/tenancy');
+const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 const { isRealTimezone } = require('../lib/device-timezone');
 const { escapeHtml, safeUrl, safeCss, safeNumber } = require('../lib/widget-sanitize');
 const pluginRegistry = require('../lib/plugins/registry');
@@ -221,7 +221,7 @@ function checkWidgetRead(req, res) {
   if (!widget) { res.status(404).json({ error: 'Widget not found' }); return null; }
   if (!widget.workspace_id) return widget;
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(widget.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   return widget;
 }
@@ -246,7 +246,7 @@ function checkWidgetWrite(req, res) {
     return widget;
   }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(widget.workspace_id);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;

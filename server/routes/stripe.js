@@ -186,7 +186,12 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const userId = session.metadata?.user_id;
         const planId = session.metadata?.plan_id;
         if (userId && session.subscription) {
-          db.prepare(`UPDATE users SET stripe_subscription_id = ?, plan_id = ?, subscription_status = 'active', updated_at = strftime('%s','now') WHERE id = ?`)
+          // ⚠️ trial_started = NULL: a trial that converts is OVER. Left set, the account looked like
+          // a trial for ever (the Billing page's trial block, checkDeviceAccess's trial exemption),
+          // because the only other writer that clears it — expireTrial — skips anyone with a
+          // subscription. trial_expired_at stays NULL: that column means "lapsed to Free", which
+          // this is not.
+          db.prepare(`UPDATE users SET stripe_subscription_id = ?, plan_id = ?, plan_comped = 0, subscription_status = 'active', trial_started = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
             .run(session.subscription, planId || 'starter', userId);
           console.log(`User ${userId} subscribed to ${planId} (sub: ${session.subscription})`);
         }
@@ -212,18 +217,22 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const userId = sub.metadata?.user_id;
         if (!userId) break;
 
-        // Find plan by stripe price ID
-        const priceId = sub.items?.data?.[0]?.price?.id;
-        let planId = sub.metadata?.plan_id;
-        if (priceId && !planId) {
-          const plan = db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?').get(priceId, priceId);
-          if (plan) planId = plan.id;
-        }
+        /*
+         * ⚠️ THE BILLED PRICE FIRST, metadata only as the fallback.
+         *
+         * metadata.plan_id is stamped ONCE, at checkout, and Stripe leaves subscription metadata
+         * untouched when the billing portal swaps the price — and the portal is where plan changes
+         * happen (/checkout sends every subscriber there). Reading metadata first re-wrote the
+         * ORIGINAL plan on every later event: a Pro customer who downgraded to Starter paid Starter
+         * and kept Pro, and one who upgraded paid Pro and stayed capped at Starter. The price is
+         * what Stripe is actually charging; metadata only answers for a price no plan row knows.
+         */
+        const planId = subscriptions.planIdFromSubscription(sub);
 
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
         const ends = periodEndOf(sub);   // moved to the item in Stripe 2025-03+; see lib/stripe-fields.js
 
-        db.prepare(`UPDATE users SET plan_id = COALESCE(?, plan_id), subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
+        db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE COALESCE(?, plan_id) END, subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
           .run(planId, status, ends, userId);
         // Back in good standing: end the dunning episode, including its email stamps, so a lapse
         // next year is announced rather than silently suppressed by a stale one.
@@ -236,9 +245,19 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const sub = event.data.object;
         const userId = sub.metadata?.user_id;
         if (userId) {
-          db.prepare(`UPDATE users SET plan_id = 'free', subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
-            .run(userId);
-          console.log(`Subscription cancelled for ${userId}`);
+          /*
+           * ⚠️ Only the subscription we are TRACKING may drop the account. Two checkouts finished
+           * before the first webhook landed (two tabs, a double click) leave two live
+           * subscriptions with the last one stored; cancelling the duplicate used to drop a paying
+           * customer to Free AND null the id of the one still billing them, which also blinded the
+           * reconcile. `IS NULL` is kept so a deletion still lands when the checkout webhook that
+           * would have stored the id was itself lost.
+           */
+          const r = db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now')
+                                 WHERE id = ? AND (stripe_subscription_id IS NULL OR stripe_subscription_id = ?)`)
+            .run(userId, sub.id);
+          if (r.changes) console.log(`Subscription cancelled for ${userId}`);
+          else console.log(`Subscription ${sub.id} deleted for ${userId}, but it is not the tracked one — account left as is`);
         }
         break;
       }

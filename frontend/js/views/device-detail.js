@@ -624,7 +624,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <div class="device-header-left">
           <h1 id="deviceName">${esc(device.name)}</h1>
           ${(() => { const b = livenessBadge(device); return `<span class="device-status-badge ${b.state}"${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.label)}</span>`; })()}
-          ${device.owner_name || device.owner_email ? `<span style="font-size:12px;color:var(--text-muted)">${t('device.owner_label', { owner: device.owner_name || device.owner_email })}</span>` : ''}
+          ${device.owner_name || device.owner_email ? `<span style="font-size:12px;color:var(--text-muted)">${t('device.owner_label', { owner: esc(device.owner_name || device.owner_email) })}</span>` : ''}
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-sm" id="devicePreviewBtn">${t('device.preview_btn')}</button>
@@ -852,7 +852,7 @@ async function loadDevice(deviceId, activeTab = null) {
                  ISP's address as the screen's. Above is where the connection comes FROM (public);
                  this is what the screen calls itself on its own network. -->
             <div class="info-card-label">${t('device.info.local_ip')}</div>
-            <div class="info-card-value small" id="telLocalIp">${device.local_ip || '--'}</div>
+            <div class="info-card-value small" id="telLocalIp">${esc(device.local_ip || '--')}</div>
           </div>
           ${device.local_ip6 ? `
           <div class="info-card">
@@ -861,7 +861,7 @@ async function loadDevice(deviceId, activeTab = null) {
                  tell them nothing. A dual-stack panel shows both cards; a v6-only panel used to
                  show a dash here and nothing else, because the player only ever collected v4. -->
             <div class="info-card-label">${t('device.info.local_ip6')}</div>
-            <div class="info-card-value small" id="telLocalIp6">${device.local_ip6}</div>
+            <div class="info-card-value small" id="telLocalIp6">${esc(device.local_ip6)}</div>
           </div>` : ''}
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
@@ -993,7 +993,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.android_version')}</div>
-            <div class="info-card-value small">${device.android_version}</div>
+            <div class="info-card-value small">${esc(device.android_version)}</div>
           </div>` : ''}
           <div class="info-card">
             <div class="info-card-label">${t('device.info.settings_pin')}</div>
@@ -1008,12 +1008,12 @@ async function loadDevice(deviceId, activeTab = null) {
           <div class="info-card">
             <div class="info-card-label">${t('device.info.screen_resolution')}</div>
             <div class="info-card-value small">${device.screen_width && device.screen_height
-              ? device.screen_width + 'x' + device.screen_height +
+              ? esc(device.screen_width + 'x' + device.screen_height) +
                 // #134: show the UI render surface alongside the HDMI output when they differ
                 // (TV boxes that render at 720p and upscale to a 1080p signal).
                 (device.render_width && device.render_height &&
                  (device.render_width !== device.screen_width || device.render_height !== device.screen_height)
-                  ? ` (UI ${device.render_width}x${device.render_height})` : '')
+                  ? ` (UI ${esc(device.render_width + 'x' + device.render_height)})` : '')
               : '--'}</div>
           </div>
           <div class="info-card">
@@ -2999,11 +2999,14 @@ async function setupPlaylistActions(device) {
   document.getElementById('applyLayoutBtn')?.addEventListener('click', async () => {
     const layoutId = document.getElementById('deviceLayoutSelect').value;
     try {
-      await fetch(`/api/layouts/device/${device.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ layout_id: layoutId || null })
-      });
+      /*
+       * ⚠️ api.put, NOT a bare fetch. fetch only rejects on a network failure, so the old handler
+       * showed "Layout applied" for a 403 (viewer, cross-workspace layout) or a 400 (bad id) and then
+       * reloaded onto the unchanged layout with no explanation. request() throws the server's own
+       * error for a non-2xx, and it also applies the linked-server routing a bare fetch skipped —
+       * which sent this write to the LOCAL server while a customer's server was on screen.
+       */
+      await api.put(`/layouts/device/${device.id}`, { layout_id: layoutId || null });
       showToast(layoutId ? t('device.toast.layout_applied') : t('device.toast.switched_to_fullscreen'), 'success');
       // Reload the device page to show updated zone selectors, stay on playlist tab
       loadDevice(device.id, 'playlist');

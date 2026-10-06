@@ -6,7 +6,7 @@ const { db } = require('../db/database');
 // full-trust (a `web` overlay renders an arbitrary page in the player), so — like the
 // group command route — it requires the 'full' token scope. No-op for JWT sessions.
 const { requireScope } = require('../middleware/apiToken');
-const { accessContext } = require('../lib/tenancy');
+const { resourceAccess } = require('../lib/tenancy');
 
 // requireScope('full') gates API TOKENS and is a deliberate pass-through for JWT sessions
 // (middleware/apiToken.js: `if (!req.viaToken) return next()`). It was the ONLY guard on these
@@ -17,7 +17,7 @@ const { accessContext } = require('../lib/tenancy');
 function requireFleetWrite(req, res, next) {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
-  const ctx = ws && accessContext(req.user.id, req.user.role, ws);
+  const ctx = ws && resourceAccess(req, ws);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     return res.status(403).json({ error: 'Read-only access' });

@@ -338,6 +338,33 @@ function disposeDraftFiles(db, contentId, draft, live) {
   }
 }
 
+/*
+ * ⚠️ DELETING A RESOURCE DELETES ITS HISTORY, SUBMISSIONS FIRST. submissions.revision_id is
+ * `NOT NULL REFERENCES revisions(id)` with NO ACTION and foreign_keys is ON, so deleting the
+ * revisions of anything that was ever submitted for approval throws "FOREIGN KEY constraint
+ * failed". DELETE /api/content/:id did exactly that inside a try/catch(_){} that also held the
+ * .history removal: the error was swallowed, the rows survived, revision-retention keeps any
+ * revision a submission names (and every .history file such a revision names), and the "deleted"
+ * media stayed on disk for good while the route answered success. Every deletion path goes
+ * through these two helpers so the order is decided once.
+ */
+function deleteHistoryRows(db, resourceType, resourceId) {
+  db.prepare('DELETE FROM submissions WHERE resource_type = ? AND resource_id = ?').run(resourceType, resourceId);
+  db.prepare('DELETE FROM revisions WHERE resource_type = ? AND resource_id = ?').run(resourceType, resourceId);
+}
+
+// Content ids are uuids; the check keeps a malformed one from ever naming .history itself or
+// anything outside it.
+const RETAINED_DIR_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+/** Remove <contentDir>/.history/<contentId>/ (the retained copies of a DELETED content row). */
+function removeRetainedFiles(contentId) {
+  const id = String(contentId || '');
+  if (!RETAINED_DIR_ID_RE.test(id)) return false;
+  fs.rmSync(path.join(historyDir(), id), { recursive: true, force: true });
+  return true;
+}
+
 /** Absolute path for a revision's retained file, or the live file when the ref IS the live one. */
 function resolveFileRef(ref) {
   if (!ref) return null;
@@ -544,5 +571,5 @@ function lastPublished(db, type, id) {
 module.exports = { CONTENT_DRAFT_FIELDS, CONTENT_PLAYBACK_FIELDS, disposeDraftFiles,
   RESOURCE_TYPES, TABLE, HISTORY_DIR,
   captureState, captureLiveState, hashState, stable, record, recordCurrent, recordMissingIn, markPublished, baselineAll,
-  retainContentFile, resolveFileRef, historyDir, redactState, diffStates, restoreToDraft, hasDraft, list, get, latest, lastPublished, parseJson,
+  retainContentFile, resolveFileRef, historyDir, deleteHistoryRows, removeRetainedFiles, redactState, diffStates, restoreToDraft, hasDraft, list, get, latest, lastPublished, parseJson,
 };
