@@ -44,6 +44,7 @@ CONSENT_COOKIES = [
     "_iub_cs-*",
     "didomi_token",
     "cookieconsent_status", "cookieconsent_*",
+    "cc_cookie",
     "moove_gdpr_popup", "gdpr_consent*", "cookie_consent*", "cookie-consent*", "cookies_accepted",
     "klaro", "axeptio_cookies", "axeptio_authorized_vendors", "axeptio_all_vendors",
     "tarteaucitron", "CONSENT", "SOCS",
@@ -174,13 +175,15 @@ class KioskConfig:
     keep_cookie_names: list = field(default_factory=list)
     home_button: bool = True
     zoom_pct: int = 100
+    wipe_site_data: bool = True
 
     def as_dict(self):
         """The JS object's shape (camelCase), as the vectors spell it."""
         return {"url": self.url, "idleTimeoutSec": self.idle_timeout_sec, "warnSec": self.warn_sec,
                 "allowedDomains": list(self.allowed_domains), "minWebView": self.min_webview,
                 "keepConsent": self.keep_consent, "keepCookieNames": list(self.keep_cookie_names),
-                "homeButton": self.home_button, "zoomPct": self.zoom_pct}
+                "homeButton": self.home_button, "zoomPct": self.zoom_pct,
+                "wipeSiteData": self.wipe_site_data}
 
 
 def parse(widget_type, config):
@@ -224,6 +227,7 @@ def parse(widget_type, config):
         keep_cookie_names=names,
         home_button=o.get("home_button") is not False,
         zoom_pct=100 if zoom <= 0 else _clamp(zoom, 25, 400),
+        wipe_site_data=o.get("wipe_site_data") is not False,
     )
 
 
@@ -236,6 +240,12 @@ def keep_patterns(cfg):
         if n not in out:
             out.append(n)
     return out
+
+
+def keeps_cookies(cfg):
+    """Whether any cookie outlives a reset: keepConsent's names, or all of them with
+    wipe_site_data off (this player's site STORAGE never survives — the profile is in memory)."""
+    return cfg is not None and (cfg.keep_consent or not cfg.wipe_site_data)
 
 
 def is_start_page(current, start):
@@ -437,11 +447,15 @@ def kept_cookies(cookies, cfg, visited_hosts=()):
 
     Only names the patterns keep, and only cookies whose domain belongs to an allowed site (the start
     host, allowed_domains, or an allowed host the visitor reached) — never "every cookie of the
-    allowed domain", which would keep the visitor's login. Later records of the same (name, domain,
+    allowed domain", which would keep the visitor's login (unless the operator turned wipe_site_data off,
+    which keeps them all, for pages with nothing to protect). Later records of the same (name, domain,
     path) replace earlier ones, as a cookie store does."""
-    pats = keep_patterns(cfg)
-    if not pats:
-        return []
+    if cfg is not None and not cfg.wipe_site_data:
+        pats = None                           # wipe_site_data off: every cookie of the allowed sites
+    else:
+        pats = keep_patterns(cfg)
+        if not pats:
+            return []
     allowed = list(cfg.allowed_domains)
     for h in visited_hosts:
         if is_allowed("https://%s/" % h, cfg.allowed_domains) and h not in allowed:
@@ -450,7 +464,7 @@ def kept_cookies(cookies, cfg, visited_hosts=()):
     for c in cookies or []:
         name = str(c.get("name") or "")
         dom = str(c.get("domain") or "").lstrip(".").lower()
-        if not name or not dom or not cookie_matches(name, pats):
+        if not name or not dom or (pats is not None and not cookie_matches(name, pats)):
             continue
         if not is_allowed("https://%s/" % dom, allowed):
             continue

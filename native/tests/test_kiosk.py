@@ -118,6 +118,21 @@ def test_kept_cookies_by_name_and_allowed_domain_only():
     assert K.kept_cookies(store, off) == []
 
 
+def test_wipe_site_data_off_keeps_every_cookie_of_the_allowed_sites_only():
+    # An info page (#473 follow-up): the banner and the chosen language survive — any name — but a
+    # cookie from a site that is not allowed still goes.
+    cfg = K.parse("webpage", {"url": "https://info.example/", "interactive": True, "wipe_site_data": False})
+    store = [
+        {"name": "lang", "value": "sl", "domain": "info.example", "path": "/"},
+        {"name": "cc_cookie", "value": "{}", "domain": ".info.example", "path": "/"},
+        {"name": "_ga", "value": "g", "domain": ".tracker.example", "path": "/"},
+    ]
+    assert K.keeps_cookies(cfg)
+    assert [c["name"] for c in K.kept_cookies(store, cfg)] == ["lang", "cc_cookie"]
+    on = K.parse("webpage", {"url": "https://info.example/", "interactive": True})
+    assert not K.keeps_cookies(on) and K.kept_cookies(store, on) == []
+
+
 def test_session_queue_cap_dedupe_ack_and_persistence(tmp_path):
     p = str(tmp_path / "kiosk-sessions.json")
     q = K.SessionQueue(cap=3, path=p)

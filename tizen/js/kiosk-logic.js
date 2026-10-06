@@ -5,6 +5,7 @@
 // one place and not the others fails a test instead of drifting.
 //
 //   parse(widgetType, config)  -> null unless an interactive webpage widget with an http(s) URL
+//                                 (wipeSiteData false: a reset keeps cookies + site storage)
 //   isAllowed(url, domains)    -> may the TOP-LEVEL page navigate here (subresources never filtered)
 //   Idle(idleMs, warnMs)       -> the session clock: touch / keepAlive / tick, explicit timestamps
 //   selectCookies(header, pats)-> the consent cookies a wipe may keep, BY NAME ONLY
@@ -78,6 +79,7 @@
     '_iub_cs-*',
     'didomi_token',
     'cookieconsent_status', 'cookieconsent_*',
+    'cc_cookie',
     'moove_gdpr_popup', 'gdpr_consent*', 'cookie_consent*', 'cookie-consent*', 'cookies_accepted',
     'klaro', 'axeptio_cookies', 'axeptio_authorized_vendors', 'axeptio_all_vendors',
     'tarteaucitron', 'CONSENT', 'SOCS',
@@ -143,6 +145,7 @@
       keepCookieNames: names,
       homeButton: o.home_button !== false,
       zoomPct: zoom <= 0 ? 100 : clamp(zoom, 25, 400),
+      wipeSiteData: o.wipe_site_data !== false,
     };
   }
 

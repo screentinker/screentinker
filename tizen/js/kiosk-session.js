@@ -419,7 +419,8 @@
   KioskSession.prototype._apply = function (a) {
     if (a === 'started') {
       this.touchedThisMount = true;
-      this.store.set(LS_DIRTY, '1');
+      // wipe_site_data off: nothing will be wiped, so a power cut must not wipe at the next start either.
+      if (!this.cfg || this.cfg.wipeSiteData !== false) this.store.set(LS_DIRTY, '1');
       this.sessionId = uuid();
       this.sessionStartMs = this._now();
       this.pages = 1;
@@ -553,6 +554,7 @@
    */
   KioskSession.prototype.wipe = function (cfg) {
     var store = this.store;
+    if (cfg && cfg.wipeSiteData === false) { this._log('info', 'session reset (cookies kept: wipe_site_data off)'); return; }
     KioskSession.wipeCookies(this.o.websetting ? this.o.websetting() : null, this._log.bind(this), cfg && cfg.keepConsent,
       function (ok) { if (ok) store.set(LS_DIRTY, '0'); },      // dirty stays set on failure: the next start retries
       this.o.setTimeout, this.o.clearTimeout);

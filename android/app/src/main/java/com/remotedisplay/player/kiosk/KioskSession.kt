@@ -151,9 +151,13 @@ class KioskSession(
         try { onSessionEnd(r) } catch (_: Throwable) {}
     }
 
-    /** What a wipe may keep for [cfg]: the consent cookies of the allowed sites, by name only. */
+    /**
+     * What a wipe may keep for [cfg]: the consent cookies of the allowed sites, by name only — or,
+     * with wipe_site_data off, all cookies and site storage (the wipe then skips both).
+     */
     private fun keepSpecFor(cfg: KioskConfig?): KeepSpec? {
-        if (cfg == null || !cfg.keepConsent) return null
+        if (cfg == null || (!cfg.keepConsent && cfg.wipeSiteData)) return null
+        if (!cfg.wipeSiteData) return KeepSpec(emptyList(), emptyList(), wipeSiteData = false)
         val hosts = (cfg.allowedDomains + visitedHosts.filter { KioskNav.isAllowed("https://$it/", cfg.allowedDomains) }).distinct()
         return KeepSpec(hosts, (CookieKeep.BUILT_IN + cfg.keepCookieNames).distinct())
     }
@@ -243,7 +247,7 @@ class KioskSession(
         frame = f
         webView = wv
         DebugLog.i(TAG, "interactive page: ${cfg.url} (idle ${cfg.idleTimeoutSec}s, domains ${cfg.allowedDomains}, zoom ${cfg.zoomPct}%" +
-            (if (cfg.keepConsent) ", keeps consent cookies" else "") + ")")
+            (if (cfg.keepConsent) ", keeps consent cookies" else "") + (if (!cfg.wipeSiteData) ", keeps site data" else "") + ")")
         wv.loadUrl(cfg.url)
         handler.post(tickRunnable)
     }
@@ -439,7 +443,10 @@ class KioskSession(
          * callback — writing before it completes would let the removal delete them again).
          */
         fun wipeAll(ctx: Context, wv: WebView?, keep: KeepSpec? = null) {
-            try {
+            // wipe_site_data off (info pages): cookies and WebStorage stay — the consent banner and the
+            // chosen language survive. Everything below them (cache, form data, history, HTTP auth) goes.
+            val siteData = keep?.wipeSiteData != false
+            if (siteData) try {
                 val cm = CookieManager.getInstance()
                 val saved = keep?.hosts?.flatMap { h ->
                     CookieKeep.select(cm.getCookie("https://$h/"), keep.patterns).map { Triple(h, it.first, it.second) }
@@ -450,7 +457,7 @@ class KioskSession(
                     if (saved.isNotEmpty()) DebugLog.i(TAG, "kept ${saved.size} consent cookie(s): ${saved.map { it.second }.distinct()}")
                 }
             } catch (_: Throwable) {}
-            try { WebStorage.getInstance().deleteAllData() } catch (_: Throwable) {}
+            if (siteData) try { WebStorage.getInstance().deleteAllData() } catch (_: Throwable) {}
             try {
                 wv?.clearCache(true); wv?.clearFormData(); wv?.clearHistory()
                 if (wv == null) WebView(ctx).apply { clearCache(true); destroy() }
@@ -460,7 +467,7 @@ class KioskSession(
                 WebViewDatabase.getInstance(ctx).apply { clearHttpAuthUsernamePassword(); clearFormData() }
             } catch (_: Throwable) {}
             markDirty(ctx, false)
-            DebugLog.i(TAG, "web storage wiped")
+            DebugLog.i(TAG, if (siteData) "web storage wiped" else "session reset (cookies + site storage kept: wipe_site_data off)")
         }
 
         private fun markDirty(ctx: Context, dirty: Boolean) {
@@ -486,7 +493,7 @@ class KioskSession(
         private fun saveKeepSpec(ctx: Context, k: KeepSpec?) {
             try {
                 val e = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                if (k == null) e.remove(KEEP) else e.putString(KEEP, JSONObject().put("hosts", JSONArray(k.hosts)).put("patterns", JSONArray(k.patterns)).toString())
+                if (k == null) e.remove(KEEP) else e.putString(KEEP, JSONObject().put("hosts", JSONArray(k.hosts)).put("patterns", JSONArray(k.patterns)).put("wipe_site_data", k.wipeSiteData).toString())
                 e.apply()
             } catch (_: Throwable) {}
         }
@@ -495,14 +502,17 @@ class KioskSession(
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEEP, null)?.let { raw ->
                 val o = JSONObject(raw)
                 fun list(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.optString(it, "") }.filter { it.isNotEmpty() }
-                KeepSpec(list(o.optJSONArray("hosts")), list(o.optJSONArray("patterns")))
+                KeepSpec(list(o.optJSONArray("hosts")), list(o.optJSONArray("patterns")), o.optBoolean("wipe_site_data", true))
             }
         } catch (_: Throwable) { null }
     }
 }
 
-/** Hosts whose cookies are read before a wipe, and the names that survive it. */
-data class KeepSpec(val hosts: List<String>, val patterns: List<String>)
+/**
+ * Hosts whose cookies are read before a wipe, and the names that survive it. [wipeSiteData] false
+ * (the item's wipe_site_data off) skips the cookie and WebStorage wipe altogether.
+ */
+data class KeepSpec(val hosts: List<String>, val patterns: List<String>, val wipeSiteData: Boolean = true)
 
 /**
  * Lays its child out at (size / zoom) and scales it back up to fill. The page therefore sees a

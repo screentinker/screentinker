@@ -540,6 +540,9 @@ export async function render(container) {
   `;
 
   let editingWidget = null;
+  // The config the open form was filled from. Saving starts from it, so a key the form has no field
+  // for (min_webview, or an idle_warning_sec set through the API) survives a save from the dashboard.
+  let formBaseConfig = {};
   let creatingType = null;
   let dirState = { categories: [], logo_url: '', background_images: [] };
   // Cached widget list from the last load — used to populate the directory-search
@@ -642,6 +645,7 @@ export async function render(container) {
   }
 
   function showConfigForm(type, config) {
+    formBaseConfig = config || {};
     const plugin = pluginTypeById().get(type);
     const typeName = plugin ? (plugin.label || plugin.type) : widgetTypeName(type);
     document.getElementById('widgetModalTitle').textContent = editingWidget
@@ -717,6 +721,8 @@ export async function render(container) {
             <div id="wInteractiveOpts" style="margin-top:10px;${config.interactive ? '' : 'display:none'}">
               <div id="wInteractiveSupport" style="font-size:12px;color:var(--text-muted);margin-bottom:10px"></div>
               <div class="form-group"><label>${t('widget.web.idle_timeout')}</label><input type="number" id="wIdle" class="input" min="15" max="3600" value="${Number(config.idle_timeout_sec) || 60}"></div>
+              <div class="form-group"><label>${t('widget.web.idle_warning')}</label>${idleWarningSelect(config.idle_warning_sec)}
+                <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.web.idle_warning_hint')}</div></div>
               <div class="form-group"><label>${t('widget.web.allowed_domains')}</label><input type="text" id="wDomains" class="input" value="${esc(Array.isArray(config.allowed_domains) ? config.allowed_domains.join(', ') : (config.allowed_domains || ''))}" placeholder="${esc(t('widget.web.allowed_domains_ph'))}">
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.web.allowed_domains_hint')}</div></div>
               <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;margin-bottom:8px">
@@ -726,6 +732,10 @@ export async function render(container) {
               <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
                 <input type="checkbox" id="wKeepConsent" ${config.keep_consent ? 'checked' : ''} style="margin-top:3px">
                 <span>${t('widget.web.keep_consent')}<br><span style="font-size:12px;color:var(--text-muted)">${t('widget.web.keep_consent_hint')}</span></span>
+              </label>
+              <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;margin-top:8px">
+                <input type="checkbox" id="wWipeSite" ${config.wipe_site_data === false ? '' : 'checked'} style="margin-top:3px">
+                <span>${t('widget.web.wipe_site_data')}<br><span style="font-size:12px;color:var(--text-muted)">${t('widget.web.wipe_site_data_hint')}</span></span>
               </label>
               <div id="wKeepNamesRow" class="form-group" style="margin-top:8px;${config.keep_consent ? '' : 'display:none'}"><label>${t('widget.web.keep_cookie_names')}</label><input type="text" id="wKeepNames" class="input" value="${esc(Array.isArray(config.keep_cookie_names) ? config.keep_cookie_names.join(', ') : (config.keep_cookie_names || ''))}" placeholder="${esc(t('widget.web.keep_cookie_names_ph'))}">
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.web.keep_cookie_names_hint')}</div></div>
@@ -1314,6 +1324,17 @@ export async function render(container) {
     }
   }
 
+  /* The "Still there?" warning before an interactive page resets, in seconds: Off / 5 / 10 / 20 s, plus whatever
+     value the widget already has (set through the API), so opening the form never changes it. */
+  function idleWarningSelect(current) {
+    const cur = current === undefined || current === null || current === '' ? 10 : Math.min(60, Math.max(0, parseInt(current, 10) || 0));
+    const opts = [0, 5, 10, 20];
+    if (!opts.includes(cur)) opts.push(cur);
+    opts.sort((a, b) => a - b);
+    return `<select id="wIdleWarn" class="input" style="background:var(--bg-input)">${opts.map((n) =>
+      `<option value="${n}" ${n === cur ? 'selected' : ''}>${n === 0 ? esc(t('widget.web.idle_warning_off')) : esc(t('widget.web.idle_warning_sec', { n }))}</option>`).join('')}</select>`;
+  }
+
   function getConfigFromForm(type) {
     const config = {};
     const val = id => document.getElementById(id)?.value;
@@ -1342,6 +1363,8 @@ export async function render(container) {
       case 'rss': Object.assign(config, { feed_url: val('wFeedUrl'), scroll_speed: parseInt(val('wScrollSpeed')) || 30, max_items: parseInt(val('wMaxItems')) || 10, font_size: parseInt(val('wFontSize')) || 24, color: val('wColor'), background: val('wBg') }); break;
       case 'text': Object.assign(config, { html: val('wHtml'), css: val('wCss'), background: val('wBg') }); break;
       case 'webpage': {
+        // Start from what the form was filled from: keys it has no field for are kept, not dropped.
+        for (const [k, v] of Object.entries(formBaseConfig || {})) if (k !== '_name') config[k] = v;
         Object.assign(config, { url: val('wUrl'), zoom: parseInt(val('wZoom')) || 100, refresh_interval: parseInt(val('wRefresh')) || 0 });
         const on = !!document.getElementById('wInteractive')?.checked;
         config.interactive = on;
@@ -1349,6 +1372,8 @@ export async function render(container) {
           config.idle_timeout_sec = Math.min(3600, Math.max(15, parseInt(val('wIdle')) || 60));
           config.allowed_domains = String(val('wDomains') || '').split(/[\s,]+/).map((d) => d.trim()).filter(Boolean);
           config.home_button = !!document.getElementById('wHomeBtn')?.checked;
+          config.idle_warning_sec = Math.min(60, Math.max(0, parseInt(val('wIdleWarn'), 10) || 0));
+          config.wipe_site_data = !!document.getElementById('wWipeSite')?.checked;
           config.keep_consent = !!document.getElementById('wKeepConsent')?.checked;
           config.keep_cookie_names = config.keep_consent
             ? String(val('wKeepNames') || '').split(/[\s,]+/).map((d) => d.trim()).filter((d) => /^[A-Za-z0-9_.-]+[*]?$/.test(d) && d !== '*')
