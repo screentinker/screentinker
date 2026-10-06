@@ -342,3 +342,15 @@ test('comp: the customer\'s own completed checkout ends the comp; assigning Free
   await assign(free, 'free');
   assert.equal(read(free).plan_comped, 0);
 });
+
+test('comp: a paid plan with no subscription and no trial (an admin grant made before the flag) is treated as a comp', () => {
+  const id = mkUser({ plan: 'pro' });                      // no sub, no trial
+  db.prepare('UPDATE users SET plan_comped = 0 WHERE id = ?').run(id);
+  // The statement as the migration list holds it — read from the source, so the two cannot drift.
+  const src = require('node:fs').readFileSync(require.resolve('../db/database'), 'utf8');
+  const stmt = src.match(/"(UPDATE users SET plan_comped = 1 WHERE [^"]+)"/)[1];
+  db.exec(stmt);
+  assert.equal(read(id).plan_comped, 1);
+  const trialing = mkUser({ plan: 'pro', trialStarted: nowSec() });
+  assert.equal(read(trialing).plan_comped, 0, 'a trial is not a comp');
+});
