@@ -731,8 +731,8 @@ export async function render(container) {
             </label>
             <div id="wInteractiveOpts" style="margin-top:10px;${config.interactive ? '' : 'display:none'}">
               <div id="wInteractiveSupport" style="font-size:12px;color:var(--text-muted);margin-bottom:10px"></div>
-              <div class="form-group"><label>${t('widget.web.idle_timeout')}</label><input type="number" id="wIdle" class="input" min="15" max="3600" value="${Number(config.idle_timeout_sec) || 60}"></div>
-              <div class="form-group"><label>${t('widget.web.idle_warning')}</label>${idleWarningSelect(config.idle_warning_sec)}
+              <div class="form-group"><label>${t('widget.web.idle_timeout')}</label><input type="number" id="wIdle" class="input" min="15" max="3600" value="${escAttr(Number(config.idle_timeout_sec) || 60)}"></div>
+              <div class="form-group"><label>${t('widget.web.idle_warning')}</label>${idleWarningSelect(config)}
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.web.idle_warning_hint')}</div></div>
               <div class="form-group"><label>${t('widget.web.allowed_domains')}</label><input type="text" id="wDomains" class="input" value="${esc(Array.isArray(config.allowed_domains) ? config.allowed_domains.join(', ') : (config.allowed_domains || ''))}" placeholder="${esc(t('widget.web.allowed_domains_ph'))}">
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.web.allowed_domains_hint')}</div></div>
@@ -1337,7 +1337,8 @@ export async function render(container) {
 
   /* The "Still there?" warning before an interactive page resets, in seconds: Off / 5 / 10 / 20 s, plus whatever
      value the widget already has (set through the API), so opening the form never changes it. */
-  function idleWarningSelect(current) {
+  function idleWarningSelect(cfg) {
+    const current = cfg ? cfg.idle_warning_sec : undefined;   // a number, clamped below; never markup
     const cur = current === undefined || current === null || current === '' ? 10 : Math.min(60, Math.max(0, parseInt(current, 10) || 0));
     const opts = [0, 5, 10, 20];
     if (!opts.includes(cur)) opts.push(cur);
