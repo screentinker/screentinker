@@ -30,6 +30,12 @@ data class KioskConfig(
     val homeButton: Boolean = true,
     /** v2: the widget's existing Zoom %, as a layout zoom (the page sees a smaller viewport). */
     val zoomPct: Int = 100,
+    /**
+     * Off: a reset leaves cookies and site storage (localStorage, IndexedDB) alone, for info pages
+     * with nothing to protect. History, form data, HTTP auth and the cache are still cleared, and the
+     * WebView is still fresh per appearance. Storage is app-wide: another item's wipe clears it too.
+     */
+    val wipeSiteData: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_IDLE_SEC = 60
@@ -71,6 +77,7 @@ data class KioskConfig(
                 keepCookieNames = names,
                 homeButton = o.optBoolean("home_button", true),
                 zoomPct = o.optInt("zoom", 100).let { if (it <= 0) 100 else it.coerceIn(25, 400) },
+                wipeSiteData = o.opt("wipe_site_data") != false,   // only a real false turns it off (JS: !== false)
             )
         }
     }
@@ -131,6 +138,7 @@ object CookieKeep {
         "_iub_cs-*",                                                  // iubenda
         "didomi_token",                                               // Didomi (+ euconsent-v2)
         "cookieconsent_status", "cookieconsent_*",                    // Osano / cookieconsent.js
+        "cc_cookie",                                                  // orestbida/cookieconsent v2/v3
         "moove_gdpr_popup", "gdpr_consent*", "cookie_consent*", "cookie-consent*", "cookies_accepted",
         "klaro", "axeptio_cookies", "axeptio_authorized_vendors", "axeptio_all_vendors",
         "tarteaucitron", "CONSENT", "SOCS",                           // Google's own

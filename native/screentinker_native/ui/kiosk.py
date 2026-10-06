@@ -14,6 +14,10 @@ and whose domain is an allowed site are kept — by name only, never "every cook
 domain", which would keep the visitor's login — written to <state>/kiosk-consent.json, and set into
 the next appearance's fresh profile before its first load.
 
+wipe_site_data off (info pages): the same path keeps EVERY cookie of the allowed sites, so the
+consent banner and chosen language survive. Local/session storage and IndexedDB still go with the
+profile — there is no on-disk store to keep them in.
+
 Hooks back into the player (engine/app):
   hold()     first touch: hold the playlist on this item
   release()  session over (reset, failure during a session): advance the playlist
@@ -290,7 +294,7 @@ class KioskSession(QObject):
         cfg = self.config
         if cfg is None:
             return
-        if cfg.keep_consent:
+        if K.keeps_cookies(cfg):
             kept = K.kept_cookies(self._cookie_records(), cfg, self.visited_hosts)
         elif wiped:
             kept = []                         # a visitor used a page that keeps nothing: nothing survives
@@ -308,7 +312,7 @@ class KioskSession(QObject):
 
     def _inject_kept(self):
         cfg = self.config
-        if not cfg.keep_consent or self.profile is None:
+        if not K.keeps_cookies(cfg) or self.profile is None:
             return 0
         try:
             with open(self.consent_path, encoding="utf-8") as f:

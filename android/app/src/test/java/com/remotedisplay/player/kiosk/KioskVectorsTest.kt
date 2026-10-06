@@ -40,6 +40,7 @@ class KioskVectorsTest {
             assertEquals(name, strList(e.getAsJsonArray("keepCookieNames")), got.keepCookieNames)
             assertEquals(name, e.get("homeButton").asBoolean, got.homeButton)
             assertEquals(name, e.get("zoomPct").asInt, got.zoomPct)
+            assertEquals(name, e.get("wipeSiteData").asBoolean, got.wipeSiteData)
         }
     }
 
