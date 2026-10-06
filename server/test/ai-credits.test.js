@@ -6,7 +6,8 @@
  * What has to hold, and why each one matters to a customer:
  *   - the price is 2x the provider cost of the EXACT model/tier chosen, rounded up to the cent, and
  *     an unknown combination is refused rather than guessed;
- *   - the included allotment is 10% of the org's screen bill (lib/billing.js's formula, read-only);
+ *   - the included allotment is 10% of the org's FINAL screen bill for LAST month (lib/billing.js's
+ *     formula, read-only), and only for a paying org;
  *   - the balance never goes below zero, and an unaffordable choice is refused while a cheaper one
  *     still works;
  *   - a failed provider call refunds the reserve, and a retried request charges once.
@@ -33,9 +34,10 @@ const hosted = require('../lib/ai-hosted');
 
 const MAR15 = Date.UTC(2026, 2, 15, 12, 0, 0);   // mid-month: 14 completed days
 
-db.prepare("INSERT OR IGNORE INTO users (id, email, password_hash, role) VALUES ('u-owner', 'owner@test.local', 'x', 'user')").run();
-function seedOrg(id) {
-  db.prepare("INSERT OR IGNORE INTO organizations (id, name, owner_user_id) VALUES (?, ?, 'u-owner')").run(id, id);
+// The fixture orgs' owner pays (Pro, active): included credits are for paying orgs.
+db.prepare("INSERT OR IGNORE INTO users (id, email, password_hash, role, plan_id, subscription_status) VALUES ('u-owner', 'owner@test.local', 'x', 'user', 'pro', 'active')").run();
+function seedOrg(id, owner = 'u-owner') {
+  db.prepare('INSERT OR IGNORE INTO organizations (id, name, owner_user_id) VALUES (?, ?, ?)').run(id, id, owner);
   db.prepare('INSERT OR IGNORE INTO workspaces (id, organization_id, name) VALUES (?, ?, ?)').run(`ws-${id}`, id, id);
 }
 
@@ -116,7 +118,7 @@ test('catalog: only providers with a key, never the key itself', () => {
 
 test('included grant = 10% of the screen bill: 100 screens -> $150 -> 1,500 credits', () => {
   seedOrg('org-100');
-  seedScreens('org-100', 100, '2026-03', 14);
+  seedScreens('org-100', 100, '2026-02', 28);       // last month, every day
   const bill = credits.orgScreenBill('org-100', MAR15);
   assert.equal(bill.billable_screens, 100);
   assert.equal(bill.cost_cents, 15000);
@@ -149,28 +151,69 @@ test('included grant: zero screens grants zero, but purchased credits still spen
 
 test('included credits expire at month end; purchased do not', () => {
   seedOrg('org-roll');
-  seedScreens('org-roll', 10, '2026-03', 31);
+  seedScreens('org-roll', 10, '2026-02', 28);
   credits.ensureIncludedGrant('org-roll', MAR15);
   credits.recordPurchase({ orgId: 'org-roll', packId: 'pack_10', ref: 'cs_roll', nowMs: MAR15 });
   assert.equal(credits.balance('org-roll', MAR15).included, 150);
   const apr2 = Date.UTC(2026, 3, 2, 12);
   const b = credits.balance('org-roll', apr2);
-  assert.equal(b.included, 0, 'March included does not roll into April');
+  assert.equal(b.included, 0, 'March included does not roll into April (and March had no usage)');
   assert.equal(b.purchased, 1000);
 });
 
-test('included grant on the 1st uses last month\'s final bill, and only ever tops up', () => {
+test('included grant is last month\'s final bill, the same on the 1st as on the 20th', () => {
   seedOrg('org-d1');
   seedScreens('org-d1', 10, '2026-03', 31);
   const apr1 = Date.UTC(2026, 3, 1, 9);
   const bill = credits.orgScreenBill('org-d1', apr1);
   assert.equal(bill.basis, 'previous_month');
+  assert.equal(bill.billed_month, '2026-03');
   assert.equal(bill.billable_screens, 10);
   credits.ensureIncludedGrant('org-d1', apr1);
   assert.equal(credits.balance('org-d1', apr1).included, 150);
-  // April so far has no usage, so the month-to-date estimate drops to 0: nothing is clawed back.
-  credits.ensureIncludedGrant('org-d1', Date.UTC(2026, 3, 3, 9));
-  assert.equal(credits.balance('org-d1', Date.UTC(2026, 3, 3, 9)).included, 150);
+  const apr20 = Date.UTC(2026, 3, 20, 9);
+  credits.ensureIncludedGrant('org-d1', apr20);
+  assert.equal(credits.balance('org-d1', apr20).included, 150);
+});
+
+test('THE BUG: one busy day early in the month no longer sets the month\'s grant', () => {
+  // The review's case: 2 screens all month, plus 48 more online on the 1st only.
+  seedOrg('org-spike');
+  seedScreens('org-spike', 2, '2026-03', 31);
+  const dev = db.prepare('INSERT OR IGNORE INTO devices (id, name, workspace_id) VALUES (?, ?, ?)');
+  const use = db.prepare('INSERT OR REPLACE INTO device_usage_daily (device_id, day, online_seconds) VALUES (?, ?, 28800)');
+  for (let i = 0; i < 48; i++) { dev.run(`org-spike-x${i}`, 'x', 'ws-org-spike'); use.run(`org-spike-x${i}`, '2026-04-01'); }
+  // On the 2nd, the old month-to-date estimate saw 50 screens (750 credits) and kept it for the month.
+  const apr2 = Date.UTC(2026, 3, 2, 9);
+  credits.ensureIncludedGrant('org-spike', apr2);
+  assert.equal(credits.balance('org-spike', apr2).included, 30, 'March\'s 2 screens: $3 -> 30 credits');
+});
+
+test('included credits are for paying orgs only', () => {
+  const now = Date.UTC(2026, 3, 10, 9);
+  const owner = (id, cols) => {
+    db.prepare("INSERT OR IGNORE INTO users (id, email, password_hash, role) VALUES (?, ?, 'x', 'user')").run(id, `${id}@t.local`);
+    const keys = Object.keys(cols);
+    db.prepare(`UPDATE users SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => cols[k]), id);
+  };
+  const cases = [
+    ['free',      { plan_id: 'free', subscription_status: 'active' }, false],
+    ['trialing',  { plan_id: 'pro', trial_plan: 'pro', trial_started: Math.floor(now / 1000) - 3 * 86400, subscription_status: 'active' }, false],
+    ['past-due',  { plan_id: 'pro', stripe_subscription_id: 'sub_pd', subscription_status: 'past_due' }, false],
+    ['lapsed',    { plan_id: 'free', stripe_subscription_id: 'sub_l', subscription_status: 'unpaid' }, false],
+    ['subscriber',{ plan_id: 'starter', stripe_subscription_id: 'sub_ok', subscription_status: 'active' }, true],
+    ['converted', { plan_id: 'pro', trial_plan: 'pro', trial_started: Math.floor(now / 1000) - 3 * 86400, stripe_subscription_id: 'sub_cv', subscription_status: 'active' }, true],
+    ['comped',    { plan_id: 'enterprise', subscription_status: 'active' }, true],
+  ];
+  for (const [name, cols, paying] of cases) {
+    const org = `org-pay-${name}`, u = `u-pay-${name}`;
+    owner(u, cols);
+    seedOrg(org, u);
+    seedScreens(org, 10, '2026-03', 31);
+    assert.equal(credits.includedEligible(org, now), paying, name);
+    credits.ensureIncludedGrant(org, now);
+    assert.equal(credits.balance(org, now).included, paying ? 150 : 0, `${name}: included`);
+  }
 });
 
 /* ------------------------------ ledger rules ------------------------------ */
@@ -192,7 +235,7 @@ test('cannot debit below zero; an unaffordable choice is refused while a cheaper
 
 test('included is spent before purchased', () => {
   seedOrg('org-order');
-  seedScreens('org-order', 1, '2026-03', 14);       // $1.50 -> 15 included
+  seedScreens('org-order', 1, '2026-02', 28);       // $1.50 -> 15 included
   credits.recordPurchase({ orgId: 'org-order', packId: 'pack_10', ref: 'cs_order', nowMs: MAR15 });
   const { reservation } = credits.reserve({ orgId: 'org-order', idempotencyKey: 'k-ord-1', selection: V2_2K_MED, nowMs: MAR15 });
   assert.equal(reservation.from_included, 15);
@@ -204,7 +247,7 @@ test('included is spent before purchased', () => {
 
 test('release refunds the reserve to the buckets it came from, exactly once', () => {
   seedOrg('org-refund');
-  seedScreens('org-refund', 1, '2026-03', 14);
+  seedScreens('org-refund', 1, '2026-02', 28);
   credits.recordPurchase({ orgId: 'org-refund', packId: 'pack_10', ref: 'cs_refund', nowMs: MAR15 });
   credits.ensureIncludedGrant('org-refund', MAR15);   // the month's grant lands first, as reserve() would
   const before = credits.balance('org-refund', MAR15);
@@ -270,6 +313,9 @@ before(async () => {
     if (String(url).startsWith('https://api.x.ai/')) {
       providerCalls++;
       lastProviderBody = JSON.parse(opts.body);
+      if (providerMode === 'quota') {
+        return new Response('{"error":"Your team 7f3a-platform-team has run out of credits. Buy more at https://console.x.ai/team/7f3a-platform-team"}', { status: 429 });
+      }
       if (providerMode === 'fail') {
         return new Response(`{"error":"bad key xai-test-SECRETKEY-0123456789"}`, { status: 500 });
       }
@@ -285,9 +331,12 @@ before(async () => {
     req.user = { id: 'u-http', email: 'http@test.local', role: 'user' };
     req.organizationId = 'org-http';
     req.workspaceId = 'ws-org-http';
-    req.workspaceRole = req.headers['x-role'] || 'workspace_editor';
-    req.orgRole = null;
-    req.actingAs = false;
+    const operator = req.headers['x-operator'] === '1';     // a platform operator acting as this org
+    req.workspaceRole = operator ? null : (req.headers['x-role'] || 'workspace_editor');
+    req.orgRole = req.headers['x-org-role'] || null;
+    req.actingAs = operator;
+    req.isPlatformOperator = operator;
+    req.isPlatformStaff = operator;
     req.isPlatformAdmin = false;
     next();
   });
@@ -402,4 +451,41 @@ test('the stale sweep can never fire inside a live provider call', () => {
   config.aiHosted.reservationStaleSec = 60;
   try { assert.ok(credits.staleWindowSec() * 1000 > config.aiHosted.providerTimeoutMs); }
   finally { config.aiHosted.reservationStaleSec = prev; }
+});
+
+test('route: a platform operator acting as an org cannot spend its credits', async () => {
+  credits.adminAdjust({ orgId: 'org-http', delta: 20 });
+  const start = bal();
+  const res = await gen({ idempotency_key: 'route-operator-1' }, { 'x-operator': '1' });
+  assert.equal(res.status, 403);
+  assert.equal(bal(), start, 'nothing charged');
+  const st = await (await realFetch(`${base}/api/ai/hosted/status`, { headers: { 'x-operator': '1' } })).json();
+  assert.equal(st.can_generate, false);
+});
+
+test('route: the org\'s screen bill and org-wide usage are for org admins only', async () => {
+  for (const path of ['status', 'usage']) {
+    const member = await (await realFetch(`${base}/api/ai/hosted/${path}`, { headers: { 'x-role': 'workspace_viewer' } })).json();
+    assert.equal(member.enabled, true, path);
+    assert.ok(typeof member.balance === 'number', `${path}: a member still sees the balance`);
+    assert.equal(member.screen_bill, undefined, `${path}: no screen bill for a member`);
+    assert.equal(member.usage, undefined, `${path}: no org-wide usage for a member`);
+    const admin = await (await realFetch(`${base}/api/ai/hosted/${path}`, { headers: { 'x-org-role': 'org_admin' } })).json();
+    assert.ok(admin.screen_bill, `${path}: the org admin sees the bill`);
+  }
+});
+
+test('route: a provider\'s own error text never reaches the customer, nor a replay of it', async () => {
+  credits.adminAdjust({ orgId: 'org-http', delta: 20 });
+  providerMode = 'quota';
+  try {
+    const res = await gen({ idempotency_key: 'route-quota-1' });
+    const j = await res.json();
+    assert.equal(res.status, 400);
+    assert.match(j.error, /unavailable right now/);
+    assert.doesNotMatch(JSON.stringify(j), /7f3a|console\.x\.ai|run out of credits/);
+    const again = await (await gen({ idempotency_key: 'route-quota-1' })).json();
+    assert.equal(again.replayed, true);
+    assert.doesNotMatch(JSON.stringify(again), /7f3a|console\.x\.ai|run out of credits/);
+  } finally { providerMode = 'ok'; }
 });

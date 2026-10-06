@@ -42,22 +42,28 @@ but it offers no models until an operator adds a row with a cost they have verif
 **Anthropic** is text-only, so Claude is never offered as an image model. `ANTHROPIC_API_KEY`
 is reserved for an optional copy/layout step, and credits are charged only for image calls.
 
-## Included credits: 10% of your screen bill
+## Included credits: 10% of last month's screen bill
 
-Each month your organization gets credits worth **10% of that month's screen bill**. The bill
-comes from the normal Active Screen-Day formula ([billing.md](billing.md)), which this feature
-only reads. The amount is converted at $0.01 per credit and rounded down.
+Each month a **paying** organization gets credits worth **10% of last month's final screen
+bill**. The bill comes from the normal Active Screen-Day formula ([billing.md](billing.md)), which
+this feature only reads. The amount is converted at $0.01 per credit and rounded down.
 
-> Example: a $150 screen bill → $15 included → **1,500 credits**. That is 375 images on
-> `grok-imagine-image`, or 187 on Imagine 2.0 1K low.
+> Example: a $150 screen bill in March → $15 included in April → **1,500 credits**. That is 375
+> images on `grok-imagine-image`, or 187 on Imagine 2.0 1K low.
 
 - The cap is 10% of the bill. It is not a 10% markup, and the 2× markup on whatever model you
   pick still applies.
-- The grant follows the month-to-date bill. It tops up as the estimate rises and is never taken
-  back when it falls. On the 1st, before any day of the month has finished, it uses last month's
-  final bill.
-- 0 billable screens means 0 included credits. You can still buy credits.
+- The bill is last month's, which is final, so the grant is the same on the 1st as on the 30th.
+  A new organization gets none in its first month. You can still buy credits.
+- **Paying** means the organization owner is on a plan other than Free, is not in a trial that is
+  still running, and is not past due or lapsed. A Stripe subscription, a plan an administrator
+  granted, and an invoiced plan all count. If an owner starts paying mid-month, the grant arrives
+  then; once granted it is never taken back. On a self-hosted server, which has no plans, every
+  organization qualifies.
+- 0 billable screens last month means 0 included credits.
 - Included credits are spent first, **expire at month end** and do not roll over.
+- Only organization owners and admins see the screen bill and the organization's usage by model.
+  Other members see the balance.
 
 ## Buying credits
 
@@ -83,7 +89,9 @@ get a "buy credits" prompt. Cheaper models you can still afford keep working.
 ## Guarantees
 
 - **No charge for a failure.** Credits are reserved before the provider is called, then committed
-  on success or refunded in full on any error. If the server crashes mid-attempt, the reservation
+  on success or refunded in full on any error. The provider's own error text stays in the server log, because it
+  describes the platform's provider account. You get a plain reason (the prompt was refused, the
+  provider timed out, or it is unavailable). If the server crashes mid-attempt, the reservation
   is refunded by a sweep after 15 minutes.
 - **No double charge.** Each click carries an idempotency key. A retry replays the first result.
 - **Never negative.** The balance check and the reservation happen in one transaction.
@@ -91,6 +99,8 @@ get a "buy credits" prompt. Cheaper models you can still afford keep working.
   the rows. The ledger stores no prompts. The activity log records who generated what, with
   model, tier and credits, but not the prompt.
 - Output is an ordinary content-library image, so decks and playlists use it like any upload.
+- **Who can spend:** workspace admins and editors, and platform admins. A platform operator acting
+  as an organization cannot: every image spends that customer's credits.
 
 ## Operator setup
 

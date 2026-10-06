@@ -28,6 +28,7 @@ const config = require('../config');
 const { db } = require('../db/database');
 const billing = require('./billing');
 const CARD = require('../config/ai-rate-card');
+const TRIAL_SECONDS = (Number(require('../middleware/subscription').TRIAL_DAYS) || 14) * 86400;
 
 const MICROS_PER_CREDIT = 10000;   // $0.01 in micro-dollars
 
@@ -91,34 +92,47 @@ function prevMonth(month) {
 }
 
 /*
- * The org's screen bill for a month, by the SAME formula as lib/billing.buildUsageReport, filtered
- * to the org's devices: Σ ASD over COMPLETED days / completed days, round half up, flat tier.
+ * The org's FINAL screen bill for the previous month, by the SAME formula as
+ * lib/billing.buildUsageReport, filtered to the org's devices: Σ ASD over every day of that month /
+ * days in it, round half up, flat tier.
  *
- * ⚠️ DAY 1 HAS NO COMPLETED DAYS, so the month-to-date average is undefined (billing.js reports 0).
- * Granting 0 on the 1st and never revisiting it would hand every org nothing for the month, so on
- * day 1 the estimate is the previous month's final bill instead — and see ensureIncludedGrant for
- * why later in the month the grant can only grow.
+ * ⚠️ LAST MONTH, NEVER MONTH-TO-DATE. A month-to-date average is a moving estimate, and a grant
+ * can only be topped up, never taken back (the customer may have spent it). So the estimate's
+ * high-water mark became the month's grant: 50 screens online on the 1st, then 2 for the rest of
+ * the month, granted 750 credits against a final bill entitling 60. A closed month cannot move.
  */
 function orgScreenBill(orgId, nowMs = Date.now()) {
   const month = billing.utcMonth(nowMs);
-  const todayDom = new Date(nowMs).getUTCDate();
-  let target = month;
-  let completedDays = todayDom - 1;
-  let basis = 'month_to_date';
-  if (completedDays === 0) { target = prevMonth(month); completedDays = billing.daysInMonth(target); basis = 'previous_month'; }
+  const target = prevMonth(month);
   const dim = billing.daysInMonth(target);
-  const first = `${target}-01`;
-  // Completed days only: for the current month that is strictly before today.
-  const last = basis === 'month_to_date'
-    ? `${month}-${String(todayDom - 1).padStart(2, '0')}`
-    : `${target}-${String(dim).padStart(2, '0')}`;
   const denom = config.billing.hoursPerDay * 3600;
   let sum = 0;
-  for (const r of _orgAsdByDay.all(denom, orgId, first, last)) sum += r.asd;
-  const screens = billing.billableScreens(sum, completedDays);
+  for (const r of _orgAsdByDay.all(denom, orgId, `${target}-01`, `${target}-${String(dim).padStart(2, '0')}`)) sum += r.asd;
+  const screens = billing.billableScreens(sum, dim);
   const tier = billing.tierFor(screens);
   const rate = tier ? tier.rate : 0;
-  return { month, basis, billable_screens: screens, rate_usd: rate, cost_cents: Math.round(screens * rate * 100) };
+  return { month, basis: 'previous_month', billed_month: target, billable_screens: screens, rate_usd: rate, cost_cents: Math.round(screens * rate * 100) };
+}
+
+/*
+ * Included credits are for PAYING organizations: the org owner is on a plan other than Free, not
+ * in a trial that is still running, and not past due or lapsed. That covers a Stripe subscription,
+ * an admin-granted plan and an invoiced one alike. A self-hosted server has no plans or billing at
+ * all; there the operator is paying the provider with their own key, so every org qualifies.
+ */
+const _orgOwnerPlan = db.prepare(`
+  SELECT u.plan_id, u.trial_plan, u.trial_started, u.stripe_subscription_id, u.subscription_status
+    FROM organizations o JOIN users u ON u.id = o.owner_user_id
+   WHERE o.id = ?`);
+const LAPSED = new Set(['past_due', 'unpaid', 'cancelled', 'canceled', 'incomplete', 'incomplete_expired']);
+function includedEligible(orgId, nowMs = Date.now()) {
+  if (config.selfHosted) return true;
+  const u = _orgOwnerPlan.get(orgId);
+  if (!u || !u.plan_id || u.plan_id === 'free') return false;
+  const trialRunning = !!u.trial_started && u.plan_id === u.trial_plan && !u.stripe_subscription_id
+    && u.trial_started + TRIAL_SECONDS > Math.floor(nowMs / 1000);
+  if (trialRunning) return false;
+  return !LAPSED.has(u.subscription_status);
 }
 
 /** Included credits for a bill: 10% of it, at 1 credit per cent, floored. Pure. */
@@ -152,18 +166,18 @@ const _sumPurchased = db.prepare("SELECT COALESCE(SUM(delta_credits),0) AS n FRO
 const _sumGranted = db.prepare("SELECT COALESCE(SUM(delta_credits),0) AS n FROM ai_credit_ledger WHERE org_id = ? AND reason = 'grant_included' AND period = ?");
 
 /*
- * Top the month's included grant up to what the current screen bill entitles.
+ * Grant this month's included credits: 10% of last month's final screen bill, for a paying org.
  *
- * ⚠️ A TOP-UP, AND IT NEVER CLAWS BACK. The month-to-date bill is an estimate that firms up as the
- * month goes on. Granting once, on the first call, would lock in whatever the estimate was that
- * morning; re-granting the difference as it RISES keeps the cap at 10% of the real bill. When it
- * FALLS nothing is taken back — the customer may already have spent it, and the ledger must never
- * go negative. Idempotent: the ref names the entitlement level, and the unique index refuses a
- * second row for the same level.
+ * The bill is fixed for the month (see orgScreenBill), so this grants once. It is still written as
+ * a TOP-UP to the entitled level because eligibility can change mid-month (a trial converts, a
+ * past-due account pays), and it NEVER CLAWS BACK: once granted the credits may already be spent,
+ * and the ledger must never go negative. Idempotent: the ref names the entitlement level, and the
+ * unique index refuses a second row for the same level.
  */
 function ensureIncludedGrant(orgId, nowMs = Date.now()) {
   const bill = orgScreenBill(orgId, nowMs);
-  const entitled = includedFor(bill.cost_cents);
+  const eligible = includedEligible(orgId, nowMs);
+  const entitled = eligible ? includedFor(bill.cost_cents) : 0;
   const granted = _sumGranted.get(orgId, bill.month).n;
   if (entitled > granted) {
     try {
@@ -176,7 +190,7 @@ function ensureIncludedGrant(orgId, nowMs = Date.now()) {
       if (!/UNIQUE/i.test(e.message)) throw e;   // a concurrent top-up to the same level won
     }
   }
-  return { bill, entitled };
+  return { bill, entitled, eligible };
 }
 
 function balance(orgId, nowMs = Date.now()) {
@@ -332,7 +346,7 @@ function rateCardAge(nowMs = Date.now()) {
 
 module.exports = {
   MICROS_PER_CREDIT, CreditError,
-  rateCard, priceOf, staleWindowSec, findRow, orgScreenBill, includedFor, ensureIncludedGrant, balance,
+  rateCard, priceOf, staleWindowSec, findRow, orgScreenBill, includedEligible, includedFor, ensureIncludedGrant, balance,
   reserve, commit, release, sweepStale, packById, recordPurchase, adminAdjust, usageThisMonth, rateCardAge,
   PACKS: CARD.PACKS, HIGHLIGHT: CARD.HIGHLIGHT,
   __resetCardForTests: () => { _card = null; },
