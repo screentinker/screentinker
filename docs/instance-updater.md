@@ -19,15 +19,21 @@ So the work is split:
 1. **The app** writes a request (just a version number) into a spool directory it owns,
    `$DATA_DIR/updater/requests/`.
 2. **The updater**, `scripts/updater/st-updater.sh`, runs separately as root. It treats the request
-   as untrusted and takes only an `X.Y.Z` that must be newer than the running version; everything
-   else comes from its own configuration. It then:
+   as untrusted and takes only an `X.Y.Z` that must be newer than the **installed** release, which
+   the updater reads itself (the checkout's `VERSION`, or `/app/VERSION` inside the running image).
+   It never trusts the version the app reports, so a compromised app cannot ask for a downgrade.
+   Everything else comes from its own configuration. It then:
    - backs up the database and checks the copy with `PRAGMA integrity_check`, refusing to go on
      without a good backup;
    - fetches the release (git tag or image);
    - installs it and restarts the server;
    - waits for `/api/status` to report the new version (and, on Docker, a passing healthcheck);
-   - **rolls back** to the previous version if the new one does not come up within 4 minutes. The
-     database is not restored automatically; the backup path is shown.
+   - **rolls back** if the new one does not come up within 4 minutes. If the new release was
+     started, it may have migrated the database, so the rollback stops the server, moves that
+     database aside as `<db>.failed-v<version>-<time>` (with its WAL) and restores the pre-upgrade
+     backup before starting the previous version. Anything written between the backup and the
+     rollback (a few minutes of play logs and heartbeats) is in the `.failed` copy, not the live
+     database.
 3. **The dashboard** polls `GET /api/admin/update-status`, which reads a status directory the
    updater writes and the app can only read. The progress view survives the restart, and the page
    reloads into the new version when the upgrade is done.
@@ -36,7 +42,9 @@ Every step and its output appear in the dashboard log. Each queued upgrade is re
 activity log (`admin_trigger_update`).
 
 The updater refuses, changing nothing, if:
-- the target version is not newer than the running one;
+- the target version is not newer than the installed one;
+- the server reports a different version than the one installed (restart it first);
+- the request directory's path contains a symlink;
 - there is no such release;
 - the database cannot be found or backed up;
 - the git checkout has local changes;
@@ -60,10 +68,11 @@ It reads the running unit to find the checkout, the service user, the node binar
 | `/etc/screentinker-updater.env` | the updater's settings. **Review this after installing.** |
 | `/etc/systemd/system/screentinker-updater.{path,service}` | the path unit starts the oneshot service when a request appears |
 | `/var/lib/screentinker-updater/` | status and log (root-owned, readable by the app) |
-| `$DATA_DIR/updater/requests/` | the only directory the app writes |
+| `$DATA_DIR/updater/` | root-owned, so the app cannot swap `requests/` for a symlink |
+| `$DATA_DIR/updater/requests/` | the only directory the app writes. The updater works only inside its real path and never removes a file that is not a request. |
 
-Git and `npm ci` run as the checkout's owner, never as root. Only `systemctl restart` runs as
-root. The host needs `sqlite3` for the backup (`apt install sqlite3`).
+Git and `npm ci` run as the checkout's owner, never as root, unless the checkout itself is owned
+by root (the installer warns). Only `systemctl` runs as root. The host needs `sqlite3` for the backup (`apt install sqlite3`).
 
 When `scripts/updater/st-updater.sh` changes in a release, re-run the installer to refresh the copy.
 
@@ -120,9 +129,9 @@ those directories from their defaults: `/updater` or `/var/lib/screentinker-upda
 
 ## Rolling back by hand
 
-The updater rolls back the code or image, but not the database, because migrations only move
-forward and devices keep writing during the upgrade. If you also need the data back, stop the
-server and copy the backup named in the dashboard over the live database:
+An automatic rollback restores the database itself (see above). To go back after an upgrade that
+**succeeded**, stop the server and copy the backup named in the dashboard over the live database
+(remove its `-wal` and `-shm` files first). Data written since the backup is lost:
 
 - **Docker:** restore `docker-compose.yml.bak-pre-v<version>`, then `/data/db/pre-v…db`.
 - **git:** `git checkout <previous tag>`, `npm ci --omit=dev`, then the backup in `BACKUP_DIR`.

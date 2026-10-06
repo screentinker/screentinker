@@ -153,7 +153,8 @@ describe('st-updater.sh, git mode', { skip: !has('git') || !has('sqlite3') ? 'ne
     // systemctl restart = "the service now runs whatever the checkout holds", unless that release
     // is the broken one.
     writeStub(bin, 'systemctl', `case "$1" in
-  restart) if [ -f "${app}/server/WONT_START" ]; then : > "${state}/running"; else tr -d '\\n' < "${app}/VERSION" > "${state}/running"; fi ;;
+  restart) if [ -f "${app}/server/WONT_START" ]; then sqlite3 "${root}/live.db" 'INSERT INTO t VALUES (99)'; : > "${state}/running"; else tr -d '\\n' < "${app}/VERSION" > "${state}/running"; fi ;;
+  stop) : > "${state}/running" ;;
   is-active) exit 0 ;;
 esac`);
     writeStub(bin, 'npm', 'exit 0');
@@ -196,6 +197,46 @@ esac`);
     assert.equal(fs.readFileSync(path.join(state, 'running'), 'utf8'), '1.1.0');
   });
 
+  test('THE BUG: the rollback puts the DATABASE back too, and keeps the one the new release left', () => {
+    // 1.2.0 wrote to the database (as a migration would) before it failed to come up.
+    const q = (db, sql) => execFileSync('sqlite3', [db, sql], { encoding: 'utf8' }).trim();
+    assert.equal(q(env.DB, 'SELECT COUNT(*) FROM t WHERE x = 99'), '0', 'the old release runs on the pre-upgrade data');
+    const failed = fs.readdirSync(root).filter((f) => f.startsWith('live.db.failed-v1.2.0-'));
+    assert.equal(failed.filter((f) => !/-(wal|shm)$/.test(f)).length, 1, 'the new release\'s database is kept');
+    assert.equal(q(path.join(root, failed.find((f) => !/-(wal|shm)$/.test(f))), 'SELECT COUNT(*) FROM t WHERE x = 99'), '1');
+  });
+
+  test('THE BUG: "newer than running" is measured against the installed release, not what the app reports', () => {
+    // A compromised app reports 1.0.0 to make 1.0.0 < 1.1.0 look like an upgrade... to an OLDER tag.
+    fs.writeFileSync(path.join(state, 'running'), '0.9.0');
+    request(env.UPDATER_REQUEST_DIR, '1.0.0');
+    const r = run(env);
+    assert.equal(r.status_json.state, 'failed');
+    assert.match(r.status_json.message, /reports v0\.9\.0 but v1\.1\.0 is installed/);
+    assert.equal(head(), 'v1.1.0');
+    fs.writeFileSync(path.join(state, 'running'), '1.1.0');
+  });
+
+  test('THE BUG: a request directory swapped for a symlink is refused; root acts in no other directory', () => {
+    const victim = path.join(root, 'victim');
+    fs.mkdirSync(victim);
+    fs.writeFileSync(path.join(victim, 'important.conf'), 'keep me');
+    fs.writeFileSync(path.join(victim, 'abcdefgh.json'), '{"target":"1.2.0"}');
+    const real = env.UPDATER_REQUEST_DIR;
+    fs.rmSync(real, { recursive: true, force: true });
+    fs.symlinkSync(victim, real);
+    try {
+      const before = fs.readFileSync(path.join(env.UPDATER_STATUS_DIR, 'status.json'), 'utf8');
+      spawnSync('sh', [SCRIPT, 'once'], { env: { ...env, VERIFY_TIMEOUT: '4' }, encoding: 'utf8', timeout: 60000 });
+      assert.deepEqual(fs.readdirSync(victim).sort(), ['abcdefgh.json', 'important.conf'], 'nothing read, nothing removed');
+      assert.equal(fs.readFileSync(path.join(env.UPDATER_STATUS_DIR, 'status.json'), 'utf8'), before, 'no job ran');
+      assert.match(fs.readFileSync(path.join(env.UPDATER_STATUS_DIR, 'log.txt'), 'utf8'), /Refusing the request directory/);
+      assert.equal(head(), 'v1.1.0');
+    } finally {
+      fs.unlinkSync(real); fs.mkdirSync(real);
+    }
+  });
+
   test('a forged or stale request changes nothing', () => {
     for (const [target, why] of [['1.1.0', /not newer/], ['1.0.0', /not newer/], ['1.1.0"; touch /tmp/x; "', /valid X\.Y\.Z/], ['9.9.9', /no release tag/]]) {
       request(env.UPDATER_REQUEST_DIR, target);
@@ -204,11 +245,13 @@ esac`);
       assert.match(r.status_json.message, why, target);
       assert.equal(head(), 'v1.1.0', `${target}: checkout untouched`);
     }
-    // A badly named file and a symlink are discarded without being read.
+    // A badly named file is never read or removed; a symlinked request is removed (the link
+    // only) without being read.
     fs.writeFileSync(path.join(env.UPDATER_REQUEST_DIR, 'x.json'), '{"target":"1.2.0"}');
     fs.symlinkSync('/etc/passwd', path.join(env.UPDATER_REQUEST_DIR, 'abcdefgh-link.json'));
     const r = run(env);
-    assert.deepEqual(fs.readdirSync(env.UPDATER_REQUEST_DIR), []);
+    assert.deepEqual(fs.readdirSync(env.UPDATER_REQUEST_DIR), ['x.json']);
+    fs.unlinkSync(path.join(env.UPDATER_REQUEST_DIR, 'x.json'));
     assert.equal(r.status_json.state, 'failed');
     assert.equal(head(), 'v1.1.0');
   });
@@ -260,11 +303,15 @@ case "$1" in
     case "$1" in
       ps) echo cid123 ;;
       up) tag="$(sed -n 's|.*image:[[:space:]]*${IMAGE}:\\([^[:space:]]*\\).*|\\1|p' "$f")"
-          if [ "$tag" = 9.0.0 ]; then : > "${state}/running"; else printf '%s' "$tag" > "${state}/running"; fi ;;
+          [ "$tag" = latest ] || printf '%s' "$tag" > "${state}/imagever"
+          if [ "$tag" = 9.0.0 ]; then : > "${state}/running"; else cp "${state}/imagever" "${state}/running"; fi ;;
+      stop) : > "${state}/running" ;;
+      run) : ;;
     esac ;;
+  run) cat "${state}/imagever" ;;
   exec) case "$*" in *"DST=/data/db/pre-v"*) echo ok ;; *) echo bad ;; esac ;;
   pull) case "$2" in *:8.0.0) exit 1 ;; esac ;;
-  inspect) echo healthy ;;
+  inspect) case "$*" in *.Image*) echo sha256:img ;; *) echo healthy ;; esac ;;
 esac`);
     compose = path.join(root, 'docker-compose.yml');
     env = {
@@ -282,6 +329,7 @@ esac`);
   test('pins the compose file to the release, recreates the app, keeps the old file', () => {
     writeCompose(`${IMAGE}:latest`);
     fs.writeFileSync(path.join(state, 'running'), '2.3.2');
+    fs.writeFileSync(path.join(state, 'imagever'), '2.3.2');   // what /app/VERSION in the running image says
     request(env.UPDATER_REQUEST_DIR, '2.3.3');
     const r = run(env, 'busybox');
     assert.equal(r.status_json.state, 'done', `${r.status_json.message}\n${r.stderr}`);
@@ -299,6 +347,21 @@ esac`);
     assert.equal(r.status_json.state, 'rolled_back', r.status_json.message);
     assert.match(fs.readFileSync(compose, 'utf8'), /:2\.3\.3\n/);
     assert.equal(fs.readFileSync(path.join(state, 'running'), 'utf8'), '2.3.3');
+    // The database comes back too: app stopped, then a one-off container of the OLD release swaps
+    // the backup in, paths through -e only.
+    const calls = fs.readFileSync(path.join(state, 'calls'), 'utf8');
+    assert.match(calls, /compose -f \S+ stop screentinker/);
+    assert.match(calls, /compose -f \S+ run --rm --no-deps -T -e SRC=\/data\/db\/pre-v9\.0\.0-\S+ -e DST=\/data\/db\/remote_display\.db -e TAG=v9\.0\.0-\S+ --entrypoint sh screentinker -c/);
+    assert.match(r.status_json.message, /database was restored/);
+  });
+
+  test('THE BUG (docker): the version floor is the running image\'s own VERSION, not the app\'s answer', () => {
+    fs.writeFileSync(path.join(state, 'running'), '1.0.0');   // the app lies
+    request(env.UPDATER_REQUEST_DIR, '2.0.0');
+    const r = run(env, 'busybox');
+    assert.equal(r.status_json.state, 'failed');
+    assert.match(r.status_json.message, /reports v1\.0\.0 but v2\.3\.3 is installed/);
+    fs.writeFileSync(path.join(state, 'running'), '2.3.3');
   });
 
   test('a failed pull or a compose file not running the published image changes nothing', () => {
