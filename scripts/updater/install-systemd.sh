@@ -70,8 +70,15 @@ command -v runuser >/dev/null || { echo "runuser (util-linux) is required." >&2;
 
 install -d -m 755 "$LIB" "$OUT_DIR"
 install -m 755 "$SRC_DIR/st-updater.sh" "$LIB/st-updater.sh"
-install -d -m 755 -o "$SVC_USER" "$DATA_DIR/updater"
+# The parent is ROOT's: only the requests directory inside it belongs to the app. An app-owned
+# parent would let the app swap requests/ for a symlink to any directory root then acts in.
+install -d -m 755 -o root -g root "$DATA_DIR/updater"
 install -d -m 770 -o "$SVC_USER" "$REQ_DIR"
+REQ_DIR="$(cd "$REQ_DIR" && pwd -P)"   # st-updater.sh refuses a spool path with a symlink in it
+if [ "$APP_USER" = root ]; then
+  echo "WARNING: $APP_DIR is owned by root, so git and npm ci (with its install scripts) run as root." >&2
+  echo "         chown the checkout to an unprivileged user to keep them out of root." >&2
+fi
 
 umask 077
 cat > /etc/screentinker-updater.env <<EOF

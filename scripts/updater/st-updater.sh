@@ -14,8 +14,15 @@
 #
 # ⚠️ THE REQUEST FILE IS UNTRUSTED. It is written by the (less privileged) app, so a compromised
 # app controls its contents. The only thing taken from it is a version number, and that must match
-# a strict X.Y.Z pattern and be NEWER than what is running. Image repository, paths, service names
-# and the git remote all come from this script's own environment, never from the request.
+# a strict X.Y.Z pattern and be NEWER than the installed release. Image repository, paths, service
+# names and the git remote all come from this script's own environment, never from the request.
+#
+# ⚠️ SO IS THE SPOOL DIRECTORY, AND SO IS WHAT THE APP SAYS IT RUNS. The app can replace the
+# request directory with a symlink, so this script works only inside the directory's real path
+# and never deletes anything that is not a request. And "newer than what is running" is measured
+# against the release this script finds installed (the checkout's VERSION, or the running image's),
+# never against the version the app reports, which a compromised app could lower to get a
+# downgrade.
 #
 # ⚠️ OUTPUT GOES TO A DIRECTORY THE APP CANNOT WRITE ($UPDATER_STATUS_DIR). The request spool is
 # app-writable, so a root process appending a log there would follow any symlink the app planted.
@@ -58,6 +65,7 @@ fi
 
 LOG="$OUT_DIR/log.txt"
 JOB_ID=""; JOB_TARGET=""; JOB_FROM=""; JOB_STARTED=0; JOB_BACKUP=""
+NEW_STARTED=0   # set once the new release has been started: from then on it may have migrated the DB
 
 jstr() { printf '%s' "$1" | tr -d '[:cntrl:]' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
@@ -101,6 +109,18 @@ http_get() {
 
 running_version() {
   http_get "$STATUS_URL" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+
+# The release that is INSTALLED, read by this script, not reported by the app.
+installed_version() {
+  if [ "$MODE" = git ]; then
+    as_owner git -C "$APP_DIR" show HEAD:VERSION 2>/dev/null | tr -d '[:space:]'
+  else
+    # A fresh container from the running container's image, with no network: the app cannot have
+    # changed what is inside it.
+    _img="$(docker inspect -f '{{.Image}}' "$(app_cid)" 2>/dev/null)"
+    [ -n "$_img" ] && docker run --rm --network none --entrypoint cat "$_img" /app/VERSION 2>/dev/null | tr -d '[:space:]'
+  fi
 }
 
 # Wait until the server answers with version $1. Docker additionally waits for the healthcheck.
@@ -152,10 +172,31 @@ git_install() { # ref
   ( cd "$APP_DIR/server" && as_owner npm ci --omit=dev --no-audit --no-fund ) >> "$LOG" 2>&1
 }
 
+# Put the pre-upgrade backup back as the live database. Only after the new release has run: it may
+# have migrated the schema, and the old code is not promised to read a newer one. The database the
+# new release left is kept beside it (with its WAL), so nothing written since the backup is lost
+# for good. The service is stopped first, so nothing holds the file open.
+git_restore_db() {
+  _failed="$DB.failed-v$JOB_TARGET-$(date +%Y%m%d-%H%M%S)"
+  run_logged "$SYSTEMCTL" stop "$SERVICE_NAME" || return 1
+  for _s in "" -wal -shm; do
+    if [ -e "$DB$_s" ]; then mv -f "$DB$_s" "$_failed$_s" || return 1; fi
+  done
+  cp "$JOB_BACKUP" "$DB" || return 1
+  chown --reference="$_failed" "$DB" 2>/dev/null || true
+  chmod --reference="$_failed" "$DB" 2>/dev/null || true
+  RESTORED_NOTE=" The database was restored from the backup; the one v$JOB_TARGET left is at $_failed."
+}
+
 git_rollback() { # why
   set_status rollback "$1 Rolling back to $JOB_FROM."
+  RESTORED_NOTE=""
+  if [ "$NEW_STARTED" = 1 ] && ! git_restore_db; then
+    set_status failed "$1 Could not restore the database from $JOB_BACKUP - the service is stopped. Restore it by hand, check out $PREV and start $SERVICE_NAME."
+    return
+  fi
   if git_install "$PREV" && run_logged "$SYSTEMCTL" restart "$SERVICE_NAME" && wait_for_version "$JOB_FROM"; then
-    set_status rolled_back "$1 Rolled back: $JOB_FROM is running again. Backup: $JOB_BACKUP"
+    set_status rolled_back "$1 Rolled back: $JOB_FROM is running again.$RESTORED_NOTE Backup: $JOB_BACKUP"
   else
     set_status failed "$1 The rollback did not come back either - check: journalctl -u $SERVICE_NAME. Backup: $JOB_BACKUP"
   fi
@@ -176,6 +217,7 @@ do_git() {
   set_status install "Installing v$JOB_TARGET (checkout + npm ci)"
   git_install "v$JOB_TARGET" || { git_rollback "Installing v$JOB_TARGET failed."; return 0; }
   set_status restart "Restarting $SERVICE_NAME"
+  NEW_STARTED=1
   run_logged "$SYSTEMCTL" restart "$SERVICE_NAME" || { git_rollback "The service would not restart."; return 0; }
   set_status verify "Waiting for v$JOB_TARGET to answer"
   wait_for_version "$JOB_TARGET" || { git_rollback "v$JOB_TARGET did not come up within ${VERIFY_TIMEOUT}s."; return 0; }
@@ -197,10 +239,31 @@ const r = new D(process.env.DST, { readonly: true }).pragma("integrity_check", {
 process.stdout.write(String(r));
 '
 
+# Same rule as git_restore_db, inside the app's volume: with the app stopped, a one-off container
+# of the OLD release (the compose file is already restored) moves the new release's database
+# aside and copies the backup in. Paths arrive through env, never spliced into the script.
+RESTORE_SH='set -e
+for s in "" -wal -shm; do if [ -e "$DST$s" ]; then mv -f "$DST$s" "$DST.failed-$TAG$s"; fi; done
+cp "$SRC" "$DST"'
+
+docker_restore_db() {
+  _tag="v$JOB_TARGET-$(date +%Y%m%d-%H%M%S)"
+  run_logged compose stop "$APP_SERVICE" || return 1
+  run_logged compose run --rm --no-deps -T -e SRC="$JOB_BACKUP" -e DST="$DB_IN_CONTAINER" -e TAG="$_tag" \
+    --entrypoint sh "$APP_SERVICE" -c "$RESTORE_SH" || return 1
+  RESTORED_NOTE=" The database was restored from the backup; the one v$JOB_TARGET left is at $DB_IN_CONTAINER.failed-$_tag."
+}
+
 docker_rollback() { # why
   set_status rollback "$1 Rolling back to $JOB_FROM."
-  if cp "$COMPOSE_BAK" "$COMPOSE_FILE" && run_logged compose up -d --no-deps --force-recreate "$APP_SERVICE" && wait_for_version "$JOB_FROM"; then
-    set_status rolled_back "$1 Rolled back: $JOB_FROM is running again. Backup: $JOB_BACKUP"
+  RESTORED_NOTE=""
+  cp "$COMPOSE_BAK" "$COMPOSE_FILE" || { set_status failed "$1 Could not put back $COMPOSE_BAK - restore it by hand. Backup: $JOB_BACKUP"; return; }
+  if [ "$NEW_STARTED" = 1 ] && ! docker_restore_db; then
+    set_status failed "$1 Could not restore the database from $JOB_BACKUP - $APP_SERVICE is stopped on the old compose file. Restore it by hand, then docker compose up -d $APP_SERVICE."
+    return
+  fi
+  if run_logged compose up -d --no-deps --force-recreate "$APP_SERVICE" && wait_for_version "$JOB_FROM"; then
+    set_status rolled_back "$1 Rolled back: $JOB_FROM is running again.$RESTORED_NOTE Backup: $JOB_BACKUP"
   else
     set_status failed "$1 The rollback did not come back either - check: docker compose logs $APP_SERVICE. Backup: $JOB_BACKUP"
   fi
@@ -234,6 +297,7 @@ do_docker() {
     || { set_status failed "Could not rewrite $COMPOSE_FILE - nothing was changed."; cp "$COMPOSE_BAK" "$COMPOSE_FILE"; return 0; }
 
   set_status restart "Recreating $APP_SERVICE on $IMAGE_REPO:$JOB_TARGET"
+  NEW_STARTED=1
   run_logged compose up -d --no-deps --force-recreate "$APP_SERVICE" || { docker_rollback "docker compose up failed."; return 0; }
   set_status verify "Waiting for v$JOB_TARGET to answer and pass its healthcheck"
   wait_for_version "$JOB_TARGET" || { docker_rollback "v$JOB_TARGET did not become healthy within ${VERIFY_TIMEOUT}s."; return 0; }
@@ -244,7 +308,7 @@ do_docker() {
 
 process_one() { # request file
   _f="$1"; _base="$(basename "$_f")"
-  JOB_ID="${_base%.json}"; JOB_TARGET=""; JOB_FROM=""; JOB_BACKUP=""; JOB_STARTED="$(date +%s)"
+  JOB_ID="${_base%.json}"; JOB_TARGET=""; JOB_FROM=""; JOB_BACKUP=""; JOB_STARTED="$(date +%s)"; NEW_STARTED=0
   # Read it, then remove it, before anything else: a request is consumed exactly once even if
   # this job dies, so the path unit cannot loop on it.
   _raw=""
@@ -256,9 +320,14 @@ process_one() { # request file
   if ! valid_ver "$_t"; then set_status failed "The request did not name a valid X.Y.Z version."; return; fi
   JOB_TARGET="$_t"
 
-  JOB_FROM="$(running_version)"
-  if ! valid_ver "$JOB_FROM"; then set_status failed "Could not read the running version from $STATUS_URL - nothing was changed."; return; fi
-  if ! ver_gt "$JOB_TARGET" "$JOB_FROM"; then set_status failed "v$JOB_TARGET is not newer than the running v$JOB_FROM - nothing was changed."; return; fi
+  JOB_FROM="$(installed_version)"
+  if ! valid_ver "$JOB_FROM"; then set_status failed "Could not read the installed release (${JOB_FROM:-nothing found}) - nothing was changed."; return; fi
+  _reported="$(running_version)"
+  if [ "$_reported" != "$JOB_FROM" ]; then
+    set_status failed "The server reports v${_reported:-?} but v$JOB_FROM is installed. Restart it, or check the install - nothing was changed."
+    return
+  fi
+  if ! ver_gt "$JOB_TARGET" "$JOB_FROM"; then set_status failed "v$JOB_TARGET is not newer than the installed v$JOB_FROM - nothing was changed."; return; fi
 
   set_status starting "Upgrade v$JOB_FROM -> v$JOB_TARGET requested"
   if [ "$MODE" = git ]; then do_git; else do_docker; fi
@@ -266,14 +335,22 @@ process_one() { # request file
 
 process_all() {
   [ -d "$REQ_DIR" ] || return 0
-  # One at a time, oldest first; anything that is not a well-named request is discarded.
-  for _f in "$REQ_DIR"/*; do
-    [ -e "$_f" ] || [ -L "$_f" ] || continue
-    case "$(basename "$_f")" in
-      *.tmp) continue ;;  # the app is still writing it
-    esac
-    basename "$_f" | grep -Eq '^[A-Za-z0-9-]{8,64}\.json$' || { rm -f "$_f"; continue; }
-    process_one "$_f"
+  # Work INSIDE the spool's real directory, by relative names: once there, the app swapping the
+  # path for a symlink cannot move us. The spool path must contain no symlink at all, or the app
+  # (which owns it) could point it at any directory root would then act in.
+  _real="$(cd "$REQ_DIR" 2>/dev/null && pwd -P)"
+  if [ "$_real" != "${REQ_DIR%/}" ]; then
+    log "Refusing the request directory $REQ_DIR: its real path is ${_real:-unreadable}. Set UPDATER_REQUEST_DIR to a path with no symlinks."
+    return 0
+  fi
+  cd "$_real" || return 0
+  [ "$(pwd -P)" = "$_real" ] || return 0
+  # One at a time, oldest first. Only a well-named request is ever read or removed; anything else
+  # is left exactly where it is.
+  for _n in *; do
+    [ -e "$_n" ] || [ -L "$_n" ] || continue
+    printf '%s' "$_n" | grep -Eq '^[A-Za-z0-9-]{8,64}\.json$' || continue
+    process_one "./$_n"
     heartbeat
   done
 }
