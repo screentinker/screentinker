@@ -147,7 +147,7 @@ async function renderWallEditor(container, wallId) {
     if (!d || !d.render_width || !d.render_height) return '';
     const sw = d.screen_width, sh = d.screen_height;
     if (sw && sh && (sw !== d.render_width || sh !== d.render_height)) {
-      return t('wall.render_note', { render: `${d.render_width}×${d.render_height}`, panel: `${sw}×${sh}` });
+      return t('wall.render_note', { render: esc(`${d.render_width}×${d.render_height}`), panel: esc(`${sw}×${sh}`) });
     }
     return '';
   };

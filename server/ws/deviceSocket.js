@@ -189,6 +189,9 @@ let lastScreenshots = {};
 // dashboard reflects it without a full re-register / playlist push). Older APKs omit newer fields.
 function applyDeviceInfo(deviceId, di) {
   const num = (v) => (typeof v === 'number' ? v : null);
+  // Pixel sizes are a player's own report and reach the dashboard's HTML: whole, plausible numbers
+  // or nothing. SQLite would otherwise keep a string in an INTEGER column as TEXT, markup and all.
+  const px = (v) => (Number.isInteger(v) && v > 0 && v <= 100000 ? v : null);
   // Upgrade incident: if the reported app_version differs from what we had stored, log it
   // (old → new) in the incident feed. Server-side, so it covers every client (Android/Tizen/web)
   // with no client change. Only when we HAD a prior version (a fresh pair isn't an "upgrade").
@@ -205,7 +208,7 @@ function applyDeviceInfo(deviceId, di) {
     ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
     can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, capture_mode = ?,
     media_volume = ?, system_brightness = ?, window_brightness = ?, screen_off_timeout_ms = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
-    .run(di.android_version, di.app_version, di.screen_width, di.screen_height, di.render_width ?? null, di.render_height ?? null,
+    .run(di.android_version, di.app_version, px(di.screen_width), px(di.screen_height), px(di.render_width), px(di.render_height),
       di.ota_status ?? 'none', di.ota_target_version ?? null, di.ota_attempts ?? 0,
       Number.isInteger(di.tier) ? di.tier : 0, di.foreign_device_owner ? 1 : 0,
       di.can_write_settings ? 1 : 0, di.accessibility_enabled ? 1 : 0, di.overlay_granted ? 1 : 0,

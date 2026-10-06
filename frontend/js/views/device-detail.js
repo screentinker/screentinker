@@ -624,7 +624,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <div class="device-header-left">
           <h1 id="deviceName">${esc(device.name)}</h1>
           ${(() => { const b = livenessBadge(device); return `<span class="device-status-badge ${b.state}"${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.label)}</span>`; })()}
-          ${device.owner_name || device.owner_email ? `<span style="font-size:12px;color:var(--text-muted)">${t('device.owner_label', { owner: device.owner_name || device.owner_email })}</span>` : ''}
+          ${device.owner_name || device.owner_email ? `<span style="font-size:12px;color:var(--text-muted)">${t('device.owner_label', { owner: esc(device.owner_name || device.owner_email) })}</span>` : ''}
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-sm" id="devicePreviewBtn">${t('device.preview_btn')}</button>
@@ -1008,12 +1008,12 @@ async function loadDevice(deviceId, activeTab = null) {
           <div class="info-card">
             <div class="info-card-label">${t('device.info.screen_resolution')}</div>
             <div class="info-card-value small">${device.screen_width && device.screen_height
-              ? device.screen_width + 'x' + device.screen_height +
+              ? esc(device.screen_width + 'x' + device.screen_height) +
                 // #134: show the UI render surface alongside the HDMI output when they differ
                 // (TV boxes that render at 720p and upscale to a 1080p signal).
                 (device.render_width && device.render_height &&
                  (device.render_width !== device.screen_width || device.render_height !== device.screen_height)
-                  ? ` (UI ${device.render_width}x${device.render_height})` : '')
+                  ? ` (UI ${esc(device.render_width + 'x' + device.render_height)})` : '')
               : '--'}</div>
           </div>
           <div class="info-card">
