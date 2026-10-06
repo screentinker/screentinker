@@ -46,6 +46,7 @@ so plainly when it has none.
 
 ## Integrations
 
+- [Templates](https://screentinker.com/templates): the ready-made templates in the signed catalog (menu boards, room signs, KPI dashboards, Wi-Fi QR, clocks, weather), live from the catalog, with interactive previews.
 - [Integrations overview](https://screentinker.com/integrations/): native widgets plus a Webpage widget that embeds any public URL.
 - [YouTube on digital signage](https://screentinker.com/integrations/youtube-digital-signage.html)
 - [Google Slides on digital signage](https://screentinker.com/integrations/google-slides-digital-signage.html)

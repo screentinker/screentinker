@@ -22,6 +22,7 @@ const store = require('../lib/templates/store');
 const tplWidget = require('../lib/templates/widget');
 const render = require('../lib/templates/render');
 const pkgLib = require('../lib/templates/package');
+const gallery = require('../lib/templates/gallery');
 
 const router = express.Router();
 
@@ -207,6 +208,57 @@ router.get('/thumb/:sha', (req, res) => {
   res.setHeader('Content-Security-Policy', 'sandbox');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   res.send(env.files.get(t));
+});
+
+/*
+ * The public gallery's "Interactive web preview" (/templates): an installed OFFICIAL template,
+ * rendered with its own defaults and demo weather, by package hash.
+ *
+ * Public because the marketing page is, and safe to be because:
+ *   - only a package from the official catalog that is installed, active and usable here;
+ *   - the values are the template's defaults plus lib/templates/gallery.js demo data, never a
+ *     workspace's data, images or fonts (there is no workspace);
+ *   - the document gets the same CSP as a real render (`sandbox allow-scripts`, opaque origin,
+ *     connect-src limited to the manifest's declared hosts) — the page that frames it gets nothing;
+ *   - rendered once per hash and cached in process, so a burst of visitors costs one render each,
+ *     on top of the 120/min/IP limit on this public mount.
+ * Off with the marketing page (DISABLE_HOMEPAGE).
+ */
+const demos = new Map();
+const DEMO_TTL = 60 * 60 * 1000;
+router.get('/demo/:sha', (req, res) => {
+  const sha = String(req.params.sha);
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  const gone = () => {
+    res.setHeader('Content-Security-Policy', 'sandbox');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(404).type('text/html').send(render.blankPage('Preview unavailable'));
+  };
+  if (require('../config').disableHomepage || !/^[0-9a-f]{64}$/.test(sha)) return gone();
+  const row = db.prepare("SELECT id FROM templates_installed WHERE sha256 = ? AND status = 'active' AND catalog = ?").get(sha, gallery.OFFICIAL);
+  const installed = row && store.getInstalled(row.id);
+  if (!installed || tplWidget.usable(installed)) { demos.delete(sha); return gone(); }
+  let out = demos.get(sha);
+  if (!out || Date.now() - out.at > DEMO_TTL) {
+    const env = store.loadPackage(sha);
+    if (!env) return gone();
+    const fake = { id: 'gallery-demo', workspace_id: null, widget_type: 'template', config: JSON.stringify({ template: installed.id, values: gallery.demoValues(env.manifest) }) };
+    const r = tplWidget.renderTemplateWidget(fake, {
+      origin: `${req.protocol}://${req.get('host')}`,
+      resolveImage: () => null,
+      resolveFont: () => null,
+      resolveData: (slug, key) => { const d = gallery.demoData(slug); return d && d[key] !== undefined ? d[key] : null; },
+      dataFor: (slug) => gallery.demoData(slug),
+    });
+    out = { ...r, at: Date.now() };
+    if (demos.size > 200) demos.clear();
+    demos.set(sha, out);
+  }
+  res.setHeader('Content-Security-Policy', out.csp);
+  res.setHeader('Cache-Control', 'public, max-age=600');
+  res.type('text/html').send(out.html);
 });
 
 router.post('/installed/:catalog/:id/use', (req, res) => {

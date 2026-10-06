@@ -158,6 +158,30 @@ escapes are accepted). Use it for a private fork of the official catalog, or if 
 ever rotated before you can upgrade. When the key changes, the server drops its cached index and
 resets the serial floor, because the old index was verified under the old key.
 
+## The public gallery (`/templates`)
+
+Every server with the marketing homepage on also serves a public template gallery at **`/templates`**
+(screentinker.com/templates on the hosted service), linked from the homepage nav.
+
+- **It is the official catalog as this server last accepted it**, not a list in the page. A template
+  published to the catalog appears here on the server's next catalog poll, with no release or
+  redeploy. Revoked versions are hidden. Templates from other catalogs, and imported or unsigned
+  ones, are never listed.
+- **Filters** (Corporate, Retail & Hospitality, Data & Dashboards, Utilities, Interactive): our own
+  templates are placed by hand in `server/lib/templates/gallery.js`; any other template is placed by
+  its `tags`, and lands in Utilities if none match.
+- **"Interactive web preview"** appears only for a template that is **installed and active on this
+  server** at the catalog's version. It frames `GET /api/templates/demo/<sha256>`, a public,
+  logged-out render of that package with **its own defaults** plus demo weather for a `data_source`
+  parameter about weather. It never reads a workspace's data sources, images or fonts. The render
+  gets the same `sandbox allow-scripts` CSP as a widget on a screen, the gallery frames it sandboxed
+  again, and it is limited with the other public template routes (120 requests/min per IP).
+- **It never fails.** With no accepted catalog (the community library off, or never fetched) the
+  page serves its committed fallback, which points at the library in the dashboard.
+- `/templates.md` is a Markdown rendition of the live page, for agents.
+- `DISABLE_HOMEPAGE=true` turns the gallery and the demo route off along with the homepage
+  (`/templates` redirects to `/app`; `/templates.md` and the demo answer 404).
+
 ## Settings and environment variables
 
 | Setting | Where | Default |
@@ -179,6 +203,7 @@ Unsigned **slide** templates do not need it — they contain no code.
 | `TEMPLATE_CATALOG_ALLOW_PRIVATE=1` | allow catalog URLs on private/LAN addresses (bypasses the SSRF guard for catalog fetches only) |
 | `TEMPLATE_CATALOG_PUBLIC_KEY` | override the built-in catalog's public key (PEM) |
 | `TEMPLATES_DIR` | where packages are stored. Default `$DATA_DIR/templates` — include it in backups |
+| `DISABLE_HOMEPAGE=true` | also turns off the public gallery at `/templates` and its `/api/templates/demo/` previews |
 
 ## Security model, and its limits
 
