@@ -204,8 +204,11 @@ if [ "$NATIVE" = true ]; then
     fi
     log "Native player mode: $NATIVE_MODE (override with --native-mode lite|desktop)"
     # The desktop login user: the display manager's autologin user, else whoever ran sudo.
-    DESKTOP_USER=$(sed -n 's/^[[:space:]]*autologin-user[[:space:]]*=[[:space:]]*//p' /etc/lightdm/lightdm.conf 2>/dev/null | tail -n1)
-    [ -z "$DESKTOP_USER" ] && DESKTOP_USER="${SUDO_USER:-$(getent passwd 1000 | cut -d: -f1)}"
+    # ⚠️ `|| true`: Lite has no lightdm.conf, and under `set -euo pipefail` the failed sed ends the
+    # whole script right here — silently, since its stderr goes to /dev/null (the kiosk unit stayed,
+    # setup never ran, the player showed "No server configured").
+    DESKTOP_USER=$(sed -n 's/^[[:space:]]*autologin-user[[:space:]]*=[[:space:]]*//p' /etc/lightdm/lightdm.conf 2>/dev/null | tail -n1 || true)
+    [ -z "$DESKTOP_USER" ] && DESKTOP_USER="${SUDO_USER:-$(getent passwd 1000 | cut -d: -f1 || true)}"
     # ⚠️ ONE player per screen. An earlier browser-kiosk install (menu option 1 or 2) left its own
     # launcher behind — a unit that starts X on tty1 (Lite) or a session autostart entry (Desktop) —
     # and it takes the display back from the native player. Remove both; the server unit stays.
