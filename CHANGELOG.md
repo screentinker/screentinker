@@ -121,6 +121,14 @@
 - **Changing a wall's geometry, or a screen's layout, only showed at the next item.** A wall looping
   one video never showed it at all. It now redraws straight away.
 - **The wall page said "2 of 2 not online" for a wall whose panels were all healthy.**
+- **A web-player wall went black for a moment at every switch between images and videos.** The
+  outgoing picture now stays up until the next one is ready, as on a single screen, and the wall
+  stays in sync across the switch. YouTube, live streams and widgets on a wall still switch the old
+  way.
+- **The wall's Live view showed the whole picture on every web-player panel** instead of that
+  panel's part. A web player's screenshot now matches what the panel shows, including rotation and
+  wall zones. Android, Pi/Windows and BrightSign capture the real screen and were not affected;
+  Tizen still has this for images.
 
 ### Fixed (server)
 
