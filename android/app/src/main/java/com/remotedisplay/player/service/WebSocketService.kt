@@ -1246,6 +1246,32 @@ class WebSocketService : Service() {
         android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
     }
 
+    /*
+     * ⚠️ THE SCREEN'S HDMI INPUT CANNOT BE CAPTURED (player/LiveInput.kt): it is a hardware video
+     * plane — `screencap` exits 1 while it is up, and a view capture reads black where it sits. So
+     * while one is on screen the capture comes from the player's own window with a card painted over
+     * each input; this full-frame card is the fallback when that capture is unavailable, never a
+     * black frame that looks like a dead panel. Set by MainActivity.
+     */
+    var isShowingLiveInput: (() -> Boolean)? = null
+
+    private val liveInputFrame: String by lazy {
+        val bmp = android.graphics.Bitmap.createBitmap(640, 360, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        c.drawColor(android.graphics.Color.rgb(17, 17, 17))
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(221, 221, 221); textAlign = android.graphics.Paint.Align.CENTER
+            textSize = 34f; isFakeBoldText = true
+        }
+        c.drawText("Live HDMI input", 320f, 170f, p)
+        p.textSize = 20f; p.isFakeBoldText = false; p.color = android.graphics.Color.rgb(150, 150, 150)
+        c.drawText("Playing on this screen. It can\u2019t be captured.", 320f, 210f, p)
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, out)
+        bmp.recycle()
+        android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+    }
+
     /** The tier the NEXT capture would use. Reported in telemetry so the dashboard can say why a
      *  screenshot shows only the playlist. Must stay in step with captureScreen() below. */
     fun currentCaptureMode(): CaptureMode = CaptureMode.current(onCaptureScreenshot != null)
@@ -1266,6 +1292,12 @@ class WebSocketService : Service() {
 
     private fun captureScreen(): String? {
         if (privacyOn()) return blankFrame
+        if (try { isShowingLiveInput?.invoke() == true } catch (_: Throwable) { false }) {
+            // MediaProjection and accessibility both fail on the HDMI plane, so go straight to the
+            // player's own window: it draws everything real and paints a card over each input
+            // (ScreenshotCapture). The full-frame card is only for when even that is unavailable.
+            return try { onCaptureScreenshot?.invoke() } catch (_: Throwable) { null } ?: liveInputFrame
+        }
         // Priority 1: MediaProjection (system-wide, works in background) — needs operator consent.
         if (ScreenCaptureService.isReady) {
             val result = ScreenCaptureService.captureScreen(40)

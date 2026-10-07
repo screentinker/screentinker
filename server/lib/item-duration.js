@@ -12,7 +12,7 @@ const DEFAULT_ITEM_DURATION = 10;
 // length. Default 5 minutes when added; 0 is a valid, meaningful value ("stay until skipped")
 // and is SAFE only because every player special-cases a live item's 0 dwell (no finite advance
 // timer). It must never be applied to finite media, where 0 self-loops into a black screen.
-const LIVE_MIMES = ['video/hls', 'video/rtsp'];
+const { LIVE_MIMES } = require('./remote-url');   // hls, rtsp, hdmi-in
 const LIVE_DEFAULT_DWELL = 300;
 
 // A probe that reports longer than this is a broken container (streams and truncated files

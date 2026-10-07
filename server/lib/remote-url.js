@@ -22,7 +22,19 @@
 // keeps an rtsp item off any screen that does not declare playback.rtsp).
 const LIVE_MIME = 'video/hls';      // kept as the canonical name; HLS is the portable transport
 const RTSP_MIME = 'video/rtsp';
-const LIVE_MIMES = [LIVE_MIME, RTSP_MIME];
+/*
+ * A third "transport": the player's own HDMI INPUT (a cable box, a console, another signage player
+ * plugged into a Fire TV Cube or an Android TV box with HDMI in). remote_url is `hdmi://<port>`, or
+ * plain `hdmi://` for the first input; it names a socket on the back of the screen, not a host, so
+ * there is nothing to fetch and nothing to validate beyond the shape. Android only, and only where
+ * the player found an HDMI passthrough input at runtime (playback.hdmi_in) — the deviceSocket strip
+ * keeps it off every other screen. Live like HLS/RTSP: duration is dwell, 0 = stay.
+ *
+ * ⚠️ NEVER CAPTURABLE. The picture is a hardware video plane: screenshots and the dashboard's live
+ * view see black (or the OS refuses the capture outright). Verified on a Fire TV Cube 3rd gen.
+ */
+const HDMI_IN_MIME = 'video/hdmi-in';
+const LIVE_MIMES = [LIVE_MIME, RTSP_MIME, HDMI_IN_MIME];
 
 function isLiveItem(item) {
   return !!(item && LIVE_MIMES.indexOf(item.mime_type) !== -1);
@@ -103,9 +115,26 @@ function validateRtspUrl(url) {
   return null;
 }
 
+// hdmi:// or hdmi://<port 1-99>. Nothing else: no host, no path, no query.
+function looksLikeHdmiInUrl(url) {
+  return typeof url === 'string' && /^hdmi:\/\/([1-9][0-9]?)?$/i.test(url.trim());
+}
+
+function validateHdmiInUrl(url) {
+  if (!looksLikeHdmiInUrl(url)) {
+    return { status: 400, error: 'A live input is hdmi:// (the first HDMI input) or hdmi://<port>, e.g. hdmi://1.' };
+  }
+  return null;
+}
+
 // Classify a "live stream" URL the operator typed into one Add flow: rtsp:// -> video/rtsp,
-// an http(s) .m3u8 -> video/hls. Returns { mime } or { error: { status, error } }.
+// hdmi://<port> -> video/hdmi-in, an http(s) .m3u8 -> video/hls. Returns { mime } or
+// { error: { status, error } }.
 function classifyLiveUrl(url) {
+  if (typeof url === 'string' && /^hdmi:/i.test(url.trim())) {
+    const e = validateHdmiInUrl(url);
+    return e ? { error: e } : { mime: HDMI_IN_MIME };
+  }
   if (looksLikeRtspUrl(url)) {
     const e = validateRtspUrl(url);
     return e ? { error: e } : { mime: RTSP_MIME };
@@ -119,7 +148,7 @@ function classifyLiveUrl(url) {
 }
 
 module.exports = {
-  LIVE_MIME, RTSP_MIME, LIVE_MIMES, isLiveItem, isInfiniteDwell,
-  looksLikeHlsUrl, looksLikeRtspUrl,
-  validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, classifyLiveUrl,
+  LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, isLiveItem, isInfiniteDwell,
+  looksLikeHlsUrl, looksLikeRtspUrl, looksLikeHdmiInUrl,
+  validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, classifyLiveUrl,
 };

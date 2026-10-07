@@ -41,7 +41,8 @@ object OfflineGate {
      * wherever their URL points (YouTube, HLS, a remote image). A bundle does NOT: its flattened
      * document is cached on disk (BundleCache) like any other media.
      */
-    fun needsNetwork(item: PlaylistItem): Boolean = item.isWidget || item.isRemote
+    fun needsNetwork(item: PlaylistItem): Boolean =
+        item.isWidget || (item.isRemote && !LiveInput.isLiveInput(item.mimeType))   // hdmi:// is a socket on the box, not a host
 
     /**
      * Should [index] be passed over right now? Only when it cannot load, and only when some OTHER

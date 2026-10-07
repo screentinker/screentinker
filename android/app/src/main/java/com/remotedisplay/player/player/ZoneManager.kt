@@ -40,6 +40,8 @@ class ZoneManager(
     private val handler = Handler(Looper.getMainLooper())
     private val zoneViews = mutableMapOf<String, View>()
     private val zoneExoPlayers = mutableMapOf<String, ExoPlayer>()
+    // A zone showing the screen's HDMI input holds a hardware session; released like an ExoPlayer.
+    private val zoneLiveInputs = mutableMapOf<String, LiveInputPlayer>()
     // Per-zone rotation timers: each zone cycles its own list of assignments.
     private val zoneRotators = mutableMapOf<String, Runnable>()
     private var zones = listOf<Zone>()
@@ -49,6 +51,8 @@ class ZoneManager(
     // IPTV: a dwell-0 live stream in a rotating zone re-checks eligibility on this slow cadence
     // (stays if it is still the active pick; advances if a daypart opened a sibling). Never a busy-loop.
     private val LIVE_RECHECK_MS = 60_000L
+    // A zone holding only the HDMI input re-tunes this often after its picture is lost.
+    private val LIVE_INPUT_RETRY_MS = 10_000L
     private var renderCache: com.remotedisplay.player.data.ContentCache? = null
 
     var currentLayoutId: String? = null
@@ -181,6 +185,24 @@ class ZoneManager(
         return -1
     }
 
+    /** Dwell for a live item in a rotating zone: it never ends, so a timer (or, dwell 0, a slow
+     *  eligibility re-check) moves the zone on. Shared by streams and the HDMI input. */
+    private fun armLiveDwell(zone: Zone, assignments: List<JSONObject>, activeIdx: Int, a: JSONObject, advance: () -> Unit) {
+        val liveDwell = a.optInt("duration_sec", 0)
+        if (liveDwell > 0) {
+            scheduleZoneAdvance(zone.id, liveDwell * 1000L, advance)
+        } else {
+            val recheck = object : Runnable {
+                override fun run() {
+                    if (zoneNextActive(assignments, activeIdx) == activeIdx) handler.postDelayed(this, LIVE_RECHECK_MS)
+                    else advance()
+                }
+            }
+            zoneRotators[zone.id] = recheck
+            handler.postDelayed(recheck, LIVE_RECHECK_MS)
+        }
+    }
+
     // Render assignment[index] in a zone, replacing its current view. If the zone
     // has more than one assignment it rotates: images/widgets advance on a duration
     // timer; videos advance when they end (single-item zones loop the video).
@@ -188,6 +210,7 @@ class ZoneManager(
         cancelZoneRotation(zone.id)
         zoneViews.remove(zone.id)?.let { container.removeView(it) }
         zoneExoPlayers.remove(zone.id)?.release()
+        zoneLiveInputs.remove(zone.id)?.release()
 
         // #74/#75: skip items whose schedule excludes them now; blank-idle the zone
         // and re-check shortly (a daypart may open) if none are active.
@@ -206,7 +229,7 @@ class ZoneManager(
         val advance: () -> Unit = { showZoneItem(zone, assignments, activeIdx + 1, params) }
 
         val mimeType = a.optString("mime_type", "")
-        val isLive = mimeType == "video/hls" || mimeType == "video/rtsp"   // live stream: bytes never end -> dwell, not STATE_ENDED
+        val isLive = mimeType == "video/hls" || mimeType == "video/rtsp" || LiveInput.isLiveInput(mimeType)   // live: never ends -> dwell, not STATE_ENDED
         val remoteUrl = if (a.isNull("remote_url")) null else a.optString("remote_url", null)
         val widgetType = if (a.isNull("widget_type")) null else a.optString("widget_type", null)
         val contentId = if (a.isNull("content_id")) null else a.optString("content_id", null)
@@ -232,7 +255,7 @@ class ZoneManager(
                     "&rev=" + wRev
                 webView.loadUrl(wUrl)
                 webView.layoutParams = params
-                container.addView(webView); zoneViews[zone.id] = webView
+                addZoneView(zone, webView)
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
             }
             // HTML bundle - the server's flattened document, in a WebView like a widget. `rev` is
@@ -243,7 +266,7 @@ class ZoneManager(
                 val bRev = a.optLong("content_rev", 0L)
                 webView.loadUrl("$renderServerUrl/api/content/" + a.optString("content_id", "") + "/bundle?rev=" + bRev)
                 webView.layoutParams = params
-                container.addView(webView); zoneViews[zone.id] = webView
+                addZoneView(zone, webView)
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
             }
             // YouTube - render via an embed wrapper with a valid origin (Error 153 fix)
@@ -255,8 +278,29 @@ class ZoneManager(
                 if (html != null) webView.loadDataWithBaseURL(com.remotedisplay.player.util.WebViewSupport.EMBED_BASE, html, "text/html", "UTF-8", null)
                 else webView.loadUrl(remoteUrl)
                 webView.layoutParams = params
-                container.addView(webView); zoneViews[zone.id] = webView
+                addZoneView(zone, webView)
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
+            }
+            // The screen's HDMI input, boxed into the zone (verified on a Fire TV Cube). Before the
+            // video branch: it is a video/* mime with a remote_url, but there is nothing to stream.
+            LiveInput.isLiveInput(mimeType) -> {
+                val holder = FrameLayout(context).apply { layoutParams = params }
+                addZoneView(zone, holder)
+                // A lost picture (source off, cable pulled) skips it in a rotating zone. In a zone
+                // that holds ONLY the input there is nothing to skip to, so it re-tunes on a slow
+                // cadence instead — otherwise plugging the cable back in would leave the zone black
+                // until the layout changed.
+                val retry: () -> Unit = { showZoneItem(zone, assignments, activeIdx, params) }
+                val live = LiveInputPlayer(context, holder, 0) {
+                    handler.post { if (multi) advance() else scheduleZoneAdvance(zone.id, LIVE_INPUT_RETRY_MS, retry) }
+                }
+                zoneLiveInputs[zone.id] = live
+                if (!live.play(remoteUrl ?: "hdmi://", isMuted)) {
+                    // No such input on this box: skip it in a rotating zone, keep looking in a lone one.
+                    scheduleZoneAdvance(zone.id, if (multi) 3_000L else LIVE_INPUT_RETRY_MS, if (multi) advance else retry)
+                } else if (multi) {
+                    armLiveDwell(zone, assignments, activeIdx, a, advance)
+                }
             }
             // Video
             mimeType.startsWith("video/") -> {
@@ -304,25 +348,11 @@ class ZoneManager(
                     playWhenReady = true
                 }
                 playerView.player = exoPlayer
-                container.addView(playerView); zoneViews[zone.id] = playerView; zoneExoPlayers[zone.id] = exoPlayer
+                addZoneView(zone, playerView); zoneExoPlayers[zone.id] = exoPlayer
                 // DWELL for a live stream in a rotating zone: it never fires STATE_ENDED, so advance on
                 // the dwell timer (duration_sec > 0). A dwell-0 stream stays until it is no longer the
                 // active pick (windows still re-evaluate on the slow cadence, without remounting).
-                if (multi && isLive) {
-                    val liveDwell = a.optInt("duration_sec", 0)
-                    if (liveDwell > 0) {
-                        scheduleZoneAdvance(zone.id, liveDwell * 1000L, advance)
-                    } else {
-                        val recheck = object : Runnable {
-                            override fun run() {
-                                if (zoneNextActive(assignments, activeIdx) == activeIdx) handler.postDelayed(this, LIVE_RECHECK_MS)
-                                else advance()
-                            }
-                        }
-                        zoneRotators[zone.id] = recheck
-                        handler.postDelayed(recheck, LIVE_RECHECK_MS)
-                    }
-                }
+                if (multi && isLive) armLiveDwell(zone, assignments, activeIdx, a, advance)
             }
             // Image
             mimeType.startsWith("image/") -> {
@@ -365,7 +395,7 @@ class ZoneManager(
                         }.start()
                     }
                 }
-                container.addView(imageView); zoneViews[zone.id] = imageView
+                addZoneView(zone, imageView)
                 if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
             }
             // Unknown / empty assignment - keep rotating so it doesn't get stuck.
@@ -397,7 +427,33 @@ class ZoneManager(
     private fun releaseExoPlayers() {
         zoneExoPlayers.values.forEach { it.release() }
         zoneExoPlayers.clear()
+        zoneLiveInputs.values.forEach { it.release() }
+        zoneLiveInputs.clear()
     }
+
+    /*
+     * ⚠️ IN z_index ORDER, not at the top. A zone's view is re-created every time it changes item,
+     * and a plain addView put the new one above every other zone — so z_index held only for the
+     * first render. That never mattered while zones sat side by side. It does for an overlay — a
+     * channel logo over a live input, a lower-third over a video — and twice over for the HDMI
+     * input, whose surface punches a hole through whatever is drawn beneath it: re-rendered on top,
+     * it would erase the logo it was meant to carry.
+     */
+    private fun addZoneView(zone: Zone, view: View) {
+        var at = -1
+        for ((id, v) in zoneViews) {
+            val other = zones.firstOrNull { it.id == id } ?: continue
+            if (other.zIndex > zone.zIndex) {
+                val i = container.indexOfChild(v)
+                if (i >= 0 && (at < 0 || i < at)) at = i
+            }
+        }
+        if (at >= 0) container.addView(view, at) else container.addView(view)
+        zoneViews[zone.id] = view
+    }
+
+    /** Is any zone showing the screen's HDMI input right now? (screenshots show a placeholder) */
+    fun hasLiveInput(): Boolean = zoneLiveInputs.values.any { it.isActive }
 
     fun cleanup() {
         cancelAllRotations()

@@ -40,6 +40,12 @@ const CAPABILITIES = [
    * player declares it and the deviceSocket strip keeps rtsp items off every other screen. In no
    * baseline (brand new). */
   'playback.rtsp',
+  /* The screen's own HDMI INPUT played as an item (mime video/hdmi-in, remote_url hdmi://<port>):
+   * a cable box or console plugged into a Fire TV Cube / Android TV box with HDMI in. Declared by
+   * the native Android player ONLY when it found an HDMI passthrough input on this device at
+   * runtime — most Android boxes have none, which is exactly why a static table could not know.
+   * In NO baseline; the deviceSocket strip keeps it off every other screen. */
+  'playback.hdmi_in',
   /* An uploaded HTML bundle (.wgt / .zip) played as a playlist item. Declared by a player that can
    * MOUNT one — today that means loading the server's flattened single-document render, which every
    * player with an iframe can do. It does NOT imply the player can unpack an archive locally, so it

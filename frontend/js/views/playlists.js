@@ -1271,7 +1271,7 @@ function renderItems(items) {
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${item.child_playlist_id
           ? `<span style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.nested_duration_hint'))}">${esc(t('playlist.plays_through'))}</span>`
-          : (item.mime_type === 'video/hls' || item.mime_type === 'video/rtsp')
+          : (item.mime_type === 'video/hls' || item.mime_type === 'video/rtsp' || item.mime_type === 'video/hdmi-in')
           // A live stream's duration is DWELL (how long to stay on the channel), not clip length.
           // 0 = stay until the item is skipped (window / enabled / play_when / the playlist advances).
           ? `<label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.dwell_hint'))}">${t('playlist.dwell')}</label>

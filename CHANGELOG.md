@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- **Live input: show the screen's own HDMI IN as a playlist item.**
+  - On an Android TV box with an HDMI input, such as the Fire TV Cube (3rd gen), whatever is
+    plugged into it plays like any other item: a cable box, a console, another signage player.
+  - Add it from Content → **Live input (HDMI IN)**. It plays full screen or in a zone, and other
+    zones can be layered on top of it, such as a channel logo or a lower-third.
+  - Only screens that actually have an HDMI input receive it. Every other player skips it and plays
+    the rest of the playlist.
+  - The live picture can't be captured, so dashboard screenshots show a "Live HDMI input" card in
+    its place, with everything around and above it captured normally.
+
+### Fixed (Android player)
+
+- **Zones now keep their layering when they change item.** A zone's new item used to go on top of
+  every other zone, so `z_index` only held for the first item. Side-by-side zones never noticed;
+  overlays such as a logo over a video did.
+
+## Unreleased
+
 ### Fixed (Raspberry Pi native player)
 
 - **On Pi OS with a desktop, the player could fail to start at login with nothing on screen.**

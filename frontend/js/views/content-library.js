@@ -134,6 +134,25 @@ export function render(container) {
         <input type="text" id="hlsNameInput" class="input" placeholder="${t('content.hls_name_placeholder')}">
         <button class="btn btn-primary" id="addHlsBtn">${t('content.hls_add_btn')}</button>
       </div>
+      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="10" rx="2"/>
+            <path d="M6 11h12M8 14h8"/>
+          </svg>
+          ${t('content.hdmi_in')}
+        </div>
+        <p style="font-size:12px;color:var(--text-muted)">${t('content.hdmi_in_desc')}</p>
+        <select id="hdmiInPort" class="input">
+          <option value="">${t('content.hdmi_in_first')}</option>
+          <option value="1">HDMI 1</option>
+          <option value="2">HDMI 2</option>
+          <option value="3">HDMI 3</option>
+          <option value="4">HDMI 4</option>
+        </select>
+        <input type="text" id="hdmiInName" class="input" placeholder="${t('content.hdmi_in_name_placeholder')}">
+        <button class="btn btn-primary" id="addHdmiInBtn">${t('content.hdmi_in_add_btn')}</button>
+      </div>
     </div>
     </div>
 
@@ -263,6 +282,21 @@ export function render(container) {
       showToast(t('content.toast.hls_added'), 'success');
       document.getElementById('hlsUrlInput').value = '';
       document.getElementById('hlsNameInput').value = '';
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // Live input: the screen's own HDMI IN. Same route as a live stream — the server classifies
+  // hdmi://<port> — and the same rule: only a screen that has an input is ever sent it.
+  document.getElementById('addHdmiInBtn').addEventListener('click', async () => {
+    const port = document.getElementById('hdmiInPort').value;
+    const name = document.getElementById('hdmiInName').value.trim();
+    try {
+      await api.addHlsContent('hdmi://' + port, name || (port ? 'HDMI ' + port : 'HDMI input'));
+      showToast(t('content.toast.hdmi_in_added'), 'success');
+      document.getElementById('hdmiInName').value = '';
       loadContent();
     } catch (err) {
       showToast(err.message, 'error');
@@ -598,6 +632,13 @@ async function loadContent() {
                 </svg>
                 <span style="font-size:10px;color:var(--text-muted)">${t('content.type_bundle_short')}</span>
               </div>`
+          : c.mime_type === 'video/hdmi-in'
+            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11h12M8 14h8"/>
+                </svg>
+                <span style="font-size:10px;color:var(--text-muted)">${t('content.type_hdmi_in')}</span>
+              </div>`
           : c.remote_url
             ? `<div class="video-icon" style="flex-direction:column;gap:4px">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -621,7 +662,7 @@ async function loadContent() {
           <div class="content-item-name" title="${esc(c.filename)}">${esc(c.filename)}</div>
           ${Array.isArray(c.tags) && c.tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${c.tags.map((tg) => `<span data-tag="${esc(tg)}" style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);cursor:pointer">#${esc(tg)}</span>`).join('')}</div>` : ''}
           <div class="content-item-size">
-            ${c.mime_type === 'video/hls' || c.mime_type === 'video/rtsp' ? t('content.type_live') : c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
+            ${c.mime_type === 'video/hdmi-in' ? t('content.type_hdmi_in') : c.mime_type === 'video/hls' || c.mime_type === 'video/rtsp' ? t('content.type_live') : c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
             ${c.duration_sec ? ` &middot; ${Math.floor(c.duration_sec / 60)}:${String(Math.floor(c.duration_sec % 60)).padStart(2, '0')}` : ''}
             ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
             ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}
@@ -1140,7 +1181,9 @@ async function showPreview(content) {
   }
 
   const isYoutube = content.mime_type === 'video/youtube';
-  const isVideo = !isYoutube && content.mime_type?.startsWith('video/');
+  // The screen's HDMI input exists only on the screen: nothing here can open hdmi://.
+  const isHdmiIn = content.mime_type === 'video/hdmi-in';
+  const isVideo = !isYoutube && !isHdmiIn && content.mime_type?.startsWith('video/');
   const src = content.remote_url || `/uploads/content/${content.filepath}`;
 
   const overlay = document.createElement('div');
@@ -1152,6 +1195,8 @@ async function showPreview(content) {
       <div style="max-width:80vw;max-height:80vh">
         ${isYoutube
           ? `<iframe referrerpolicy="strict-origin-when-cross-origin" src="${(() => { /* #YT153 ROOT CAUSE: the dashboard sends Referrer-Policy: no-referrer (helmet default), so a raw YouTube iframe reaches youtube.com with NO Referer -> YouTube can't identify the embedding site -> "Video player configuration error" (153). referrerpolicy on THIS iframe overrides the page policy to send just our origin, which YouTube uses to validate the embed. (The device player dodges no-referrer differently: YT.Player's iframe_api origin postMessage handshake, which doesn't rely on Referer.) The enablejsapi/origin URL params are inert in a raw iframe (no API loaded), so they're dropped. */ try { const u = new URL(src); u.searchParams.set('mute', '1'); u.searchParams.delete('enablejsapi'); u.searchParams.delete('origin'); return u.toString(); } catch { return src; } })()}" style="width:80vw;height:45vw;max-height:80vh;display:block;border:none" allow="autoplay;encrypted-media" allowfullscreen></iframe>`
+          : isHdmiIn
+            ? `<div style="padding:48px 56px;max-width:520px;color:var(--text-primary)"><div style="font-weight:600;font-size:18px;margin-bottom:8px">${esc(content.filename)}</div><div style="color:var(--text-muted);font-size:14px">${t('content.hdmi_in_desc')}</div></div>`
           : isVideo
             ? `<video src="${esc(src)}" controls autoplay style="max-width:80vw;max-height:80vh;display:block"></video>`
             : `<img src="${esc(src)}" style="max-width:80vw;max-height:80vh;display:block">`

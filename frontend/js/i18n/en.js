@@ -1046,6 +1046,11 @@ export default {
   'content.hls_url_placeholder': 'https://...m3u8  or  rtsp://user:pass@10.0.0.5/stream',
   'content.hls_name_placeholder': 'Channel name (optional)',
   'content.hls_add_btn': 'Add live stream',
+  'content.hdmi_in': 'Live input (HDMI IN)',
+  'content.hdmi_in_desc': 'Show whatever is plugged into the screen\u2019s HDMI input: a cable box, a console, another player. Plays only on Android TV boxes that have an HDMI input, such as the Fire TV Cube; other screens skip it. It can\u2019t be previewed or captured.',
+  'content.hdmi_in_first': 'First HDMI input',
+  'content.hdmi_in_name_placeholder': 'Name (optional)',
+  'content.hdmi_in_add_btn': 'Add live input',
   // Search / folders
   'content.search_placeholder': 'Search content...',
   'content.filter_type_all': 'All types',
@@ -1089,6 +1094,7 @@ export default {
   // Item type labels
   'content.type_youtube': 'YouTube',
   'content.type_live': 'Live',
+  'content.type_hdmi_in': 'HDMI in',
   'content.type_remote': 'Remote URL',
   'content.type_remote_short': 'Remote',
   'content.type_video': 'Video',
@@ -1146,6 +1152,7 @@ export default {
   'content.toast.remote_added': 'Remote content added',
   'content.toast.youtube_added': 'YouTube video added',
   'content.toast.hls_added': 'Live stream added',
+  'content.toast.hdmi_in_added': 'Live input added',
   'content.toast.deleted': 'Content deleted',
   'content.toast.updated': 'Content updated',
   'content.toast.uploaded_named': '{name} uploaded successfully',

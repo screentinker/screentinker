@@ -97,7 +97,7 @@ function parseRules(raw) {
 function contentType(c) {
   const m = String(c.mime_type || '').toLowerCase();
   if (m === 'video/youtube') return 'youtube';
-  if (m === 'video/hls' || m === 'video/rtsp') return 'stream';
+  if (m === 'video/hls' || m === 'video/rtsp' || m === 'video/hdmi-in') return 'stream';
   if (m.startsWith('image/')) return 'image';
   if (m.startsWith('video/')) return 'video';
   if (m.startsWith('audio/')) return 'audio';
