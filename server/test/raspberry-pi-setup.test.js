@@ -385,7 +385,11 @@ function runNativeDetect({ files = {}, defaultTarget = 'multi-user.target', mode
     fs.writeFileSync(path.join(fake, p), body);
   }
   const block = arm.slice(start, end).replace(/(?<![\w.~])\/(etc|home|root)\//g, `${fake}/$1/`);
+  // ⚠️ Under the installer's OWN strict mode: without it a failing command in the block (Lite has no
+  // lightdm.conf) looked fine here while the real script died on it.
+  assert.match(SRC, /^set -euo pipefail$/m);
   const script = [
+    'set -euo pipefail',
     `NATIVE_MODE='${mode}'; SUDO_USER=sudoer`,
     'log() { :; }',
     `systemctl() { echo "systemctl $*" >> "${fake}/calls"; [ "$1" = get-default ] && echo ${defaultTarget}; return 0; }`,
@@ -446,4 +450,12 @@ test('native (run): a desktop image set to boot to console → lite; an unrelate
 test('native (run): --native-mode overrides the detection', () => {
   const r = runNativeDetect({ mode: 'desktop' });
   assert.match(r.out, /^MODE=desktop /);
+});
+
+test('native (run): Lite with NO lightdm.conf runs to the end under set -euo pipefail', () => {
+  // The field report: Option 3 on a clean Lite image after a kiosk install stopped right after
+  // "Native player mode: lite" — kiosk unit still there, setup never ran.
+  const r = runNativeDetect({ files: { [KIOSK_UNIT]: '[Unit]\n' } });
+  assert.equal(r.out, 'MODE=lite USER=sudoer');
+  assert.equal(r.exists(KIOSK_UNIT), false);
 });

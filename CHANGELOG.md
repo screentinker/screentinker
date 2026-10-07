@@ -86,6 +86,11 @@
   `setup` now detects the mode the same way the installer does when `--mode` is left out. Asking
   for `--mode lite` on a Pi that boots to a desktop prints a warning, because the desktop keeps the
   screen and the Lite service can't draw on it.
+- **On Pi OS Lite, installing the native player (menu option 3) stopped partway with no error.**
+  Right after printing "Native player mode: lite" it looked up the desktop's autologin user in a
+  file Lite doesn't have, and that failed lookup ended the script. An earlier browser kiosk was
+  left in charge of the screen and the player was never set up ("No server configured"). The
+  lookup no longer stops the install. Thanks to JackyL (Discord) for the report.
 
 ### Fixed (server)
 
