@@ -3,6 +3,7 @@ import { on, off, requestScreenshot, startGroupTalk, stopGroupTalk } from '../so
 import { BroadcastTalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge, isPlatformAdmin, screenshotUrl, compareVersions } from '../utils.js';
+import { mountWallLive } from '../components/wall-live.js';
 import { t, tn } from '../i18n.js';
 import * as gettingStarted from '../components/getting-started.js';
 import * as whatsNew from '../components/whats-new.js';
@@ -300,6 +301,18 @@ function renderDeviceCard(device) {
   `;
 }
 
+// A wall's card shows the WALL: every panel's screenshot where it hangs (components/wall-live.js),
+// refreshed on the same 30s cadence as the screen cards — the way a screen's card shows the screen.
+let wallLiveMounts = [];
+function mountWallCards(walls, devices) {
+  for (const m of wallLiveMounts) m.destroy();
+  wallLiveMounts = [];
+  for (const w of walls) {
+    const host = document.querySelector(`.wall-card[data-wall-id="${CSS.escape(w.id)}"] .wall-card-live`);
+    if (host && (w.devices || []).length) wallLiveMounts.push(mountWallLive(host, { wall: w, devices, live: true, refreshMs: 30000, compact: true }));
+  }
+}
+
 function renderWallCard(wall) {
   // Compose a tiny grid preview using the wall's actual cols×rows. Each cell
   // is filled (assigned) or hollow (empty slot).
@@ -316,10 +329,12 @@ function renderWallCard(wall) {
   return `
     <div class="device-card wall-card" data-wall-id="${wall.id}" onclick="window.location.hash='#/wall/${wall.id}'">
       <div class="device-card-preview wall-card-preview">
-        <div class="wall-card-grid" style="grid-template-columns:repeat(${wall.grid_cols},1fr);grid-template-rows:repeat(${wall.grid_rows},1fr)">${cells.join('')}</div>
+        ${(wall.devices || []).length
+          ? `<div class="wall-card-live" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:6px"></div>`
+          : `<div class="wall-card-grid" style="grid-template-columns:repeat(${wall.grid_cols},1fr);grid-template-rows:repeat(${wall.grid_rows},1fr)">${cells.join('')}</div>`}
         <div class="device-card-status">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
-          <span>${wall.grid_cols}×${wall.grid_rows} wall</span>
+          <span>${(wall.devices || []).length ? (wall.devices.length + '-panel') : wall.grid_cols + '×' + wall.grid_rows} wall</span>
         </div>
       </div>
       <div class="device-card-body">
@@ -1293,6 +1308,7 @@ async function loadDashboard() {
 
     main.innerHTML = html;
     frameCardScreenshots();
+    mountWallCards(walls || [], devices);
     attachGroupHandlers(groupsWithDevices);
 
     // Drop any selections for devices that have since been absorbed into a
@@ -1776,6 +1792,8 @@ export function cleanup() {
   off('device-removed', () => {});
   if (refreshInterval) clearInterval(refreshInterval);
   if (progressTickInterval) clearInterval(progressTickInterval);
+  for (const m of wallLiveMounts) m.destroy();
+  wallLiveMounts = [];
   statusHandler = null;
   screenshotHandler = null;
   playbackHandler = null;

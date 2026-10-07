@@ -492,7 +492,7 @@ class App:
             self.show_status("Offline — reconnecting", str(detail or ""))
 
     def _content_on_screen(self):
-        return self.engine.mode == "zones" or self.engine.controller.has_content_on_screen
+        return self.engine.mode in ("zones", "wallzones") or self.engine.controller.has_content_on_screen
 
     def show_status(self, title, detail=""):
         self.stage.set("statusTitle", title)

@@ -110,7 +110,7 @@ function releaseLayoutDraft(db, layoutId, req, { actor } = {}) {
     applyZones(db, layoutId, Array.isArray(draft.zones) ? draft.zones : []);
     policy.afterRelease(db, { type: 'layout', id: layoutId, gate, actor: actor || actorOf(req), summary: 'Published' });
   })();
-  pushDevices(req, db.prepare('SELECT id FROM devices WHERE layout_id = ?').all(layoutId).map((r) => r.id));
+  pushDevices(req, db.prepare(require('./wall-layout').SCREENS_ON_LAYOUT_SQL).all(layoutId, layoutId).map((r) => r.id));
   audit('release:layout', { userId: actor && actor.userId, workspaceId: l.workspace_id, details: { layout_id: layoutId, submission_id: gate.submission ? gate.submission.id : null } });
   return { gate };
 }

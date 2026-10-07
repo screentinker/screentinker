@@ -231,6 +231,10 @@ const migrations = [
   "ALTER TABLE video_wall_devices ADD COLUMN canvas_y REAL",
   "ALTER TABLE video_wall_devices ADD COLUMN canvas_width REAL",
   "ALTER TABLE video_wall_devices ADD COLUMN canvas_height REAL",
+  // Wall layouts: zones laid on the wall's player rect (percent of it, like any layout), so one
+  // zone can sit inside one panel, span several, or cover the whole wall. NULL = the wall plays its
+  // playlist across the whole player rect, exactly as before.
+  "ALTER TABLE video_walls ADD COLUMN layout_id TEXT REFERENCES layouts(id) ON DELETE SET NULL",
   // Phase 2.2c: content_folders gets workspace_id. Phase 1 missed this table.
   "ALTER TABLE content_folders ADD COLUMN workspace_id TEXT REFERENCES workspaces(id)",
   "CREATE INDEX IF NOT EXISTS idx_content_folders_workspace ON content_folders(workspace_id)",
@@ -2794,6 +2798,44 @@ migrateGroupSchedules();
 ensureMultitenancyMigration();
 
 /*
+ * Wall schedules: schedules.wall_id, and the CHECK widened from "a device XOR a group" to "exactly
+ * one of a device, a group, a wall". SQLite cannot alter a CHECK, so the table is rebuilt — from
+ * its OWN current CREATE text, so every column added since phase 4 (workspace_id, …) survives
+ * untouched, and its indexes and triggers are put back (the mesh replication triggers are also
+ * re-created at boot by ensureTriggers). A table whose CHECK is not the one we know is left alone
+ * and logged: wall schedules are refused there rather than risk a boot on a guessed rewrite.
+ */
+function migrateWallSchedules(conn = db) {
+  const db = conn;   // a parameter so a test can run it against an old-shaped database
+  const cols = db.prepare('PRAGMA table_info(schedules)').all();
+  if (!cols.length) return;
+  // ⚠️ The index lives HERE, not in schema.sql: schema.sql runs on every boot before this, and on an
+  // existing database an index on a column that does not exist yet would fail the whole boot.
+  if (cols.some((c) => c.name === 'wall_id')) { db.exec('CREATE INDEX IF NOT EXISTS idx_schedules_wall ON schedules(wall_id, enabled)'); return; }
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'schedules'").get();
+  const OLD_CHECK = /CHECK\s*\(\s*\(device_id IS NOT NULL AND group_id IS NULL\)\s*OR\s*\(device_id IS NULL AND group_id IS NOT NULL\)\s*\)/;
+  if (!row || !OLD_CHECK.test(row.sql) || !/^CREATE TABLE\s+"?schedules"?\s*\(/.test(row.sql)) {
+    console.error('[migrate] wall schedules: the schedules table is not the shape expected — left as is, wall schedules unavailable');
+    return;
+  }
+  const createSql = row.sql
+    .replace(/^CREATE TABLE\s+"?schedules"?/, 'CREATE TABLE schedules_wall_new')
+    .replace(OLD_CHECK, "wall_id TEXT REFERENCES video_walls(id) ON DELETE CASCADE,\n    CHECK ((device_id IS NOT NULL) + (group_id IS NOT NULL) + (wall_id IS NOT NULL) = 1)");
+  const keep = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name = 'schedules' AND type IN ('index', 'trigger') AND sql IS NOT NULL").all().map((r) => r.sql);
+  const names = cols.map((c) => `"${c.name}"`).join(', ');
+  db.transaction(() => {
+    db.exec(createSql);
+    db.exec(`INSERT INTO schedules_wall_new (${names}) SELECT ${names} FROM schedules`);
+    db.exec('DROP TABLE schedules');
+    db.exec('ALTER TABLE schedules_wall_new RENAME TO schedules');
+    for (const sql of keep) db.exec(sql);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_schedules_wall ON schedules(wall_id, enabled)');
+  })();
+  console.log(`[migrate] wall schedules: schedules table rebuilt with wall_id (${cols.length} columns kept)`);
+}
+migrateWallSchedules();
+
+/*
  * `organizations.sso_only` — added HERE, not in the migrations array above.
  *
  * That array runs BEFORE ensureMultitenancyMigration(), which is what creates the organizations
@@ -3437,4 +3479,4 @@ const PLAY_LOGS_WORKSPACE_BACKFILL_ID = 'play_logs_workspace_backfill';
 // Read once by services/heartbeat to arm the 2.0.1 player defer (lib/boot-defer.js). The loop
 // that sets it runs at require time, well above this line, so the value is already final here.
 module.exports = { db, pruneTelemetry, pruneTelemetryRetention, pruneScreenshots, pruneStatusLog, getMaintenanceStats,
-                   playsMigrationTouched: _playsMigrationTouched };
+                   playsMigrationTouched: _playsMigrationTouched, _migrateWallSchedules: migrateWallSchedules };

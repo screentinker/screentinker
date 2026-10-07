@@ -42,7 +42,8 @@ object OfflineGate {
      * document is cached on disk (BundleCache) like any other media.
      */
     fun needsNetwork(item: PlaylistItem): Boolean =
-        item.isWidget || (item.isRemote && !LiveInput.isLiveInput(item.mimeType))   // hdmi:// is a socket on the box, not a host
+        // hdmi:// is a socket on the box, not a host; hold:// is not fetched from anywhere at all.
+        item.isWidget || (item.isRemote && !LiveInput.isLiveInput(item.mimeType) && !Hold.isHold(item.mimeType))
 
     /**
      * Should [index] be passed over right now? Only when it cannot load, and only when some OTHER

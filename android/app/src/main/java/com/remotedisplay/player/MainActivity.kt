@@ -42,6 +42,9 @@ import com.remotedisplay.player.player.GroupScheduleController
 import com.remotedisplay.player.player.LayoutMode
 import com.remotedisplay.player.player.layoutModeOf
 import com.remotedisplay.player.player.ZoneManager
+import com.remotedisplay.player.player.WallZoneRenderer
+import com.remotedisplay.player.player.WallZones
+import com.remotedisplay.player.player.Hold
 import com.remotedisplay.player.player.ItemTiming
 import com.remotedisplay.player.remote.ScreenshotCapture
 import com.remotedisplay.player.remote.TouchInjector
@@ -72,6 +75,8 @@ class MainActivity : AppCompatActivity() {
     private var slideAudioPlayer: SlideAudioPlayer? = null
     private lateinit var updateChecker: UpdateChecker
     private var zoneManager: ZoneManager? = null
+    // Wall zones: a video wall's own layout, each zone paced by the shared clock (WallZoneRenderer).
+    private var wallZones: WallZoneRenderer? = null
     // #473: walk-up interactive web pages (fullscreen only; passive in zones, walls and groups).
     private var kiosk: com.remotedisplay.player.kiosk.KioskSession? = null
     private lateinit var wallController: WallController
@@ -302,6 +307,15 @@ class MainActivity : AppCompatActivity() {
         zoneManager = ZoneManager(this, rootView as FrameLayout) {
             playlistController.onVideoComplete()
         }
+        // Wall zones draw into the wall-transformed rootView, just above the static fullscreen views
+        // (and below the status overlay and anything layered on later).
+        wallZones = WallZoneRenderer(
+            context = this,
+            root = rootView as FrameLayout,
+            stageIndex = { (rootView as ViewGroup).indexOfChild(youtubeWebView) + 1 },
+            syncedNow = { syncedNowMs() },
+            report = { msg -> wsService?.sendLog("sync", "info", msg) }
+        )
 
         // Setup playlist controller
         playlistController = PlaylistController(
@@ -448,7 +462,7 @@ class MainActivity : AppCompatActivity() {
         groupSchedule = GroupScheduleController(
             playlist = playlistController,
             media = mediaPlayer,
-            syncedNow = { wsService?.syncedNowMs() ?: System.currentTimeMillis() },
+            syncedNow = { syncedNowMs() },
             report = { msg -> wsService?.sendLog("sync", "info", msg) },
             // Double buffer: warm the NEXT clip's second player if it's a locally-cached video, so the
             // boundary switch is a warm swap (no black hold). Non-video / uncached items just skip it.
@@ -509,6 +523,13 @@ class MainActivity : AppCompatActivity() {
                     // the main thread here, so applyMultiZoneLayout can run directly.
                     val cachedOrder = cached.optString("playback_order", "sequential")
                     when (layoutModeOf(cached)) {
+                        // A wall with its own layout comes back as THIS panel's slice of every zone,
+                        // on the cached clock offset — no server needed (WallZoneRenderer).
+                        LayoutMode.WALL_ZONES -> {
+                            val wc = cached.optJSONObject("wall_config")
+                            val z = cached.optJSONObject("layout")?.optJSONArray("zones")
+                            if (wc != null && z != null) enterWallZones(wc, z, assignments)
+                        }
                         LayoutMode.WALL -> {
                             cached.optJSONObject("wall_config")?.let { wallController.apply(parseWallConfig(it)) }
                             playlistController.updatePlaylist(assignments, cachedOrder)
@@ -539,7 +560,7 @@ class MainActivity : AppCompatActivity() {
         // cache above renders through zoneManager (not playlistController), so isPlaying stays false
         // even though the zones ARE up - without the hasZones guard the connecting overlay flashes on
         // top of the restored zones on every cold boot until the online catch-up hides it.
-        if (!playlistController.isPlaying && zoneManager?.hasZones() != true) {
+        if (!playlistController.isPlaying && zoneManager?.hasZones() != true && wallZones?.isActive != true) {
             showStatus("Connecting to server...")
         }
 
@@ -636,6 +657,12 @@ class MainActivity : AppCompatActivity() {
      * string has not changed, and it never changes on a display that has always been landscape.
      */
     private fun reapplyOrientation() {
+        /*
+         * ⚠️ NOT ON A WALL. The wall transform owns rootView (and sets currentOrientation = null), so
+         * re-measuring here re-rotated a wall panel to "landscape" on the next focus change — seen
+         * on the emulator as a wall zone turned 90° and pushed off its slice after a relaunch.
+         */
+        if (::wallController.isInitialized && wallController.isWall) return
         applyOrientation(currentOrientation ?: "landscape")
     }
 
@@ -899,6 +926,7 @@ class MainActivity : AppCompatActivity() {
                 val message = data.optString("message", "Account Suspended")
                 val detail = data.optString("detail", "Please upgrade your plan.")
                 handler.post {
+                    wallZones?.stop()
                     showStatus("$message\n$detail")
                     kiosk?.hide()
                     if (::mediaPlayer.isInitialized) mediaPlayer.stop()
@@ -911,6 +939,7 @@ class MainActivity : AppCompatActivity() {
             val effectiveTz = if (data.isNull("timezone")) null else data.optString("timezone", "").ifEmpty { null }
             playlistController.setTimezone(effectiveTz)
             zoneManager?.setTimezone(effectiveTz)
+            wallZones?.setTimezone(effectiveTz)
 
             // Default / standby content: a per-device, per-payload fallback IMAGE the server attaches
             // TOP-LEVEL (not in assignments) as `default_content`. Handed to the controller so it can
@@ -954,12 +983,21 @@ class MainActivity : AppCompatActivity() {
                 groupSchedule.exit()                 // wall and group are mutually exclusive
                 kiosk?.hide()                        // interactive pages render passively on a wall
                 playlistController.dropHold()        // a wall never holds; clear any interactive hold
-                wallController.apply(parseWallConfig(wallObj))
-                playlistController.updatePlaylist(assignments, data.optString("playback_order", "sequential"))
+                if (layoutModeOf(data) == LayoutMode.WALL_ZONES) {
+                    // The wall's own layout: every zone on the shared clock, no leader relay.
+                    val lz = data.optJSONObject("layout")!!.optJSONArray("zones")!!
+                    com.remotedisplay.player.util.DebugLog.i("Player", "Layout: WALL ZONES (${lz.length()} zones)")
+                    enterWallZones(wallObj, lz, assignments)
+                } else {
+                    wallZones?.stop()                // layout cleared, or an emergency took the wall
+                    wallController.apply(parseWallConfig(wallObj))
+                    playlistController.updatePlaylist(assignments, data.optString("playback_order", "sequential"))
+                }
             } else {
             // #group-sync: not a wall — enter clock/schedule group sync if the payload carries a
             // group_sync block, else leave it. No leader/relay: the schedule tick drives index +
             // position locally (offline-native). Content renders through the normal path below.
+            wallZones?.stop()                        // never wall zones here either
             wallController.exit()                    // never in wall mode here
             val groupObj = if (data.isNull("group_sync")) null else data.optJSONObject("group_sync")
             if (groupObj != null) groupSchedule.apply(groupObj.optString("group_id")) else groupSchedule.exit()
@@ -1143,7 +1181,7 @@ class MainActivity : AppCompatActivity() {
                 // recheck swaps new content in once its download completes. Single-zone only; in
                 // multi-zone, ZoneManager drives each zone.
                 handler.post {
-                    if (zoneManager?.hasZones() != true) playlistController.startIfNeeded()
+                    if (zoneManager?.hasZones() != true && wallZones?.isActive != true) playlistController.startIfNeeded()
                 }
             }
             } // end else (not suspended)
@@ -1190,7 +1228,8 @@ class MainActivity : AppCompatActivity() {
         // The HDMI input is a hardware plane no capture can read (LiveInput): the service sends a
         // placeholder card while one is up, full screen or in any zone.
         wsService?.isShowingLiveInput = {
-            (::mediaPlayer.isInitialized && mediaPlayer.isShowingLiveInput()) || zoneManager?.hasLiveInput() == true
+            (::mediaPlayer.isInitialized && mediaPlayer.isShowingLiveInput()) || zoneManager?.hasLiveInput() == true ||
+                wallZones?.hasLiveInput() == true
         }
         wsService?.onCaptureScreenshot = {
             screenshotCapture.captureView(captureRoot, 40)
@@ -1423,6 +1462,8 @@ class MainActivity : AppCompatActivity() {
                 // isNull() first: org.json's optString hands back the STRING "null" for a JSON null.
                 val contentId = if (item.isNull("content_id")) "" else item.optString("content_id", "")
                 if (contentId.isEmpty()) continue          // widgets carry no content to fetch
+                // A remote item (a stream, a hold://) has no file behind /api/content/:id/file.
+                if (!item.isNull("remote_url") && item.optString("remote_url", "").isNotEmpty()) continue
                 val filename = item.optString("filename", "content")
                 val rev = item.optLong("content_rev", 0L)
                 downloadCoordinator.ensure(contentId, filename, rev)
@@ -1462,6 +1503,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
         kiosk?.hide()
+
+        // A HOLD: nothing new for its duration. FREEZE keeps the outgoing frame, paused; BLANK clears
+        // to the background. Its duration is a timer (ItemTiming.endsOnTimer); in a wall or a synced
+        // group the tick moves on instead. Never a file, never "unknown type -> skip".
+        if (Hold.isHold(item.mimeType)) {
+            if (Hold.mode(item.remoteUrl) == Hold.Mode.FREEZE) mediaPlayer.holdFreeze() else mediaPlayer.holdBlank()
+            wsService?.sendPlaybackState(item.contentId, 0f)
+            return
+        }
 
         if (item.isWidget) {
             // rev makes the URL change when — and only when — the widget's content changed, so an
@@ -1629,6 +1679,37 @@ class MainActivity : AppCompatActivity() {
         zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache, config.deviceId)
         zoneManager?.lastAssignmentSig = zoneAssignmentSig(assignments)
         zoneManager?.lastZoneSig = zoneGeometrySig(layoutZones)
+    }
+
+    /**
+     * The server-disciplined clock group sync and wall zones share. Before the service is bound (a
+     * cold boot restoring from cache) it falls back to the offset the service last persisted, so an
+     * offline reboot still lands on the same slot as the rest of the wall.
+     */
+    private fun syncedNowMs(): Long = wsService?.syncedNowMs() ?: (System.currentTimeMillis() + try {
+        getSharedPreferences("remote_display", MODE_PRIVATE).getLong("clock_offset_ms", 0L)
+    } catch (e: Throwable) { 0L })
+
+    /**
+     * Enter (or refresh) wall zones: the wall transform without the relay, the fullscreen player
+     * stopped, and every zone on the shared clock. Main thread. The renderer places the zones from a
+     * layout listener, so they land on the canvas the transform sized, not on a stale window.
+     */
+    private fun enterWallZones(wallObj: JSONObject, layoutZones: org.json.JSONArray, assignments: org.json.JSONArray) {
+        val cfg = parseWallConfig(wallObj).copy(canvasLayout = true)
+        val audio = wallObj.optJSONArray("audio_zones")?.let { a -> (0 until a.length()).map { a.optString(it, "") }.filter { it.isNotEmpty() } } ?: emptyList()
+        val first = wallZones?.isActive != true
+        wallController.apply(cfg)
+        if (first) {
+            hideStatus()
+            kiosk?.hide()
+            if (::mediaPlayer.isInitialized) mediaPlayer.stop()
+            playlistController.stop()
+            playerView.visibility = View.GONE
+            imageView.visibility = View.GONE
+        }
+        val key = WallZones.configKey(cfg.wallId, cfg.isLeader, cfg.rotation, cfg.screen, cfg.player, true, audio)
+        wallZones?.apply(layoutZones, assignments, key, cfg.screen, cfg.player, audio, config.serverUrl, config.deviceId, contentCache)
     }
 
     private fun showStatus(message: String) {
@@ -2155,6 +2236,7 @@ class MainActivity : AppCompatActivity() {
         if (::groupSchedule.isInitialized) groupSchedule.shutdown()
         if (::downloadCoordinator.isInitialized) downloadCoordinator.shutdown() // cancel in-flight downloads (no orphan/leak)
         zoneManager?.cleanup()
+        wallZones?.stop()
         if (::pipOverlay.isInitialized) pipOverlay.clear(null) // #109: tear down overlay WebView
         if (::mediaPlayer.isInitialized) {
             stopScreenshotStreaming()

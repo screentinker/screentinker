@@ -195,8 +195,9 @@ object ItemTiming {
     /** The mime the server stamps on an uploaded HTML bundle (lib/html-bundle.js). */
     const val BUNDLE_MIME = "application/vnd.screentinker.bundle+zip"
 
+    // A HOLD (Hold.MIME) shows nothing new and fires no completion, so its duration is its timer.
     fun endsOnTimer(mimeType: String, isWidget: Boolean): Boolean =
         mimeType.startsWith("image/") || isWidget || mimeType == "video/youtube" ||
-            mimeType == BUNDLE_MIME
+            mimeType == BUNDLE_MIME || Hold.isHold(mimeType)
 }
 

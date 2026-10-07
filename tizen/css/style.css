@@ -83,6 +83,14 @@ button.ghost { background: transparent; color: #64748b; font-size: 1.8rem; margi
    wall's player rect; media stretches to fill (object-fit:fill) so a given source row
    lands on the same physical line across every screen that shares a viewport height. */
 .stage.wall-mode img, .stage.wall-mode video, .stage.wall-mode iframe { object-fit: fill; }
+/* ...except inside a WALL ZONE (WallZoneRenderer). The rule above is a DESCENDANT selector, so it
+   would also force fill on zone media and throw away each zone's own fit_mode. A zone is framed like
+   any layout zone — its item's / zone's contain | cover | fill — and the wall crop still lines it up
+   across the seams because the zone itself is laid out in % of the wall stage. Higher specificity
+   than the rule above, so it wins regardless of order (the element also carries it inline). */
+.stage.wall-mode .wall-zone img.contain, .stage.wall-mode .wall-zone video.contain { object-fit: contain; }
+.stage.wall-mode .wall-zone img.cover,   .stage.wall-mode .wall-zone video.cover   { object-fit: cover; }
+.stage.wall-mode .wall-zone img.fill,    .stage.wall-mode .wall-zone video.fill    { object-fit: fill; }
 
 /* #109: PiP overlay layer. Sits above #stage and fills the same viewport box so a
    child positioned to a corner lands in the corner of the visible content. app.js

@@ -24,9 +24,10 @@ from PySide6.QtCore import QTimer
 
 from ..logic import kiosk as kiosk_logic
 from ..logic import schedule_eval
+from ..logic import wall_zones as wz
 from . import transitions
 from .controller import PlaylistController
-from .items import BUNDLE_MIME, Item
+from .items import BUNDLE_MIME, Item, slot_ms
 
 log = logging.getLogger("engine")
 
@@ -36,6 +37,7 @@ PRELOAD_LEAD_SEC = 6.0
 SEEK_COOLDOWN_MS = 1200
 ZONE_MIN_SEC = 3
 LIVE_RECHECK_MS = 3000
+WALL_ZONE_TICK_MS = 250
 
 
 def youtube_id(url):
@@ -150,6 +152,14 @@ class ZoneRunner:
             return
         self.index = idx
         it = self.items[idx]
+        if wz.is_hold(it):
+            # A HOLD: nothing new for its duration — keep the zone's picture paused, or blank it.
+            # Never "unknown type -> skip": that silently shortens the timeline the hold exists for.
+            self.e.apply_hold(self.sid, it)
+            self.token = None
+            if self.multi:
+                self.timer.start(int(slot_ms(it)))
+            return
         rendered = self.e.render(it, surface=self.sid, loop=(not self.multi and not it.is_live),
                                  fit=it.fit_mode or self.zone.get("fit_mode") or "cover")
         if rendered is None:
@@ -183,6 +193,29 @@ class ZoneRunner:
             return
         if event in ("ended", "failed") and self.multi:
             self.advance()
+
+
+class WallZone:
+    """One zone of a wall layout that this panel can see (see logic/wall_zones.py). No timer of its
+    own: the engine's 4 Hz tick places every zone on the shared clock."""
+
+    def __init__(self, zone, audio):
+        self.zone = zone                   # the server's layout_zones row
+        self.zid = str(zone.get("id"))
+        self.sid = "zone:" + self.zid
+        self.audio = audio
+        self.reset()
+
+    def reset(self):
+        self.key = None                    # index|sig|cycle of what is mounted (None = mount next tick)
+        self.index = -1
+        self.token = None                  # token of what is on the surface (None = nothing)
+        self.video = False                 # a clip the tick keeps on the clock
+        self.align_pending = True
+        self.last_seek = 0
+        self.speed = 1.0
+        self.loop = None                   # decided once the clip's duration is known
+        self.want_dl = False
 
 
 class PlaybackEngine:
@@ -227,6 +260,14 @@ class PlaybackEngine:
         self.trigger_items = []
         self.payload = None
         self.playing = False
+        # Wall zones (a wall with a layout): the visible zones, their items, the shared-clock tick.
+        self.wz_zones = []
+        self.wz_buckets = {}
+        self.wz_key = None
+        self.wz_config = None
+        self.wz_timer = QTimer()
+        self.wz_timer.setInterval(WALL_ZONE_TICK_MS)
+        self.wz_timer.timeout.connect(self._wz_tick)
 
     # ------------------------------------------------------------------ helpers
     def allows(self, item):
@@ -306,8 +347,13 @@ class PlaybackEngine:
             self._hide_kiosk()
             self.controller.drop_hold()
         if wall:
+            on_canvas = wz.active(wall, zones)
+            self._apply_wall(wall, relay=not on_canvas)
+            if on_canvas:
+                # The WALL's layout: every zone on the shared clock, drawn on the wall canvas.
+                self._enter_wall_zones(wall, zones, assignments)
+                return
             self._enter_single()
-            self._apply_wall(wall)
         else:
             self._exit_wall()
             if len(zones) > 1:
@@ -358,7 +404,7 @@ class PlaybackEngine:
         for a in assignments:
             it = Item.parse(a)
             if it.content_id and not it.is_remote and not it.is_widget and not it.is_bundle \
-                    and it.mime_type != "video/youtube":
+                    and it.mime_type != "video/youtube" and not wz.is_hold(it):
                 want.append((it.content_id, it.filename, it.mime_type, it.content_rev))
         dc = p.get("default_content")
         if isinstance(dc, dict) and dc.get("content_id") and not dc.get("remote_url"):
@@ -366,7 +412,8 @@ class PlaybackEngine:
         self.trigger_items = []
         for t in p.get("triggers") or []:
             for a in (t or {}).get("items") or []:
-                if isinstance(a, dict) and a.get("content_id") and a.get("mime_type") != "video/youtube":
+                if isinstance(a, dict) and a.get("content_id") and a.get("mime_type") != "video/youtube" \
+                        and a.get("mime_type") != wz.HOLD_MIME:
                     want.append((a["content_id"], a.get("filename") or "", a.get("mime_type") or "", a.get("content_rev") or 0))
         self.app.ensure_downloads(want, prune=bool(assignments))
 
@@ -388,6 +435,8 @@ class PlaybackEngine:
 
     # ------------------------------------------------------------------ modes
     def _enter_single(self):
+        if self.mode == "wallzones":
+            self._stop_wall_zones()
         if self.mode == "zones":
             for r in self.zone_runners.values():
                 r.stop()
@@ -400,11 +449,14 @@ class PlaybackEngine:
         spec = [{"id": str(z.get("id")), "name": z.get("name") or "",
                  "x": float(z.get("x_percent") or 0), "y": float(z.get("y_percent") or 0),
                  "w": float(z.get("width_percent") or 100), "h": float(z.get("height_percent") or 100),
-                 "z": int(z.get("z_index") or 0), "fit_mode": z.get("fit_mode") or "cover"} for z in zones]
+                 "z": int(z.get("z_index") or 0), "fit_mode": z.get("fit_mode") or "cover",
+                 "bg": z.get("background_color") or ""} for z in zones]
         items = [Item.parse(a) for a in assignments]
         sig = json.dumps([spec, [i.sig() for i in items]], sort_keys=True)
         if self.mode == "zones" and getattr(self, "_zone_sig", None) == sig:
             return
+        if self.mode == "wallzones":
+            self._stop_wall_zones()
         if self.mode == "single":
             self._hide_kiosk()               # interactive pages render passively in a zone
             self.controller.stop()
@@ -455,11 +507,15 @@ class PlaybackEngine:
                 self.tokens.pop(k, None)
         return tok
 
-    def item_dict(self, it, fit=None, loop=False):
-        """Item -> the dict a Slot renders, or None when there is nothing renderable."""
+    def item_dict(self, it, fit=None, loop=False, muted=None):
+        """Item -> the dict a Slot renders, or None when there is nothing renderable. `muted` overrides
+        the wall rule (wall zones decide sound per zone)."""
         server = self.config.server_url
-        muted = bool(it.muted) or bool(self.wall and not self.wall["leader"] and not self.wall["group"])
-        d = {"fit": "fill" if (self.wall and not self.wall["group"]) else (fit or it.fit_mode or "cover"),
+        if muted is None:
+            muted = bool(it.muted) or bool(self.wall and not self.wall["leader"] and not self.wall["group"])
+        # A plain wall stretches the one item over the canvas; wall ZONES keep their own fit.
+        stretch = bool(self.wall and not self.wall["group"] and self.mode != "wallzones")
+        d = {"fit": "fill" if stretch else (fit or it.fit_mode or "cover"),
              "muted": muted, "loop": loop, "live": it.is_live}
         if it.is_widget:
             q = ("?device=" + urllib.parse.quote(self.config.device_id)) if self.config.device_id else "?d="
@@ -482,7 +538,7 @@ class PlaybackEngine:
             return d
         if it.is_remote:
             if it.mime_type.startswith("video/"):
-                d.update(kind="video", source=it.remote_url)
+                d.update(kind="video", source=it.remote_url, holdEnd=not loop and not it.is_live)
             elif it.mime_type.startswith("image/"):
                 d.update(kind="image", source=it.remote_url)
             else:
@@ -493,7 +549,7 @@ class PlaybackEngine:
             return None
         src = pathlib.Path(path).as_uri()   # file:///C:/... on Windows; "file://"+path is not a URL there
         if it.mime_type.startswith("video/"):
-            d.update(kind="video", source=src)
+            d.update(kind="video", source=src, holdEnd=not loop)
         elif it.mime_type.startswith("image/"):
             d.update(kind="image", source=src)
         else:
@@ -527,6 +583,16 @@ class PlaybackEngine:
                                                      "position_sec": 0})
             return
         self._hide_kiosk()
+        if wz.is_hold(it):
+            # FREEZE keeps the outgoing frame, paused — and main_token None, so neither the group tick
+            # nor the wall relay seeks it; BLANK clears to the background. The controller times it
+            # (playlist_logic.ends_on_timer), or a schedule-driven follower's tick moves it on.
+            self.apply_hold("main", it)
+            self.main_token, self.main_item = None, it
+            self.app.emit("device:playback-state", {"device_id": self.config.device_id,
+                                                     "current_content_id": it.content_id or "",
+                                                     "position_sec": 0})
+            return
         # Group/wall followers loop video so they never freeze between leader updates.
         loop = bool(self.controller.wall_follower and it.mime_type.startswith("video/"))
         tok = self.render(it, "main", loop=loop)
@@ -542,7 +608,17 @@ class PlaybackEngine:
                                                  "current_content_id": it.content_id or it.widget_id or "",
                                                  "position_sec": 0})
 
+    def apply_hold(self, sid, it):
+        """Show a hold item on a surface: freeze = pause what is there and keep it; blank = clear."""
+        if wz.hold_mode(it) == "freeze":
+            self.stage.control.emit(sid, {"pause": True})
+        else:
+            self.stage.clearSurface.emit(sid)
+
     def on_slot_event(self, surface, token, event, detail):
+        if surface.startswith("zone:") and self.mode == "wallzones":
+            self._wz_event(surface, token, event, detail)
+            return
         if surface.startswith("zone:"):
             r = self.zone_runners.get(surface[5:])
             if r:
@@ -586,6 +662,8 @@ class PlaybackEngine:
         self.stage.control.emit("main", {"seek_ms": int(ms)})
 
     def set_muted_for(self, content_id, muted):
+        if self.mode == "wallzones":
+            return                         # the zone audio rule owns sound on a wall layout
         it = self.main_item
         if not it or it.content_id != content_id or self.main_token is None:
             return
@@ -602,7 +680,7 @@ class PlaybackEngine:
         self.app.play_event(event, it, completed)
 
     # ------------------------------------------------------------------ wall + group sync
-    def _apply_wall(self, wc):
+    def _apply_wall(self, wc, relay=True):
         def rect(k):
             r = wc.get(k) or {}
             return tuple(float(r.get(x) or 0) for x in ("x", "y", "w", "h"))
@@ -618,12 +696,16 @@ class PlaybackEngine:
         self.stage.set("rotation", rot if rot in (0, 90, 180, 270) else 0)
         self.controller.set_wall_follower(not leader)
         self.sync_timer.start()
-        if not leader:
+        if not leader and relay:
             self.app.emit("wall:sync-request", {"wall_id": self.wall["id"]})
 
     def _exit_wall(self):
         if not self.wall:
             return
+        if self.mode == "wallzones":
+            self._stop_wall_zones()
+            self.mode = "single"
+            self.stage.set("layoutMode", "single")
         self.wall = None
         self.stage.set("wall", None)
         self.sync_timer.stop()
@@ -657,6 +739,8 @@ class PlaybackEngine:
             self._sync_tick()
 
     def _sync_tick(self):
+        if self.mode == "wallzones":
+            return            # zones run on the shared clock; there is no one index to relay
         if self.wall and self.wall["leader"]:
             self._wall_emit()
             return
@@ -675,6 +759,8 @@ class PlaybackEngine:
                                     "sent_at": int(time.time() * 1000)})
 
     def on_wall_sync(self, d):
+        if self.mode == "wallzones":
+            return            # each zone keeps its own place on the shared clock
         if not self.wall or self.wall["leader"] or (d or {}).get("wall_id") != self.wall["id"]:
             return
         idx = d.get("current_index", -1)
@@ -697,7 +783,7 @@ class PlaybackEngine:
             self._set_speed(1.0)
 
     def on_wall_sync_request(self, d):
-        if self.wall and self.wall["leader"]:
+        if self.wall and self.wall["leader"] and self.mode != "wallzones":
             wid = (d or {}).get("wall_id")
             if wid is None or wid == self.wall["id"]:
                 self._wall_emit()
@@ -739,11 +825,201 @@ class PlaybackEngine:
         else:
             self._set_speed(1.0)
 
+    # ------------------------------------------------------------------ wall zones
+    # A video wall with a LAYOUT (server/lib/wall-layout.js; web reference: server/player/index.html
+    # "Wall zones"). The zones are percent of the wall's player rect and live in the zone Repeater
+    # INSIDE stageRoot, which the wall transform already sizes to the canvas — so the wall crop shows
+    # this panel its slice of every zone, including one that straddles a seam.
+    #
+    # ⚠️ PACED BY THE SHARED CLOCK, NOT THE LEADER. The wall relay carries ONE index and ONE position;
+    # a layout has a timeline per zone. Each zone lays its own items on synced_now_ms() with the
+    # group-sync slot rule, so every panel that can see a zone computes the same item and position
+    # for it on its own. Zones whose items add up to the same period stay locked to each other —
+    # which, with HOLD items, is how a timeline across screens is written.
+    def _enter_wall_zones(self, wall, zones, assignments):
+        items = [Item.parse(a) for a in assignments]
+        key = wz.config_key(wall, zones)
+        if self.mode == "wallzones" and self.wz_key == key:
+            # Same wall and zones: only the items may differ. The tick re-places every zone (an edit
+            # remounts through the sig in its key, a duration edit moves the slots on the clock).
+            self.wz_buckets = self._wz_bucket(zones, items)
+            self.wz_config = wall
+            self._wz_tick()
+            return
+        if self.mode == "single":
+            self._hide_kiosk()
+            self.controller.stop()
+            self.playing = False
+            self.stage.clearSurface.emit("main")
+        elif self.mode == "zones":
+            for r in self.zone_runners.values():
+                r.stop()
+            self.zone_runners.clear()
+            self._zone_sig = None
+        elif self.mode == "wallzones":
+            self._stop_wall_zones()
+        self.wz_key, self.wz_config = key, wall
+        self.wz_buckets = self._wz_bucket(zones, items)
+        # Only the zones this panel can see get a surface: never decode what is cropped away.
+        self.wz_zones = [WallZone(z, wz.zone_has_audio(z.get("id"), wall)) for z in zones
+                         if wz.zone_visible(z, wall)]
+        spec = [{"id": zs.zid, "name": zs.zone.get("name") or "",
+                 "x": float(zs.zone.get("x_percent") or 0), "y": float(zs.zone.get("y_percent") or 0),
+                 "w": float(zs.zone.get("width_percent") or 100), "h": float(zs.zone.get("height_percent") or 100),
+                 "z": int(zs.zone.get("z_index") or 0), "fit_mode": zs.zone.get("fit_mode") or "cover",
+                 "bg": zs.zone.get("background_color") or ""} for zs in self.wz_zones]
+        self.mode = "wallzones"
+        self.stage.set("zones", spec)
+        self.stage.set("layoutMode", "zones")
+        self.app.hide_status()
+        self.app.log_remote("info", "Zone", "wall zones: %d/%d visible on this panel, audio for %d" % (
+            len(self.wz_zones), len(zones), sum(1 for zs in self.wz_zones if zs.audio)))
+        # The Repeater creates the zone surfaces on the next frame; the first tick follows it.
+        QTimer.singleShot(0, self._wz_tick)
+        self.wz_timer.start()
+
+    def _wz_bucket(self, zones, items):
+        def orphan(it, largest):
+            self.app.log_remote("warn", "Zone", "orphan zone_id=%s item=%s -> fallback zone '%s'" % (
+                it.zone_id, it.filename, largest.get("name") or largest.get("id")))
+        return wz.buckets(zones, items, on_orphan=orphan)
+
+    def _stop_wall_zones(self):
+        self.wz_timer.stop()
+        for zs in self.wz_zones:
+            self.stage.clearSurface.emit(zs.sid)
+            self.video_pos.pop(zs.sid, None)
+        self.wz_zones, self.wz_buckets, self.wz_key, self.wz_config = [], {}, None, None
+        self.stage.set("zones", [])
+
+    def _wz_release(self, zs):
+        self.stage.clearSurface.emit(zs.sid)
+        self.video_pos.pop(zs.sid, None)
+        zs.token = None
+        zs.video = False
+
+    def _wz_tick(self):
+        if self.mode != "wallzones":
+            return
+        now = self.app.synced_now_ms()
+        for zs in self.wz_zones:
+            items = self.wz_buckets.get(zs.zid) or []
+            t = wz.target(items, now, self.allows)
+            if not t:
+                if zs.token is not None or zs.key is not None:
+                    self._wz_release(zs)
+                    zs.key, zs.index = None, -1
+                continue
+            it = items[t["index"]]
+            # The cycle is in the key so a zone with ONE slot restarts at each period, instead of a
+            # clip that ended on the first pass sitting on its last frame for good.
+            key = "%d|%s|%d" % (t["index"], it.sig(), t["cycle"])
+            if key != zs.key:
+                self._wz_mount(zs, it, t, items[t["prev_index"]], key)
+                continue
+            self._wz_correct(zs, t)
+
+    def _wz_render(self, zs, it, extra=None):
+        fit = it.fit_mode or zs.zone.get("fit_mode") or "cover"
+        d = self.item_dict(it, fit=fit, loop=False, muted=wz.zone_muted(zs.zid, self.wz_config, it.muted))
+        if d is None:
+            return None
+        if extra:
+            d.update(extra)
+        tok = self._new_token(zs.sid, it)
+        d["token"] = tok
+        # Surface.show loads into the back slot and reveals once it has a frame: a buffered swap.
+        self.stage.showItem.emit(zs.sid, d)
+        zs.token = tok
+        return tok
+
+    def _wz_mount(self, zs, it, t, prev, key):
+        zs.key, zs.index = key, t["index"]
+        zs.align_pending, zs.loop, zs.speed, zs.video = True, None, 1.0, False
+        if wz.is_hold(it):
+            if wz.hold_mode(it) == "freeze":
+                if zs.token is not None:
+                    # Keep the outgoing picture up, paused; nothing will seek it (video False).
+                    self.stage.control.emit(zs.sid, {"pause": True})
+                    return
+                # Nothing on this zone (the panel joined mid-hold): build what the others are
+                # showing — the previous slot's item at its last frame.
+                if prev is not None and not wz.is_hold(prev):
+                    self._wz_render(zs, prev, {"frozenEnd": True, "loop": False, "holdEnd": True, "muted": True})
+                return
+            self._wz_release(zs)
+            return
+        if not it.is_remote and not it.is_widget and not it.is_bundle and it.content_id \
+                and it.mime_type != "video/youtube" and not self.cache.cached_file(it.content_id):
+            # Not downloaded yet: keep whatever the zone shows and try again next tick.
+            if not zs.want_dl:
+                zs.want_dl = True
+                self.app.ensure_downloads([(it.content_id, it.filename, it.mime_type, it.content_rev)], prune=False)
+            zs.key = None
+            return
+        zs.want_dl = False
+        if self._wz_render(zs, it) is None:
+            self._wz_release(zs)           # nothing this player can draw: the zone's background
+            return
+        zs.video = it.mime_type.startswith("video/") and it.mime_type != "video/youtube" and not it.is_live
+
+    def _wz_correct(self, zs, t):
+        if not zs.video:
+            return
+        v = self.video_pos.get(zs.sid)
+        if not v or v[3] != zs.token or time.monotonic() - v[2] > 1.0 or not v[1] or v[1] <= 0:
+            return
+        clip = v[1] / 1000.0
+        cur = (v[0] + (time.monotonic() - v[2]) * 1000 * zs.speed) / 1000.0
+        cmd = {}
+        if zs.loop is None:
+            zs.loop = wz.should_loop(clip, t["slot_sec"])
+            if zs.loop:
+                cmd["loop"] = True
+        tgt = wz.video_target_sec(t["pos_sec"], clip, zs.loop)
+        if tgt is None:
+            # Not looping and the clock is past its end: it stays on its last frame. On a mount that
+            # landed there (a panel joining late) put it on that frame now.
+            if zs.align_pending:
+                cmd.update(seek_ms=int(max(0.0, clip - 0.05) * 1000), pause=True)
+                zs.align_pending = False
+                zs.video = False
+            if cmd:
+                self.stage.control.emit(zs.sid, cmd)
+            return
+        now = time.time() * 1000
+        seek, rate = wz.drift_action(cur, tgt, zs.align_pending, now, zs.last_seek)
+        zs.align_pending = False
+        if seek is not None:
+            cmd["seek_ms"] = int(seek * 1000)
+            zs.last_seek = now
+        if abs(rate - zs.speed) > 1e-3 or seek is not None:
+            cmd["rate"] = rate
+            zs.speed = rate
+        if cmd:
+            self.stage.control.emit(zs.sid, cmd)
+
+    def _wz_event(self, surface, token, event, detail):
+        zs = next((z for z in self.wz_zones if z.sid == surface), None)
+        if zs is None or token != zs.token:
+            return
+        if event == "failed":
+            self.app.log_remote("warn", "Zone", "%s: %s" % (surface, detail))
+            if str(detail or "").startswith("no surface"):
+                zs.key, zs.token = None, None     # the Repeater was not there yet: mount again
+            else:
+                zs.video = False                  # leave it; the next slot moves the zone on
+        # "ended": a clip as long as its slot stops on its last frame until the clock moves on.
+
     # ------------------------------------------------------------------ lifecycle
     def stop_all(self):
         self._hide_kiosk()
         self.controller.stop()
         self.playing = False
+        if self.mode == "wallzones":
+            self._stop_wall_zones()
+            self.mode = "single"
+            self.stage.set("layoutMode", "single")
         for r in self.zone_runners.values():
             r.stop()
         self.sync_timer.stop()

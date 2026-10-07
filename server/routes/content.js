@@ -666,6 +666,30 @@ router.post('/hls', (req, res) => {
   }
 });
 
+// Add a HOLD (lib/hold-item.js): an item that shows nothing new for its duration — blank, or the
+// previous item's last frame. No bytes and no URL to check: the mode is the whole item.
+router.post('/hold', (req, res) => {
+  try {
+    if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding a hold.' });
+    if (denyReadOnly(req, res)) return;
+    const { HOLD_MIME, HOLD_MODES, holdUrl } = require('../lib/hold-item');
+    const mode = req.body && req.body.mode ? String(req.body.mode) : 'blank';
+    if (!HOLD_MODES.includes(mode)) return res.status(400).json({ error: `mode must be one of: ${HOLD_MODES.join(', ')}` });
+    const name = (req.body && req.body.name && String(req.body.name).trim()) || (mode === 'freeze' ? 'Hold (freeze frame)' : 'Hold (blank)');
+    const id = uuidv4();
+    db.prepare(`
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url)
+      VALUES (?, ?, ?, ?, '', ?, 0, ?)
+    `).run(id, req.user.id, req.workspaceId, safeFilename(name), HOLD_MIME, holdUrl(mode));
+    const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
+    res.status(201).json(content);
+  } catch (err) {
+    console.error('Hold add error:', err);
+    res.status(500).json({ error: 'Failed to add hold' });
+  }
+});
+
 function extractYoutubeId(url) {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
@@ -972,8 +996,16 @@ router.put('/:id', (req, res) => {
    * anything else, is refused here — delete it and add the right kind instead. Switching a
    * live item BETWEEN transports (video/hls <-> video/rtsp <-> video/hdmi-in) is allowed: it is still live.
    */
-  const wasLive = LIVE_MIMES.indexOf(content.mime_type) !== -1;
   const targetMime = mime_type !== undefined ? mime_type : content.mime_type;
+  // A hold has no bytes and no URL, so nothing can be swapped into or out of one.
+  {
+    const { HOLD_MIME } = require('../lib/hold-item');
+    if ((content.mime_type === HOLD_MIME) !== (targetMime === HOLD_MIME)
+        || (content.mime_type === HOLD_MIME && remote_url !== undefined && !/^hold:\/\/(blank|freeze)$/.test(String(remote_url || '')))) {
+      return res.status(400).json({ error: 'A hold cannot be turned into other content, or other content into a hold. Add a new item instead.' });
+    }
+  }
+  const wasLive = LIVE_MIMES.indexOf(content.mime_type) !== -1;
   const targetIsLive = LIVE_MIMES.indexOf(targetMime) !== -1;
   if (wasLive !== targetIsLive) {
     return res.status(400).json({
@@ -988,7 +1020,9 @@ router.put('/:id', (req, res) => {
       // A live URL is opened by the player on its LAN, never fetched by the server, so it
       // uses the player-opened gate for its transport (private hosts / rtsp creds allowed);
       // everything else stays on the SSRF gate.
-      if (targetIsLive) {
+      if (targetMime === require('../lib/hold-item').HOLD_MIME) {
+        // Shape already checked above: hold://blank or hold://freeze — nothing to fetch or gate.
+      } else if (targetIsLive) {
         const urlErr = targetMime === RTSP_MIME ? validateRtspUrl(remote_url)
           : targetMime === HDMI_IN_MIME ? validateHdmiInUrl(remote_url)
           : validatePlayerOpenedUrl(remote_url);

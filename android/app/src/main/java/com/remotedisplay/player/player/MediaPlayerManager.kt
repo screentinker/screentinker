@@ -559,7 +559,7 @@ class MediaPlayerManager(
     fun onAppForegrounded() {
         youtubeWebView?.let { wv -> wv.post { try { wv.resumeTimers(); wv.onResume() } catch (_: Throwable) {} } }
         if (currentType == MediaType.YOUTUBE) postYoutubeCommand("playVideo")
-        if (currentType == MediaType.VIDEO) exoPlayer?.play()
+        if (currentType == MediaType.VIDEO && !isFrozen()) exoPlayer?.play()
     }
 
     // Fullscreen widget render (single-zone / "fullscreen" layouts). Reuses the
@@ -808,6 +808,35 @@ class MediaPlayerManager(
         val from = if (transition != null) captureCurrentFrame() else null
         if (!runWipe(bitmap, transition, from) { mountImageBitmap(bitmap) }) mountImageBitmap(bitmap)
     }
+
+    /*
+     * A HOLD on the whole screen (Hold). FREEZE keeps the outgoing frame up, paused: the clip is
+     * paused in place, so isPlayingVideo() turns false and neither the group tick nor a wall
+     * follower's relay seeks it, the stall watchdog stands down (it only watches a player told to
+     * play), and coming back to the foreground does not resume it. An image or a page simply stays.
+     * The next mount of anything ends it like any other item.
+     */
+    private var frozenGeneration = -1L
+
+    fun holdFreeze() {
+        frozenGeneration = mountGeneration
+        stall.reset()
+        when (currentType) {
+            MediaType.VIDEO -> try { exoPlayer?.playWhenReady = false } catch (_: Throwable) {}
+            MediaType.YOUTUBE -> postYoutubeCommand("pauseVideo")
+            else -> {}
+        }
+    }
+
+    /** HOLD blank: clear to the background. stop() alone keeps the last video frame on the surface. */
+    fun holdBlank() {
+        mountGeneration++
+        stop()
+        playerView.visibility = android.view.View.GONE
+        imageView.visibility = android.view.View.GONE
+    }
+
+    private fun isFrozen(): Boolean = frozenGeneration == mountGeneration
 
     fun stop() {
         stall.reset()

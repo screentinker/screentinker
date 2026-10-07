@@ -20,6 +20,78 @@ var TIZEN_I18N = {
 /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Matches no image/ or video/
  * prefix, so nothing in the dispatch chains below routes it as media by accident. */
 var BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
+
+/*
+ * A HOLD item (server/lib/hold-item.js): show nothing new for the item's duration.
+ *   hold://blank   the screen / zone goes to its background
+ *   hold://freeze  the outgoing picture stays up, paused
+ * It has NO file: remote_url is hold://… and nothing may fetch, cache or src= it. The server only
+ * sends one to a player that declares playback.hold (capabilities.js), because a player that treats
+ * it as "unknown type -> skip" silently shortens the timeline it exists to keep.
+ */
+var HOLD_MIME = 'application/x-st-hold';
+function stIsHold(it) { return !!(it && it.mime_type === HOLD_MIME); }
+function stHoldMode(it) { return it && it.remote_url === 'hold://freeze' ? 'freeze' : 'blank'; }
+
+/*
+ * The CANONICAL clock-slot rule shared by group sync and wall zones — and by the web and Android
+ * engines, so a mixed group/wall agrees on where everything is: each schedule-allowed item occupies
+ * max(1, duration_sec || 10) seconds, in order; a dwell-0 live HLS item is infinite and gets NO slot.
+ * Deliberately NOT durationMs() (its MIN_DURATION=3 clamp would diverge from the other players).
+ */
+function stClockSlots(items, allows) {
+  var acc = 0, s = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var it = items[i];
+    if (!it) continue;
+    if (allows && !allows(it)) continue;
+    if (it.mime_type === 'video/hls' && !(Number(it.duration_sec) > 0)) continue;
+    var d = Math.max(1, Number(it.duration_sec) || 10) * 1000;
+    s.push({ index: i, start: acc, dur: d }); acc += d;
+  }
+  return { slots: s, period: acc };
+}
+// Where the clock says a list is right now: the slot containing (nowMs mod period), the position in
+// it, its length, and its neighbours (prev wraps — a freeze uses it; next drives preloading).
+function stClockTarget(items, nowMs, allows) {
+  var r = stClockSlots(items, allows);
+  if (!r.slots.length || r.period <= 0) return null;
+  var phase = ((nowMs % r.period) + r.period) % r.period;
+  var ci = -1;
+  for (var i = 0; i < r.slots.length; i++) { var x = r.slots[i]; if (phase >= x.start && phase < x.start + x.dur) { ci = i; break; } }
+  if (ci < 0) ci = r.slots.length - 1;
+  var n = r.slots.length, s = r.slots[ci], nx = r.slots[(ci + 1) % n], pv = r.slots[(ci - 1 + n) % n];
+  return {
+    index: s.index, posSec: (phase - s.start) / 1000, slotSec: s.dur / 1000,
+    prevIndex: pv.index, nextIndex: nx.index, secToBoundary: (s.start + s.dur - phase) / 1000,
+    // Which pass of the loop this is. A wall zone with ONE slot never changes index, so without this
+    // in its mount key a non-looping clip would sit on its last frame forever.
+    period: r.period, cycle: Math.floor(nowMs / r.period)
+  };
+}
+/*
+ * One drift-correction step against a clock target (the group-sync maths, shared per wall zone):
+ *   first step after a mount -> align (seek only if > 0.05s off), rate 1.0
+ *   > 0.3s off and >= 1.2s since the last seek -> hard seek (decoder-thrash guard)
+ *   > 0.05s off -> nudge playbackRate 0.97 / 1.03
+ *   else -> ride at 1.0
+ * `st` carries alignPending / lastSeekAt. Returns the action taken, for the live log.
+ */
+function stDriftCorrect(v, target, st, nowMs) {
+  var drift = (v.currentTime || 0) - target, ad = Math.abs(drift);
+  if (st.alignPending) {
+    if (ad > 0.05) { v.currentTime = target; st.lastSeekAt = nowMs; }
+    v.playbackRate = 1.0; st.alignPending = false;
+    return 'align ' + drift.toFixed(2);
+  }
+  if (ad > 0.3 && nowMs - (st.lastSeekAt || 0) > 1200) {
+    v.currentTime = target; v.playbackRate = 1.0; st.lastSeekAt = nowMs;
+    return 'seek ' + drift.toFixed(2);
+  }
+  if (ad > 0.05) { v.playbackRate = drift > 0 ? 0.97 : 1.03; return 'nudge ' + drift.toFixed(2); }
+  if (v.playbackRate !== 1.0) v.playbackRate = 1.0;
+  return 'hold';
+}
 var TZ_LANG = (function () { try { return (localStorage.getItem('rd_lang') || navigator.language || 'en').split('-')[0]; } catch (e) { return 'en'; } })();
 function tzt(k) { return (TIZEN_I18N[TZ_LANG] && TIZEN_I18N[TZ_LANG][k]) || TIZEN_I18N.en[k] || k; }
 
@@ -148,6 +220,7 @@ PlaylistPlayer.prototype.indexOfIdentity = function (arr, id) {
   return -1;
 };
 PlaylistPlayer.prototype.hasContentOnScreen = function () {
+  if (this._holdShowing) return true;   // a blank hold is on screen even with nothing mounted
   return !!(this.stage && this.stage.querySelector &&
     (this.stage.querySelector('video') || this.stage.querySelector('img') || this.stage.querySelector('iframe')));
 };
@@ -322,12 +395,17 @@ PlaylistPlayer.prototype.stop = function () {
   // Here and not in clearStage(): that runs on every advance, and the bed has to survive those.
   this.stopSlideAudio();
   this._releasePreloadImage();   // #187: drop any warmed next-image bitmap on teardown
+  // A pending #157 deferred rotation would otherwise fire up to 60s later and paint this player over
+  // whichever renderer took the stage (zones / wall zones).
+  if (this._deferredDeadline) { clearTimeout(this._deferredDeadline); this._deferredDeadline = null; }
+  this._deferredRotation = false; this._deferredSuccessorId = null;
   this.clearStage();
   // Proof-of-play: close the open row so its duration is recorded on teardown.
   if (this._loggedItem) { this._logPlay('play_end', this._loggedItem, true); this._loggedItem = null; }
 };
 
 PlaylistPlayer.prototype.clearStage = function () {
+  this._holdShowing = false;
   if (this.avActive) this.avStop(); // #170: tear down any AVPlay session (portrait video)
   // #473: the interactive page lives in the stage; leaving it must end (and wipe) the session, not
   // just drop its DOM. hide() is a no-op when nothing is showing.
@@ -646,6 +724,10 @@ PlaylistPlayer.prototype.playCurrent = function () {
   // (looping, no auto-advance) and only switches when wall:sync says the index moved.
   var single = this.wallFollower || (this.items.length === 1 && !this.anyScheduled());
   var mime = item.mime_type || '';
+  // A HOLD shows nothing new: it never reaches the type dispatch below (whose remote_url fallback
+  // would iframe hold://…, and whose "unknown -> skip" would shorten the timeline it keeps).
+  this._holdShowing = false;
+  if (stIsHold(item)) return this.renderHold(item, single);
   // #187: the IMAGE path decode-gates and SWAPS (it clears the stage only after the new frame is
   // paint-ready, inside renderImage) so slow Tizen decode HW no longer black-flashes between images.
   // Every OTHER type keeps the pre-dispatch clearStage() exactly as before — this mirrors the same
@@ -682,6 +764,31 @@ PlaylistPlayer.prototype.playCurrent = function () {
   this.skipSoon();
 };
 
+/*
+ * A hold on the whole screen (solo, synced group, or a wall without a layout).
+ *   FREEZE keeps the outgoing picture up, paused — and lets go of it as currentVideoEl, so neither
+ *          the group-sync tick nor the wall relay (both drift-correct getCurrentVideo()) seeks it.
+ *          An AVPlay session (portrait video) is paused in place; the next item's clearStage stops it.
+ *   BLANK  clears the stage to its background.
+ * Either way it lasts max(1, duration_sec || 10) s — the canonical slot rule, not durationMs()'s
+ * 3s floor, so a timeline agrees with the clock-driven players. A schedule-driven screen (group
+ * member / wall follower: `single` is true there) moves on by its tick, not by a timer.
+ */
+PlaylistPlayer.prototype.renderHold = function (item, single) {
+  if (stHoldMode(item) === 'freeze') {
+    var vids = this.stage.querySelectorAll ? this.stage.querySelectorAll('video') : [];
+    for (var i = 0; i < vids.length; i++) {
+      try { vids[i].onended = null; vids[i].onerror = null; vids[i].pause(); } catch (e) {}
+    }
+    if (this.avActive) { try { webapis.avplay.pause(); } catch (e) {} }
+  } else {
+    this.clearStage();
+  }
+  this.currentVideoEl = null;
+  this._holdShowing = true;   // hasContentOnScreen(): a hold IS what is on screen (continuity)
+  if (!single) this.schedule(Math.max(1, Number(item.duration_sec) || 10) * 1000);
+};
+
 // Give a broken item ~2s then move on so the loop never wedges.
 PlaylistPlayer.prototype.skipSoon = function () {
   if (this.items.length > 1) { this.schedule(2000); return; }
@@ -708,6 +815,7 @@ PlaylistPlayer.prototype.fit = function (el, item) {
 PlaylistPlayer.prototype.renderImage = function (item, single) {
   var self = this;
   var targetIdx = this.index;
+  var seq = this._playSeq;
   var img = this._takePreloadImage(targetIdx);   // pre-decoded from the previous item's dwell?
   if (!img) {
     this._releasePreloadImage();                 // any warmed image is for a different index now — drop it
@@ -724,7 +832,9 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
     if (isDefault) return item !== self.defaultContent;
     // A next()/gotoIndex/playlist change mid-decode must not mount a now-stale image over the current
     // item (mirrors how renderVideo's _takePreload only fires for the still-current index).
-    return self.index !== targetIdx || self.items[targetIdx] !== item;
+    // stop() bumps _playSeq: a decode that finishes after the stage was handed to another renderer
+    // (zones / wall zones) must not mount over it.
+    return self.index !== targetIdx || self.items[targetIdx] !== item || self._playSeq !== seq;
   };
   var mount = function () {
     if (settled) return; settled = true;
@@ -912,7 +1022,8 @@ PlaylistPlayer.prototype.renderVideoBuffered = function (item, single) {
   // push / advance), a stale clip must NOT clear the stage + mount over the newer content. Mirrors the
   // stale() guard renderImage already uses.
   var targetIdx = this.index;
-  var stale = function () { return self.index !== targetIdx || self.items[targetIdx] !== item; };
+  var seq = this._playSeq;
+  var stale = function () { return self.index !== targetIdx || self.items[targetIdx] !== item || self._playSeq !== seq; };
   var abandon = function () { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} };
   var v = document.createElement('video');
   this.fit(v, item);
@@ -1475,19 +1586,38 @@ ZoneRenderer.prototype.contentUrl = function (item) {
 
 ZoneRenderer.prototype.showItem = function (zone, list, index) {
   if (this.timers[zone.id]) { clearTimeout(this.timers[zone.id]); this.timers[zone.id] = null; }
-  if (this.videos[zone.id]) { try { this.videos[zone.id].pause(); } catch (e) {} this.videos[zone.id] = null; }
-  zone.el.innerHTML = '';
 
   var self = this;
   // #74/#75: skip items whose schedule excludes them now; blank-idle the zone and
   // re-check shortly (a daypart may open) if none are active.
   var activeIdx = this.nextActive(list, index, zone && zone.id);
-  if (activeIdx < 0) { this.scheduleAdvance(zone, 30000, function () { self.showItem(zone, list, 0); }); return; }
-
-  var a = list[activeIdx];
+  var a = activeIdx < 0 ? null : list[activeIdx];
   // Scheduled zones cycle even with one active item so windows re-evaluate.
   var multi = list.length > 1 || list.some(function (x) { return (x.schedules && x.schedules.length) || x.play_from || x.play_until; });
   var advance = function () { self.showItem(zone, list, activeIdx + 1); };
+
+  // A HOLD: nothing new in this zone for its duration. FREEZE pauses the zone's media where it is
+  // and keeps it on screen (its 'ended' can no longer advance the zone); BLANK clears the zone to
+  // its background. Decided BEFORE the teardown below, which would otherwise wipe the frame a
+  // freeze exists to keep. Lasts max(1, duration_sec || 10) s, the canonical slot rule.
+  if (a && stIsHold(a)) {
+    if (stHoldMode(a) === 'freeze') {
+      var held = zone.el.querySelectorAll ? zone.el.querySelectorAll('video') : [];
+      for (var hv = 0; hv < held.length; hv++) {
+        try { held[hv].onended = null; held[hv].onerror = null; held[hv].pause(); } catch (e) {}
+      }
+    } else {
+      if (this.videos[zone.id]) { try { this.videos[zone.id].pause(); this.videos[zone.id].removeAttribute('src'); this.videos[zone.id].load(); } catch (e) {} }
+      this.videos[zone.id] = null;
+      zone.el.innerHTML = '';
+    }
+    if (multi) this.scheduleAdvance(zone, Math.max(1, Number(a.duration_sec) || 10) * 1000, advance);
+    return;
+  }
+
+  if (this.videos[zone.id]) { try { this.videos[zone.id].pause(); } catch (e) {} this.videos[zone.id] = null; }
+  zone.el.innerHTML = '';
+  if (activeIdx < 0) { this.scheduleAdvance(zone, 30000, function () { self.showItem(zone, list, 0); }); return; }
   var dur = this.durationMs(a);
   var mime = a.mime_type || '';
 
@@ -1590,6 +1720,9 @@ function WallController(stageEl, player, getSocket, getDeviceId, canEmit) {
   this.canEmit = canEmit; // () -> authenticated && socket connected (don't emit pre-register)
   this.config = null;
   this.timer = null;
+  // Wall zones (WallZoneRenderer): every zone runs on the shared clock, so there is no one index to
+  // relay — the leader emits no wall:sync and followers ignore any that arrive.
+  this.zonesActive = false;
 }
 
 WallController.prototype.active = function () { return !!this.config; };
@@ -1645,8 +1778,9 @@ WallController.prototype.clearStageStyle = function () {
   st.transform = ''; st.transformOrigin = '';
 };
 
-WallController.prototype.apply = function (config) {
+WallController.prototype.apply = function (config, opts) {
   var isGroup = config.mode === 'group';
+  this.zonesActive = !isGroup && !!(opts && opts.zones);
   var id = this.syncId(config);
   var roleChanged = !this.config ||
     this.config.is_leader !== config.is_leader ||
@@ -1663,6 +1797,7 @@ WallController.prototype.apply = function (config) {
 
   if (this.timer) { clearInterval(this.timer); this.timer = null; }
   var self = this;
+  if (this.zonesActive) return;   // no relay in either direction while the zones own the clock
   if (config.is_leader) {
     // 4Hz so followers nudge playbackRate instead of jerk-seeking; immediate first
     // tick so any already-up follower aligns now (and on leader-reclaim after reconnect).
@@ -1682,6 +1817,7 @@ WallController.prototype.exit = function () {
   var wasActive = !!this.config || !!this.timer || this.stage.classList.contains('wall-mode');
   if (this.timer) { clearInterval(this.timer); this.timer = null; }
   this.config = null;
+  this.zonesActive = false;
   this.player.setWallFollower(false);
   if (wasActive) {
     this.clearStageStyle();
@@ -1691,6 +1827,7 @@ WallController.prototype.exit = function () {
 
 WallController.prototype.emitSync = function () {
   if (!this.config || !this.config.is_leader || !this.canEmit()) return;
+  if (this.zonesActive) return;   // zones run on the shared clock; there is no one index to relay
   var s = this.getSocket(); if (!s) return;
   var item = this.player.getCurrentItem();
   if (!item) return;
@@ -1711,6 +1848,7 @@ WallController.prototype.emitSync = function () {
 WallController.prototype.onSync = function (data) {
   var c = this.config;
   if (!c || c.is_leader || !data) return;
+  if (this.zonesActive) return;   // each zone keeps its own place on the shared clock
   var isG = c.mode === 'group';
   if ((isG ? data.group_id : data.wall_id) !== this.syncId(c)) return;
   // Align to the leader's current item.
@@ -1765,30 +1903,16 @@ function GroupSyncController(player, getOffsetMs, report) {
 }
 GroupSyncController.prototype.active = function () { return !!this.groupId; };
 GroupSyncController.prototype.syncedNow = function () { return Date.now() + (this.getOffsetMs() || 0); };
+// Same daypart filter as solo playback; the slot rule itself is stClockSlots (shared with wall zones,
+// and canonical across the web + Android engines: max(1,dur||10)*1000, dwell-0 live HLS ineligible).
 GroupSyncController.prototype.slots = function () {
-  var p = this.player, items = p.items, acc = 0, s = [];
-  for (var i = 0; i < items.length; i++) {
-    if (!p.scheduleAllows(items[i])) continue;   // same daypart filter as solo playback
-    // A dwell-0 live HLS channel is INFINITE (no finite slot length), so it would desync a synced
-    // group. Treat it as INELIGIBLE for the clock scheduler; a dwell>0 live item is a finite slot.
-    if (items[i].mime_type === 'video/hls' && !(Number(items[i].duration_sec) > 0)) continue;
-    // CANONICAL slot length — MUST match the web + Android engines exactly (max(1,dur||10)*1000).
-    // Deliberately NOT durationMs() (its MIN_DURATION=3 clamp would diverge from the other players).
-    var d = Math.max(1, Number(items[i].duration_sec) || 10) * 1000;
-    s.push({ index: i, start: acc, dur: d }); acc += d;
-  }
-  return { slots: s, period: acc };
+  var p = this.player;
+  return stClockSlots(p.items, function (it) { return p.scheduleAllows(it); });
 };
 GroupSyncController.prototype.target = function () {
-  var r = this.slots();
-  if (!r.slots.length || r.period <= 0) return null;
-  var phase = ((this.syncedNow() % r.period) + r.period) % r.period;
-  var ci = -1;
-  for (var i = 0; i < r.slots.length; i++) { var x = r.slots[i]; if (phase >= x.start && phase < x.start + x.dur) { ci = i; break; } }
-  if (ci < 0) ci = r.slots.length - 1;
-  var s = r.slots[ci], nx = r.slots[(ci + 1) % r.slots.length];
   // nextIndex + secToBoundary drive the double buffer (preload the upcoming clip a few s early).
-  return { index: s.index, posSec: (phase - s.start) / 1000, nextIndex: nx.index, secToBoundary: (s.start + s.dur - phase) / 1000 };
+  var p = this.player;
+  return stClockTarget(p.items, this.syncedNow(), function (it) { return p.scheduleAllows(it); });
 };
 GroupSyncController.prototype.tick = function () {
   if (!this.groupId || !this.player.items.length) return;
@@ -1813,19 +1937,11 @@ GroupSyncController.prototype.tick = function () {
     var v = this.player.getCurrentVideo();
     if (v && isFinite(v.duration) && v.duration > 0) {
       var target = t.posSec % v.duration;                        // loop-safe when slot > clip length
-      var drift = (v.currentTime || 0) - target, ad = Math.abs(drift);
       if (this.player.getIndex() !== this.lastAlignedIndex) this.alignPending = true;
-      try {
-        if (this.alignPending) {
-          if (ad > 0.05) { v.currentTime = target; this.lastSeekAt = Date.now(); }
-          v.playbackRate = 1.0; this.alignPending = false; this.lastAlignedIndex = this.player.getIndex();
-          action = 'align ' + drift.toFixed(2);
-        }
-        // Seek cooldown: don't hard-seek every tick (decoder-thrash guard); nudge within the window.
-        else if (ad > 0.3 && Date.now() - (this.lastSeekAt || 0) > 1200) { v.currentTime = target; v.playbackRate = 1.0; this.lastSeekAt = Date.now(); action = 'seek ' + drift.toFixed(2); }
-        else if (ad > 0.05) { v.playbackRate = drift > 0 ? 0.97 : 1.03; action = 'nudge ' + drift.toFixed(2); }
-        else if (v.playbackRate !== 1.0) { v.playbackRate = 1.0; }
-      } catch (e) {}
+      var aligning = this.alignPending;
+      // stDriftCorrect: align once on a fresh item, then seek (with a 1.2s cooldown) / nudge / ride.
+      try { action = stDriftCorrect(v, target, this, Date.now()); } catch (e) {}
+      if (aligning && !this.alignPending) this.lastAlignedIndex = this.player.getIndex();
     }
   }
   // Log discrete corrections (jump/align/seek) immediately so the transition is visible; only the
@@ -1859,4 +1975,341 @@ GroupSyncController.prototype.exit = function () {
   this.player._takePreload(this.player.preloadIdx);   // drop any warmed next-clip element
   this.player._releasePreloadImage();                 // #187: drop any warmed next-image bitmap
   if (this.report) this.report('info', 'group-sync exited');
+};
+
+/* WallZoneRenderer — a VIDEO WALL's own layout (wall zones). Mirrors the web player's
+ * renderWallZones / wallZoneTick / mountWallZoneItem (server/player/index.html), which is the
+ * behavioural reference; the server half is server/lib/wall-layout.js + the wall block in
+ * server/ws/deviceSocket.js.
+ *
+ * Contract: wall_config.canvas_layout = true means payload.layout is the WALL's layout, its zones in
+ * percent of the wall's PLAYER RECT. WallController.styleStage already positions the shared #stage as
+ * that rect (vw/vh, rotation included), so a zone placed in percent of #stage lands on the right
+ * pixels of every panel — including one that straddles a seam. This panel only builds the zones
+ * that intersect its own screen_rect (nothing is decoded that cannot be seen).
+ *
+ * Each zone runs on the SHARED CLOCK (server-disciplined, the same offset group sync uses): there is
+ * no leader relay, so a panel that joins, reboots or drops off the network lands on the same item and
+ * the same frame as its neighbours by arithmetic alone. Slots use the canonical stClockSlots rule;
+ * drift correction is stDriftCorrect, per zone, at 4 Hz.
+ *
+ * ⚠️ Zone video is ALWAYS an HTML5 <video>, never AVPlay. AVPlay draws on a hardware plane addressed
+ * by setDisplayRect in SCREEN coordinates; CSS cannot crop or transform it, so a zone that spans a
+ * seam (or a rotated panel) would come out at the wrong size in the wrong place.
+ */
+var WZ_LIVE_MIME = 'video/hls';
+function WallZoneRenderer(stageEl, getBase, getDeviceId, getNowMs, report) {
+  this.stage = stageEl;
+  this.getBase = getBase;
+  this.getDeviceId = getDeviceId || function () { return ''; };
+  this.getNowMs = getNowMs || function () { return Date.now(); };
+  this.report = report || null;
+  this.timezone = null;
+  this.layout = null;
+  this.config = null;
+  this.items = [];
+  this.zones = [];       // per visible zone: { zone, div, audio, index, key, video, alignPending, lastSeekAt }
+  this.timer = null;
+  this.sig = '';
+  this.built = false;
+}
+
+// Wall zones apply when the server says the layout is on the wall AND it really has zones (>= 2;
+// one zone is just the wall canvas, which the plain wall path already draws).
+WallZoneRenderer.wanted = function (wallConfig, layout) {
+  return !!(wallConfig && wallConfig.canvas_layout && layout && Array.isArray(layout.zones) && layout.zones.length > 1);
+};
+WallZoneRenderer.playable = function (a) { return !!(a && (a.content_id || a.widget_id || a.remote_url)); };
+
+// Zone membership, the web renderZones rules: an item on a zone this layout does not have shares the
+// LARGEST zone; unassigned items fill the first zone (layout order) that has nothing of its own.
+WallZoneRenderer.buckets = function (zones, items) {
+  var valid = {}, i;
+  for (i = 0; i < zones.length; i++) valid[zones[i].id] = true;
+  var area = function (z) { return (Number(z.width_percent) || 0) * (Number(z.height_percent) || 0); };
+  var largest = zones[0];
+  for (i = 1; i < zones.length; i++) if (area(zones[i]) > area(largest)) largest = zones[i];
+  var by = {};
+  for (i = 0; i < (items || []).length; i++) {
+    var a = items[i];
+    if (!WallZoneRenderer.playable(a)) continue;
+    var zid = a.zone_id || '__none__';
+    if (a.zone_id && !valid[a.zone_id]) zid = largest.id;
+    (by[zid] = by[zid] || []).push(a);
+  }
+  var bySort = function (x, y) { return (x.sort_order || 0) - (y.sort_order || 0); };
+  for (var k in by) if (by.hasOwnProperty(k)) by[k].sort(bySort);
+  var out = {}, unassignedUsed = false;
+  for (i = 0; i < zones.length; i++) {
+    var list = by[zones[i].id];
+    if ((!list || !list.length) && !unassignedUsed && by.__none__) { unassignedUsed = true; list = by.__none__; }
+    out[zones[i].id] = list || [];
+  }
+  return out;
+};
+
+// A zone's rect on the wall CANVAS (the coordinate space screen_rect is in).
+WallZoneRenderer.zoneRect = function (zone, p) {
+  return {
+    x: p.x + (Number(zone.x_percent) || 0) / 100 * p.w, y: p.y + (Number(zone.y_percent) || 0) / 100 * p.h,
+    w: (Number(zone.width_percent) || 0) / 100 * p.w, h: (Number(zone.height_percent) || 0) / 100 * p.h
+  };
+};
+WallZoneRenderer.intersects = function (r, s) {
+  return r.x < s.x + s.w && s.x < r.x + r.w && r.y < s.y + s.h && s.y < r.y + r.h;
+};
+WallZoneRenderer.zoneVisible = function (zone, config) {
+  var p = config && config.player_rect, s = config && config.screen_rect;
+  if (!p || !s || !s.w || !s.h) return true;   // no geometry to judge by: draw it rather than lose it
+  return WallZoneRenderer.intersects(WallZoneRenderer.zoneRect(zone, p), s);
+};
+/*
+ * ⚠️ Loop a clip ONLY if it is shorter than its slot. A clip as long as its slot (the usual case:
+ * duration_sec defaults to the clip length) that loops wraps to frame 0 a few ms before the clock
+ * moves the zone on — so a FREEZE hold after it freezes the FIRST frame, not the last (found on the
+ * web player). Not looping, it ends and stays on its last frame until the boundary.
+ */
+WallZoneRenderer.shouldLoop = function (durationSec, slotSec) { return durationSec < slotSec - 0.3; };
+// Same rule as the web player's itemFit, so a mixed wall frames a zone identically: the item's
+// fit_mode, else the zone's, else contain.
+WallZoneRenderer.fit = function (item, zone) {
+  var m = String((item && item.fit_mode) || (zone && zone.fit_mode) || 'contain').toLowerCase();
+  return (m === 'cover' || m === 'fill' || m === 'contain') ? m : 'contain';
+};
+// The audio rule: one panel voices each zone (the server's audio_zones list); a per-item mute wins.
+WallZoneRenderer.muted = function (zoneAudio, item) { return !zoneAudio || !!(item && item.muted); };
+WallZoneRenderer.itemKey = function (a) {
+  return a ? [a.content_id || '', a.widget_id || '', a.widget_rev || 0, a.remote_url || '', a.content_rev || '',
+    a.mime_type || '', a.fit_mode || '', a.muted ? 1 : 0].join('|') : '';
+};
+
+WallZoneRenderer.prototype.active = function () { return this.built; };
+WallZoneRenderer.prototype.setTimezone = function (tz) { this.timezone = tz || null; };
+WallZoneRenderer.prototype.invalidate = function () { this.sig = ''; };
+WallZoneRenderer.prototype.allows = ZoneRenderer.prototype.allows;
+WallZoneRenderer.prototype.contentUrl = ZoneRenderer.prototype.contentUrl;   // cache-aware, rev-checked
+
+WallZoneRenderer.prototype.signature = function (layout, config) {
+  var c = config || {}, s = c.screen_rect || {}, p = c.player_rect || {};
+  var zs = (layout.zones || []).map(function (z) {
+    return [z.id, z.x_percent, z.y_percent, z.width_percent, z.height_percent, z.z_index, z.fit_mode, z.background_color];
+  });
+  // canvas_layout + audio_zones are part of the key: change which zones this panel voices (or the
+  // wall geometry) and nothing in the item list changes, but the zones must be rebuilt.
+  return JSON.stringify([layout.id || '', zs, c.wall_id || '', c.rotation || 0, [s.x, s.y, s.w, s.h], [p.x, p.y, p.w, p.h],
+    c.canvas_layout ? 1 : 0, (c.audio_zones || []).slice().sort()]);
+};
+
+WallZoneRenderer.prototype.render = function (layout, assignments, config) {
+  this.layout = layout;
+  this.config = config;
+  this.items = (Array.isArray(assignments) ? assignments : []).filter(WallZoneRenderer.playable);
+  var sig = this.signature(layout, config);
+  // Same zones, same wall: keep everything playing. The tick picks up new items / durations itself
+  // (a changed item at a zone's slot changes that zone's key and remounts only that zone).
+  if (sig === this.sig && this.built) { this.tick(); return; }
+  this.clear();
+  this.sig = sig;
+  this.built = true;
+  var audio = {};
+  var az = Array.isArray(config.audio_zones) ? config.audio_zones : [];
+  for (var i = 0; i < az.length; i++) audio[az[i]] = true;
+  var self = this;
+  layout.zones.forEach(function (zone) {
+    if (!WallZoneRenderer.zoneVisible(zone, config)) return;
+    var div = document.createElement('div');
+    div.className = 'wall-zone';
+    var st = div.style;
+    st.position = 'absolute';
+    st.left = zrNum(zone.x_percent, 0) + '%'; st.top = zrNum(zone.y_percent, 0) + '%';
+    st.width = zrNum(zone.width_percent, 100) + '%'; st.height = zrNum(zone.height_percent, 100) + '%';
+    st.overflow = 'hidden';
+    st.zIndex = String(zrNum(zone.z_index, 0));
+    st.background = zone.background_color || 'transparent';
+    self.stage.appendChild(div);
+    self.zones.push({ zone: zone, div: div, audio: !!audio[zone.id], index: -1, key: null, video: null, alignPending: true, lastSeekAt: 0 });
+  });
+  if (this.report) this.report('info', 'wall zones: ' + this.zones.length + '/' + layout.zones.length + ' visible on this panel, audio for ' + az.length);
+  if (!this.zones.length) return;
+  this.tick();
+  this.timer = setInterval(function () { self.tick(); }, 250);
+};
+
+WallZoneRenderer.prototype.release = function (zs) {
+  var vids = zs.div.querySelectorAll ? zs.div.querySelectorAll('video') : [];
+  for (var i = 0; i < vids.length; i++) {
+    try { vids[i].onended = null; vids[i].onerror = null; vids[i].pause(); vids[i].removeAttribute('src'); vids[i].load(); } catch (e) {}
+  }
+  zs.div.innerHTML = '';
+  zs.video = null; zs.index = -1; zs.key = null;
+};
+
+// Leaving wall-zone mode (layout cleared, wall left, emergency, suspension, teardown).
+WallZoneRenderer.prototype.clear = function () {
+  if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  for (var i = 0; i < this.zones.length; i++) this.release(this.zones[i]);
+  this.zones = [];
+  this.sig = '';
+  if (this.built) this.stage.innerHTML = '';
+  this.built = false;
+};
+
+WallZoneRenderer.prototype.tick = function () {
+  if (!this.zones.length || !this.layout) return;
+  var self = this;
+  var allows = function (it) { return self.allows(it); };
+  var now = this.getNowMs();
+  var buckets = WallZoneRenderer.buckets(this.layout.zones, this.items);
+  for (var i = 0; i < this.zones.length; i++) {
+    var zs = this.zones[i];
+    var items = buckets[zs.zone.id] || [];
+    var t = stClockTarget(items, now, allows);
+    if (!t) { if (zs.index !== -1 || zs.div.firstChild) this.release(zs); continue; }
+    var item = items[t.index];
+    // A video CLIP remounts each pass of the loop (cycle), so a one-slot zone restarts its clip at the
+    // boundary instead of holding the ended clip's last frame forever. Not live, not images/widgets.
+    var mime = (item && item.mime_type) || '';
+    var isClip = mime.indexOf('video/') === 0 && mime !== WZ_LIVE_MIME;
+    var key = t.index + '|' + WallZoneRenderer.itemKey(item) + (isClip ? '|c' + t.cycle : '');
+    if (key !== zs.key) {
+      this.mount(zs, item, t, items[t.prevIndex]);
+      zs.key = key; zs.index = t.index;
+      zs.alignPending = true;
+      continue;
+    }
+    var v = zs.video;
+    if (!v || !isFinite(v.duration) || v.duration <= 0) continue;
+    // A clip that does not loop (it is about as long as its slot) is past its end: leave it on its
+    // last frame. Correcting against posSec % duration here would seek it back to the start.
+    if (!v.loop && t.posSec >= v.duration - 0.05) continue;
+    try { stDriftCorrect(v, t.posSec % v.duration, zs, Date.now()); } catch (e) {}
+  }
+};
+
+// Build one item's element for a zone. Returns { el, video } (video = the element to clock-align,
+// null for anything that is not aligned), or null when the zone should just show its background.
+WallZoneRenderer.prototype.element = function (zs, a, opts) {
+  var mime = a.mime_type || '';
+  var fit = WallZoneRenderer.fit(a, zs.zone);
+  if (stIsHold(a)) return null;   // never a URL: hold://… has no file
+  if (a.widget_id && !a.content_id) {
+    return { el: zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0)), video: null };
+  }
+  if (mime === BUNDLE_MIME) {
+    var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0));
+    bf.setAttribute('sandbox', 'allow-scripts');
+    return { el: bf, video: null };
+  }
+  var src = this.contentUrl(a);
+  if (!src || /^hold:/i.test(src)) return null;
+  if (mime.indexOf('image/') === 0) {
+    var img = document.createElement('img');
+    img.className = fit;
+    img.style.objectFit = fit;
+    img.src = src;
+    return { el: img, video: null };
+  }
+  // YouTube cannot be clock-aligned and HDMI IN is not a Tizen source: the zone shows its background.
+  if (mime.indexOf('video/') === 0 && mime !== 'video/youtube' && mime !== 'video/hdmi-in') {
+    var v = document.createElement('video');   // ⚠️ never AVPlay in a wall zone (see the header)
+    v.className = fit;
+    v.style.objectFit = fit;
+    v.setAttribute('playsinline', '');
+    v.preload = 'auto';
+    v.muted = WallZoneRenderer.muted(zs.audio, a);
+    if (mime === WZ_LIVE_MIME) {   // live: nothing to align, it just plays
+      v.autoplay = true;
+      v.src = src;
+      return { el: v, video: null };
+    }
+    v.loop = true;   // until loadedmetadata knows the clip length (see shouldLoop)
+    if (opts && opts.frozenAtEnd) {
+      v.autoplay = false;
+      v.muted = true;
+      v.addEventListener('loadedmetadata', function () {
+        try { v.currentTime = Math.max(0, (v.duration || 0) - 0.05); v.pause(); } catch (e) {}
+      }, { once: true });
+      v.src = src;
+      return { el: v, video: null };
+    }
+    v.autoplay = true;
+    v.src = src;
+    return { el: v, video: v };
+  }
+  return null;
+};
+
+function wzPlay(v) {
+  try {
+    var p = v.play();
+    if (p && typeof p.then === 'function') p.catch(function () { try { v.muted = true; var q = v.play(); if (q && q.catch) q.catch(function () {}); } catch (e) {} });
+  } catch (e) {}
+}
+
+WallZoneRenderer.prototype.mount = function (zs, a, t, prevItem) {
+  // FREEZE keeps the zone's current picture up, paused. A panel that arrives mid-hold has nothing to
+  // keep, so it builds the PREVIOUS slot's item at its last frame — what its neighbours are showing.
+  if (stIsHold(a)) {
+    if (stHoldMode(a) === 'freeze') {
+      if (zs.div.firstChild) {
+        var vids = zs.div.querySelectorAll ? zs.div.querySelectorAll('video') : [];
+        for (var i = 0; i < vids.length; i++) { try { vids[i].onended = null; vids[i].pause(); } catch (e) {} }
+        zs.video = null;
+        return;
+      }
+      if (prevItem && !stIsHold(prevItem)) {
+        var frozen = this.element(zs, prevItem, { frozenAtEnd: true });
+        if (frozen) zs.div.appendChild(frozen.el);
+      }
+      zs.video = null;
+      return;
+    }
+    this.release(zs);   // BLANK: the zone's background
+    return;
+  }
+  var built = this.element(zs, a, null);
+  if (!built) { this.release(zs); return; }
+  // Buffered swap: the new element mounts underneath, invisible, and replaces the old one once it has
+  // something to show — no black blink at every boundary in a zone.
+  var old = Array.prototype.slice.call(zs.div.children || []);
+  var el = built.el;
+  el.style.opacity = '0';
+  zs.div.appendChild(el);
+  var done = false;
+  var reveal = function () {
+    if (done) return; done = true;
+    el.style.opacity = '1';
+    for (var k = 0; k < old.length; k++) {
+      var o = old[k];
+      if (o.tagName === 'VIDEO') { try { o.onended = null; o.onerror = null; o.pause(); o.removeAttribute('src'); o.load(); } catch (e) {} }
+      try { if (o.parentNode) o.parentNode.removeChild(o); } catch (e) {}
+    }
+  };
+  if (el.tagName === 'VIDEO') el.addEventListener('loadeddata', reveal, { once: true });
+  else if (el.tagName === 'IMG') { el.onload = reveal; el.onerror = reveal; }
+  else if (el.tagName === 'IFRAME') el.addEventListener('load', reveal, { once: true });
+  setTimeout(reveal, 1500);
+  zs.video = built.video;
+  var v = built.video;
+  if (v) {
+    var self = this;
+    var mountedAt = Date.now();
+    // Start where the clock says, not at 0: a panel that joins mid-clip lands on the same frame.
+    v.addEventListener('loadedmetadata', function () {
+      if (zs.video !== v) return;   // superseded before it loaded
+      try {
+        var d = v.duration;
+        if (isFinite(d) && d > 0) {
+          var pos = t.posSec + (Date.now() - mountedAt) / 1000;
+          v.loop = WallZoneRenderer.shouldLoop(d, t.slotSec);
+          if (v.loop) v.currentTime = pos % d;
+          else if (pos >= d - 0.05) { v.currentTime = Math.max(0, d - 0.05); v.pause(); }   // joined after its end
+          else v.currentTime = pos;
+        }
+      } catch (e) {}
+    }, { once: true });
+    wzPlay(v);
+  } else if (el.tagName === 'VIDEO' && el.autoplay) {
+    wzPlay(el);
+  }
 };

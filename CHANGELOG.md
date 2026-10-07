@@ -4,6 +4,28 @@
 
 ### Added
 
+- **A video wall now works like one big screen.** See `docs/video-walls.md`.
+  - **Zones on a wall.** A wall can take a layout: put content anywhere on it, in one screen,
+    across a bezel or over the whole wall. **One zone per screen** builds the obvious layout in one
+    click, and the zones are drawn over the wall editor's canvas.
+  - **Screens can take turns.** Every zone runs on one shared clock, so "video A on screen 1, then
+    video B on screen 2, then A again" is two zones with a **hold** between their videos. The wall
+    stays in step with no screen in charge, including while the server is unreachable.
+  - **Hold items** (Content → Hold): show nothing new for a set time, frozen on the last frame or
+    blank. They work on any screen, not only walls.
+  - **Live view.** The wall page shows every panel's picture where the panel hangs, and the wall's
+    card on Displays shows the same.
+  - **Commands to the whole wall** (screen on/off, restart, update, reboot, shut down), counted per
+    panel.
+  - **Schedules for a wall.** A schedule can target a wall; every panel switches together on one
+    clock. A schedule on a single panel of a wall is refused, because it switched that panel alone
+    and tore the picture.
+  - **Snapping** in the wall editor (screens to each other, the player box and the bezel gap) and
+    in the layout editor (zones to each other, the canvas and, for a wall, the screen seams). Hold
+    Alt to place freely. The layout editor also takes the canvas size, draws very wide wall shapes
+    correctly and has a layer field for overlapping zones.
+  - Thanks to J.O. (Discord) for the question that started this.
+
 - **Live input: show the screen's own HDMI IN as a playlist item.**
   - On an Android TV box with an HDMI input, such as the Fire TV Cube (3rd gen), whatever is
     plugged into it plays like any other item: a cable box, a console, another signage player.
@@ -92,6 +114,14 @@
   left in charge of the screen and the player was never set up ("No server configured"). The
   lookup no longer stops the install. Thanks to JackyL (Discord) for the report.
 
+### Fixed (video walls)
+
+- **A wall panel that restarted without the server played the whole picture uncropped** until the
+  server answered. The wall setup is now kept on the panel and restored before the first frame.
+- **Changing a wall's geometry, or a screen's layout, only showed at the next item.** A wall looping
+  one video never showed it at all. It now redraws straight away.
+- **The wall page said "2 of 2 not online" for a wall whose panels were all healthy.**
+
 ### Fixed (server)
 
 - **The standby image never reached Android screens unless it was also in a playlist.** The
@@ -101,6 +131,14 @@
 
 Thanks to カタカナ for the report and for the approach, which they had already tested on Fire TV
 and Fire tablets in their fork.
+
+
+### Upgrade notes
+
+- The `schedules` table is rebuilt once on first start, to let a schedule target a video wall.
+  Every row, column, index and trigger is kept. A table that does not look as expected is left
+  alone and logged (`[migrate] wall schedules`), and wall schedules are then unavailable on that
+  server. Take the usual backup before upgrading.
 
 ## 2.4.3
 

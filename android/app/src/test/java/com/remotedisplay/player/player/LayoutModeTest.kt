@@ -59,4 +59,20 @@ class LayoutModeTest {
         p.put("wall_config", JSONObject.NULL)
         assertEquals(LayoutMode.MULTI_ZONE, layoutModeOf(p))
     }
+
+    // Wall layouts: the wall's own zones (canvas_layout) drawn across the wall on the shared clock.
+    @Test fun `a wall with canvas_layout and a multi-zone layout is WALL_ZONES`() {
+        val p = payload(layoutZones = zones(3), wall = JSONObject().put("wall_id", "w").put("canvas_layout", true))
+        assertEquals(LayoutMode.WALL_ZONES, layoutModeOf(p))
+    }
+
+    @Test fun `canvas_layout with a single zone stays a plain WALL`() {
+        val p = payload(layoutZones = zones(1), wall = JSONObject().put("wall_id", "w").put("canvas_layout", true))
+        assertEquals(LayoutMode.WALL, layoutModeOf(p))
+    }
+
+    @Test fun `a wall layout without canvas_layout is a plain WALL (old server, or an emergency)`() {
+        val p = payload(layoutZones = zones(4), wall = JSONObject().put("wall_id", "w"))
+        assertEquals(LayoutMode.WALL, layoutModeOf(p))
+    }
 }

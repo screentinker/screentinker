@@ -233,7 +233,11 @@
     var self = this;
 
     try { this.prune(items); } catch (e) { /* pruning must never block fetching */ }
-    var list = (items || []).filter(function (it) { return it && it.content_id && !it.remote_url; });
+    // A hold item (application/x-st-hold, remote_url hold://…) has NO bytes: never fetch or cache it.
+    // remote_url already excludes it; the mime check keeps that true if a hold ever arrives bare.
+    var list = (items || []).filter(function (it) {
+      return it && it.content_id && !it.remote_url && it.mime_type !== 'application/x-st-hold';
+    });
 
     /*
      * One item at a time, and within an item, keep going while bytes are landing — exactly the

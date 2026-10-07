@@ -7,6 +7,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // platform-shared pair (NULL user_id, NULL workspace_id) and are visible
 // everywhere, writable only by platform_admin.
 const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
+const { SCREENS_ON_LAYOUT_SQL } = require('../lib/wall-layout');
 
 // List layouts in the caller's current workspace plus all templates.
 // Phase 2.2h: workspace-scoped. Templates (is_template=1) remain visible to
@@ -261,7 +262,7 @@ router.put('/:id', (req, res) => {
     if (io) {
       const { buildPlaylistPayload } = require('../ws/deviceSocket');
       const commandQueue = require('../lib/command-queue');
-      for (const d of db.prepare('SELECT id FROM devices WHERE layout_id = ?').all(req.params.id)) {
+      for (const d of db.prepare(SCREENS_ON_LAYOUT_SQL).all(req.params.id, req.params.id)) {
         commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), d.id, buildPlaylistPayload);
       }
     }
@@ -277,6 +278,8 @@ router.delete('/:id', (req, res) => {
   if (layout.is_template && !PLATFORM_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Cannot delete templates' });
 
   db.prepare('DELETE FROM layouts WHERE id = ?').run(req.params.id);
+  // foreign_keys is OFF here, so ON DELETE SET NULL never fires: clear walls that used it by hand.
+  db.prepare('UPDATE video_walls SET layout_id = NULL WHERE layout_id = ?').run(req.params.id);
   res.json({ success: true });
 });
 

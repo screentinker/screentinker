@@ -3,7 +3,6 @@ package com.remotedisplay.player.player
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import kotlin.math.abs
 
 /**
  * #group-sync — clock/schedule group synchronization. Native Kotlin port of the web player's
@@ -41,7 +40,7 @@ class GroupScheduleController(
     // under load on a weak panel) prevents it from ever rendering a frame → the whole thing spirals
     // to black. After a seek, hold off ~1.2s and just NUDGE instead, letting the decoder catch up.
     private var lastSeekAt = 0L
-    private val SEEK_COOLDOWN_MS = 1200L
+    // (the cooldown itself is WallZones.SEEK_COOLDOWN_MS)
     // Set whenever the schedule moves us to a new item (or on first entry). The FIRST video correction
     // after a load is an unconditional hard-seek to the exact schedule position — "load and hold" —
     // instead of the gentle ±3% nudge, which would take ~10s to eat the ~0.3s load offset (the "5s to
@@ -115,25 +114,28 @@ class GroupScheduleController(
                 val dur = durMs / 1000f
                 val target = t.posSec % dur                       // loop-safe when the slot > clip length
                 val drift = media.currentPositionMs() / 1000f - target
-                val ad = abs(drift)
                 // A fresh item (index changed since our last align) snaps ONCE to the exact position —
                 // load-and-hold — so it doesn't spend ~10s nudging away a ~0.3s load offset.
                 if (playlist.getIndex() != lastAlignedIndex) alignPending = true
                 val nowMs = System.currentTimeMillis()
-                when {
-                    alignPending -> {
-                        if (ad > 0.05f) { media.seekExact((target * 1000).toLong()); lastSeekAt = nowMs }
+                // The decision is WallZones.correction — shared with every wall zone, so the two
+                // clock-paced engines cannot drift apart in how they chase the schedule.
+                when (val c = WallZones.correction(drift, alignPending, nowMs - lastSeekAt)) {
+                    WallZones.Correction.SEEK_ALIGN, WallZones.Correction.ALIGN -> {
+                        if (c == WallZones.Correction.SEEK_ALIGN) { media.seekExact((target * 1000).toLong()); lastSeekAt = nowMs }
                         media.setSpeed(1.0f); alignPending = false; lastAlignedIndex = playlist.getIndex()
                         action = "align ${fmt(drift)}"
                     }
                     // Large drift: hard-seek, but only if we're past the cooldown — otherwise NUDGE so we
                     // don't flush the decoder every tick (the black-screen spiral under load).
-                    ad > 0.3f && nowMs - lastSeekAt > SEEK_COOLDOWN_MS -> {
+                    WallZones.Correction.SEEK -> {
                         media.seekExact((target * 1000).toLong()); media.setSpeed(1.0f); lastSeekAt = nowMs
                         action = "seek ${fmt(drift)}"
                     }
-                    ad > 0.05f -> { media.setSpeed(if (drift > 0) 0.97f else 1.03f); action = "nudge ${fmt(drift)}" }
-                    else -> media.setSpeed(1.0f)
+                    WallZones.Correction.NUDGE_SLOWER, WallZones.Correction.NUDGE_FASTER -> {
+                        media.setSpeed(WallZones.rateFor(c)); action = "nudge ${fmt(drift)}"
+                    }
+                    WallZones.Correction.NORMAL -> media.setSpeed(1.0f)
                 }
             }
         }
