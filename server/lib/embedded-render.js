@@ -187,6 +187,25 @@ function safeLocalImagePath(filepath) {
   return safe;
 }
 
+/*
+ * safeLocalImagePath, plus items whose bytes are in a storage backend (lib/storage): those are
+ * fetched once into the storage cache (never into contentDir) and that file is read instead.
+ */
+async function localImageFile(content, fileToLoad) {
+  try { return safeLocalImagePath(fileToLoad); }
+  catch (e) {
+    if (e.code !== 'NOT_FOUND' || !content || !content.id) throw e;
+    const { db } = require('../db/database');
+    const row = db.prepare('SELECT * FROM content WHERE id = ?').get(content.id);
+    const loc = require('./storage/locations');
+    if (!row || !loc.hasExplicitLocations(row.id)) throw e;
+    const kind = fileToLoad === row.thumbnail_path && fileToLoad !== row.filepath ? 'thumb' : 'asset';
+    const p = await loc.ensureLocalFile(row, kind);
+    if (!p) throw e;
+    return p;
+  }
+}
+
 function parseColorToRgba(hexOrInt, fallback = 0x000000FF) {
   if (typeof hexOrInt === 'number' && Number.isFinite(hexOrInt)) return hexOrInt >>> 0;
   if (typeof hexOrInt === 'string' && hexOrInt.trim()) {
@@ -571,7 +590,7 @@ async function render(item, content, screenProfile, options = {}) {
       : (content.thumbnail_path || content.filepath);
 
     if (fileToLoad) {
-      const safe = safeLocalImagePath(fileToLoad);
+      const safe = await localImageFile(content, fileToLoad);
       try {
         const fileBuffer = fs.readFileSync(safe);
         const img = await Jimp.fromBuffer(fileBuffer);
@@ -691,7 +710,7 @@ async function renderLayoutNative(layout, zoneEntries, screenProfile, options = 
       if (fileToLoad) {
         let buf;
         try {
-          const safe = safeLocalImagePath(fileToLoad);
+          const safe = await localImageFile(content, fileToLoad);
           buf = fs.readFileSync(safe);
         } catch (fileErr) {
           console.warn(`[embedded] native layout file read error for zone ${zone.id || 'unknown'}: ${fileErr.message}`);

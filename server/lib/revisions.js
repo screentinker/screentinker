@@ -302,7 +302,17 @@ function historyDir() { return path.join(config.contentDir, HISTORY_DIR); }
 function retainContentFile(db, contentId, relPath, tag) {
   if (!relPath) return null;
   const src = path.join(config.contentDir, path.basename(String(relPath)));
-  if (!fs.existsSync(src)) return null;
+  if (!fs.existsSync(src)) {
+    /*
+     * The live copy is in a storage backend (lib/storage), not on this disk. Retaining it is a
+     * re-label, not a copy: its location rows become `history` under a ref this revision names, and
+     * the object stays exactly where it is — referenced, so nothing deletes it until retention lets
+     * the ref go. Returns null when there is no remote copy either, as before.
+     */
+    const row = db.prepare('SELECT filepath, thumbnail_path FROM content WHERE id = ?').get(contentId) || {};
+    const kind = relPath === row.thumbnail_path && relPath !== row.filepath ? 'thumb' : 'asset';
+    return require('./storage/locations').retainRemote(contentId, kind, tag, relPath);
+  }
   const dir = path.join(historyDir(), contentId);
   fs.mkdirSync(dir, { recursive: true });
   const dest = path.join(dir, `${tag}__${path.basename(src)}`);
@@ -368,6 +378,8 @@ function removeRetainedFiles(contentId) {
 /** Absolute path for a revision's retained file, or the live file when the ref IS the live one. */
 function resolveFileRef(ref) {
   if (!ref) return null;
+  // A copy retained in a storage backend has no local path; see refExists / storage/locations.
+  if (require('./storage/locations').isStorageRef(ref)) return null;
   const clean = String(ref).replace(/\\/g, '/');
   const abs = clean.startsWith(HISTORY_DIR + '/')
     ? path.join(historyDir(), clean.slice(HISTORY_DIR.length + 1).split('/').map((s) => path.basename(s)).join(path.sep))
@@ -375,6 +387,32 @@ function resolveFileRef(ref) {
   const base = path.resolve(config.contentDir);
   if (!path.resolve(abs).startsWith(base + path.sep)) return null;
   return fs.existsSync(abs) ? abs : null;
+}
+
+/** Is this revision's retained file still available, wherever it is stored? */
+function refExists(ref) {
+  if (!ref) return false;
+  const loc = require('./storage/locations');
+  return loc.isStorageRef(ref) ? loc.refExists(ref) : !!resolveFileRef(ref);
+}
+
+/**
+ * Fetch a revision's retained copies into contentDir when they live in a storage backend, so the
+ * restore below (synchronous, local-file based) can use them. Returns { file, thumb } absolute
+ * temp paths (null where the ref is local or absent); the restore copies and the caller deletes.
+ */
+async function materializeRefs(db, rev) {
+  const loc = require('./storage/locations');
+  const out = { file: null, thumb: null };
+  for (const [ref, k] of [[rev.file_ref, 'file'], [rev.thumb_ref, 'thumb']]) {
+    if (!ref || !loc.isStorageRef(ref)) continue;
+    const locs = loc.orderForRead(loc.historyLocations(ref));
+    if (!locs.length) continue;
+    const dest = path.join(config.contentDir, `.restore-${crypto.randomBytes(6).toString('hex')}${path.extname(String(ref))}`);
+    try { await loc.downloadTo({ id: rev.resource_id }, 'history', dest, { locations: locs }); out[k] = dest; }
+    catch (e) { try { fs.unlinkSync(dest); } catch (_) {} }
+  }
+  return out;
 }
 
 // ─── redaction ───────────────────────────────────────────────────────────────────────────────
@@ -441,7 +479,7 @@ function diffStates(type, a, b) {
 
 // ─── restore: write an old state into the DRAFT and record it ────────────────────────────────
 
-function restoreToDraft(db, { type, id, revisionId, actor }) {
+function restoreToDraft(db, { type, id, revisionId, actor, materialized = null }) {
   const rev = db.prepare('SELECT * FROM revisions WHERE id = ? AND resource_type = ? AND resource_id = ?').get(revisionId, type, id);
   if (!rev) { const e = new Error('Revision not found'); e.status = 404; throw e; }
   const state = parseJson(rev.state, null);
@@ -454,8 +492,11 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
 
   if (type === 'content') {
     // The bytes must still exist, or this is a rename pretending to be a restore.
-    const abs = rev.file_ref ? resolveFileRef(rev.file_ref) : null;
-    if (rev.file_ref && !abs) { const e = new Error('The media for this revision is no longer retained, so it cannot be restored'); e.status = 409; throw e; }
+    const abs = rev.file_ref ? ((materialized && materialized.file) || resolveFileRef(rev.file_ref)) : null;
+    // A revision whose file IS the live file (bytes unchanged since) needs no copy — and for an item
+    // whose bytes are in a storage backend there is no local file to find (lib/storage).
+    const isLiveFile = rev.file_ref && rev.file_ref === row.filepath && require('./storage/locations').hasExplicitLocations(id);
+    if (rev.file_ref && !abs && !isLiveFile) { const e = new Error('The media for this revision is no longer retained, so it cannot be restored'); e.status = 409; throw e; }
     let pendingPath = null;
     if (abs) {
       const ext = path.extname(abs);
@@ -463,7 +504,7 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
       fs.copyFileSync(abs, path.join(config.contentDir, pendingPath));
     }
     let thumbPath = null;
-    const thumbAbs = rev.thumb_ref ? resolveFileRef(rev.thumb_ref) : null;
+    const thumbAbs = rev.thumb_ref ? ((materialized && materialized.thumb) || resolveFileRef(rev.thumb_ref)) : null;
     if (thumbAbs) {
       thumbPath = `thumb_restore-${rev.rev_no}-${crypto.randomBytes(6).toString('hex')}${path.extname(thumbAbs)}`;
       fs.copyFileSync(thumbAbs, path.join(config.contentDir, thumbPath));
@@ -571,5 +612,5 @@ function lastPublished(db, type, id) {
 module.exports = { CONTENT_DRAFT_FIELDS, CONTENT_PLAYBACK_FIELDS, disposeDraftFiles,
   RESOURCE_TYPES, TABLE, HISTORY_DIR,
   captureState, captureLiveState, hashState, stable, record, recordCurrent, recordMissingIn, markPublished, baselineAll,
-  retainContentFile, resolveFileRef, historyDir, deleteHistoryRows, removeRetainedFiles, redactState, diffStates, restoreToDraft, hasDraft, list, get, latest, lastPublished, parseJson,
+  retainContentFile, resolveFileRef, refExists, materializeRefs, historyDir, deleteHistoryRows, removeRetainedFiles, redactState, diffStates, restoreToDraft, hasDraft, list, get, latest, lastPublished, parseJson,
 };

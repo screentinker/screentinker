@@ -204,7 +204,7 @@ router.get('/backup', (req, res) => {
 });
 
 // User data export (own data only)
-router.get('/export', (req, res) => {
+router.get('/export', async (req, res) => {
   const token = req.query.token;
   if (!token) return res.status(401).json({ error: 'Token required' });
 
@@ -330,9 +330,28 @@ router.get('/export', (req, res) => {
 
     // Collect file info and add files to archive
     const filesToInclude = [];
+    const storageLoc = require('../lib/storage/locations');
     for (const c of exportData.content) {
       if (c.remote_url || !c.filename) continue;
-      const row = db.prepare('SELECT filepath, thumbnail_path FROM content WHERE id = ?').get(c.id);
+      const row = db.prepare('SELECT * FROM content WHERE id = ?').get(c.id);
+      /*
+       * A row whose bytes live in a storage backend (lib/storage) is fetched into the storage cache
+       * first, so the archive is complete wherever the media is kept. A copy that cannot be read
+       * is left out, exactly as a missing local file always has been.
+       */
+      if (row && storageLoc.hasExplicitLocations(row.id)) {
+        for (const [kind, col, field] of [['asset', 'filepath', 'original_filepath'], ['thumb', 'thumbnail_path', 'original_thumbnail']]) {
+          if (!row[col] || (kind === 'thumb' && row.thumbnail_path === row.filepath)) continue;
+          try {
+            const abs = await storageLoc.ensureLocalFile(row, kind);
+            if (abs && fs.existsSync(abs)) {
+              c[field] = path.basename(row[col]);
+              archive.file(abs, { name: `files/${c.id}/${c[field]}` });
+            }
+          } catch (_) { /* unreadable everywhere: omitted */ }
+        }
+        continue;
+      }
       if (row?.filepath) {
         const filePath = path.join(config.contentDir, path.basename(row.filepath));
         if (fs.existsSync(filePath)) {
@@ -596,6 +615,9 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
 
       db.prepare(`INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, remote_url, thumbnail_path, width, height, created_at, byte_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, c.filename, newFilepath, c.mime_type, c.file_size || 0, c.duration_sec || null, c.remote_url || null, newThumbnail, c.width || null, c.height || null, c.created_at || Math.floor(Date.now() / 1000), restoredDigest);
       stats.content++;
+      // The restored file is local; if the workspace writes to a bucket it moves there once this
+      // transaction has committed (a rolled-back import leaves no row, and the settle is a no-op).
+      if (newFilepath) require('../lib/storage/locations').settleSoon(newId);
     }
 
     // Import widgets

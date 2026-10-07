@@ -12,6 +12,7 @@ import { openTypeToConfirmModal } from '../components/type-to-confirm-modal.js';
 // 409 duplicate-email / weak-password / invalid-email cases) so we don't fork a
 // second mapper.
 import { mapMutationError } from './workspace-members.js';
+import { mountInstanceStorage } from '../components/storage-settings.js';
 
 const headers = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
 // A refused request must reject, not resolve.
@@ -158,6 +159,7 @@ ${section(t('admin.orgs.title'), t('admin.orgs.desc'), `
     tab: 'platform.tab.system', title: 'platform.system.title', subtitle: 'platform.system.subtitle',
     html: () => `
       ${section(t('admin.system'), '', `<div id="systemInfo">${loading()}</div>`)}
+      ${section('Instance storage', '', `<div id="instanceStorage">${loading()}</div>`)}
     <div class="settings-section">
       <h3>${t('admin.diag.title')}</h3>
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.diag.desc')}</p>
@@ -173,7 +175,7 @@ ${section(t('admin.orgs.title'), t('admin.orgs.desc'), `
     </div>
       ${section(esc(t('platform.system.status_endpoint')), '', `<div id="statusDebugForm">${loading()}</div>`)}
       ${section(esc(t('platform.system.player_debug')), esc(t('platform.system.player_debug_desc')), `<a class="btn btn-secondary" href="#/admin/player-debug">${esc(t('platform.system.player_debug_open'))} &rarr;</a>`)}`,
-    load: () => { loadSystem(); loadDiagnostics(); wireDiagnostics(); loadStatusDebug(); },
+    load: () => { loadSystem(); mountInstanceStorage(document.getElementById('instanceStorage')); loadDiagnostics(); wireDiagnostics(); loadStatusDebug(); },
   },
   cleanup: {
     tab: 'platform.tab.cleanup', title: 'platform.cleanup.title', subtitle: 'platform.cleanup.subtitle',

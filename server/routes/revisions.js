@@ -29,7 +29,7 @@ function present(rev, { withState = false } = {}) {
   const out = { ...rev };
   delete out.state;
   if (withState) out.state = revisions.redactState(revisions.parseJson(rev.state, null));
-  out.has_file = !!rev.file_ref && !!revisions.resolveFileRef(rev.file_ref);
+  out.has_file = !!rev.file_ref && revisions.refExists(rev.file_ref);
   return out;
 }
 
@@ -76,9 +76,19 @@ router.get('/:type/:id/:rev/file', requireWorkspaceRead, (req, res) => {
   const rev = revisions.get(db, req.params.rev);
   if (!rev || rev.resource_id !== req.params.id) return res.status(404).json({ error: 'Revision not found' });
   const which = req.query.thumb === '1' ? rev.thumb_ref : rev.file_ref;
+  const state = revisions.parseJson(rev.state, {});
+  // Retained in a storage backend (lib/storage): stream it from whichever copy answers.
+  const storageLoc = require('../lib/storage/locations');
+  if (which && storageLoc.isStorageRef(which)) {
+    const locs = storageLoc.orderForRead(storageLoc.historyLocations(which));
+    if (!locs.length) return res.status(404).json({ error: 'The media for this revision is no longer retained' });
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return require('../lib/storage/serve').serveFromStorage(req, res,
+      { id: rev.resource_id, mime_type: req.query.thumb === '1' ? 'image/jpeg' : (state.mime_type || null), filepath: which },
+      'asset', { locations: locs });
+  }
   const abs = which ? revisions.resolveFileRef(which) : null;
   if (!abs) return res.status(404).json({ error: 'The media for this revision is no longer retained' });
-  const state = revisions.parseJson(rev.state, {});
   res.setHeader('Cache-Control', 'private, max-age=300');
   if (req.query.thumb !== '1' && state.mime_type) res.setHeader('Content-Type', state.mime_type);
   res.sendFile(abs);
@@ -113,11 +123,18 @@ function sendCorporate(res, e, req) {
   return require('../lib/corporate/guard').send(res, e, req);
 }
 
-router.post('/:type/:id/:rev/restore', requireWorkspaceWrite, (req, res) => {
+router.post('/:type/:id/:rev/restore', requireWorkspaceWrite, async (req, res) => {
   if (!loadResource(req, res)) return;
+  let materialized = null;
   try {
     assertCorporateWritable(req);
-    const out = revisions.restoreToDraft(db, { type: req.params.type, id: req.params.id, revisionId: req.params.rev, actor: { ...releases.actorOf(req), kind: 'restore' } });
+    // A content revision retained in a storage backend is fetched to local disk first; the restore
+    // itself works on local files exactly as before (lib/revisions.materializeRefs).
+    if (req.params.type === 'content') {
+      const rev = revisions.get(db, req.params.rev);
+      if (rev && rev.resource_id === req.params.id) materialized = await revisions.materializeRefs(db, rev);
+    }
+    const out = revisions.restoreToDraft(db, { type: req.params.type, id: req.params.id, revisionId: req.params.rev, actor: { ...releases.actorOf(req), kind: 'restore' }, materialized });
     audit('history:restored', { userId: req.user.id, workspaceId: req.workspaceId, ip: req.ip, details: { resource_type: req.params.type, resource_id: req.params.id, from_revision: out.restoredFrom.id, to_revision: out.revision.id } });
     res.json({
       revision: present(out.revision), restored_from: present(out.restoredFrom),
@@ -129,6 +146,8 @@ router.post('/:type/:id/:rev/restore', requireWorkspaceWrite, (req, res) => {
   } catch (e) {
     if (sendCorporate(res, e, req)) return;
     res.status(e.status || 500).json({ error: e.message, code: e.code || null });
+  } finally {
+    for (const f of Object.values(materialized || {})) { if (f) { try { require('fs').unlinkSync(f); } catch (_) { /* already gone */ } } }
   }
 });
 

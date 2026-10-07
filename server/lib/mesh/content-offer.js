@@ -79,6 +79,17 @@ function buildOffer(db, edge, contentIds, deps = {}) {
      * a manual cleanup — would otherwise be advertised, ticketed, and fail at transfer, and the
      * operator would be told the network was at fault.
      */
+    if (!stat && row.byte_digest) {
+      /*
+       * Held in a storage backend instead of on this disk (lib/storage). Offered from the size its
+       * stored copy recorded, with the digest the receiver verifies against anyway; the pull route
+       * fetches it into the storage cache before serving, and its size/digest checks still apply.
+       */
+      try {
+        const loc = db.prepare("SELECT size FROM content_locations WHERE content_id = ? AND kind = 'asset' AND state = 'ready' AND storage_profile_id IS NOT NULL ORDER BY role = 'primary' DESC LIMIT 1").get(row.id);
+        if (loc) stat = { size: loc.size != null ? loc.size : row.file_size };
+      } catch (e) { stat = null; }
+    }
     if (!stat) { skipped.push({ id, why: 'its file is missing on this server' }); continue; }
 
     content.push({

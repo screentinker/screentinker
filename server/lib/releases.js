@@ -130,7 +130,9 @@ function releaseContentDraft(db, contentId, req, { actor } = {}) {
   const draft = revisions.parseJson(c.draft_json, null);
   if (!draft) { const e = new Error('This item has no unpublished draft'); e.status = 400; throw e; }
   const gate = policy.assertReleasable(db, { workspaceId: c.workspace_id, type: 'content', id: contentId });
-  if (draft.filepath && !fs.existsSync(path.join(config.contentDir, path.basename(draft.filepath)))) {
+  // A draft that keeps the live bytes (draft.filepath === the live one) needs no local file: the live
+  // copy may be in a storage backend (lib/storage). Only NEW draft bytes must be on disk.
+  if (draft.filepath && draft.filepath !== c.filepath && !fs.existsSync(path.join(config.contentDir, path.basename(draft.filepath)))) {
     const e = new Error('The draft file is missing on disk; upload it again'); e.status = 409; throw e;
   }
   const prevRev = revisions.latest(db, 'content', contentId);
@@ -159,6 +161,9 @@ function releaseContentDraft(db, contentId, req, { actor } = {}) {
     policy.afterRelease(db, { type: 'content', id: contentId, gate, actor: actor || actorOf(req), summary: 'Published' });
   })();
   pushDevices(req, require('./devices-playing').devicesPlayingContent(contentId));
+  // The released draft's bytes are a local file; if this workspace writes to a bucket they move
+  // there now (lib/storage). Until that finishes — or if it fails — the local copy serves.
+  if (draft.filepath && draft.filepath !== c.filepath) require('./storage/locations').settleSoon(contentId, { kinds: ['asset', 'thumb'] });
   audit('release:content', { userId: actor && actor.userId, workspaceId: c.workspace_id, details: { content_id: contentId, submission_id: gate.submission ? gate.submission.id : null } });
   return { gate };
 }

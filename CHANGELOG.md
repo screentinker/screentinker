@@ -13,26 +13,40 @@
     the rest of the playlist.
   - The live picture can't be captured, so dashboard screenshots show a "Live HDMI input" card in
     its place, with everything around and above it captured normally.
+- **Storage backends: local disk, S3 and S3-compatible stores, Azure Blob.** Media — each file, its
+  thumbnail, subtitle and retained revision copies — can live in Amazon S3, any S3-compatible store
+  (MinIO, Garage, Ceph RGW, SeaweedFS, R2, B2, Wasabi, Spaces) or Azure Blob. With nothing
+  configured nothing changes: uploads land on local disk exactly as before. See `docs/storage.md`.
+  - **Three levels.** A workspace's new uploads go to the workspace's own choice, else its
+    organization's, else the instance default:
+    - **Instance:** set from the environment (`STORAGE_PROVIDER`, `S3_*`, `AZURE_STORAGE_*`) or by a
+      platform admin under **Platform → System → Instance storage**. The environment wins when set,
+      and the card says so.
+    - **Organization:** org owners and admins, under **Settings → Where media is stored**.
+    - **Workspace:** a workspace can store its media somewhere else, in a profile of the
+      organization or one of its own that no other workspace can see. Org admins can always set
+      this. Workspace admins can too, but only if the organization turns on *Workspace admins may
+      choose their own workspace's storage*, which is off by default.
+  - **Live migration.** *Move media here* copies and verifies every file while screens keep playing
+    from the existing copies; *Switch* makes the new copies primary while the old ones stay
+    readable; *Remove old copies* deletes them only where another ready copy exists. A restart
+    resumes a copy and never switches or deletes anything by itself. A move covers either one
+    workspace, or the whole organization except workspaces that have their own storage.
+  - **Any available copy.** A file with several copies is served from the first one that answers; a
+    failing store is skipped, and a dead one is not retried for 60 s.
+  - **Attach an existing bucket** read-only and import objects by reference (never modified or
+    deleted) or by copy.
+  - **Screens are unchanged.** Players keep fetching the same URLs; the server serves them from the
+    bucket. A new `file_url` field offers a presigned direct link when the screen can reach the
+    bucket. Screens on a network that cannot reach the bucket are always served by the server.
+  - Storage keys are encrypted with the server's JWT secret and never shown again; changing
+    `JWT_SECRET` means re-entering them. Endpoints go through the SSRF guard: cloud metadata is
+    always refused, and loopback and private networks are refused unless the profile allows them.
+  - Database: new tables `storage_profiles`, `content_locations` and `storage_migrations`, plus
+    nullable columns. All additive; nothing is backfilled at boot.
+  - New dependencies: `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` (Apache-2.0), and
+    `@azure/storage-blob` (MIT). Each is loaded only when its provider is used.
 
-### Fixed (Android player)
-
-- **Zones now keep their layering when they change item.** A zone's new item used to go on top of
-  every other zone, so `z_index` only held for the first item. Side-by-side zones never noticed;
-  overlays such as a logo over a video did.
-
-## Unreleased
-
-### Fixed (Raspberry Pi native player)
-
-- **On Pi OS with a desktop, the player could fail to start at login with nothing on screen.**
-  The desktop session runs on Wayland, and Qt's Wayland support is a separate package
-  (`qt6-wayland`) that the player didn't depend on. Without it, Qt aborted before drawing
-  anything. The package now depends on it, and the player falls back to X11 (through Xwayland) if
-  Wayland still can't be used.
-- **Running `sudo screentinker-pi setup URL` by hand on a desktop Pi switched it to Lite mode.**
-  `setup` now detects the mode the same way the installer does when `--mode` is left out. Asking
-  for `--mode lite` on a Pi that boots to a desktop prints a warning, because the desktop keeps the
-  screen and the Lite service can't draw on it.
 ### Fixed (Android player)
 
 - **A web, widget or YouTube item no longer shows "webpage not available" when the network
@@ -57,6 +71,21 @@
     refers to it, so schedules that switch playlists don't download the same media again every
     day.
   - When free space is low, unused files are deleted straight away.
+- **Zones now keep their layering when they change item.** A zone's new item used to go on top of
+  every other zone, so `z_index` only held for the first item. Side-by-side zones never noticed;
+  overlays such as a logo over a video did.
+
+### Fixed (Raspberry Pi native player)
+
+- **On Pi OS with a desktop, the player could fail to start at login with nothing on screen.**
+  The desktop session runs on Wayland, and Qt's Wayland support is a separate package
+  (`qt6-wayland`) that the player didn't depend on. Without it, Qt aborted before drawing
+  anything. The package now depends on it, and the player falls back to X11 (through Xwayland) if
+  Wayland still can't be used.
+- **Running `sudo screentinker-pi setup URL` by hand on a desktop Pi switched it to Lite mode.**
+  `setup` now detects the mode the same way the installer does when `--mode` is left out. Asking
+  for `--mode lite` on a Pi that boots to a desktop prints a warning, because the desktop keeps the
+  screen and the Lite service can't draw on it.
 
 ### Fixed (server)
 

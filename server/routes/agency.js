@@ -82,6 +82,7 @@ router.post('/content', checkStorageLimit, upload.single('file'), async (req, re
   } catch (e) {
     // A non-media upload is the caller's error, not ours (lib/upload-sniff rejects it).
     if (e && e.name === 'UnsupportedUploadError') return res.status(400).json({ error: e.message });
+    if (e && e.name === 'StorageWriteError') { e.discard(); return res.status(502).json({ error: e.message }); }
     console.error('agency upload error:', e.message);
     res.status(500).json({ error: 'Upload failed' });
   }
