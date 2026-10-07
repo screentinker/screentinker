@@ -5649,6 +5649,10 @@ function renderContent(item) {
     renderVideoBuffered(item);
     return;
   }
+  if (isWallSwappable(item)) {
+    renderWallBuffered(item);
+    return;
+  }
   teardownCurrentMedia();
   const container = document.getElementById("playerContainer");
   container.style.display = "block";
@@ -5739,6 +5743,141 @@ function renderContent(item) {
       if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 30) * 1e3);
     }
   }
+}
+const WALL_SWAP_TIMEOUT_MS = 4e3;
+function isWallSwappable(item) {
+  if (!wallConfig || wallZonesActive() || groupSync || !item || item.widget_id) return false;
+  const m = typeof item.mime_type === "string" ? item.mime_type : "";
+  if (m.startsWith("image/")) return true;
+  return m.startsWith("video/") && m !== "video/youtube" && m !== LIVE_MIME && m !== "video/hdmi-in";
+}
+function releaseWallVideo(v) {
+  try {
+    destroyHls(v);
+    v.onended = null;
+    v.onerror = null;
+    v.onloadeddata = null;
+    v.pause();
+    v.removeAttribute("src");
+    v.load();
+  } catch (e) {
+  }
+}
+function renderWallBuffered(item) {
+  const seq = renderSeq;
+  if (ytSafetyNet) {
+    clearTimeout(ytSafetyNet);
+    ytSafetyNet = null;
+  }
+  discardPendingSwap();
+  hideStatus();
+  const container = document.getElementById("playerContainer");
+  container.style.display = "block";
+  const outgoing = Array.from(container.children);
+  container.querySelectorAll("video").forEach((v) => {
+    v.onended = null;
+    v.onerror = null;
+    try {
+      v.pause();
+    } catch (e) {
+    }
+  });
+  currentVideoEl = null;
+  const isFollower = isWallFollower();
+  const src = mediaUrl(item);
+  const stage = document.createElement("div");
+  stage.className = "wall-stage";
+  styleWallStage(stage);
+  stage.style.visibility = "hidden";
+  stage.style.zIndex = "1";
+  container.appendChild(stage);
+  let revealed = false, watchdog = null;
+  const abandon = (video) => {
+    if (revealed) return false;
+    revealed = true;
+    if (watchdog) {
+      clearTimeout(watchdog);
+      watchdog = null;
+    }
+    if (video) releaseWallVideo(video);
+    try {
+      stage.remove();
+    } catch (e) {
+    }
+    return true;
+  };
+  const reveal = (video) => {
+    if (revealed) return;
+    revealed = true;
+    if (watchdog) {
+      clearTimeout(watchdog);
+      watchdog = null;
+    }
+    if (seq !== renderSeq || !stage.isConnected) {
+      if (video) releaseWallVideo(video);
+      try {
+        stage.remove();
+      } catch (e) {
+      }
+      return;
+    }
+    clearZoneTimers();
+    stopWallZones();
+    outgoing.forEach((ch) => {
+      if (ch === stage) return;
+      ch.querySelectorAll && ch.querySelectorAll("video").forEach(releaseWallVideo);
+      if (ch.tagName === "VIDEO") releaseWallVideo(ch);
+      try {
+        ch.remove();
+      } catch (e) {
+      }
+    });
+    stage.style.visibility = "";
+    stage.style.zIndex = "";
+    if (video) currentVideoEl = video;
+  };
+  if (item.mime_type.startsWith("image/")) {
+    const img = document.createElement("img");
+    img.style.cssText = "width:100%;height:100%;object-fit:fill";
+    img.onerror = () => {
+      abandon(null);
+      mediaFailureSkip(img, "image", src, !isFollower);
+    };
+    img.onload = () => {
+      (img.decode ? img.decode() : Promise.resolve()).then(() => reveal(null), () => reveal(null));
+    };
+    img.src = src;
+    stage.appendChild(img);
+    if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1e3);
+  } else {
+    const video = document.createElement("video");
+    video.src = src;
+    video.autoplay = true;
+    attachSubtitleTrack(video, item);
+    video.playsInline = true;
+    video.crossOrigin = "anonymous";
+    video.style.cssText = "width:100%;height:100%;object-fit:fill;background:#000";
+    stage.appendChild(video);
+    const shown = () => reveal(video);
+    if (typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback(shown);
+    video.addEventListener("playing", () => setTimeout(shown, 50), { once: true });
+    wireSoloVideoPlayback(video, item, src, {
+      forceMuted: isFollower,
+      mayAdvance: !isFollower,
+      loop: playlist.length === 1,
+      role: wallConfig.is_leader ? "leader" : "follower"
+    });
+    const onErr = video.onerror;
+    video.onerror = (e) => {
+      if (!revealed && video.error) {
+        mediaFailureSkip(video, "video", src, !isFollower);
+        abandon(video);
+        return;
+      }
+      if (onErr) onErr(e);
+    };
+  }
+  watchdog = setTimeout(() => reveal(stage.querySelector("video")), WALL_SWAP_TIMEOUT_MS);
 }
 function zoneNextActive(items, from, zoneId) {
   try {
@@ -6402,6 +6541,85 @@ function drawZoneComposite(ctx, container, cr, W, H) {
   });
   return true;
 }
+function drawWallComposite(ctx, container, W, H) {
+  if (!wallConfig || !window.WallGeometry || !container) return null;
+  const g = window.WallGeometry.wallStageGeometry(wallConfig.screen_rect, wallConfig.player_rect, wallConfig.rotation);
+  if (!g) return null;
+  const stages = Array.from(container.children).filter((c) => c.classList && c.classList.contains("wall-stage") && c.style.visibility !== "hidden");
+  const stage = stages[stages.length - 1];
+  if (!stage) return null;
+  const bw = g.w * (g.wAxis === "x" ? W : H);
+  const bh = g.h * (g.hAxis === "x" ? W : H);
+  const out = { drawn: false, uncapturable: false };
+  const fitOf = (el) => {
+    try {
+      return getComputedStyle(el).objectFit;
+    } catch (e) {
+      return "fill";
+    }
+  };
+  const draw = (el, dx, dy, dw, dh) => {
+    if (!el) return false;
+    if (el.tagName === "IMG" && el.complete && el.naturalWidth > 0 && isMediaReadable(el)) {
+      try {
+        drawMediaFit(ctx, el, el.naturalWidth, el.naturalHeight, dx, dy, dw, dh, fitOf(el));
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    if (el.tagName === "VIDEO" && el.readyState >= 2 && el.videoWidth > 0 && isMediaReadable(el)) {
+      if (!videoFrameIsCapturable(el)) {
+        out.uncapturable = true;
+        return false;
+      }
+      try {
+        drawMediaFit(ctx, el, el.videoWidth, el.videoHeight, dx, dy, dw, dh, fitOf(el));
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
+  };
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(g.cx * W, g.cy * H);
+  if (g.rotation) ctx.rotate(g.rotation * Math.PI / 180);
+  ctx.translate(-bw / 2, -bh / 2);
+  try {
+    const zones2 = Array.from(stage.querySelectorAll(".zone"));
+    if (zones2.length) {
+      const sw = stage.offsetWidth || 1, sh = stage.offsetHeight || 1;
+      const z = (el) => Number(el.style.zIndex) || 0;
+      zones2.sort((a, b) => z(a) - z(b)).forEach((zd) => {
+        const dx = zd.offsetLeft / sw * bw, dy = zd.offsetTop / sh * bh;
+        const dw = zd.offsetWidth / sw * bw, dh = zd.offsetHeight / sh * bh;
+        const bg = zd.style.background || zd.style.backgroundColor;
+        if (bg && bg !== "transparent") {
+          ctx.fillStyle = bg;
+          ctx.fillRect(dx, dy, dw, dh);
+        }
+        const els = Array.from(zd.querySelectorAll("video, img, iframe")).filter((e) => e.style.opacity !== "0");
+        const el = els[els.length - 1];
+        if (!el) return;
+        if (!draw(el, dx, dy, dw, dh)) drawZonePlaceholder(ctx, dx, dy, dw, dh, zonePlaceholderLabel(el));
+      });
+      out.drawn = true;
+    } else {
+      const el = stage.querySelector("video, img, iframe");
+      if (draw(el, 0, 0, bw, bh)) out.drawn = true;
+      else if (el && el.tagName === "IFRAME") {
+        drawZonePlaceholder(ctx, 0, 0, bw, bh, zonePlaceholderLabel(el));
+        out.drawn = true;
+      }
+    }
+  } finally {
+    ctx.restore();
+  }
+  return out;
+}
 function renderCaptureCanvas() {
   const container = document.getElementById("playerContainer");
   const cr = container ? container.getBoundingClientRect() : null;
@@ -6415,7 +6633,11 @@ function renderCaptureCanvas() {
   let videoUncapturable = false;
   try {
     const multiZone = !!(layout && Array.isArray(layout.zones) && layout.zones.length > 1 && !wallConfig);
-    if (multiZone && container) {
+    const wallShot = wallConfig ? drawWallComposite(ctx, container, W, H) : null;
+    if (wallShot) {
+      captured = wallShot.drawn;
+      videoUncapturable = wallShot.uncapturable && !wallShot.drawn;
+    } else if (multiZone && container) {
       captured = drawZoneComposite(ctx, container, cr, W, H);
     } else if (container) {
       const video = container.querySelector("video");
