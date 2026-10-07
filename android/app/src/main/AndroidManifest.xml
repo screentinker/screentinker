@@ -2,6 +2,25 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+      ⚠️ EVERY HARDWARE FEATURE IS OPTIONAL. A permission below implies its hardware is REQUIRED
+      unless it is declared otherwise here, and app stores filter on that: the Amazon Appstore
+      refused Fire TV Cube (3rd Gen) because RECORD_AUDIO implied a microphone and the location
+      permissions implied GPS. Neither is needed to play signage — the microphone is only the
+      talk-back intercom, and location only reveals the Wi-Fi network name — and an Ethernet-only
+      box has no Wi-Fi. Touchscreen and leanback are the standard pair for an app that runs on both
+      TVs and tablets. Check with `aapt2 dump badging <apk> | grep feature`: nothing may be listed
+      without required='false'.
+    -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.faketouch" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Provisioning-only: lets a device-owner panel enable its OWN accessibility service (the
          durable whole-screen-capture + D-pad path) without a human toggling Settings. Protected /
