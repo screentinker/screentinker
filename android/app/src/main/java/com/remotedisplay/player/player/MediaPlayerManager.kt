@@ -50,6 +50,19 @@ class MediaPlayerManager(
     // The URL the widget WebView currently has loaded, so re-showing the same widget can be a
     // no-op. Cleared whenever anything else takes the surface (see clearWidgetUrl callers).
     private var currentWidgetUrl: String? = null
+
+    /*
+     * Whether the fullscreen web frame (widget, YouTube, bundle) loaded or failed, for the offline
+     * fallback (OfflineGate). Tagged with the mount it belongs to: a load still finishing for an item
+     * the playlist has already left must not be read as news about the one on screen now.
+     */
+    var onWebLoadState: ((ok: Boolean) -> Unit)? = null
+    private val webLoadState: (Boolean) -> Unit = { ok ->
+        val gen = mountGeneration
+        if (currentType == MediaType.YOUTUBE || currentType == MediaType.WIDGET) {
+            mainHandler.post { if (gen == mountGeneration) onWebLoadState?.invoke(ok) }
+        }
+    }
     // Wall mode: followers must stay muted even as the leader's sync switches them
     // to a new (possibly unmuted) item, so the mute has to survive each playVideo.
     private var wallMute = false
@@ -455,7 +468,7 @@ class MediaPlayerManager(
         exoPlayer?.stop()
 
         youtubeWebView?.apply {
-            com.remotedisplay.player.util.WebViewSupport.configure(this, "YouTube")
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "YouTube", webLoadState)
             setBackgroundColor(android.graphics.Color.BLACK)
             // Load via an embed wrapper with a valid youtube.com origin (Error 153 fix).
             // #129: initial mute comes from the per-item flag (no longer hardcoded).
@@ -532,7 +545,7 @@ class MediaPlayerManager(
         exoPlayer?.stop()
 
         youtubeWebView?.apply {
-            com.remotedisplay.player.util.WebViewSupport.configure(this, "Widget")
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "Widget", webLoadState)
             loadUrl(url)
         }
     }
@@ -569,7 +582,7 @@ class MediaPlayerManager(
         exoPlayer?.stop()
 
         youtubeWebView?.apply {
-            com.remotedisplay.player.util.WebViewSupport.configure(this, "Bundle")
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "Bundle", webLoadState)
             loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
         }
     }

@@ -13,6 +13,40 @@
   `setup` now detects the mode the same way the installer does when `--mode` is left out. Asking
   for `--mode lite` on a Pi that boots to a desktop prints a warning, because the desktop keeps the
   screen and the Lite service can't draw on it.
+### Fixed (Android player)
+
+- **A web, widget or YouTube item no longer shows "webpage not available" when the network
+  drops.**
+  - A page that fails to load is hidden instead of showing the browser's error page, and it keeps
+    retrying in the background.
+  - While the screen is offline, the playlist skips items that need the network, as long as
+    something cached can play instead. When the connection comes back, the full playlist returns
+    on the next advance.
+  - If nothing cached can play, the standby image covers the screen after 30 seconds of failed
+    loads.
+  - A page that had already loaded, such as Google Slides, keeps showing.
+  - "Offline" means the connection to the server is down or a page just failed to load. Android's
+    own network check is not used, because it can take minutes to notice a disconnected modem.
+
+  Multi-zone layouts get the hidden-page part only.
+- **The Android player now deletes downloaded media nothing uses any more.**
+  - Before this, removing an item from a playlist or the library left its file on the screen
+    forever, until small devices such as a Fire TV Stick ran out of space and new downloads
+    failed.
+  - A file is deleted after 7 days in which no playlist, trigger or standby image on the screen
+    refers to it, so schedules that switch playlists don't download the same media again every
+    day.
+  - When free space is low, unused files are deleted straight away.
+
+### Fixed (server)
+
+- **The standby image never reached Android screens unless it was also in a playlist.** The
+  Android player downloads it like any other media so it can show offline, and the server refused
+  that download because the image wasn't in a playlist or widget. A device's standby image now
+  counts, scoped to the device's own workspace. Found while testing the offline fallback above.
+
+Thanks to カタカナ for the report and for the approach, which they had already tested on Fire TV
+and Fire tablets in their fork.
 
 ## 2.4.3
 
