@@ -49,6 +49,14 @@
        * Tizen build is a privileged app — so unlike a browser tab it needs no user gesture and
        * genuinely makes sound on a wall. */
       'playback.slide_audio',
+      /* Hold items (hold://blank | hold://freeze, no file): PlaylistPlayer.renderHold fullscreen /
+       * synced group / plain wall, ZoneRenderer.showItem in a layout, and WallZoneRenderer on a
+       * wall's own layout. The server sends holds ONLY to a player declaring this. */
+      'playback.hold',
+      /* A video wall's own layout (WallZoneRenderer): zones in % of the wall's player rect inside the
+       * wall-positioned stage, each zone on the shared clock, HTML5 <video> only (never AVPlay, which
+       * CSS cannot crop). Static: it needs nothing beyond what playback.zones already uses. */
+      'playback.wall_zones',
 
       /*
        * ⚠️ NOT trigger.http / trigger.udp, and this is a platform limit rather than an omission.

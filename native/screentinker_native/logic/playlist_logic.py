@@ -146,6 +146,9 @@ def should_defer_swap(is_running: bool, wall_follower: bool, has_content_on_scre
 
 # The mime the server stamps on an uploaded HTML bundle (lib/html-bundle.js).
 BUNDLE_MIME = "application/vnd.screentinker.bundle+zip"
+# A hold item (server/lib/hold-item.js): blank or freeze for its duration — a timed item, never
+# "unknown type, skip" (skipping it silently shortens the timeline it exists to keep).
+HOLD_MIME = "application/x-st-hold"
 
 
 def ends_on_timer(mime_type: str, is_widget: bool) -> bool:
@@ -158,7 +161,7 @@ def ends_on_timer(mime_type: str, is_widget: bool) -> bool:
     """
     mime_type = mime_type or ""
     return (mime_type.startswith("image/") or is_widget or mime_type == "video/youtube"
-            or mime_type == BUNDLE_MIME)
+            or mime_type == BUNDLE_MIME or mime_type == HOLD_MIME)
 
 
 # ============================== PlaybackStall (#297) ==============================

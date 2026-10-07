@@ -1535,6 +1535,8 @@
      * image/ or video/ prefix, so nothing routes it as media by accident. */
     const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
     const LIVE_MIME = 'video/hls';   // IPTV: a live stream item's mime (see renderLiveStream)
+    const HOLD_MIME = 'application/x-st-hold';   // a hold item: blank or freeze for its duration (see Wall zones)
+    let wallZoneState = null;   // wall-layout renderer state { stage, zones, timer } (see Wall zones)
     // A dwell-0 live channel never advances on its own; on this slow cadence we only re-check
     // whether it is STILL eligible (window/enabled/play_when), and move on if not. Same interval
     // as the widget solo re-check — a minute, never a busy-loop.
@@ -2331,6 +2333,8 @@
          * remotely. Rendering from cache is an OPTIMISATION; it must never be able to cost the
          * connection that makes the player fixable. Whatever goes wrong in here, we still boot.
          */
+        // A wall panel resumes as its slice of the wall (see applyWallMode), BEFORE the first render.
+        try { const cw = localStorage.getItem('st_wall_config'); if (cw) applyWallMode(JSON.parse(cw)); } catch (e) {}
         try {
           startPlaybackAt(0); // #74/#75: honour schedules from the first frame on cold-start
         } catch (e) {
@@ -3024,6 +3028,7 @@
       // Video wall sync (leader broadcasts; followers align)
       socket.on('wall:sync', (data) => {
         if (!wallConfig || wallConfig.is_leader) return;
+        if (wallZonesActive()) return;   // each zone keeps its own place on the shared clock
         if (data.wall_id !== wallConfig.wall_id) return;
         lastWallSync = data;
         // If leader switched item, jump to it
@@ -4337,6 +4342,8 @@
         // Render paths that exist in this file unconditionally.
         'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
         'playback.zones', 'playback.pip',
+        // Hold items (blank / freeze for their duration) and a wall's own layout (see Wall zones).
+        'playback.hold', 'playback.wall_zones',
         // IPTV: this player plays a live HLS stream — natively on Safari/BrightSign/webOS/Tizen,
         // and via the lazily-loaded vendored hls.js on Chrome. See renderLiveStream.
         'playback.hls',
@@ -4836,6 +4843,10 @@
       if (wallSyncTimer) { clearInterval(wallSyncTimer); wallSyncTimer = null; }
       lastWallSync = null;
 
+      // Cached like st_group_sync, so a panel that reboots with no server comes back as ITS SLICE of
+      // the wall. Without it a cold boot played the cached playlist uncropped across one panel — and
+      // with a wall layout, drew the wall's zones squeezed onto this one screen.
+      try { if (config) localStorage.setItem('st_wall_config', JSON.stringify(config)); else localStorage.removeItem('st_wall_config'); } catch (e) {}
       if (!config) {
         wallConfig = null;
         container.classList.remove('wall-mode');
@@ -4882,6 +4893,7 @@
 
     function emitWallSync() {
       if (!wallConfig?.is_leader || !socket?.connected || playlist.length === 0) return;
+      if (wallZonesActive()) return;   // zones run on the shared clock; there is no one index to relay
       const item = playlist[currentIndex];
       if (!item) return;
       const position = currentVideoEl
@@ -5281,7 +5293,10 @@
         // #236: rotation is part of the key. Left out, re-hanging a panel and changing only its
         // rotation in the editor looks like "no change" and the panel keeps the old transform until
         // it is rebooted — which reads as the editor silently ignoring you.
-        return `${c.wall_id}:${c.is_leader}:r${c.rotation || 0}:s${s.x},${s.y},${s.w},${s.h}:p${p.x},${p.y},${p.w},${p.h}`;
+        // Wall layouts: whether the zones are on the wall, and which zones this panel voices — set or
+        // clear a wall's layout and nothing else here changes.
+        return `${c.wall_id}:${c.is_leader}:r${c.rotation || 0}:s${s.x},${s.y},${s.w},${s.h}:p${p.x},${p.y},${p.w},${p.h}`
+          + `:z${c.canvas_layout ? 1 : 0}:${(c.audio_zones || []).join(',')}`;
       }
       const wallChanged = wallKey(wallConfig) !== wallKey(data.wall_config);
       if (wallChanged) applyWallMode(data.wall_config || null);
@@ -5506,6 +5521,17 @@
           // the buffered swap, which is flash-free by design, so this costs nothing visually.
           const oldItem = oldPlaylist[oldAnchorIdx];
           const newItem = playlist[stillThereIdx];
+          /*
+           * ⚠️ The SAME items under a new layout or wall geometry. The layout and the wall stage are
+           * only built when an item renders, so keeping the item playing kept the OLD zones / crop
+           * until the next item — and forever on a wall looping one clip, or a layout whose zones
+           * all hold single items. Redraw now; the item itself is unchanged.
+           */
+          if (layoutChanged || wallChanged) {
+            console.log('Layout or wall changed with the same items - redrawing');
+            playCurrentItem();
+            return;
+          }
           if (newItem && newItem.widget_id && oldItem && (oldItem.widget_rev || 0) !== (newItem.widget_rev || 0)) {
             console.log('Widget edited - re-rendering in place');
             renderContent(newItem);
@@ -5998,6 +6024,7 @@
         clearTimeout(pendingWidgetSwap.timer); pendingWidgetSwap = null;
       }
       clearZoneTimers();
+      stopWallZones();
       const container = document.getElementById('playerContainer');
       if (container) {
         container.querySelectorAll('video').forEach(v => {
@@ -6903,6 +6930,10 @@
       // Runs BEFORE the generic teardown so the outgoing frame survives until the incoming image is
       // DECODED (no blank/half-painted flash on slow panels). Wall/group/zone images fall through to
       // the legacy path below (they carry their own sync/preload handling).
+      if (isHoldItem(item) && !wallZonesActive() && !isZones) {
+        renderHold(item);
+        return;
+      }
       const isImageBufferable = item && typeof item.mime_type === 'string' && item.mime_type.startsWith('image/')
         && !item.widget_id && !wallConfig && !isZones && !groupSync;
       if (isImageBufferable) {
@@ -6944,6 +6975,11 @@
       // bail) so an empty/placeholder current item can't blank the whole screen.
       if (layout && layout.zones && layout.zones.length > 1 && !wallConfig) {
         renderZones(container, item);
+        return;
+      }
+      // A wall with a layout: every zone runs on the shared clock (see Wall zones).
+      if (wallZonesActive()) {
+        renderWallZones(container);
         return;
       }
 
@@ -7190,6 +7226,18 @@
       // at each transition rather than a loop ignoring the window end.
       const multi = items.length > 1 || items.some(it => (it.schedules && it.schedules.length) || it.play_from || it.play_until || it.play_when);
       const advance = () => showZoneItem(zone, div, items, index + 1, timers);
+      // A HOLD: nothing new for its duration — freeze the zone's last frame, or blank it. Literals,
+      // not the HOLD_MIME helpers: showZoneItem is extracted + eval'd in isolation by a test.
+      if (a.mime_type === 'application/x-st-hold') {
+        if (a.remote_url === 'hold://freeze') {
+          div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.onerror = null; v.pause(); } catch (e) {} });
+        } else {
+          div.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
+          div.innerHTML = '';
+        }
+        if (multi) timers[zone.id] = setTimeout(advance, Math.max(1, Number(a.duration_sec) || 10) * 1000);
+        return;
+      }
       // Tear down any prior media in this zone before swapping.
       div.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
       div.innerHTML = '';
@@ -7300,6 +7348,304 @@
         img.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;
         div.appendChild(img);
         if (multi) timers[zone.id] = setTimeout(advance, dur);
+      }
+    }
+
+    // ==================== Wall zones ====================
+    /*
+     * A video wall with a LAYOUT (server/lib/wall-layout.js): the zones are percentages of the wall's
+     * player rect, drawn inside the wall stage, so the wall crop shows this panel its slice of every
+     * zone — one zone can sit inside a panel, straddle a seam, or cover the wall.
+     *
+     * ⚠️ PACED BY THE SHARED CLOCK, NOT THE LEADER. The leader relay carries ONE index and ONE
+     * position; a layout has a timeline per zone. Each zone instead lays its own items on syncedNow()
+     * the way a synced group lays a playlist (groupScheduleSlots): every panel that can see a zone
+     * computes the same item and position for it on its own, with no panel in charge and no server
+     * at play time. Two zones whose items add up to the same period stay locked to each other —
+     * which, with HOLD items, is how a timeline across screens is written.
+     *
+     * A zone this panel cannot see is never mounted: every panel would otherwise decode every zone's
+     * full source just to crop it away.
+     */
+    // HOLD_MIME and wallZoneState are declared up beside LIVE_MIME: the cached-playlist restore can
+    // render before this point in the script, and a let/const read there is a TDZ throw at boot.
+
+    /*
+     * A hold on a whole screen (solo, synced group, or a wall without a layout). FREEZE keeps the
+     * outgoing frame — paused, and let go of as currentVideoEl so neither the group tick nor the wall
+     * relay seeks it — and BLANK clears to the background colour. Either way the item lasts its
+     * duration like any other; on a schedule-driven screen the tick moves on, not a timer.
+     */
+    function renderHold(item) {
+      if (holdMode(item) === 'freeze') {
+        if (currentVideoEl) { try { currentVideoEl.pause(); } catch (e) {} currentVideoEl = null; }
+      } else {
+        teardownCurrentMedia();
+        document.getElementById('playerContainer').style.display = 'block';
+      }
+      hideStatus();
+      isPlaying = true;
+      if (!(isWallFollower() || groupSync)) scheduleAdvance(nextItem, Math.max(1, Number(item.duration_sec) || 10) * 1000);
+    }
+
+    function wallZonesActive() {
+      return !!(wallConfig && wallConfig.canvas_layout && layout && Array.isArray(layout.zones) && layout.zones.length > 1);
+    }
+
+    function isHoldItem(it) { return !!(it && it.mime_type === HOLD_MIME); }
+    function holdMode(it) { return it && it.remote_url === 'hold://freeze' ? 'freeze' : 'blank'; }
+
+    function releaseWallZoneMedia(zs) {
+      zs.div.querySelectorAll('video').forEach((v) => {
+        try { destroyHls(v); v.onended = null; v.onerror = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+      });
+      zs.div.innerHTML = '';
+      zs.video = null; zs.index = -1; zs.key = null;
+    }
+
+    function stopWallZones() {
+      if (!wallZoneState) return;
+      clearInterval(wallZoneState.timer);
+      for (const zs of wallZoneState.zones) releaseWallZoneMedia(zs);
+      wallZoneState = null;
+    }
+
+    // Same bucketing rules as renderZones: an item on a zone this layout does not have shares the
+    // largest zone, and unassigned items fill the first zone that has nothing of its own.
+    function wallZoneBuckets() {
+      const zones = layout.zones;
+      const valid = new Set(zones.map((z) => z.id));
+      const largest = zones.reduce((a, b) => ((b.width_percent || 0) * (b.height_percent || 0) > (a.width_percent || 0) * (a.height_percent || 0) ? b : a), zones[0]);
+      const by = {};
+      for (const a of playlist) {
+        let zid = a.zone_id || '__none__';
+        if (a.zone_id && !valid.has(a.zone_id)) zid = largest.id;
+        (by[zid] = by[zid] || []).push(a);
+      }
+      for (const k in by) by[k].sort((x, y) => (x.sort_order || 0) - (y.sort_order || 0));
+      const out = {};
+      let unassignedUsed = false;
+      for (const z of zones) {
+        let items = by[z.id];
+        if ((!items || !items.length) && !unassignedUsed && by.__none__) { unassignedUsed = true; items = by.__none__; }
+        out[z.id] = items || [];
+      }
+      return out;
+    }
+
+    // The zone's place on the shared clock. The SAME slot rule as groupScheduleSlots (and Android's
+    // and Tizen's), so a mixed wall agrees on where every zone is.
+    function wallZoneTarget(items) {
+      const slots = []; let acc = 0;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (!scheduleAllows(it)) continue;
+        if (it.mime_type === LIVE_MIME && !(Number(it.duration_sec) > 0)) continue;   // infinite dwell: no slot
+        const dur = Math.max(1, Number(it.duration_sec) || 10) * 1000;
+        slots.push({ index: i, start: acc, dur }); acc += dur;
+      }
+      if (!slots.length) return null;
+      const phase = ((syncedNow() % acc) + acc) % acc;
+      let ci = slots.findIndex((x) => phase >= x.start && phase < x.start + x.dur);
+      if (ci < 0) ci = slots.length - 1;
+      const s = slots[ci];
+      const prev = slots[(ci - 1 + slots.length) % slots.length];
+      // cycle: which pass of the loop this is. A zone with ONE slot never changes index, so without it a
+      // clip that ends (not looped — see mountWallZoneItem) would sit on its last frame forever.
+      return { index: s.index, posSec: (phase - s.start) / 1000, slotSec: s.dur / 1000, prevIndex: prev.index,
+               cycle: Math.floor(syncedNow() / acc) };
+    }
+
+    function wallZoneRect(zone) {
+      const p = wallConfig.player_rect;
+      return {
+        x: p.x + (zone.x_percent || 0) / 100 * p.w, y: p.y + (zone.y_percent || 0) / 100 * p.h,
+        w: (zone.width_percent || 0) / 100 * p.w, h: (zone.height_percent || 0) / 100 * p.h,
+      };
+    }
+
+    function renderWallZones(container) {
+      stopWallZones();
+      const stage = document.createElement('div');
+      stage.className = 'wall-stage';
+      styleWallStage(stage);
+      container.appendChild(stage);
+      const s = wallConfig.screen_rect;
+      const audio = new Set(Array.isArray(wallConfig.audio_zones) ? wallConfig.audio_zones : []);
+      const zones = [];
+      for (const zone of layout.zones) {
+        const r = wallZoneRect(zone);
+        const visible = r.x < s.x + s.w && s.x < r.x + r.w && r.y < s.y + s.h && s.y < r.y + r.h;
+        if (!visible) continue;
+        const div = document.createElement('div');
+        div.className = 'zone';
+        div.style.cssText = `left:${zone.x_percent}%;top:${zone.y_percent}%;width:${zone.width_percent}%;height:${zone.height_percent}%;z-index:${zone.z_index || 0};background:${zone.background_color || 'transparent'}`;
+        stage.appendChild(div);
+        zones.push({ zone, div, audio: audio.has(zone.id), index: -1, key: null, video: null, alignPending: true, lastSeekAt: 0 });
+      }
+      wallZoneState = { stage, zones, timer: null };
+      isPlaying = true;
+      zoneReport('info', 'wall zones: ' + zones.length + '/' + layout.zones.length + ' visible on this panel, audio for ' + audio.size);
+      wallZoneTick();
+      wallZoneState.timer = setInterval(wallZoneTick, 250);
+    }
+
+    function wallZoneTick() {
+      if (!wallZoneState || !wallZonesActive()) return;
+      const buckets = wallZoneBuckets();
+      for (const zs of wallZoneState.zones) {
+        const items = buckets[zs.zone.id] || [];
+        const t = wallZoneTarget(items);
+        if (!t) { if (zs.index !== -1 || zs.div.firstChild) releaseWallZoneMedia(zs); continue; }
+        const item = items[t.index];
+        const isClip = item && typeof item.mime_type === 'string' && item.mime_type.startsWith('video/') && item.mime_type !== LIVE_MIME;
+        const key = t.index + '|' + itemIdentity(item) + (isClip ? '|' + t.cycle : '');
+        if (key !== zs.key) {
+          mountWallZoneItem(zs, item, t, items[t.prevIndex]);
+          zs.key = key; zs.index = t.index;
+          zs.alignPending = true;
+          continue;
+        }
+        const v = zs.video;
+        if (!v || !isFinite(v.duration) || v.duration <= 0) continue;
+        // ⚠️ A clip that does not loop and whose slot outlasts it is DONE: it holds its last frame.
+        // posSec % duration would seek it back to near frame 0 — the wrong frame under a freeze.
+        if (!v.loop && t.posSec >= v.duration - 0.05) continue;
+        // Same seek/nudge maths as groupScheduleTick, per zone.
+        const target = t.posSec % v.duration;
+        const drift = (v.currentTime || 0) - target;
+        const ad = Math.abs(drift);
+        if (zs.alignPending) {
+          if (ad > 0.05) { try { v.currentTime = target; } catch (e) {} zs.lastSeekAt = Date.now(); }
+          try { v.playbackRate = 1.0; } catch (e) {}
+          zs.alignPending = false;
+        } else if (ad > 0.3 && Date.now() - zs.lastSeekAt > 1200) {
+          try { v.currentTime = target; v.playbackRate = 1.0; } catch (e) {}
+          zs.lastSeekAt = Date.now();
+        } else if (ad > 0.05) {
+          try { v.playbackRate = drift > 0 ? 0.97 : 1.03; } catch (e) {}
+        } else if (v.playbackRate !== 1.0) {
+          try { v.playbackRate = 1.0; } catch (e) {}
+        }
+      }
+    }
+
+    // Build one item's element for a wall zone. Returns { el, video }.
+    function wallZoneElement(zs, a, opts) {
+      const fit = itemFit(a, zs.zone);
+      const src = mediaUrl(a);
+      if (a.widget_id) {
+        const iframe = document.createElement('iframe');
+        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId || '')}&rev=${a.widget_rev || 0}`;
+        iframe.setAttribute('sandbox', widgetSandboxAttr(a));
+        return { el: iframe, video: null };
+      }
+      if (a.mime_type === 'video/hdmi-in') return { el: hdmiInCard(a), video: null };
+      if (typeof a.mime_type === 'string' && a.mime_type.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = src;
+        img.style.cssText = `width:100%;height:100%;object-fit:${fit}`;
+        return { el: img, video: null };
+      }
+      if (typeof a.mime_type === 'string' && a.mime_type.startsWith('video/') && a.mime_type !== 'video/youtube') {
+        const video = document.createElement('video');
+        video.playsInline = true;
+        video.crossOrigin = 'anonymous';
+        video.style.cssText = `width:100%;height:100%;object-fit:${fit}`;
+        // One panel plays a zone's sound (the server's audio_zones); a per-item mute still wins.
+        video.muted = !zs.audio || !!a.muted;
+        if (a.mime_type === LIVE_MIME) {
+          video.autoplay = true;
+          attachHlsTo(video, src, {});
+          return { el: video, video: null };   // live: nothing to align
+        }
+        video.src = src;
+        video.loop = true;    // a clip shorter than its slot holds until the clock moves the zone on
+        if (opts && opts.frozenAtEnd) {
+          video.autoplay = false;
+          video.addEventListener('loadedmetadata', () => {
+            try { video.currentTime = Math.max(0, (video.duration || 0) - 0.05); video.pause(); } catch (e) {}
+          }, { once: true });
+          return { el: video, video: null };
+        }
+        video.autoplay = true;
+        return { el: video, video };
+      }
+      return null;   // youtube / unknown: the zone shows its background
+    }
+
+    function playWithMutedRetry(video) {
+      try {
+        const p = video.play();
+        if (p && typeof p.then === 'function') p.catch(() => { try { video.muted = true; video.play().catch(() => {}); } catch (e) {} });
+      } catch (e) {}
+    }
+
+    function mountWallZoneItem(zs, a, t, prevItem) {
+      // FREEZE: keep the outgoing frame up, paused. A panel that arrives mid-hold has no outgoing
+      // frame, so it builds the previous item at its last frame — what the others are showing.
+      if (isHoldItem(a)) {
+        if (holdMode(a) === 'freeze') {
+          if (zs.div.firstChild) {
+            zs.div.querySelectorAll('video').forEach((v) => { try { v.pause(); } catch (e) {} });
+            zs.video = null;
+            return;
+          }
+          if (prevItem && !isHoldItem(prevItem)) {
+            const built = wallZoneElement(zs, prevItem, { frozenAtEnd: true });
+            if (built) { zs.div.appendChild(built.el); zs.video = null; }
+          }
+          return;
+        }
+        releaseWallZoneMedia(zs);
+        return;
+      }
+      const built = wallZoneElement(zs, a, null);
+      if (!built) { releaseWallZoneMedia(zs); return; }
+      // Buffered swap: the new element mounts underneath, invisible, and replaces the old one once
+      // it has something to show — no black blink at every boundary in a zone.
+      const old = Array.from(zs.div.children);
+      built.el.style.opacity = '0';
+      built.el.style.position = 'absolute';
+      built.el.style.left = '0'; built.el.style.top = '0';
+      zs.div.appendChild(built.el);
+      let done = false;
+      const reveal = () => {
+        if (done) return; done = true;
+        built.el.style.opacity = '1';
+        for (const o of old) {
+          if (o.tagName === 'VIDEO') { try { destroyHls(o); o.pause(); o.removeAttribute('src'); o.load(); } catch (e) {} }
+          try { o.remove(); } catch (e) {}
+        }
+      };
+      if (built.el.tagName === 'VIDEO') built.el.addEventListener('loadeddata', reveal, { once: true });
+      else if (built.el.tagName === 'IMG') { built.el.onload = reveal; built.el.onerror = reveal; }
+      else if (built.el.tagName === 'IFRAME') built.el.addEventListener('load', reveal, { once: true });
+      setTimeout(reveal, built.el.tagName ? 1500 : 0);
+      zs.video = built.video;
+      if (built.video) {
+        // Start where the clock says, not at 0: a panel that joins mid-clip lands on the same frame.
+        built.video.addEventListener('loadedmetadata', () => {
+          try {
+            const d = built.video.duration;
+            if (isFinite(d) && d > 0) {
+              const loops = d < t.slotSec - 0.3;
+              // Joining after a non-looping clip has ended: show its last frame, as the others are.
+              if (!loops && t.posSec >= d - 0.05) { built.video.currentTime = Math.max(0, d - 0.05); built.video.pause(); }
+              else built.video.currentTime = t.posSec % d;
+              /*
+               * ⚠️ Loop ONLY a clip shorter than its slot. A clip as long as its slot (the usual
+               * case: duration_sec defaults to the clip length) wrapped to frame 0 a few ms before
+               * the tick moved the zone on — so a FREEZE hold after it froze the first frame, not
+               * the last. Not looping, it ends and stays on its last frame until the boundary.
+               */
+              built.video.loop = d < t.slotSec - 0.3;
+            }
+          } catch (e) {}
+        }, { once: true });
+        playWithMutedRetry(built.video);
+      } else if (built.el.tagName === 'VIDEO' && built.el.autoplay) {
+        playWithMutedRetry(built.el);
       }
     }
 

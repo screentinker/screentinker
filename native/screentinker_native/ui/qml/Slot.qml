@@ -55,6 +55,8 @@ Item {
     function seek(ms) { if (loader.item && loader.item.seekTo) loader.item.seekTo(ms) }
     function setRate(r) { if (loader.item && loader.item.setRate) loader.item.setRate(r) }
     function pauseMedia(p) { if (loader.item && loader.item.pauseMedia) loader.item.pauseMedia(p) }
+    // Wall zones: loop only a clip shorter than its slot — decided once the duration is known.
+    function setLoop(b) { if (loader.item && loader.item.setLoop) loader.item.setLoop(b) }
     function runJs(js) { if (loader.item && loader.item.runJs) loader.item.runJs(js) }
 
     Loader {
@@ -93,10 +95,23 @@ Item {
     Component {
         id: videoComp
         Item {
+            id: videoRoot
             anchors.fill: parent
-            function seekTo(ms) { player.position = Math.max(0, ms) }
+            function seekTo(ms) { endHeld = false; player.position = Math.max(0, ms) }
             function setRate(r) { player.playbackRate = r }
-            function pauseMedia(p) { if (p) player.pause(); else player.play() }
+            function pauseMedia(p) { if (p) player.pause(); else { endHeld = false; player.play() } }
+            // ⚠️ Not player.loops: changing it mid-play does not take (Qt 6.11 FFmpeg backend), so a
+            // wall zone that decides to loop once the duration is known wraps the clip itself.
+            function setLoop(b) { wantLoop = b }
+            property bool wantLoop: false
+            // holdEnd: a clip that does not loop PAUSES on its last frame and reports ended there.
+            // Left to reach EndOfMedia, the FFmpeg backend blanks the output and rewinds — a FREEZE
+            // hold after it froze black or frame 0, and a slot that outlasts its clip went black.
+            readonly property bool holdEnd: !!(slot.item && slot.item.holdEnd)
+            property bool endHeld: false
+            // frozenEnd (a wall zone joining mid-FREEZE): the clip's last frame, paused — what the
+            // other panels froze on.
+            readonly property bool frozenEnd: !!(slot.item && slot.item.frozenEnd)
             VideoOutput {
                 id: vo
                 anchors.fill: parent
@@ -112,8 +127,32 @@ Item {
                     muted: slot.forceMute || (slot.item ? !!slot.item.muted : false) || !slot.front
                 }
                 onPlaybackStateChanged: if (playbackState === MediaPlayer.PlayingState) readyTimer.start()
+                // A paused seek does not repaint on the FFmpeg backend (it showed frame 0), and a seek
+                // before playback starts is dropped, so a frozenEnd clip jumps on its first position
+                // report, PLAYS its last moment, and holdEnd stops it on the final frame.
+                property bool endSought: false
+                // ⚠️ A function with no formal parameter, and player.* throughout: the old-style
+                // handler injects a `position` PARAMETER, and `position = x` assigned to that.
+                onPositionChanged: function() {
+                    var d = player.duration, p = player.position
+                    if (videoRoot.frozenEnd && !endSought && d > 0) {
+                        endSought = true
+                        player.position = Math.max(0, d - 300)
+                        return
+                    }
+                    if (player.loops === MediaPlayer.Infinite || d <= 0 || d - p > 120) return
+                    if (videoRoot.wantLoop) { player.position = 0; return }
+                    if (videoRoot.holdEnd && !videoRoot.endHeld && player.playbackState === MediaPlayer.PlayingState) {
+                        videoRoot.endHeld = true
+                        player.pause()
+                        slot.ended()
+                    }
+                }
                 onMediaStatusChanged: {
-                    if (mediaStatus === MediaPlayer.EndOfMedia && !(slot.item && slot.item.loop)) slot.ended()
+                    if (mediaStatus === MediaPlayer.EndOfMedia && loops !== MediaPlayer.Infinite) {
+                        if (videoRoot.wantLoop) { player.position = 0; player.play() }
+                        else if (!videoRoot.endHeld) { videoRoot.endHeld = true; slot.ended() }
+                    }
                     else if (mediaStatus === MediaPlayer.InvalidMedia) slot.failed("invalid media")
                 }
                 onErrorOccurred: function(error, errorString) { slot.failed(errorString || ("error " + error)) }

@@ -12,12 +12,19 @@ Item {
     property string surfaceId: ""
     property real volume: 1.0
     property bool forceMute: false
+    // A zone's background_color (a blank hold, or a zone between items, shows it).
+    property string fill: ""
     property var current: null
     property int frontIndex: 0
     readonly property var slots: [slotA, slotB]
     clip: true
 
     function frontSlot() { return slots[frontIndex] }
+    // ⚠️ By TOKEN, not ===. The item arrives from Python as a QVariantMap, and a var property holding
+    // it does not keep JS identity (PySide6 6.11: `current === item` was false for the very object
+    // just assigned), so reveal() never ran: front stayed false — no position reports for the sync
+    // engines, AudioOutput muted by !front, the old slot never unloaded, no transitions.
+    function isCurrent(it) { return !!(it && current && it.token === current.token) }
     function backSlot() { return slots[1 - frontIndex] }
 
     function show(item) {
@@ -54,6 +61,7 @@ Item {
         if (!s || !s.item) return
         if (cmd.seek_ms !== undefined) s.seek(cmd.seek_ms)
         if (cmd.rate !== undefined) s.setRate(cmd.rate)
+        if (cmd.loop !== undefined) s.setLoop(cmd.loop)
         if (cmd.pause !== undefined) s.pauseMedia(cmd.pause)
         if (cmd.js !== undefined) s.runJs(cmd.js)
     }
@@ -76,12 +84,14 @@ Item {
         stage.slotEvent(surfaceId, slot.item ? slot.item.token : "", "shown", "")
     }
 
+    Rectangle { anchors.fill: parent; z: -1; color: surface.fill; visible: surface.fill !== "" }
+
     Slot {
         id: slotA
         anchors.fill: parent
         volume: surface.volume
         forceMute: surface.forceMute
-        onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (item && surface.current === item) surface.reveal(slotA) }
+        onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (surface.isCurrent(item)) surface.reveal(slotA) }
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
@@ -92,7 +102,7 @@ Item {
         visible: false
         volume: surface.volume
         forceMute: surface.forceMute
-        onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (item && surface.current === item) surface.reveal(slotB) }
+        onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (surface.isCurrent(item)) surface.reveal(slotB) }
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }

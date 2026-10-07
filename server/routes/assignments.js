@@ -395,8 +395,13 @@ router.put('/:id', (req, res) => {
     if (effZone) {
       const devs = db.prepare(`SELECT d.layout_id FROM devices d
         JOIN device_resolved_playlist r ON r.device_id = d.id
-        WHERE r.playlist_id = ? AND d.layout_id IS NOT NULL`).all(item.playlist_id);
+        WHERE r.playlist_id = ? AND d.layout_id IS NOT NULL AND d.wall_id IS NULL`).all(item.playlist_id);
       if (devs.length === 1) effZone = validZoneForLayout(effZone, devs[0].layout_id, `on update of item ${req.params.id}`);
+      // A wall's playlist is placed by the WALL's layout (lib/wall-layout.js), not a member's.
+      else if (devs.length === 0) {
+        const walls = db.prepare('SELECT layout_id FROM video_walls WHERE playlist_id = ? AND layout_id IS NOT NULL').all(item.playlist_id);
+        if (walls.length === 1) effZone = validZoneForLayout(effZone, walls[0].layout_id, `on update of wall item ${req.params.id}`);
+      }
     }
     updates.push('zone_id = ?'); values.push(effZone);
   }

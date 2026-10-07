@@ -78,6 +78,7 @@ Window {
                     width: stageRoot.width * modelData.w / 100
                     height: stageRoot.height * modelData.h / 100
                     z: modelData.z
+                    fill: modelData.bg || ""
                     volume: stage.volume
                     forceMute: stage.muted
                     Component.onCompleted: win.registerSurface(surfaceId, this)

@@ -197,10 +197,19 @@ export async function render(container) {
    * date_desc, the hidden ones are the OLDEST, which in a library built up over time are the ones
    * already filed into folders — so a customer sees content in the library and cannot schedule it.
    */
-  const [devices, contentPage, groups, playlists, layoutsRaw, corpCov] = await Promise.all([
+  const [allDevices, contentPage, groups, playlists, layoutsRaw, corpCov, wallsRaw] = await Promise.all([
     api.getDevices(), api.getAllContent(), api.getGroups(), api.getPlaylists(), API('/layouts'),
     workspaceCoverage({ force: true }),
+    API('/walls').catch(() => []),
   ]);
+  /*
+   * A video wall is scheduled AS A WALL (services/scheduler.js): a panel follows only its wall's
+   * schedules, so a schedule on one panel would never run — and before that rule it switched that
+   * panel alone and tore the picture. Panels are therefore not offered as screens; their wall is.
+   */
+  const walls = Array.isArray(wallsRaw) ? wallsRaw : [];
+  const wallMemberIds = new Set(walls.flatMap((w) => (w.devices || []).map((d) => d.device_id)));
+  const devices = allDevices.filter((d) => !wallMemberIds.has(d.id));
   /*
    * Head office (spec §7.10): a schedule on a screen or group head office's playlist covers would
    * never show (the mandate ranks above every schedule), so the pickers mark those targets, the
@@ -279,12 +288,18 @@ export async function render(container) {
               <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
                 <input type="radio" name="schedTarget" value="group" id="schedTargetGroup"> ${t('schedule.target_group')}
               </label>
+              ${walls.length ? `<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
+                <input type="radio" name="schedTarget" value="wall" id="schedTargetWall"> ${t('schedule.target_wall')}
+              </label>` : ''}
             </div>
             <select id="schedDeviceSelect" class="input" style="background:var(--bg-input)">
               ${devices.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}${esc(corpMark(corpDevice(d.id)))}</option>`).join('')}
             </select>
             <select id="schedGroupSelect" class="input" style="background:var(--bg-input);display:none">
               ${groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)} (${t('schedule.group_devices_count', { n: g.device_count })})${esc(corpMark(corpGroup(g.id)))}</option>`).join('')}
+            </select>
+            <select id="schedWallSelect" class="input" style="background:var(--bg-input);display:none">
+              ${walls.map((w) => `<option value="${esc(w.id)}">${esc(w.name)} (${t('schedule.wall_panels_count', { n: (w.devices || []).length })})</option>`).join('')}
             </select>
             <div id="schedCorpNote" class="corp-notice corp-notice-warn" style="display:none;margin-top:6px"></div>
             ${groups.length === 0 ? `<div id="schedNoGroups" style="display:none;color:var(--text-muted);font-size:12px;margin-top:4px">${t('schedule.no_groups_msg')}</div>` : ''}
@@ -397,12 +412,17 @@ export async function render(container) {
   const deviceSelect = document.getElementById('schedDeviceSelect');
   const groupSelect = document.getElementById('schedGroupSelect');
   const noGroupsMsg = document.getElementById('schedNoGroups');
+  // Absent when the workspace has no walls; a stand-in keeps every `.checked` read below simple.
+  const wallRadio = document.getElementById('schedTargetWall') || { checked: false, addEventListener() {} };
+  const wallSelect = document.getElementById('schedWallSelect');
   const zoneNote = document.getElementById('schedZoneNote');
 
   function updateTargetVisibility() {
     const isGroup = groupRadio.checked;
-    deviceSelect.style.display = isGroup ? 'none' : '';
+    const isWall = wallRadio.checked;
+    deviceSelect.style.display = (isGroup || isWall) ? 'none' : '';
     groupSelect.style.display = isGroup ? '' : 'none';
+    wallSelect.style.display = isWall ? '' : 'none';
     if (noGroupsMsg) noGroupsMsg.style.display = (isGroup && groups.length === 0) ? '' : 'none';
     zoneNote.style.display = isGroup ? '' : 'none';
     updateCorpNote();
@@ -410,6 +430,7 @@ export async function render(container) {
   const corpNote = document.getElementById('schedCorpNote');
   function updateCorpNote() {
     if (!corpNote) return;
+    if (wallRadio.checked) { corpNote.style.display = 'none'; return; }   // refused server-side if head office covers a panel
     const isGroup = groupRadio.checked;
     const id = isGroup ? groupSelect.value : deviceSelect.value;
     const hit = isGroup ? (corpGroup(id) && corpCov.groups[id]) : (corpDevice(id) && corpCov.devices[id]);
@@ -418,6 +439,7 @@ export async function render(container) {
   }
   deviceRadio.addEventListener('change', updateTargetVisibility);
   groupRadio.addEventListener('change', updateTargetVisibility);
+  wallRadio.addEventListener('change', updateTargetVisibility);
   deviceSelect.addEventListener('change', updateCorpNote);
   groupSelect.addEventListener('change', updateCorpNote);
 
@@ -426,9 +448,14 @@ export async function render(container) {
     if (!tzNote) return;
     const local = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
     let zone = null;
-    if (!groupRadio.checked) {
-      const d = devices.find((x) => x.id === deviceSelect.value);
-      zone = (d && d.timezone && d.timezone !== 'UTC' ? d.timezone : null) || (d && d.reported_timezone) || null;
+    const zoneOf = (d) => (d && d.timezone && d.timezone !== 'UTC' ? d.timezone : null) || (d && d.reported_timezone) || null;
+    if (wallRadio.checked) {
+      // The wall's one clock (routes/schedules wallTz): its leader's zone, else the first panel that has one.
+      const w = walls.find((x) => x.id === wallSelect.value);
+      const ids = w ? [w.leader_device_id, ...(w.devices || []).map((m) => m.device_id)].filter(Boolean) : [];
+      for (const id of ids) { zone = zoneOf(allDevices.find((x) => x.id === id)); if (zone) break; }
+    } else if (!groupRadio.checked) {
+      zone = zoneOf(devices.find((x) => x.id === deviceSelect.value));
     }
     if (!zone) { tzNote.textContent = t('schedule.tz_unknown'); return; }
     tzNote.textContent = (zone === local)
@@ -437,6 +464,8 @@ export async function render(container) {
   }
   deviceRadio.addEventListener('change', updateTzNote);
   groupRadio.addEventListener('change', updateTzNote);
+  wallRadio.addEventListener('change', updateTzNote);
+  if (wallSelect) wallSelect.addEventListener('change', updateTzNote);
   deviceSelect.addEventListener('change', updateTzNote);
   updateTzNote();
 
@@ -451,11 +480,19 @@ export async function render(container) {
   }
   const calendars = [
     ...devices.map((d) => ({ key: 'd:' + d.id, id: d.id, name: d.name, isGroup: false, color: hashColor('d:' + d.id) })),
+    // Wall panels stay listed as calendars (only out of the pickers), so a schedule written on one
+    // panel before walls could be scheduled is still visible — and deletable. It no longer runs.
+    ...allDevices.filter((d) => wallMemberIds.has(d.id)).map((d) => {
+      const w = walls.find((x) => (x.devices || []).some((m) => m.device_id === d.id));
+      return { key: 'd:' + d.id, id: d.id, name: `${d.name} (${t('schedule.panel_of_wall', { wall: w ? w.name : '' })})`, isGroup: false, color: hashColor('d:' + d.id) };
+    }),
     ...groups.map((g) => ({ key: 'g:' + g.id, id: g.id, name: g.name, isGroup: true, color: g.color || hashColor('g:' + g.id) })),
+    ...walls.map((w) => ({ key: 'w:' + w.id, id: w.id, name: w.name, isGroup: true, isWall: true, color: hashColor('w:' + w.id) })),
   ];
   for (const c of calendars) visibleKeys.add(c.key);
   const calendarByKey = new Map(calendars.map((c) => [c.key, c]));
   function targetOf(ev) {
+    if (ev.wall_id) return { key: 'w:' + ev.wall_id, name: ev.wall_name || t('schedule.target_wall'), isGroup: true, isWall: true };
     if (ev.group_id) return { key: 'g:' + ev.group_id, name: ev.group_name || t('schedule.target_group'), isGroup: true };
     return { key: 'd:' + (ev.device_id || '?'), name: ev.device_name || t('schedule.target_device'), isGroup: false };
   }
@@ -540,7 +577,8 @@ export async function render(container) {
         <span class="name">${esc(c.name)}</span>
       </label>`).join('') : '';
     const html = section(t('schedule.calendars_screens'), calendars.filter((c) => !c.isGroup && match(c)))
-      + section(t('schedule.calendars_groups'), calendars.filter((c) => c.isGroup && match(c)));
+      + section(t('schedule.calendars_groups'), calendars.filter((c) => c.isGroup && !c.isWall && match(c)))
+      + section(t('schedule.calendars_walls'), calendars.filter((c) => c.isWall && match(c)));
     host.innerHTML = html || `<div style="color:var(--text-muted);font-size:12px;padding:4px 6px">${t('schedule.no_calendars')}</div>`;
     host.onchange = (e) => {
       const cb = e.target.closest('input[data-key]');
@@ -698,7 +736,7 @@ export async function render(container) {
         } else {
           block.textContent = `${target.name} · ${labelOf(ev)}`;
         }
-        block.title = `${target.isGroup ? t('schedule.target_group') : t('schedule.target_device')}: ${target.name}\n${labelOf(ev)}\n${formatRange(minsOf(evStart(ev)), minsOf(evEnd(ev)))}`
+        block.title = `${target.isWall ? t('schedule.target_wall') : target.isGroup ? t('schedule.target_group') : t('schedule.target_device')}: ${target.name}\n${labelOf(ev)}\n${formatRange(minsOf(evStart(ev)), minsOf(evEnd(ev)))}`
           + ((continues || continued) ? `\n${t('schedule.overnight_note')}` : '')
           + `\n${t('schedule.tooltip_priority', { n: ev.priority })}`
           + (corpShadowed.has(ev.id) ? `\n${t('corp.sched.paused')}` : '');
@@ -904,7 +942,7 @@ export async function render(container) {
       <h3><span class="sw" style="background:${colorOf(ev)}"></span>${esc(labelOf(ev))}</h3>
       <div class="meta">
         ${esc(fmtDate(s, { weekday: 'short', month: 'short', day: 'numeric' }))} · ${esc(formatRange(minsOf(s), minsOf(e)))}<br>
-        ${esc(target.isGroup ? t('schedule.target_group') : t('schedule.target_device'))}: ${esc(target.name)}<br>
+        ${esc(target.isWall ? t('schedule.target_wall') : target.isGroup ? t('schedule.target_group') : t('schedule.target_device'))}: ${esc(target.name)}<br>
         ${what.map((w) => esc(w) + '<br>').join('')}
         ${esc(recurrenceSentence(ev.recurrence, { startMin: minsOf(new Date(ev.start_time)), endMin: minsOf(new Date(ev.end_time)), until, startDate: new Date(ev.start_time) }))}
       </div>
@@ -929,7 +967,8 @@ export async function render(container) {
   function openCompose(dayDate, startMin, endMin, anchorRect) {
     const hhmm = (m) => `${p2(Math.floor(m / 60) % 24)}:${p2(m % 60)}`;
     const opts = `<optgroup label="${t('schedule.calendars_screens')}">${devices.map((d) => `<option value="d:${esc(d.id)}">${esc(d.name)}${esc(corpMark(corpDevice(d.id)))}</option>`).join('')}</optgroup>`
-      + (groups.length ? `<optgroup label="${t('schedule.calendars_groups')}">${groups.map((g) => `<option value="g:${esc(g.id)}">${esc(g.name)}${esc(corpMark(corpGroup(g.id)))}</option>`).join('')}</optgroup>` : '');
+      + (groups.length ? `<optgroup label="${t('schedule.calendars_groups')}">${groups.map((g) => `<option value="g:${esc(g.id)}">${esc(g.name)}${esc(corpMark(corpGroup(g.id)))}</option>`).join('')}</optgroup>` : '')
+      + (walls.length ? `<optgroup label="${t('schedule.calendars_walls')}">${walls.map((w) => `<option value="w:${esc(w.id)}">${esc(w.name)}</option>`).join('')}</optgroup>` : '');
     const pop = openPopover(`
       <h3>${t('schedule.compose_title')}</h3>
       <div class="meta">${esc(t('schedule.compose_date', { date: fmtDate(dayDate, { weekday: 'short', month: 'short', day: 'numeric' }) }))}</div>
@@ -949,7 +988,7 @@ export async function render(container) {
       const tv = pop.querySelector('#cmpTarget').value;
       return {
         title: pop.querySelector('#cmpTitle').value, startMin: hhmmToMin(pop.querySelector('#cmpStart').value), endMin: hhmmToMin(pop.querySelector('#cmpEnd').value),
-        isGroup: tv.startsWith('g:'), targetId: tv.slice(2), playlistId: pop.querySelector('#cmpPlaylist').value,
+        isGroup: tv.startsWith('g:'), isWall: tv.startsWith('w:'), targetId: tv.slice(2), playlistId: pop.querySelector('#cmpPlaylist').value,
       };
     };
     const save = async () => {
@@ -960,7 +999,7 @@ export async function render(container) {
         start_time: toLocalStamp(dayDate, f.startMin), end_time: toLocalStamp(dayDate, f.endMin),
         recurrence: null, recurrence_end: null, priority: 0, color: '#3B82F6',
       };
-      if (f.isGroup) data.group_id = f.targetId; else data.device_id = f.targetId;
+      if (f.isWall) data.wall_id = f.targetId; else if (f.isGroup) data.group_id = f.targetId; else data.device_id = f.targetId;
       try {
         await API('/schedules', { method: 'POST', body: JSON.stringify(data) });
         closePopovers();
@@ -978,7 +1017,8 @@ export async function render(container) {
         openCreateAt(dayDate, f.startMin, f.endMin);
         document.getElementById('schedTitle').value = f.title;
         document.getElementById('schedPlaylist').value = f.playlistId;
-        if (f.isGroup) { groupRadio.checked = true; groupSelect.value = f.targetId; } else { deviceRadio.checked = true; deviceSelect.value = f.targetId; }
+        if (f.isWall) { wallRadio.checked = true; wallSelect.value = f.targetId; }
+        else if (f.isGroup) { groupRadio.checked = true; groupSelect.value = f.targetId; } else { deviceRadio.checked = true; deviceSelect.value = f.targetId; }
         updateTargetVisibility(); updateTzNote();
       }
     };
@@ -1225,7 +1265,7 @@ export async function render(container) {
   async function duplicateSchedule(ev) {
     try {
       await API('/schedules', { method: 'POST', body: JSON.stringify({
-        device_id: ev.device_id || null, group_id: ev.group_id || null,
+        device_id: ev.device_id || null, group_id: ev.group_id || null, ...(ev.wall_id ? { wall_id: ev.wall_id } : {}),
         content_id: ev.content_id || null, playlist_id: ev.playlist_id || null, layout_id: ev.layout_id || null,
         title: ev.title ? `${ev.title} (copy)` : null, start_time: ev.start_time, end_time: ev.end_time,
         recurrence: ev.recurrence || null, recurrence_end: ev.recurrence_end || null, priority: ev.priority || 0, color: ev.color || '#3B82F6',
@@ -1279,7 +1319,8 @@ export async function render(container) {
     applyRecurrence(ev.recurrence);
     document.getElementById('schedPriority').value = ev.priority || 0;
     document.getElementById('schedColor').value = ev.color || '#3B82F6';
-    if (ev.group_id) { groupRadio.checked = true; groupSelect.value = ev.group_id; }
+    if (ev.wall_id) { wallRadio.checked = true; wallSelect.value = ev.wall_id; }
+    else if (ev.group_id) { groupRadio.checked = true; groupSelect.value = ev.group_id; }
     else { deviceRadio.checked = true; deviceSelect.value = ev.device_id || (devices[0] && devices[0].id) || ''; }
     updateTargetVisibility();
     updateTzNote();
@@ -1327,11 +1368,12 @@ export async function render(container) {
 
   document.getElementById('saveScheduleBtn').onclick = async () => {
     const isGroup = groupRadio.checked;
+    const isWall = wallRadio.checked;
     const contentId = document.getElementById('schedContent').value;
     const startTime = document.getElementById('schedStart').value;
     const endTime = document.getElementById('schedEnd').value;
     if (isGroup && groups.length === 0) { showToast(t('schedule.toast.no_groups'), 'error'); return; }
-    const targetId = isGroup ? groupSelect.value : deviceSelect.value;
+    const targetId = isWall ? wallSelect.value : isGroup ? groupSelect.value : deviceSelect.value;
     if (!targetId) { showToast(t('schedule.toast.target_required'), 'error'); return; }
     const playlistId = document.getElementById('schedPlaylist').value;
     const layoutId = document.getElementById('schedLayout').value;
@@ -1350,7 +1392,7 @@ export async function render(container) {
       priority: parseInt(document.getElementById('schedPriority').value) || 0,
       color: document.getElementById('schedColor').value,
     };
-    if (isGroup) data.group_id = targetId; else data.device_id = targetId;
+    if (isWall) data.wall_id = targetId; else if (isGroup) data.group_id = targetId; else data.device_id = targetId;
     try {
       if (editingId) await API(`/schedules/${editingId}`, { method: 'PUT', body: JSON.stringify(data) });
       else await API('/schedules', { method: 'POST', body: JSON.stringify(data) });

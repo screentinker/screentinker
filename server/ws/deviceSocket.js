@@ -575,13 +575,17 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   const deviceSupportsRtsp = capsLib.supports(device, 'playback.rtsp');
   // HDMI IN (video/hdmi-in): only a player that found an input on THIS device declares it.
   const deviceSupportsHdmiIn = capsLib.supports(device, 'playback.hdmi_in');
+  // A hold (lib/hold-item.js) is not live, but it rides the same strip for the same reason: a player
+  // that does not know it would skip it, and skipping a hold silently shortens a timeline.
+  const deviceSupportsHold = capsLib.supports(device, 'playback.hold');
   const dropLiveIfUnsupported = (items) => {
-    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsp && deviceSupportsHdmiIn)) return items;
+    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsp && deviceSupportsHdmiIn && deviceSupportsHold)) return items;
     return items.filter((a) => {
       if (!a) return true;
       if (a.mime_type === 'video/hls') return deviceSupportsHls;
       if (a.mime_type === 'video/rtsp') return deviceSupportsRtsp;
       if (a.mime_type === 'video/hdmi-in') return deviceSupportsHdmiIn;
+      if (a.mime_type === 'application/x-st-hold') return deviceSupportsHold;
       return true;
     });
   };
@@ -807,6 +811,41 @@ function buildPlaylistPayloadUnchecked(deviceId) {
         // live wall on its side — a bad rotation degrades to "as drawn", not to "sideways".
         rotation: normalizeWallRotation(pos.rotation),
       };
+      /*
+       * Wall layout (lib/wall-layout.js): zones in percent of the PLAYER RECT, paced by the shared
+       * clock. It replaces the member's own layout, which was never drawn on a wall anyway (every
+       * player skips zones in wall mode) — `canvas_layout` is what tells a player the zones are on
+       * the wall and not on its own screen. An emergency keeps the plain canvas (no layout), and a
+       * head office mandate keeps the layout the mandate resolved, as on any other screen.
+       */
+      // A wall schedule's layout (devices.scheduled_layout_id — only wall schedules set it on a
+      // panel, see services/scheduler.js) is the wall's layout while it runs.
+      const scheduledWallLayout = db.prepare('SELECT scheduled_layout_id FROM devices WHERE id = ?').get(deviceId)?.scheduled_layout_id || null;
+      const wallLayoutId = scheduledWallLayout || wall.layout_id;
+      if (wallLayoutId && !emergencyNow && !corporateSource) {
+        const wl = db.prepare('SELECT * FROM layouts WHERE id = ?').get(wallLayoutId);
+        if (wl) {
+          wl.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(wl.id);
+          const wallLayout = require('../lib/wall-layout');
+          if (wallLayout.isZonedLayout(wl)) {
+            layout = wl;
+            wall_config.canvas_layout = true;
+            // ONE panel plays each zone's sound — the one under the zone's centre — or a zone that
+            // spans three panels plays it three times, a few ms apart. Decided here because only the
+            // server knows every panel's rect; the player just obeys its list.
+            const screens = db.prepare('SELECT * FROM video_wall_devices WHERE wall_id = ?').all(wall.id).map((p) => ({
+              id: p.device_id,
+              rect: {
+                x: p.canvas_x ?? (p.grid_col * (baseW + bezelH)), y: p.canvas_y ?? (p.grid_row * (baseH + bezelV)),
+                w: p.canvas_width ?? baseW, h: p.canvas_height ?? baseH,
+              },
+            }));
+            wall_config.audio_zones = wl.zones
+              .filter((z) => wallLayout.zonePanels(z, playerRect, screens).audio === deviceId)
+              .map((z) => z.id);
+          }
+        }
+      }
     }
   }
 

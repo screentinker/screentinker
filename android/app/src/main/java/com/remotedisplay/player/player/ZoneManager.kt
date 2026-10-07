@@ -44,6 +44,8 @@ class ZoneManager(
     private val zoneLiveInputs = mutableMapOf<String, LiveInputPlayer>()
     // Per-zone rotation timers: each zone cycles its own list of assignments.
     private val zoneRotators = mutableMapOf<String, Runnable>()
+    // Bumped every time a zone shows something; see showZoneItem.
+    private val zoneGeneration = mutableMapOf<String, Int>()
     private var zones = listOf<Zone>()
     // Render context kept for rotation re-renders.
     private var renderServerUrl = ""
@@ -208,13 +210,39 @@ class ZoneManager(
     // timer; videos advance when they end (single-item zones loop the video).
     private fun showZoneItem(zone: Zone, assignments: List<JSONObject>, index: Int, params: FrameLayout.LayoutParams) {
         cancelZoneRotation(zone.id)
-        zoneViews.remove(zone.id)?.let { container.removeView(it) }
-        zoneExoPlayers.remove(zone.id)?.release()
-        zoneLiveInputs.remove(zone.id)?.release()
+        // Anything the previous item armed (an end/error listener, an input fault) checks this before
+        // advancing, so it cannot move the zone on from under whatever is shown now — a frozen frame
+        // in particular, whose paused player is still attached.
+        val gen = (zoneGeneration[zone.id] ?: 0) + 1
+        zoneGeneration[zone.id] = gen
 
         // #74/#75: skip items whose schedule excludes them now; blank-idle the zone
         // and re-check shortly (a daypart may open) if none are active.
         val activeIdx = zoneNextActive(assignments, index)
+
+        // A HOLD keeps (freeze) or clears (blank) what the zone shows for its duration, so it is
+        // decided BEFORE the teardown below — freezing needs the outgoing view and player intact.
+        if (activeIdx >= 0 && Hold.isHold(assignments[activeIdx].optString("mime_type", ""))) {
+            val h = assignments[activeIdx]
+            val remote = if (h.isNull("remote_url")) null else h.optString("remote_url", "")
+            if (Hold.mode(remote) == Hold.Mode.FREEZE) {
+                zoneExoPlayers[zone.id]?.let { try { it.playWhenReady = false } catch (_: Throwable) {} }
+            } else {
+                zoneViews.remove(zone.id)?.let { container.removeView(it) }
+                zoneExoPlayers.remove(zone.id)?.release()
+                zoneLiveInputs.remove(zone.id)?.release()
+            }
+            val holdMs = WallZones.slotMs(h.optInt("duration_sec", 10))
+            com.remotedisplay.player.util.DebugLog.i("Zone", "'${zone.name}' [${activeIdx + 1}/${assignments.size}] -> hold ${Hold.mode(remote).name.lowercase()} (${holdMs / 1000}s)")
+            // A zone of one hold has nothing to advance to; anything else moves on after the hold.
+            if (assignments.size > 1) scheduleZoneAdvance(zone.id, holdMs) { showZoneItem(zone, assignments, activeIdx + 1, params) }
+            return
+        }
+
+        zoneViews.remove(zone.id)?.let { container.removeView(it) }
+        zoneExoPlayers.remove(zone.id)?.release()
+        zoneLiveInputs.remove(zone.id)?.release()
+
         if (activeIdx < 0) {
             scheduleZoneAdvance(zone.id, 30_000L) { showZoneItem(zone, assignments, 0, params) }
             return
@@ -226,7 +254,8 @@ class ZoneManager(
                 || !it.isNull("play_from") && it.optString("play_from").isNotEmpty()
                 || !it.isNull("play_until") && it.optString("play_until").isNotEmpty()
         }
-        val advance: () -> Unit = { showZoneItem(zone, assignments, activeIdx + 1, params) }
+        // Guarded by the zone's generation: a stale callback from an item already replaced is ignored.
+        val advance: () -> Unit = { if (zoneGeneration[zone.id] == gen) showZoneItem(zone, assignments, activeIdx + 1, params) }
 
         val mimeType = a.optString("mime_type", "")
         val isLive = mimeType == "video/hls" || mimeType == "video/rtsp" || LiveInput.isLiveInput(mimeType)   // live: never ends -> dwell, not STATE_ENDED
@@ -290,7 +319,7 @@ class ZoneManager(
                 // that holds ONLY the input there is nothing to skip to, so it re-tunes on a slow
                 // cadence instead — otherwise plugging the cable back in would leave the zone black
                 // until the layout changed.
-                val retry: () -> Unit = { showZoneItem(zone, assignments, activeIdx, params) }
+                val retry: () -> Unit = { if (zoneGeneration[zone.id] == gen) showZoneItem(zone, assignments, activeIdx, params) }
                 val live = LiveInputPlayer(context, holder, 0) {
                     handler.post { if (multi) advance() else scheduleZoneAdvance(zone.id, LIVE_INPUT_RETRY_MS, retry) }
                 }

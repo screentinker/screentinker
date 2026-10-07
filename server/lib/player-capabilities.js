@@ -51,6 +51,16 @@ const CAPABILITIES = [
    * player with an iframe can do. It does NOT imply the player can unpack an archive locally, so it
    * says nothing about whether a bundle survives an outage; that is offline.cache's job. */
   'playback.bundle',
+  /* A HOLD item (mime application/x-st-hold, remote_url hold://blank | hold://freeze): show nothing
+   * new for the item's duration — blank, or freeze the previous frame. How a timeline across screens
+   * is written (see lib/hold-item.js). In NO baseline: an old player would skip it as an unknown
+   * type, shortening the timeline, so the deviceSocket strip keeps it off any screen that does not
+   * declare it. */
+  'playback.hold',
+  /* Zones on a VIDEO WALL: the wall's layout, in percent of the wall's player rect, each zone paced
+   * by the shared clock (lib/wall-layout.js). A wall member without it still plays the wall's
+   * playlist across the whole wall, so the dashboard names the panels that lack it. In NO baseline. */
+  'playback.wall_zones',
   /* A webpage widget with `interactive: true` played as a walk-up kiosk page (#473): touch reaches
    * the site, the playlist holds while a visitor uses it, and an idle reset wipes the session.
    * FULL support: the site loads TOP-LEVEL in a browser the player controls, so the navigation

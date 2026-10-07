@@ -34,6 +34,7 @@ function getDeviceSchedulesQuery() {
         OR s.group_id IN (
           SELECT group_id FROM device_group_members WHERE device_id = ?
         )
+        ${wallSchedulesAvailable() ? 'OR s.wall_id = (SELECT wall_id FROM devices WHERE id = ?)' : 'OR ? IS NULL'}
       )
     ORDER BY
       CASE WHEN s.device_id IS NOT NULL THEN 1 ELSE 0 END DESC,
@@ -52,13 +53,14 @@ function getWorkspaceSchedulesQuery() {
   return `
     SELECT s.*, c.filename as content_name, w.name as widget_name, p.name as playlist_name,
            dg.name as group_name, dg.color as group_color,
-           d.name as device_name
+           d.name as device_name, ${wallSchedulesAvailable() ? 'vw.name' : 'NULL'} as wall_name
     FROM schedules s
     LEFT JOIN content c ON s.content_id = c.id
     LEFT JOIN widgets w ON s.widget_id = w.id
     LEFT JOIN playlists p ON s.playlist_id = p.id
     LEFT JOIN device_groups dg ON s.group_id = dg.id
     LEFT JOIN devices d ON s.device_id = d.id
+    ${wallSchedulesAvailable() ? 'LEFT JOIN video_walls vw ON s.wall_id = vw.id' : ''}
     WHERE s.enabled = 1 AND s.workspace_id = ?
     ORDER BY
       CASE WHEN s.device_id IS NOT NULL THEN 1 ELSE 0 END DESC,
@@ -118,9 +120,16 @@ function parseCalendarDate(value) {
  * office mandate shadows (a partly covered group). Store users get 403, authors 409, both coded
  * CORPORATE_SCHEDULE.
  */
-function scheduleTargetRefusal(req, res, deviceId, groupId) {
+function scheduleTargetRefusal(req, res, deviceId, groupId, wallId = null) {
   const corpGuard = require('../lib/corporate/guard');
   try {
+    // A wall is all its panels: one head-office panel and the schedule could never show there.
+    if (wallId) {
+      for (const m of db.prepare('SELECT device_id FROM video_wall_devices WHERE wall_id = ?').all(wallId)) {
+        corpGuard.assertNotMandated(req, m.device_id, { storeCode: 'CORPORATE_SCHEDULE', authorCode: 'CORPORATE_SCHEDULE' });
+      }
+      return 0;
+    }
     if (deviceId) { corpGuard.assertNotMandated(req, deviceId, { storeCode: 'CORPORATE_SCHEDULE', authorCode: 'CORPORATE_SCHEDULE' }); return 0; }
     if (groupId) {
       const group = db.prepare('SELECT id, workspace_id, name FROM device_groups WHERE id = ?').get(groupId);
@@ -132,6 +141,21 @@ function scheduleTargetRefusal(req, res, deviceId, groupId) {
     if (corpGuard.send(res, e, req)) return false;
     throw e;
   }
+}
+
+// A wall keeps ONE clock for its schedules, or its panels could switch an hour apart: the leader's
+// zone, else the oldest member that reports one (the group rule).
+function wallTz(wallId) {
+  const wall = db.prepare('SELECT leader_device_id FROM video_walls WHERE id = ?').get(wallId);
+  const leader = wall && wall.leader_device_id ? db.prepare('SELECT timezone, reported_timezone FROM devices WHERE id = ?').get(wall.leader_device_id) : null;
+  return effectiveDeviceTz(leader) || effectiveDeviceTz(db.prepare(`SELECT d.timezone, d.reported_timezone FROM devices d
+    JOIN video_wall_devices m ON m.device_id = d.id
+    WHERE m.wall_id = ? AND COALESCE(d.timezone, d.reported_timezone) IS NOT NULL
+    ORDER BY d.created_at LIMIT 1`).get(wallId));
+}
+// db/database.js migrateWallSchedules leaves a table it does not recognise alone.
+function wallSchedulesAvailable() {
+  return db.prepare('PRAGMA table_info(schedules)').all().some((c) => c.name === 'wall_id');
 }
 
 // Load a schedule + access context, sending 403/404 on failure.
@@ -193,10 +217,11 @@ function checkRefInWorkspace(table, id, workspaceId, opts = { allowNullWorkspace
 // List schedules (filterable). Phase 2.2m: workspace-scoped.
 router.get('/', (req, res) => {
   if (!req.workspaceId) return res.json([]);
-  const { device_id, group_id, start, end } = req.query;
+  const { device_id, group_id, wall_id, start, end } = req.query;
   let sql = `SELECT s.*, c.filename as content_name, w.name as widget_name, p.name as playlist_name,
-             dg.name as group_name, dg.color as group_color
+             dg.name as group_name, dg.color as group_color, ${wallSchedulesAvailable() ? 'vw.name' : 'NULL'} as wall_name
              FROM schedules s
+             ${wallSchedulesAvailable() ? 'LEFT JOIN video_walls vw ON s.wall_id = vw.id' : ''}
              LEFT JOIN content c ON s.content_id = c.id
              LEFT JOIN widgets w ON s.widget_id = w.id
              LEFT JOIN playlists p ON s.playlist_id = p.id
@@ -209,6 +234,7 @@ router.get('/', (req, res) => {
     params.push(device_id, device_id);
   }
   if (group_id) { sql += ' AND s.group_id = ?'; params.push(group_id); }
+  if (wall_id && wallSchedulesAvailable()) { sql += ' AND s.wall_id = ?'; params.push(wall_id); }
   if (start) { sql += ' AND s.end_time >= ?'; params.push(start); }
   if (end) { sql += ' AND s.start_time <= ?'; params.push(end); }
 
@@ -224,7 +250,7 @@ router.get('/device/:deviceId', (req, res) => {
   const ctx = workspaceAccess(req, device.workspace_id);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
 
-  const schedules = db.prepare(getDeviceSchedulesQuery()).all(req.params.deviceId, req.params.deviceId);
+  const schedules = db.prepare(getDeviceSchedulesQuery()).all(req.params.deviceId, req.params.deviceId, req.params.deviceId);
   res.json(schedules);
 });
 
@@ -259,7 +285,7 @@ router.get('/week', (req, res) => {
   weekEnd.setDate(weekEnd.getDate() + days);
 
   const schedules = device_id
-    ? db.prepare(getDeviceSchedulesQuery()).all(device_id, device_id)
+    ? db.prepare(getDeviceSchedulesQuery()).all(device_id, device_id, device_id)
     : db.prepare(getWorkspaceSchedulesQuery()).all(scopeWorkspaceId);
   const events = [];
   for (const s of schedules) {
@@ -274,25 +300,34 @@ router.get('/week', (req, res) => {
 // write access. Closes 4 pre-existing leaks: content / widget / layout /
 // playlist were accepted with NO ownership check at all.
 router.post('/', (req, res) => {
-  const { device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time,
+  const { device_id, group_id, wall_id, zone_id, content_id, widget_id, layout_id, playlist_id, title, start_time, end_time,
           timezone, recurrence, recurrence_end, priority, color } = req.body;
 
   if (!start_time || !end_time) {
     return res.status(400).json({ error: 'start_time and end_time required' });
   }
-  if (device_id && group_id) {
-    return res.status(400).json({ error: 'Cannot set both device_id and group_id. A schedule applies to one device OR one group.' });
+  const targets = [device_id, group_id, wall_id].filter(Boolean).length;
+  if (targets > 1) {
+    return res.status(400).json({ error: 'A schedule applies to one screen, one group OR one video wall — set only one of device_id, group_id, wall_id.' });
   }
-  if (!device_id && !group_id) {
-    return res.status(400).json({ error: 'Either device_id or group_id is required' });
+  if (targets === 0) {
+    return res.status(400).json({ error: 'One of device_id, group_id or wall_id is required' });
+  }
+  if (wall_id && !wallSchedulesAvailable()) {
+    return res.status(409).json({ error: 'This server cannot schedule video walls yet (the schedules table was not upgraded — see the server log).' });
   }
 
   // Resolve target's workspace_id and verify caller has write access there.
   let targetWorkspaceId = null;
   let targetTz = null;
   if (device_id) {
-    const device = db.prepare('SELECT workspace_id, timezone, reported_timezone FROM devices WHERE id = ?').get(device_id);
+    const device = db.prepare('SELECT workspace_id, timezone, reported_timezone, wall_id FROM devices WHERE id = ?').get(device_id);
     if (!device) return res.status(404).json({ error: 'Device not found' });
+    // A wall panel follows only its wall's schedules (services/scheduler.js) — one on the panel
+    // would be saved and never run. Say what to do instead.
+    if (device.wall_id && wallSchedulesAvailable()) {
+      return res.status(409).json({ error: 'This screen is part of a video wall. Schedule the wall instead, so every panel switches together.', code: 'WALL_PANEL', wall_id: device.wall_id });
+    }
     if (!device.workspace_id) return res.status(403).json({ error: 'Device not assigned to a workspace' });
     targetWorkspaceId = device.workspace_id;
     targetTz = effectiveDeviceTz(device);
@@ -317,6 +352,13 @@ router.post('/', (req, res) => {
       targetTz = effectiveDeviceTz(member);
     }
   }
+  if (wall_id) {
+    const wall = db.prepare('SELECT id, workspace_id FROM video_walls WHERE id = ?').get(wall_id);
+    if (!wall) return res.status(404).json({ error: 'Video wall not found' });
+    if (!wall.workspace_id) return res.status(403).json({ error: 'Video wall not assigned to a workspace' });
+    targetWorkspaceId = wall.workspace_id;
+    targetTz = wallTz(wall_id);
+  }
   const ctx = workspaceAccess(req, targetWorkspaceId);
   if (!ctx) return res.status(403).json({ error: 'Access denied' });
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
@@ -330,7 +372,7 @@ router.post('/', (req, res) => {
    */
   let shadowedDevices = 0;
   {
-    const corp = scheduleTargetRefusal(req, res, device_id, group_id);
+    const corp = scheduleTargetRefusal(req, res, device_id, group_id, wall_id);
     if (corp === false) return;
     shadowedDevices = corp;
   }
@@ -390,11 +432,11 @@ router.post('/', (req, res) => {
   const id = uuidv4();
   db.prepare(`
     INSERT INTO schedules (id, user_id, workspace_id, device_id, group_id, zone_id, content_id, widget_id, layout_id, playlist_id, title,
-      start_time, end_time, timezone, recurrence, recurrence_end, priority, color)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      start_time, end_time, timezone, recurrence, recurrence_end, priority, color${wall_id ? ', wall_id' : ''})
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${wall_id ? ', ?' : ''})
   `).run(id, req.user.id, targetWorkspaceId, device_id || null, group_id || null, zone_id || null, content_id || null, widget_id || null,
     layout_id || null, effectivePlaylistId, title || '', start_time, end_time, timezone || targetTz || 'UTC',
-    recurrence || null, recurrence_end || null, priority || 0, color || '#3B82F6');
+    recurrence || null, recurrence_end || null, priority || 0, color || '#3B82F6', ...(wall_id ? [wall_id] : []));
 
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
   res.status(201).json(shadowedDevices ? { ...schedule, shadowed_devices: shadowedDevices } : schedule);
@@ -406,20 +448,32 @@ router.post('/', (req, res) => {
 router.put('/:id', requireScheduleWrite, (req, res) => {
   const schedule = req.schedule;
 
-  const newDeviceId = req.body.device_id !== undefined ? req.body.device_id : schedule.device_id;
-  const newGroupId = req.body.group_id !== undefined ? req.body.group_id : schedule.group_id;
-  if (newDeviceId && newGroupId) {
-    return res.status(400).json({ error: 'Cannot set both device_id and group_id' });
+  // Retargeting to one kind of target clears the other two, so a body naming only the new target
+  // is enough (the dialog sends just that).
+  const body = req.body;
+  if (body.device_id) { if (body.group_id === undefined) body.group_id = null; if (body.wall_id === undefined) body.wall_id = null; }
+  if (body.group_id) { if (body.device_id === undefined) body.device_id = null; if (body.wall_id === undefined) body.wall_id = null; }
+  if (body.wall_id) { if (body.device_id === undefined) body.device_id = null; if (body.group_id === undefined) body.group_id = null; }
+  const newDeviceId = body.device_id !== undefined ? body.device_id : schedule.device_id;
+  const newGroupId = body.group_id !== undefined ? body.group_id : schedule.group_id;
+  const newWallId = body.wall_id !== undefined ? body.wall_id : (schedule.wall_id || null);
+  const targets = [newDeviceId, newGroupId, newWallId].filter(Boolean).length;
+  if (targets > 1) {
+    return res.status(400).json({ error: 'A schedule applies to one screen, one group OR one video wall' });
   }
-  if (!newDeviceId && !newGroupId) {
-    return res.status(400).json({ error: 'Either device_id or group_id is required' });
+  if (targets === 0) {
+    return res.status(400).json({ error: 'One of device_id, group_id or wall_id is required' });
+  }
+  if (body.wall_id && !wallSchedulesAvailable()) {
+    return res.status(409).json({ error: 'This server cannot schedule video walls yet (the schedules table was not upgraded — see the server log).' });
   }
 
   // CORPORATE: retargeting a schedule onto a screen/group head office's playlist covers is refused
   // like creating one there. Editing a schedule that is already shadowed stays allowed.
   if ((req.body.device_id !== undefined && req.body.device_id !== schedule.device_id)
-      || (req.body.group_id !== undefined && req.body.group_id !== schedule.group_id)) {
-    if (scheduleTargetRefusal(req, res, newDeviceId, newGroupId) === false) return;
+      || (req.body.group_id !== undefined && req.body.group_id !== schedule.group_id)
+      || (req.body.wall_id !== undefined && req.body.wall_id !== (schedule.wall_id || null))) {
+    if (scheduleTargetRefusal(req, res, newDeviceId, newGroupId, newWallId) === false) return;
   }
 
   // For each field changing to a non-null value, verify the referenced row
@@ -429,11 +483,16 @@ router.put('/:id', requireScheduleWrite, (req, res) => {
   const ownershipChecks = [
     ['devices',       req.body.device_id,   schedule.device_id,   false],
     ['device_groups', req.body.group_id,    schedule.group_id,    false],
+    ['video_walls',   req.body.wall_id,     schedule.wall_id,     false],
     ['content',       req.body.content_id,  schedule.content_id,  true],
     ['widgets',       req.body.widget_id,   schedule.widget_id,   true],
     ['layouts',       req.body.layout_id,   schedule.layout_id,   true],
     ['playlists',     req.body.playlist_id, schedule.playlist_id, true],
   ];
+  if (req.body.device_id && req.body.device_id !== schedule.device_id && wallSchedulesAvailable()) {
+    const d = db.prepare('SELECT wall_id FROM devices WHERE id = ?').get(req.body.device_id);
+    if (d && d.wall_id) return res.status(409).json({ error: 'This screen is part of a video wall. Schedule the wall instead, so every panel switches together.', code: 'WALL_PANEL', wall_id: d.wall_id });
+  }
   for (const [table, newVal, oldVal, allowNull] of ownershipChecks) {
     if (newVal === undefined || newVal === oldVal || !newVal) continue;
     const err = checkRefInWorkspace(table, newVal, schedule.workspace_id, { allowNullWorkspace: allowNull });
@@ -449,18 +508,12 @@ router.put('/:id', requireScheduleWrite, (req, res) => {
 
   const fields = ['device_id', 'group_id', 'zone_id', 'content_id', 'widget_id', 'layout_id', 'playlist_id', 'title',
     'start_time', 'end_time', 'timezone', 'recurrence', 'recurrence_end', 'priority', 'enabled', 'color'];
+  if (wallSchedulesAvailable()) fields.push('wall_id');
   const updates = [];
   const values = [];
   fields.forEach(f => {
     if (req.body[f] !== undefined) { updates.push(`${f} = ?`); values.push(req.body[f]); }
   });
-
-  if (req.body.group_id && !updates.some(u => u.startsWith('device_id'))) {
-    updates.push('device_id = ?'); values.push(null);
-  }
-  if (req.body.device_id && !updates.some(u => u.startsWith('group_id'))) {
-    updates.push('group_id = ?'); values.push(null);
-  }
 
   if (updates.length > 0) {
     updates.push("updated_at = strftime('%s','now')");

@@ -600,6 +600,7 @@ export const api = {
   }),
 
   // IPTV: add a live HLS stream (the player opens the .m3u8 on its LAN; the server never fetches it).
+  addHoldContent: (mode, name) => request('/content/hold', { method: 'POST', body: JSON.stringify({ mode, name }) }),
   addHlsContent: (url, name) => request('/content/hls', {
     method: 'POST',
     body: JSON.stringify({ url, name })

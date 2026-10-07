@@ -11,6 +11,7 @@ const { resourceAccess } = require('../lib/tenancy');
 // #236: per-panel mounting rotation. Normalised on the way IN as well as out, so a bad value from a
 // scripted API caller is rejected at the door instead of persisting and confusing every later read.
 const { normalizeWallRotation } = require('../lib/wall-geometry');
+const { requireScope } = require('../middleware/apiToken');
 
 // Load a wall + access context. Returns the wall row or null after sending
 // 403/404. requireWrite=true also denies workspace_viewer.
@@ -177,6 +178,14 @@ router.put('/:id', requireWallWrite, (req, res) => {
       return res.status(403).json({ error: 'Content is not in this workspace' });
     }
   }
+  // A wall layout: same rule as a device's (a template, or a layout in the wall's workspace).
+  if (req.body.layout_id) {
+    const l = db.prepare('SELECT is_template, workspace_id FROM layouts WHERE id = ?').get(req.body.layout_id);
+    if (!l) return res.status(404).json({ error: 'Layout not found' });
+    if (!l.is_template && l.workspace_id !== wall.workspace_id) {
+      return res.status(403).json({ error: 'Layout is not in this workspace' });
+    }
+  }
   if (req.body.leader_device_id) {
     const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(req.body.leader_device_id);
     if (!d) return res.status(404).json({ error: 'Leader device not found' });
@@ -186,14 +195,16 @@ router.put('/:id', requireWallWrite, (req, res) => {
   }
 
   // CORPORATE: geometry and the wall's own playlist/content on a head office wall (see wallLockedFor).
-  if ((WALL_GEOMETRY.some((f) => req.body[f] !== undefined) || req.body.playlist_id !== undefined || req.body.content_id !== undefined)
+  if ((WALL_GEOMETRY.some((f) => req.body[f] !== undefined) || req.body.playlist_id !== undefined || req.body.content_id !== undefined
+      || req.body.layout_id !== undefined)
       && wallLockedFor(req, wall.id)) {
     return refuseWall(req, res, wall);
   }
 
   const fields = ['name', 'grid_cols', 'grid_rows', 'bezel_h_mm', 'bezel_v_mm',
     'screen_w_mm', 'screen_h_mm', 'sync_mode', 'leader_device_id', 'content_id', 'playlist_id',
-    'player_x', 'player_y', 'player_width', 'player_height'];
+    'player_x', 'player_y', 'player_width', 'player_height', 'layout_id'];
+  if (req.body.layout_id === '') req.body.layout_id = null;
   const updates = [];
   const values = [];
   for (const f of fields) {
@@ -217,6 +228,27 @@ router.put('/:id', requireWallWrite, (req, res) => {
   pushToWallMembers(req, req.params.id);
   notifyDashboards(req, req.wall.workspace_id);
   res.json(loadWallWithDevices(req.params.id));
+});
+
+/*
+ * A command to the WHOLE wall, like a screen's: every panel gets it, and the reply counts per panel
+ * (same delivery and same per-panel capability check as a group command — a wall can mix players
+ * too, and a panel that cannot honour a reboot must not be counted as rebooted).
+ */
+router.post('/:id/command', requireScope('full'), requireWallWrite, (req, res) => {
+  const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+  const { type, payload } = req.body || {};
+  if (!type) return res.status(400).json({ error: 'command type required' });
+  if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
+  const v = validateCommand(type, payload);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const devices = db.prepare(`SELECT d.* FROM devices d JOIN video_wall_devices vwd ON vwd.device_id = d.id WHERE vwd.wall_id = ?`).all(req.wall.id);
+  const deviceNs = req.app.get('io').of('/device');
+  const results = devices.map((device) => ({ device_id: device.id, name: device.name, ...deliverCommand(deviceNs, device, type, payload) }));
+  const count = (...st) => results.filter((r) => st.includes(r.status)).length;
+  const refused = count('refused');
+  res.json({ success: true, sent: count('sent', 'relayed'), offline: count('offline', 'queued'), unsupported: count('unsupported'),
+    ...(refused ? { refused } : {}), total: devices.length, results });
 });
 
 // Delete wall — clear playlists + wall_id on every former member (matches

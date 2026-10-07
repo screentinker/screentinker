@@ -4,6 +4,8 @@ import { showToast } from '../components/toast.js';
 import { esc, livenessBadge } from '../utils.js';
 import { t } from '../i18n.js';
 import * as cui from '../components/corporate-ui.js';
+import { snapMove, snapResize } from '../components/snap.js';
+import { mountWallLive } from '../components/wall-live.js';
 
 const API = (url, opts = {}) => {
   // ⚠️ This helper bypasses api.js's routing, so it must ask the same question itself.
@@ -31,6 +33,9 @@ const CANVAS_PADDING = 200; // extra room beyond bounding box, in canvas units
 // panels side by side had to stack them vertically here and pre-rotate every video. The canvas is
 // now what it always looked like: the wall as the audience sees it.
 const WALL_ROTATIONS = [0, 90, 180, 270];
+// The same commands a group gets (dashboard GROUP_COMMANDS), sent to every panel of the wall.
+const WALL_COMMANDS = ['screen_on', 'screen_off', 'launch', 'update', 'reboot', 'shutdown'];
+const WALL_DESTRUCTIVE = ['reboot', 'shutdown'];
 const ROTATION_LABELS = { 0: 'Normal (0°)', 90: 'Turned left (90°)', 180: 'Upside down (180°)', 270: 'Turned right (270°)' };
 // A panel already configured portrait is already hung sideways; carry that across so the operator
 // doesn't have to say the same thing twice (and so the tile lands the right shape first time).
@@ -104,13 +109,15 @@ async function renderList(container) {
 // Free-form canvas wall editor
 // ============================================================
 async function renderWallEditor(container, wallId) {
-  let wall, devices, playlists;
+  let wall, devices, playlists, layouts;
   try {
-    [wall, devices, playlists] = await Promise.all([
+    [wall, devices, playlists, layouts] = await Promise.all([
       API(`/walls/${wallId}`),
       api.getDevices(),
       api.getPlaylists(),
+      API('/layouts').catch(() => []),
     ]);
+    if (!Array.isArray(layouts)) layouts = [];
     wall.__corp = (await cui.workspaceCoverage({ force: true })).walls[wallId] || null;
   } catch { container.innerHTML = `<div class="empty-state"><h3>${t('wall.not_found')}</h3></div>`; return; }
 
@@ -231,12 +238,29 @@ async function renderWallEditor(container, wallId) {
         <button class="btn btn-sm" id="renameWallBtn" title="${t('wall.rename')}" style="padding:2px 8px;font-size:12px">✎</button>
       </h1>
       <div style="display:flex;gap:8px">
+        <!-- A command to every panel, like a screen's own controls (POST /walls/:id/command). -->
+        <select class="input" id="wallCommand" style="width:170px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
+          <option value="">${t('wall.cmd_placeholder')}</option>
+          ${WALL_COMMANDS.map(c => `<option value="${c}" ${WALL_DESTRUCTIVE.includes(c) ? 'style="color:var(--danger)"' : ''}>${t('dashboard.cmd.' + (c === 'launch' ? 'restart_app' : c === 'update' ? 'check_update' : c))}</option>`).join('')}
+        </select>
         <button class="btn btn-sm" id="centerViewBtn" title="Re-center and fit content to the viewport">Center</button>
         <button class="btn btn-sm" id="autoArrangeBtn" title="Lay out screens in a grid using the columns/rows/bezel below">Auto-arrange</button>
         <button class="btn btn-sm" id="fitPlayerBtn" title="Snap the player rect to the bounding box of all screens">Fit player to screens</button>
         <button class="btn btn-sm" id="saveLayoutBtn" disabled>Save layout</button>
         <button class="btn btn-danger btn-sm" id="deleteWallBtn">${t('wall.delete_wall')}</button>
       </div>
+    </div>
+
+    <!-- The wall as the audience sees it, like a screen's Now Playing: every panel's screenshot where
+         the panel hangs (components/wall-live.js). -->
+    <div class="info-card" id="wallLiveCard" style="padding:12px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <strong style="font-size:14px">${t('wall.live')}</strong>
+        <span style="font-size:12px;color:var(--text-muted)">${t('wall.live_help')}</span>
+        <label style="margin-left:auto;font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="wallLiveAuto" checked> ${t('wall.live_auto')}</label>
+        <button class="btn btn-sm" id="wallLiveRefresh">${t('wall.live_refresh')}</button>
+      </div>
+      <div id="wallLive" style="max-width:1200px"></div>
     </div>
 
     <div style="display:flex;gap:16px;align-items:flex-start">
@@ -259,6 +283,24 @@ async function renderWallEditor(container, wallId) {
             ${(playlists || []).map(p => `<option value="${esc(p.id)}" ${p.id === wall.playlist_id ? 'selected' : ''}>${esc(p.name)}${p.status === 'draft' ? ' (draft)' : ''}</option>`).join('')}
           </select>
           <button class="btn btn-primary btn-sm" id="setPlaylistBtn" style="margin-left:8px">${t('wall.set_playlist')}</button>
+        </div>
+
+        <!-- Wall layouts: zones on the wall itself (server/lib/wall-layout.js), each on the shared
+             clock, so content can go anywhere on the wall and screens can take turns. -->
+        <div style="margin-top:16px" id="wallZonesSection">
+          <h3 style="font-size:14px;margin:0 0 4px">${t('wall.zones')}</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;max-width:640px">${t('wall.zones_help')}</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="wallLayout" class="input" style="width:300px;background:var(--bg-input)">
+              <option value="">${t('wall.no_layout')}</option>
+              ${layouts.filter(l => (l.zones || []).length > 1 || l.id === wall.layout_id).map(l => `<option value="${esc(l.id)}" ${l.id === wall.layout_id ? 'selected' : ''}>${esc(l.name)}${l.is_template ? ' (' + esc(t('wall.layout_template')) + ')' : ''}</option>`).join('')}
+            </select>
+            <button class="btn btn-primary btn-sm" id="setWallLayoutBtn">${t('wall.set_layout')}</button>
+            <button class="btn btn-sm" id="newWallLayoutBtn" title="${esc(t('wall.layout_per_screen_tip'))}">${t('wall.layout_per_screen')}</button>
+            <a class="btn btn-sm" id="editWallLayoutLink" style="display:${wall.layout_id ? '' : 'none'}" href="#/layout/${esc(wall.layout_id || '')}?wall=${esc(wallId)}">${t('wall.edit_zones')}</a>
+          </div>
+          <div id="wallZoneWarn" style="margin-top:8px"></div>
+          <div id="wallZoneItems" style="margin-top:8px"></div>
         </div>
 
         <!-- #235: a wall used to swallow its members whole — joining one removed the device's card
@@ -332,6 +374,7 @@ async function renderWallEditor(container, wallId) {
     canvas.innerHTML = '';
     canvas.appendChild(renderPlayerEl());
     for (const s of screens) canvas.appendChild(renderScreenEl(s));
+    renderZoneOverlay();
     updateOverlapsAll();
     renderSidebar();
     renderPanelStatus();
@@ -460,6 +503,7 @@ async function renderWallEditor(container, wallId) {
 
   function applyTransform() {
     canvas.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
+    positionZoneOverlay();   // its border and label are sized against the zoom
     const r = document.getElementById('zoomReadout');
     if (r) r.textContent = Math.round(zoom * 100) + '%';
   }
@@ -553,6 +597,7 @@ async function renderWallEditor(container, wallId) {
   }
 
   function updateOverlapsAll() {
+    positionZoneOverlay();
     canvas.querySelectorAll('.wall-screen').forEach(el => {
       const id = el.dataset.deviceId;
       const s = screens.find(x => x.device_id === id);
@@ -591,12 +636,18 @@ async function renderWallEditor(container, wallId) {
     }
 
     const badges = screens.map(s => ({ s, b: panelLiveness(s.device_id) }));
-    const down = badges.filter(x => x.b.state !== 'online').length;
+    // ⚠️ The states are livenessState()'s — healthy / degraded / offline / provisioning. This used to
+    // test `!== 'online'`, a value livenessState never returns, so every healthy panel was counted
+    // as down and a fully working wall read "2 of 2 not online" under two green dots.
+    const down = badges.filter(x => x.b.state === 'offline' || x.b.state === 'provisioning').length;
+    const degraded = badges.filter(x => x.b.state === 'degraded').length;
     if (summary) {
-      summary.textContent = down === 0
-        ? `${screens.length} panel${screens.length === 1 ? '' : 's'}, all online`
-        : `${down} of ${screens.length} not online`;
-      summary.style.color = down === 0 ? 'var(--success)' : 'var(--danger, #e5484d)';
+      summary.textContent = down > 0
+        ? `${down} of ${screens.length} not online`
+        : degraded > 0
+          ? `${screens.length} panel${screens.length === 1 ? '' : 's'} online, ${degraded} degraded`
+          : `${screens.length} panel${screens.length === 1 ? '' : 's'}, all online`;
+      summary.style.color = down > 0 ? 'var(--danger, #e5484d)' : degraded > 0 ? 'var(--warning, #e0a800)' : 'var(--success)';
     }
 
     host.innerHTML = `
@@ -838,6 +889,193 @@ async function renderWallEditor(container, wallId) {
     renderAll();
   });
 
+  // ---------------------------------------------------------------- wall zones
+  // The wall's layout: zones in percent of the PLAYER rect (server/lib/wall-layout.js). Drawn over
+  // the canvas so the operator sees which screens each zone lands on; the list below fills them.
+  const ZONE_COLORS = ['#f59e0b', '#10b981', '#ec4899', '#8b5cf6', '#06b6d4', '#ef4444', '#84cc16', '#f97316'];
+  const layoutById = (id) => layouts.find(l => l.id === id) || null;
+  const wallLayoutZones = () => ((layoutById(wall.layout_id) || {}).zones || []);
+  const zoneColor = (i) => ZONE_COLORS[i % ZONE_COLORS.length];
+
+  async function jsonOrThrow(url, opts) {
+    assertLocalCallAllowed(url, opts && opts.method);
+    const r = await fetch('/api' + url, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...((opts && opts.headers) || {}) },
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ('HTTP ' + r.status));
+    return body;
+  }
+
+  function renderZoneOverlay() {
+    wallLayoutZones().forEach((z, i) => {
+      const el = document.createElement('div');
+      el.className = 'wall-zone-overlay';
+      el.dataset.zoneId = z.id;
+      el.style.cssText = `position:absolute;pointer-events:none;border:2px dashed ${zoneColor(i)};background:${zoneColor(i)}22;z-index:3;box-sizing:border-box`;
+      el.innerHTML = `<span style="position:absolute;left:4px;top:2px;font-size:11px;font-weight:600;color:${zoneColor(i)};text-shadow:0 1px 2px #000">${esc(z.name || ('Zone ' + (i + 1)))}</span>`;
+      canvas.appendChild(el);
+    });
+    positionZoneOverlay();
+  }
+  function positionZoneOverlay() {
+    const zones = wallLayoutZones();
+    canvas.querySelectorAll('.wall-zone-overlay').forEach(el => {
+      const z = zones.find(x => x.id === el.dataset.zoneId);
+      if (!z) return;
+      el.style.left = (player.x + (z.x_percent || 0) / 100 * player.w) + 'px';
+      el.style.top = (player.y + (z.y_percent || 0) / 100 * player.h) + 'px';
+      el.style.width = ((z.width_percent || 0) / 100 * player.w) + 'px';
+      el.style.height = ((z.height_percent || 0) / 100 * player.h) + 'px';
+      // The canvas is drawn scaled (often to ~30%), so a 2px border and an 11px label came out
+      // thinner than a pixel. Size them against the zoom to stay readable at any zoom.
+      el.style.borderWidth = (3 / zoom) + 'px';
+      const label = el.querySelector('span');
+      if (label) { label.style.fontSize = (12 / zoom) + 'px'; label.style.left = (4 / zoom) + 'px'; }
+    });
+  }
+
+  // Panels whose player predates wall zones play the playlist across the whole wall instead — say so
+  // by name rather than letting the wall come out half right.
+  function renderZoneWarn() {
+    const box = document.getElementById('wallZoneWarn');
+    if (!box) return;
+    if (!wall.layout_id) { box.innerHTML = ''; return; }
+    const lacking = screens.filter(s => {
+      const d = deviceById(s.device_id);
+      return !(d && Array.isArray(d.capabilities) && d.capabilities.includes('playback.wall_zones'));
+    });
+    box.innerHTML = lacking.length
+      ? `<div class="info-card" style="padding:8px 10px;font-size:12px;border-color:var(--warning,#e0a800)">⚠️ ${esc(t('wall.zones_unsupported', { names: lacking.map(s => s.device_name || s.device_id.slice(0, 8)).join(', ') }))}</div>`
+      : '';
+  }
+
+  // The wall playlist's items, by zone: zone, duration, and a hold to make zones take turns. Each
+  // zone loops on the total of its own items, so equal totals keep a timeline in step.
+  let zoneHoldContentId = null;
+  async function renderZoneItems() {
+    const box = document.getElementById('wallZoneItems');
+    if (!box) return;
+    const zones = wallLayoutZones();
+    if (!wall.layout_id || zones.length < 2) { box.innerHTML = ''; return; }
+    if (!wall.playlist_id) { box.innerHTML = `<p style="font-size:12px;color:var(--text-muted)">${esc(t('wall.zones_need_playlist'))}</p>`; return; }
+    let pl;
+    try { pl = await jsonOrThrow(`/playlists/${wall.playlist_id}`); } catch (err) { box.innerHTML = `<p style="font-size:12px;color:var(--danger)">${esc(err.message)}</p>`; return; }
+    const items = pl.items || [];
+    const valid = new Set(zones.map(z => z.id));
+    const secs = (it) => Math.max(1, Number(it.duration_sec) || 10);
+    const totals = zones.map(z => items.filter(it => it.zone_id === z.id).reduce((a, it) => a + secs(it), 0));
+    const used = totals.filter(n => n > 0);
+    const uneven = used.length > 1 && used.some(n => n !== used[0]);
+    const zoneOptions = (cur) => `<option value="">${esc(t('wall.zone_none'))}</option>` +
+      zones.map((z, i) => `<option value="${esc(z.id)}" ${z.id === cur ? 'selected' : ''}>${esc(z.name || ('Zone ' + (i + 1)))}</option>`).join('');
+    const row = (it) => `
+      <div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${esc(it.filename || '')}">${it.mime_type === 'application/x-st-hold' ? '⏸ ' : ''}${esc(it.filename || it.widget_name || it.child_playlist_name || '?')}</span>
+        <button class="btn btn-sm wz-move" data-item="${esc(it.id)}" data-dir="-1" title="${esc(t('wall.zone_earlier'))}" style="padding:1px 6px;font-size:11px">↑</button>
+        <button class="btn btn-sm wz-move" data-item="${esc(it.id)}" data-dir="1" title="${esc(t('wall.zone_later'))}" style="padding:1px 6px;font-size:11px">↓</button>
+        <input type="number" class="input wz-dur" data-item="${esc(it.id)}" value="${secs(it)}" min="1" step="1" style="width:72px" title="${esc(t('wall.zone_seconds'))}">
+        <select class="input wz-zone" data-item="${esc(it.id)}" style="width:150px;background:var(--bg-input)${it.zone_id && !valid.has(it.zone_id) ? ';border-color:var(--danger)' : ''}">${zoneOptions(valid.has(it.zone_id) ? it.zone_id : '')}</select>
+      </div>`;
+    box.innerHTML = `
+      ${pl.status === 'draft' ? `<div class="info-card" style="padding:8px 10px;font-size:12px;display:flex;gap:10px;align-items:center;margin-bottom:8px;border-color:#92400e">
+          <span style="flex:1">${esc(t('wall.zones_draft'))}</span>
+          <button class="btn btn-primary btn-sm" id="wzPublishBtn">${esc(t('wall.zones_publish'))}</button></div>` : ''}
+      ${uneven ? `<p style="font-size:12px;color:var(--warning,#e0a800);margin:0 0 6px">${esc(t('wall.zones_uneven'))}</p>` : ''}
+      ${zones.map((z, i) => `
+        <div style="margin:8px 0 4px;display:flex;align-items:center;gap:8px">
+          <span style="width:10px;height:10px;border-radius:2px;background:${zoneColor(i)}"></span>
+          <strong style="font-size:12px">${esc(z.name || ('Zone ' + (i + 1)))}</strong>
+          <span style="font-size:11px;color:var(--text-muted)">${esc(t('wall.zone_loop', { s: totals[i] }))}</span>
+          <button class="btn btn-sm wz-hold" data-zone="${esc(z.id)}" style="margin-left:auto;padding:2px 8px;font-size:11px">${esc(t('wall.zone_add_hold'))}</button>
+        </div>
+        ${items.filter(it => it.zone_id === z.id).map(row).join('') || `<p style="font-size:11px;color:var(--text-muted);margin:0">${esc(t('wall.zone_empty'))}</p>`}`).join('')}
+      ${items.some(it => !valid.has(it.zone_id)) ? `
+        <div style="margin:10px 0 4px"><strong style="font-size:12px">${esc(t('wall.zone_unplaced'))}</strong></div>
+        ${items.filter(it => !valid.has(it.zone_id)).map(row).join('')}` : ''}
+    `;
+    const patch = async (itemId, body) => {
+      try { await api.updatePlaylistItem(wall.playlist_id, itemId, body); renderZoneItems(); }
+      catch (err) { showToast(err.message, 'error'); }
+    };
+    box.querySelectorAll('.wz-zone').forEach(sel => sel.addEventListener('change', () => patch(sel.dataset.item, { zone_id: sel.value || null })));
+    box.querySelectorAll('.wz-dur').forEach(inp => inp.addEventListener('change', () => {
+      const v = Math.max(1, parseInt(inp.value, 10) || 0);
+      patch(inp.dataset.item, { duration_sec: v });
+    }));
+    // Order within a zone is its timeline: swap with the zone's neighbour, keep everything else put.
+    box.querySelectorAll('.wz-move').forEach(btn => btn.addEventListener('click', async () => {
+      const order = items.map(it => it.id);
+      // Item ids are numbers and dataset values are strings: compare as strings, or indexOf is -1.
+      const i = order.findIndex(id => String(id) === btn.dataset.item);
+      const zid = items[i] && items[i].zone_id;
+      const sameZone = (k) => valid.has(zid) ? items[k].zone_id === zid : !valid.has(items[k].zone_id);
+      let j = i + Number(btn.dataset.dir);
+      while (j >= 0 && j < items.length && !sameZone(j)) j += Number(btn.dataset.dir);
+      if (j < 0 || j >= items.length) return;
+      [order[i], order[j]] = [order[j], order[i]];
+      try { await api.reorderPlaylistItems(wall.playlist_id, order); renderZoneItems(); }
+      catch (err) { showToast(err.message, 'error'); }
+    }));
+    box.querySelectorAll('.wz-hold').forEach(btn => btn.addEventListener('click', async () => {
+      try {
+        // One freeze-frame hold per wall editor session is enough: the same content can sit in any
+        // number of zones, each with its own duration.
+        if (!zoneHoldContentId) zoneHoldContentId = (await jsonOrThrow('/content/hold', { method: 'POST', body: JSON.stringify({ mode: 'freeze' }) })).id;
+        await api.addPlaylistItem(wall.playlist_id, { content_id: zoneHoldContentId, zone_id: btn.dataset.zone, duration_sec: 30 });
+        renderZoneItems();
+      } catch (err) { showToast(err.message, 'error'); }
+    }));
+    box.querySelector('#wzPublishBtn')?.addEventListener('click', async () => {
+      try { await api.publishPlaylist(wall.playlist_id); showToast(t('wall.toast.zones_published'), 'success'); renderZoneItems(); }
+      catch (err) { showToast(err.message, 'error'); }
+    });
+  }
+
+  async function setWallLayout(layoutId) {
+    await jsonOrThrow(`/walls/${wallId}`, { method: 'PUT', body: JSON.stringify({ layout_id: layoutId || '' }) });
+    wall.layout_id = layoutId || null;
+    const sel = document.getElementById('wallLayout');
+    if (sel) sel.value = wall.layout_id || '';
+    const link = document.getElementById('editWallLayoutLink');
+    if (link) { link.style.display = wall.layout_id ? '' : 'none'; link.href = '#/layout/' + (wall.layout_id || '') + '?wall=' + wallId; }
+    renderAll();
+    renderZoneWarn();
+    renderZoneItems();
+  }
+
+  document.getElementById('setWallLayoutBtn').addEventListener('click', async () => {
+    try { await setWallLayout(document.getElementById('wallLayout').value || null); showToast(t('wall.toast.layout_updated'), 'success'); }
+    catch (err) { showToast(err.message, 'error'); }
+  });
+
+  // One zone per screen: each screen's overlap with the player, as percentages of it — the quickest
+  // way to "screen 1 plays this, screen 2 plays that".
+  document.getElementById('newWallLayoutBtn').addEventListener('click', async () => {
+    if (dirty) { showToast(t('wall.toast.save_first'), 'info'); return; }
+    const parts = screens.map(s => ({ s, r: intersect(s, player) })).filter(x => x.r)
+      .sort((a, b) => (a.r.y - b.r.y) || (a.r.x - b.r.x));
+    if (parts.length < 2) { showToast(t('wall.toast.need_two_screens'), 'info'); return; }
+    const pct = (v) => Math.round(v * 1000) / 10;
+    const zones = parts.map(({ s, r }, i) => ({
+      name: s.device_name || ('Screen ' + (i + 1)),
+      x_percent: pct((r.x - player.x) / player.w), y_percent: pct((r.y - player.y) / player.h),
+      width_percent: pct(r.w / player.w), height_percent: pct(r.h / player.h),
+      z_index: 0, zone_type: 'content', fit_mode: 'contain',
+    }));
+    try {
+      const l = await jsonOrThrow('/layouts', { method: 'POST', body: JSON.stringify({
+        name: t('wall.layout_per_screen_name', { wall: wall.name }), width: Math.round(player.w), height: Math.round(player.h), zones,
+      }) });
+      layouts.unshift(l);
+      const sel = document.getElementById('wallLayout');
+      if (sel) sel.insertAdjacentHTML('beforeend', `<option value="${esc(l.id)}">${esc(l.name)}</option>`);
+      await setWallLayout(l.id);
+      showToast(t('wall.toast.layout_created'), 'success');
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+
   document.getElementById('saveLayoutBtn').addEventListener('click', async () => {
     try {
       // Persist player rect + grid/bezel inputs to the wall, devices to its
@@ -872,12 +1110,29 @@ async function renderWallEditor(container, wallId) {
       await cui.withImpactAck((o) => api.setWallDevices(wallId, payload, o));
       // Re-fetch master device list so wall_id changes propagate to the sidebar
       devices = await api.getDevices();
+      try { wall.devices = (await API(`/walls/${wallId}`)).devices || wall.devices; mountLive(); } catch (e) { /* live view keeps the old geometry */ }
       dirty = false;
       const btn = document.getElementById('saveLayoutBtn');
       btn.disabled = true;
       btn.classList.remove('btn-primary');
       showToast('Layout saved', 'success');
     } catch (err) { showToast(err.message, err.cancelled ? 'info' : 'error'); }
+  });
+
+  document.getElementById('wallCommand').addEventListener('change', async (e) => {
+    const type = e.target.value;
+    e.target.value = '';
+    if (!type) return;
+    const label = e.target.querySelector(`option[value="${type}"]`)?.textContent || type;
+    if (WALL_DESTRUCTIVE.includes(type) && !confirm(t('wall.cmd_confirm', { cmd: label.toUpperCase(), n: screens.length, wall: wall.name }))) return;
+    try {
+      const r = await jsonOrThrow(`/walls/${wallId}/command`, { method: 'POST', body: JSON.stringify({ type }) });
+      let msg = t('wall.toast.cmd_sent', { cmd: label, sent: r.sent, total: r.total });
+      if (r.offline) msg += ' ' + t('wall.toast.cmd_offline', { n: r.offline });
+      if (r.unsupported) msg += ' ' + t('wall.toast.cmd_unsupported', { n: r.unsupported });
+      if (r.refused) msg += ' ' + t('wall.toast.cmd_refused', { n: r.refused });
+      showToast(msg, (r.offline || r.unsupported || r.refused) ? 'warning' : 'success');
+    } catch (err) { showToast(err.message, 'error'); }
   });
 
   document.getElementById('renameWallBtn').addEventListener('click', async () => {
@@ -896,6 +1151,7 @@ async function renderWallEditor(container, wallId) {
       await API(`/walls/${wallId}`, { method: 'PUT', body: JSON.stringify({ playlist_id: playlistId }) });
       wall.playlist_id = playlistId;
       showToast(t('wall.toast.playlist_updated'), 'success');
+      renderZoneItems();
     } catch (err) { showToast(err.message, 'error'); }
   });
 
@@ -914,6 +1170,22 @@ async function renderWallEditor(container, wallId) {
   cleanupHooks.push(() => window.removeEventListener('beforeunload', beforeUnloadWarn));
 
   renderAll();
+  renderZoneWarn();
+  renderZoneItems();
+
+  // Live: refresh every 5s while the box is ticked (screenshots are cheap and safe on a live wall —
+  // they never change what is playing). Rebuilt with the saved geometry, so a moved panel shows up
+  // where it now hangs after Save.
+  let wallLive = null;
+  function mountLive() {
+    if (wallLive) wallLive.destroy();
+    const auto = document.getElementById('wallLiveAuto');
+    wallLive = mountWallLive(document.getElementById('wallLive'), { wall, devices, live: true, refreshMs: auto && auto.checked ? 5000 : 0 });
+  }
+  mountLive();
+  document.getElementById('wallLiveAuto').addEventListener('change', mountLive);
+  document.getElementById('wallLiveRefresh').addEventListener('click', () => wallLive && wallLive.refresh());
+  cleanupHooks.push(() => { if (wallLive) wallLive.destroy(); });
   // Center on initial mount once the viewport has measurable dimensions.
   // requestAnimationFrame defers until layout settles; fits content + padding.
   requestAnimationFrame(() => centerView());
@@ -924,6 +1196,21 @@ async function renderWallEditor(container, wallId) {
     el.style.top = r.y + 'px';
     el.style.width = r.w + 'px';
     el.style.height = r.h + 'px';
+  }
+
+  const bezelGap = (id) => Math.max(0, parseInt(document.getElementById(id)?.value, 10) || 0);
+  // Guide lines while a snap is holding: long enough to reach across any wall at any zoom.
+  function drawSnapGuides(guides) {
+    canvas.querySelectorAll('.wall-snap-guide').forEach(g => g.remove());
+    for (const g of guides) {
+      const line = document.createElement('div');
+      line.className = 'wall-snap-guide';
+      const thick = Math.max(1, 1.5 / zoom) + 'px';
+      line.style.cssText = 'position:absolute;pointer-events:none;z-index:20;background:#f472b6;' + (g.axis === 'x'
+        ? `left:${g.at}px;top:-100000px;width:${thick};height:200000px`
+        : `top:${g.at}px;left:-100000px;height:${thick};width:200000px`);
+      canvas.appendChild(line);
+    }
   }
 
   function attachDragResize(el, rect, onChange) {
@@ -955,9 +1242,21 @@ async function renderWallEditor(container, wallId) {
         } else {
           applyResize(mode.slice(7), dx, dy, start, rect);
         }
+        // Snap edges and centres to the other screens, the player, and "one bezel apart" — lining
+        // panels up by hand to the pixel was the hard part. Hold Alt to place freely.
+        let guides = [];
+        if (!e.altKey) {
+          const others = [...screens, player].filter(r => r !== rect);
+          const opts = { threshold: 12 / zoom, gap: { x: bezelGap('bezelH'), y: bezelGap('bezelV') }, minW: 40, minH: 24 };
+          const sn = mode === 'move' ? snapMove(rect, others, opts) : snapResize(rect, mode.slice(7), others, opts);
+          rect.x = sn.x; rect.y = sn.y; rect.w = sn.w; rect.h = sn.h;
+          guides = sn.guides;
+        }
+        drawSnapGuides(guides);
         onChange();
       }
       function up(e) {
+        drawSnapGuides([]);
         el.releasePointerCapture(ev.pointerId);
         el.removeEventListener('pointermove', move);
         el.removeEventListener('pointerup', up);

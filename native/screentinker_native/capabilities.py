@@ -16,6 +16,9 @@ CAPABILITIES_ALWAYS = [
     "playback.video", "playback.image", "playback.widget", "playback.youtube", "playback.hls",
     "playback.rtsp", "playback.zones", "playback.transitions", "playback.pip", "playback.bundle",
     "playback.slide_audio", "playback.web_interactive",
+    # Hold items (blank / freeze for their duration) and a video wall's own layout, zones on the
+    # shared clock (player/engine.py "wall zones", logic/wall_zones.py).
+    "playback.hold", "playback.wall_zones",
     "audio.mute", "audio.volume",
     "display.rotation", "display.brightness", "display.power", "display.power_schedule",
     "remote.screenshot", "remote.stream", "remote.input", "remote.talk", "remote.set_server_url",

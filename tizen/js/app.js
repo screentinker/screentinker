@@ -143,6 +143,12 @@
     if (stageOwner === 'zones') {
       var cp = get(LS.payload);
       if (cp) { try { onPlaylist(JSON.parse(cp)); } catch (e) {} }
+    } else if (stageOwner === 'wallzones') {
+      // Wall zones re-mount from the cached payload too; invalidate so the unchanged signature does
+      // not keep a stalled element — every zone lands back on the shared clock.
+      wallZones.invalidate();
+      var wp = get(LS.payload);
+      if (wp) { try { onPlaylist(JSON.parse(wp)); } catch (e) {} }
     } else if (stageOwner === 'player') {
       player.playCurrent();
     }
@@ -456,6 +462,9 @@
       try {
         if (!data) return;
         if (player.kioskSessionActive()) { kioskLog('info', 'remote key refused: interactive session in progress'); return; }
+        // Wall zones run on the shared clock and own the stage: stepping the single-zone player
+        // here would paint its stale playlist over the zones.
+        if (stageOwner === 'wallzones') return;
         var v = player.getCurrentVideo();
         var n = player.getItemCount();
         switch (data.keycode) {
@@ -645,6 +654,9 @@
     // A torn-down AVPlay session cannot be resumed, so re-mount the current item from scratch.
     // playCurrent(), not gotoIndex(): gotoIndex early-returns when the index has not changed, so it
     // would leave a blanked portrait panel dark after screen_on.
+    // Wall zones own the stage instead: re-mount them (each zone rejoins the shared clock) rather
+    // than paint the single-zone player's stale playlist over them.
+    if (stageOwner === 'wallzones') { replayCurrent(); return; }
     try { if (player && player.playCurrent) player.playCurrent(); } catch (e) {}
   }
   // Diagnostic info overlay (parity with the web player). Toggled by the dashboard remote BACK key —
@@ -786,6 +798,7 @@
     stopHeartbeat();
     stopStreaming();
     try { player.stop(); } catch (e) {}
+    try { wallZones.clear(); } catch (e) {}
     stageOwner = ''; // #162: stage cleared — next playlist must repaint
     if (registerTimer) { clearTimeout(registerTimer); registerTimer = null; }
     authenticated = false;
@@ -924,6 +937,9 @@
   );
   // #group-sync: clock/schedule group sync (no leader, offline-native). Separate from WallController.
   var groupSync = new GroupSyncController(player, function () { return clockOffsetMs; }, reportSync);
+  // Wall zones: a video wall's own layout, every zone paced by the SAME server-disciplined clock
+  // group sync uses (syncedNow), no leader relay. Owns the stage as 'wallzones'.
+  var wallZones = new WallZoneRenderer(elStage, function () { return serverUrl.replace(/\/+$/, ''); }, function () { return deviceId || ''; }, function () { return syncedNow(); }, reportSync);
   // #109: PiP overlay layer. Renders into #pip (above #stage); never touches the
   // playlist. Reports show/clear over device:log (tag 'pip').
   var pipOverlay = new PipOverlay(elPip, { log: reportPip });
@@ -978,6 +994,7 @@
     if (payload.suspended) {
       player.stop();
       zoneRenderer.clear();
+      wallZones.clear();
       wallController.exit();
       // #320: an operator's uploaded shaders ride in with the playlist, keyed by the ids the items
       // reference. Tizen resolves a shader from the same global the web player does, so merging is
@@ -1023,6 +1040,24 @@
     // it INSTEAD of the "nothing scheduled" card. It is NOT a playlist item — it never enters assignments
     // or the sig, so it can't restart playback.
     player.defaultContent = payload.default_content || null;
+
+    if (payload.wall_config && WallZoneRenderer.wanted(payload.wall_config, payload.layout)) {
+      // Video wall WITH its own layout (wall_config.canvas_layout): the zones are in percent of the
+      // wall's player rect, drawn inside the wall-positioned #stage, each on the shared clock. The
+      // single-zone player and the plain zone renderer give up the stage; there is no wall:sync relay
+      // in either direction (WallController zones mode). The whole payload — wall_config included —
+      // is already cached in LS.payload and replayed at cold boot before the socket connects, so an
+      // offline reboot comes back as this panel's slice.
+      if (stageOwner !== 'wallzones') { player.stop(); zoneRenderer.clear(); wallZones.invalidate(); }
+      groupSync.exit();
+      player.setScheduleDriven(false);
+      wallController.apply(payload.wall_config, { zones: true });   // positions #stage first
+      wallZones.setTimezone(payload.timezone || null);
+      wallZones.render(payload.layout, payload.assignments || [], payload.wall_config);
+      stageOwner = 'wallzones';
+      return;
+    }
+    wallZones.clear();   // no-op unless leaving wall-zone mode (layout cleared, wall left, emergency)
 
     if (payload.wall_config) {
       // Video wall: fullscreen content mapped into this screen's slice. No multi-zone,

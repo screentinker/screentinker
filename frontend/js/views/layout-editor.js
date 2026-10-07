@@ -3,6 +3,7 @@ import { showToast } from '../components/toast.js';
 import { t, tn } from '../i18n.js';
 import { esc } from '../utils.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
+import { snapMove, snapResize } from '../components/snap.js';
 
 // A refused request must reject, not resolve.
 //
@@ -26,8 +27,11 @@ const API = (url, opts = {}) => {
 export async function render(container) {
   const hash = window.location.hash;
   if (hash.startsWith('#/layout/')) {
-    const id = hash.split('#/layout/')[1];
-    return renderEditor(container, id);
+    // "?wall=<id>" when opened from a video wall's "Edit zones": the editor then draws that wall's
+    // panels under the zones and snaps to their seams.
+    const [id, query] = hash.split('#/layout/')[1].split('?');
+    const wallId = new URLSearchParams(query || '').get('wall');
+    return renderEditor(container, id, wallId);
   }
   return renderList(container);
 }
@@ -133,19 +137,41 @@ function canvasRatioPct(layout) {
   const w = Number(layout && layout.width) || 1920;
   const h = Number(layout && layout.height) || 1080;
   if (!(w > 0 && h > 0)) return 56.25;
-  return Math.min(300, Math.max(20, (h / w) * 100));
+  // 5% lets a wall layout be as wide as 20:1 (a row of six 1080p panels is 10.7:1); the old 20%
+  // floor drew anything wider than 5:1 too tall, so zones were placed on the wrong shape.
+  return Math.min(300, Math.max(5, (h / w) * 100));
 }
 
-async function renderEditor(container, layoutId) {
+async function renderEditor(container, layoutId, wallId = null) {
   let layout;
   try {
     layout = await API(`/layouts/${layoutId}`);
   } catch { container.innerHTML = `<div class="empty-state"><h3>${t('layout.not_found')}</h3></div>`; return; }
+  // The wall's panels in percent of its player rect — the same space the zones live in. Best-effort:
+  // without them the editor is exactly the single-screen editor.
+  let wallPanels = [];
+  let wallName = null;
+  if (wallId) {
+    try {
+      const w = await API(`/walls/${wallId}`);
+      const devs = w.devices || [];
+      const rects = devs.map(d => ({ name: d.device_name || 'Screen', x: d.canvas_x ?? 0, y: d.canvas_y ?? 0, w: d.canvas_width ?? 320, h: d.canvas_height ?? 180 }));
+      let p = (w.player_x != null) ? { x: w.player_x, y: w.player_y, w: w.player_width, h: w.player_height } : null;
+      if (!p && rects.length) {
+        const x = Math.min(...rects.map(r => r.x)), y = Math.min(...rects.map(r => r.y));
+        p = { x, y, w: Math.max(...rects.map(r => r.x + r.w)) - x, h: Math.max(...rects.map(r => r.y + r.h)) - y };
+      }
+      if (p && p.w > 0 && p.h > 0) {
+        wallPanels = rects.map(r => ({ name: r.name, x: (r.x - p.x) / p.w * 100, y: (r.y - p.y) / p.h * 100, w: r.w / p.w * 100, h: r.h / p.h * 100 }));
+        wallName = w.name;
+      }
+    } catch { /* no wall overlay */ }
+  }
 
   container.innerHTML = `
-    <a href="#/layouts" class="back-link" style="display:inline-flex;align-items:center;gap:6px;color:var(--text-secondary);margin-bottom:16px;font-size:13px">
+    <a href="${wallId && wallName ? '#/wall/' + esc(wallId) : '#/layouts'}" class="back-link" style="display:inline-flex;align-items:center;gap:6px;color:var(--text-secondary);margin-bottom:16px;font-size:13px">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-      ${t('layout.back')}
+      ${wallId && wallName ? esc(t('layout.back_to_wall', { wall: wallName })) : t('layout.back')}
     </a>
     <div class="page-header">
       <!-- Editable in place. Duplicating a template names the copy "<template> (Copy)" and there
@@ -154,7 +180,13 @@ async function renderEditor(container, layoutId) {
       <input id="layoutName" class="input" value="${esc((layout.draft && layout.draft.name) || layout.name)}"
              aria-label="${t('layout.rename')}" title="${t('layout.rename')}"
              style="font-size:24px;font-weight:600;background:transparent;border:1px solid transparent;padding:2px 6px;max-width:420px">
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <!-- The canvas size: a screen's resolution, or a WALL's player rect (wide and short). Zones are
+             percentages either way; this is only the shape they are drawn on. -->
+        <label style="font-size:11px;color:var(--text-muted)" title="${t('layout.size_tip')}">${t('layout.size')}</label>
+        <input type="number" id="layoutW" class="input" value="${esc(String((layout.draft && layout.draft.width) || layout.width || 1920))}" min="16" step="1" style="width:84px">
+        <span style="color:var(--text-muted)">×</span>
+        <input type="number" id="layoutH" class="input" value="${esc(String((layout.draft && layout.draft.height) || layout.height || 1080))}" min="16" step="1" style="width:84px">
         <button class="btn btn-secondary btn-sm" id="addZoneBtn">${t('layout.add_zone')}</button>
         <button class="btn btn-primary btn-sm" id="saveLayoutBtn">${t('common.save')}</button>
       </div>
@@ -180,6 +212,8 @@ async function renderEditor(container, layoutId) {
           <div class="form-group"><label>${t('layout.prop.y')}</label><input type="number" id="propY" class="input" min="0" max="100" step="0.1"></div>
           <div class="form-group"><label>${t('layout.prop.width')}</label><input type="number" id="propW" class="input" min="1" max="100" step="0.1"></div>
           <div class="form-group"><label>${t('layout.prop.height')}</label><input type="number" id="propH" class="input" min="1" max="100" step="0.1"></div>
+          <div class="form-group"><label>${t('layout.prop.z')}</label><input type="number" id="propZ" class="input" step="1">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('layout.z_hint')}</div></div>
           <div class="form-group"><label>${t('layout.prop.type')}</label>
             <select id="propType" class="input" style="background:var(--bg-input)">
               <option value="content">${t('layout.type_content')}</option><option value="widget">${t('layout.type_widget')}</option>
@@ -206,9 +240,49 @@ async function renderEditor(container, layoutId) {
   let selectedZone = null;
   let dragging = null;
 
+  // Snapping (components/snap.js), done in on-screen pixels so the pull is the same on both axes of
+  // a very wide wall canvas. Targets: the other zones, the canvas edges and centre, and — when
+  // opened from a wall — the panels' edges, so a zone lands exactly on a seam. Alt = place freely.
+  function snapZone(z, i, dir, ev) {
+    const canvas = document.getElementById('canvas');
+    if (ev.altKey) { drawGuides([]); return; }
+    const r = canvas.getBoundingClientRect();
+    const px = (q) => ({ x: q.x / 100 * r.width, y: q.y / 100 * r.height, w: q.w / 100 * r.width, h: q.h / 100 * r.height });
+    const me = px({ x: z.x_percent, y: z.y_percent, w: z.width_percent, h: z.height_percent });
+    const targets = zones.filter((_, k) => k !== i).map(o => px({ x: o.x_percent, y: o.y_percent, w: o.width_percent, h: o.height_percent }))
+      .concat(wallPanels.map(px));
+    const opts = { threshold: 12, bounds: { x: 0, y: 0, w: r.width, h: r.height }, minW: 0.05 * r.width, minH: 0.05 * r.height };
+    const sn = dir ? snapResize(me, dir, targets, opts) : snapMove(me, targets, opts);
+    const pct = (v, total) => Math.round(v / total * 1000) / 10;
+    z.x_percent = Math.max(0, pct(sn.x, r.width)); z.y_percent = Math.max(0, pct(sn.y, r.height));
+    z.width_percent = Math.min(100 - z.x_percent, pct(sn.w, r.width)); z.height_percent = Math.min(100 - z.y_percent, pct(sn.h, r.height));
+    drawGuides(sn.guides.map(g => ({ axis: g.axis, at: g.axis === 'x' ? g.at / r.width * 100 : g.at / r.height * 100 })));
+  }
+  function drawGuides(guides) {
+    const canvas = document.getElementById('canvas');
+    canvas.querySelectorAll('.snap-guide').forEach(g => g.remove());
+    for (const g of guides) {
+      const line = document.createElement('div');
+      line.className = 'snap-guide';
+      line.style.cssText = 'position:absolute;pointer-events:none;z-index:9999;background:#f472b6;' + (g.axis === 'x'
+        ? `left:${g.at}%;top:0;width:1px;height:100%` : `top:${g.at}%;left:0;height:1px;width:100%`);
+      canvas.appendChild(line);
+    }
+  }
+
   function renderZones() {
     const canvas = document.getElementById('canvas');
     canvas.querySelectorAll('.zone-el').forEach(z => z.remove());
+    if (!canvas.querySelector('.wall-panel-el')) {
+      for (const p of wallPanels) {
+        const el = document.createElement('div');
+        el.className = 'wall-panel-el';
+        el.style.cssText = `position:absolute;left:${p.x}%;top:${p.y}%;width:${p.w}%;height:${p.h}%;pointer-events:none;
+          border:1px dashed rgba(255,255,255,0.35);box-sizing:border-box;z-index:0`;
+        el.innerHTML = `<span style="position:absolute;right:4px;bottom:2px;font-size:10px;color:rgba(255,255,255,0.45)">${esc(p.name)}</span>`;
+        canvas.appendChild(el);
+      }
+    }
 
     zones.forEach((z, i) => {
       const el = document.createElement('div');
@@ -251,11 +325,13 @@ async function renderEditor(container, layoutId) {
           const dy = (e2.clientY - startY) / rect.height * 100;
           z.x_percent = Math.max(0, Math.min(100 - z.width_percent, Math.round((origX + dx) * 10) / 10));
           z.y_percent = Math.max(0, Math.min(100 - z.height_percent, Math.round((origY + dy) * 10) / 10));
+          snapZone(z, i, null, e2);
           live.style.left = z.x_percent + '%';
           live.style.top = z.y_percent + '%';
           updateProperties();
         };
         const onUp = () => {
+          drawGuides([]);
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
         };
@@ -275,11 +351,13 @@ async function renderEditor(container, layoutId) {
           const newH = ((e2.clientY - rect.top) / rect.height * 100) - z.y_percent;
           z.width_percent = Math.max(5, Math.min(100 - z.x_percent, Math.round(newW * 10) / 10));
           z.height_percent = Math.max(5, Math.min(100 - z.y_percent, Math.round(newH * 10) / 10));
+          snapZone(z, i, 'se', e2);
           el.style.width = z.width_percent + '%';
           el.style.height = z.height_percent + '%';
           updateProperties();
         };
         const onUp = () => {
+          drawGuides([]);
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
         };
@@ -314,11 +392,12 @@ async function renderEditor(container, layoutId) {
     document.getElementById('propY').value = z.y_percent;
     document.getElementById('propW').value = z.width_percent;
     document.getElementById('propH').value = z.height_percent;
+    document.getElementById('propZ').value = z.z_index || 0;
     document.getElementById('propType').value = z.zone_type;
     document.getElementById('propFit').value = z.fit_mode || 'cover';
   }
 
-  ['propName', 'propX', 'propY', 'propW', 'propH', 'propType', 'propFit'].forEach(id => {
+  ['propName', 'propX', 'propY', 'propW', 'propH', 'propZ', 'propType', 'propFit'].forEach(id => {
     document.getElementById(id).oninput = () => {
       if (selectedZone === null) return;
       const z = zones[selectedZone];
@@ -327,6 +406,7 @@ async function renderEditor(container, layoutId) {
       z.y_percent = parseFloat(document.getElementById('propY').value) || 0;
       z.width_percent = parseFloat(document.getElementById('propW').value) || 10;
       z.height_percent = parseFloat(document.getElementById('propH').value) || 10;
+      z.z_index = parseInt(document.getElementById('propZ').value, 10) || 0;
       z.zone_type = document.getElementById('propType').value;
       z.fit_mode = document.getElementById('propFit').value;
       renderZones();
@@ -359,14 +439,14 @@ async function renderEditor(container, layoutId) {
         method: 'PUT',
         // Name goes with the zones so renaming is part of the Save the user already
         // presses, not a second hidden action.
-        body: JSON.stringify(newName ? { zones, name: newName } : { zones }),
+        body: JSON.stringify({ zones, ...(newName ? { name: newName } : {}), ...canvasSize() }),
       });
       if (updated && updated.error) { showToast(updated.error, 'error'); return; }
       layout = updated;
       zones = layout.zones || [];
       selectedZone = null;
       showToast(updated.pending_review ? t('review.toast.saved_as_draft') : t('layout.toast.saved'), 'success');
-      renderApprovalBar(document.getElementById('layoutApprovalBar'), { type: 'layout', id: layoutId, name: layout.name, onChanged: () => renderEditor(container, layoutId) });
+      renderApprovalBar(document.getElementById('layoutApprovalBar'), { type: 'layout', id: layoutId, name: layout.name, onChanged: () => renderEditor(container, layoutId, wallId) });
       renderZones();
       updateProperties();
     } catch (err) {
@@ -374,8 +454,21 @@ async function renderEditor(container, layoutId) {
     }
   };
 
+  // The canvas size reshapes the canvas live; it is saved with the zones.
+  function canvasSize() {
+    const w = parseInt(document.getElementById('layoutW')?.value, 10);
+    const h = parseInt(document.getElementById('layoutH')?.value, 10);
+    return (w >= 16 && h >= 16) ? { width: w, height: h } : {};
+  }
+  ['layoutW', 'layoutH'].forEach((id) => {
+    document.getElementById(id).oninput = () => {
+      const sz = canvasSize();
+      if (sz.width) document.getElementById('canvas').style.paddingTop = canvasRatioPct(sz) + '%';
+    };
+  });
+
   renderZones();
-  renderApprovalBar(document.getElementById('layoutApprovalBar'), { type: 'layout', id: layoutId, name: layout.name, onChanged: () => renderEditor(container, layoutId) });
+  renderApprovalBar(document.getElementById('layoutApprovalBar'), { type: 'layout', id: layoutId, name: layout.name, onChanged: () => renderEditor(container, layoutId, wallId) });
 }
 
 export function cleanup() {}

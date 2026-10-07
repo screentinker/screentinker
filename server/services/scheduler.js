@@ -30,7 +30,18 @@ function evaluateSchedules(ioOverride) {
     // #12 scheduled reboot — evaluated independently of playlist/layout overrides.
     maybeRebootDevice(device, now, deviceNs);
 
-    const schedules = db.prepare(`
+    /*
+     * ⚠️ A WALL PANEL FOLLOWS ITS WALL'S SCHEDULES ONLY, in the wall's one timezone. A schedule on
+     * a single panel switched that panel alone and tore the picture across the wall, and panels
+     * reporting different zones would switch an hour apart. Every member reading the same rows on
+     * the same clock is what keeps the wall one picture. (A wall member is in no group: joining a
+     * wall removes it from its groups.)
+     */
+    const wallId = device.wall_id && hasWallSchedules() ? device.wall_id : null;
+    const schedules = wallId
+      ? db.prepare(`SELECT s.* FROM schedules s WHERE s.enabled = 1 AND s.wall_id = ?
+          ORDER BY s.priority DESC, s.created_at ASC`).all(wallId)
+      : db.prepare(`
       SELECT s.*
       FROM schedules s
       WHERE s.enabled = 1
@@ -46,7 +57,7 @@ function evaluateSchedules(ioOverride) {
         s.created_at ASC
     `).all(device.id, device.id);
 
-    const active = schedules.find(s => isScheduleActiveNow(s, now, deviceTz(device)));
+    const active = schedules.find(s => isScheduleActiveNow(s, now, wallId ? wallClockTz(wallId, device) : deviceTz(device)));
 
     /*
      * ⚠️ A schedule writes its OWN columns and never touches devices.playlist_id or layout_id.
@@ -85,6 +96,22 @@ function evaluateSchedules(ioOverride) {
 // are stored as device-local wall-clock datetimes, so we compare them to a device-local
 // "now". tz === null (no override AND no reported zone) falls back to the server clock,
 // preserving the pre-existing behaviour for un-migrated / non-reporting devices.
+// The wall's clock: its leader's zone, else the oldest member that reports one (routes/schedules
+// wallTz, same rule), else this panel's own.
+function wallClockTz(wallId, device) {
+  const wall = db.prepare('SELECT leader_device_id FROM video_walls WHERE id = ?').get(wallId);
+  const leader = wall && wall.leader_device_id ? db.prepare('SELECT * FROM devices WHERE id = ?').get(wall.leader_device_id) : null;
+  if (leader && deviceTz(leader)) return deviceTz(leader);
+  const m = db.prepare(`SELECT d.* FROM devices d JOIN video_wall_devices v ON v.device_id = d.id
+    WHERE v.wall_id = ? AND COALESCE(NULLIF(d.timezone, 'UTC'), d.reported_timezone) IS NOT NULL ORDER BY d.created_at LIMIT 1`).get(wallId);
+  return (m && deviceTz(m)) || deviceTz(device);
+}
+let _hasWallSchedules = null;
+function hasWallSchedules() {
+  if (_hasWallSchedules === null) _hasWallSchedules = db.prepare('PRAGMA table_info(schedules)').all().some((c) => c.name === 'wall_id');
+  return _hasWallSchedules;
+}
+
 function deviceTz(device) {
   const override = (device.timezone && device.timezone !== 'UTC') ? device.timezone : null;
   return override || device.reported_timezone || null;

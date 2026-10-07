@@ -153,6 +153,20 @@ export function render(container) {
         <input type="text" id="hdmiInName" class="input" placeholder="${t('content.hdmi_in_name_placeholder')}">
         <button class="btn btn-primary" id="addHdmiInBtn">${t('content.hdmi_in_add_btn')}</button>
       </div>
+      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+          </svg>
+          ${t('content.hold')}
+        </div>
+        <p style="font-size:12px;color:var(--text-muted)">${t('content.hold_desc')}</p>
+        <select id="holdMode" class="input">
+          <option value="freeze">${t('content.hold_freeze')}</option>
+          <option value="blank">${t('content.hold_blank')}</option>
+        </select>
+        <button class="btn btn-primary" id="addHoldBtn">${t('content.hold_add_btn')}</button>
+      </div>
     </div>
     </div>
 
@@ -297,6 +311,17 @@ export function render(container) {
       await api.addHlsContent('hdmi://' + port, name || (port ? 'HDMI ' + port : 'HDMI input'));
       showToast(t('content.toast.hdmi_in_added'), 'success');
       document.getElementById('hdmiInName').value = '';
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // A hold: nothing new for its duration (freeze or blank) — how screens take turns (lib/hold-item.js).
+  document.getElementById('addHoldBtn').addEventListener('click', async () => {
+    try {
+      await api.addHoldContent(document.getElementById('holdMode').value);
+      showToast(t('content.toast.hold_added'), 'success');
       loadContent();
     } catch (err) {
       showToast(err.message, 'error');
@@ -632,6 +657,13 @@ async function loadContent() {
                 </svg>
                 <span style="font-size:10px;color:var(--text-muted)">${t('content.type_bundle_short')}</span>
               </div>`
+          : c.mime_type === 'application/x-st-hold'
+            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                </svg>
+                <span style="font-size:10px;color:var(--text-muted)">${c.remote_url === 'hold://freeze' ? t('content.hold_freeze') : t('content.hold_blank')}</span>
+              </div>`
           : c.mime_type === 'video/hdmi-in'
             ? `<div class="video-icon" style="flex-direction:column;gap:4px">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -662,7 +694,7 @@ async function loadContent() {
           <div class="content-item-name" title="${esc(c.filename)}">${esc(c.filename)}</div>
           ${Array.isArray(c.tags) && c.tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${c.tags.map((tg) => `<span data-tag="${esc(tg)}" style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);cursor:pointer">#${esc(tg)}</span>`).join('')}</div>` : ''}
           <div class="content-item-size">
-            ${c.mime_type === 'video/hdmi-in' ? t('content.type_hdmi_in') : c.mime_type === 'video/hls' || c.mime_type === 'video/rtsp' ? t('content.type_live') : c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
+            ${c.mime_type === 'application/x-st-hold' ? t('content.type_hold') : c.mime_type === 'video/hdmi-in' ? t('content.type_hdmi_in') : c.mime_type === 'video/hls' || c.mime_type === 'video/rtsp' ? t('content.type_live') : c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
             ${c.duration_sec ? ` &middot; ${Math.floor(c.duration_sec / 60)}:${String(Math.floor(c.duration_sec % 60)).padStart(2, '0')}` : ''}
             ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
             ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}

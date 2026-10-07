@@ -43,7 +43,11 @@ class WallController(
         val player: Rect,
         val isLeader: Boolean,
         val rotation: Int,
-        val mode: Mode = Mode.WALL
+        val mode: Mode = Mode.WALL,
+        // Wall zones (WallZoneRenderer): the wall has a layout and every zone runs on the shared
+        // clock. The transform still applies; the leader/follower relay does NOT — it carries ONE
+        // index and ONE position, and a layout has a timeline per zone.
+        val canvasLayout: Boolean = false
     )
     private val WallConfig.isGroup: Boolean get() = mode == Mode.GROUP
 
@@ -52,11 +56,26 @@ class WallController(
     private var tick: Runnable? = null
 
     val isActive: Boolean get() = config != null
+    /** A real video wall (not a sync group): this controller owns rootView's slice transform. */
+    val isWall: Boolean get() = config?.mode == Mode.WALL
 
     /** Enter/refresh wall mode for the given config (idempotent; handles role flips). */
     fun apply(cfg: WallConfig) {
         config = cfg
         Log.i("WallController", "apply wall=${cfg.wallId} isLeader=${cfg.isLeader}")
+
+        if (cfg.canvasLayout && !cfg.isGroup) {
+            // Wall zones: the slice transform only. No leader tick, no sync request, and the
+            // fullscreen player is unused (MainActivity stops it), so it is told to stay silent and
+            // never self-advance should anything start it.
+            applyTransform(cfg)
+            media.setWallMode(true)
+            media.setWallMute(true)
+            playlist.setWallFollower(true)
+            media.setVideoLooping(false)
+            stopTimer()
+            return
+        }
 
         // WALL-only spatial bits — a group syncs timing only, full-screen, per-item mute honored.
         applyTransform(if (cfg.isGroup) null else cfg)   // size/translate root view (wall) or clear (group)
@@ -110,7 +129,7 @@ class WallController(
 
     private fun emitNow() {
         val c = config ?: return
-        if (!c.isLeader) return
+        if (!c.isLeader || c.canvasLayout) return   // wall zones: nothing to relay
         val item = playlist.currentItem ?: return
         val pos = if (media.isPlayingVideo()) {
             media.currentPositionMs() / 1000f
@@ -127,6 +146,7 @@ class WallController(
     fun onSync(data: JSONObject) {
         val c = config ?: return
         if (c.isLeader) return
+        if (c.canvasLayout) return                  // each zone keeps its own place on the shared clock
         if (data.optString(c.idField()) != c.wallId) return
 
         val leaderIdx = data.optInt("current_index", -1)
@@ -158,7 +178,7 @@ class WallController(
     /** Handle a follower's sync-request (leader only): broadcast position now. */
     fun onSyncRequest(data: JSONObject) {
         val c = config ?: return
-        if (!c.isLeader) return
+        if (!c.isLeader || c.canvasLayout) return
         if (data.has(c.idField()) && data.optString(c.idField()) != c.wallId) return
         emitNow()
     }

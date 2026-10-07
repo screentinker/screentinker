@@ -820,27 +820,18 @@ class PlaylistController(
     private fun slotMs(it: PlaylistItem): Long = (if (it.durationSec > 0) it.durationSec else 10).toLong() * 1000L
     fun groupScheduleTarget(syncedNowMs: Long): GroupTarget? {
         if (items.isEmpty()) return null
-        var acc = 0L
-        val slots = ArrayList<Triple<Int, Long, Long>>()   // index, startMs, durMs
-        for (i in items.indices) {
-            if (!scheduleAllows(items[i])) continue
-            // A dwell-0 live HLS channel is INFINITE (its stream never ends and it declares no finite
-            // slot length). On the clock scheduler it would swallow the whole period and desync every
-            // synced member, so it is INELIGIBLE here and skipped. A dwell>0 live channel has a finite
-            // slot (its durationSec) and participates normally. Solo playback is unaffected — it never
-            // calls this; it plays the channel and holds via scheduleLiveDwellRecheck().
-            if (isLiveStream(items[i]) && items[i].durationSec <= 0) continue
-            val d = slotMs(items[i]); slots.add(Triple(i, acc, d)); acc += d
-        }
-        if (slots.isEmpty() || acc <= 0L) return null
-        val period = acc
-        val phase = ((syncedNowMs % period) + period) % period
-        var chosenIdx = slots.size - 1
-        for (k in slots.indices) { val s = slots[k]; if (phase >= s.second && phase < s.second + s.third) { chosenIdx = k; break } }
-        val chosen = slots[chosenIdx]
-        val next = slots[(chosenIdx + 1) % slots.size]
-        val secToBoundary = (chosen.second + chosen.third - phase) / 1000f
-        return GroupTarget(chosen.first, (phase - chosen.second) / 1000f, next.first, secToBoundary)
+        // A dwell-0 live HLS channel is INFINITE (its stream never ends and it declares no finite
+        // slot length). On the clock scheduler it would swallow the whole period and desync every
+        // synced member, so it is INELIGIBLE here and skipped. A dwell>0 live channel has a finite
+        // slot (its durationSec) and participates normally. Solo playback is unaffected — it never
+        // calls this; it plays the channel and holds via scheduleLiveDwellRecheck().
+        // The rule itself lives in WallZones.target, shared with every wall zone, so the group
+        // scheduler and a wall layout can never disagree about where a timeline is.
+        val t = WallZones.target(
+            items.map { WallZones.SlotItem(it.durationSec, scheduleAllows(it), isLiveStream(it)) },
+            syncedNowMs
+        ) ?: return null
+        return GroupTarget(t.index, t.posSec, t.nextIndex, t.secToBoundary)
     }
 
     // Playable NOW = schedule-active AND its content is downloaded/available — and, offline, not an

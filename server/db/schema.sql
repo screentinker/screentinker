@@ -271,7 +271,9 @@ CREATE TABLE IF NOT EXISTS schedules (
     color           TEXT DEFAULT '#3B82F6',
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    CHECK ((device_id IS NOT NULL AND group_id IS NULL) OR (device_id IS NULL AND group_id IS NOT NULL))
+    -- A schedule targets exactly one of: a screen, a group, a video wall (whole wall, so it never tears).
+    wall_id         TEXT REFERENCES video_walls(id) ON DELETE CASCADE,
+    CHECK ((device_id IS NOT NULL) + (group_id IS NOT NULL) + (wall_id IS NOT NULL) = 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_device ON schedules(device_id, enabled);
