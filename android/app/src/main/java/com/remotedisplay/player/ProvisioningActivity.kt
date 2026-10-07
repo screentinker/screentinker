@@ -23,6 +23,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.service.WebSocketService
+import com.remotedisplay.player.util.CallbackOwnership
 
 class ProvisioningActivity : AppCompatActivity() {
 
@@ -49,6 +50,11 @@ class ProvisioningActivity : AppCompatActivity() {
     // Fix 2 (settle window): ticks the "re-pairing available in Xs" countdown while the server's
     // #150 reclaim hold is in effect, so the screen is stable and honest instead of flickering.
     private var repairTicker: Runnable? = null
+
+    // The callbacks THIS Activity installed, so it can drop exactly those and nothing else (#508).
+    private var ownPaired: ((String, String) -> Unit)? = null
+    private var ownUnpaired: (() -> Unit)? = null
+    private var ownRegistered: ((String) -> Unit)? = null
 
     companion object {
         // How long to sit on "Connecting to server…" before assuming the URL is wrong.
@@ -253,7 +259,7 @@ class ProvisioningActivity : AppCompatActivity() {
     }
 
     private fun setupServiceCallbacks() {
-        wsService?.onRegistered = { deviceId ->
+        ownRegistered = { deviceId ->
             runOnUiThread {
                 registered = true
                 cancelStuckTimer()
@@ -275,7 +281,7 @@ class ProvisioningActivity : AppCompatActivity() {
         // Fix 2: a REPEAT rejection while we're already on the re-pair screen must NOT re-navigate
         // (that caused the flicker). Stay put and keep the countdown ticking (the service extended
         // the hold). Overriding MainActivity's stale onUnpaired also stops it firing a new Activity.
-        wsService?.onUnpaired = {
+        ownUnpaired = {
             runOnUiThread {
                 repairMode = true
                 serverSection.visibility = View.GONE
@@ -286,7 +292,7 @@ class ProvisioningActivity : AppCompatActivity() {
             }
         }
 
-        wsService?.onPaired = { deviceId, name ->
+        ownPaired = { deviceId, name ->
             runOnUiThread {
                 // ONE-SHOT. This callback's only job is the hand-off to MainActivity, but it was
                 // being left installed on a service that OUTLIVES this Activity — and the server
@@ -305,20 +311,13 @@ class ProvisioningActivity : AppCompatActivity() {
                 finish()
             }
         }
-    }
+        wsService?.onRegistered = ownRegistered
+        wsService?.onUnpaired = ownUnpaired
+        wsService?.onPaired = ownPaired
 
-    /**
-     * Drop the callbacks this Activity installed on the long-lived service. MainActivity never
-     * assigns onRegistered/onUnpaired/onPaired, so nothing else would ever overwrite them — they
-     * would keep firing into a destroyed Activity for the life of the process (and keep it alive).
-     */
-    private fun clearServiceCallbacks() {
-        try {
-            wsService?.onPaired = null
-            wsService?.onUnpaired = null
-            wsService?.onRegistered = null
-        } catch (_: Throwable) { }
-
+        // ⚠️ This block belongs HERE, at bind time. 83c9bc5a inserted clearServiceCallbacks()'s header
+        // above it, which moved it into the clear — so it stopped running on bind, and ran on pairing
+        // and in onDestroy instead, where it restarted the countdown ticker on a destroyed screen.
         // Re-pair path: the socket is usually already up (service kept running). Make sure it's
         // connecting, then render any pairing code the service already issued (race-free). If we're
         // still inside the reclaim-settle hold (no code yet), the ticker shows the countdown.
@@ -330,6 +329,27 @@ class ProvisioningActivity : AppCompatActivity() {
             showPairingIfReady()
             if (wsService?.isPairingCodeLive() != true) startRepairTicker()
         }
+    }
+
+    /**
+     * Drop the callbacks this Activity installed on the long-lived service, and ONLY those.
+     *
+     * ⚠️ MainActivity installs onUnpaired and onRegistered too (since #234). This runs again in
+     * onDestroy, which usually arrives AFTER the MainActivity we handed off to has bound and installed
+     * its own — so nulling the fields outright wiped MainActivity's: a device deleted from the
+     * dashboard then never showed its new pairing code (#508), and reconnects stopped hiding the
+     * status and re-acking content. Each field is cleared only while it still holds ours.
+     */
+    private fun clearServiceCallbacks() {
+        val svc = wsService
+        if (svc != null) {
+            try {
+                if (CallbackOwnership.isOwn(svc.onPaired, ownPaired)) svc.onPaired = null
+                if (CallbackOwnership.isOwn(svc.onUnpaired, ownUnpaired)) svc.onUnpaired = null
+                if (CallbackOwnership.isOwn(svc.onRegistered, ownRegistered)) svc.onRegistered = null
+            } catch (_: Throwable) { }
+        }
+        ownPaired = null; ownUnpaired = null; ownRegistered = null
     }
 
     override fun onDestroy() {
