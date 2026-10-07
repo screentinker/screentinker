@@ -92,6 +92,7 @@ class PlaylistController(
         // this, so a bad/zero duration on any path can't peg the main thread (see #widget
         // zero-duration self-loop — a solo fullscreen widget with duration_sec=0).
         const val MIN_ADVANCE_MS = 500L
+        const val OFFLINE_COVER_RECHECK_MS = 15_000L
     }
 
     private val items = mutableListOf<PlaylistItem>()
@@ -142,6 +143,11 @@ class PlaylistController(
      */
     private var contentUsable: (PlaylistItem) -> Boolean = { false }
     fun setContentUsableCheck(f: (PlaylistItem) -> Boolean) { contentUsable = f }
+
+    // Offline fallback (OfflineGate): can this item load right now? Injected like the checks above;
+    // the default always says yes, so a controller that is not given one behaves exactly as before.
+    private var cannotLoad: (PlaylistItem) -> Boolean = { false }
+    fun setOfflineCheck(f: (PlaylistItem) -> Boolean) { cannotLoad = f }
 
     // Slide audio. Injected like contentReady above, for the same reason: this class should not
     // know where the server URL is stored, and a controller with neither set still behaves exactly
@@ -586,6 +592,7 @@ class PlaylistController(
         cancelAdvance()
         cancelRetry()
         cancelPendingSwapDeadline()   // else a stopped controller can still fire next()
+        cancelCover(); offlineCoverShowing = false; failingSince = 0L
         hasContentOnScreen = false
         pendingItems = null
         pendingSuccessorId = null
@@ -712,7 +719,9 @@ class PlaylistController(
     private fun playCurrentItem() {
         cancelAdvance()
         cancelRetry()
+        offlineCoverShowing = false
         val item = currentItem ?: return
+        if (!OfflineGate.needsNetwork(item)) { failingSince = 0L; cancelCover() }
         itemStartedAt = System.currentTimeMillis()
         // #234: remember where we are so a controller rebuilt seconds from now can carry on.
         try { saveResume?.invoke(currentIndex, itemStartedAt) } catch (_: Throwable) {}
@@ -834,13 +843,104 @@ class PlaylistController(
         return GroupTarget(chosen.first, (phase - chosen.second) / 1000f, next.first, secToBoundary)
     }
 
-    // Playable NOW = schedule-active AND its content is downloaded/available.
+    // Playable NOW = schedule-active AND its content is downloaded/available — and, offline, not an
+    // item that needs the network while something cached could take its turn (OfflineGate, point 1).
     private fun playableNow(i: Int): Boolean =
-        i in items.indices && scheduleAllows(items[i]) && contentReady(items[i])
+        i in items.indices && scheduleAllows(items[i]) && contentReady(items[i]) && !offlineSkip(i)
 
     /** Scheduled, and we hold bytes for it — but their revision could not be confirmed. */
     private fun playableStale(i: Int): Boolean =
-        i in items.indices && scheduleAllows(items[i]) && contentUsable(items[i])
+        i in items.indices && scheduleAllows(items[i]) && contentUsable(items[i]) && !offlineSkip(i)
+
+    private fun hasLocalBytes(it: PlaylistItem): Boolean = contentReady(it) || contentUsable(it)
+
+    private fun offlineSkip(i: Int): Boolean =
+        OfflineGate.shouldSkip(cannotLoad, items, i, ::scheduleAllows, ::hasLocalBytes)
+
+    /*
+     * OFFLINE FALLBACK, the half that reacts to an item ACTUALLY failing (OfflineGate, point 2).
+     *
+     * failingSince is the start of the current run of web-load failures, and it survives the playlist
+     * re-showing the same failing item on its timer — that is what lets a 10-second widget still
+     * reach the 30-second cover instead of restarting the count every turn. Cleared by a successful
+     * load and by anything that does not need the network taking the screen.
+     */
+    private var failingSince = 0L
+    private var offlineCoverShowing = false
+    private var coverRunnable: Runnable? = null
+
+    /** The fullscreen web item on screen failed to load (MainActivity, from WebViewSupport). */
+    fun onNetworkItemFailed() {
+        val item = currentItem ?: return
+        if (!isRunning || held || wallFollower || offlineCoverShowing || !OfflineGate.needsNetwork(item)) return
+        val now = System.currentTimeMillis()
+        if (failingSince == 0L) failingSince = now
+        // Something cached can play instead: give it the turn now. The failure has already been
+        // recorded against this item, so the selection below passes over it (and over every network
+        // item, if the server is unreachable too).
+        if (OfflineGate.hasOfflineAlternative(items, ::scheduleAllows, ::hasLocalBytes)) {
+            Log.i("PlaylistController", "offline: ${item.filename} failed to load — playing cached content instead")
+            next()
+            return
+        }
+        // Nothing cached: the page stays hidden and keeps retrying. After a sustained run, cover it
+        // with the standby image if there is one (no standby = the hidden, retrying page is all
+        // there is, which is still better than an error page).
+        if (buildDefaultItem() == null) return
+        if (OfflineGate.shouldCover(failingSince, now)) { showOfflineCover(); return }
+        if (coverRunnable == null) {
+            val r = Runnable {
+                coverRunnable = null
+                val cur = currentItem
+                if (failingSince > 0L && cur != null && OfflineGate.needsNetwork(cur) && !offlineCoverShowing) showOfflineCover()
+            }
+            coverRunnable = r
+            handler.postDelayed(r, maxOf(MIN_ADVANCE_MS, failingSince + OfflineGate.COVER_AFTER_MS - now))
+        }
+    }
+
+    /** A web load succeeded: the run of failures is over. */
+    fun onNetworkItemRecovered() {
+        failingSince = 0L
+        cancelCover()
+    }
+
+    private fun cancelCover() {
+        coverRunnable?.let { handler.removeCallbacks(it) }
+        coverRunnable = null
+    }
+
+    /*
+     * Standby image over a web item that cannot load. Not an advance: currentIndex stays on the
+     * failing item and no advance timer runs, so the playlist does not churn black-cover-black while
+     * the network is gone. Every recheck asks two questions — could the item load now (the server is
+     * reachable and its last failure has aged out: re-show it, which reloads it), or has something cached become playable (a download finished) — and
+     * otherwise leaves the cover up.
+     */
+    private fun showOfflineCover() {
+        val dflt = buildDefaultItem() ?: return
+        if (!dflt.isRemote && !hasLocalBytes(dflt)) return
+        Log.i("PlaylistController", "offline: covering ${currentItem?.filename} with the standby image")
+        cancelAdvance()
+        cancelCover()
+        offlineCoverShowing = true
+        onItemChanged(dflt)
+        defaultShowing = false
+        scheduleCoverRecheck()
+    }
+
+    private fun scheduleCoverRecheck() {
+        cancelRetry()
+        retryRunnable = Runnable {
+            if (!isRunning || !offlineCoverShowing) return@Runnable
+            when {
+                currentItem?.let { !cannotLoad(it) } == true -> { Log.i("PlaylistController", "retrying ${currentItem?.filename}"); playCurrentItem() }
+                OfflineGate.hasOfflineAlternative(items, ::scheduleAllows, ::hasLocalBytes) -> next()
+                else -> scheduleCoverRecheck()
+            }
+        }
+        handler.postDelayed(retryRunnable!!, OFFLINE_COVER_RECHECK_MS)
+    }
 
     /*
      * Strict first, stale only if strict finds nothing. Every selection goes through these two so a
