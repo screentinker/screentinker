@@ -43,7 +43,7 @@ import { t, tn } from '../i18n.js';
 /** Can this library item go in a head office slot? Mirrors server lib/corporate/compose.js isUnboundedItem. */
 function slotPlayableItem(item, allowVideo) {
   const mime = String(item.mime_type || '').toLowerCase();
-  if (mime === 'video/hls' || mime === 'video/rtsp' || mime === 'video/youtube') return false;
+  if (mime === 'video/hls' || mime === 'video/rtsp' || mime === 'video/hdmi-in' || mime === 'video/youtube') return false;
   const timed = mime.startsWith('video/') || mime.startsWith('audio/');
   if (timed && !allowVideo) return false;
   if (timed && !(Number(item.duration_sec) > 0)) return false;

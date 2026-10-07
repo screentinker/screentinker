@@ -1,4 +1,4 @@
-# Live TV, IPTV and camera feeds
+# Live TV, IPTV, camera feeds and HDMI input
 
 Play a **live stream on a screen**: an IPTV/TV channel over HLS, or an `rtsp://` camera/NVR on an
 Android player. A live stream is an ordinary playlist item, so it schedules, sits in a zone, and
@@ -93,6 +93,40 @@ and the camera only ever sees the single pull from the bridge.
 
 > HLS adds a few seconds of latency versus native RTSP. For a lobby/overview camera that is fine; for
 > a low-latency spot on a single Android panel, prefer native `video/rtsp`.
+
+## Live input: the screen's own HDMI IN
+
+An Android TV box with an **HDMI input** — the Fire TV Cube (3rd gen) is the tested one — can show
+whatever is plugged into it as an ordinary playlist item: a cable or satellite box, a games console, a
+camera, another signage player.
+
+- **Add it:** Content → **Live input (HDMI IN)**, pick the input (or "First HDMI input"), give it a
+  name. It is stored as `video/hdmi-in` with `remote_url` `hdmi://<port>` (`hdmi://` = the first
+  input). There is nothing to fetch and nothing leaves the box.
+- **Duration is dwell**, like a live stream: 5 minutes by default, `0` = stay until skipped.
+- **Zones:** it plays boxed into a zone, and other zones can sit **on top of it** — a channel logo, a
+  lower-third, a score bug — when they have a higher `z_index` and transparent content (a PNG with
+  alpha, or a web widget with a transparent background).
+- **Who gets it:** only a player that **found an HDMI input on that device** declares
+  `playback.hdmi_in`, and the server sends the item to nobody else. A Fire TV Stick, a phone, a web
+  player, Tizen, BrightSign, the Pi and e-ink skip it, and the rest of the playlist plays as normal.
+- **No picture:** a source that is off or unplugged shows nothing for 15 s after tuning (10 s if the
+  picture drops mid-play), then the item is skipped like a dead stream. A zone that holds only the
+  input re-tunes every 10 s instead, so plugging the cable back in brings the picture back on its own
+  (verified on a Fire TV Cube by pulling the cable).
+
+> ⚠️ **It can never be captured.** The picture is a hardware video layer. Fire OS refuses
+> `screencap` while it is on screen, and an app reading its own window gets black where it sits. So
+> the dashboard screenshot shows a **"Live HDMI input" card in the input's place**, with everything
+> around and above it (other zones, overlays) captured normally, and the dashboard preview shows a
+> card too. Recording or re-streaming the input is not possible.
+
+**Size the zone to the source.** The box scales the input in hardware and always keeps its aspect
+ratio, so a 16:9 source in a zone that is not 16:9 is letterboxed. On a 1080p screen a zone 75% wide
+and 75% tall is exactly 1440 × 810. If there are still black bars inside the picture, check the
+source's own output: a player sending 1920 × 1200 (16:10) is pillarboxed into any 16:9 space.
+
+Untested so far: HDCP-protected sources (most cable boxes), and audio levels from the input.
 
 ## Security and privacy
 

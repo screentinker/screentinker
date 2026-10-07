@@ -542,12 +542,15 @@ function buildPlaylistPayloadUnchecked(deviceId) {
    */
   const deviceSupportsHls = capsLib.supports(device, 'playback.hls');
   const deviceSupportsRtsp = capsLib.supports(device, 'playback.rtsp');
+  // HDMI IN (video/hdmi-in): only a player that found an input on THIS device declares it.
+  const deviceSupportsHdmiIn = capsLib.supports(device, 'playback.hdmi_in');
   const dropLiveIfUnsupported = (items) => {
-    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsp)) return items;
+    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsp && deviceSupportsHdmiIn)) return items;
     return items.filter((a) => {
       if (!a) return true;
       if (a.mime_type === 'video/hls') return deviceSupportsHls;
       if (a.mime_type === 'video/rtsp') return deviceSupportsRtsp;
+      if (a.mime_type === 'video/hdmi-in') return deviceSupportsHdmiIn;
       return true;
     });
   };

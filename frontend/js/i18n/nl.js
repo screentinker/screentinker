@@ -634,6 +634,11 @@ export default {
     'content.hls_url_placeholder': 'https://...m3u8  of  rtsp://user:pass@10.0.0.5/stream',
     'content.hls_name_placeholder': 'Kanaalnaam (optioneel)',
     'content.hls_add_btn': 'Livestream toevoegen',
+    'content.hdmi_in': 'Live-ingang (HDMI IN)',
+    'content.hdmi_in_desc': 'Toon wat er op de HDMI-ingang van het scherm is aangesloten: een settopbox, een console, een andere speler. Speelt alleen op Android TV-boxen met een HDMI-ingang, zoals de Fire TV Cube; andere schermen slaan het over. Kan niet worden voorvertoond of vastgelegd.',
+    'content.hdmi_in_first': 'Eerste HDMI-ingang',
+    'content.hdmi_in_name_placeholder': 'Naam (optioneel)',
+    'content.hdmi_in_add_btn': 'Live-ingang toevoegen',
     // Search / folders
     'content.search_placeholder': 'Inhoud zoeken...',
     'content.filter_type_all': 'Alle types',
@@ -679,6 +684,7 @@ export default {
     // Item type labels
     'content.type_youtube': 'YouTube',
     'content.type_live': 'Live',
+    'content.type_hdmi_in': 'HDMI-ingang',
     'content.type_remote': 'Externe URL',
     'content.type_remote_short': 'Extern',
     'content.type_video': 'Video',
@@ -740,6 +746,7 @@ export default {
     'content.toast.remote_added': 'Externe inhoud toegevoegd',
     'content.toast.youtube_added': 'YouTube-video toegevoegd',
     'content.toast.hls_added': 'Livestream toegevoegd',
+    'content.toast.hdmi_in_added': 'Live-ingang toegevoegd',
     'content.toast.deleted': 'Inhoud verwijderd',
     'content.toast.updated': 'Inhoud bijgewerkt',
     'content.toast.uploaded_named': '{name} succesvol geüpload',

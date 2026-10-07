@@ -6578,6 +6578,18 @@
     // so the element errors SRC_NOT_SUPPORTED (or stalls) and we lazily load the VENDORED hls.js
     // (server/player/hls.light.min.js — no CDN, works on an air-gapped LAN) and attach it. Every
     // failure path skips the item (P4), never a stuck decoder.
+    function hdmiInCard(item) {
+      const card = document.createElement('div');
+      card.style.cssText = 'width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#111;color:#ddd;font:600 4vmin system-ui,sans-serif;text-align:center';
+      const title = document.createElement('div');
+      title.textContent = 'Live input · ' + String(item.remote_url || 'hdmi://').replace(/^hdmi:\/\//i, 'HDMI ').trim();
+      const note = document.createElement('div');
+      note.style.cssText = 'font-weight:400;font-size:2.4vmin;opacity:.7;margin-top:1.5vmin';
+      note.textContent = 'Plays from the screen\u2019s HDMI IN. It can\u2019t be previewed or captured.';
+      card.appendChild(title); card.appendChild(note);
+      return card;
+    }
+
     function renderLiveStream(item, src, mount, opts) {
       const o = opts || {};
       const video = document.createElement('video');
@@ -6999,7 +7011,11 @@
 
       const isYoutube = item.mime_type === 'video/youtube';
       const isHls = item.mime_type === LIVE_MIME;
-      const isVideo = !isYoutube && !isHls && item.mime_type?.startsWith('video/');
+      // The screen's own HDMI input: only the Android player can open it, and the server never
+      // sends it to a web player — this branch is the dashboard PREVIEW, which gets the whole
+      // playlist. A card for the item's dwell instead of a <video src="hdmi://1"> that fails.
+      const isHdmiIn = item.mime_type === 'video/hdmi-in';
+      const isVideo = !isYoutube && !isHls && !isHdmiIn && item.mime_type?.startsWith('video/');
       const isImage = item.mime_type?.startsWith('image/');
       const remoteUrl = item.remote_url;
       const serverUrl = config.serverUrl;
@@ -7013,6 +7029,9 @@
           createYoutubeEmbed(src, item, mount);
         } else if (isHls) {
           renderLiveStream(item, src, mount, { forceMuted: forceMuted, mayAdvance: !isFollower, scheduleDriven: scheduleDriven });
+        } else if (isHdmiIn) {
+          mount.appendChild(hdmiInCard(item));
+          if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 300) * 1000);
         } else if (isVideo) {
           // Double buffer: reuse the pre-buffered element for this index if we warmed it (no black
           // hold). Its src is already set + buffered; a fresh element otherwise.

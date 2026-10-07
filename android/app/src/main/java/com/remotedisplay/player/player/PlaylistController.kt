@@ -714,7 +714,7 @@ class PlaylistController(
      * (durationSec = how long to stay on the channel), not by clip length. A dwell of 0/absent means
      * "stay until the schedule makes it ineligible"; a dwell > 0 advances on a timer like any item.
      */
-    private fun isLiveStream(item: PlaylistItem): Boolean = item.mimeType == "video/hls" || item.mimeType == "video/rtsp"
+    private fun isLiveStream(item: PlaylistItem): Boolean = item.mimeType == "video/hls" || item.mimeType == "video/rtsp" || LiveInput.isLiveInput(item.mimeType)
 
     private fun playCurrentItem() {
         cancelAdvance()

@@ -39,7 +39,7 @@ const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-
 const revisionsLib = require('../lib/revisions');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
-const { LIVE_MIME, RTSP_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl } = require('../lib/remote-url');
+const { LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl } = require('../lib/remote-url');
 
 // Multer captures file.originalname directly from the multipart filename header,
 // bypassing sanitizeBody, so it is cleaned here instead.
@@ -617,7 +617,8 @@ router.post('/youtube', async (req, res) => {
 // a WAN pull of a 24/7 stream across every screen). We trust the URL SHAPE; a junk
 // stream fails to a skip on the player. An http(s) .m3u8 becomes video/hls (all players);
 // an rtsp:// URL becomes video/rtsp (Android/ExoPlayer only — the deviceSocket strip keeps
-// it off screens that cannot open rtsp). Private / .local hosts and rtsp credentials are
+// it off screens that cannot open rtsp). hdmi://<port> becomes video/hdmi-in: the screen's own HDMI
+// input, Android TV boxes that have one only. Private / .local hosts and rtsp credentials are
 // allowed because the screen, not the server, opens the URL on its own LAN.
 router.post('/hls', (req, res) => {
   try {
@@ -946,7 +947,7 @@ router.put('/:id', (req, res) => {
    * is validated by a different gate (player-opened, LAN allowed) than a server-fetched
    * remote. So turning a youtube/web/video row INTO a live stream, or a live stream into
    * anything else, is refused here — delete it and add the right kind instead. Switching a
-   * live item BETWEEN transports (video/hls <-> video/rtsp) is allowed: it is still live.
+   * live item BETWEEN transports (video/hls <-> video/rtsp <-> video/hdmi-in) is allowed: it is still live.
    */
   const wasLive = LIVE_MIMES.indexOf(content.mime_type) !== -1;
   const targetMime = mime_type !== undefined ? mime_type : content.mime_type;
@@ -965,7 +966,9 @@ router.put('/:id', (req, res) => {
       // uses the player-opened gate for its transport (private hosts / rtsp creds allowed);
       // everything else stays on the SSRF gate.
       if (targetIsLive) {
-        const urlErr = targetMime === RTSP_MIME ? validateRtspUrl(remote_url) : validatePlayerOpenedUrl(remote_url);
+        const urlErr = targetMime === RTSP_MIME ? validateRtspUrl(remote_url)
+          : targetMime === HDMI_IN_MIME ? validateHdmiInUrl(remote_url)
+          : validatePlayerOpenedUrl(remote_url);
         if (urlErr) return res.status(urlErr.status).json({ error: urlErr.error });
         if (targetMime === LIVE_MIME && !looksLikeHlsUrl(remote_url)) {
           return res.status(400).json({ error: 'That does not look like an HLS stream. The URL should point at an .m3u8 playlist.' });

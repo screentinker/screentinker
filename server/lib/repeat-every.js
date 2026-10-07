@@ -31,7 +31,7 @@ function itemSeconds(it) {
 }
 
 function isOpenEnded(it) {
-  return Number(it && it.duration_sec) === 0 && /^video\/(hls|rtsp)$/.test(String((it && it.mime_type) || ''));
+  return Number(it && it.duration_sec) === 0 && /^video\/(hls|rtsp|hdmi-in)$/.test(String((it && it.mime_type) || ''));
 }
 
 function everyOf(it) {

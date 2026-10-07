@@ -28,7 +28,7 @@ export async function openSlotDialog(playlist, slot, onSaved) {
     // A fallback plays when a store leaves the slot empty, so it must end like anything in a slot.
     content = (c.items || []).filter((x) => {
       const m = String(x.mime_type || '');
-      if (m === 'video/hls' || m === 'video/rtsp' || m === 'video/youtube') return false;
+      if (m === 'video/hls' || m === 'video/rtsp' || m === 'video/hdmi-in' || m === 'video/youtube') return false;
       if ((m.startsWith('video/') || m.startsWith('audio/')) && !(Number(x.duration_sec) > 0)) return false;
       return true;
     });

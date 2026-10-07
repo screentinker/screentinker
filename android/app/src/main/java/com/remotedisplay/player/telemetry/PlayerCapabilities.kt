@@ -119,6 +119,14 @@ object PlayerCapabilities {
 
             // ---- conditional on runtime state -------------------------------------------------------
 
+            // The screen's own HDMI input as an item (LiveInput). Only when the system actually lists
+            // an HDMI passthrough input this app can tune — a Fire TV Cube or an Android TV box with
+            // HDMI in. A Fire TV Stick, a phone or a tablet has none, and the server's strip then
+            // keeps live-input items off it rather than sending something it would only skip.
+            try {
+                if (com.remotedisplay.player.player.LiveInputPlayer.deviceHasInput(context)) caps += "playback.hdmi_in"
+            } catch (_: Throwable) {}
+
             // Display power is asymmetric and only honest when BOTH halves exist. screen_off needs
             // owner, device-admin FORCE_LOCK, or accessibility; screen_on now works anywhere via a
             // wake lock (WAKE_LOCK is a normal permission). So the binding constraint is the OFF

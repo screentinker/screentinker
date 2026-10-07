@@ -5290,6 +5290,18 @@ function wireSoloVideoPlayback(video, item, src, opts) {
     }
   }, 2e3);
 }
+function hdmiInCard(item) {
+  const card = document.createElement("div");
+  card.style.cssText = "width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#111;color:#ddd;font:600 4vmin system-ui,sans-serif;text-align:center";
+  const title = document.createElement("div");
+  title.textContent = "Live input \xB7 " + String(item.remote_url || "hdmi://").replace(/^hdmi:\/\//i, "HDMI ").trim();
+  const note = document.createElement("div");
+  note.style.cssText = "font-weight:400;font-size:2.4vmin;opacity:.7;margin-top:1.5vmin";
+  note.textContent = "Plays from the screen\u2019s HDMI IN. It can\u2019t be previewed or captured.";
+  card.appendChild(title);
+  card.appendChild(note);
+  return card;
+}
 function renderLiveStream(item, src, mount, opts) {
   const o = opts || {};
   const video = document.createElement("video");
@@ -5645,7 +5657,8 @@ function renderContent(item) {
   const isFollower = scheduleDriven;
   const isYoutube = item.mime_type === "video/youtube";
   const isHls = item.mime_type === LIVE_MIME;
-  const isVideo = !isYoutube && !isHls && ((_a = item.mime_type) == null ? void 0 : _a.startsWith("video/"));
+  const isHdmiIn = item.mime_type === "video/hdmi-in";
+  const isVideo = !isYoutube && !isHls && !isHdmiIn && ((_a = item.mime_type) == null ? void 0 : _a.startsWith("video/"));
   const isImage = (_b = item.mime_type) == null ? void 0 : _b.startsWith("image/");
   const remoteUrl = item.remote_url;
   const serverUrl = config.serverUrl;
@@ -5657,6 +5670,9 @@ function renderContent(item) {
       createYoutubeEmbed(src, item, mount);
     } else if (isHls) {
       renderLiveStream(item, src, mount, { forceMuted, mayAdvance: !isFollower, scheduleDriven });
+    } else if (isHdmiIn) {
+      mount.appendChild(hdmiInCard(item));
+      if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 300) * 1e3);
     } else if (isVideo) {
       const preloaded = scheduleDriven ? takeGroupPreload(currentIndex) : null;
       const video = preloaded || document.createElement("video");

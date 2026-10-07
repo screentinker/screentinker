@@ -1187,6 +1187,11 @@ class MainActivity : AppCompatActivity() {
         // #473: while a visitor uses an interactive page the operator sees a blank frame and cannot
         // inject input — they would otherwise watch (or type into) a stranger's form.
         wsService?.privacyActive = { kiosk?.sessionActive == true }
+        // The HDMI input is a hardware plane no capture can read (LiveInput): the service sends a
+        // placeholder card while one is up, full screen or in any zone.
+        wsService?.isShowingLiveInput = {
+            (::mediaPlayer.isInitialized && mediaPlayer.isShowingLiveInput()) || zoneManager?.hasLiveInput() == true
+        }
         wsService?.onCaptureScreenshot = {
             screenshotCapture.captureView(captureRoot, 40)
         }
@@ -1477,6 +1482,18 @@ class MainActivity : AppCompatActivity() {
         // for.
         if (item.mimeType == ItemTiming.BUNDLE_MIME) {
             playBundle(item)
+            return
+        }
+
+        // The screen's own HDMI input (LiveInput). Before the remote-URL branch below: it carries a
+        // remote_url (hdmi://<port>) but there is nothing to stream. No input on this device — the
+        // server should never have sent it, but a box can lose one — is a fault like a dead stream.
+        if (com.remotedisplay.player.player.LiveInput.isLiveInput(item.mimeType)) {
+            if (!mediaPlayer.playLiveInput(item.remoteUrl ?: "hdmi://", item.muted)) {
+                Log.w("MainActivity", "No HDMI input for ${item.remoteUrl} — skipping")
+                handler.post { playlistController.onVideoFault() }
+            }
+            wsService?.sendPlaybackState(item.contentId, 0f)
             return
         }
 
