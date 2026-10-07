@@ -501,6 +501,37 @@ function refreshContentRevs(assignments) {
   }
 }
 
+/*
+ * Storage backends (lib/storage, docs/storage.md): `file_url` — an ABSOLUTE url for an item whose
+ * bytes are in a bucket: a presigned GET when this screen may fetch the bucket directly, else this
+ * server's /api/content/:id/file when APP_URL says what this server is called.
+ *
+ * ⚠️ ADDITIVE ONLY. `filepath` is untouched, so every player shipped before this keeps building
+ * /uploads/content/<filepath> — which the server answers from the bucket through its own proxy. A
+ * player that understands file_url may prefer it; none is required to. Plain local rows (no
+ * content_locations at all — every row on an install that never configured storage) get nothing,
+ * so their payloads are byte-identical to before. Never fatal: a payload without file_url plays.
+ */
+const hasStoredCopies = db.prepare('SELECT 1 FROM content_locations WHERE content_id = ? LIMIT 1');
+const contentRowForUrl = db.prepare('SELECT * FROM content WHERE id = ?');
+// Read only when an item actually has stored copies — not added to the payload's device SELECT,
+// which stays exactly the column list #336 pins.
+const deviceFetchFlags = db.prepare('SELECT workspace_id, storage_direct_fetch FROM devices WHERE id = ?');
+function stampFileUrls(items, deviceId) {
+  if (!Array.isArray(items) || !items.length) return;
+  let device;
+  for (const a of items) {
+    if (!a || !a.content_id || !a.filepath) continue;
+    try {
+      if (!hasStoredCopies.get(a.content_id)) continue;
+      if (device === undefined) device = deviceFetchFlags.get(deviceId) || null;
+      const pick = require('../lib/storage/locations').pickForPlayer(contentRowForUrl.get(a.content_id), 'asset', { device });
+      if (pick && pick.url) a.file_url = pick.url;
+      else delete a.file_url;
+    } catch (_) { /* keep the payload playable */ }
+  }
+}
+
 const { triggersForDevice, projectTrigger } = require('../lib/device-triggers');
 
 function buildPlaylistPayloadUnchecked(deviceId) {
@@ -828,6 +859,9 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   } catch (e) {
     console.warn(`[endpoints] resolve failed for ${deviceId}: ${e.message}`);
   }
+
+  stampFileUrls(assignments, deviceId);
+  if (default_content) stampFileUrls([default_content], deviceId);
 
   return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
 }

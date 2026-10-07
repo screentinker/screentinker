@@ -1139,58 +1139,71 @@ module.exports = function meshRoutes(db, { requireAuth }) {
     // from the difference, and there is nothing useful it could do with it.
     if (!redeemed.ok) return res.status(404).json({ error: redeemed.reason });
 
-    const abs = path.join(config.contentDir, path.basename(redeemed.ticket.filepath));
-    if (!fs.existsSync(abs)) return res.status(404).json({ error: 'That file is no longer here.' });
-
-    /*
-     * ⚠️ CHECKED BEFORE IT IS SERVED — but the size on every request and the digest only when the
-     * file has actually changed.
-     *
-     * The receiving node verifies size, digest and type on arrival, so a wrong file cannot be
-     * accepted whatever this does; that is the guarantee, and it stays. What this adds is catching
-     * it HERE, where the operator who can fix it will see it, instead of as a mystery failure at a
-     * customer site. A file replaced or truncated under a live ticket is a real thing — a restore, a
-     * botched sync, a disk error — and the ticket names the bytes it was minted for.
-     *
-     * ⚠️ Re-hashing per request was the obvious version and it is wrong: a 500 MB asset pulled by
-     * forty sites would be forty full reads of a file nobody touched, on the box those sites are
-     * also fetching from. The digest is verified once per (size, mtime) and the result remembered,
-     * so a changed file is caught and an unchanged one costs a statSync.
-     */
-    let stat;
-    try { stat = fs.statSync(abs); } catch (e) {
-      return res.status(404).json({ error: 'That file is no longer here.' });
+    const local = path.join(config.contentDir, path.basename(redeemed.ticket.filepath));
+    if (!fs.existsSync(local)) {
+      // Held in a storage backend (lib/storage): fetched once into the storage cache, then served
+      // and checked below exactly like a local file.
+      const hit = require('../lib/storage/serve').rowForUploadName(db, redeemed.ticket.filepath);
+      if (hit && hit.kind === 'asset') {
+        return require('../lib/storage/locations').ensureLocalFile(hit.row, 'asset')
+          .then((p) => servePull(p || local), () => servePull(local));
+      }
     }
-    if (typeof redeemed.ticket.size === 'number' && stat.size !== redeemed.ticket.size) {
-      console.warn(`[mesh] refusing to serve ${redeemed.ticket.filepath}: ${stat.size} bytes, ` +
-                   `ticket says ${redeemed.ticket.size}`);
-      return res.status(409).json({ error: 'That file has changed since it was offered.' });
+    return servePull(local);
+
+    function servePull(abs) {
+      if (!fs.existsSync(abs)) return res.status(404).json({ error: 'That file is no longer here.' });
+
+      /*
+       * ⚠️ CHECKED BEFORE IT IS SERVED — but the size on every request and the digest only when the
+       * file has actually changed.
+       *
+       * The receiving node verifies size, digest and type on arrival, so a wrong file cannot be
+       * accepted whatever this does; that is the guarantee, and it stays. What this adds is catching
+       * it HERE, where the operator who can fix it will see it, instead of as a mystery failure at a
+       * customer site. A file replaced or truncated under a live ticket is a real thing — a restore, a
+       * botched sync, a disk error — and the ticket names the bytes it was minted for.
+       *
+       * ⚠️ Re-hashing per request was the obvious version and it is wrong: a 500 MB asset pulled by
+       * forty sites would be forty full reads of a file nobody touched, on the box those sites are
+       * also fetching from. The digest is verified once per (size, mtime) and the result remembered,
+       * so a changed file is caught and an unchanged one costs a statSync.
+       */
+      let stat;
+      try { stat = fs.statSync(abs); } catch (e) {
+        return res.status(404).json({ error: 'That file is no longer here.' });
+      }
+      if (typeof redeemed.ticket.size === 'number' && stat.size !== redeemed.ticket.size) {
+        console.warn(`[mesh] refusing to serve ${redeemed.ticket.filepath}: ${stat.size} bytes, ` +
+                     `ticket says ${redeemed.ticket.size}`);
+        return res.status(409).json({ error: 'That file has changed since it was offered.' });
+      }
+      if (redeemed.ticket.digest && !verifiedRecently(abs, stat, redeemed.ticket.digest)) {
+        console.warn(`[mesh] refusing to serve ${redeemed.ticket.filepath}: digest does not match the ticket`);
+        return res.status(409).json({ error: 'That file has changed since it was offered.' });
+      }
+
+      /*
+       * ⚠️ The response is forced to an opaque type and marked nosniff. It is a byte stream for a
+       * machine; nothing about it should ever be interpreted by a browser that happens to open the
+       * URL, and the same rule the upload routes follow applies here.
+       */
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+      res.setHeader('Cache-Control', 'private, no-store');
+      // A validator so the far side can use If-Range and refuse to stitch two different files.
+      if (redeemed.ticket.digest) res.setHeader('ETag', `"${redeemed.ticket.digest}"`);
+
+      db.prepare('UPDATE mesh_pull_tickets SET used_at = strftime(\'%s\',\'now\') WHERE id = ?')
+        .run(redeemed.ticket.id);
+
+      // res.sendFile handles Range, If-Range, 206 and 416 correctly; re-implementing that by hand is
+      // how off-by-one errors get into a byte stream.
+      return res.sendFile(abs, { dotfiles: 'deny' }, (err) => {
+        if (err && !res.headersSent) res.status(500).end();
+      });
     }
-    if (redeemed.ticket.digest && !verifiedRecently(abs, stat, redeemed.ticket.digest)) {
-      console.warn(`[mesh] refusing to serve ${redeemed.ticket.filepath}: digest does not match the ticket`);
-      return res.status(409).json({ error: 'That file has changed since it was offered.' });
-    }
-
-    /*
-     * ⚠️ The response is forced to an opaque type and marked nosniff. It is a byte stream for a
-     * machine; nothing about it should ever be interpreted by a browser that happens to open the
-     * URL, and the same rule the upload routes follow applies here.
-     */
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
-    res.setHeader('Cache-Control', 'private, no-store');
-    // A validator so the far side can use If-Range and refuse to stitch two different files.
-    if (redeemed.ticket.digest) res.setHeader('ETag', `"${redeemed.ticket.digest}"`);
-
-    db.prepare('UPDATE mesh_pull_tickets SET used_at = strftime(\'%s\',\'now\') WHERE id = ?')
-      .run(redeemed.ticket.id);
-
-    // res.sendFile handles Range, If-Range, 206 and 416 correctly; re-implementing that by hand is
-    // how off-by-one errors get into a byte stream.
-    return res.sendFile(abs, { dotfiles: 'deny' }, (err) => {
-      if (err && !res.headersSent) res.status(500).end();
-    });
   });
 
   router.get('/read/:nodeId', requireAuth, async (req, res) => {

@@ -2291,6 +2291,93 @@ const migrations = [
      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), updated_at INTEGER,
      UNIQUE (org_id, idempotency_key))`,
   "CREATE INDEX IF NOT EXISTS idx_ai_credit_reservations_pending ON ai_credit_reservations(status, created_at)",
+  /*
+   * Storage backends (lib/storage, docs/storage.md). ALL ADDITIVE: an old database boots with these
+   * tables empty and every content row keeps meaning "a file in contentDir", because absence of a
+   * content_locations row IS that meaning. Nothing is backfilled at boot — a million-row library
+   * must not gain a million location rows to say what it already said.
+   *
+   * storage_profiles: where bytes can live. org_id NULL is the instance default row (at most one —
+   * and env still wins over it, see lib/storage/index.js). credentials_enc is a secretbox blob;
+   * credentials_hint is the last 4 of the key id, the only part ever shown back.
+   * manage_scope is what ScreenTinker may WRITE or DELETE there: 'st' = only under the st/ prefix
+   * (a write profile), 'none' = nothing (a bucket attached for reference), 'all' = the operator
+   * confirmed a destructive import. Enforced in the backend wrapper, not just the UI.
+   */
+  `CREATE TABLE IF NOT EXISTS storage_profiles (
+     id TEXT PRIMARY KEY,
+     org_id TEXT,
+     name TEXT NOT NULL,
+     provider TEXT NOT NULL CHECK (provider IN ('local','s3','azure')),
+     bucket TEXT,
+     endpoint TEXT, public_endpoint TEXT, public_base_url TEXT,
+     region TEXT, prefix TEXT,
+     force_path_style INTEGER,
+     credentials_enc TEXT, credentials_hint TEXT,
+     mode TEXT NOT NULL DEFAULT 'rw' CHECK (mode IN ('rw','ro')),
+     manage_scope TEXT NOT NULL DEFAULT 'st' CHECK (manage_scope IN ('none','st','all')),
+     read_priority INTEGER NOT NULL DEFAULT 100,
+     presign INTEGER NOT NULL DEFAULT 1,
+     allow_private INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')))`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_profiles_name ON storage_profiles(COALESCE(org_id, ''), name)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_profiles_instance ON storage_profiles(COALESCE(org_id, '')) WHERE org_id IS NULL",
+  /*
+   * Every copy of a content row's bytes. role: primary (preferred read, and where it was written),
+   * replica (a verified extra copy), draining (do not write here; still READ here). kind separates
+   * the asset from its thumbnail, subtitle and retained revision copies, which travel with it.
+   * owned = 1 when ScreenTinker wrote the object; a reference import is 0 and is never deleted.
+   * storage_profile_id NULL = local contentDir, and then object_key is the basename.
+   * ref is set on kind = 'history' only: the revisions.file_ref / thumb_ref that names this copy.
+   */
+  `CREATE TABLE IF NOT EXISTS content_locations (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     content_id TEXT NOT NULL,
+     kind TEXT NOT NULL DEFAULT 'asset' CHECK (kind IN ('asset','thumb','subtitle','history')),
+     storage_profile_id TEXT,
+     object_key TEXT,
+     role TEXT NOT NULL DEFAULT 'primary' CHECK (role IN ('primary','replica','draining')),
+     state TEXT NOT NULL DEFAULT 'ready' CHECK (state IN ('pending','ready','error')),
+     owned INTEGER NOT NULL DEFAULT 1,
+     byte_digest TEXT, size INTEGER,
+     verified_at INTEGER, last_error TEXT, last_error_at INTEGER,
+     ref TEXT,
+     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')))`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_content_locations_unique ON content_locations(content_id, COALESCE(storage_profile_id, ''), COALESCE(object_key, ''))",
+  'CREATE INDEX IF NOT EXISTS idx_content_locations_object ON content_locations(storage_profile_id, object_key)',
+  'CREATE INDEX IF NOT EXISTS idx_content_locations_digest ON content_locations(storage_profile_id, byte_digest)',
+  // A denormalized pointer at the current primary, for old queries. content_locations is the truth.
+  'ALTER TABLE content ADD COLUMN storage_profile_id TEXT',
+  'ALTER TABLE content ADD COLUMN object_key TEXT',
+  // The /uploads/content/<name> miss path looks a row up by its basename; without these that is a scan per request.
+  'CREATE INDEX IF NOT EXISTS idx_content_filepath ON content(filepath)',
+  'CREATE INDEX IF NOT EXISTS idx_content_thumbnail_path ON content(thumbnail_path)',
+  // May screens fetch presigned bucket URLs directly? NULL = default (yes, when a public endpoint
+  // exists). The workspace and organization columns are added after the multitenancy phase below.
+  'ALTER TABLE devices ADD COLUMN storage_direct_fetch INTEGER',
+  /*
+   * A live migration's progress, in SQLite so a restart resumes from `cursor` instead of starting
+   * over — and so a restart can never flip a primary or delete a source by itself: only commit and
+   * drain do that, and both are operator actions. One active (copying / ready_to_commit) per org.
+   */
+  `CREATE TABLE IF NOT EXISTS storage_migrations (
+     id TEXT PRIMARY KEY,
+     org_id TEXT NOT NULL,
+     target_profile_id TEXT,
+     previous_profile_id TEXT,
+     state TEXT NOT NULL CHECK (state IN ('copying','ready_to_commit','committed','draining','done','aborted')),
+     cursor TEXT,
+     total INTEGER NOT NULL DEFAULT 0,
+     copied INTEGER NOT NULL DEFAULT 0,
+     verified INTEGER NOT NULL DEFAULT 0,
+     failed INTEGER NOT NULL DEFAULT 0,
+     skipped INTEGER NOT NULL DEFAULT 0,
+     last_error TEXT,
+     started_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     committed_at INTEGER)`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_migrations_active ON storage_migrations(org_id) WHERE state IN ('copying','ready_to_commit')",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
@@ -3126,6 +3213,19 @@ try {
   // #talk/#go2rtc: optional per-org ICE (STUN/TURN) override as a JSON array [{urls,username?,credential?}].
   // NULL -> use the global go2rtc ice_servers. Lets an org bring its own TURN.
   try { db.prepare('ALTER TABLE organizations ADD COLUMN ice_servers TEXT').run(); console.log('[migrate] organizations.ice_servers added'); } catch (_) { /* present */ }
+  // Storage backends (lib/storage): where NEW uploads in this org go (NULL = instance default;
+  // changing it never re-homes existing rows), and whether a workspace's screens may fetch
+  // presigned bucket URLs directly (NULL = yes, when a reachable endpoint exists).
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN storage_profile_id TEXT').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN storage_direct_fetch INTEGER').run(); } catch (_) { /* present */ }
+  // Per-workspace storage: the workspace's own override for new uploads (NULL = follows its
+  // organization), a profile owned by one workspace (visible to it alone), whether the org lets
+  // workspace admins choose (default off: where a tenant's bytes live is the organization's call),
+  // and the scope of a migration (NULL = org-wide, skipping workspaces that have an override).
+  try { db.prepare('ALTER TABLE workspaces ADD COLUMN storage_profile_id TEXT').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE storage_profiles ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN storage_workspace_choice INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE storage_migrations ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
   // Smart playlists (lib/smart-playlist.js): JSON rule set; NULL = an ordinary hand-built playlist.
   try { db.prepare('ALTER TABLE playlists ADD COLUMN smart_rules TEXT').run(); console.log('[migrate] playlists.smart_rules added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }

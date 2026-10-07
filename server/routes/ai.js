@@ -587,6 +587,7 @@ async function generateAndIngest({ row, prompt, width, height, name, userId, wor
     });
   } catch (e) {
     try { fs.unlinkSync(tmpPath); } catch (e2) { /* finalizeUpload may already have removed it */ }
+    if (e && e.name === 'StorageWriteError') e.discard();
     throw e;
   }
   return { content, extra };

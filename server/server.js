@@ -1437,6 +1437,12 @@ app.get('/api/content/:id/file', (req, res) => {
   if (!isReferencedForPlayers(db, content) && !requesterCanAccessContent(req, content)) return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  // Storage backends (lib/storage): no local file, but stored copies — stream from whichever answers.
+  if (!fs.existsSync(safePath) && require('./lib/storage/serve').storedElsewhere(content)) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    return require('./lib/storage/serve').serveFromStorage(req, res, content, 'asset', { harden: hardenUploadResponse });
+  }
   // Scale-out (docs/scale-out.md): the row was copied, the bytes were not — fetch through, or (C3,
   // under a caches-content edge) store them here first and then serve the local file.
   if (config.primaryUrl && content.workspace_id && !fs.existsSync(safePath) &&
@@ -1529,10 +1535,16 @@ app.get('/api/content/:id/bundle', async (req, res) => {
     return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
   }
 
-  const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
+  let safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
 
   try {
+    // The inliner reads the archive's central directory from a FILE; a bundle held only in a
+    // storage backend is fetched once into the storage cache (never into contentDir) first.
+    if (!fs.existsSync(safePath) && require('./lib/storage/serve').storedElsewhere(content)) {
+      safePath = await require('./lib/storage/locations').ensureLocalFile(content, 'asset');
+      if (!safePath) return res.status(404).json({ error: 'Bundle not found' });
+    }
     const { inlineBundle } = require('./lib/bundle-inline');
     const entry = content.bundle_entry || 'index.html';
     const out = await inlineBundle(safePath, entry);
@@ -1601,6 +1613,9 @@ app.get('/api/content/:id/thumbnail', (req, res) => {
   // See /file — cross-origin so sandboxed widget iframes can load it.
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  if (!fs.existsSync(safePath) && require('./lib/storage/serve').storedElsewhere(content)) {
+    return require('./lib/storage/serve').serveFromStorage(req, res, content, 'thumb', { harden: hardenUploadResponse });
+  }
   hardenUploadResponse(res, content.thumbnail_path);
   res.sendFile(safePath);
 });
@@ -2021,6 +2036,10 @@ winCache.start();                                    // native Windows player: n
 // plus the device-less sha256 lookup the SYSTEM helper service makes before running an installer.
 require('./routes/win-update')(app);
 require('./lib/revision-retention').start(require('./db/database').db);   // version history: bounded retention, daily
+// Storage backends (docs/storage.md): resume a migration copier a restart interrupted (it never
+// commits or drains by itself), honour STORAGE_DRAIN_AFTER_HOURS, probe open breakers. Idle on an
+// install that never configured storage — there is nothing in storage_migrations to resume.
+require('./lib/storage/migrate').startBackground();
 const { getBand } = require('./services/loop-lag');  // #146 Item C: critical-band download shed
 app.get('/api/update/check', (req, res) => {
   const currentVersion = req.query.version;
@@ -2286,6 +2305,21 @@ app.use('/uploads/content', (req, res, next) => {
    */
   res.removeHeader('Cache-Control');
   res.removeHeader('Content-Disposition');
+  /*
+   * Storage backends (lib/storage): the name belongs to a row whose bytes are in a bucket (or on a
+   * copy that is not this disk). Streamed from whichever stored copy answers, under the same
+   * immutable header the static route sets — the name changes whenever the bytes do, which is what
+   * makes immutable true. This is what lets every existing player keep building
+   * /uploads/content/<filepath> while the file lives in S3, Azure or MinIO: no player change needed.
+   */
+  {
+    const hit = require('./lib/storage/serve').rowForUploadName(require('./db/database').db, path.basename(req.path));
+    if (hit) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      return require('./lib/storage/serve').serveFromStorage(req, res, hit.row, hit.kind, { harden: hardenUploadResponse, cacheControl: 'public, max-age=2592000, immutable' });
+    }
+  }
   // Scale-out (docs/scale-out.md): a copied workspace's file lives on the primary. Only a name that
   // belongs to a copied content row is fetched through; anything else stays the miss above.
   // C3: under a caches-content edge the fetch-through STORES the file first, then serves it

@@ -185,10 +185,32 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
    */
   const ownerUserId = isSupportUserId(userId) ? null : userId;
 
-  db.prepare(`
-    INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id, byte_digest, bundle_entry)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, ownerUserId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry);
+  /*
+   * ⚠️ THE BYTES GO WHERE THE WORKSPACE WRITES BEFORE THE ROW EXISTS (lib/storage). Everything above
+   * ran against the local file — sniffing, the bundle's central directory, ffprobe, the thumbnail,
+   * the digest — and none of it is ever done by streaming from a bucket. If the workspace writes to
+   * local disk this is a no-op and the file stays exactly where it has always been. If it writes to
+   * a bucket and the asset put fails, no row is inserted and the caller answers 502 with an
+   * operator-safe reason: a row whose only copy failed to land would be a row that 404s.
+   */
+  const placed = [{ kind: 'asset', abs: path.join(config.contentDir, filepath), basename: filepath, digest }];
+  if (thumbnailPath && thumbnailPath !== filepath) placed.push({ kind: 'thumb', abs: path.join(config.contentDir, thumbnailPath), basename: thumbnailPath });
+  let plan;
+  try {
+    plan = await require('./storage/locations').placeFiles({ workspaceId, files: placed, mime });
+  } catch (e) {
+    throw storageWriteError(e, placed);
+  }
+
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id, byte_digest, bundle_entry)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, ownerUserId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry);
+    plan.commit(id);
+  })();
+  // Only now, with the row committed and its remote copy recorded, may the local copy go.
+  plan.cleanup();
 
   try {
     require('./plugins/hooks').emit('content.uploaded', {
@@ -202,4 +224,28 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
   return db.prepare('SELECT * FROM content WHERE id = ?').get(id);
 }
 
-module.exports = { ingestUploadedFile, safeFilename, deriveMediaMetadata };
+/*
+ * A storage put failed during ingest. Carries the local files (asset first) so the caller can
+ * decide: a resumable upload moves the asset back into its session and lets the client retry the
+ * finalize; a single-shot upload removes them. status 502, message safe to show: the StorageError
+ * underneath never carries a credential or an SDK dump.
+ */
+class StorageWriteError extends Error {
+  constructor(message, files) {
+    super(message);
+    this.name = 'StorageWriteError';
+    this.status = 502;
+    this.files = files;
+  }
+
+  /** Remove the local files: for callers with no session to retry from. */
+  discard() {
+    for (const f of this.files || []) { try { fs.unlinkSync(f); } catch (_) { /* already gone */ } }
+  }
+}
+function storageWriteError(e, files) {
+  const reason = e && e.name && /Storage/.test(e.name) ? e.message : 'The storage backend refused the file.';
+  return new StorageWriteError(`The file could not be stored: ${reason}`, files.map((f) => f.abs));
+}
+
+module.exports = { ingestUploadedFile, safeFilename, deriveMediaMetadata, StorageWriteError };

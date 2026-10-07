@@ -386,6 +386,9 @@ async function commitStagedAsset(db, edge, entry, stagedPath, deps) {
     }
   });
   commit();
+  // Received bytes land on local disk (the transfer protocol stages them there); a workspace that
+  // writes to a bucket gets them moved there, the same as an upload (lib/storage).
+  try { require('../storage/locations').settleSoon(localId, { kinds: ['asset'] }); } catch (_) { /* stays local */ }
     try { require('../revisions').recordCurrent(db, 'content', localId, { actor: { userId: null, kind: 'mesh', label: 'mesh hub' }, summary: existing ? 'Synced from hub (bytes changed)' : 'Synced from hub' }); } catch (_) {}
 
   return { ok: true, localId, filepath: finalName, digest, bytes: stat.size, reusedRow: !!existing };

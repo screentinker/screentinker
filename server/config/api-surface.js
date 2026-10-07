@@ -91,6 +91,11 @@ const JWT_ONLY_ROUTERS = [
   { path: '/api/workspaces',  mod: './routes/workspaces' },
   { path: '/api/admin',       mod: './routes/admin' },
   /*
+   * Storage profiles (docs/storage.md). JWT only: a profile holds cloud credentials and decides
+   * where every workspace in the org writes — not something an API token should reach.
+   */
+  { path: '/api/storage-profiles', mod: './routes/storage-profiles', tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */

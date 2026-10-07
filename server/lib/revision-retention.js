@@ -42,7 +42,6 @@ function prune(db, { keep = KEEP } = {}) {
 
   // Files: anything under .history that nothing names any more.
   const hist = revisions.historyDir();
-  if (!fs.existsSync(hist)) return out;
   const named = new Set();
   for (const r of db.prepare('SELECT file_ref, thumb_ref FROM revisions WHERE file_ref IS NOT NULL OR thumb_ref IS NOT NULL').all()) {
     if (r.file_ref) named.add(norm(r.file_ref)); if (r.thumb_ref) named.add(norm(r.thumb_ref));
@@ -52,6 +51,15 @@ function prune(db, { keep = KEEP } = {}) {
     const d = revisions.parseJson(c.draft_json, null);
     if (d && d.filepath) named.add(norm(d.filepath));
   }
+  /*
+   * Retained copies held in a storage backend (lib/storage): their location rows carry the ref a
+   * revision names. A ref nothing names any more loses its rows, and its objects go through the same
+   * refcount every other delete does — a copy another row still names is kept.
+   */
+  try { out.objects_released = require('./storage/locations').pruneHistoryLocations(named); }
+  catch (e) { console.warn('[history] storage prune failed:', e.message); }
+
+  if (!fs.existsSync(hist)) return out;
   for (const contentId of fs.readdirSync(hist)) {
     const dir = path.join(hist, contentId);
     let entries = [];

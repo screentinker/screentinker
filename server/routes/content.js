@@ -36,6 +36,8 @@ const { finalizeUpload, INLINE_SAFE_EXTS, sniffMime, readHead: readUploadHead, M
 const { digestFile } = require('../lib/content-digest');
 const { normalizeTags, normalizeMeta, parseTags, parseMeta } = require('../lib/content-tags');
 const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-files');
+const storageLocations = require('../lib/storage/locations');
+const storageServe = require('../lib/storage/serve');
 const revisionsLib = require('../lib/revisions');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
@@ -157,9 +159,13 @@ router.post('/:id/bundle-preview', async (req, res) => {
   if (content.mime_type !== htmlBundle.BUNDLE_MIME || !content.filepath) {
     return res.status(400).json({ error: 'Not an HTML bundle' });
   }
-  const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
+  let safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
   try {
+    if (!fs.existsSync(safePath) && storageServe.storedElsewhere(content)) {
+      safePath = await storageLocations.ensureLocalFile(content, 'asset');
+      if (!safePath) return res.status(404).json({ error: 'Bundle not found' });
+    }
     const { inlineBundle } = require('../lib/bundle-inline');
     const out = await inlineBundle(safePath, content.bundle_entry || 'index.html');
     const token = require('../lib/bundle-preview-store').put(content.id, out.html);
@@ -301,6 +307,7 @@ router.post('/', checkStorageLimit, uploadPreflight, uploadContentFilesGuarded, 
     // files[next] was being ingested (ingest removes what it refuses); the rest were never reached.
     discardUploads(req, files.slice(next + 1));
     if (err && err.name === 'UnsupportedUploadError') return res.status(400).json({ error: err.message });
+    if (err && err.name === 'StorageWriteError') { err.discard(); return res.status(502).json({ error: err.message, code: 'STORAGE_WRITE_FAILED' }); }
     console.error('Upload error:', err);
     res.status(500).json({ error: 'Upload failed' });
   }
@@ -511,6 +518,17 @@ router.post('/uploads/:id/finalize', async (req, res) => {
     } catch (_) { /* revision history must not fail an upload */ }
     res.status(201).json(content);
   } catch (err) {
+    /*
+     * The bucket refused the bytes (lib/storage). The upload itself is intact, so it is NOT thrown
+     * away: the asset goes back into the session as its part file and the client may simply retry
+     * the finalize once the operator has fixed the profile. Nothing was inserted.
+     */
+    if (err && err.name === 'StorageWriteError') {
+      const [asset, ...rest] = err.files || [];
+      try { fs.renameSync(asset, uploadSession.partPath(session)); } catch (_) { uploadSession.discard(session); }
+      for (const f of rest) { try { fs.unlinkSync(f); } catch (_) { /* already gone */ } }
+      return res.status(502).json({ error: err.message, code: 'STORAGE_WRITE_FAILED', retryable: true });
+    }
     /*
      * ⚠️ The part file goes on an unsupported type, and only then. finalizeUpload already unlinked
      * whatever it rejected, so leaving the row would strand a session pointing at nothing — and
@@ -770,6 +788,9 @@ function scrubCorporate(id, workspaceId, affected, scrubbed) {
 
 function purgeContentRow(content) {
   const id = content.id;
+  // Copies in storage backends (lib/storage): their rows go with the content row, in this
+  // transaction; the objects go after it commits, refcounted against what survives.
+  const storedCopies = storageLocations.locationsOf(id);
   unlinkIfUnreferenced(content.filepath, id, 'filepath');
   unlinkIfUnreferenced(content.thumbnail_path, id, 'thumbnail_path');
   unlinkIfUnreferenced(content.subtitle_url, id, 'subtitle_url'); // #216 sidecar (no-op pre-#216)
@@ -819,6 +840,8 @@ function purgeContentRow(content) {
   // Audit F22: the history goes with the row - submissions BEFORE revisions (FK), not swallowed.
   revisionsLib.deleteHistoryRows(db, 'content', id);
   db.prepare('DELETE FROM content WHERE id = ?').run(id);
+  storageLocations.deleteLocationRows(id);
+  storageLocations.queueRelease(storedCopies);
   // ⚠️ Its own try: a filesystem error must never skip (or be mistaken for) the DB work above.
   try { revisionsLib.removeRetainedFiles(id); }
   catch (e) { console.warn(`[content] could not remove retained history for ${id}: ${e.message}`); }
@@ -1169,6 +1192,21 @@ router.put('/:id/replace', replacePreflight, upload.single('file'), async (req, 
    * item, the thumbnail vanished, and restore could not find the old bytes. Nothing may touch the
    * live file until the replacement is certain to be written.
    */
+  /*
+   * The new bytes go where this workspace writes BEFORE anything about the old ones changes
+   * (lib/storage) — the same order the rule above demands of the sniffer. A refused put answers 502
+   * with the live row and its file untouched.
+   */
+  const placedFiles = [{ kind: 'asset', abs: path.join(config.contentDir, filepath), basename: filepath, digest: newDigest }];
+  if (thumbnailPath && thumbnailPath !== filepath) placedFiles.push({ kind: 'thumb', abs: path.join(config.contentDir, thumbnailPath), basename: thumbnailPath });
+  let storagePlan;
+  try {
+    storagePlan = await storageLocations.placeFiles({ workspaceId: content.workspace_id, files: placedFiles, mime });
+  } catch (e) {
+    for (const f of placedFiles) { try { fs.unlinkSync(f.abs); } catch (_) { /* already gone */ } }
+    return res.status(502).json({ error: `The file could not be stored: ${e && /Storage/.test(e.name || '') ? e.message : 'the storage backend refused it.'}`, code: 'STORAGE_WRITE_FAILED' });
+  }
+
   const prev = revisions.latest(db, 'content', content.id);
   const tag = prev ? `r${prev.rev_no}` : 'r0';
   const retainedFile = revisions.retainContentFile(db, content.id, content.filepath, tag);
@@ -1185,8 +1223,15 @@ router.put('/:id/replace', replacePreflight, upload.single('file'), async (req, 
                        updated_at = MAX(CAST(strftime('%s','now') AS INTEGER), COALESCE(NULLIF(updated_at, 0), created_at) + 1)
                  WHERE id = ?`)
       .run(filepath, mime, req.file.size, thumbnailPath, width, height, durationSec, newDigest, bundleEntry, req.params.id);
+    // Copies of the OLD bytes that were not retained above are not this row's any more.
+    const stale = db.prepare("SELECT * FROM content_locations WHERE content_id = ? AND kind IN ('asset','thumb')").all(content.id);
+    db.prepare("DELETE FROM content_locations WHERE content_id = ? AND kind IN ('asset','thumb')").run(content.id);
+    storageLocations.queueRelease(stale);
+    db.prepare('UPDATE content SET storage_profile_id = NULL, object_key = NULL WHERE id = ?').run(content.id);
+    storagePlan.commit(content.id);
     revisions.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Replaced file' });
   })();
+  storagePlan.cleanup();
 
   const affected = devicesPlayingContent(req.params.id);
   pushContentUpdates(req, affected);
@@ -1212,8 +1257,15 @@ router.post('/:id/subtitle', upload.subtitleUpload.single('subtitle'), async (re
   // Remove the previous subtitle file if there was one, unless it is shared (see purgeContentRow).
   unlinkIfUnreferenced(content.subtitle_url, content.id, 'subtitle_url');
   const lang = req.body.subtitle_lang ? String(req.body.subtitle_lang).slice(0, 10) : (content.subtitle_lang || null);
-  db.prepare('UPDATE content SET subtitle_url = ?, subtitle_lang = ? WHERE id = ?')
-    .run(req.file.filename, lang, req.params.id);
+  const staleSubs = db.prepare("SELECT * FROM content_locations WHERE content_id = ? AND kind = 'subtitle'").all(content.id);
+  db.transaction(() => {
+    db.prepare("DELETE FROM content_locations WHERE content_id = ? AND kind = 'subtitle'").run(content.id);
+    db.prepare('UPDATE content SET subtitle_url = ?, subtitle_lang = ? WHERE id = ?')
+      .run(req.file.filename, lang, req.params.id);
+  })();
+  storageLocations.queueRelease(staleSubs);
+  // The new .vtt is a local file; it follows the asset to the workspace's storage (lib/storage).
+  storageLocations.settleSoon(content.id, { kinds: ['subtitle'] });
   res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
 });
 
@@ -1258,9 +1310,24 @@ router.get('/:id/file', (req, res) => {
   // Prevent path traversal
   const safePath = path.resolve(config.contentDir, path.basename(content.filepath));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  if (!fs.existsSync(safePath) && storageServe.storedElsewhere(content)) {
+    return storageServe.serveFromStorage(req, res, content, 'asset', { harden: hardenUploadResponse });
+  }
   if (fetchThroughIfCopied(req, res, content, safePath)) return;
   hardenUploadResponse(res, content.filepath);
   res.sendFile(safePath);
+});
+
+/*
+ * Every stored copy of this item, its state, and which one a read would use right now — the
+ * "anything available" view (lib/storage/locations.describe). Org admin only: it names buckets and
+ * keys. No credentials, no presigned URLs.
+ */
+router.get('/:id/locations', (req, res) => {
+  const content = checkContentRead(req, res);
+  if (!content) return;
+  if (!require('../lib/permissions').isOrgAdmin(req)) return res.status(403).json({ error: 'Organization admin required' });
+  res.json(storageLocations.describe(content));
 });
 
 // Serve thumbnail
@@ -1270,6 +1337,9 @@ router.get('/:id/thumbnail', (req, res) => {
   if (!content.thumbnail_path) return res.status(404).json({ error: 'Thumbnail not found' });
   const safePath = path.resolve(config.contentDir, path.basename(content.thumbnail_path));
   if (!safePath.startsWith(path.resolve(config.contentDir))) return res.status(403).json({ error: 'Invalid path' });
+  if (!fs.existsSync(safePath) && storageServe.storedElsewhere(content)) {
+    return storageServe.serveFromStorage(req, res, content, 'thumb', { harden: hardenUploadResponse });
+  }
   if (fetchThroughIfCopied(req, res, content, safePath)) return;
   hardenUploadResponse(res, content.thumbnail_path);
   res.sendFile(safePath);

@@ -5,6 +5,7 @@ import { getLanguage, setLanguage, getAvailableLanguages, t } from '../i18n.js';
 import { esc, isPlatformAdmin } from '../utils.js';
 import { resetBranding, applyAccent } from '../branding.js';
 import { mountCorporateSettings } from '../components/corporate-settings.js';
+import { mountStorageSettings } from '../components/storage-settings.js';
 import { formatRow, buyPack, usd } from '../components/ai-hosted-picker.js';
 
 export async function render(container) {
@@ -89,6 +90,9 @@ export async function render(container) {
     <!-- Head office (corporate) playlists and emergency alerts. Org owners and admins only;
          components/corporate-settings.js fills it, and leaves it hidden for everyone else. -->
     <div class="settings-section" id="corporateCard" style="display:none"></div>
+
+    <!-- Where media is stored (org owners/admins). Mounted only for them; the server enforces it. -->
+    <div class="settings-section" id="storageCard" style="display:none"></div>
 
     <div class="settings-section" id="ssoCard" style="display:none">
       <h3>${t('sso.title')}</h3>
@@ -1445,6 +1449,9 @@ export async function render(container) {
 
   loadSso();
   mountCorporateSettings(document.getElementById('corporateCard'));
+  // Org admins always; a workspace admin too, because the org may let workspaces choose their own
+  // storage — when it does not, the server answers 403 and the card stays hidden.
+  if (canManageOrgSecurity || user.current_workspace_role === 'workspace_admin') mountStorageSettings(document.getElementById('storageCard'));
 
 
   document.getElementById('createTokenBtn')?.addEventListener('click', async () => {
