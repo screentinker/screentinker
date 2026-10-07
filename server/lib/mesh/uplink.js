@@ -250,6 +250,9 @@ class Uplink extends EventEmitter {
        * trip and remembering could cost a customer's telemetry.
        */
       this.parentCapabilities = null;
+      // ⚠️ Kept, like connect_error's message. `connect` cleared lastError, so without this every
+      // drop of a working link was retried as "unknown" — and why it dropped was the one thing wanted.
+      this.lastError = reason || 'disconnected';
       this.emit('disconnected', reason);
       this._scheduleRetry();
     });

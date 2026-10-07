@@ -1031,3 +1031,41 @@ test('⚠️ itemAsEnvelope keeps a relayed item\'s own ancestry', () => {
   assert.equal(asOwn.origin_node_id, 'node-B');
   assert.deepEqual(asOwn.ancestry, ['node-B']);
 });
+
+// ===== a redial =====
+
+test('⚠️ a child that drops says WHY when it retries — it said "unknown" for every drop of a working link', async () => {
+  const hub = await parent();
+  const up = child(hub).start();
+  const retries = [];
+  up.on('retry-scheduled', (r) => retries.push(r));
+  try {
+    await waitFor(() => up.connected);
+    hub.wired.dropChild(CHILD_ID);
+    await waitFor(() => retries.length > 0);
+    assert.equal(retries[0].reason, 'io server disconnect');
+    assert.equal(up.status().lastError, 'io server disconnect');
+  } finally { up.stop(); await hub.close(); }
+});
+
+test('⚠️ a redial supersedes the old socket at once, and a read goes to the new one', async () => {
+  const hub = await parent();
+  const dial = (who) => {
+    const s = connect(`${hub.url}/mesh`, { auth: { edgeToken: hub.token, nodeId: CHILD_ID }, transports: ['websocket'], reconnection: false });
+    s.on('mesh:read', (req, ack) => ack({ ok: true, who }));
+    return s;
+  };
+  const first = dial('first');
+  try {
+    await waitFor(() => first.connected);
+    const gone = new Promise((r) => first.on('disconnect', r));
+    const second = dial('second');
+    try {
+      await waitFor(() => second.connected);
+      assert.equal(await gone, 'io server disconnect', 'the parent closed the old socket rather than waiting out its ping timeout');
+      const r = await hub.wired.readFrom(CHILD_ID, { path: '/api/devices', method: 'GET' });
+      assert.equal(r.who, 'second');
+      assert.equal(hub.wired.isConnected(CHILD_ID), true);
+    } finally { second.close(); }
+  } finally { first.close(); await hub.close(); }
+});

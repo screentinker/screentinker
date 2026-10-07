@@ -174,4 +174,25 @@ function onParentLost(edge, now) {
   };
 }
 
-module.exports = { STALE_AFTER_MS, consentView, disenroll, onParentLost };
+/**
+ * The NOC state of a DOWN link (a child below this node).
+ *
+ * A replicating child is judged by its replica row: is its pull loop up, and how far behind is it. A
+ * child that only sends telemetry has no replica row, so it is judged by when it last reported —
+ * the edge's freshness, the same 10-minute rule the screens use.
+ *
+ * ⚠️ freshnessOf answers 'live', never 'fresh'. The NOC compared against 'fresh' from #399 on, so every
+ * telemetry-only child was drawn DOWN while it reported every minute.
+ *
+ * @returns {'revoked'|'connected'|'lagging'|'down'}
+ */
+function childLinkState(edge, replicaRow, nowSec) {
+  if (edge.revoked_at) return 'revoked';
+  if (replicaRow) {
+    if (replicaRow.edge !== 'up') return 'down';
+    return (replicaRow.lag_s != null && replicaRow.lag_s > 60) ? 'lagging' : 'connected';
+  }
+  return require('./mirror-store').freshnessOf(edge, nowSec) === 'live' ? 'connected' : 'down';
+}
+
+module.exports = { STALE_AFTER_MS, consentView, disenroll, onParentLost, childLinkState };
