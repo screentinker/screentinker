@@ -1116,7 +1116,19 @@
   // ---- setup screen wiring ----
   if (serverUrl) elUrl.value = serverUrl;
   elConnect.addEventListener('click', doConnect);
-  elUrl.addEventListener('keydown', function (e) { if (e.keyCode === 13) doConnect(); });
+  /*
+   * ⚠️ THE REMOTE HAS NO TAB KEY. Down in a text field only moves its caret, so with no handler the
+   * Connect button was unreachable from a remote: a screen could be set up only with a USB keyboard
+   * (Tab). Down/Up now move between the field and the button. The on-screen keyboard's Done key
+   * (65376) connects like Enter; before, it only closed the keyboard.
+   */
+  elUrl.addEventListener('keydown', function (e) {
+    if (e.keyCode === 13 || e.keyCode === 65376) { e.preventDefault(); doConnect(); }
+    else if (e.keyCode === 40) { e.preventDefault(); elConnect.focus(); }
+  });
+  elConnect.addEventListener('keydown', function (e) {
+    if (e.keyCode === 38) { e.preventDefault(); elUrl.focus(); }
+  });
   function doConnect() {
     var v = (elUrl.value || '').trim();
     if (!v) { elSetupStatus.textContent = 'Enter a server URL'; return; }
@@ -1131,7 +1143,7 @@
     deviceId = null; deviceToken = null; serverUrl = null;
     if (socket) { try { socket.disconnect(); } catch (e) {} }
     teardownSession(); // H4: stop heartbeat/stream/player-loop + pending register (no dangling timers on setup)
-    show(elSetup);
+    show(elSetup); elUrl.focus();   // a remote has to land somewhere to type
   });
 
   // TV remote RETURN key (10009).

@@ -130,6 +130,14 @@
   wall zones. Android, Pi/Windows and BrightSign capture the real screen and were not affected;
   Tizen still has this for images.
 
+### Fixed (Samsung Tizen player)
+
+- **The setup screen could not be finished with a TV remote.** Down in the Server URL field only
+  moved the cursor, so the Connect button was reachable only with a USB keyboard's Tab, and the
+  on-screen keyboard's Done key just closed the keyboard. Down and Up now move between the field
+  and Connect, and Done connects like Enter. "Change server" also puts focus in the field. Thanks to
+  Mr. Car [MHA] for the report.
+
 ### Fixed (server)
 
 - **The standby image never reached Android screens unless it was also in a playlist.** The
