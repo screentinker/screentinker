@@ -33,8 +33,8 @@ Manual equivalent:
 ```sh
 curl -fLo /tmp/st.deb https://your-server/download/pi
 sudo apt install /tmp/st.deb
-sudo screentinker-pi setup https://your-server              # Lite: system service on the display
-sudo screentinker-pi setup https://your-server --mode desktop --user pi   # inside the desktop
+sudo screentinker-pi setup https://your-server              # mode detected: desktop if the Pi boots to one, else lite
+sudo screentinker-pi setup https://your-server --mode desktop --user pi   # force: inside the desktop
 ```
 
 ### Run modes

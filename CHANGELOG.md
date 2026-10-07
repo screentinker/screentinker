@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed (Raspberry Pi native player)
+
+- **On Pi OS with a desktop, the player could fail to start at login with nothing on screen.**
+  The desktop session runs on Wayland, and Qt's Wayland support is a separate package
+  (`qt6-wayland`) that the player didn't depend on. Without it, Qt aborted before drawing
+  anything. The package now depends on it, and the player falls back to X11 (through Xwayland) if
+  Wayland still can't be used.
+- **Running `sudo screentinker-pi setup URL` by hand on a desktop Pi switched it to Lite mode.**
+  `setup` now detects the mode the same way the installer does when `--mode` is left out. Asking
+  for `--mode lite` on a Pi that boots to a desktop prints a warning, because the desktop keeps the
+  screen and the Lite service can't draw on it.
+
 ## 2.4.3
 
 Three dashboard fixes, found while capturing a real 2.4.2 server for the release video. Server and
