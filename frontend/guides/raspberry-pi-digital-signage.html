@@ -153,6 +153,15 @@
     <code>sudo screentinker-pi setup https://your-server --mode lite</code>. Check with
     <code>screentinker-pi status</code>.</p>
 
+    <h3>Native player on Pi OS with a desktop: the desktop appears but the player never does</h3>
+    <p>The player starts at desktop login, not as a service, so <code>screentinker-pi.service</code> is
+    meant to be inactive on a desktop Pi. Older packages needed Qt's Wayland support installed
+    separately: run <code>sudo apt install qt6-wayland</code>, then
+    <code>sudo screentinker-pi setup https://your-server --mode desktop</code> and reboot. To see why it
+    stops, open a terminal on the desktop and run <code>screentinker-pi run</code> (errors print in the terminal), or read
+    <code>~/.local/state/screentinker-pi/player.log</code>. Don't start the service on a desktop: the
+    desktop keeps the screen and the service can't draw on it.</p>
+
     <h3>The screen goes dark after a few minutes</h3>
     <p>The installer should disable screen blanking, but some monitors sleep based on their own timer. Disable sleep mode on the monitor itself, or use a dummy HDMI plug if the Pi negotiates a low-power mode.</p>
 

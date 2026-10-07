@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """screentinker-pi — launcher and setup for the native ScreenTinker Raspberry Pi player.
 
-  screentinker-pi setup URL [--name NAME] [--mode lite|desktop] [--user USER]
+  screentinker-pi setup URL [--name NAME] [--mode lite|desktop] [--user USER]      (mode: detected)
                             [--allow-package-install] [--state-dir DIR]     (as root)
   screentinker-pi run                  start the player in the foreground (what the service runs)
   screentinker-pi status               show configuration and service state
@@ -53,6 +53,28 @@ def sh(*argv, check=False):
     return subprocess.run(list(argv), check=check)
 
 
+def boots_to_desktop():
+    """The installer's rule (scripts/raspberry-pi-setup.sh): a desktop that BOOTS — a display manager
+    enabled and graphical.target the default — not "desktop packages are installed"."""
+    if not os.path.exists("/etc/systemd/system/display-manager.service"):
+        return False
+    r = subprocess.run(["systemctl", "get-default"], capture_output=True, text=True)
+    return r.stdout.strip() == "graphical.target"
+
+
+def desktop_login_user():
+    """The display manager's autologin user, else whoever ran sudo — the installer's rule too."""
+    try:
+        with open("/etc/lightdm/lightdm.conf") as f:
+            users = [l.split("=", 1)[1].strip() for l in f
+                     if l.strip().startswith("autologin-user") and "=" in l]
+        if users and users[-1]:
+            return users[-1]
+    except OSError:
+        pass
+    return os.environ.get("SUDO_USER")
+
+
 def kms_card():
     """The DRM card that actually has connectors. A Pi 5 exposes TWO cards (v3d renders, vc4
     displays) and eglfs picks card0 by default — the wrong one — which is a black screen with no error."""
@@ -84,7 +106,11 @@ def cmd_run(args):
                 json.dump({"device": card, "hwcursor": False}, f)
             env["QT_QPA_EGLFS_KMS_CONFIG"] = kcfg
     elif env.get("WAYLAND_DISPLAY") and "QT_QPA_PLATFORM" not in env:
-        env["QT_QPA_PLATFORM"] = "wayland"
+        # ⚠️ With a fallback. A bare "wayland" aborts Qt at startup when the Wayland platform plugin
+        # is missing (it is the separate qt6-wayland package, which early .debs did not depend on):
+        # the desktop autostart ran, the player died before drawing anything, and the screen just
+        # showed the desktop. xcb goes through Xwayland, which Pi OS's labwc and wayfire both run.
+        env["QT_QPA_PLATFORM"] = "wayland;xcb"
     # WebEngine: GPU rasterisation on the Pi's V3D is where Chromium is least stable; the scene graph
     # (video, images, transitions) keeps its GPU path regardless.
     env.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
@@ -99,10 +125,22 @@ def cmd_setup(args):
     cfg["server_url"] = args.url.rstrip("/")
     if args.name:
         cfg["device_name"] = args.name
-    cfg["mode"] = args.mode
+    # ⚠️ DETECTED when not given. This defaulted to lite, so re-running `setup URL` by hand on a
+    # Desktop Pi — a natural thing to try when the player has not appeared — enabled the system
+    # service on a machine whose display manager owns the screen. The service then failed every DRM
+    # page flip ("Permission denied") and the screen stayed on the desktop. Reported from the field.
+    desktop = boots_to_desktop()
+    mode = args.mode or ("desktop" if desktop else "lite")
+    if args.mode is None:
+        print("Mode: %s (detected; override with --mode lite|desktop)" % mode)
+    elif mode == "lite" and desktop:
+        print("⚠️  This Pi boots to a desktop, and the desktop owns the screen: the lite service will not")
+        print("   be able to draw until the desktop is disabled (sudo raspi-config → System → Boot → Console).")
+        print("   To run inside the desktop instead: sudo screentinker-pi setup URL --mode desktop")
+    cfg["mode"] = mode
     cfg["allow_package_install"] = bool(args.allow_package_install)
-    if args.mode == "desktop":
-        user = args.user or os.environ.get("SUDO_USER")
+    if mode == "desktop":
+        user = args.user or desktop_login_user()
         if not user:
             sys.exit("--mode desktop needs --user (the desktop login user)")
         pwd.getpwnam(user)
@@ -171,7 +209,8 @@ def main():
     s = sub.add_parser("setup")
     s.add_argument("url")
     s.add_argument("--name")
-    s.add_argument("--mode", choices=("lite", "desktop"), default="lite")
+    s.add_argument("--mode", choices=("lite", "desktop"), default=None,
+                   help="default: desktop if this Pi boots to a desktop, else lite")
     s.add_argument("--user")
     s.add_argument("--allow-package-install", action="store_true",
                    help="let the dashboard install ANY .deb (maintainer scripts run as root)")
