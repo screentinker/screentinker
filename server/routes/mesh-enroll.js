@@ -409,8 +409,7 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
           screens: c ? { total: c.total, online: c.online, attachedHere: c.attached_here, stale: Math.max(0, c.total - c.online) }
                      : (m ? { total: m.total, online: m.online, stale: m.stale, attachedHere: 0 }
                           : { total: 0, online: 0, stale: 0, attachedHere: 0 }) });
-        const state = e.revoked_at ? 'revoked' : (r ? (r.edge === 'up' ? ((r.lag_s != null && r.lag_s > 60) ? 'lagging' : 'connected') : 'down')
-                                                    : (require('../lib/mesh/mirror-store').freshnessOf(e, now) === 'fresh' ? 'connected' : 'down'));
+        const state = edgeStatus.childLinkState(e, r, now);
         links.push({
           from: e.peer_node_id, to: me, edgeId: e.id, direction: 'down', state,
           lag_s: r ? r.lag_s : null, phase: r ? r.phase : null, lastAppliedRev: r ? r.last_applied_rev : null, error: r ? r.error : null,

@@ -138,3 +138,24 @@ test('losing a parent is silent and changes nothing about how the node runs (I1)
   assert.equal(s.buffering, true, 'observations are held for backfill when the link returns');
   assert.equal(s.connectionView.parentNodeId, 'hub-1', 'it IS surfaced — in the connection view');
 });
+
+// ===== the NOC state of a down link =====
+
+test('⚠️ a telemetry-only child that reported a minute ago is CONNECTED (the NOC drew it down since #399)', () => {
+  const { childLinkState } = require('../lib/mesh/edge-status');
+  const now = 1_800_000_000;   // unix seconds, like the stored column
+  const edge = (over = {}) => ({ id: 'e2', direction: 'down', peer_node_id: 'bs-1', revoked_at: null, last_sync_at: now - 54, ...over });
+  assert.equal(childLinkState(edge(), null, now), 'connected');
+  assert.equal(childLinkState(edge({ last_sync_at: now - 601 }), null, now), 'down', 'quiet past 10 minutes');
+  assert.equal(childLinkState(edge({ last_sync_at: null }), null, now), 'down', 'never reported');
+  assert.equal(childLinkState(edge({ revoked_at: now - 5 }), null, now), 'revoked');
+});
+
+test('a replicating child is judged by its replica row, not by when it last reported', () => {
+  const { childLinkState } = require('../lib/mesh/edge-status');
+  const now = 1_800_000_000;
+  const e = { id: 'e3', revoked_at: null, last_sync_at: null };
+  assert.equal(childLinkState(e, { edge: 'up', lag_s: 3 }, now), 'connected');
+  assert.equal(childLinkState(e, { edge: 'up', lag_s: 61 }, now), 'lagging');
+  assert.equal(childLinkState(e, { edge: 'down', lag_s: null }, now), 'down');
+});

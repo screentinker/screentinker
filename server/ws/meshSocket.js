@@ -92,6 +92,14 @@ function setupMeshSocket(io, deps) {
     let edge = socket.data.edge;
     const childId = socket.data.childNodeId;
     log.log(`[mesh] node ${childId} connected on edge ${edge.id}`);
+    // A redial supersedes the socket it replaces. Left alone, the old one lingers half-open until its
+    // ping timeout and logs a "disconnect" for a child that never went away.
+    for (const old of meshNs.sockets.values()) {
+      if (old !== socket && old.data && old.data.edge && old.data.edge.id === edge.id) {
+        old.data.superseded = true;
+        try { old.disconnect(true); } catch (e) { /* already gone */ }
+      }
+    }
     // Optional: a replica pull loop wants to know the moment its primary is back, not at the next poll.
     if (typeof deps.onConnect === 'function') { try { deps.onConnect(edge); } catch (e) { log.warn(`[mesh] onConnect: ${e && e.message}`); } }
 
@@ -310,9 +318,24 @@ function setupMeshSocket(io, deps) {
 
     socket.on('disconnect', (reason) => {
       // Not an alarm: a node going quiet is normal, and the connection view is where it shows.
-      log.log(`[mesh] node ${childId} disconnected (${reason})`);
+      if (socket.data.superseded) log.log(`[mesh] node ${childId}: older connection closed, replaced by a new one`);
+      else log.log(`[mesh] node ${childId} disconnected (${reason})`);
     });
   });
+
+  /*
+   * ⚠️ THE NEWEST LIVE SOCKET, not the first one found. A child that drops and redials within a
+   * second is back on a new socket while the parent still holds the old one, half-open, until its
+   * ping timeout (30 s). Taking the first match sent reads in that window to the dead socket, and
+   * they timed out against a child that was connected the whole time. The Map is in insertion order.
+   */
+  function socketOf(childNodeId) {
+    let found = null;
+    for (const sock of meshNs.sockets.values()) {
+      if (sock.data && sock.data.childNodeId === childNodeId && sock.connected) found = sock;
+    }
+    return found;
+  }
 
   /*
    * ⚠️ The PARENT side of a read: find the child's live socket and ask it. Returns a rejection
@@ -320,15 +343,14 @@ function setupMeshSocket(io, deps) {
    * how an operator ends up staring at a spinner and concluding the product is broken.
    */
   async function readFrom(childNodeId, request, timeoutMs = 10_000) {
-    for (const sock of meshNs.sockets.values()) {
-      if (sock.data && sock.data.childNodeId === childNodeId) {
-        return new Promise((resolve) => {
-          sock.timeout(timeoutMs).emit('mesh:read', request, (err, res) => {
-            if (err) return resolve({ ok: false, reason: 'That server did not answer in time.' });
-            resolve(res || { ok: false, reason: 'That server returned nothing.' });
-          });
+    const sock = socketOf(childNodeId);
+    if (sock) {
+      return new Promise((resolve) => {
+        sock.timeout(timeoutMs).emit('mesh:read', request, (err, res) => {
+          if (err) return resolve({ ok: false, reason: 'That server did not answer in time.' });
+          resolve(res || { ok: false, reason: 'That server returned nothing.' });
         });
-      }
+      });
     }
     return {
       ok: false,
@@ -354,28 +376,27 @@ function setupMeshSocket(io, deps) {
    * cannot be reached.
    */
   async function writeTo(childNodeId, request, timeoutMs = 15_000) {
-    for (const sock of meshNs.sockets.values()) {
-      if (sock.data && sock.data.childNodeId === childNodeId) {
-        return new Promise((resolve) => {
-          sock.timeout(timeoutMs).emit('mesh:write', request, (err, res) => {
-            /*
-             * ⚠️ A TIMEOUT IS NOT A FAILURE — it is an unknown, and saying so matters here in a way
-             * it does not for a read. The write may well have been applied; the acknowledgement is
-             * what went missing. The caller must retry with the SAME opId rather than re-issuing,
-             * which is exactly what the child's idempotency record is for.
-             */
-            if (err) {
-              return resolve({
-                ok: false,
-                indeterminate: true,
-                reason: 'That server did not acknowledge in time. The change may or may not have ' +
-                        'been applied — retrying the same request is safe and will tell you which.',
-              });
-            }
-            resolve(res || { ok: false, reason: 'That server returned nothing.' });
-          });
+    const sock = socketOf(childNodeId);
+    if (sock) {
+      return new Promise((resolve) => {
+        sock.timeout(timeoutMs).emit('mesh:write', request, (err, res) => {
+          /*
+           * ⚠️ A TIMEOUT IS NOT A FAILURE — it is an unknown, and saying so matters here in a way
+           * it does not for a read. The write may well have been applied; the acknowledgement is
+           * what went missing. The caller must retry with the SAME opId rather than re-issuing,
+           * which is exactly what the child's idempotency record is for.
+           */
+          if (err) {
+            return resolve({
+              ok: false,
+              indeterminate: true,
+              reason: 'That server did not acknowledge in time. The change may or may not have ' +
+                      'been applied — retrying the same request is safe and will tell you which.',
+            });
+          }
+          resolve(res || { ok: false, reason: 'That server returned nothing.' });
         });
-      }
+      });
     }
     return {
       ok: false,
@@ -404,42 +425,40 @@ function setupMeshSocket(io, deps) {
    * a server nobody at that site controls.
    */
   async function contentPurgeTo(childNodeId, request, timeoutMs = 30_000) {
-    for (const sock of meshNs.sockets.values()) {
-      if (sock.data && sock.data.childNodeId === childNodeId) {
-        return new Promise((resolve) => {
-          sock.timeout(timeoutMs).emit('mesh:content-purge', request, (err, res) => {
-            if (err) {
-              return resolve({
-                ok: false, indeterminate: true,
-                reason: 'That server did not answer. Some copies may already have been removed — ' +
-                        'asking again is safe.',
-              });
-            }
-            resolve(res || { ok: false, reason: 'That server returned nothing.' });
-          });
+    const sock = socketOf(childNodeId);
+    if (sock) {
+      return new Promise((resolve) => {
+        sock.timeout(timeoutMs).emit('mesh:content-purge', request, (err, res) => {
+          if (err) {
+            return resolve({
+              ok: false, indeterminate: true,
+              reason: 'That server did not answer. Some copies may already have been removed — ' +
+                      'asking again is safe.',
+            });
+          }
+          resolve(res || { ok: false, reason: 'That server returned nothing.' });
         });
-      }
+      });
     }
     return { ok: false, offline: true, reason: 'That server is not connected right now.' };
   }
 
   async function contentOfferTo(childNodeId, request, timeoutMs = 30 * 60 * 1000) {
-    for (const sock of meshNs.sockets.values()) {
-      if (sock.data && sock.data.childNodeId === childNodeId) {
-        return new Promise((resolve) => {
-          sock.timeout(timeoutMs).emit('mesh:content-offer', request, (err, res) => {
-            if (err) {
-              return resolve({
-                ok: false,
-                indeterminate: true,
-                reason: 'That server did not report back in time. Some files may have arrived — ' +
-                        'sending the same content again is safe and will tell you which.',
-              });
-            }
-            resolve(res || { ok: false, reason: 'That server returned nothing.' });
-          });
+    const sock = socketOf(childNodeId);
+    if (sock) {
+      return new Promise((resolve) => {
+        sock.timeout(timeoutMs).emit('mesh:content-offer', request, (err, res) => {
+          if (err) {
+            return resolve({
+              ok: false,
+              indeterminate: true,
+              reason: 'That server did not report back in time. Some files may have arrived — ' +
+                      'sending the same content again is safe and will tell you which.',
+            });
+          }
+          resolve(res || { ok: false, reason: 'That server returned nothing.' });
         });
-      }
+      });
     }
     return {
       ok: false,

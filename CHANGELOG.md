@@ -128,6 +128,14 @@
   Android player downloads it like any other media so it can show offline, and the server refused
   that download because the image wasn't in a playlist or widget. A device's standby image now
   counts, scoped to the device's own workspace. Found while testing the offline fallback above.
+- **The NOC drew every telemetry-only child server as "down"** while it was reporting every minute
+  (since the NOC shipped). It compared the link's freshness against a value that is never returned.
+  Replicating children were not affected.
+- **Mesh: a child that redials now replaces its old connection at once.** The parent used to keep
+  the old socket half-open until its ping timeout (30 s), logging a false "ping timeout" disconnect,
+  and a read, write or content offer in that window could go to the dead socket and time out.
+- **Mesh: a child now logs why its link dropped** (for example "ping timeout" or "transport close")
+  instead of "unknown".
 
 Thanks to カタカナ for the report and for the approach, which they had already tested on Fire TV
 and Fire tablets in their fork.

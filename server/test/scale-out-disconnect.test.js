@@ -124,7 +124,8 @@ test('the replica disconnects the primary: edge revoked here, live socket droppe
   const dead = await waitFor(async () => {
     const so = await scaleOut(primary);
     const rep = so && so.replicas && so.replicas.find((x) => x.node_id !== undefined);
-    return rep && rep.link && rep.link.connected === false && rep.link.last_error ? rep.link : null;
+    // ⚠️ The drop itself is recorded first ("io server disconnect"); the refusal replaces it at the redial.
+    return rep && rep.link && rep.link.connected === false && /no longer authorised|revoked/i.test(rep.link.last_error || '') ? rep.link : null;
   }, { what: 'primary to see the edge dead', tries: 80 });
   assert.match(dead.last_error, /no longer authorised|revoked/i, JSON.stringify(dead));
   // Twice is a 409, not a second revoke.
