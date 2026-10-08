@@ -4,6 +4,17 @@
 
 ### Added
 
+- **SAML 2.0 single sign-on for organizations** (Settings → Single sign-on → Add provider →
+  SAML 2.0).
+  - Paste your identity provider's metadata, give it the entity ID and ACS URL that Settings
+    shows, and verify your domains. Okta, Entra ID, ADFS, Google Workspace and OneLogin all work
+    this way.
+  - Every sign-in must carry a signed assertion, answer a sign-in we started, be addressed to us,
+    and be used only once. The email must be in one of your verified domains.
+  - Signing in is otherwise the same as with OIDC: **Require SSO**, joining your organization on
+    first sign-in, and the same protections against account takeover all apply. See
+    `docs/sso-setup.md`.
+
 - **New player versions roll out in waves, and stop themselves if they're bad** (Platform → Player
   rollouts).
   - A new Android, Raspberry Pi or Windows player now goes to about 10% of that platform's screens

@@ -48,8 +48,12 @@ test('link start requires authentication and refuses org providers', () => {
 
 test('the linked account is taken from the transaction, never from the returned email', () => {
   const cb = handler('get', '/oidc/:slug/callback');
-  assert.match(cb, /WHERE id = \?'\)\.get\(tx\.link\)/,
-    'the target account is looked up by tx.link (the session that started it)');
+  // The callback hands the transaction's link target to the shared post-login path
+  // (completeFederatedLogin), which looks the account up by THAT, never by the returned email.
+  assert.match(cb, /completeFederatedLogin\(req, res, \{ provider, claims, link: tx\.link \|\| null \}\)/,
+    'the callback passes tx.link (the session that started it) as the link target');
+  assert.match(cb, /WHERE id = \?'\)\.get\(link\)/,
+    'the target account is looked up by that link target');
   // The email is still checked, but as a constraint on the link — not as the way the account is found.
   assert.match(cb, /target\.email\.toLowerCase\(\) !== email/, 'email must match the account being linked');
   assert.match(cb, /link_email_mismatch/);

@@ -15,6 +15,7 @@ so the browser never talks to the provider directly and there is no SDK to load.
 - [Operator: Microsoft / Entra ID](#operator-microsoft--entra-id)
 - [Operator: any other provider](#operator-any-other-provider)
 - [Organization admin: bring your own provider](#organization-admin-bring-your-own-provider)
+- [Organization admin: SAML 2.0](#organization-admin-saml-20)
 - [Requiring SSO for your organization](#requiring-sso-for-your-organization)
 - [Linking an existing account](#linking-an-existing-account)
 - [What users see at sign-in](#what-users-see-at-sign-in)
@@ -171,6 +172,47 @@ claimed by one organization only; a second claim is refused.
 Once a domain is verified, your provider is trusted to assert addresses in it even if it omits
 `email_verified` (as Entra does) — the DNS proof stands in for the claim. A provider that has
 verified nothing assumes nothing.
+
+---
+
+## Organization admin: SAML 2.0
+
+For identity providers you'd rather connect over SAML: Okta, Entra ID (Enterprise applications),
+ADFS, Google Workspace, OneLogin, PingFederate, JumpCloud and so on.
+
+1. **Settings → Single sign-on → Add provider**, and choose **SAML 2.0**.
+2. Paste your IdP's **metadata XML**. It fills in the IdP entity ID, the sign-in URL and the
+   signing certificate. You can also enter those three by hand.
+3. Enter the **email domains** you intend to claim, and save.
+4. Settings now shows three values. Give them to your IdP:
+   - **SP entity ID (audience)**, `https://<server>/api/auth/saml/<slug>/metadata`
+   - **ACS URL** (HTTP-POST), `https://<server>/api/auth/saml/<slug>/acs`
+   - **SP metadata URL**: the same address as the entity ID. Some IdPs can import from it.
+5. In the IdP, send the user's email address as an attribute named `email` (`mail` and the usual
+   Microsoft claim URIs work too), or use an email-format NameID. The NameID must stay the same
+   for each person: it is what we match an account on.
+6. **Verify each domain** with a DNS TXT record, exactly as for OIDC above.
+
+What we require of every sign-in:
+
+- **The assertion itself is signed** with the certificate you gave us. A signed response that
+  wraps an unsigned assertion is refused.
+- **It answers a sign-in we started.** IdP-initiated sign-in (clicking the tile in an IdP's app
+  portal) is refused. Start from the ScreenTinker sign-in page instead: type your email and choose
+  **Continue with single sign-on**.
+- **It's addressed to us and still current.** The audience must match, and there are 3 minutes of
+  clock skew allowed.
+- **It hasn't been used before.** Replaying a captured response fails.
+- **The email is in one of your verified domains.**
+
+Only the HTTP-Redirect binding is supported for the sign-in request. Every common IdP offers it.
+
+To **rotate a certificate**, paste the old and the new certificate into the certificate field, one
+after the other (up to four), and save. Remove the old one once the IdP has switched. **Test** on
+the provider shows the certificate's expiry date.
+
+Everything after the assertion is checked follows the same rules as OIDC: domain confinement,
+**Require SSO**, account adoption, and joining your organization on first sign-in.
 
 ---
 

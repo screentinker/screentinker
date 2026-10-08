@@ -101,8 +101,25 @@ export async function render(container) {
       <details id="ssoAddDetails" style="margin-top:12px">
         <summary style="cursor:pointer;font-size:13px">${t('sso.add')}</summary>
         <div style="margin-top:12px;display:grid;gap:10px;max-width:560px">
+          <div class="form-group"><label>${t('sso.f_protocol')}</label>
+            <select id="ssoKind" class="input">
+              <option value="oidc">${t('sso.protocol_oidc')}</option>
+              <option value="saml">${t('sso.protocol_saml')}</option>
+            </select></div>
           <div class="form-group"><label>${t('sso.f_name')}</label>
             <input type="text" id="ssoName" class="input" placeholder="Acme SSO"></div>
+          <div id="ssoSamlFields" style="display:none;gap:10px">
+            <div class="form-group"><label>${t('sso.f_saml_metadata')}</label>
+              <textarea id="ssoSamlMetadata" class="input" rows="4" spellcheck="false" style="font-family:monospace;font-size:11px"></textarea>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('sso.f_saml_metadata_hint')}</div></div>
+            <div class="form-group"><label>${t('sso.f_saml_entity_id')}</label>
+              <input type="text" id="ssoSamlEntityId" class="input" placeholder="https://sts.windows.net/…/"></div>
+            <div class="form-group"><label>${t('sso.f_saml_sso_url')}</label>
+              <input type="url" id="ssoSamlSsoUrl" class="input" placeholder="https://login.example.com/saml2"></div>
+            <div class="form-group"><label>${t('sso.f_saml_cert')}</label>
+              <textarea id="ssoSamlCert" class="input" rows="3" spellcheck="false" style="font-family:monospace;font-size:11px" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+          </div>
+          <div id="ssoOidcFields" style="display:grid;gap:10px">
           <div class="form-group"><label>${t('sso.f_issuer')}</label>
             <input type="url" id="ssoIssuer" class="input" placeholder="https://login.example.com">
             <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('sso.f_issuer_hint')}</div></div>
@@ -111,6 +128,7 @@ export async function render(container) {
           <div class="form-group"><label>${t('sso.f_client_secret')}</label>
             <input type="password" id="ssoClientSecret" class="input" autocomplete="new-password">
             <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('sso.f_client_secret_hint')}</div></div>
+          </div>
           <div class="form-group"><label>${t('sso.f_domains')}</label>
             <input type="text" id="ssoDomains" class="input" placeholder="acme.com, acme.co.uk">
             <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('sso.f_domains_hint')}</div></div>
@@ -1115,7 +1133,8 @@ export async function render(container) {
           <div>
             <strong>${esc(p.name)}</strong>
             ${p.enabled ? '' : `<span style="font-size:11px;color:var(--text-muted)"> — ${esc(t('sso.disabled'))}</span>`}
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(p.issuer)}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(p.kind === 'saml' ? `${t('sso.protocol_saml')} · ${p.idp_entity_id}` : p.issuer)}</div>
+            ${p.kind === 'saml' && p.cert ? `<div style="font-size:12px;color:var(--text-muted)">${esc(t('sso.saml_cert_label'))}: ${esc(p.cert.subject)} — ${esc(t('sso.saml_cert_expires'))} ${esc(p.cert.valid_to)}</div>` : ''}
             <div style="font-size:12px;color:var(--text-muted)">${esc(t('sso.domains_label'))}: ${esc(p.email_domains || '—')}</div>
             ${((p.domains || []).some((d) => !d.verified) || (p.domains || []).length === 0)
               ? `<div style="font-size:12px;color:var(--warning,#b45309);margin-top:2px">⚠️ ${esc(t('sso.unverified_warning'))}</div>`
@@ -1134,10 +1153,18 @@ export async function render(container) {
         </div>
         <!-- The admin has to paste this into their identity provider, and it must match character
              for character, so it is shown rather than described. -->
+        ${p.kind === 'saml' ? `
+        <div style="margin-top:8px;font-size:12px">
+          <div style="font-weight:600;margin-bottom:4px">${esc(t('sso.saml_sp_heading'))}</div>
+          ${[['sso.saml_sp_entity_id', p.sp_entity_id], ['sso.saml_acs_url', p.acs_url], ['sso.saml_metadata_url', p.metadata_url]].map(([k, v]) => `
+          <div style="color:var(--text-muted);margin-top:4px">${esc(t(k))}</div>
+          <code style="display:block;word-break:break-all;padding:6px;background:var(--bg-secondary);border-radius:4px">${esc(v)}</code>`).join('')}
+          <div style="color:var(--text-muted);margin-top:6px">${esc(t('sso.saml_nameid_hint'))}</div>
+        </div>` : `
         <div style="margin-top:8px;font-size:12px">
           <div style="color:var(--text-muted)">${esc(t('sso.callback_label'))}</div>
           <code style="display:block;word-break:break-all;padding:6px;background:var(--bg-secondary);border-radius:4px">${esc(origin + p.callback_url)}</code>
-        </div>
+        </div>`}
 
         <!-- Editing is per provider, because an organization may have several (one per domain, or
              one per identity provider after a merger) and they are configured independently. -->
@@ -1174,6 +1201,18 @@ export async function render(container) {
           <div style="display:grid;gap:10px;max-width:560px">
             <div class="form-group"><label>${esc(t('sso.f_name'))}</label>
               <input type="text" class="input" data-f="name" value="${esc(p.name)}"></div>
+            ${p.kind === 'saml' ? `
+            <div class="form-group"><label>${esc(t('sso.f_saml_metadata'))}</label>
+              <textarea class="input" data-f="metadata_xml" rows="3" spellcheck="false" style="font-family:monospace;font-size:11px"></textarea>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${esc(t('sso.f_saml_metadata_edit_hint'))}</div></div>
+            <div class="form-group"><label>${esc(t('sso.f_saml_entity_id'))}</label>
+              <input type="text" class="input" data-f="idp_entity_id" value="${esc(p.idp_entity_id)}"></div>
+            <div class="form-group"><label>${esc(t('sso.f_saml_sso_url'))}</label>
+              <input type="url" class="input" data-f="sso_url" value="${esc(p.sso_url || '')}"></div>
+            <div class="form-group"><label>${esc(t('sso.f_saml_cert'))}</label>
+              <textarea class="input" data-f="cert" rows="3" spellcheck="false" style="font-family:monospace;font-size:11px" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${esc(t('sso.f_saml_cert_edit_hint'))}</div></div>
+            ` : `
             <div class="form-group"><label>${esc(t('sso.f_issuer'))}</label>
               <input type="url" class="input" data-f="issuer" value="${esc(p.issuer)}"></div>
             <div class="form-group"><label>${esc(t('sso.f_client_id'))}</label>
@@ -1189,11 +1228,11 @@ export async function render(container) {
               <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px">
                 <input type="checkbox" data-f="clear_secret"> ${esc(t('sso.secret_clear'))}
               </label>` : ''}
-            </div>
+            </div>`}
             <div class="form-group"><label>${esc(t('sso.f_domains'))}</label>
               <input type="text" class="input" data-f="email_domains" value="${esc(p.email_domains)}"></div>
             <div style="display:flex;gap:6px">
-              <button class="btn btn-primary btn-sm" data-sso-save="${esc(p.id)}">${esc(t('sso.save'))}</button>
+              <button class="btn btn-primary btn-sm" data-sso-save="${esc(p.id)}" data-kind="${esc(p.kind || 'oidc')}">${esc(t('sso.save'))}</button>
               <button class="btn btn-secondary btn-sm" data-sso-cancel="${esc(p.id)}">${esc(t('sso.cancel'))}</button>
             </div>
           </div>
@@ -1337,6 +1376,8 @@ export async function render(container) {
             discovery: t('sso.check_discovery'),
             endpoints: t('sso.check_endpoints'),
             signing_keys: t('sso.check_signing_keys'),
+            certificate: t('sso.check_certificate'),
+            sso_url: t('sso.check_sso_url'),
           };
           const rows = (data.checks || []).map((c) => `
             <div>${c.ok ? '✅' : '❌'} ${esc(CHECK_LABELS[c.name] || c.name)} — <span style="color:var(--text-muted)">${esc(c.detail || '')}</span></div>`).join('');
@@ -1347,7 +1388,7 @@ export async function render(container) {
            * implied "SSO works" would send an admin away from the one thing still to check.
            */
           out.innerHTML = rows + (data.ok
-            ? `<div style="margin-top:6px;color:var(--text-muted)">${esc(t('sso.test_caveat'))}</div>`
+            ? `<div style="margin-top:6px;color:var(--text-muted)">${esc(data.acs_url ? t('sso.saml_test_caveat') : t('sso.test_caveat'))}</div>`
             : '');
         } catch {
           out.textContent = t('sso.test_failed');
@@ -1371,6 +1412,15 @@ export async function render(container) {
         const panel = document.getElementById(`ssoEdit-${btn.dataset.ssoSave}`);
         if (!panel) return;
         const val = (f) => panel.querySelector(`[data-f="${f}"]`)?.value?.trim() ?? '';
+        if (btn.dataset.kind === 'saml') {
+          // Blank metadata and certificate mean "keep what is stored", exactly like the OIDC secret.
+          const body = { name: val('name'), idp_entity_id: val('idp_entity_id'), sso_url: val('sso_url'), email_domains: val('email_domains') };
+          if (val('metadata_xml')) body.metadata_xml = val('metadata_xml');
+          if (val('cert')) body.cert = val('cert');
+          if (!body.name) { showToast(t('sso.saml_missing_fields'), 'error'); return; }
+          await ssoRequest('PUT', `/${btn.dataset.ssoSave}`, body);
+          return;
+        }
         const body = {
           name: val('name'),
           issuer: val('issuer'),
@@ -1428,7 +1478,29 @@ export async function render(container) {
     }
   }
 
+  const ssoKindEl = document.getElementById('ssoKind');
+  ssoKindEl?.addEventListener('change', () => {
+    const saml = ssoKindEl.value === 'saml';
+    document.getElementById('ssoSamlFields').style.display = saml ? 'grid' : 'none';
+    document.getElementById('ssoOidcFields').style.display = saml ? 'none' : 'grid';
+  });
   document.getElementById('ssoCreateBtn')?.addEventListener('click', async () => {
+    if (ssoKindEl?.value === 'saml') {
+      const v = (id) => document.getElementById(id).value.trim();
+      const payload = { kind: 'saml', name: v('ssoName'), email_domains: v('ssoDomains') };
+      if (v('ssoSamlMetadata')) payload.metadata_xml = v('ssoSamlMetadata');
+      else Object.assign(payload, { idp_entity_id: v('ssoSamlEntityId'), sso_url: v('ssoSamlSsoUrl'), cert: v('ssoSamlCert') });
+      if (!payload.name || (!payload.metadata_xml && (!payload.idp_entity_id || !payload.sso_url || !payload.cert))) {
+        showToast(t('sso.saml_missing_fields'), 'error');
+        return;
+      }
+      if (await ssoRequest('POST', '', payload)) {
+        ['ssoName', 'ssoDomains', 'ssoSamlMetadata', 'ssoSamlEntityId', 'ssoSamlSsoUrl', 'ssoSamlCert']
+          .forEach((id) => { document.getElementById(id).value = ''; });
+        document.getElementById('ssoAddDetails').open = false;
+      }
+      return;
+    }
     const payload = {
       name: document.getElementById('ssoName').value.trim(),
       issuer: document.getElementById('ssoIssuer').value.trim(),

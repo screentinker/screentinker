@@ -258,6 +258,10 @@ function rowToProvider(row, secretbox) {
     assumeEmailVerified: verified.length > 0,
     source: 'org',
     organizationId: row.organization_id,
+    // 'oidc' or 'saml' (lib/saml.js). For SAML, `issuer` is the IdP's entityID.
+    kind: row.kind === 'saml' ? 'saml' : 'oidc',
+    samlSsoUrl: row.saml_sso_url || null,
+    samlCert: row.saml_cert || null,
     /*
      * ⚠️ VERIFIED domains only — never org_sso_providers.email_domains.
      *
