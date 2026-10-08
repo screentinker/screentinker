@@ -625,6 +625,12 @@ app.get(['/integrations', '/integrations/'], (req, res) => {
   if (req.path === '/integrations') return res.redirect(301, '/integrations/');
   res.sendFile(path.join(config.frontendDir, 'integrations', 'index.html'));
 });
+// The solutions hub (use cases: emergency alerts, meeting rooms, menu boards...) is served the same
+// way, for the same reason: static runs with index:false.
+app.get(['/solutions', '/solutions/'], (req, res) => {
+  if (req.path === '/solutions') return res.redirect(301, '/solutions/');
+  res.sendFile(path.join(config.frontendDir, 'solutions', 'index.html'));
+});
 
 // Serve frontend static files
 // JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
@@ -3102,7 +3108,7 @@ app.get(['/tizen', '/tizen/'], (req, res) => {
  * answering 200 with unrelated markup learns to distrust the whole directory. Flagged in
  * docs/seo-directory-listings.md and unfixed until now.
  */
-const CONTENT_PREFIXES = ['/guides/', '/integrations/'];
+const CONTENT_PREFIXES = ['/guides/', '/integrations/', '/solutions/'];
 
 /*
  * ⚠️ A MISSING ASSET IS A 404, NEVER THE APP SHELL. Every app route is `/#/…`, so a path ending in a
