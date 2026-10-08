@@ -278,8 +278,8 @@ export async function render(container) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div class="form-group"><label>${t('settings.brand_name')}</label><input type="text" id="wlBrandName" class="input" placeholder="ScreenTinker"></div>
           <div class="form-group"><label>${t('settings.logo_url')}</label><input type="text" id="wlLogoUrl" class="input" placeholder="https://..."></div>
-          <div class="form-group"><label>${t('settings.primary_color')}</label><input type="color" id="wlPrimaryColor" value="#3B82F6" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
-          <div class="form-group"><label>${t('settings.bg_color')}</label><input type="color" id="wlBgColor" value="#111827" style="width:100%;height:36px;border:none;cursor:pointer;border-radius:var(--radius)"></div>
+          <div class="form-group"><label>${t('settings.primary_color')}</label><input type="color" id="wlPrimaryColor" class="input" value="#3B82F6"></div>
+          <div class="form-group"><label>${t('settings.bg_color')}</label><input type="color" id="wlBgColor" class="input" value="#111827"></div>
           <div class="form-group"><label>${t('settings.custom_domain')}</label><input type="text" id="wlDomain" class="input" placeholder="signage.yourcompany.com"></div>
           <div class="form-group"><label>${t('settings.favicon_url')}</label><input type="text" id="wlFavicon" class="input" placeholder="https://..."></div>
         </div>
@@ -419,7 +419,7 @@ export async function render(container) {
         <div><div style="font-size:11px;color:var(--text-muted)">Purchased remaining</div><div style="font-size:20px;font-weight:600">${esc(String(st.purchased_remaining))}</div></div>
       </div>
       <p style="font-weight:500;margin:12px 0 6px">This month's usage</p>
-      ${rows ? `<table class="table" style="width:100%"><thead><tr><th>Model</th><th>Images</th><th>Credits</th><th>Cost</th></tr></thead><tbody>${rows}</tbody></table>`
+      ${rows ? `<div class="table-wrap"><table class="corp-table"><thead><tr><th>Model</th><th>Images</th><th>Credits</th><th>Cost</th></tr></thead><tbody>${rows}</tbody></table></div>`
         : '<p style="color:var(--text-muted);font-size:13px">No hosted images generated yet this month.</p>'}
       ${buy}
       ${st.rate_card ? `<p style="font-size:11px;margin-top:12px;color:${st.rate_card.stale ? 'var(--danger, #e05252)' : 'var(--text-muted)'}">Platform admin: rate card last verified ${esc(st.rate_card.verified_at)} (${esc(String(st.rate_card.age_days))} days ago)${st.rate_card.stale ? ' — re-check provider prices and update config/ai-rate-card.js' : ''}.</p>` : ''}`;
@@ -455,10 +455,10 @@ export async function render(container) {
 
     box.innerHTML = `
       <p style="font-weight:500;margin:12px 0 6px">${t('support.sessions_title')}</p>
-      ${st.grants.length ? `<table class="table" style="width:100%"><thead><tr><th>${t('support.col_org')}</th><th>${t('support.col_reason')}</th><th>${t('support.col_first_used')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${grants}</tbody></table>`
+      ${st.grants.length ? `<div class="table-wrap"><table class="corp-table"><thead><tr><th>${t('support.col_org')}</th><th>${t('support.col_reason')}</th><th>${t('support.col_first_used')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${grants}</tbody></table></div>`
         : `<p style="color:var(--text-muted);font-size:13px">${t('support.no_sessions')}</p>`}
       ${st.requests.length ? `<p style="font-weight:500;margin:16px 0 6px">${t('support.requests_title')}</p>
-        <table class="table" style="width:100%"><thead><tr><th>${t('support.col_code')}</th><th>${t('support.col_requested_by')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${requests}</tbody></table>` : ''}`;
+        <div class="table-wrap"><table class="corp-table"><thead><tr><th>${t('support.col_code')}</th><th>${t('support.col_requested_by')}</th><th>${t('support.col_expires')}</th><th></th></tr></thead><tbody>${requests}</tbody></table></div>` : ''}`;
 
     box.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => {
       try { await api.delete(`/auth/support/grant/${encodeURIComponent(b.dataset.revoke)}`); showToast(t('support.toast_revoked'), 'success'); loadSupportAccess(); }

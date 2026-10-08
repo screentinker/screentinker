@@ -1,6 +1,6 @@
 import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { t } from '../i18n.js';
+import { t, tn } from '../i18n.js';
 import { workspaceCoverage } from '../components/corporate-ui.js';
 import {
   HOUR_PX, pxToMinutes, minutesToPx, rangeFromDrag, moveRange, resizeRange,
@@ -299,7 +299,7 @@ export async function render(container) {
               ${groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)} (${t('schedule.group_devices_count', { n: g.device_count })})${esc(corpMark(corpGroup(g.id)))}</option>`).join('')}
             </select>
             <select id="schedWallSelect" class="input" style="background:var(--bg-input);display:none">
-              ${walls.map((w) => `<option value="${esc(w.id)}">${esc(w.name)} (${t('schedule.wall_panels_count', { n: (w.devices || []).length })})</option>`).join('')}
+              ${walls.map((w) => `<option value="${esc(w.id)}">${esc(w.name)} (${tn('schedule.wall_panels_count', (w.devices || []).length)})</option>`).join('')}
             </select>
             <div id="schedCorpNote" class="corp-notice corp-notice-warn" style="display:none;margin-top:6px"></div>
             ${groups.length === 0 ? `<div id="schedNoGroups" style="display:none;color:var(--text-muted);font-size:12px;margin-top:4px">${t('schedule.no_groups_msg')}</div>` : ''}

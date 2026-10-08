@@ -62,20 +62,20 @@ function scopeSummary(f) {
 function feedCard(f) {
   const live = f.live_count > 0;
   return `
-  <div class="card" data-id="${esc(f.id)}" style="margin-bottom:12px;padding:16px;border-left:4px solid ${live ? '#dc2626' : (f.last_error ? '#ca8a04' : 'var(--border)')}">
+  <div class="corp-card" data-id="${esc(f.id)}" style="margin-bottom:12px;padding:16px;border-left:4px solid ${live ? '#dc2626' : (f.last_error ? '#ca8a04' : 'var(--border)')}">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start">
       <div style="min-width:0">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <strong style="font-size:15px">${esc(f.name)}</strong>
-          ${f.enabled ? '' : `<span class="muted" style="font-size:12px">${esc(t('capf.disabled'))}</span>`}
+          ${f.enabled ? '' : `<span class="corp-help" style="font-size:12px">${esc(t('capf.disabled'))}</span>`}
           ${live ? `<span style="font-size:12px;font-weight:700;color:#dc2626">${esc(tn('capf.live_count', f.live_count))}</span>` : ''}
         </div>
-        <div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(f.url)}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(f.url)}</div>
         <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">
           ${esc(t('capf.summary', { sev: t(`capf.sev.${f.min_severity}`), scope: scopeSummary(f), n: f.screens_in_scope }))}
           · ${esc(f.playlist_id ? t('capf.shows_playlist', { name: (cache.playlists.find((p) => p.id === f.playlist_id) || {}).name || '?' }) : t('capf.shows_card'))}
         </div>
-        <div class="muted" style="font-size:12px;margin-top:4px">${esc(t('capf.checked', { when: ago(f.last_polled_at) }))}${f.last_error ? ` · <span style="color:#ca8a04">${esc(f.last_error)}</span>` : ''}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(f.enabled ? t('capf.checked', { when: ago(f.last_polled_at) }) : t('capf.off_not_checked'))}${f.last_error ? ` · <span style="color:#ca8a04">${esc(f.last_error)}</span>` : ''}</div>
         ${live ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">${f.live.map((a) => `
           <div style="font-size:13px;display:flex;gap:8px;align-items:center">${sevChip(a.severity)} <span>${esc(a.headline || a.event)}</span></div>`).join('')}</div>` : ''}
       </div>
@@ -91,8 +91,8 @@ function feedCard(f) {
 }
 
 export async function render(app) {
-  app.innerHTML = `<div class="view"><h1>${esc(t('nav.emergency_feeds'))}</h1>
-    <p class="muted">${esc(t('capf.intro'))}</p><div id="capBody"></div></div>`;
+  app.innerHTML = `<div class="page-header"><div><h1>${esc(t('nav.emergency_feeds'))}</h1>
+    <div class="subtitle">${esc(t('capf.intro'))}</div></div></div><div id="capBody"></div>`;
   const body = document.getElementById('capBody');
   try {
     const [fs, pls, devs, grps] = await Promise.all([api.get('/cap-feeds'), api.get('/playlists'), api.get('/devices'), api.get('/groups')]);
@@ -103,14 +103,14 @@ export async function render(app) {
       groups: Array.isArray(grps) ? grps : (grps.groups || []),
     };
   } catch (e) {
-    body.innerHTML = `<p class="error">${esc((e && e.message) || t('common.error'))}</p>`;
+    body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc((e && e.message) || t('common.error'))}</p>`;
     return;
   }
   body.innerHTML = `
-    <div class="toolbar"><button class="btn btn-primary" id="capNew">${esc(t('capf.new'))}</button></div>
-    ${cache.feeds.length ? cache.feeds.map(feedCard).join('') : `<p class="muted">${esc(t('capf.empty'))}</p>`}`;
+    <div class="corp-toolbar"><button class="btn btn-primary" id="capNew">${esc(t('capf.new'))}</button></div>
+    ${cache.feeds.length ? cache.feeds.map(feedCard).join('') : `<div class="corp-empty">${esc(t('capf.empty'))}</div>`}`;
   document.getElementById('capNew').addEventListener('click', () => openForm(app, null));
-  body.querySelectorAll('.card[data-id]').forEach((card) => {
+  body.querySelectorAll('.corp-card[data-id]').forEach((card) => {
     const f = cache.feeds.find((x) => x.id === card.dataset.id);
     card.querySelector('[data-act="edit"]').addEventListener('click', () => openForm(app, f));
     card.querySelector('[data-act="del"]').addEventListener('click', async () => {
@@ -130,15 +130,15 @@ export async function render(app) {
       const box = card.querySelector('.cap-alerts');
       if (!box.hidden) { box.hidden = true; return; }
       box.hidden = false;
-      box.innerHTML = `<span class="muted">…</span>`;
+      box.innerHTML = `<span class="corp-help">…</span>`;
       try {
         const rows = await api.get(`/cap-feeds/${f.id}/alerts`);
-        box.innerHTML = rows.length ? `<table class="table"><thead><tr><th>${esc(t('capf.col.alert'))}</th><th>${esc(t('capf.col.area'))}</th><th>${esc(t('capf.col.until'))}</th><th>${esc(t('capf.col.state'))}</th></tr></thead><tbody>
+        box.innerHTML = rows.length ? `<div class="table-wrap"><table class="corp-table"><thead><tr><th>${esc(t('capf.col.alert'))}</th><th>${esc(t('capf.col.area'))}</th><th>${esc(t('capf.col.until'))}</th><th>${esc(t('capf.col.state'))}</th></tr></thead><tbody>
           ${rows.map((a) => `<tr><td>${sevChip(a.severity)} ${esc(a.headline || a.event)}</td><td>${esc((a.area || '').slice(0, 120))}</td>
             <td>${a.expires ? esc(new Date(a.expires).toLocaleString()) : ''}</td>
             <td>${esc(a.on_screens ? t('capf.state.on_screens') : a.ended ? t('capf.state.ended') : !a.in_feed ? t('capf.state.gone') : t('capf.state.filtered'))}</td></tr>`).join('')}
-          </tbody></table>` : `<span class="muted">${esc(t('capf.no_alerts_yet'))}</span>`;
-      } catch (e) { box.innerHTML = `<span class="error">${esc((e && e.message) || t('common.error'))}</span>`; }
+          </tbody></table></div>` : `<span class="corp-help">${esc(t('capf.no_alerts_yet'))}</span>`;
+      } catch (e) { box.innerHTML = `<span style="color:var(--danger)">${esc((e && e.message) || t('common.error'))}</span>`; }
     });
   });
 }
@@ -163,7 +163,7 @@ function openForm(app, feed) {
         </select>
         <span id="cfValueHost" style="flex:1;min-width:200px"></span>
       </div>
-      <div class="muted" id="cfUrl" style="font-size:12px;margin-top:4px;word-break:break-all"></div>
+      <div class="corp-help" id="cfUrl" style="font-size:12px;margin-top:4px;word-break:break-all"></div>
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div class="form-group" style="flex:1;min-width:160px"><label>${esc(t('capf.f.min_severity'))}</label>
@@ -172,9 +172,9 @@ function openForm(app, feed) {
         <select id="cfPoll" class="input">${POLLS.map((p) => `<option value="${p}" ${(feed ? feed.poll_sec : 120) === p ? 'selected' : ''}>${esc(tn('capf.every_min', p / 60))}</option>`).join('')}</select></div>
     </div>
     <div class="form-group"><label>${esc(t('capf.f.events'))}</label><input id="cfEvents" class="input" value="${esc(feed ? (feed.events || []).join(', ') : '')}" placeholder="${esc(t('capf.f.events_ph'))}">
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(t('capf.f.events_hint'))}</div></div>
+      <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('capf.f.events_hint'))}</div></div>
     <div class="form-group"><label>${esc(t('capf.f.area'))}</label><input id="cfArea" class="input" value="${esc(feed ? feed.area_match : '')}" placeholder="${esc(t('capf.f.area_ph'))}">
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(t('capf.f.area_hint'))}</div></div>
+      <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('capf.f.area_hint'))}</div></div>
     <div class="form-group"><label>${esc(t('capf.f.scope'))}</label>
       <select id="cfScope" class="input" style="width:auto">
         ${['workspace', 'group', 'device'].map((k) => `<option value="${k}" ${scopeKind === k ? 'selected' : ''}>${esc(t(`capf.scope.${k}`))}</option>`).join('')}
@@ -216,9 +216,9 @@ function openForm(app, feed) {
   function paintScope() {
     const k = $('cfScope').value;
     const list = k === 'group' ? cache.groups : k === 'device' ? cache.devices : [];
-    $('cfScopeList').innerHTML = k === 'workspace' ? `<span class="muted" style="font-size:12px">${esc(t('capf.scope_all_hint', { n: cache.devices.length }))}</span>`
+    $('cfScopeList').innerHTML = k === 'workspace' ? `<span class="corp-help" style="font-size:12px">${esc(t('capf.scope_all_hint', { n: cache.devices.length }))}</span>`
       : list.map((x) => `<label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" value="${esc(x.id)}" ${chosen.has(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('')
-        || `<span class="muted" style="font-size:12px">${esc(t('capf.scope_empty'))}</span>`;
+        || `<span class="corp-help" style="font-size:12px">${esc(t('capf.scope_empty'))}</span>`;
   }
   $('cfKind').addEventListener('change', () => { src.value = ''; paintValue(); });
   $('cfScope').addEventListener('change', paintScope);
@@ -251,8 +251,8 @@ function openForm(app, feed) {
       box.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${esc(t('capf.test_result', { total: r.total, n: r.would_show }))}</div>
         ${r.alerts.slice(0, 15).map((a) => `<div style="display:flex;gap:8px;align-items:center;margin:3px 0;opacity:${a.live && a.matches ? 1 : 0.55}">
           ${sevChip(a.severity)} <span>${esc(a.headline || a.event)}</span>
-          <span class="muted" style="font-size:11px">${esc(a.live && a.matches ? t('capf.would_show') : !a.live ? t('capf.not_live') : t('capf.filtered_out'))}</span></div>`).join('')}
-        ${r.total > 15 ? `<div class="muted" style="font-size:12px">${esc(t('capf.and_more', { n: r.total - 15 }))}</div>` : ''}`;
+          <span class="corp-help" style="font-size:11px">${esc(a.live && a.matches ? t('capf.would_show') : !a.live ? t('capf.not_live') : t('capf.filtered_out'))}</span></div>`).join('')}
+        ${r.total > 15 ? `<div class="corp-help" style="font-size:12px">${esc(t('capf.and_more', { n: r.total - 15 }))}</div>` : ''}`;
     } catch (e) { box.hidden = true; $('cfError').textContent = (e && e.message) || t('common.error'); }
   });
   $('cfCancel').addEventListener('click', close);

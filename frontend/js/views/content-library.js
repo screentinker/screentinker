@@ -752,7 +752,7 @@ async function loadContent() {
             : (exp.dateLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_label', { date: exp.dateLabel })}</div>` : '')}
         </div>
         <div class="content-item-actions">
-          <button class="btn btn-secondary btn-sm" data-history-content="${c.id}" title="${t('history.button')}">${t('history.button')}</button>
+          <button class="btn btn-secondary btn-sm btn-icon-only" data-history-content="${c.id}" title="${t('history.button')}" aria-label="${t('history.button')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></button>
           <button class="btn btn-secondary btn-sm" data-edit-content="${c.id}" title="${t('content.btn_edit')}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -760,13 +760,7 @@ async function loadContent() {
             </svg>
             ${t('content.btn_edit')}
           </button>
-          <button class="btn btn-danger btn-sm" data-delete-content="${c.id}" title="${t('content.btn_delete')}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-            ${t('content.btn_delete')}
-          </button>
+          <button class="btn btn-danger btn-sm btn-icon-only" data-delete-content="${c.id}" title="${t('content.btn_delete')}" aria-label="${t('content.btn_delete')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
       </div>
     `;

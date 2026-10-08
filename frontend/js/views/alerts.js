@@ -31,16 +31,16 @@ function target(c) {
 }
 
 function card(c) {
-  return `<div class="card" data-id="${esc(c.id)}" style="margin-bottom:12px;padding:16px;border-left:4px solid ${c.last_error ? '#ca8a04' : 'var(--border)'}">
+  return `<div class="corp-card" data-id="${esc(c.id)}" style="margin-bottom:12px;padding:16px;border-left:4px solid ${c.last_error ? '#ca8a04' : 'var(--border)'}">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div style="min-width:0">
         <div style="display:flex;gap:8px;align-items:center"><strong>${esc(c.name)}</strong>
-          <span class="muted" style="font-size:12px">${esc(t(`alerts.kind.${c.kind}`))}</span>
-          ${c.enabled ? '' : `<span class="muted" style="font-size:12px">${esc(t('alerts.off'))}</span>`}</div>
-        <div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(target(c))}</div>
+          <span class="corp-help" style="font-size:12px">${esc(t(`alerts.kind.${c.kind}`))}</span>
+          ${c.enabled ? '' : `<span class="corp-help" style="font-size:12px">${esc(t('alerts.off'))}</span>`}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(target(c))}</div>
         <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">${esc(t('alerts.summary', {
           events: c.events.map((e) => t(`alerts.ev.${e}`)).join(', '), n: c.offline_minutes, scope: scopeSummary(c) }))}</div>
-        <div class="muted" style="font-size:12px;margin-top:4px">${esc(t('alerts.last_sent', { when: ago(c.last_sent_at) }))}${c.last_error ? ` · <span style="color:#ca8a04">${esc(c.last_error)}</span>` : ''}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('alerts.last_sent', { when: ago(c.last_sent_at) }))}${c.last_error ? ` · <span style="color:#ca8a04">${esc(c.last_error)}</span>` : ''}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">
         <button class="btn btn-secondary btn-sm" data-act="test">${esc(t('alerts.send_test'))}</button>
@@ -51,17 +51,17 @@ function card(c) {
 }
 
 export async function render(app) {
-  app.innerHTML = `<div class="view"><h1>${esc(t('nav.alerts'))}</h1><p class="muted">${esc(t('alerts.intro'))}</p><div id="alBody"></div></div>`;
+  app.innerHTML = `<div class="page-header"><div><h1>${esc(t('nav.alerts'))}</h1><div class="subtitle">${esc(t('alerts.intro'))}</div></div></div><div id="alBody"></div>`;
   const body = document.getElementById('alBody');
   try {
     const [chs, devs, grps] = await Promise.all([api.get('/alert-channels'), api.get('/devices'), api.get('/groups')]);
     cache = { channels: Array.isArray(chs) ? chs : [], devices: Array.isArray(devs) ? devs : (devs.devices || []), groups: Array.isArray(grps) ? grps : (grps.groups || []) };
-  } catch (e) { body.innerHTML = `<p class="error">${esc((e && e.message) || t('common.error'))}</p>`; return; }
-  body.innerHTML = `<div class="toolbar"><button class="btn btn-primary" id="alNew">${esc(t('alerts.new'))}</button></div>
-    ${cache.channels.length ? cache.channels.map(card).join('') : `<p class="muted">${esc(t('alerts.empty'))}</p>`}
-    <p class="muted" style="font-size:12px;margin-top:16px">${esc(t('alerts.owner_note'))}</p>`;
+  } catch (e) { body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc((e && e.message) || t('common.error'))}</p>`; return; }
+  body.innerHTML = `<div class="corp-toolbar"><button class="btn btn-primary" id="alNew">${esc(t('alerts.new'))}</button></div>
+    ${cache.channels.length ? cache.channels.map(card).join('') : `<div class="corp-empty">${esc(t('alerts.empty'))}</div>`}
+    <p class="corp-help" style="font-size:12px;margin-top:16px">${esc(t('alerts.owner_note'))}</p>`;
   document.getElementById('alNew').addEventListener('click', () => openForm(app, null));
-  body.querySelectorAll('.card[data-id]').forEach((el) => {
+  body.querySelectorAll('.corp-card[data-id]').forEach((el) => {
     const c = cache.channels.find((x) => x.id === el.dataset.id);
     el.querySelector('[data-act="edit"]').addEventListener('click', () => openForm(app, c));
     el.querySelector('[data-act="del"]').addEventListener('click', async () => {
@@ -114,16 +114,16 @@ function openForm(app, ch) {
     const host = $('alKindFields');
     if (k === 'email') host.innerHTML = `<div class="form-group"><label>${esc(t('alerts.f.emails'))}</label><input id="alEmails" class="input" value="${esc(ch && ch.emails ? ch.emails.join(', ') : '')}" placeholder="ops@example.com, manager@example.com"></div>`;
     else if (k === 'pagerduty') host.innerHTML = `<div class="form-group"><label>${esc(t('alerts.f.pd_key'))}</label><input id="alSecret1" class="input" autocomplete="off" placeholder="${esc(ch && ch.routing_key_hint ? ch.routing_key_hint : '')}">
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(t('alerts.f.pd_hint'))} ${esc(keep)}</div></div>`;
+      <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('alerts.f.pd_hint'))} ${esc(keep)}</div></div>`;
     else host.innerHTML = `<div class="form-group"><label>${esc(t(`alerts.f.url_${k}`))}</label><input id="alUrl" class="input" autocomplete="off" placeholder="${esc(ch && ch.url_hint ? ch.url_hint : 'https://…')}">
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(t(`alerts.f.url_${k}_hint`))} ${esc(keep)}</div></div>
+      <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t(`alerts.f.url_${k}_hint`))} ${esc(keep)}</div></div>
       ${k === 'webhook' ? `<div class="form-group"><label>${esc(t('alerts.f.secret'))}</label><input id="alSecret2" class="input" autocomplete="off" placeholder="${esc(ch && ch.has_secret ? '••••••' : '')}">
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(t('alerts.f.secret_hint'))}</div></div>` : ''}`;
+      <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('alerts.f.secret_hint'))}</div></div>` : ''}`;
   }
   function paintScope() {
     const k = $('alScope').value;
     const list = k === 'group' ? cache.groups : k === 'device' ? cache.devices : [];
-    $('alScopeList').innerHTML = k === 'workspace' ? `<span class="muted" style="font-size:12px">${esc(tn('alerts.scope_all_hint', cache.devices.length))}</span>`
+    $('alScopeList').innerHTML = k === 'workspace' ? `<span class="corp-help" style="font-size:12px">${esc(tn('alerts.scope_all_hint', cache.devices.length))}</span>`
       : list.map((x) => `<label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" value="${esc(x.id)}" ${chosen.has(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('');
   }
   $('alKind').addEventListener('change', paintKind);

@@ -95,10 +95,10 @@ export async function mountStorageSettings(host) {
 
       ${m ? migrationPanel(m) : ''}
 
-      <table class="table" style="width:100%;margin-top:8px">
+      <div class="table-wrap" style="margin-top:8px"><table class="corp-table">
         <thead><tr><th>Name</th><th>Level</th><th>Type</th><th>Bucket</th><th>Mode</th><th>Files</th><th></th></tr></thead>
         <tbody>${profiles.map((p) => row(p, orgAdmin, !!ws)).join('')}</tbody>
-      </table>
+      </table></div>
       <div style="margin-top:10px"><button type="button" class="btn btn-secondary btn-sm" id="stAdd">Add storage profile</button></div>
       <div id="stForm"></div>
       <div id="stBrowse"></div>`;
@@ -149,14 +149,14 @@ export async function mountStorageSettings(host) {
       <td>${where}</td>
       <td>${p.mode === 'ro' ? 'read-only' : 'read/write'}</td>
       <td>${esc(String(p.in_use || 0))}</td>
-      <td style="white-space:nowrap">
+      <td><div class="storage-row-actions">
         ${p.provider !== 'local' ? btn('test', 'Test') : ''}
         ${p.provider !== 'local' && (orgAdmin || p.usable_here) ? btn('browse', 'Browse') : ''}
         ${movable && orgAdmin && p.scope !== 'workspace' ? btn('migrate', 'Move organization here') : ''}
         ${movable && inWorkspace && p.usable_here ? btn('migrate-ws', 'Move this workspace here') : ''}
         ${p.editable ? btn('edit', 'Edit') : ''}
         ${p.editable ? btn('delete', 'Delete', 'btn-danger') : ''}
-      </td></tr>`;
+      </div></td></tr>`;
   }
 
   function migrationPanel(m) {
@@ -214,11 +214,11 @@ export async function mountStorageSettings(host) {
     box.innerHTML = `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-top:12px">
       <h4 style="margin-bottom:8px">${esc(p.name)}: /${esc(prefix)}</h4>
       ${prefix ? `<button type="button" class="btn btn-secondary btn-sm" data-dir="${esc(up)}">↑ Up</button>` : ''}
-      <table class="table" style="width:100%;margin-top:6px"><tbody>
+      <div class="table-wrap" style="margin-top:6px"><table class="corp-table"><tbody>
         ${page.folders.map((f) => `<tr><td colspan="3"><a href="#" data-dir="${esc(f)}">📁 ${esc(f.slice(prefix.length))}</a></td></tr>`).join('')}
         ${page.objects.map((o) => `<tr><td><label><input type="checkbox" data-key="${esc(o.key)}" ${o.importable ? '' : 'disabled'}> ${esc(o.key.slice(prefix.length))}</label>${o.st_internal ? ' <span style="font-size:11px;color:var(--text-muted)">(ScreenTinker)</span>' : ''}</td><td style="font-size:12px">${esc(fmtSize(o.size))}</td><td style="font-size:11px;color:var(--text-muted)">${o.importable ? '' : 'not a media type'}</td></tr>`).join('')}
         ${!page.folders.length && !page.objects.length ? '<tr><td style="color:var(--text-muted);font-size:13px">Empty.</td></tr>' : ''}
-      </tbody></table>
+      </tbody></table></div>
       ${page.cursor ? '<button type="button" class="btn btn-secondary btn-sm" data-next="1">Next page</button>' : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
         <select id="sbMode" class="input" style="width:auto">
@@ -265,7 +265,7 @@ export async function mountInstanceStorage(host) {
       ${env ? `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:10px;font-size:13px">
         <strong>Set by the server's environment:</strong> ${esc(PROVIDERS[env.provider] || env.provider)}${env.bucket ? ` — ${esc(env.bucket)}` : ''}${env.endpoint ? ` <span style="color:var(--text-muted)">(${esc(env.endpoint)})</span>` : ''}.
         <div style="font-size:12px;color:var(--text-muted);margin-top:4px">STORAGE_PROVIDER is set, so it is the instance default${p ? ' and the profile below is <strong>not in effect</strong>' : ''}. Unset it and restart to manage the instance default here.</div></div>` : ''}
-      ${p ? `<table class="table" style="width:100%"><thead><tr><th>Name</th><th>Type</th><th>Bucket</th><th>Files</th><th></th></tr></thead><tbody><tr>
+      ${p ? `<div class="table-wrap"><table class="corp-table"><thead><tr><th>Name</th><th>Type</th><th>Bucket</th><th>Files</th><th></th></tr></thead><tbody><tr>
           <td>${esc(p.name)}${p.active ? ' <span style="font-size:11px;color:var(--success)">in effect</span>' : ''}${p.hint ? `<div style="font-size:11px;color:var(--text-muted)">key …${esc(p.hint)}</div>` : ''}${p.credentials_unreadable ? '<div style="font-size:11px;color:var(--danger, #e05252)">Key unreadable — re-enter it.</div>' : ''}</td>
           <td>${esc(PROVIDERS[p.provider] || p.provider)}</td>
           <td>${esc(p.bucket || '')}${p.endpoint ? `<div style="font-size:11px;color:var(--text-muted)">${esc(p.endpoint)}</div>` : ''}</td>
@@ -274,7 +274,7 @@ export async function mountInstanceStorage(host) {
             <button type="button" class="btn btn-secondary btn-sm" data-iact="test">Test</button>
             <button type="button" class="btn btn-secondary btn-sm" data-iact="edit">Edit</button>
             <button type="button" class="btn btn-danger btn-sm" data-iact="delete">Delete</button>
-          </td></tr></tbody></table>`
+          </td></tr></tbody></table></div>`
         : `<p style="font-size:13px">${env ? '' : 'No instance storage profile: media is stored on this server\'s local disk.'}</p>
            <button type="button" class="btn btn-secondary btn-sm" data-iact="add">Add instance storage</button>`}
       <div data-iform></div>`;

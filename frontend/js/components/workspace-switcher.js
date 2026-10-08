@@ -240,7 +240,7 @@ export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
             <div class="ws-name">${esc(w.name)}${w.remote
               // ⚠️ Marked, always. An operator acting on the wrong customer's screens because two
               // rows looked identical is the failure this one character prevents.
-              ? ' <span class="badge" style="font-size:9px;vertical-align:middle">remote</span>' : ''}</div>
+              ? ' <span class="corp-chip ws-remote-badge" style="font-size:9px;padding:0 6px">remote</span>' : ''}</div>
             <div class="ws-org">${subtitle}</div>
           </div>
           ${adminIconsHtml(w)}

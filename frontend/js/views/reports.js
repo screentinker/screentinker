@@ -113,13 +113,13 @@ export async function render(container) {
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
-          <div class="settings-section" style="margin:0">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:20px;margin-bottom:24px">
+          <div class="settings-section" style="margin:0;min-width:0">
             <h3 style="font-size:14px;margin-bottom:12px">${t('report.plays_per_day')}</h3>
             <div id="dailyChart" style="height:200px;display:flex;align-items:flex-end;gap:2px"></div>
           </div>
 
-          <div class="settings-section" style="margin:0">
+          <div class="settings-section" style="margin:0;min-width:0">
             <h3 style="font-size:14px;margin-bottom:12px">${t('report.plays_by_hour')}</h3>
             <div id="hourlyChart" style="height:200px;display:flex;align-items:flex-end;gap:1px"></div>
           </div>
@@ -356,7 +356,7 @@ async function loadUptime() {
           ${r.incidents.slice(0, 50).map((i) => `
             <tr style="border-bottom:1px solid var(--border)">
               <td style="${TDs}">${esc(i.deviceName || i.deviceId)}</td>
-              <td style="${TDs}"><span class="badge" title="${esc(i.originNodeId)}" style="font-family:monospace">${esc(String(i.originNodeId).slice(0, 8))}</span></td>
+              <td style="${TDs}"><span class="corp-chip" title="${esc(i.originNodeId)}" style="font-family:monospace">${esc(String(i.originNodeId).slice(0, 8))}</span></td>
               <td style="${TDs}">${esc(String(i.alertType || '').replace(/[_-]/g, ' '))}</td>
               <td style="${TDs}">${esc(new Date(i.openedAt * 1000).toLocaleString())}</td>
               <td style="${TDs}">${i.ongoing ? '<strong>still down</strong>' : esc(mins(i.downSeconds))}</td>

@@ -514,13 +514,17 @@ function renderDetailContent(container, playlist) {
           ${playlist.display_count ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">${tn('playlist.assigned_to', playlist.display_count)}</div>` : ''}
         </div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <!-- Delete FIRST, away from the far right. Publish sits at the right end of the draft banner
+             above; publishing removes the banner and this row moves up into its place, so whatever
+             is rightmost here ends up under the cursor that just clicked Publish. A quick double
+             click used to land on Delete. Keep the destructive button at the other end. -->
+        <button class="btn btn-secondary" id="deletePlaylistBtn" style="color:var(--danger);margin-right:8px">${t('playlist.delete_playlist')}</button>
         <button class="btn btn-secondary" id="previewPlaylistBtn">${t('widget.preview')}</button>
         ${playlist.smart_rules
           ? `<button class="btn btn-primary" id="editRulesBtn">${t('smart.edit_rules')}</button>`
           : `<button class="btn btn-primary" id="addItemBtn">${t('playlist.add_content')}</button>`}
         ${corpMode === 'corporate' ? `<button class="btn btn-secondary" id="addSlotBtn" style="display:none">+ ${esc(t('corp.hq.add_slot'))}</button>` : ''}
-        <button class="btn btn-secondary" id="deletePlaylistBtn" style="color:var(--danger)">${t('playlist.delete_playlist')}</button>
       </div>
     </div>
     <div id="playlistApprovalBar" style="margin:-8px 0 12px"></div>

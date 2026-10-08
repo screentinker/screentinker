@@ -14,7 +14,7 @@ import { esc } from '../utils.js';
 // not. Same contract now, including the 401 session-expiry reload.
 const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(async (r) => {
   if (r.status === 401) { localStorage.removeItem('token'); window.location.reload(); throw new Error('Session expired'); }
-  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `Request failed (${r.status})`); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw Object.assign(new Error(e.error || `Request failed (${r.status})`), { status: r.status, body: e }); }
   return r.json();
 });
 
@@ -47,8 +47,10 @@ async function renderList(container) {
   };
 
   try {
-    const teams = await API('/teams');
     const list = document.getElementById('teamsList');
+    // A 503 (Teams switched off server-side) is a state of the page, not a failed action: show it
+    // once, in the page, instead of an error toast per request.
+    const teams = await API('/teams').catch((e) => { if (e.status === 503) return e.body || {}; throw e; });
 
     // Teams is switched off server-side while it is redesigned: every endpoint answers 503 with
     // an explanation. API() resolves the BODY whatever the status, so an object arrives where an

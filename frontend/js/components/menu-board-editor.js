@@ -80,7 +80,7 @@ function paint(host) {
     ${row(field(t('menu.title'), `<input class="input" data-k="title" value="${esc(s.title)}">`),
           field(t('menu.subtitle'), `<input class="input" data-k="subtitle" value="${esc(s.subtitle)}">`))}
     ${row(field(t('menu.theme'), `<select class="input" data-k="theme">${['dark', 'light', 'chalkboard', 'bold'].map((th) => `<option value="${th}" ${s.theme === th ? 'selected' : ''}>${esc(t(`menu.theme.${th}`))}</option>`).join('')}</select>`),
-          field(t('menu.accent'), `<input type="color" class="input" data-k="accent" value="${esc(s.accent || '#f59e0b')}" style="height:36px;padding:2px">`),
+          field(t('menu.accent'), `<input type="color" class="input" data-k="accent" value="${esc(s.accent || '#f59e0b')}">`),
           field(t('menu.columns'), `<select class="input" data-k="columns">${[0, 1, 2, 3, 4].map((n) => `<option value="${n}" ${Number(s.columns) === n ? 'selected' : ''}>${n ? n : esc(t('menu.columns_auto'))}</option>`).join('')}</select>`),
           field(t('menu.text_size'), `<select class="input" data-k="font_scale">${[0.8, 0.9, 1, 1.15, 1.3, 1.5].map((n) => `<option value="${n}" ${Number(s.font_scale) === n ? 'selected' : ''}>${Math.round(n * 100)}%</option>`).join('')}</select>`))}
     ${row(field(t('menu.currency'), `<input class="input" data-k="currency" value="${esc(s.currency)}" style="max-width:90px">`),

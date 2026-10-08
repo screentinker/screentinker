@@ -19,13 +19,13 @@ function bars(days) {
 }
 
 function card(l) {
-  return `<div class="card" data-id="${esc(l.id)}" style="margin-bottom:12px;padding:16px">
+  return `<div class="corp-card" data-id="${esc(l.id)}" style="margin-bottom:12px;padding:16px">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div style="min-width:0">
-        <div style="display:flex;gap:8px;align-items:center"><strong>${esc(l.name)}</strong>${l.enabled ? '' : `<span class="muted" style="font-size:12px">${esc(t('qr.off'))}</span>`}</div>
+        <div style="display:flex;gap:8px;align-items:center"><strong>${esc(l.name)}</strong>${l.enabled ? '' : `<span class="corp-help" style="font-size:12px">${esc(t('qr.off'))}</span>`}</div>
         <div style="font-size:13px;margin-top:4px"><code>${esc(shortUrl(l))}</code>
           <button class="btn btn-secondary btn-sm" data-act="copy" style="margin-left:6px">${esc(t('qr.copy'))}</button></div>
-        <div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all">→ ${esc(l.target_url)}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px;word-break:break-all">→ ${esc(l.target_url)}</div>
         <div style="font-size:13px;margin-top:6px">${esc(tn('qr.scans', l.scans))} · ${esc(t('qr.last7', { n: l.last_7_days }))}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">
@@ -40,14 +40,14 @@ function card(l) {
 }
 
 export async function render(app) {
-  app.innerHTML = `<div class="view"><h1>${esc(t('nav.qr_codes'))}</h1><p class="muted">${esc(t('qr.intro'))}</p><div id="qrBody"></div></div>`;
+  app.innerHTML = `<div class="page-header"><div><h1>${esc(t('nav.qr_codes'))}</h1><div class="subtitle">${esc(t('qr.intro'))}</div></div></div><div id="qrBody"></div>`;
   const body = document.getElementById('qrBody');
-  try { links = await api.get('/qr-links'); } catch (e) { body.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
-  body.innerHTML = `<div class="toolbar"><button class="btn btn-primary" id="qrNew">${esc(t('qr.new'))}</button></div>
-    ${links.length ? links.map(card).join('') : `<p class="muted">${esc(t('qr.empty'))}</p>`}
+  try { links = await api.get('/qr-links'); } catch (e) { body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc(e.message)}</p>`; return; }
+  body.innerHTML = `<div class="corp-toolbar"><button class="btn btn-primary" id="qrNew">${esc(t('qr.new'))}</button></div>
+    ${links.length ? links.map(card).join('') : `<div class="corp-empty">${esc(t('qr.empty'))}</div>`}
     ${/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname) ? `<p style="font-size:12px;color:#ca8a04;margin-top:12px">${esc(t('qr.private_origin', { origin: location.origin }))}</p>` : ''}`;
   document.getElementById('qrNew').addEventListener('click', () => openForm(app, null));
-  body.querySelectorAll('.card[data-id]').forEach((el) => {
+  body.querySelectorAll('.corp-card[data-id]').forEach((el) => {
     const l = links.find((x) => x.id === el.dataset.id);
     el.querySelector('[data-act="copy"]').addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(shortUrl(l)); showToast(t('qr.copied'), 'success'); } catch { showToast(shortUrl(l), 'info'); }
@@ -86,7 +86,7 @@ function openForm(app, l) {
     <h3 style="margin-bottom:12px">${esc(l ? t('qr.edit_title', { name: l.name }) : t('qr.new'))}</h3>
     <div class="form-group"><label>${esc(t('qr.f.name'))}</label><input id="qrName" class="input" value="${esc(l ? l.name : '')}" placeholder="${esc(t('qr.f.name_ph'))}"></div>
     <div class="form-group"><label>${esc(t('qr.f.target'))}</label><input id="qrTarget" class="input" value="${esc(l ? l.target_url : 'https://')}">
-      ${l ? `<div class="muted" style="font-size:12px;margin-top:4px">${esc(t('qr.f.target_hint'))}</div>` : ''}</div>
+      ${l ? `<div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('qr.f.target_hint'))}</div>` : ''}</div>
     ${l ? `<label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" id="qrEnabled" ${l.enabled ? 'checked' : ''}> ${esc(t('qr.f.enabled'))}</label>` : ''}
     <div id="qrError" style="color:var(--danger);font-size:13px;min-height:18px;margin-top:8px"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">

@@ -73,20 +73,20 @@ function summary(h) {
 function hookCard(h) {
   const live = h.live_alerts > 0 || h.screens_overridden > 0;
   return `
-  <div class="card" data-id="${esc(h.id)}" style="margin-bottom:12px;padding:16px;border-left:4px solid ${live ? '#dc2626' : 'var(--border)'}">
+  <div class="corp-card" data-id="${esc(h.id)}" style="margin-bottom:12px;padding:16px;border-left:4px solid ${live ? '#dc2626' : 'var(--border)'}">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start">
       <div style="min-width:0">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <strong style="font-size:15px">${esc(h.name)}</strong>
-          <span class="muted" style="font-size:12px">${esc(KIND_LABEL()[h.kind] || h.kind)}</span>
-          ${h.enabled ? '' : `<span class="muted" style="font-size:12px">${esc(t('capf.disabled'))}</span>`}
+          <span class="corp-help" style="font-size:12px">${esc(KIND_LABEL()[h.kind] || h.kind)}</span>
+          ${h.enabled ? '' : `<span class="corp-help" style="font-size:12px">${esc(t('capf.disabled'))}</span>`}
           ${h.live_alerts ? `<span style="font-size:12px;font-weight:700;color:#dc2626">${esc(tn('capf.live_count', h.live_alerts))}</span>` : ''}
           ${h.screens_overridden ? `<span style="font-size:12px;font-weight:700;color:#dc2626">${esc(tn('auto.overridden', h.screens_overridden))}</span>` : ''}
-          ${h.has_signing_secret ? `<span class="muted" style="font-size:12px">🔏 ${esc(t('auto.signed'))}</span>` : ''}
+          ${h.has_signing_secret ? `<span class="corp-help" style="font-size:12px">🔏 ${esc(t('auto.signed'))}</span>` : ''}
         </div>
         <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">${esc(summary(h))}</div>
-        <div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(h.url_hint)}</div>
-        <div class="muted" style="font-size:12px;margin-top:4px">${esc(tn('auto.last_called', h.call_count, { when: ago(h.last_called_at) }))}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(h.url_hint)}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(tn('auto.last_called', h.call_count, { when: ago(h.last_called_at) }))}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" data-act="test">${esc(t('auto.test'))}</button>
@@ -107,7 +107,7 @@ function showUrl(url, name) {
   overlay.innerHTML = `
   <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:640px;max-width:100%">
     <h3 style="margin-bottom:8px">${esc(t('auto.url_title', { name }))}</h3>
-    <p class="muted" style="font-size:13px;margin-bottom:12px">${esc(t('auto.url_once'))}</p>
+    <p class="corp-help" style="font-size:13px;margin-bottom:12px">${esc(t('auto.url_once'))}</p>
     <code id="auUrl" style="display:block;word-break:break-all;padding:10px;background:var(--bg-input);border-radius:var(--radius);font-size:12px">${esc(url)}</code>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap">
       <button class="btn btn-secondary" id="auCopy">${esc(t('auto.copy'))}</button>
@@ -123,8 +123,8 @@ function showUrl(url, name) {
 }
 
 export async function render(app) {
-  app.innerHTML = `<div class="view"><h1>${esc(t('nav.automation'))}</h1>
-    <p class="muted">${esc(t('auto.intro'))}</p><div id="autoBody"></div></div>`;
+  app.innerHTML = `<div class="page-header"><div><h1>${esc(t('nav.automation'))}</h1>
+    <div class="subtitle">${esc(t('auto.intro'))}</div></div></div><div id="autoBody"></div>`;
   const body = document.getElementById('autoBody');
   try {
     const [hk, pls, devs, grps, trg, ds, subs] = await Promise.all([
@@ -140,25 +140,25 @@ export async function render(app) {
       subs: Array.isArray(subs) ? subs : [],
     };
   } catch (e) {
-    body.innerHTML = `<p class="error">${esc((e && e.message) || t('common.error'))}</p>`;
+    body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc((e && e.message) || t('common.error'))}</p>`;
     return;
   }
   body.innerHTML = `
-    <div class="toolbar"><button class="btn btn-primary" id="autoNew">${esc(t('auto.new'))}</button></div>
-    ${cache.hooks.length ? cache.hooks.map(hookCard).join('') : `<p class="muted">${esc(t('auto.empty'))}</p>`}
+    <div class="corp-toolbar"><button class="btn btn-primary" id="autoNew">${esc(t('auto.new'))}</button></div>
+    ${cache.hooks.length ? cache.hooks.map(hookCard).join('') : `<div class="corp-empty">${esc(t('auto.empty'))}</div>`}
     <h2 style="margin-top:28px;font-size:18px">${esc(t('auto.zapier_title'))}</h2>
-    <p class="muted" style="font-size:13px">${esc(t('auto.zapier_intro'))}</p>
-    <div class="card" style="padding:16px;margin-bottom:12px;font-size:13px">
+    <p class="corp-help" style="font-size:13px">${esc(t('auto.zapier_intro'))}</p>
+    <div class="corp-card" style="padding:16px;margin-bottom:12px;font-size:13px">
       <div>${esc(t('auto.zapier_base'))}</div>
       <code style="display:block;word-break:break-all;padding:8px;background:var(--bg-input);border-radius:var(--radius);margin:6px 0">${esc(cache.api_base)}</code>
-      <div class="muted">${esc(t('auto.zapier_token'))}</div>
+      <div class="corp-help">${esc(t('auto.zapier_token'))}</div>
     </div>
     <h3 style="font-size:15px;margin:12px 0 8px">${esc(t('auto.subs_title'))}</h3>
-    ${cache.subs.length ? `<table class="table"><thead><tr><th>${esc(t('auto.col.event'))}</th><th>${esc(t('auto.col.receiver'))}</th><th>${esc(t('auto.col.delivered'))}</th><th></th></tr></thead><tbody>
-      ${cache.subs.map((s) => `<tr data-sub="${esc(s.id)}"><td>${esc(EVENT_LABEL()[s.event] || s.event)}</td><td>${esc(s.target_host)}${s.token_name ? ` <span class="muted">(${esc(s.token_name)})</span>` : ''}</td>
+    ${cache.subs.length ? `<div class="table-wrap"><table class="corp-table"><thead><tr><th>${esc(t('auto.col.event'))}</th><th>${esc(t('auto.col.receiver'))}</th><th>${esc(t('auto.col.delivered'))}</th><th></th></tr></thead><tbody>
+      ${cache.subs.map((s) => `<tr data-sub="${esc(s.id)}"><td>${esc(EVENT_LABEL()[s.event] || s.event)}</td><td>${esc(s.target_host)}${s.token_name ? ` <span class="corp-help">(${esc(s.token_name)})</span>` : ''}</td>
         <td>${esc(t('auto.delivered', { ok: (s.deliveries || {}).ok || 0, failed: (s.deliveries || {}).failed || 0, pending: (s.deliveries || {}).pending || 0 }))}${s.last_error ? `<div style="color:#ca8a04;font-size:12px">${esc(s.last_error)}</div>` : ''}</td>
         <td><button class="btn btn-secondary btn-sm" data-unsub="${esc(s.id)}" style="color:var(--danger)">${esc(t('auto.unsubscribe'))}</button></td></tr>`).join('')}
-      </tbody></table>` : `<p class="muted" style="font-size:13px">${esc(t('auto.subs_empty'))}</p>`}`;
+      </tbody></table></div>` : `<p class="corp-help" style="font-size:13px">${esc(t('auto.subs_empty'))}</p>`}`;
 
   document.getElementById('autoNew').addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('[data-unsub]').forEach((b) => b.addEventListener('click', async () => {
@@ -166,7 +166,7 @@ export async function render(app) {
     try { await api.delete(`/automation/subscriptions/${b.dataset.unsub}`); render(app); }
     catch (e) { showToast((e && e.message) || t('common.error'), 'error'); }
   }));
-  body.querySelectorAll('.card[data-id]').forEach((card) => {
+  body.querySelectorAll('.corp-card[data-id]').forEach((card) => {
     const h = cache.hooks.find((x) => x.id === card.dataset.id);
     card.querySelector('[data-act="edit"]').addEventListener('click', () => openForm(app, h));
     card.querySelector('[data-act="del"]').addEventListener('click', async () => {
@@ -193,14 +193,14 @@ export async function render(app) {
       const box = card.querySelector('.auto-calls');
       if (!box.hidden) { box.hidden = true; return; }
       box.hidden = false;
-      box.innerHTML = '<span class="muted">…</span>';
+      box.innerHTML = '<span class="corp-help">…</span>';
       try {
         const rows = await api.get(`/automation/${h.id}/calls`);
-        box.innerHTML = rows.length ? `<table class="table"><thead><tr><th>${esc(t('auto.col.when'))}</th><th>${esc(t('auto.col.status'))}</th><th>${esc(t('auto.col.result'))}</th></tr></thead><tbody>
-          ${rows.map((c) => `<tr><td>${esc(new Date(c.at * 1000).toLocaleString())}${c.test ? ` <span class="muted">(${esc(t('auto.test_mark'))})</span>` : ''}</td>
+        box.innerHTML = rows.length ? `<div class="table-wrap"><table class="corp-table"><thead><tr><th>${esc(t('auto.col.when'))}</th><th>${esc(t('auto.col.status'))}</th><th>${esc(t('auto.col.result'))}</th></tr></thead><tbody>
+          ${rows.map((c) => `<tr><td>${esc(new Date(c.at * 1000).toLocaleString())}${c.test ? ` <span class="corp-help">(${esc(t('auto.test_mark'))})</span>` : ''}</td>
             <td style="color:${c.status < 300 ? 'inherit' : '#dc2626'}">${esc(String(c.status))}</td><td>${esc(c.outcome || '')}</td></tr>`).join('')}
-          </tbody></table>` : `<span class="muted">${esc(t('auto.no_calls'))}</span>`;
-      } catch (e) { box.innerHTML = `<span class="error">${esc((e && e.message) || t('common.error'))}</span>`; }
+          </tbody></table></div>` : `<span class="corp-help">${esc(t('auto.no_calls'))}</span>`;
+      } catch (e) { box.innerHTML = `<span style="color:var(--danger)">${esc((e && e.message) || t('common.error'))}</span>`; }
     });
   });
 }
@@ -246,7 +246,7 @@ function wireScope(root, prefix) {
   };
 }
 const field = (id, label, value, { ph = '', hint = '' } = {}) => `<div class="form-group"><label>${esc(label)}</label>
-  <input id="${id}" class="input" value="${esc(value == null ? '' : value)}" placeholder="${esc(ph)}">${hint ? `<div class="muted" style="font-size:12px;margin-top:4px">${esc(hint)}</div>` : ''}</div>`;
+  <input id="${id}" class="input" value="${esc(value == null ? '' : value)}" placeholder="${esc(ph)}">${hint ? `<div class="corp-help" style="font-size:12px;margin-top:4px">${esc(hint)}</div>` : ''}</div>`;
 const select = (id, label, options, value) => `<div class="form-group"><label>${esc(label)}</label>
   <select id="${id}" class="input">${options.map(([v, l]) => `<option value="${esc(v)}" ${String(value) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`;
 
@@ -268,13 +268,13 @@ function kindFields(kind, c) {
   if (kind === 'mass_notification') {
     const m = c.mapping || {};
     return `
-      <p class="muted" style="font-size:12px">${esc(t('auto.mn_explain'))}</p>
+      <p class="corp-help" style="font-size:12px">${esc(t('auto.mn_explain'))}</p>
       ${select('afSeverity', t('auto.f.default_severity'), Object.entries(SEV()), c.severity || 'Extreme')}
       ${field('afExpires', t('auto.f.expires'), c.expires_min || 120)}
       ${scopePicker('af', c.scopes)}
       ${select('afShow', t('capf.f.show'), showOpts, c.playlist_id || '')}
       <details style="margin:8px 0"><summary style="cursor:pointer;font-size:13px">${esc(t('auto.mapping'))}</summary>
-        <p class="muted" style="font-size:12px">${esc(t('auto.mapping_hint'))}</p>
+        <p class="corp-help" style="font-size:12px">${esc(t('auto.mapping_hint'))}</p>
         ${field('afMapId', t('auto.f.map_id'), m.id || '', { ph: '{{body.alertId}}' })}
         ${field('afMapHeadline', t('auto.f.map_headline'), m.headline || '', { ph: '{{body.title}}' })}
         ${field('afMapMessage', t('auto.f.map_message'), m.message || '', { ph: '{{body.message}}' })}
@@ -285,7 +285,7 @@ function kindFields(kind, c) {
     return `
       ${select('afTrigger', t('auto.f.trigger'), cache.triggers.map((x) => [x.id, x.name]), c.trigger_id || '')}
       ${select('afOp', t('auto.f.op'), [['fire', t('auto.op.fire')], ['clear', t('auto.op.clear')]], c.op || 'fire')}
-      <p class="muted" style="font-size:12px">${esc(t('auto.trigger_note'))}</p>`;
+      <p class="corp-help" style="font-size:12px">${esc(t('auto.trigger_note'))}</p>`;
   }
   if (kind === 'data') {
     return `
@@ -327,16 +327,16 @@ function openForm(app, hook) {
     <h3 style="margin-bottom:12px">${esc(hook ? t('auto.edit_title', { name: hook.name }) : t('auto.new'))}</h3>
     ${field('afName', t('capf.f.name'), hook ? hook.name : '', { ph: t('auto.f.name_ph') })}
     ${hook ? '' : select('afKind', t('auto.f.kind'), kinds, 'emergency')}
-    <p class="muted" id="afKindHint" style="font-size:12px;margin:-4px 0 8px"></p>
+    <p class="corp-help" id="afKindHint" style="font-size:12px;margin:-4px 0 8px"></p>
     <div id="afKindFields"></div>
     <details style="margin:8px 0"><summary style="cursor:pointer;font-size:13px">${esc(t('auto.signing'))}</summary>
-      <p class="muted" style="font-size:12px">${esc(t('auto.signing_hint'))}</p>
+      <p class="corp-help" style="font-size:12px">${esc(t('auto.signing_hint'))}</p>
       <input id="afSigning" class="input" type="password" autocomplete="new-password" placeholder="${esc(hook && hook.has_signing_secret ? t('auto.signing_set') : t('auto.signing_none'))}">
       ${hook && hook.has_signing_secret ? `<label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:6px"><input type="checkbox" id="afSigningClear"> ${esc(t('auto.signing_remove'))}</label>` : ''}
     </details>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0"><input type="checkbox" id="afEnabled" ${!hook || hook.enabled ? 'checked' : ''}> ${esc(t('auto.f.enabled'))}</label>
     ${hook && hook.config && hook.config.via ? '' : `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0 0"><input type="checkbox" id="afAllowGet" ${hook && hook.config && hook.config.allow_get ? 'checked' : ''}> ${esc(t('auto.f.allow_get'))}</label>
-    <p class="muted" style="font-size:12px;margin:2px 0 8px 24px">${esc(t('auto.f.allow_get_hint'))}</p>`}
+    <p class="corp-help" style="font-size:12px;margin:2px 0 8px 24px">${esc(t('auto.f.allow_get_hint'))}</p>`}
     <div id="afError" style="color:var(--danger);font-size:13px;min-height:18px"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px">
       <button class="btn btn-secondary" id="afCancel">${esc(t('common.cancel'))}</button>

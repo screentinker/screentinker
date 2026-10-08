@@ -527,7 +527,7 @@ export async function render(container) {
       `).join('')}
     </div>
     <div class="content-grid" id="widgetGrid"></div>
-    <div id="pluginSubmitCard" style="display:none;margin-top:32px" class="card"></div>
+    <div id="pluginSubmitCard" style="display:none;margin-top:32px" class="corp-card"></div>
 
     <!-- Widget Config Modal -->
     <div class="modal-overlay" id="widgetModal" style="display:none">
@@ -1571,9 +1571,9 @@ export async function render(container) {
           </div>
           <div class="content-item-actions">
             <button class="btn btn-secondary btn-sm" data-edit-widget="${escAttr(w.id)}">${t('common.edit')}</button>
-            <button class="btn btn-secondary btn-sm" data-duplicate-widget="${escAttr(w.id)}" title="${escAttr(t('widget.duplicate_hint'))}">${t('widget.duplicate')}</button>
-            <button class="btn btn-secondary btn-sm" data-history-widget="${escAttr(w.id)}" title="${t('history.button')}">${t('history.button')}</button>
-            <button class="btn btn-danger btn-sm" data-delete-widget="${escAttr(w.id)}">${t('common.delete')}</button>
+            <button class="btn btn-secondary btn-sm btn-icon-only" data-duplicate-widget="${escAttr(w.id)}" title="${escAttr(t('widget.duplicate_hint'))}" aria-label="${escAttr(t('widget.duplicate'))}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+            <button class="btn btn-secondary btn-sm btn-icon-only" data-history-widget="${escAttr(w.id)}" title="${t('history.button')}" aria-label="${t('history.button')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></button>
+            <button class="btn btn-danger btn-sm btn-icon-only" data-delete-widget="${escAttr(w.id)}" title="${t('common.delete')}" aria-label="${t('common.delete')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
           </div>
           <div data-approval-widget="${escAttr(w.id)}" style="padding:0 12px 10px"></div>
         </div>

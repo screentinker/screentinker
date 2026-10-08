@@ -2217,7 +2217,8 @@ export default {
     'schedule.target_wall': 'Videowand',
     'schedule.panel_of_wall': 'scherm van {wall} — plan de wand',
     'schedule.calendars_walls': 'Videowanden',
-    'schedule.wall_panels_count': '{n} schermen',
+    'schedule.wall_panels_count_one': '{n} scherm',
+    'schedule.wall_panels_count_other': '{n} schermen',
     'schedule.group_devices_count': '{n} apparaten',
     'schedule.no_groups_msg': 'Nog geen groepen aangemaakt. Maak groepen aan op de pagina Schermen.',
     'schedule.zone_note':

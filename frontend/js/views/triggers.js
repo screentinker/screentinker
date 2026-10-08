@@ -38,7 +38,7 @@ function targetName(tr) {
 
 function assignmentSummary(tr) {
   const a = tr.assignments || [];
-  if (!a.length) return `<span class="badge badge-warn">${esc(t('trigger.unassigned'))}</span>`;
+  if (!a.length) return `<span class="corp-chip corp-chip-hq">${esc(t('trigger.unassigned'))}</span>`;
   const names = a.map((x) => {
     const list = x.target_type === 'device' ? cache.devices : cache.groups;
     const hit = list.find(i => i.id === x.target_id);
@@ -53,16 +53,16 @@ function rowHtml(tr) {
     <tr data-id="${esc(tr.id)}">
       <td>
         <strong>${esc(tr.name)}</strong>
-        ${tr.enabled ? '' : `<span class="badge">${esc(t('trigger.disabled'))}</span>`}
+        ${tr.enabled ? '' : `<span class="corp-chip corp-chip-muted">${esc(t('trigger.disabled'))}</span>`}
       </td>
       <td><code>${esc(tr.match_token)}</code>${tr.clear_token ? ` / <code>${esc(tr.clear_token)}</code>` : ''}</td>
       <td>${esc(targetName(tr))}</td>
-      <td>${esc(modeLabel(tr.mode))}${risk ? ` <span class="badge badge-warn" title="${esc(t('trigger.lease_risk'))}">${esc(t('trigger.no_lease'))}</span>` : ''}</td>
+      <td>${esc(modeLabel(tr.mode))}${risk ? ` <span class="corp-chip corp-chip-hq" title="${esc(t('trigger.lease_risk'))}">${esc(t('trigger.no_lease'))}</span>` : ''}</td>
       <td>${tr.source_http ? 'HTTP' : ''}${tr.source_http && tr.source_udp ? ' + ' : ''}${tr.source_udp ? 'UDP' : ''}</td>
       <td>${tr.priority}</td>
       <td>${assignmentSummary(tr)}</td>
-      <td class="actions">
-        <button class="btn btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
+      <td class="corp-actions-cell">
+        <button class="btn btn-secondary btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
         <button class="btn btn-sm btn-danger" data-act="del">${esc(t('common.delete'))}</button>
       </td>
     </tr>`;
@@ -95,7 +95,7 @@ function formHtml(tr) {
       <label class="check">
         <input type="checkbox" data-assign="${type}:${esc(x.id)}"
                ${assigned.has(`${type}:${x.id}`) ? 'checked' : ''}> ${esc(x.name)}
-      </label>`).join('') || `<p class="muted">${esc(t('trigger.none_available'))}</p>`;
+      </label>`).join('') || `<p class="corp-help">${esc(t('trigger.none_available'))}</p>`;
 
   /*
    * ⚠️ `.modal-overlay`, NOT `.modal-backdrop`. This dialog spent its whole life using a class name
@@ -327,8 +327,8 @@ function headOfficeHtml() {
 }
 
 export async function render(app) {
-  app.innerHTML = `<div class="view"><h1>${esc(t('nav.triggers'))}</h1>
-    <p class="muted">${esc(t('trigger.intro'))}</p><div id="trigBody"></div></div>`;
+  app.innerHTML = `<div class="page-header"><div><h1>${esc(t('nav.triggers'))}</h1>
+    <div class="subtitle">${esc(t('trigger.intro'))}</div></div></div><div id="trigBody"></div>`;
   const body = document.getElementById('trigBody');
 
   try {
@@ -346,19 +346,19 @@ export async function render(app) {
       groups: Array.isArray(grps) ? grps : (grps.groups || []),
     };
   } catch (e) {
-    body.innerHTML = `<p class="error">${esc((e && e.message) || t('common.error'))}</p>`;
+    body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc((e && e.message) || t('common.error'))}</p>`;
     return;
   }
 
   const risky = cache.triggers.filter(leaseRisk).length;
   body.innerHTML = `
     ${headOfficeHtml()}
-    <div class="toolbar">
+    <div class="corp-toolbar">
       <button class="btn btn-primary" id="tgNew">${esc(t('trigger.new'))}</button>
     </div>
-    ${risky ? `<div class="banner banner-warn">${esc(t('trigger.lease_risk_banner'))}</div>` : ''}
+    ${risky ? `<div class="corp-notice corp-notice-warn">${esc(t('trigger.lease_risk_banner'))}</div>` : ''}
     ${cache.triggers.length ? `
-    <table class="table">
+    <div class="table-wrap"><table class="corp-table">
       <thead><tr>
         <th>${esc(t('trigger.name'))}</th><th>${esc(t('trigger.tokens'))}</th>
         <th>${esc(t('trigger.target'))}</th><th>${esc(t('trigger.mode'))}</th>
@@ -366,7 +366,7 @@ export async function render(app) {
         <th>${esc(t('trigger.assigned'))}</th><th></th>
       </tr></thead>
       <tbody>${cache.triggers.map(rowHtml).join('')}</tbody>
-    </table>` : `<p class="muted">${esc(t('trigger.empty'))}</p>`}`;
+    </table></div>` : `<div class="corp-empty">${esc(t('trigger.empty'))}</div>`}`;
 
   document.getElementById('tgNew').addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('tr[data-id]').forEach((row) => {

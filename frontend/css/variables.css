@@ -30,4 +30,10 @@
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
   --sidebar-width: 220px;
   --transition: 0.2s ease;
+  /* Aliases for names some views use (drop indicators, the slide editor) that were never defined, so
+     their outlines and fields fell back to nothing. They follow the brand tokens above. */
+  --primary: var(--accent);
+  --surface: var(--bg-input);
+  --text: var(--text-primary);
+  --radius-md: var(--radius);
 }
