@@ -21,9 +21,10 @@ function orgContext(req, res) {
   if (!req.workspaceId || !req.organizationId) { res.status(403).json({ error: 'No workspace context' }); return false; }
   return true;
 }
-function isOrgAdmin(req) {
-  return !!(req.isPlatformAdmin || req.actingAs || req.orgRole === 'org_owner' || req.orgRole === 'org_admin');
-}
+// lib/permissions: a platform admin, or the org's owner/admin. NOT req.actingAs: that is also true
+// for a platform_operator, who may look at any org but holds no owner power (lib/tenancy #13), and
+// a connection is credentials into the customer's BI tenant.
+const { isOrgAdmin } = require('../lib/permissions');
 function requireOrgAdmin(req, res) {
   if (!orgContext(req, res)) return false;
   if (!isOrgAdmin(req)) { res.status(403).json({ error: 'Only an organization admin can manage BI connections.', code: 'BI_ADMIN_REQUIRED' }); return false; }
@@ -47,6 +48,9 @@ function usedBy(orgId, id) {
     WHERE ws.organization_id = ? AND w.widget_type = 'bi-dashboard' AND json_extract(w.config, '$.connection_id') = ?`).get(orgId, id).n;
 }
 const canAllowPrivate = (req) => !!(req.isPlatformAdmin || config.selfHosted);
+// Any Tableau host (not only Tableau Cloud): the same people, for the same reason — it is an
+// operator's decision what a hosted server's pages load scripts from.
+const inputOpts = (req) => ({ canAllowPrivate: canAllowPrivate(req), anyTableauHost: canAllowPrivate(req) });
 
 router.get('/', (req, res) => {
   if (!orgContext(req, res)) return;
@@ -57,7 +61,7 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   if (!requireOrgAdmin(req, res)) return;
   let input;
-  try { input = conns.normaliseInput(req.body, null, { canAllowPrivate: canAllowPrivate(req) }); }
+  try { input = conns.normaliseInput(req.body, null, inputOpts(req)); }
   catch (e) { return res.status(e.status || 400).json({ error: e.message, code: e.code }); }
   const row = conns.create(db, req.organizationId, req.user.id, input);
   audit(req, 'bi_connection.create', { connection_id: row.id, kind: row.kind, name: row.name, organization_id: req.organizationId });
@@ -68,7 +72,7 @@ router.put('/:id', (req, res) => {
   if (!requireOrgAdmin(req, res)) return;
   const row = load(req, res); if (!row) return;
   let input;
-  try { input = conns.normaliseInput(req.body, row, { canAllowPrivate: canAllowPrivate(req) }); }
+  try { input = conns.normaliseInput(req.body, row, inputOpts(req)); }
   catch (e) { return res.status(e.status || 400).json({ error: e.message, code: e.code }); }
   const next = conns.update(db, row, input);
   audit(req, 'bi_connection.update', { connection_id: row.id, name: next.name, secret_changed: next.secret_enc !== row.secret_enc });

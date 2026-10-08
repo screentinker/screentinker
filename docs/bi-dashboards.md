@@ -58,7 +58,9 @@ networks it shouldn't.
 
 On a **self-hosted** server, or for a **platform administrator**, the connection has an extra
 option: **Allow a private network address**. Cloud metadata and link-local addresses stay refused
-even with it on.
+even with it on. On a hosted instance the option belongs to the address it was granted for: if an
+organization admin changes the connection's address, it switches off again until a platform
+administrator turns it back on.
 
 ---
 
@@ -123,7 +125,10 @@ it should have nothing else.
 **In ScreenTinker:**
 
 1. **Settings → BI dashboards → Add a connection → Tableau.** Enter:
-   - the Tableau address, such as `https://prod-useast-a.online.tableau.com` or your server
+   - the Tableau address, such as `https://prod-useast-a.online.tableau.com` or your server. On a
+     hosted ScreenTinker instance this must be a Tableau Cloud address (`https://….online.tableau.com`),
+     because the widget page loads Tableau's script from it; Tableau Server needs a self-hosted
+     ScreenTinker (or a platform administrator to add the connection)
    - the site's content URL (empty for the default site)
    - the three connected-app values
    - the user
@@ -145,11 +150,13 @@ reach that host.
 
 - Screens show dashboards like any widget. The dashboard page is cached for offline use, but a live
   dashboard needs the network. Grafana screens keep the last image when they lose it.
-- **Power BI and Tableau embed a page from Microsoft or Tableau inside the widget.** If your
-  organization has **Settings → Widget sandbox isolation** on (the default), embedded pages run with
-  an isolated origin. Some browsers and players then refuse to sign in to the embedded report. If a
-  report stays blank on a web-based player (the browser player, Samsung Tizen, LG webOS), turn
-  isolation off for the organization. Grafana images are unaffected.
+- **Power BI and Tableau embed a page from Microsoft or Tableau inside the widget.** The dashboard
+  page always runs with an isolated (opaque) origin, whatever **Settings → Widget sandbox isolation**
+  says, and the report embedded in it inherits that isolation. It has to: the page is served by the
+  ScreenTinker server, and without the isolation a script it loads (Tableau's comes from the Tableau
+  host) would run with access to whoever opens the link's ScreenTinker session. Turning isolation off
+  for the organization therefore does not change how a dashboard runs. Grafana images are
+  unaffected.
 - Very old TV browsers may not run the Power BI or Tableau embedding libraries. Grafana images work
   everywhere.
 
@@ -161,4 +168,11 @@ itself:
 - `GET /api/widgets/:id/bi-image.png`, the Grafana image
 - `GET /api/widgets/:id/bi-token`, a Power BI embed token or Tableau token
 
-Both are limited per widget, and neither ever returns a connection's secret.
+Neither ever returns a connection's secret, and both answer a page with an opaque origin
+(`Origin: null`), which is what a screen's widget page is.
+
+What is limited is work, not views: a cached Grafana image or Power BI embed token is served to any
+number of screens without counting. A request that would make the server render with Grafana, ask
+Power BI for a token, or sign a Tableau token is counted per caller address and, more generously,
+per widget. A caller over its budget still gets the last Grafana image, or the cached Power BI token
+while it is valid.

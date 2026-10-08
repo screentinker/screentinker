@@ -42,7 +42,7 @@ function cleanUrl(raw, label) {
  * their stored values; a secret left out is kept). Returns { kind, name, config, secretEnc, allowPrivate }.
  * Throws InputError.
  */
-function normaliseInput(body, existing = null, { canAllowPrivate = false } = {}) {
+function normaliseInput(body, existing = null, { canAllowPrivate = false, anyTableauHost = false } = {}) {
   const b = body || {};
   const kind = existing ? existing.kind : String(b.kind || '');
   if (!KINDS.includes(kind)) throw new InputError('kind must be grafana, powerbi or tableau.');
@@ -73,6 +73,15 @@ function normaliseInput(body, existing = null, { canAllowPrivate = false } = {})
     const username = String(pick('username') || '').trim();
     if (!username || username.length > 256 || /[\s<>"]/.test(username)) throw new InputError('Enter the Tableau user the screens view as.');
     config = { server_url: cleanUrl(pick('server_url'), 'The Tableau address'), site, client_id: clientId, secret_id: secretId, username };
+    /*
+     * ⚠️ THE WIDGET PAGE RUNS A SCRIPT FROM THIS HOST (the Embedding API is served by the Tableau
+     * host itself), so on a hosted instance it must be Tableau Cloud, not any address a tenant types.
+     * The page is sandboxed to an opaque origin as well (lib/bi/widget.js); this is the second line.
+     * Checked when the address is set or changed, so a connection an operator made is still editable.
+     */
+    if (!anyTableauHost && (!existing || config.server_url !== prev.server_url) && !isTableauCloudUrl(config.server_url)) {
+      throw new InputError('On this server the Tableau address must be your Tableau Cloud site (https://…online.tableau.com). Tableau Server needs a self-hosted ScreenTinker.');
+    }
   }
 
   // Secret: absent keeps the stored one. It cannot be cleared: every kind needs it to work at all.
@@ -92,6 +101,10 @@ function normaliseInput(body, existing = null, { canAllowPrivate = false } = {})
    * instance, may switch it on. Power BI talks to fixed Microsoft hosts and never needs it.
    */
   let allowPrivate = existing ? !!existing.allow_private : false;
+  // The flag was granted for an ADDRESS. A new address loses it unless whoever sets it may grant it,
+  // or an org admin could point an operator-approved connection at any private host.
+  const urlKey = kind === 'grafana' ? 'base_url' : 'server_url';
+  if (existing && !canAllowPrivate && config[urlKey] !== prev[urlKey]) allowPrivate = false;
   if (b.allow_private !== undefined && kind !== 'powerbi') {
     const want = b.allow_private === true || b.allow_private === 1 || b.allow_private === '1';
     if (want && !allowPrivate && !canAllowPrivate) {
@@ -100,6 +113,14 @@ function normaliseInput(body, existing = null, { canAllowPrivate = false } = {})
     allowPrivate = want;
   }
   return { kind, name, config, secretEnc, allowPrivate };
+}
+
+// Tableau Cloud pods all live under online.tableau.com (prod-useast-a, 10ax, prod-uk-a, …).
+function isTableauCloudUrl(u) {
+  try {
+    const url = new URL(u);
+    return url.protocol === 'https:' && /(^|\.)online\.tableau\.com$/i.test(url.hostname);
+  } catch { return false; }
 }
 
 function parseConfig(s) {
@@ -161,4 +182,4 @@ function update(db, row, input) {
   return db.prepare('SELECT * FROM bi_connections WHERE id = ?').get(row.id);
 }
 
-module.exports = { KINDS, GUID_RE, InputError, normaliseInput, parseConfig, present, secretOf, forOrg, forWidget, orgOfWorkspace, create, update };
+module.exports = { KINDS, GUID_RE, InputError, normaliseInput, isTableauCloudUrl, parseConfig, present, secretOf, forOrg, forWidget, orgOfWorkspace, create, update };

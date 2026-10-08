@@ -8,8 +8,8 @@
  * Needs the Grafana Image Renderer (plugin or remote service) on the Grafana side; Test says so.
  *
  * Images are cached per widget and size for the widget's refresh interval, one fetch in flight per
- * key, and the last good image is served when Grafana is down so a screen never goes blank on a
- * Grafana restart.
+ * key, and the last good image is served when Grafana is down — or when the caller's render budget
+ * is spent — so a screen never goes blank on a Grafana restart.
  */
 
 const biHttp = require('./http');
@@ -105,7 +105,7 @@ async function fetchPng(conn, token, url) {
  * The image for a widget at a size. Returns { buf, type, at, stale, error? } or throws when there
  * is nothing at all to show.
  */
-async function imageFor(widgetId, conn, cfg, size, { refreshSec = 300, now = Date.now() } = {}) {
+async function imageFor(widgetId, conn, cfg, size, { refreshSec = 300, now = Date.now(), beforeFetch = null } = {}) {
   const width = sizeBucket(size.width, 320, 3840, 1920);
   const height = sizeBucket(size.height, 240, 2160, 1080);
   const url = renderUrl(conn, cfg, { width, height });
@@ -114,6 +114,12 @@ async function imageFor(widgetId, conn, cfg, size, { refreshSec = 300, now = Dat
   const hit = cache.get(key);
   if (hit && now - hit.at < ttl) return { ...hit, stale: false };
   if (!inflight.has(key)) {
+    // Only a call that would reach Grafana is counted (routes/widgets.js): a refused one still gets
+    // the last image, so a busy fleet or a stranger with the address never blanks a screen.
+    if (beforeFetch && !beforeFetch()) {
+      if (hit) return { ...hit, stale: true, error: 'rate limited' };
+      throw Object.assign(new Error('Too many renders for this dashboard'), { status: 429 });
+    }
     const token = require('./connections').secretOf(conn);
     const p = fetchPng(conn, token, url)
       .then((img) => { const e = { ...img, at: Date.now() }; put(key, e); return e; })

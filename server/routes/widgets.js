@@ -556,16 +556,33 @@ function liveBiWidget(req, res) {
 
 /*
  * ⚠️ PUBLIC, LIKE /render (a screen's widget page is a null-origin frame and cannot carry a session),
- * so both of these are bounded per widget: an address that leaks lets someone view the dashboard —
- * as the screen does — but not make this server hammer Grafana or mint tokens without limit.
+ * so both of these are bounded: an address that leaks lets someone view the dashboard — as the screen
+ * does — but not make this server hammer Grafana or mint tokens without limit.
+ *
+ * ⚠️ WHAT IS COUNTED IS WORK, NOT VIEWS. A cached image or embed token is served without counting:
+ * a per-widget limit on every request meant a big fleet on one dashboard got 429s, and anyone with
+ * a widget id could spend that budget and blank every screen showing it. Only a call that would
+ * reach Grafana / Power BI (or mint a Tableau JWT) is counted, twice: per caller — the page holds no
+ * identity, so that is the address it came from — and, more generously, per widget, which is the cap
+ * on what one dashboard can cost upstream.
  */
-const biLimiter = require('../lib/bounded-snapshot-store').createStore({ max: 2000, ttlMs: 60_000 });
+const biLimiter = require('../lib/bounded-snapshot-store').createStore({ max: 20000, ttlMs: 60_000 });
 function biRateLimited(key, max) {
   // A fixed one-minute window: the store expires an entry 60s after its receivedAt.
   const win = biLimiter.get(key) || { receivedAt: Date.now(), n: 0 };
   win.n += 1;
   biLimiter.set(key, win);
   return win.n > max;
+}
+const BI_LIMITS = {
+  img: { caller: 30, widget: 120 },   // Grafana renders (cache misses only)
+  pbi: { caller: 10, widget: 30 },    // Power BI GenerateToken (cache misses only; ~1/hour normally)
+  tab: { caller: 60, widget: 1200 },  // Tableau JWTs: every call, but signing one is local and cheap
+};
+function biUpstreamAllowed(kind, req, widgetId) {
+  const l = BI_LIMITS[kind];
+  if (biRateLimited(`${kind}:${widgetId}:${req.ip || ''}`, l.caller)) return false;
+  return !biRateLimited(`${kind}:${widgetId}`, l.widget);
 }
 
 // The latest Grafana render for a dashboard widget. The token never leaves this server.
@@ -574,13 +591,13 @@ router.get('/:id/bi-image.png', async (req, res) => {
   if (!got) return;
   const { widget, config } = got;
   if (config.provider !== 'grafana' || config.mode === 'public') return res.status(404).json({ error: 'Not a Grafana image dashboard' });
-  if (biRateLimited(`img:${widget.id}`, 120)) return res.status(429).json({ error: 'Too many requests' });
   const conn = require('../lib/bi/connections').forWidget(db, widget, config);
   if (!conn || conn.kind !== 'grafana') return res.status(404).json({ error: 'No connection' });
   try {
     const grafana = require('../lib/bi/grafana');
     const img = await grafana.imageFor(widget.id, conn, grafana.normaliseWidgetConfig(config),
-      { width: req.query.w, height: req.query.h }, { refreshSec: config.refresh_sec });
+      { width: req.query.w, height: req.query.h },
+      { refreshSec: config.refresh_sec, beforeFetch: () => biUpstreamAllowed('img', req, widget.id) });
     res.setHeader('Content-Type', img.type);
     res.setHeader('Cache-Control', 'private, max-age=30');
     // Loaded by the widget page, a sandboxed (opaque-origin) document: same-origin CORP blocks it.
@@ -588,8 +605,9 @@ router.get('/:id/bi-image.png', async (req, res) => {
     if (img.stale) res.setHeader('X-Dashboard-Stale', '1');
     res.send(img.buf);
   } catch (e) {
-    console.warn(`[bi] grafana render for widget ${widget.id}: ${e.message}`);
     res.setHeader('Cache-Control', 'no-store');
+    if (e.status === 429) return res.status(429).json({ error: 'Too many requests' });
+    console.warn(`[bi] grafana render for widget ${widget.id}: ${e.message}`);
     res.status(502).json({ error: 'The dashboard could not be rendered' });
   }
 });
@@ -600,11 +618,12 @@ router.get('/:id/bi-token', async (req, res) => {
   if (!got) return;
   const { widget, config } = got;
   res.setHeader('Cache-Control', 'no-store');
-  if (biRateLimited(`tok:${widget.id}`, 30)) return res.status(429).json({ error: 'Too many requests' });
   try {
-    res.json(await require('../lib/bi/widget').tokenFor(db, widget, config));
+    const kind = config.provider === 'tableau' ? 'tab' : 'pbi';
+    res.json(await require('../lib/bi/widget').tokenFor(db, widget, config, { beforeFetch: () => biUpstreamAllowed(kind, req, widget.id) }));
   } catch (e) {
     if (e.status === 404) return res.status(404).json({ error: e.message });
+    if (e.status === 429) return res.status(429).json({ error: 'Too many requests' });
     console.warn(`[bi] token for widget ${widget.id}: ${e.message}`);
     res.status(502).json({ error: 'The dashboard service did not issue a token' });
   }

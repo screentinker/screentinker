@@ -7,7 +7,9 @@
  * fresh one before it expires (GET /api/widgets/:id/bi-token). The client secret never leaves here.
  *
  * Embed tokens are cached per report until ten minutes before they expire, so however many screens
- * show a report, or however often its page is loaded, Power BI is asked about once an hour.
+ * show a report, or however often its page is loaded, Power BI is asked about once an hour. A token
+ * that arrives with less than twenty minutes left (Power BI caps it at the Entra token's lifetime)
+ * is kept for half of what it has, not regenerated on every call.
  *
  * Commercial cloud only (login.microsoftonline.com / api.powerbi.com).
  */
@@ -67,12 +69,22 @@ async function aadToken(conn, now = Date.now()) {
   return out.access_token;
 }
 
-/** { embedUrl, reportId, token, expiration } for a report — cached until 10 minutes before expiry. */
-async function embedFor(conn, cfg, now = Date.now()) {
+const FRESH_MARGIN = 10 * 60 * 1000;
+
+/**
+ * { embedUrl, reportId, token, expiration } for a report — cached until 10 minutes before expiry.
+ * `beforeFetch`, when given, is asked before Power BI is (routes/widgets.js counts only those calls);
+ * refused, a cached token that is still valid is served instead.
+ */
+async function embedFor(conn, cfg, now = Date.now(), { beforeFetch = null } = {}) {
   const k = `${connKey(conn)}|${cfg.group_id}|${cfg.report_id}`;
   const hit = embedCache.get(k);
-  if (hit && hit.exp - 10 * 60 * 1000 > now) return strip(hit);
+  if (hit && hit.freshUntil > now) return strip(hit);
   if (!inflight.has(k)) {
+    if (beforeFetch && !beforeFetch()) {
+      if (hit && hit.exp - 60 * 1000 > now) return strip(hit);
+      throw Object.assign(new Error('Too many token requests for this dashboard'), { status: 429 });
+    }
     const p = (async () => {
       const bearer = await aadToken(conn, now);
       const h = { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' };
@@ -89,7 +101,8 @@ async function embedFor(conn, cfg, now = Date.now()) {
       const gen = await call(`${base}/GenerateToken`, { method: 'POST', headers: h, body: JSON.stringify({ accessLevel: 'View' }) }, 'Power BI');
       if (!gen.token || !report.embedUrl) throw new Error('Power BI returned no embed token');
       const exp = Date.parse(gen.expiration) || (now + 60 * 60 * 1000);
-      const entry = { embedUrl: report.embedUrl, reportId: report.id || cfg.report_id, token: gen.token, expiration: new Date(exp).toISOString(), exp };
+      const freshUntil = exp - Math.min(FRESH_MARGIN, Math.max(0, exp - now) / 2);
+      const entry = { embedUrl: report.embedUrl, reportId: report.id || cfg.report_id, token: gen.token, expiration: new Date(exp).toISOString(), exp, freshUntil };
       embedCache.set(k, entry);
       while (embedCache.size > 500) embedCache.delete(embedCache.keys().next().value);
       return entry;

@@ -12,6 +12,9 @@
  *     embed token only
  *   - Tableau: a connected-app JWT with the claims Tableau requires, fresh each time
  *   - a widget can only use its own organization's connection
+ *   - every dashboard page is sandboxed to an opaque origin, and what it fetches answers Origin: null
+ *   - only cache misses are rate limited, per caller and per widget, so a big fleet is never refused
+ *   - a platform_operator acting-as cannot manage connections; a changed address loses allow_private
  *
  * Grafana and Tableau Server are real local HTTP servers; Microsoft's hosts are mocked in fetch.
  */
@@ -94,15 +97,17 @@ test('connection input: GUIDs, single-tenant Entra, a secret is required, privat
 
 /* ── HTTP, against a real local Grafana / Tableau and mocked Microsoft ─────────────── */
 
-const ORG = 'o-bi', WS = 'ws-bi', ADMIN = 'u-bi-admin', EDITOR = 'u-bi-ed';
+const ORG = 'o-bi', WS = 'ws-bi', ADMIN = 'u-bi-admin', EDITOR = 'u-bi-ed', OPERATOR = 'u-bi-op';
 const ORG2 = 'o-bi2', WS2 = 'ws-bi2', ADMIN2 = 'u-bi-admin2';
 let server, base, mock, mockBase;
 const hits = { render: [], search: 0, signin: [], aad: 0, gen: 0 };
 let grafanaDown = false;
+let pbiTokenLifeMs = 3600e3;
 const realFetch = global.fetch;
 
 before(async () => {
   db.prepare("INSERT INTO users (id, email, password_hash, role) VALUES (?, 'bia@t.local', 'x', 'user'), (?, 'bie@t.local', 'x', 'user'), (?, 'bia2@t.local', 'x', 'user')").run(ADMIN, EDITOR, ADMIN2);
+  db.prepare("INSERT INTO users (id, email, password_hash, role) VALUES (?, 'biop@t.local', 'x', 'platform_operator')").run(OPERATOR);
   db.prepare('INSERT INTO organizations (id, name, owner_user_id) VALUES (?, ?, ?), (?, ?, ?)').run(ORG, 'Org', ADMIN, ORG2, 'Other', ADMIN2);
   db.prepare('INSERT INTO workspaces (id, organization_id, name) VALUES (?, ?, ?), (?, ?, ?)').run(WS, ORG, 'HQ', WS2, ORG2, 'Elsewhere');
   db.prepare("INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'org_owner'), (?, ?, 'org_member'), (?, ?, 'org_owner')").run(ORG, ADMIN, ORG, EDITOR, ORG2, ADMIN2);
@@ -147,7 +152,7 @@ before(async () => {
       if (u.endsWith('/GenerateToken')) {
         hits.gen++;
         assert.deepEqual(JSON.parse(opts.body), { accessLevel: 'View' }, 'view-only embed tokens');
-        return new Response(JSON.stringify({ token: `EMBED-${hits.gen}`, tokenId: 't', expiration: new Date(Date.now() + 3600e3).toISOString() }), { status: 200 });
+        return new Response(JSON.stringify({ token: `EMBED-${hits.gen}`, tokenId: 't', expiration: new Date(Date.now() + pbiTokenLifeMs).toISOString() }), { status: 200 });
       }
       if (/\/groups\/[^/]+\/reports\/[^/]+$/.test(u)) return new Response(JSON.stringify({ id: GUID(20), embedUrl: 'https://app.powerbi.com/reportEmbed?reportId=r', datasetId: 'd' }), { status: 200 });
       if (/\/groups\?/.test(u)) return new Response(JSON.stringify({ value: [{ id: GUID(10), name: 'Sales' }] }), { status: 200 });
@@ -157,7 +162,10 @@ before(async () => {
   };
 
   const app = express();
+  // So a test can be many callers: the BI limits are per caller address (X-Forwarded-For here).
+  app.set('trust proxy', true);
   app.use(express.json());
+  app.use('/api/status', require('../routes/status'));
   app.get('/api/widgets/:id/bi-image.png', (req, res, next) => { req._skipAuth = true; next(); });
   app.get('/api/widgets/:id/bi-token', (req, res, next) => { req._skipAuth = true; next(); });
   app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
@@ -176,8 +184,8 @@ after(() => {
 });
 
 const tokenOf = (u) => generateToken(db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(u), u === ADMIN2 ? WS2 : WS);
-async function api(method, p, body, who = ADMIN) {
-  const headers = who ? { Authorization: `Bearer ${tokenOf(who)}`, 'Content-Type': 'application/json' } : {};
+async function api(method, p, body, who = ADMIN, extra = {}) {
+  const headers = { ...(who ? { Authorization: `Bearer ${tokenOf(who)}`, 'Content-Type': 'application/json' } : {}), ...extra };
   const r = await realFetch(base + p, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const buf = Buffer.from(await r.arrayBuffer());
   let json; try { json = JSON.parse(buf.toString()); } catch { json = null; }
@@ -344,8 +352,11 @@ test('Tableau: a fresh connected-app JWT for the view, and the page loads the Em
   assert.match(page.headers.get('content-security-policy'), new RegExp(`frame-src ${mockBase.replace(/[.]/g, '\\.')}`));
   // Bounded: a leaked address cannot be used to mint tokens without limit.
   let last;
-  for (let i = 0; i < 30; i++) last = await api('GET', `/api/widgets/${W.tab}/bi-token`, null, null);
+  for (let i = 0; i < 60; i++) last = await api('GET', `/api/widgets/${W.tab}/bi-token`, null, null);
   assert.equal(last.status, 429);
+  // …per caller: another screen is not refused because this one was.
+  const other = await api('GET', `/api/widgets/${W.tab}/bi-token`, null, null, { 'X-Forwarded-For': '203.0.113.9' });
+  assert.equal(other.status, 200, other.text);
 });
 
 test('a widget that points at another organization\'s connection shows nothing and gets no token', async () => {
@@ -375,6 +386,152 @@ test('coexists with the cloud-doc widget (#521): both reserved, each render keep
   assert.match(bi.headers.get('content-security-policy'), /sandbox allow-scripts/);
   assert.equal((await api('GET', `/api/widgets/${cd.body.id}/bi-token`, null, null)).status, 404, 'a cloud-doc is not a dashboard');
   assert.equal((await api('GET', `/api/widgets/${cd.body.id}/bi-image.png`, null, null)).status, 404);
+});
+
+/* ── review fixes ─────────────────────────────────────────────────────────────────── */
+
+test('every dashboard page is sandboxed to an opaque origin, whichever provider and mode', async () => {
+  const pubTab = (await api('POST', '/api/widgets', { widget_type: 'bi-dashboard', name: 'TP', config: { provider: 'tableau', mode: 'public', public_url: 'https://public.tableau.com/views/Book/Sheet1' } })).body.id;
+  const pubGraf = (await api('POST', '/api/widgets', { widget_type: 'bi-dashboard', name: 'GP', config: { provider: 'grafana', mode: 'public', public_url: 'https://g.example/public-dashboards/abc' } })).body.id;
+  for (const [name, id] of Object.entries({ grafana: W.grafana, powerbi: W.pbi, tableau: W.tab, powerbiPublic: W.pub, tableauPublic: pubTab, grafanaPublic: pubGraf })) {
+    const r = await api('GET', `/api/widgets/${id}/render?rev=1`, null, null);
+    assert.equal(r.status, 200, name);
+    const csp = r.headers.get('content-security-policy');
+    assert.match(csp, /(^|;\s*)sandbox allow-scripts(;|$)/, `${name}: the page runs in an opaque origin`);
+    assert.doesNotMatch(csp, /allow-same-origin/, `${name}: never this server's origin`);
+    assert.doesNotMatch(r.text, /localStorage|sessionStorage|document\.cookie/, `${name}: no storage use, which throws in an opaque origin`);
+  }
+});
+
+test('the token endpoint answers an opaque-origin (Origin: null) page', async () => {
+  const r = await api('GET', `/api/widgets/${W.pbi}/bi-token`, null, null, { Origin: 'null' });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.headers.get('access-control-allow-origin'), '*');
+  assert.equal(r.headers.get('access-control-allow-credentials'), null, 'no credentials: the page has none to send');
+});
+
+test('a platform_operator acting-as cannot create, change or remove a connection', async () => {
+  const list = await api('GET', '/api/bi-connections', null, OPERATOR);
+  assert.equal(list.status, 200);
+  assert.equal(list.body.can_manage, false);
+  let r = await api('POST', '/api/bi-connections', { kind: 'grafana', name: 'op', base_url: 'https://g.example', secret: 't' }, OPERATOR);
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'BI_ADMIN_REQUIRED');
+  r = await api('PUT', `/api/bi-connections/${C.pbi}`, { name: 'hijacked' }, OPERATOR);
+  assert.equal(r.status, 403);
+  r = await api('DELETE', `/api/bi-connections/${C.pbi}?force=1`, null, OPERATOR);
+  assert.equal(r.status, 403);
+  r = await api('POST', `/api/bi-connections/${C.pbi}/test`, {}, OPERATOR);
+  assert.equal(r.status, 403);
+  assert.equal(db.prepare('SELECT name FROM bi_connections WHERE id = ?').get(C.pbi).name, 'PBI');
+});
+
+test('only cache misses are counted: many screens on a cached dashboard all get it', async () => {
+  grafana._resetCache();
+  hits.render = [];
+  assert.equal((await api('GET', `/api/widgets/${W.grafana}/bi-image.png?w=1280&h=720`, null, null)).status, 200);
+  for (let i = 0; i < 200; i++) {
+    const r = await api('GET', `/api/widgets/${W.grafana}/bi-image.png?w=1280&h=720`, null, null, { 'X-Forwarded-For': `198.51.100.${i % 250}` });
+    assert.equal(r.status, 200, `screen ${i}`);
+  }
+  for (let i = 0; i < 200; i++) {
+    assert.equal((await api('GET', `/api/widgets/${W.grafana}/bi-image.png?w=1280&h=720`, null, null)).status, 200, 'one address, cached: never refused');
+  }
+  assert.equal(hits.render.length, 1, 'one render served them all');
+
+  // Cache misses ARE counted, per caller: one address cannot make Grafana render without limit…
+  let last;
+  for (let i = 0; i < 31; i++) {
+    grafana._resetCache();
+    last = await api('GET', `/api/widgets/${W.grafana}/bi-image.png?w=1280&h=720`, null, null, { 'X-Forwarded-For': '192.0.2.50' });
+  }
+  assert.equal(last.status, 429);
+  // …and a refused caller still gets the image once it is cached, as does everyone else.
+  assert.equal((await api('GET', `/api/widgets/${W.grafana}/bi-image.png?w=1280&h=720`, null, null)).status, 200);
+  assert.equal((await api('GET', `/api/widgets/${W.grafana}/bi-image.png?w=1280&h=720`, null, null, { 'X-Forwarded-For': '192.0.2.50' })).status, 200);
+
+  hits.gen = 0;
+  for (let i = 0; i < 100; i++) {
+    const r = await api('GET', `/api/widgets/${W.pbi}/bi-token`, null, null, { 'X-Forwarded-For': `198.51.100.${i}` });
+    assert.equal(r.status, 200, `screen ${i}`);
+  }
+  for (let i = 0; i < 60; i++) assert.equal((await api('GET', `/api/widgets/${W.pbi}/bi-token`, null, null)).status, 200);
+  assert.equal(hits.gen, 0, 'all from the cached embed token');
+});
+
+test('Power BI: a short-lived embed token is cached for half its life, not regenerated per call', async () => {
+  powerbi._resetCache();
+  hits.gen = 0;
+  pbiTokenLifeMs = 7 * 60 * 1000;
+  try {
+    const conn = { ...db.prepare('SELECT * FROM bi_connections WHERE id = ?').get(C.pbi) };
+    conn.config = JSON.parse(conn.config);
+    const cfg = { group_id: GUID(10), report_id: GUID(20) };
+    const t0 = Date.now();
+    const a = await powerbi.embedFor(conn, cfg, t0);
+    const b = await powerbi.embedFor(conn, cfg, t0 + 60_000);
+    assert.equal(a.token, b.token);
+    assert.equal(hits.gen, 1, 'a 7-minute token is reused');
+    await powerbi.embedFor(conn, cfg, t0 + 4 * 60_000);
+    assert.equal(hits.gen, 2, 'and replaced once half of it is gone');
+  } finally { pbiTokenLifeMs = 3600e3; powerbi._resetCache(); }
+});
+
+test('hosted: a changed address loses allow_private, and Tableau must be Tableau Cloud', async () => {
+  // Made on a self-hosted instance (or by an operator), with the private flag on.
+  let r = await api('POST', '/api/bi-connections', { kind: 'grafana', name: 'LAN Grafana', base_url: mockBase, secret: GRAFANA_TOKEN, allow_private: true });
+  assert.equal(r.status, 201, r.text);
+  const id = r.body.id;
+  config.selfHosted = false;
+  try {
+    r = await api('PUT', `/api/bi-connections/${id}`, { name: 'LAN Grafana 2' });
+    assert.equal(r.body.allow_private, true, 'a rename keeps it');
+    r = await api('PUT', `/api/bi-connections/${id}`, { base_url: 'http://10.0.0.5:3000' });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.allow_private, false, 'a new address is not the one the operator approved');
+    r = await api('PUT', `/api/bi-connections/${id}`, { base_url: 'http://10.0.0.6:3000', allow_private: true });
+    assert.equal(r.status, 403);
+
+    const tab = { kind: 'tableau', name: 'T', site: 'acme', client_id: GUID(1), secret_id: GUID(2), username: 'screens@acme.test', secret: TAB_SECRET };
+    r = await api('POST', '/api/bi-connections', { ...tab, server_url: 'https://attacker.example' });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /Tableau Cloud/);
+    r = await api('POST', '/api/bi-connections', { ...tab, server_url: 'https://evil-online.tableau.com.attacker.example' });
+    assert.equal(r.status, 400);
+    r = await api('POST', '/api/bi-connections', { ...tab, server_url: 'https://prod-useast-a.online.tableau.com' });
+    assert.equal(r.status, 201, r.text);
+    r = await api('PUT', `/api/bi-connections/${r.body.id}`, { server_url: 'https://attacker.example' });
+    assert.equal(r.status, 400);
+    // A connection made by an operator on another host is still editable: only a NEW address is checked.
+    r = await api('PUT', `/api/bi-connections/${C.tab}`, { name: 'Tab (renamed)' });
+    assert.equal(r.status, 200, r.text);
+  } finally { config.selfHosted = true; }
+});
+
+test('render re-checks fit, and a workspace import validates dashboard configs', async () => {
+  const id = crypto.randomUUID();
+  db.prepare("INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, 'bi-dashboard', 'raw', ?)")
+    .run(id, ADMIN, WS, JSON.stringify({ provider: 'grafana', mode: 'connection', connection_id: C.grafana, dashboard_uid: 'ops-1', fit: 'cover;background:url(https://x.example/a)"><b' }));
+  const page = await api('GET', `/api/widgets/${id}/render`, null, null);
+  assert.match(page.text, /object-fit:contain;/);
+  assert.ok(!page.text.includes('x.example'));
+
+  const exp = {
+    format: 'screentinker-export-v2',
+    widgets: [
+      { id: 'b1', widget_type: 'bi-dashboard', name: 'imp-ok', config: { provider: 'grafana', connection_id: C.grafana, dashboard_uid: 'ops-1', fit: 'cover;x', refresh_sec: '1);alert(1)//', extra: 'x' } },
+      { id: 'b2', widget_type: 'bi-dashboard', name: 'imp-foreign', config: { provider: 'powerbi', connection_id: 'not-here', group_id: GUID(10), report_id: GUID(20) } },
+    ],
+  };
+  const r = await api('POST', '/api/status/import', exp);
+  assert.ok(r.status === 200 || r.status === 201, r.text);
+  const cfgOf = (n) => JSON.parse(db.prepare('SELECT config FROM widgets WHERE name = ? AND workspace_id = ?').get(n, WS).config);
+  const ok = cfgOf('imp-ok');
+  assert.equal(ok.fit, 'contain');
+  assert.equal(ok.refresh_sec, 300);
+  assert.equal(ok.extra, undefined);
+  assert.equal(ok.connection_id, C.grafana);
+  assert.deepEqual(cfgOf('imp-foreign'), { provider: 'powerbi', mode: 'connection' }, 'a connection this org does not have is dropped');
 });
 
 test('removing a connection that dashboards use asks first', async () => {
