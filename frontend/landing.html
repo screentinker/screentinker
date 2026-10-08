@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- Primary SEO -->
-  <title>Open-Source Digital Signage CMS, Self-Hosted &amp; Free | ScreenTinker</title>
-  <meta name="description" content="Open-source digital signage CMS with live data from Google Sheets and APIs, a template library, and video walls on any screen. Self-host free.">
-  <meta name="keywords" content="digital signage, open source digital signage, self hosted signage, digital signage cms, free digital signage software, digital signage raspberry pi, digital signage android tv, video wall software, kiosk software, screen management, google sheets digital signage, digital signage templates, digital signage api data, yodeck alternative, optisigns alternative">
+  <title>Open-Source Digital Signage Software for Business | ScreenTinker</title>
+  <meta name="description" content="Digital signage for business: Microsoft 365, Power BI, emergency alerts, room displays and SSO on the screens you own. Start a 14-day free trial.">
+  <meta name="keywords" content="digital signage software for business, enterprise digital signage, emergency alert digital signage, meeting room display, power bi on tv screen, saml sso digital signage, social media wall software, digital menu board software, digital signage, open source digital signage, self hosted signage, digital signage cms, free digital signage software, digital signage raspberry pi, digital signage android tv, video wall software, kiosk software, screen management, google sheets digital signage, digital signage templates, digital signage api data, yodeck alternative, optisigns alternative">
   <meta name="author" content="ScreenTinker">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://screentinker.com/">
@@ -16,8 +16,8 @@
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://screentinker.com/">
-  <meta property="og:title" content="ScreenTinker - Open-Source Digital Signage CMS">
-  <meta property="og:description" content="Open-source digital signage CMS. Live data from Google Sheets and APIs, a template library, and video walls across 11 platforms. Self-host or cloud.">
+  <meta property="og:title" content="ScreenTinker - Open-Source Digital Signage for Business">
+  <meta property="og:description" content="Digital signage that works with Microsoft 365, Google, Power BI and your alert system, across 12 platforms. Hosted 14-day trial, or self-host.">
   <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
   <meta property="og:image:width" content="2500">
   <meta property="og:image:height" content="1314">
@@ -26,8 +26,8 @@
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="ScreenTinker - Open-Source Digital Signage CMS">
-  <meta name="twitter:description" content="Open-source digital signage CMS. Live data from Google Sheets and APIs, templates, video walls and remote control on 11 platforms.">
+  <meta name="twitter:title" content="ScreenTinker - Open-Source Digital Signage for Business">
+  <meta name="twitter:description" content="Digital signage with Microsoft 365, Power BI, emergency alerts, room displays and SSO, on 12 platforms. Start a 14-day free trial.">
   <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
   <meta name="twitter:image:alt" content="ScreenTinker open-source digital signage dashboard showing four online displays with playlist assignments">
 
@@ -393,6 +393,30 @@
     nav .btn-primary, .hero-btns .btn-primary { background:linear-gradient(135deg,#3b82f6,#7c3aed); }
     nav .btn-primary:hover, .hero-btns .btn-primary:hover { filter:brightness(1.1); }
     @media (prefers-reduced-motion: reduce) { .feature-card:hover, .price-card:hover, .platform-item:hover, #resources a:hover { transform:none; } }
+    /* ─── Buyer-journey sections (hero lead, works-with strip, grouped capabilities, trust) ─── */
+    .hero h1 span { display:block; font-size:.6em; line-height:1.2; margin-top:12px; }
+    .hero p.hero-lead { max-width:680px; }
+    .hero p.hero-sub { font-size:14px; color:var(--muted); margin:16px auto 0; max-width:640px; line-height:1.7; }
+    .gh-link { display:inline-flex; align-items:center; gap:5px; color:#93c5fd; font-weight:600; }
+    .gh-link:hover { text-decoration:underline; }
+    .works-with { max-width:1000px; margin:30px auto 0; display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; }
+    .works-with .ww-label { font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); margin-right:4px; }
+    .works-with a { font-size:13px; font-weight:600; padding:6px 12px; border-radius:999px; background:var(--card); border:1px solid var(--border); color:var(--text); transition:border-color .2s; }
+    .works-with a:hover { border-color:rgba(139,92,246,.6); }
+    .group-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:20px; }
+    .feature-icon svg { width:26px; height:26px; stroke:#c4b5fd; }
+    .group-note { max-width:860px; margin:24px auto 0; font-size:14px; color:var(--muted); text-align:center; }
+    .group-note a, .group-more a { color:var(--violet-l); font-weight:600; }
+    .group-more { text-align:center; margin-top:22px; }
+    .beta { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em; padding:1px 7px; border-radius:999px; background:rgba(245,158,11,.15); color:#fbbf24; border:1px solid rgba(245,158,11,.35); vertical-align:middle; }
+    #safety { background:radial-gradient(900px 400px at 85% 0%, rgba(239,68,68,.07), transparent 70%); border-radius:24px; }
+    #enterprise { background:radial-gradient(900px 400px at 10% 0%, rgba(59,130,246,.08), transparent 70%); border-radius:24px; }
+    #why { background:radial-gradient(800px 360px at 50% 0%, rgba(34,197,94,.08), transparent 70%); border-radius:24px; }
+    #resources a[href^="/solutions/"] > div:first-child { color:#f472b6 !important; }
+    @media (max-width:768px) {
+      #integrations, #safety, #enterprise, #rooms, #measure, #why { padding:60px 16px; }
+      .group-grid { grid-template-columns:1fr; }
+    }
   </style>
 </head>
 <body>
@@ -405,7 +429,7 @@
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="/templates">Templates</a>
-        <a href="#platforms">Platforms</a>
+        <a href="/solutions/">Solutions</a>
         <a href="/certified-hardware">Certified Hardware</a>
         <a href="#pricing">Pricing</a>
         <a href="#compare">Compare</a>
@@ -430,17 +454,32 @@
   <main>
   <!-- Hero -->
   <section class="hero">
-    <a href="#whats-new" class="new-pill"><b>New</b> Live data from Google Sheets &amp; APIs &middot; Template library &rarr;</a><br>
+    <a href="#integrations" class="new-pill"><b>New</b> SAML SSO &middot; Microsoft 365 &middot; Power BI &middot; Emergency alerts &rarr;</a><br>
     <div class="hero-badge">&#9889; Open source &middot; Free plan &middot; 14-day Pro trial, no credit card</div>
-    <h1>Open-Source Digital Signage Software.<br><span>Flat price, any screen.</span></h1>
-    <p>A complete <strong>digital signage CMS</strong> for TVs, video walls and kiosks &mdash; scheduling, playlists, live data, templates, remote control and proof-of-play. Every competitor bills you per screen, every month. We don't. <strong>Self-host it free</strong>, or use our managed cloud.</p>
+    <h1>The right message on every screen.<br><span>Open-Source Digital Signage. Flat price, any screen.</span></h1>
+    <p class="hero-lead">One <strong>digital signage CMS</strong> for lobbies, meeting rooms, menu boards, dashboards and emergency alerts. It works with Microsoft 365, Google Workspace, Power BI and your sign-in provider, and runs on the screens you already own. Other vendors bill per screen, every month. We don&rsquo;t.</p>
     <div class="hero-btns">
       <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free Trial</a>
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="margin-right:2px"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
-        View on GitHub
-      </a>
       <a href="#compare" class="btn btn-outline" style="padding:14px 28px;font-size:16px">See How We Compare</a>
+    </div>
+    <p class="hero-sub">14 days of Pro on our hosted service: up to 15 screens, every feature, no credit card.<br>
+      Or host it yourself, free and open source:
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="gh-link"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg> View on GitHub</a></p>
+
+    <!-- Works-with strip: names, not logos (no trademark artwork, nothing heavy to load). Every chip
+         is a page that says how the integration works and what it needs. -->
+    <div class="works-with" aria-label="Works with">
+      <span class="ww-label">Works with</span>
+      <a href="/integrations/microsoft-365-digital-signage.html">Microsoft 365 &amp; SharePoint</a>
+      <a href="/integrations/google-slides-digital-signage.html">Google Workspace</a>
+      <a href="/integrations/power-bi-digital-signage.html">Power BI</a>
+      <a href="/integrations/tableau-digital-signage.html">Tableau</a>
+      <a href="/integrations/grafana-digital-signage.html">Grafana</a>
+      <a href="/integrations/canva-digital-signage.html">Canva</a>
+      <a href="/integrations/zapier-digital-signage.html">Zapier, Make &amp; n8n</a>
+      <a href="/integrations/slack-teams-offline-alerts.html">Slack &amp; Teams</a>
+      <a href="/solutions/enterprise-digital-signage.html">Okta &amp; Entra ID SSO</a>
+      <a href="/integrations/">All integrations &rarr;</a>
     </div>
 
     <p style="margin-top:18px;font-size:14px;color:var(--muted)">Not sure what to run it on?
@@ -456,7 +495,7 @@
       visitor could do about either.
     -->
     <div class="trust-strip cols-3" id="trustStrip">
-      <div><div class="n">11</div><div class="l">platforms, one CMS</div></div>
+      <div><div class="n">12</div><div class="l">platforms, one CMS</div></div>
       <div><div class="n">$0</div><div class="l">per extra screen</div></div>
       <div><div class="n">Self-host</div><div class="l">or managed cloud</div></div>
       <div id="deployed-stat" hidden>
@@ -498,14 +537,77 @@
     <img src="/assets/dashboard-preview.png" alt="ScreenTinker open-source digital signage dashboard showing 4 online displays with playlist assignments" loading="lazy" width="2500" height="1314">
   </div>
 
-  <!-- Open Source callout -->
-  <section class="opensource" id="opensource" style="max-width:900px;margin:0 auto;padding:40px 24px;text-align:center">
-    <h2 style="font-size:28px;margin-bottom:12px">Fully Open Source</h2>
-    <p style="color:var(--muted);font-size:16px;margin-bottom:20px">MIT licensed. Self-host on your own infrastructure or use our managed cloud. Your data, your rules.</p>
-    <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="display:inline-flex;align-items:center;gap:8px">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
-      github.com/screentinker/screentinker
-    </a>
+  <!--
+    The buyer journey, grouped the way buyers ask: "does it work with what we have?", "can it carry an
+    emergency?", "will IT approve it?", rooms, measurement, platforms, then "why trust it". ⚠️ Every
+    claim here is checked against docs/*.md and the CHANGELOG on the branch it shipped from; each card
+    links to the page that states the limits. Integrations need the customer's OWN app or keys.
+  -->
+  <section class="features" id="integrations">
+    <span class="eyebrow2 ey-cyan">Works with the tools you already use</span>
+    <h2>Show what your teams already make</h2>
+    <p class="subtitle">Connect the accounts you already pay for. Each integration uses your own app or keys, kept encrypted on the server and never sent to a screen.</p>
+    <div class="group-grid">
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div><h3>Microsoft 365, SharePoint and OneDrive</h3><p>Point at a SharePoint or OneDrive folder and its images and videos stay in your library: new files are added, changed files replaced, removed files taken out. PowerPoint, Word and Excel show through Microsoft&rsquo;s own viewer. <a href="/integrations/microsoft-365-digital-signage.html">How it works &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M7 9h10M7 13h6"/></svg></div><h3>Google Slides, Docs and Sheets</h3><p>Slides advance and loop on their own, Docs and Sheets reload themselves, and a Google Sheet can drive prices and numbers on any slide. Edit the file and the screens follow. <a href="/integrations/google-slides-digital-signage.html">How it works &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div><h3>Power BI, Tableau and Grafana</h3><p>Put live dashboards on a wall with your organization&rsquo;s own credentials. Screens get a view-only token or a rendered image, never the password. Pages and sheets can rotate. <a href="/integrations/power-bi-digital-signage.html">Power BI</a> &middot; <a href="/integrations/tableau-digital-signage.html">Tableau</a> &middot; <a href="/integrations/grafana-digital-signage.html">Grafana</a></p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12a4 4 0 0 1 8 0"/></svg></div><h3>Canva, kept in sync</h3><p>Import a design as images or a video. When someone edits it in Canva, screens pick up the new version within 30 minutes, through your approval step if you use one. <a href="/integrations/canva-digital-signage.html">How it works &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div><h3>Zapier, Make and n8n</h3><p>Start a workflow when a screen goes offline or content is approved. Raise an alert, switch a playlist or update a table from a Zap, a script, or any system that can call a web address. <a href="/integrations/zapier-digital-signage.html">How it works &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></div><h3>Slack, Teams and PagerDuty alerts</h3><p>Hear about a dark screen before a customer does. Offline and back-online alerts for all screens, some groups or single screens, and PagerDuty incidents that close themselves. <a href="/integrations/slack-teams-offline-alerts.html">How it works &rarr;</a></p></div>
+    </div>
+    <p class="group-more"><a href="/integrations/">See every integration, and what each one needs &rarr;</a></p>
+  </section>
+
+  <section class="features" id="safety">
+    <span class="eyebrow2" style="color:#f87171">Safety and emergency alerts</span>
+    <h2>When it matters, every screen says the same thing</h2>
+    <p class="subtitle">Emergency alert digital signage that connects to the systems you already run, and cuts in at once.</p>
+    <div class="group-grid">
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg></div><h3>Public alert feeds</h3><p>Subscribe to US National Weather Service alerts by state or zone, MeteoAlarm for 38 European countries, or any CAP feed. Matching alerts take over the screens you choose, and clear when cancelled or expired.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></div><h3>Alertus, InformaCast and CAP 1.2</h3><p>Your mass notification system can raise alerts on screens through a secret hook address. The same alert sent twice shows once, and a cancel from the sender clears it.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><h3>Cuts in at once</h3><p>The alert card replaces whatever is playing straight away, mid-video, on every player. The all-clear brings the playlist back just as fast. Ordinary edits still wait for the current item.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h3"/></svg></div><h3>Wired to the building</h3><p>A fire panel, a PLC or a Crestron button can fire a trigger over the local network, and the screen acts on it with the internet down.</p></div>
+    </div>
+    <p class="group-note">ScreenTinker is a display channel for your alerts. It is not a certified life-safety or mass notification system, and it does not replace one. <a href="/solutions/emergency-alert-digital-signage.html">How emergency alerts work &rarr;</a></p>
+  </section>
+
+  <section class="features" id="enterprise">
+    <span class="eyebrow2 ey-blue">Enterprise ready</span>
+    <h2>Built to pass the IT review</h2>
+    <p class="subtitle">Single sign-on, roles, approvals and an audit trail on every plan, hosted by us or on your own infrastructure.</p>
+    <div class="group-grid">
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div><h3>SSO with SAML 2.0 or OIDC</h3><p>Connect Entra ID, Okta, Google Workspace, ADFS or OneLogin for your organization. Prove your domains with a DNS record, then require SSO for everyone at them.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M17 11a3 3 0 1 0 0-6M21 20a6 6 0 0 0-4-5.7"/></svg></div><h3>Roles and workspaces</h3><p>A workspace per site, brand or client, with admin, editor and viewer roles. Head office can lock playlists that stores can&rsquo;t change.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg></div><h3>Approvals and an audit trail</h3><p>Require approval before content goes live, keep version history, and see who changed what in the activity log.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5z"/></svg></div><h3>Security basics, included</h3><p>Two-factor sign-in and API tokens scoped to one workspace. On a self-hosted server, our support can get in only when you grant it, for as long as you choose, with every action logged.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div><h3>Hosted, or on your own servers</h3><p>Use our hosted service, or run the same MIT-licensed server yourself. Keep media in your own Amazon S3, S3-compatible or Azure Blob storage.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></div><h3>Safe updates across a fleet</h3><p>New player versions go out in waves and halt themselves if updated screens start failing. Raspberry Pi and Windows screens roll back on their own.</p></div>
+    </div>
+    <p class="group-more"><a href="/solutions/enterprise-digital-signage.html">Enterprise digital signage: SSO, roles, audit and scale &rarr;</a></p>
+  </section>
+
+  <section class="features" id="rooms">
+    <span class="eyebrow2 ey-green">Rooms and wayfinding</span>
+    <h2>Rooms people can find, and book</h2>
+    <p class="subtitle">Meeting room displays, directories and touch screens that help people get where they are going.</p>
+    <div class="group-grid">
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3>Meeting room displays</h3><p>Available or In use, readable from across a corridor, from Microsoft 365 or Google Workspace room calendars. On a touch screen, book the room for 15, 30 or 60 minutes, end a meeting early, and release rooms nobody checks in to. <a href="/solutions/meeting-room-display.html">How it works &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div><h3>Directory boards</h3><p>Scrolling lobby, tenant and staff directories, with categories, dark and light themes and anti-burn-in.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M9 11V6a2 2 0 0 1 4 0v5M13 10a2 2 0 0 1 4 0v3a7 7 0 0 1-7 7h-.5A5.5 5.5 0 0 1 5 14.5V12a2 2 0 0 1 4 0"/></svg></div><h3>Touch kiosks and wayfinding</h3><p>Interactive pages and touch screens for check-in, maps and wayfinding.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v7h-7"/></svg></div><h3>QR codes you can change later</h3><p>Put a tracked QR on a slide or in print. Change where it goes at any time and the printed code keeps working.</p></div>
+    </div>
+  </section>
+
+  <section class="features" id="measure">
+    <span class="eyebrow2 ey-pink">Measure what works</span>
+    <h2>Know what played, and who noticed</h2>
+    <p class="subtitle">Proof of play for every screen, and audience numbers that respect the people in front of it.</p>
+    <div class="group-grid">
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5"/></svg></div><h3>Proof of play</h3><p>What played, when, and on which screen, with CSV export for campaign and ad reports.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Audience counting, privacy first</h3><p>How many people looked at a screen, and for how long, per item. Counts only: no image is stored or sent and nobody is identified. Off until an admin turns it on. Android, plus Raspberry Pi and Windows with an optional add-on. Check your local rules first. <a href="/solutions/audience-analytics.html">The privacy model &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg></div><h3>QR scans, counted</h3><p>Totals, the last 30 days, and iPhone or Android, with no IP address or browser details stored about the person scanning.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><h3>Fleet health</h3><p>Uptime reports, storage, network and battery telemetry, and offline alerts by email, Slack, Teams, PagerDuty or webhook.</p></div>
+    </div>
   </section>
 
   <!--
@@ -514,7 +616,7 @@
     together with the table.
   -->
   <section class="whatsnew" id="whats-new">
-    <div class="eyebrow">New in ScreenTinker</div>
+    <div class="eyebrow">Live data and templates</div>
     <h2>Screens that update themselves.</h2>
     <p class="subtitle">Connect the data you already keep, start from a ready-made template, and run it on a native player. No code, and no upgrade to a higher plan to unlock any of it.</p>
 
@@ -592,8 +694,8 @@
   <!-- Features -->
   <section class="features" id="features">
     <span class="eyebrow2 ey-blue">Features</span>
-    <h2>Everything You Need</h2>
-    <p class="subtitle">Every feature you'd expect from an enterprise <strong>digital signage CMS</strong>: video walls, scheduling, proof-of-play, and remote monitoring. All free and open source.</p>
+    <h2>Everything Else in the Box</h2>
+    <p class="subtitle">Video walls, scheduling, layouts, remote control and the rest of what a fleet needs. Hosted or self-hosted, it is the same software.</p>
     <div class="feature-grid">
       <div class="feature-card"><div class="feature-icon">&#128202;</div><h3>Live Data, No Code</h3><p>Google Sheets, any REST API, CSV files, RSS feeds, calendars, weather, or a table you type in. Values land on slides as tags and refresh on their own. <a href="#whats-new">See how &rarr;</a></p></div>
       <div class="feature-card"><div class="feature-icon">&#127912;</div><h3>Turnkey App &amp; Template Library</h3><p>Menu boards, meeting room signs, KPI dashboards, leaderboards, Wi-Fi QR codes, world clocks, animated weather. Fill in a form or bind them to a sheet, API, feed or calendar; they stay interactive and keep playing offline. New ones arrive from a signed catalog without an upgrade. <a href="/templates">Browse the templates &rarr;</a></p></div>
@@ -603,15 +705,17 @@
       <div class="feature-card"><div class="feature-icon">&#128257;</div><h3>Group Sync</h3><p>A wall of screens starts the same frame at the same moment &mdash; and keeps doing it with the internet unplugged.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127760;</div><h3>Node Mesh</h3><p>One screen on a site pulls a video once and hands it to its neighbours over the LAN. A whole store updates on one download.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127959;</div><h3>Scale-Out Replicas</h3><p>Put a server in each region and let screens connect to the nearest one. Thousands of displays without one box carrying them all.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128273;</div><h3>SSO With Your Identity Provider</h3><p>OIDC per organisation with DNS-verified domains, so staff sign in with the account they already have.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128737;</div><h3>Two-Factor Authentication</h3><p>TOTP from any authenticator app, with recovery codes. Included, not an enterprise upsell.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127911;</div><h3>Consent-Gated Support Access</h3><p>Support can only look inside your account after you grant it, for a window you choose, and every action is logged.</p></div>
+            <div class="feature-card"><div class="feature-icon">&#128737;</div><h3>Two-Factor Authentication</h3><p>TOTP from any authenticator app, with recovery codes. Included, not an enterprise upsell.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127911;</div><h3>Consent-Gated Support Access</h3><p>On a self-hosted server, our support can only look inside after you grant it, for a window you choose, and every action is logged.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128241;</div><h3>Portrait-Native Panels</h3><p>Screens that are portrait in hardware &mdash; menu boards, wayfinders &mdash; fill edge to edge without a rotation hack.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128268;</div><h3>Plugins</h3><p>Extend ScreenTinker with plugins: extra widget types, data-source connectors, and event hooks, without forking core. Trusted local code on a self-hosted node, off by default.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128196;</div><h3>PDF to Playlist</h3><p>Upload a PDF and every page becomes a full-screen slide, rendered in the browser. No manual export step.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128197;</div><h3>Meeting Room Signs</h3><p>Connect a calendar (iCal / Webcal) to show live Busy / Available, agendas and the next meeting, in every language the dashboard speaks.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127828;</div><h3>Menu Boards</h3><p>Sections, sizes and prices, dietary tags and photos. Mark an item sold out from the till or a phone and it shows at once. Breakfast and happy-hour sections switch by each screen&rsquo;s clock. <a href="/solutions/digital-menu-boards.html">Menu boards &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon">&#128172;</div><h3>Social Walls</h3><p>Posts from Instagram, Facebook, YouTube, X, Bluesky and Mastodon, with approval before anything shows if you want it. Screens never contact a social network. <a href="/solutions/social-media-wall.html">Social walls &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon">&#9925;</div><h3>Weather and Location Rules</h3><p>Play an item only where it is raining, above a temperature, or within a distance of a place. Each screen is judged at its own location, on every player.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127991;</div><h3>Tags and Dynamic Groups</h3><p>Tag screens and let groups fill themselves from rules. Playlists, schedules and alerts follow the screens that match.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128250;</div><h3>Multi-Zone Layouts</h3><p>Split screens into zones with a drag-and-drop editor. 7 built-in templates or create your own.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127916;</div><h3>Video Wall</h3><p>Combine multiple displays into one giant screen. Automatic bezel compensation. Any grid size.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127916;</div><h3>Video Wall</h3><p>Combine displays into one big screen, with zones across the bezels, a shared clock and wall schedules. Bezel compensation, any grid size.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128421;</div><h3>Remote Control</h3><p>See what's on screen in real-time. Send key presses, navigate menus, power on/off remotely.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128197;</div><h3>Scheduling</h3><p>Visual weekly calendar with recurrence rules. Schedule per device or for whole groups. Device rules override the group.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127926;</div><h3>Playlists</h3><p>Share one playlist across many displays. Draft changes, preview, then publish. Or revert to the last published version.</p></div>
@@ -620,13 +724,13 @@
       <div class="feature-card"><div class="feature-icon">&#9889;</div><h3>Triggers</h3><p>Let a Crestron or Extron panel, a PLC or a button put a playlist over whatever is showing. Resolved on the screen itself, so an alarm still works with the internet down.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128433;</div><h3>Kiosk Mode</h3><p>Create interactive touchscreen interfaces. Wayfinding, directories, check-in screens.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128202;</div><h3>Proof-of-Play</h3><p>Track what played, when, and on which device. Export CSV reports for ad verification.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128276;</div><h3>Alerts & Monitoring</h3><p>Email alerts when devices go offline. Full telemetry: battery, storage, WiFi, uptime.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128276;</div><h3>Alerts &amp; Monitoring</h3><p>Offline alerts by email, Slack, Microsoft Teams, PagerDuty or webhook. Full telemetry: battery, storage, WiFi, uptime.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128268;</div><h3>Offline Resilience</h3><p>Displays keep playing cached content when the internet or your server drops. They catch up automatically when you're back.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128241;</div><h3>Mobile Dashboard</h3><p>Manage everything from your phone. The full dashboard works on any mobile browser, so there is no separate app to install.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128274;</div><h3>Self-Hosted Option</h3><p>Deploy on your own infrastructure. Your data never leaves your network. Lock down signups with a single env var.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127912;</div><h3>White Label</h3><p>Custom branding, colors, logo, and domain. Resell under your own brand.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128101;</div><h3>Teams &amp; Workspaces</h3><p>Separate workspaces per client or site, with owner, editor and viewer roles. Invite by email, or sign in with your own identity provider.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#128260;</div><h3>Auto-Update</h3><p>Devices automatically update when you push a new version. Zero manual intervention.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128260;</div><h3>Auto-Update in Waves</h3><p>Players update themselves, a wave at a time, and a bad release stops spreading on its own.</p></div>
     </div>
   </section>
 
@@ -634,25 +738,26 @@
   <section class="features" id="use-cases">
     <span class="eyebrow2 ey-pink">Use cases</span>
     <h2>Digital Signage for Any Space</h2>
-    <p class="subtitle">One platform, every use case.</p>
+    <p class="subtitle">One platform, every use case. <a href="/solutions/">Browse solutions &rarr;</a></p>
     <div class="feature-grid">
-      <div class="feature-card"><div class="feature-icon">&#128722;</div><h3>Retail &amp; QSR</h3><p>Menu boards, promotions, and price updates pushed to every location instantly.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#128722;</div><h3>Retail &amp; QSR</h3><p>Menu boards, promotions and price updates pushed to every location, with head office playlists stores can&rsquo;t override. <a href="/solutions/digital-menu-boards.html">Menu boards &rarr;</a></p></div>
       <div class="feature-card"><div class="feature-icon">&#127869;</div><h3>Restaurants &amp; Cafés</h3><p>Digital menu boards with dayparting. Breakfast, lunch, and dinner menus that switch themselves on schedule.</p></div>
       <div class="feature-card"><div class="feature-icon">&#128161;</div><h3>LED Walls</h3><p>The LED processor hands the wall&rsquo;s native resolution to the player over EDID, so a 2808&times;648 wall is just a screen with an odd shape. &#9888;&#65039; Streaming sticks can&rsquo;t drive one &mdash; they only output standard resolutions &mdash; so use a Raspberry Pi or a small PC. Verified in production by Watterott electronic. <a href="/guides/led-wall-digital-signage.html">LED wall guide &rarr;</a></p></div>
-      <div class="feature-card"><div class="feature-icon">&#127970;</div><h3>Offices &amp; Corporate</h3><p>Lobby welcome screens, meeting-room signs, KPI dashboards, and internal comms.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127979;</div><h3>Schools &amp; Universities</h3><p>Campus announcements, event calendars, and emergency alerts across every building.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#127973;</div><h3>Healthcare &amp; Clinics</h3><p>Waiting-room info, wayfinding, and check-in kiosks that keep playing even offline.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127970;</div><h3>Offices &amp; Corporate</h3><p>Lobby welcome screens, bookable meeting room displays, Power BI and Tableau dashboards, and internal comms from SharePoint. <a href="/solutions/meeting-room-display.html">Room displays &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon">&#127979;</div><h3>Schools &amp; Universities</h3><p>Campus announcements, event calendars, and emergency alerts from your notification system on every screen at once. <a href="/solutions/emergency-alert-digital-signage.html">Emergency alerts &rarr;</a></p></div>
+      <div class="feature-card"><div class="feature-icon">&#127973;</div><h3>Healthcare &amp; Clinics</h3><p>Waiting-room information, wayfinding and check-in kiosks that keep playing offline, with sign-in through your hospital&rsquo;s identity provider. <a href="/solutions/enterprise-digital-signage.html">Enterprise features &rarr;</a></p></div>
       <div class="feature-card"><div class="feature-icon">&#9962;</div><h3>Churches &amp; Nonprofits</h3><p>Free, self-hostable signage for lobbies and sanctuaries with no recurring cost.</p></div>
       <div class="feature-card"><div class="feature-icon">&#127947;</div><h3>Gyms &amp; Fitness</h3><p>Class schedules, promos, and live directories on any screen you already own.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#127881;</div><h3>Events &amp; Venues</h3><p>Moderated social walls for a hashtag or an account, schedules, and sponsor loops. <a href="/solutions/social-media-wall.html">Social walls &rarr;</a></p></div>
       <div class="feature-card"><div class="feature-icon">&#127970;</div><h3>Building &amp; Staff Directories</h3><p>Scrolling lobby, tenant, and staff directories with categories and anti-burn-in.</p></div>
     </div>
   </section>
 
   <!-- Platforms -->
   <section class="platforms" id="platforms">
-    <span class="eyebrow2 ey-cyan">Platforms</span>
+    <span class="eyebrow2 ey-cyan">Every screen you own</span>
     <h2>Runs on Everything</h2>
-    <p class="subtitle">No hardware lock-in. Use any screen you already have &mdash; every platform has its own setup guide, and every player is <a href="/download/">downloaded from your own server</a>.</p>
+    <p class="subtitle">No hardware lock-in. Use any screen you already have &mdash; every platform has its own setup guide, and every player is <a href="/download/">downloaded from your own server</a>. Apple TV can&rsquo;t run a player, and the Mac and iPad players are new, so try one screen first.</p>
     <div class="platform-grid">
       <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#129302;</div><div class="name">Android TV</div><div class="sub">Native APK</div></a>
       <a class="platform-item" href="/guides/digital-signage-android-tv.html" style="color:inherit"><div class="icon">&#128293;</div><div class="name">Fire TV</div><div class="sub">Native APK</div></a>
@@ -663,12 +768,30 @@
       <a class="platform-item" href="/guides/lg-webos-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">LG webOS</div><div class="sub">webOS 4 &rarr; 6+</div></a>
       <a class="platform-item" href="/guides/samsung-tv-digital-signage.html" style="color:inherit"><div class="icon">&#128250;</div><div class="name">Samsung Tizen</div><div class="sub">.wgt package</div></a>
       <a class="platform-item" href="/guides/brightsign-digital-signage.html" style="color:inherit"><div class="icon">&#128225;</div><div class="name">BrightSign</div><div class="sub">Series 5 / 6</div></a>
+      <a class="platform-item" href="/guides/mac-ipad-digital-signage.html" style="color:inherit"><div class="icon">&#127822;</div><div class="name">Mac, iPad &amp; iPhone</div><div class="sub">Beta</div></a>
       <a class="platform-item" href="/guides/eink-esp32-digital-signage.html" style="color:inherit"><div class="icon">&#128220;</div><div class="name">E-Paper &amp; ESP32</div><div class="sub">Battery, no browser</div></a>
       <a class="platform-item" href="/player" style="color:inherit"><div class="icon">&#127758;</div><div class="name">Any Browser</div><div class="sub">No install</div></a>
     </div>
     <!-- The page already links /certified-hardware from the nav and the hero, but this is where
          somebody who has just decided WHICH platform actually needs it: prices and models. -->
     <a href="/certified-hardware" class="btn btn-outline" style="margin-top:32px;padding:13px 24px;font-size:15px">Browse certified hardware, with prices &rarr;</a>
+  </section>
+
+  <!-- Trust and objection handling. The questions a buyer's IT, legal and finance people ask, answered
+       plainly. ⚠️ No certification, compliance, customer-count or uptime claims: we hold none. -->
+  <section class="features" id="why">
+    <span class="eyebrow2 ey-green">Why teams choose ScreenTinker</span>
+    <h2>No lock-in. No surprises.</h2>
+    <p class="subtitle">The questions IT, legal and finance ask before they sign, answered plainly.</p>
+    <div class="group-grid">
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></div><h3>Open source, MIT licensed</h3><p>The server and the players are on GitHub. Your security team can read the code that runs your screens, not a datasheet about it.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M3 9l9-6 9 6v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9 21V12h6v9"/></svg></div><h3>Your data stays yours</h3><p>Run it on your own servers, or keep media in your own storage bucket. Credentials for Microsoft, Google, Canva and the rest are encrypted on the server and never sent to a screen.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h3>No hardware lock-in</h3><p>Use the TVs, sticks and players you already own, or <a href="/certified-hardware">hardware we have tested</a>. If you ever leave the hosted service, the same software runs on your own server.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><h3>Flat plans, not per-screen bills</h3><p>Plans are priced by tier, with screens and storage the main difference. Integrations, SSO and emergency alerts are on every plan, not an enterprise upsell.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></div><h3>An honest platform list</h3><p>We say what doesn&rsquo;t work. Apple TV can&rsquo;t run a player, the Mac and iPad players are beta, and LinkedIn and TikTok walls aren&rsquo;t supported. Each guide states its limits.</p></div>
+      <div class="feature-card"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><path d="M15 7h3a5 5 0 0 1 0 10h-3M9 17H6A5 5 0 0 1 6 7h3M8 12h8"/></svg></div><h3>Bring your own app</h3><p>Integrations connect through your own Entra app, Google service account, Canva integration or API keys, so access stays under your admins&rsquo; control and can be revoked there.</p></div>
+    </div>
+    <p class="group-more"><a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">Read the source on GitHub &rarr;</a></p>
   </section>
 
   <!-- Pricing -->
@@ -737,7 +860,7 @@
         <tr><td>Site-local content distribution</td><td class="yes">&#10003; Node mesh</td><td class="no">&#10007;</td><td class="no">&#10007;</td><td class="no">&#10007;</td></tr>
         <tr><td>White Label</td><td class="yes">&#10003; Included</td><td class="paid">Paid</td><td class="paid">Paid tier</td><td class="paid">Enterprise</td></tr>
         <tr><td>Email Alerts</td><td class="yes">&#10003; All plans</td><td class="paid">Paid</td><td class="paid">Paid</td><td class="paid">Paid</td></tr>
-        <tr><td>Platforms supported</td><td style="color:var(--accent);font-weight:600">11, incl. e-paper</td><td>Own player + a few OS</td><td>Several</td><td>Several</td></tr>
+        <tr><td>Platforms supported</td><td style="color:var(--accent);font-weight:600">12, incl. e-paper</td><td>Own player + a few OS</td><td>Several</td><td>Several</td></tr>
       </tbody>
     </table>
     </div>
@@ -759,8 +882,53 @@
   <section class="resources" id="resources" style="max-width:1000px;margin:0 auto;padding:60px 24px;">
     <span class="eyebrow2 ey-green">Guides &amp; comparisons</span>
     <h2 style="text-align:center;font-size:32px;margin-bottom:8px">Resources</h2>
-    <p style="text-align:center;color:var(--muted);margin-bottom:32px">Setup guides and honest comparisons.</p>
+    <p style="text-align:center;color:var(--muted);margin-bottom:32px">Solutions, setup guides and honest comparisons.</p>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
+      <a href="/solutions/" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Solutions</div>
+        <div style="font-weight:600;margin-bottom:4px">Digital signage solutions by use case</div>
+        <div style="font-size:13px;color:var(--muted)">Alerts, rooms, menus, social walls, analytics, enterprise.</div>
+      </a>
+      <a href="/solutions/emergency-alert-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Solution</div>
+        <div style="font-weight:600;margin-bottom:4px">Emergency alert digital signage</div>
+        <div style="font-size:13px;color:var(--muted)">CAP feeds, Alertus, InformaCast, and alerts that cut in at once.</div>
+      </a>
+      <a href="/solutions/meeting-room-display.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Solution</div>
+        <div style="font-weight:600;margin-bottom:4px">Meeting room displays</div>
+        <div style="font-size:13px;color:var(--muted)">Microsoft 365 and Google room calendars, book from the panel.</div>
+      </a>
+      <a href="/solutions/enterprise-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Solution</div>
+        <div style="font-weight:600;margin-bottom:4px">Enterprise digital signage</div>
+        <div style="font-size:13px;color:var(--muted)">SAML and OIDC SSO, roles, approvals, audit, self-host.</div>
+      </a>
+      <a href="/solutions/digital-menu-boards.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Solution</div>
+        <div style="font-weight:600;margin-bottom:4px">Digital menu boards</div>
+        <div style="font-size:13px;color:var(--muted)">Prices, sizes, dietary tags, sold out from the till.</div>
+      </a>
+      <a href="/solutions/social-media-wall.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Solution</div>
+        <div style="font-weight:600;margin-bottom:4px">Social media walls</div>
+        <div style="font-size:13px;color:var(--muted)">Six networks, moderation, three layouts.</div>
+      </a>
+      <a href="/solutions/audience-analytics.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Solution</div>
+        <div style="font-weight:600;margin-bottom:4px">Privacy-first audience analytics</div>
+        <div style="font-size:13px;color:var(--muted)">Counts only, no images, off by default.</div>
+      </a>
+      <a href="/integrations/microsoft-365-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Integration</div>
+        <div style="font-weight:600;margin-bottom:4px">SharePoint, OneDrive and Office files on screens</div>
+        <div style="font-size:13px;color:var(--muted)">Folder sync and PowerPoint, Word, Excel.</div>
+      </a>
+      <a href="/integrations/power-bi-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
+        <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Integration</div>
+        <div style="font-weight:600;margin-bottom:4px">Power BI on a TV screen</div>
+        <div style="font-size:13px;color:var(--muted)">Your own service principal, view-only tokens.</div>
+      </a>
       <a href="/guides/raspberry-pi-digital-signage.html" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
         <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Guide</div>
         <div style="font-weight:600;margin-bottom:4px">How to set up digital signage on Raspberry Pi</div>
@@ -838,8 +1006,8 @@
       </a>
       <a href="/integrations/" style="display:block;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--text);transition:border-color 0.2s">
         <div style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Integrations</div>
-        <div style="font-weight:600;margin-bottom:4px">Connect Google Slides, Canva, Power BI &amp; more</div>
-        <div style="font-size:13px;color:var(--muted)">Native widgets + embed any web app.</div>
+        <div style="font-weight:600;margin-bottom:4px">All integrations</div>
+        <div style="font-size:13px;color:var(--muted)">Microsoft 365, Google, BI dashboards, Canva, Zapier and more.</div>
       </a>
     </div>
   </section>
@@ -848,11 +1016,16 @@
   <section class="features" id="faq" style="max-width:820px">
     <span class="eyebrow2 ey-blue">FAQ</span>
     <h2>Frequently Asked Questions</h2>
-    <p class="subtitle">Everything you need to know about running open-source digital signage.</p>
+    <p class="subtitle">What buyers ask us most about running ScreenTinker.</p>
     <div style="display:flex;flex-direction:column;gap:20px">
       <div><h3 style="font-size:18px;margin-bottom:6px">Is there free digital signage software?</h3><p style="color:var(--muted);font-size:15px">Yes. ScreenTinker is free and open source (MIT licensed). The free cloud plan runs 1 display with 500 MB of storage, and if you self-host there's no per-screen fee at all, so you can run as many displays as your own server can handle. New accounts also get a 14-day Pro trial (15 displays) with no credit card required.</p></div>
+      <div><h3 style="font-size:18px;margin-bottom:6px">How long is the free trial, and what does it include?</h3><p style="color:var(--muted);font-size:15px">14 days of the Pro plan on our hosted service: up to 15 screens and 20 GB of storage, with every integration. No credit card is needed. At the end you choose a plan, or the account moves to the Free plan with one screen.</p></div>
+      <div><h3 style="font-size:18px;margin-bottom:6px">Does ScreenTinker support single sign-on with SAML or OIDC?</h3><p style="color:var(--muted);font-size:15px">Yes. Each organization can connect its own identity provider over SAML 2.0 or OpenID Connect, including Entra ID, Okta, Google Workspace, ADFS and OneLogin. You verify your domains with a DNS TXT record, and can then require single sign-on for everyone at them.</p></div>
+      <div><h3 style="font-size:18px;margin-bottom:6px">Can digital signage show emergency alerts?</h3><p style="color:var(--muted);font-size:15px">Yes. Subscribe to public CAP feeds such as the US National Weather Service or MeteoAlarm, or connect Alertus, Singlewire InformaCast or any system that sends CAP 1.2. The alert card replaces what is playing at once, on every player, and the all-clear brings the playlist back. ScreenTinker is a display channel for alerts, not a certified life-safety system.</p></div>
+      <div><h3 style="font-size:18px;margin-bottom:6px">Can I show a Power BI dashboard on a TV screen?</h3><p style="color:var(--muted);font-size:15px">Yes. An organization admin adds your Power BI service principal once, and editors pick a report. Screens get a view-only embed token that expires within the hour, never your secret. Embedding this way needs a Power BI Embedded, Fabric or Premium capacity. A public Publish to web link also works, for data that is meant to be public.</p></div>
+      <div><h3 style="font-size:18px;margin-bottom:6px">Does audience counting record people?</h3><p style="color:var(--muted);font-size:15px">No. The player counts faces turned toward the screen and discards each frame straight away. No image or video is stored or sent, nobody is recognised, and only per-minute counts reach the server. It is off by default, an admin has to allow it, and a small camera icon shows on screens that are counting. Camera rules differ by country and state, so check with your adviser and put up a notice first.</p></div>
       <div><h3 style="font-size:18px;margin-bottom:6px">Can I run digital signage on a Raspberry Pi?</h3><p style="color:var(--muted);font-size:15px">Yes. A Raspberry Pi 4 or newer makes an excellent low-cost signage player. Our one-line installer sets up kiosk mode, auto-start, and pairing for you. See the full walkthrough in our <a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi digital signage guide</a>.</p></div>
-      <div><h3 style="font-size:18px;margin-bottom:6px">Does ScreenTinker work on Android TV and Fire TV?</h3><p style="color:var(--muted);font-size:15px">Yes. Install the free APK on any Android TV box or Amazon Fire TV Stick to turn it into a managed signage display, complete with kiosk mode and live remote control. Step-by-step instructions are in our <a href="/guides/digital-signage-android-tv.html">Android TV &amp; Fire TV guide</a>. ScreenTinker also runs on BrightSign players, Windows, ChromeOS, LG webOS, Samsung Tizen, and any web browser.</p></div>
+      <div><h3 style="font-size:18px;margin-bottom:6px">Does ScreenTinker work on Android TV and Fire TV?</h3><p style="color:var(--muted);font-size:15px">Yes. Install the free APK on any Android TV box or Amazon Fire TV Stick to turn it into a managed signage display, complete with kiosk mode and live remote control. Step-by-step instructions are in our <a href="/guides/digital-signage-android-tv.html">Android TV &amp; Fire TV guide</a>. ScreenTinker also runs on BrightSign players, Windows, ChromeOS, LG webOS, Samsung Tizen, and any web browser, with Mac and iPad/iPhone players in beta.</p></div>
       <div><h3 style="font-size:18px;margin-bottom:6px">Does ScreenTinker run on BrightSign players?</h3><p style="color:var(--muted);font-size:15px">Yes. A BrightSign runs the same web player the browser does, so it gets the same playlists, layouts, scheduling and remote control as every other screen. It can even run the ScreenTinker server itself, so a small site needs no separate box. Most open-source signage never supports BrightSign at all.</p></div>
       <div><h3 style="font-size:18px;margin-bottom:6px">What's the difference between self-hosted and cloud digital signage?</h3><p style="color:var(--muted);font-size:15px">With cloud, we host everything and you just sign in. That is the fastest way to start. With self-hosting, you deploy ScreenTinker on your own server or VPS so your content and device data never leave your network, with no recurring SaaS fees. You can switch later. Our <a href="/guides/self-hosted-digital-signage.html">self-hosted digital signage guide</a> covers sizing, deployment, TLS, and backups.</p></div>
       <div><h3 style="font-size:18px;margin-bottom:6px">Is ScreenTinker really open source?</h3><p style="color:var(--muted);font-size:15px">Yes. The full platform is released under the permissive MIT license on <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>. You can read the code, self-host it, modify it, and even white-label it. No vendor lock-in and no proprietary black box.</p></div>
@@ -869,9 +1042,11 @@
   <!-- CTA -->
   <section class="cta">
     <span class="eyebrow2 ey-green">14-day Pro trial &middot; no card</span>
-    <h2>Ready to Get Started?</h2>
-    <p>14-day free Pro trial. No credit card required. Set up in under 5 minutes.</p>
+    <h2>Put it on one screen this week</h2>
+    <p>Start a 14-day Pro trial: up to 15 screens, every integration, no credit card. Pair a screen in minutes, then invite your team.</p>
     <a href="/app#/login" class="btn btn-primary" style="padding:14px 32px;font-size:16px">Start Free Trial</a>
+    <a href="#pricing" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:8px;background:rgba(255,255,255,.06);color:#fff;border-color:rgba(255,255,255,.4)">See plans</a>
+    <p style="font-size:14px;margin:20px 0 0">Or host it yourself, free and open source, from <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" style="color:#fff;text-decoration:underline">GitHub</a>. Rolling out to a large estate? <a href="#pricing" style="color:#fff;text-decoration:underline">Talk to us</a>.</p>
   </section>
   </main>
 
@@ -880,7 +1055,7 @@
     <div style="max-width:1200px;margin:0 auto;padding:48px 24px 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:32px">
       <div>
         <div style="font-weight:700;color:var(--accent);margin-bottom:12px">ScreenTinker</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.6">Open-source digital signage. Free plan, self-host or cloud. MIT licensed.</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.6">Open-source digital signage for business. Hosted 14-day trial, or self-host. MIT licensed.</div>
       </div>
       <div>
         <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Guides</div>
@@ -890,6 +1065,28 @@
           <a href="/guides/digital-signage-android-tv.html" style="color:var(--muted)">Android TV &amp; Fire TV</a>
           <a href="/guides/self-hosted-digital-signage.html" style="color:var(--muted)">Self-hosting guide</a>
           <a href="/cloud-digital-signage.html" style="color:var(--muted)">Hosted / cloud</a>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Solutions</div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+          <a href="/solutions/emergency-alert-digital-signage.html" style="color:var(--muted)">Emergency alerts</a>
+          <a href="/solutions/meeting-room-display.html" style="color:var(--muted)">Meeting room displays</a>
+          <a href="/solutions/digital-menu-boards.html" style="color:var(--muted)">Menu boards</a>
+          <a href="/solutions/social-media-wall.html" style="color:var(--muted)">Social walls</a>
+          <a href="/solutions/audience-analytics.html" style="color:var(--muted)">Audience analytics</a>
+          <a href="/solutions/enterprise-digital-signage.html" style="color:var(--muted)">Enterprise</a>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Integrations</div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+          <a href="/integrations/microsoft-365-digital-signage.html" style="color:var(--muted)">Microsoft 365</a>
+          <a href="/integrations/power-bi-digital-signage.html" style="color:var(--muted)">Power BI</a>
+          <a href="/integrations/tableau-digital-signage.html" style="color:var(--muted)">Tableau</a>
+          <a href="/integrations/grafana-digital-signage.html" style="color:var(--muted)">Grafana</a>
+          <a href="/integrations/canva-digital-signage.html" style="color:var(--muted)">Canva</a>
+          <a href="/integrations/" style="color:var(--muted)">All integrations</a>
         </div>
       </div>
       <div>
@@ -981,8 +1178,8 @@
     "name": "ScreenTinker",
     "applicationCategory": "BusinessApplication",
     "applicationSubCategory": "Digital Signage",
-    "operatingSystem": "Android, Web browser, Windows, Linux, ChromeOS, LG webOS, Samsung Tizen, BrightSign, Fire TV",
-    "description": "Self-hosted, open-source digital signage CMS. MIT licensed. Live data from Google Sheets and REST APIs, a signed template library, and TVs, video walls and kiosks across Android, Raspberry Pi, Windows, ChromeOS, and any browser.",
+    "operatingSystem": "Android, Web browser, Windows, Linux, ChromeOS, LG webOS, Samsung Tizen, BrightSign, Fire TV, macOS, iPadOS, iOS",
+    "description": "Open-source digital signage CMS for business, hosted or self-hosted. MIT licensed. Microsoft 365, Google Workspace, Power BI, Tableau and Grafana, CAP emergency alerts, meeting room displays, SAML and OIDC single sign-on, and live data, on TVs, video walls and kiosks across Android, Raspberry Pi, Windows, ChromeOS, Mac (beta) and any browser.",
     "url": "https://screentinker.com/",
     "image": "https://screentinker.com/assets/dashboard-preview.png",
     "screenshot": "https://screentinker.com/assets/dashboard-preview.png",
@@ -1008,6 +1205,21 @@
       ]
     },
     "featureList": [
+      "SAML 2.0 and OpenID Connect single sign-on per organization, with DNS-verified domains",
+      "Microsoft 365: SharePoint and OneDrive folder sync, PowerPoint, Word and Excel documents",
+      "Google Slides, Docs and Sheets documents",
+      "Power BI, Tableau and Grafana dashboards",
+      "Canva import and sync",
+      "CAP 1.2 emergency alert feeds, Alertus and Singlewire InformaCast hooks",
+      "Meeting room displays for Microsoft 365 and Google Workspace calendars, with booking",
+      "Social walls with moderation: Instagram, Facebook, YouTube, X, Bluesky, Mastodon",
+      "Menu boards with dietary tags and sold-out from a till",
+      "Privacy-first audience counting (counts only, off by default)",
+      "Tracked QR links",
+      "Offline alerts to Slack, Microsoft Teams, PagerDuty, email and webhooks",
+      "Zapier, Make and n8n automation; inbound hooks",
+      "Device tags and dynamic groups",
+      "Player updates in waves with automatic halt",
       "Live data sources: Google Sheets, REST/JSON APIs, CSV, RSS, iCal calendars, weather, manual tables",
       "Cryptographically signed template library (slide and code templates)",
       "Native players for Raspberry Pi and Windows",
@@ -1066,8 +1278,13 @@
     "@type": "FAQPage",
     "mainEntity": [
       { "@type": "Question", "name": "Is there free digital signage software?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. ScreenTinker is free and open source (MIT licensed). The free cloud plan runs 1 display with 500 MB of storage, and if you self-host there's no per-screen fee at all, so you can run as many displays as your own server can handle. New accounts also get a 14-day Pro trial (15 displays) with no credit card required." } },
+      { "@type": "Question", "name": "How long is the free trial, and what does it include?", "acceptedAnswer": { "@type": "Answer", "text": "14 days of the Pro plan on our hosted service: up to 15 screens and 20 GB of storage, with every integration. No credit card is needed. At the end you choose a plan, or the account moves to the Free plan with one screen." } },
+      { "@type": "Question", "name": "Does ScreenTinker support single sign-on with SAML or OIDC?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Each organization can connect its own identity provider over SAML 2.0 or OpenID Connect, including Entra ID, Okta, Google Workspace, ADFS and OneLogin. You verify your domains with a DNS TXT record, and can then require single sign-on for everyone at them." } },
+      { "@type": "Question", "name": "Can digital signage show emergency alerts?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Subscribe to public CAP feeds such as the US National Weather Service or MeteoAlarm, or connect Alertus, Singlewire InformaCast or any system that sends CAP 1.2. The alert card replaces what is playing at once, on every player, and the all-clear brings the playlist back. ScreenTinker is a display channel for alerts, not a certified life-safety system." } },
+      { "@type": "Question", "name": "Can I show a Power BI dashboard on a TV screen?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. An organization admin adds your Power BI service principal once, and editors pick a report. Screens get a view-only embed token that expires within the hour, never your secret. Embedding this way needs a Power BI Embedded, Fabric or Premium capacity. A public Publish to web link also works, for data that is meant to be public." } },
+      { "@type": "Question", "name": "Does audience counting record people?", "acceptedAnswer": { "@type": "Answer", "text": "No. The player counts faces turned toward the screen and discards each frame straight away. No image or video is stored or sent, nobody is recognised, and only per-minute counts reach the server. It is off by default, an admin has to allow it, and a small camera icon shows on screens that are counting. Camera rules differ by country and state, so check with your adviser and put up a notice first." } },
       { "@type": "Question", "name": "Can I run digital signage on a Raspberry Pi?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. A Raspberry Pi 4 or newer makes an excellent low-cost signage player. Our one-line installer sets up kiosk mode, auto-start, and pairing for you." } },
-      { "@type": "Question", "name": "Does ScreenTinker work on Android TV and Fire TV?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Install the free APK on any Android TV box or Amazon Fire TV Stick to turn it into a managed signage display, complete with kiosk mode and live remote control. ScreenTinker also runs on BrightSign players, Windows, ChromeOS, LG webOS, Samsung Tizen, and any web browser." } },
+      { "@type": "Question", "name": "Does ScreenTinker work on Android TV and Fire TV?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Install the free APK on any Android TV box or Amazon Fire TV Stick to turn it into a managed signage display, complete with kiosk mode and live remote control. ScreenTinker also runs on BrightSign players, Windows, ChromeOS, LG webOS, Samsung Tizen, and any web browser, with Mac and iPad/iPhone players in beta." } },
       { "@type": "Question", "name": "Does ScreenTinker run on BrightSign players?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. A BrightSign runs the same web player the browser does, so it gets the same playlists, layouts, scheduling and remote control as every other screen. It can even run the ScreenTinker server itself, so a small site needs no separate box. Most open-source signage never supports BrightSign at all." } },
       { "@type": "Question", "name": "What's the difference between self-hosted and cloud digital signage?", "acceptedAnswer": { "@type": "Answer", "text": "With cloud, we host everything and you just sign in. That is the fastest way to start. With self-hosting, you deploy ScreenTinker on your own server or VPS so your content and device data never leave your network, with no recurring SaaS fees. You can switch later." } },
       { "@type": "Question", "name": "Is ScreenTinker really open source?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. The full platform is released under the permissive MIT license on GitHub. You can read the code, self-host it, modify it, and even white-label it. No vendor lock-in and no proprietary black box." } },
