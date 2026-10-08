@@ -17,6 +17,7 @@ import * as reports from './views/reports.js';
 import * as servers from './views/servers.js';
 import * as noc from './views/noc.js';
 import * as triggers from './views/triggers.js';
+import * as alerts from './views/alerts.js';
 import * as capFeeds from './views/cap-feeds.js';
 import * as corporate from './views/corporate.js';
 import * as activity from './views/activity.js';
@@ -244,6 +245,7 @@ const NAV_LABEL_KEYS = {
   reports: 'nav.reports',
   servers: 'nav.servers',
   triggers: 'nav.triggers',
+  alerts: 'nav.alerts',
   'emergency-feeds': 'nav.emergency_feeds',
   // corporate is relabelled per viewer (Corporate / Head office) by syncCorporateNav.
   kiosk: 'nav.kiosk',
@@ -627,6 +629,9 @@ function route() {
   } else if (hash === '#/triggers') {
     currentView = triggers;
     triggers.render(app);
+  } else if (hash === '#/alerts') {
+    currentView = alerts;
+    alerts.render(app);
   } else if (hash === '#/emergency-feeds') {
     currentView = capFeeds;
     capFeeds.render(app);

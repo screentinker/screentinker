@@ -3273,6 +3273,42 @@ try {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }
   // "Play every N seconds" (lib/repeat-every.js): NULL = plays once per loop, as before.
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN repeat_every_sec INTEGER').run(); console.log('[migrate] playlist_items.repeat_every_sec added'); } catch (_) { /* present */ }
+  // Alert channels (lib/alert-channels.js): Slack / Teams / PagerDuty / webhook / email per workspace.
+  // Workspace-owned and FK-cascaded; alert_deliveries is the once-per-outage ledger.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS alert_channels (
+      id              TEXT PRIMARY KEY,
+      workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id         TEXT,
+      kind            TEXT NOT NULL,
+      name            TEXT NOT NULL,
+      config          TEXT NOT NULL DEFAULT '{}',
+      events          TEXT NOT NULL DEFAULT '["device_offline","device_online"]',
+      offline_minutes INTEGER NOT NULL DEFAULT 5,
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      last_sent_at    INTEGER,
+      last_error      TEXT,
+      created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_alert_channels_ws ON alert_channels(workspace_id);
+    CREATE TABLE IF NOT EXISTS alert_channel_scopes (
+      channel_id TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+      scope_kind TEXT NOT NULL,
+      scope_id   TEXT NOT NULL,
+      PRIMARY KEY (channel_id, scope_kind, scope_id)
+    );
+    CREATE TABLE IF NOT EXISTS alert_deliveries (
+      channel_id      TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+      device_id       TEXT NOT NULL,
+      outage          INTEGER NOT NULL,
+      offline_sent_at INTEGER,
+      online_sent_at  INTEGER,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      online_attempts INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (channel_id, device_id, outage)
+    );
+  `);
   // Device tags (JSON array, lib/content-tags normalizer) and dynamic group rules
   // (lib/device-group-rules.js): NULL rules = a hand-built group, as before.
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }

@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Offline alerts to Slack, Microsoft Teams, PagerDuty, email or a webhook** (Automate → Alerts).
+  - Each channel says when to alert (offline for N minutes, and back online), and for which
+    screens: all, some groups or some screens. One message per outage, and "back online" only
+    after an offline alert went out.
+  - PagerDuty incidents close themselves when the screen comes back. Webhooks can be signed with
+    a shared secret (`X-ScreenTinker-Signature`).
+  - **Send test** checks a channel. A failed delivery is retried, and the error is shown on the
+    channel.
+  - Webhook addresses and PagerDuty keys are never shown again after saving. Only workspace
+    admins can add or change channels.
+  - The owner's offline email is unchanged.
+
 - **Menu boards** (Widgets → Menu Board), for restaurants, cafés and bars.
   - Sections and items with one or more prices (Small / Large, Glass / Bottle), descriptions,
     photos and dietary tags (V, VG, GF, DF, nuts, halal, spicy, new, popular), with a key on screen.

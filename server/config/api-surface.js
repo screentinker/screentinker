@@ -98,6 +98,11 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/storage-profiles', mod: './routes/storage-profiles', tenancy: true },
   /*
+   * Alert channels (lib/alert-channels.js). JWT only, for the same reason: a channel holds a Slack /
+   * Teams webhook URL or a PagerDuty routing key — credentials into someone else's systems.
+   */
+  { path: '/api/alert-channels', mod: './routes/alert-channels', tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */
