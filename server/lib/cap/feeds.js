@@ -181,6 +181,13 @@ function isLive(a, now) {
   return end > now;
 }
 
+/** Past its own end (expires, or 24 h after sent). Not-yet-effective is not expired. */
+function hasExpired(a, now) {
+  const sent = Date.parse((a && a.sent) || '') / 1000;
+  const end = a && a.expires ? Date.parse(a.expires) / 1000 : (Number.isFinite(sent) ? sent + DEFAULT_TTL_SEC : NaN);
+  return Number.isFinite(end) && end <= now;
+}
+
 function matchesFilters(feed, a) {
   if ((SEVERITY_RANK[a.severity] ?? 0) < (SEVERITY_RANK[feed.min_severity] ?? SEVERITY_RANK.Severe)) return false;
   const events = parseEvents(feed).map((e) => e.toLowerCase());
@@ -340,22 +347,39 @@ function announce(db, feed, feedId, live) {
 
 /* ============================== push-mode feeds (lib/automation) ============================== */
 
+/*
+ * cap_alerts.ended on a push-mode feed:
+ *   0  not ended (live, or past its expiry)
+ *   1  ended by the SENDER's CAP Cancel / Update — final: CAP identifiers are unique per alert, so
+ *      the same identifier again is a retry of something already over
+ *   2  ended by a hook clear (endPushed): an "all clear" or a clear by id. ⚠️ RE-RAISABLE: a hook
+ *      alert without an id is keyed on a hash of its body, so "Evacuate", the all-clear, then the
+ *      same "Evacuate" is the same key — and has to show again, not answer "no change" for a week.
+ * A polled feed (applyPoll) only ever writes 0 and 1, and keeps its MAX rule.
+ */
+const ENDED_FINAL = 1;
+const ENDED_CLEARED = 2;
+
 /**
  * Add or update alerts on a push-mode feed. Idempotent on sender + identifier: the same alert sent
- * twice is one row, and an Update / Cancel ends every alert its references name. Unlike applyPoll,
- * alerts not mentioned are left alone — a push is one message, not the whole current set.
- * Returns { raised: [keys new and live], ended: [keys that went from live to ended] }.
+ * twice while it is live is one row and one raise, and an Update / Cancel ends every alert its
+ * references name. Unlike applyPoll, alerts not mentioned are left alone — a push is one message,
+ * not the whole current set. An alert sent again after a hook cleared it, or after it expired, is
+ * raised again.
+ * Returns { raised: [keys that went live], ended: [keys that went from live to ended] }.
  */
 function applyPush(db, feed, alerts, now = clock()) {
   const raised = [];
   const ended = [];
   db.transaction(() => {
-    const get = db.prepare('SELECT ended FROM cap_alerts WHERE feed_id = ? AND akey = ?');
+    const get = db.prepare('SELECT ended, data FROM cap_alerts WHERE feed_id = ? AND akey = ?');
     const upsert = db.prepare(`INSERT INTO cap_alerts (feed_id, akey, data, in_feed, ended, first_seen, last_seen)
       VALUES (?, ?, ?, 1, ?, ?, ?)
       ON CONFLICT(feed_id, akey) DO UPDATE SET data = excluded.data, last_seen = excluded.last_seen,
-        ended = MAX(cap_alerts.ended, excluded.ended)`);
-    const endOne = db.prepare('UPDATE cap_alerts SET ended = 1, last_seen = ? WHERE feed_id = ? AND akey = ? AND ended = 0');
+        ended = CASE WHEN excluded.ended = ${ENDED_FINAL} THEN ${ENDED_FINAL}
+                     WHEN cap_alerts.ended = ${ENDED_CLEARED} THEN 0
+                     ELSE cap_alerts.ended END`);
+    const endOne = db.prepare(`UPDATE cap_alerts SET ended = ${ENDED_FINAL}, last_seen = ? WHERE feed_id = ? AND akey = ? AND ended = 0`);
     for (const a of alerts) {
       if (!a || !a.identifier) continue;
       const refs = (a.msgType === 'Update' || a.msgType === 'Cancel') ? (a.references || []).map(referenceKey) : [];
@@ -363,21 +387,23 @@ function applyPush(db, feed, alerts, now = clock()) {
       const key = alertKey(a);
       const prior = get.get(feed.id, key);
       const isEnd = a.msgType === 'Cancel';
-      upsert.run(feed.id, key, JSON.stringify(a), isEnd ? 1 : 0, now, now);
-      if (!prior && !isEnd) raised.push(key);
-      if (prior && !prior.ended && isEnd) ended.push(key);
+      upsert.run(feed.id, key, JSON.stringify(a), isEnd ? ENDED_FINAL : 0, now, now);
+      if (isEnd) { if (prior && !prior.ended) ended.push(key); continue; }
+      let priorExpired = false;
+      if (prior && !prior.ended) { try { priorExpired = hasExpired(JSON.parse(prior.data), now); } catch { priorExpired = false; } }
+      if (!prior || prior.ended === ENDED_CLEARED || priorExpired) raised.push(key);
     }
-    db.prepare('DELETE FROM cap_alerts WHERE feed_id = ? AND ended = 1 AND last_seen < ?').run(feed.id, now - 7 * 86400);
+    db.prepare('DELETE FROM cap_alerts WHERE feed_id = ? AND ended != 0 AND last_seen < ?').run(feed.id, now - 7 * 86400);
   })();
   return { raised, ended };
 }
 
-/** End alerts on a push-mode feed: the named keys, or every live one when `keys` is null. */
+/** End alerts on a push-mode feed (a hook clear, so re-raisable): the named keys, or every live one when `keys` is null. */
 function endPushed(db, feed, keys = null, now = clock()) {
   const rows = keys
     ? keys.map((k) => ({ akey: k }))
     : db.prepare('SELECT akey FROM cap_alerts WHERE feed_id = ? AND ended = 0').all(feed.id);
-  const endOne = db.prepare('UPDATE cap_alerts SET ended = 1, last_seen = ? WHERE feed_id = ? AND akey = ? AND ended = 0');
+  const endOne = db.prepare(`UPDATE cap_alerts SET ended = ${ENDED_CLEARED}, last_seen = ? WHERE feed_id = ? AND akey = ? AND ended = 0`);
   const ended = [];
   for (const r of rows) if (endOne.run(now, feed.id, r.akey).changes) ended.push(r.akey);
   return ended;

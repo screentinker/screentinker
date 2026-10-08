@@ -31,17 +31,40 @@ const { logActivity, getClientIp } = require('../services/activity');
 const events = require('../lib/automation/events');
 const hooks = require('../lib/automation/hooks');
 
-function access(req, res, { admin = false, write = false } = {}) {
+function access(req, res, { admin = false, write = false, adminError = 'Only a workspace admin can take over screens.' } = {}) {
   if (!req.workspaceId) { res.status(403).json({ error: 'No workspace context' }); return null; }
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
   const ctx = ws && resourceAccess(req, ws);
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (!ctx.actingAs && (admin || write) && ctx.workspaceRole === 'workspace_viewer') { res.status(403).json({ error: 'Read-only access' }); return null; }
   if (admin && !ctx.actingAs && ctx.workspaceRole !== 'workspace_admin') {
-    res.status(403).json({ error: 'Only a workspace admin can take over screens.', code: 'AUTOMATION_ADMIN_REQUIRED' }); return null;
+    res.status(403).json({ error: adminError, code: 'AUTOMATION_ADMIN_REQUIRED' }); return null;
   }
   return { ws, ctx };
 }
+
+/*
+ * ⚠️ EVERY ASYNC HANDLER HERE IS WRAPPED. Express 4 does not await a handler, and server.js turns an
+ * unhandled rejection into process.exit — so one throw inside an action (a bad value reaching SQL,
+ * say) took the whole multi-tenant server down. Same guard as asyncRoute in routes/auth.js.
+ */
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch((err) => {
+    console.error(`[zapier] unhandled error in ${req.method} ${req.path}:`, err && err.message);
+    try {
+      if (!res.headersSent) res.status(500).json({ error: 'Something went wrong' });
+    } catch (e2) {
+      console.error('[zapier] failed to report an error:', e2 && e2.message);
+    }
+  });
+}
+
+/*
+ * Subscribing sends this workspace's events to an outside URL, and unsubscribing stops someone
+ * else's Zap: the same workspace-admin rule the Automation page applies to subscriptions
+ * (routes/automation.js). A JWT session skips requireScope, so the role check is what stops a viewer.
+ */
+const SUBSCRIPTION_ADMIN = { admin: true, adminError: 'Only a workspace admin can manage Zapier subscriptions.' };
 
 router.get('/me', requireScope('read'), (req, res) => {
   const a = access(req, res); if (!a) return;
@@ -71,7 +94,7 @@ function checkTarget(raw) {
 }
 
 router.post('/subscriptions', requireScope('write'), (req, res) => {
-  if (!access(req, res)) return;
+  if (!access(req, res, SUBSCRIPTION_ADMIN)) return;
   const b = req.body || {};
   const event = String(b.event || '');
   if (!events.EVENTS.includes(event)) return res.status(400).json({ error: `event must be one of: ${events.EVENTS.join(', ')}` });
@@ -91,7 +114,7 @@ router.post('/subscriptions', requireScope('write'), (req, res) => {
 });
 
 router.delete('/subscriptions/:id', requireScope('write'), (req, res) => {
-  if (!access(req, res)) return;
+  if (!access(req, res, SUBSCRIPTION_ADMIN)) return;
   const r = db.prepare('DELETE FROM automation_subscriptions WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
   if (r.changes) db.prepare("UPDATE automation_deliveries SET status = 'failed', last_error = 'unsubscribed' WHERE subscription_id = ? AND status = 'pending'").run(req.params.id);
   // Idempotent: Zapier retries an unsubscribe, and "already gone" is success.
@@ -128,12 +151,19 @@ function scopesFrom(b) {
  * The workspace's Zapier hook for a kind, created on first use. A real hook row, so what Zapier
  * raised shows on the Automation page and can be cleared or deleted there. It has no usable URL
  * (its secret is never shown) until an admin rotates it.
+ *
+ * ⚠️ SWITCHED OFF MEANS OFF: a disabled Zapier hook is found (via = 'zapier' survives edits — see
+ * hooks.normaliseInput) and refused with 409, untouched. It is never replaced by a fresh one.
+ * Deleting it on the Automation page is what lets the next Zapier call start over.
  */
 function zapierHook(req, kind, config) {
   const v = hooks.validateConfig(db, req.workspaceId, kind, config);
   if (v.error) return { error: v.error };
   const cfg = { ...v.config, via: 'zapier' };
   let h = db.prepare("SELECT * FROM automation_hooks WHERE workspace_id = ? AND kind = ? AND json_extract(config, '$.via') = 'zapier'").get(req.workspaceId, kind);
+  if (h && !h.enabled) {
+    return { status: 409, code: 'ZAPIER_HOOK_DISABLED', error: 'The Zapier emergency hook is switched off on the Automation page. Switch it back on there to use this action.' };
+  }
   if (!h) {
     const id = crypto.randomUUID();
     db.prepare(`INSERT INTO automation_hooks (id, workspace_id, name, kind, config, secret_hash, enabled, created_by)
@@ -144,7 +174,6 @@ function zapierHook(req, kind, config) {
     db.prepare("UPDATE automation_hooks SET config = ?, updated_at = strftime('%s','now') WHERE id = ?").run(JSON.stringify(cfg), h.id);
     h = db.prepare('SELECT * FROM automation_hooks WHERE id = ?').get(h.id);
   }
-  if (!h.enabled) return { error: 'The Zapier emergency hook is switched off on the Automation page.' };
   return { hook: h };
 }
 
@@ -163,7 +192,7 @@ function meshRefusal(req, res) {
   return false;
 }
 
-router.post('/actions/emergency', requireScope('full'), async (req, res) => {
+router.post('/actions/emergency', requireScope('full'), asyncRoute(async (req, res) => {
   if (!access(req, res, { admin: true }) || meshRefusal(req, res)) return;
   const b = req.body || {};
   const op = b.op === 'clear' ? 'clear' : 'raise';
@@ -172,13 +201,13 @@ router.post('/actions/emergency', requireScope('full'), async (req, res) => {
     headline: '{{body.headline}}', description: '{{body.message}}', instruction: '{{body.instruction}}', event: '{{body.event}}',
     alert_id: '{{body.alert_id}}', playlist_id: b.playlist_id || null,
   });
-  if (z.error) return res.status(400).json({ error: z.error });
+  if (z.error) return res.status(z.status || 400).json({ error: z.error, ...(z.code ? { code: z.code } : {}) });
   const body = { headline: b.headline, message: b.message, instruction: b.instruction, event: b.event || 'Emergency', alert_id: b.alert_id };
   const r = await hooks.run(db, z.hook, { body, text: JSON.stringify(body), format: 'json' }, { io: req.app.get('io') });
   finish(req, res, `emergency ${op}`, r);
-});
+}));
 
-router.post('/actions/playlist', requireScope('full'), (req, res) => {
+router.post('/actions/playlist', requireScope('full'), asyncRoute(async (req, res) => {
   if (!access(req, res, { admin: true }) || meshRefusal(req, res)) return;
   const b = req.body || {};
   const ov = require('../lib/automation/overrides');
@@ -192,9 +221,9 @@ router.post('/actions/playlist', requireScope('full'), (req, res) => {
   const r = ov.start(db, { workspaceId: req.workspaceId, playlistId: c.playlist_id, minutes: c.minutes, scopes: c.scopes });
   if (r.error) return finish(req, res, 'playlist start', { ok: false, status: 409, outcome: r.error });
   finish(req, res, 'playlist start', { ok: true, outcome: `switched ${r.devices} screen(s) for ${c.minutes} minute(s)` });
-});
+}));
 
-router.post('/actions/trigger', requireScope('full'), async (req, res) => {
+router.post('/actions/trigger', requireScope('full'), asyncRoute(async (req, res) => {
   if (!access(req, res, { admin: true }) || meshRefusal(req, res)) return;
   const b = req.body || {};
   const v = hooks.validateConfig(db, req.workspaceId, 'trigger', { trigger_id: b.trigger_id, op: b.op === 'clear' ? 'clear' : 'fire' });
@@ -202,9 +231,9 @@ router.post('/actions/trigger', requireScope('full'), async (req, res) => {
   const r = await hooks.run(db, { id: 'zapier', workspace_id: req.workspaceId, kind: 'trigger', name: 'Zapier', config: JSON.stringify(v.config) },
     { body: {}, text: '', format: 'json' }, { io: req.app.get('io'), log: false });
   finish(req, res, 'trigger', r);
-});
+}));
 
-router.post('/actions/data', requireScope('write'), async (req, res) => {
+router.post('/actions/data', requireScope('write'), asyncRoute(async (req, res) => {
   if (!access(req, res, { write: true }) || meshRefusal(req, res)) return;
   const b = req.body || {};
   const v = hooks.validateConfig(db, req.workspaceId, 'data', { data_source_id: b.data_source_id, mode: b.mode, key_column: b.key_column, rows: '{{body.rows}}' });
@@ -214,6 +243,6 @@ router.post('/actions/data', requireScope('write'), async (req, res) => {
   const r = await hooks.run(db, { id: 'zapier', workspace_id: req.workspaceId, kind: 'data', name: 'Zapier', config: JSON.stringify(v.config) },
     { body: { rows }, text: '', format: 'json' }, { log: false });
   finish(req, res, 'data', r);
-});
+}));
 
 module.exports = router;

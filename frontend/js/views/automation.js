@@ -335,6 +335,8 @@ function openForm(app, hook) {
       ${hook && hook.has_signing_secret ? `<label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:6px"><input type="checkbox" id="afSigningClear"> ${esc(t('auto.signing_remove'))}</label>` : ''}
     </details>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0"><input type="checkbox" id="afEnabled" ${!hook || hook.enabled ? 'checked' : ''}> ${esc(t('auto.f.enabled'))}</label>
+    ${hook && hook.config && hook.config.via ? '' : `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0 0"><input type="checkbox" id="afAllowGet" ${hook && hook.config && hook.config.allow_get ? 'checked' : ''}> ${esc(t('auto.f.allow_get'))}</label>
+    <p class="muted" style="font-size:12px;margin:2px 0 8px 24px">${esc(t('auto.f.allow_get_hint'))}</p>`}
     <div id="afError" style="color:var(--danger);font-size:13px;min-height:18px"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px">
       <button class="btn btn-secondary" id="afCancel">${esc(t('common.cancel'))}</button>
@@ -356,6 +358,7 @@ function openForm(app, hook) {
   $('afSave').addEventListener('click', async () => {
     const body = { name: $('afName').value.trim(), enabled: $('afEnabled').checked, config: collectConfig(overlay, kind, getScopes) };
     if (!hook) body.kind = kind;
+    if ($('afAllowGet')) body.allow_get = $('afAllowGet').checked;
     const s = $('afSigning').value;
     if (s) body.signing_secret = s;
     else if ($('afSigningClear') && $('afSigningClear').checked) body.signing_secret = '';

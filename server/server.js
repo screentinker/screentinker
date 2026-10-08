@@ -1196,7 +1196,9 @@ function rateLimit(windowMs, maxRequests) {
       // its job, several means a shared egress IP is denying real users. Identifiers are
       // salted-hashed inside the telemetry module and only ever counted. Response unchanged.
       try {
-        const endpoint = (req.originalUrl || req.url || req.path).split('?')[0];
+        // The bucket's SHAPE, never the raw path: a path can carry a credential (an inbound hook's
+        // URL is /api/hooks/in/<id>/<secret>), and this line goes to the server log.
+        const endpoint = normalisedPath;
         const ip = getClientIp(req);
         const ident = req.body && (req.body.email || req.body.username);
         const t = limiterTelemetry.recordRejection({ endpoint, ip, identifier: ident });

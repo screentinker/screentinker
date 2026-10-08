@@ -105,7 +105,10 @@ test('410 Gone unsubscribes, and nothing more is sent to that receiver', async (
   sent.length = 0;
   const r = await ev.deliverDue(db);
   assert.equal(sent.length, 1, 'the second delivery is cancelled, not sent');
-  assert.equal(r.gone, 2);
+  // Deliveries to one subscription go one at a time, so the 410 has already failed the second one
+  // ("unsubscribed") by the time its turn comes, and it is skipped rather than attempted.
+  assert.equal(r.gone, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM automation_deliveries WHERE subscription_id = ? AND status = 'failed' AND last_error LIKE '%410%'").get(s).n, 2);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM automation_subscriptions WHERE id = ?').get(s).n, 0);
   answer = () => ({ status: 200 });
   ev.emit(db, WS, 'playlist_published', { playlist_name: 'C' });
@@ -132,4 +135,64 @@ test('screen online/offline is announced on a change only', async () => {
   assert.equal(count('device_offline'), before.off + 1);
   const last = ev.recent(db, WS, 'device_offline', 1)[0];
   assert.equal(last.device_name, 'Lobby');
+});
+
+test('delivery is concurrent and fair: one workspace with dead receivers cannot hold back another', async () => {
+  const org2 = crypto.randomUUID();
+  db.prepare('INSERT INTO organizations (id, name, owner_user_id) VALUES (?, ?, ?)').run(org2, 'Org2', USER);
+  const WS2 = crypto.randomUUID();
+  db.prepare('INSERT INTO workspaces (id, organization_id, name) VALUES (?, ?, ?)').run(WS2, org2, 'WS2');
+  db.prepare("UPDATE automation_deliveries SET status = 'failed' WHERE status = 'pending'").run();
+  // Workspace 1: 40 subscribers on a receiver that never answers (until released).
+  const dead = [];
+  for (let i = 0; i < 40; i++) {
+    const id = crypto.randomUUID();
+    db.prepare('INSERT INTO automation_subscriptions (id, workspace_id, event, target_url) VALUES (?, ?, ?, ?)')
+      .run(id, WS, 'emergency_cleared', `https://dead${i % 2}.example.test/${id}`);
+    dead.push(id);
+  }
+  // Workspace 2: one subscriber that answers at once, queued AFTER all of workspace 1's.
+  const live = crypto.randomUUID();
+  db.prepare('INSERT INTO automation_subscriptions (id, workspace_id, event, target_url) VALUES (?, ?, ?, ?)')
+    .run(live, WS2, 'emergency_cleared', `https://alive.example.test/${live}`);
+  ev.emit(db, WS, 'emergency_cleared', { headline: 'one' });
+  ev.emit(db, WS2, 'emergency_cleared', { headline: 'two' });
+
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const running = { all: 0, max: 0, ws1: 0, maxWs1: 0, hosts: new Map(), maxHost: 0 };
+  let liveSentWhileStuck = false;
+  ev._setSender(async (m) => {
+    const host = new URL(m.url).host;
+    if (host === 'alive.example.test') { liveSentWhileStuck = running.ws1 > 0; return { status: 200 }; }
+    running.all++; running.ws1++;
+    running.hosts.set(host, (running.hosts.get(host) || 0) + 1);
+    running.max = Math.max(running.max, running.all);
+    running.maxWs1 = Math.max(running.maxWs1, running.ws1);
+    running.maxHost = Math.max(running.maxHost, running.hosts.get(host));
+    await gate;
+    running.all--; running.ws1--; running.hosts.set(host, running.hosts.get(host) - 1);
+    return { status: 200 };
+  });
+  const done = ev.deliverDue(db);
+  // Let the scheduler start what fits; workspace 2 must not wait for workspace 1's receivers.
+  for (let i = 0; i < 20 && !liveSentWhileStuck; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(liveSentWhileStuck, 'workspace 2 was delivered while workspace 1 was stuck');
+  assert.ok(running.maxWs1 <= ev.PER_WORKSPACE, `at most ${ev.PER_WORKSPACE} at once for one workspace (saw ${running.maxWs1})`);
+  // A second tick runs beside the first, and never sends what the first has in flight.
+  const second = await ev.deliverDue(db);
+  assert.equal(second.ok, 0);
+  release();
+  const r = await done;
+  assert.equal(r.ok, 41, 'everything is delivered in the end');
+  assert.ok(running.maxWs1 <= ev.PER_WORKSPACE);
+  assert.ok(running.maxHost <= ev.PER_HOST);
+  assert.ok(running.max <= ev.MAX_CONCURRENT);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM automation_deliveries WHERE status = 'ok' AND subscription_id IN (SELECT id FROM automation_subscriptions WHERE event = 'emergency_cleared')").get().n, 41, 'each sent exactly once');
+  ev._setSender(async (m) => { sent.push(m); return answer(m); });
+});
+
+test('fairOrder takes turns between workspaces', () => {
+  const rows = [...Array(5)].map((_, i) => ({ id: i, ws: 'a' })).concat([{ id: 9, ws: 'b' }, { id: 10, ws: 'c' }]);
+  assert.deepEqual(ev.fairOrder(rows).map((r) => r.id), [0, 9, 10, 1, 2, 3, 4]);
 });

@@ -2122,7 +2122,7 @@ paths:
     post:
       tags: [zapier]
       summary: Subscribe a REST hook to an event
-      description: 'Requires scope: write. target_url must be https on a public address. Deliveries are POSTed as JSON and signed with X-ScreenTinker-Signature (t=<unix>,v1=<hex HMAC-SHA256 of "t.body">) using the signing_secret returned here, once. A 410 from the receiver unsubscribes it; other failures retry at 1, 5, 30 and 120 minutes.'
+      description: 'Requires scope: write, and a workspace admin (token owner or session). target_url must be https on a public address. Deliveries are POSTed as JSON and signed with X-ScreenTinker-Signature (t=<unix>,v1=<hex HMAC-SHA256 of "t.body">) using the signing_secret returned here, once. A 410 from the receiver unsubscribes it; other failures retry at 1, 5, 30 and 120 minutes.'
       x-required-scope: write
       requestBody:
         required: true
@@ -2141,7 +2141,7 @@ paths:
     delete:
       tags: [zapier]
       summary: Unsubscribe a REST hook (idempotent)
-      description: 'Requires scope: write.'
+      description: 'Requires scope: write, and a workspace admin (token owner or session).'
       x-required-scope: write
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
