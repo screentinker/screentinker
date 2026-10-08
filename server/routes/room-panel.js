@@ -12,6 +12,9 @@
  *                            this server issued it to that paired screen for that widget
  *                            (lib/rooms/service.js panelToken). No session, no API token, and no
  *                            calendar credential is ever on the device.
+ *   POST /:widgetId/seen     "this screen is showing the room, with working buttons" — sent once a
+ *                            minute by a page holding the capability, checked the same way. The
+ *                            no-show release acts only while one was (lib/rooms/service.js).
  */
 
 const express = require('express');
@@ -84,17 +87,39 @@ function forwardIfCopy(req, res, next) {
   next();
 }
 
-router.post('/:widgetId/action', forwardIfCopy, express.text({ type: '*/*', limit: '4kb' }), async (req, res) => {
+/** The device a panel request names, or null unless its capability is good for this widget. */
+function panelDevice(widget, b) {
+  const device = b.device ? db.prepare('SELECT id, workspace_id, device_token, blocked FROM devices WHERE id = ?').get(String(b.device)) : null;
+  if (!device || device.blocked || device.workspace_id !== widget.workspace_id || !svc.verifyPanelToken(widget.id, device, b.panel)) return null;
+  return device;
+}
+
+function parseBody(req) {
+  try { return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {}); } catch { return {}; }
+}
+
+router.options('/:widgetId/seen', (req, res) => { cors(res); res.status(204).end(); });
+
+// Not rate-limited with the actions (a lobby screen may show several rooms); recordPresence writes
+// at most every 20 s per screen and widget, and nothing is written without a valid capability.
+router.post('/:widgetId/seen', forwardIfCopy, express.text({ type: '*/*', limit: '4kb' }), (req, res) => {
   cors(res);
-  let b = {};
-  try { b = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {}); } catch { b = {}; }
   const { widget, room } = roomForWidget(req.params.widgetId);
   if (!widget) return res.status(404).json({ error: 'Not a room display' });
-  const device = b.device ? db.prepare('SELECT id, workspace_id, device_token, blocked FROM devices WHERE id = ?').get(String(b.device)) : null;
+  const device = panelDevice(widget, parseBody(req));
+  if (!device) return res.status(403).json({ error: 'This screen is not allowed to change the booking.' });
+  if (room) svc.recordPresence(room, widget.id, device.id);
+  res.status(204).end();
+});
+
+router.post('/:widgetId/action', forwardIfCopy, express.text({ type: '*/*', limit: '4kb' }), async (req, res) => {
+  cors(res);
+  const b = parseBody(req);
+  const { widget, room } = roomForWidget(req.params.widgetId);
+  if (!widget) return res.status(404).json({ error: 'Not a room display' });
+  const device = panelDevice(widget, b);
   // One answer for every way this can fail, so the endpoint does not confirm which ids exist.
-  if (!device || device.blocked || device.workspace_id !== widget.workspace_id || !svc.verifyPanelToken(widget.id, device, b.panel)) {
-    return res.status(403).json({ error: 'This screen is not allowed to change the booking.' });
-  }
+  if (!device) return res.status(403).json({ error: 'This screen is not allowed to change the booking.' });
   if (limited(device.id)) return res.status(429).json({ error: 'Too many requests — wait a moment.' });
   if (!room) return res.status(409).json({ error: 'This room display has no room selected.' });
 

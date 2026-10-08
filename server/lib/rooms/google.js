@@ -87,13 +87,28 @@ function mapEvent(e, calId, tz) {
   };
 }
 
+// Every page of a Google list, following nextPageToken up to MAX_PAGES.
+const MAX_PAGES = 10;
+async function allPages(url, params, headers, what) {
+  const out = [];
+  let pageToken = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const qs = new URLSearchParams(params);
+    if (pageToken) qs.set('pageToken', pageToken);
+    const r = await request(`${url}?${qs}`, { headers, what });
+    out.push(...((r && r.items) || []));
+    pageToken = r && typeof r.nextPageToken === 'string' && r.nextPageToken ? r.nextPageToken : null;
+    if (!pageToken) break;
+  }
+  return out;
+}
+
 async function events(conn, cal, fromMs, toMs, tz) {
-  const qs = new URLSearchParams({
+  const items = await allPages(calPath(cal), {
     timeMin: new Date(fromMs).toISOString(), timeMax: new Date(toMs).toISOString(),
     singleEvents: 'true', orderBy: 'startTime', maxResults: '250',
-  });
-  const r = await request(`${calPath(cal)}?${qs}`, { headers: await auth(conn), what: 'Google Calendar' });
-  return ((r && r.items) || []).map((e) => mapEvent(e, cal, tz)).filter((e) => e && Number.isFinite(e.start) && Number.isFinite(e.end));
+  }, await auth(conn), 'Google Calendar');
+  return items.map((e) => mapEvent(e, cal, tz)).filter((e) => e && Number.isFinite(e.start) && Number.isFinite(e.end));
 }
 
 async function create(conn, cal, { title, start, end }) {
@@ -113,21 +128,40 @@ async function shorten(conn, cal, id, endMs) {
 }
 
 /*
- * Free the room from someone else's meeting. Deleting an event from an ATTENDEE's calendar (the
- * room's) removes the room from it rather than cancelling the meeting for everyone.
+ * Free the room from someone else's meeting: the room DECLINES it, and the organiser is told.
+ *
+ * ⚠️ Never a DELETE. Deleting the event from the room's calendar with sendUpdates=all cancels the
+ * whole meeting for every attendee when the room is its organiser — a meeting typed straight into
+ * the resource calendar — which is the opposite of what a release promises. So the room's own
+ * attendance is patched to declined (attendeesOmitted: only our own response changes, the other
+ * attendees are left exactly as they are), and a meeting the room organises, or one the room is not
+ * an attendee of, is refused with a code service.js treats as "keep it".
  */
-async function release(conn, cal, id) {
-  await request(`${calPath(cal)}/${encodeURIComponent(id)}?sendUpdates=all`, {
-    method: 'DELETE', headers: await auth(conn), what: 'Google Calendar',
+async function release(conn, cal, id, comment) {
+  const headers = await auth(conn);
+  const url = `${calPath(cal)}/${encodeURIComponent(id)}`;
+  const e = await request(url, { headers, what: 'Google Calendar' });
+  const me = String(cal).toLowerCase();
+  const isRoom = (p) => !!(p && (p.self || (p.email && String(p.email).toLowerCase() === me)));
+  if (!e) throw new RoomSourceError('Google Calendar did not return the meeting.', { code: 'no-event' });
+  if (isRoom(e.organizer)) {
+    throw new RoomSourceError('The room organises this meeting, so giving the room back would cancel it for everyone. End it from the calendar.', { status: 409, code: 'room-organiser' });
+  }
+  const self = (Array.isArray(e.attendees) ? e.attendees : []).find(isRoom);
+  if (!self) throw new RoomSourceError('The room is not an attendee of this meeting, so it cannot decline it.', { status: 409, code: 'not-attendee' });
+  const declined = { ...self, responseStatus: 'declined' };
+  if (comment) declined.comment = String(comment).slice(0, 500);
+  await request(`${url}?sendUpdates=all`, {
+    method: 'PATCH', headers, what: 'Google Calendar',
+    body: { attendeesOmitted: true, attendees: [declined] },
   });
 }
 
 async function listRooms(conn) {
   if (!conn.subject) throw new RoomSourceError('Listing rooms needs domain-wide delegation and an admin to act as. Enter calendar IDs by hand instead.', { status: 400, code: 'needs-subject' });
-  const r = await request(`${endpoints().googleDirectory}/customer/my_customer/resources/calendars?maxResults=200`, {
-    headers: await auth(conn, SCOPE_DIR), what: 'Google Directory',
-  });
-  return ((r && r.items) || [])
+  const items = await allPages(`${endpoints().googleDirectory}/customer/my_customer/resources/calendars`, { maxResults: '200' },
+    await auth(conn, SCOPE_DIR), 'Google Directory');
+  return items
     .filter((x) => x && x.resourceEmail)
     .map((x) => ({ calendar_id: String(x.resourceEmail), name: String(x.resourceName || x.resourceEmail) }));
 }

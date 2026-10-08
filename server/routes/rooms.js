@@ -31,6 +31,9 @@ const audit = (req, action, details) => logActivity(req.user.id, action, details
 const str = (v, max = 300) => (v == null ? '' : String(v).trim().slice(0, max));
 const bool01 = (v) => (v === true || v === 1 || v === '1' || v === 'true' ? 1 : 0);
 
+// An async handler's failure goes to sendErr, not to an unhandled rejection (Express 4).
+const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => { if (!res.headersSent) sendErr(res, e); });
+
 function sendErr(res, e) {
   if (e instanceof RoomSourceError || e instanceof svc.ActionError) return res.status(e.status || 400).json({ error: e.message, code: e.code || null });
   console.error('[rooms]', e && e.message);
@@ -237,6 +240,31 @@ function connectionInOrg(req, id) {
   return !!db.prepare('SELECT 1 FROM room_connections WHERE id = ? AND organization_id = ?').get(id, req.organizationId);
 }
 
+/*
+ * ⚠️ A connection is the ORGANIZATION's, and reads any mailbox its app can reach — on Microsoft 365,
+ * without an ApplicationAccessPolicy, that is every mailbox in the tenant. So a workspace admin who
+ * is not an org admin may point a room only at a calendar the connection itself lists as a room;
+ * otherwise "calendar_id: ceo@corp.com" would publish that calendar on the room's unauthenticated
+ * panel page, and with end-any on, let the panel decline its meetings. Fails closed: a connection
+ * that cannot list its rooms (a Google one without delegation) is left to an org admin. Returns an
+ * error message, or null.
+ */
+async function calendarAllowed(req, connectionId, calendarId) {
+  if (isOrgAdmin(req)) return null;
+  const refuse = 'Choose one of the rooms this connection lists. Only an organization admin can enter another calendar.';
+  let listed;
+  try {
+    const conn = svc.connectionFor(connectionId, req.organizationId);
+    const a = conn && svc.adapterOf(conn.kind);
+    listed = a ? await a.listRooms(conn) : null;
+  } catch (e) {
+    listed = null;
+  }
+  if (!Array.isArray(listed)) return `The rooms this connection can see could not be listed. ${refuse}`;
+  const want = String(calendarId || '').toLowerCase();
+  return listed.some((r) => r && String(r.calendar_id || '').toLowerCase() === want) ? null : refuse;
+}
+
 router.get('/', (req, res) => {
   if (!req.workspaceId) return res.json({ rooms: [] });
   if (!canRead(req)) return res.status(403).json({ error: 'Workspace access required' });
@@ -244,19 +272,23 @@ router.get('/', (req, res) => {
   res.json({ rooms: rows.map(roomPublic), can_manage: canAdmin(req) });
 });
 
-router.post('/', (req, res) => {
+router.post('/', wrap(async (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context' });
   if (!canAdmin(req)) return res.status(403).json({ error: 'Workspace admin required' });
   const f = roomFields(req.body || {});
   if (f.error) return res.status(400).json({ error: f.error });
   if (f.connection_id && !connectionInOrg(req, f.connection_id)) return res.status(400).json({ error: 'That connection is not in this organization.' });
+  if (f.source !== 'ics') {
+    const bad = await calendarAllowed(req, f.connection_id, f.calendar_id);
+    if (bad) return res.status(403).json({ error: bad, code: 'calendar-not-listed' });
+  }
   const id = crypto.randomUUID();
   db.prepare(`INSERT INTO rooms (id, workspace_id, name, source, connection_id, calendar_id, ics_url_enc, timezone, details, allow_booking)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, req.workspaceId, f.name, f.source, f.connection_id || null, f.calendar_id || null,
     f.ics_url_enc || null, f.timezone, f.details || 'private_hidden', f.allow_booking === undefined ? 1 : f.allow_booking);
   audit(req, 'room_created', `${f.name} (${f.source})`);
   res.status(201).json(roomPublic(db.prepare('SELECT * FROM rooms WHERE id = ?').get(id)));
-});
+}));
 
 function loadRoom(req, res) {
   const r = req.workspaceId ? db.prepare('SELECT * FROM rooms WHERE id = ? AND workspace_id = ?').get(req.params.id, req.workspaceId) : null;
@@ -264,7 +296,7 @@ function loadRoom(req, res) {
   return r;
 }
 
-router.put('/:id', (req, res) => {
+router.put('/:id', wrap(async (req, res) => {
   if (!canAdmin(req)) return res.status(403).json({ error: 'Workspace admin required' });
   const r = loadRoom(req, res);
   if (!r) return;
@@ -272,6 +304,11 @@ router.put('/:id', (req, res) => {
   if (f.error) return res.status(400).json({ error: f.error });
   if (f.connection_id && !connectionInOrg(req, f.connection_id)) return res.status(400).json({ error: 'That connection is not in this organization.' });
   const n = { ...r, ...f };
+  // Moving a room to another calendar or connection is checked like adding one; renaming it is not.
+  if (r.source !== 'ics' && (n.connection_id !== r.connection_id || String(n.calendar_id || '').toLowerCase() !== String(r.calendar_id || '').toLowerCase())) {
+    const bad = await calendarAllowed(req, n.connection_id, n.calendar_id);
+    if (bad) return res.status(403).json({ error: bad, code: 'calendar-not-listed' });
+  }
   const sourceChanged = n.connection_id !== r.connection_id || n.calendar_id !== r.calendar_id || n.ics_url_enc !== r.ics_url_enc || n.timezone !== r.timezone;
   db.prepare(`UPDATE rooms SET name = ?, connection_id = ?, calendar_id = ?, ics_url_enc = ?, timezone = ?, details = ?, allow_booking = ?,
     ${sourceChanged ? 'cache_json = NULL, cache_at = NULL, next_poll_at = NULL, error_count = 0, last_error = NULL,' : ''}
@@ -279,7 +316,7 @@ router.put('/:id', (req, res) => {
     .run(n.name, n.connection_id, n.calendar_id, n.ics_url_enc, n.timezone, n.details, n.allow_booking, r.id);
   audit(req, 'room_updated', n.name);
   res.json(roomPublic(db.prepare('SELECT * FROM rooms WHERE id = ?').get(r.id)));
-});
+}));
 
 router.delete('/:id', (req, res) => {
   if (!canAdmin(req)) return res.status(403).json({ error: 'Workspace admin required' });
@@ -289,6 +326,7 @@ router.delete('/:id', (req, res) => {
   db.transaction(() => {
     db.prepare('DELETE FROM room_bookings WHERE room_id = ?').run(r.id);
     db.prepare('DELETE FROM room_checkins WHERE room_id = ?').run(r.id);
+    db.prepare('DELETE FROM room_panel_presence WHERE room_id = ?').run(r.id);
     db.prepare('DELETE FROM rooms WHERE id = ?').run(r.id);
   })();
   audit(req, 'room_deleted', r.name);

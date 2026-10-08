@@ -3764,6 +3764,15 @@ try {
       at         INTEGER NOT NULL,
       PRIMARY KEY (room_id, event_id)
     );
+    /* Which screen last showed a room with working buttons (POST /api/room-panel/:widget/seen). The
+     * no-show release only acts while one did, a moment ago (lib/rooms/service.js sweepReleases). */
+    CREATE TABLE IF NOT EXISTS room_panel_presence (
+      room_id    TEXT NOT NULL,
+      widget_id  TEXT NOT NULL,
+      device_id  TEXT NOT NULL,
+      seen_at    INTEGER NOT NULL,
+      PRIMARY KEY (room_id, widget_id, device_id)
+    );
   `);
   // End any meeting from a panel (not only ones booked there), and release-if-nobody-checks-in.
   try { db.prepare('ALTER TABLE organizations ADD COLUMN room_end_any INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }

@@ -121,6 +121,9 @@ object PlayerCapabilities {
                 "sync.clock",
                 // Content is cached to local storage and survives a server outage.
                 "offline.cache",
+                // A meeting-room display's buttons work here: PlaylistController passes the page its
+                // #panel capability. The server's no-show release waits for a screen with this.
+                "room.panel",
                 // App-UID `sh -c`. Deliberately NOT gated on device owner: it runs at any tier and
                 // is the diagnostic path the dashboard already relies on. Gated server-side instead.
                 "system.shell"

@@ -4522,6 +4522,15 @@
       if (typeof HOST !== 'undefined' && HOST && HOST.ready) {
         for (const c of HOST.caps) if (!caps.includes(c)) caps.push(c);
       }
+      // A meeting-room display's buttons (the widget iframe's #panel fragment) work in a browser and
+      // in the iPad app. Not on a BrightSign, or in the webOS or Vega shell: docs/room-booking.md
+      // lists those read-only, and the server only releases a no-show meeting while a screen that
+      // declares this shows the room. typeof-guarded: the capability tests extract this function on its own.
+      try {
+        const onBS = typeof BS !== 'undefined' && !!BS && typeof BS.isBrightSign === 'function' && BS.isBrightSign();
+        const shell = typeof HOST !== 'undefined' && HOST ? HOST.platform : null;
+        if (!onBS && (!shell || shell === 'ios')) caps.push('room.panel');
+      } catch (e) { /* not claimed */ }
       // iOS (ios/): a WKWebView ignores HTMLMediaElement.volume — it is read-only and always 1 on
       // iPhone and iPad — so a volume slider there would move nothing. Mute does work. typeof-guarded:
       // the capability tests extract this function without onIOS.

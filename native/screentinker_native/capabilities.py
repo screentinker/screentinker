@@ -24,6 +24,9 @@ CAPABILITIES_ALWAYS = [
     "remote.screenshot", "remote.stream", "remote.input", "remote.talk", "remote.set_server_url",
     "system.restart_player", "system.self_update", "system.shell", "system.pty", "system.kiosk",
     "net.http_request", "sync.clock", "offline.cache",
+    # A meeting-room display's buttons work here: the engine passes #panel (player/engine.py) and the
+    # screen is a touch panel. The server's no-show release waits for a screen that declares it.
+    "room.panel",
 ]
 
 

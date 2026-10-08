@@ -223,6 +223,19 @@ test('actions: with the capability, book now and end early reach the calendar an
   assert.equal((await panelAction(S.widget, { action: 'dance', device: S.dev.id, panel: tok })).status, 400);
 });
 
+test('seen: a screen reports it is showing the room only with its own capability', async () => {
+  const tok = expectedToken(S.widget, S.dev);
+  const seen = (body) => api(`/api/room-panel/${S.widget}/seen`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) });
+  const rows = () => q1('SELECT COUNT(*) AS n FROM room_panel_presence WHERE room_id = ?', S.room).n;
+  assert.equal((await seen({ device: S.dev.id })).status, 403);
+  assert.equal((await seen({ device: S.otherDev.id, panel: tok })).status, 403, 'another screen’s capability');
+  assert.equal(rows(), 0);
+  assert.equal((await seen({ device: S.dev.id, panel: tok })).status, 204);
+  assert.equal(q1('SELECT device_id FROM room_panel_presence WHERE room_id = ? AND widget_id = ?', S.room, S.widget).device_id, S.dev.id);
+  const page = await api(`/api/widgets/${S.widget}/render?device=${S.dev.id}`);
+  assert.match(page.text, /\/api\/room-panel\/[^/]+\/seen/, 'the page reports itself');
+});
+
 test('org rules: only an org admin may change them, and they are bounded', async () => {
   assert.equal((await api('/api/rooms/settings', J({ release_min: 90 }, 'PUT'))).status, 400);
   const r = await api('/api/rooms/settings', J({ end_any: true, release_min: 10 }, 'PUT'));

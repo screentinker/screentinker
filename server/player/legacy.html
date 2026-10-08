@@ -3696,6 +3696,12 @@ function declaredCapabilities() {
     for (const c of HOST.caps) if (!caps.includes(c)) caps.push(c);
   }
   try {
+    const onBS = typeof BS !== "undefined" && !!BS && typeof BS.isBrightSign === "function" && BS.isBrightSign();
+    const shell = typeof HOST !== "undefined" && HOST ? HOST.platform : null;
+    if (!onBS && (!shell || shell === "ios")) caps.push("room.panel");
+  } catch (e) {
+  }
+  try {
     if (typeof onIOS === "function" && onIOS()) {
       const i = caps.indexOf("audio.volume");
       if (i !== -1) caps.splice(i, 1);

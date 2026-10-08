@@ -157,6 +157,15 @@ const CAPABILITIES = [
    * statement that it is counting; that is the org's switch, sent in the payload. In NO baseline.
    */
   'audience.camera',
+  /*
+   * A meeting-room display (lib/rooms) on this screen can be USED: the player hands the page its
+   * panel capability (the #panel fragment, ws/deviceSocket.js) and a person at the screen can press
+   * its buttons. The release sweep (lib/rooms/service.js sweepReleases) gives a room back only while
+   * a screen with this is showing it, because releasing a meeting nobody COULD check in to just loses
+   * a real booking. In NO baseline: a player older than room displays never passes the capability.
+   * Not declared by Tizen, webOS, BrightSign or Vega (docs/room-booking.md lists them read-only).
+   */
+  'room.panel',
 
   // synchronisation
   'sync.clock', 'sync.native',
