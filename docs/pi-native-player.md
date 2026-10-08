@@ -158,3 +158,10 @@ breaker. A package held by `block_uninstall` is un-held for the upgrade and held
 
 ⚠️ After `set_server_url`, the helper still verifies against the server in `/etc` (by design — the
 player's own state is not trusted); re-run `screentinker-pi setup <new-url>` on panels that move.
+
+## Audience counting (optional add-on)
+
+The player declares `audience.camera` only when the optional audience-counting add-on is installed
+and a USB webcam is present. The add-on is OpenCV and the YuNet face model, chosen at install time
+and off by default. It counts with the same rules and wire format as Android (`device:audience`,
+acked by `device:audience-ack`). See [audience-counting.md](audience-counting.md#the-add-on-for-raspberry-pi-and-windows).

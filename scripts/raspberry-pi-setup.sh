@@ -39,11 +39,16 @@ PLAYER_ONLY=false
 NATIVE=false
 NATIVE_MODE=""
 SERVER_URL=""
+# The optional audience-counting add-on for the native player (OpenCV + face model, ~54 MB). OFF
+# unless asked for: --audience, or "y" at the prompt (default No). "" = not decided yet.
+AUDIENCE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --player-only) PLAYER_ONLY=true; shift ;;
         --native) NATIVE=true; shift ;;
+        --audience) AUDIENCE=yes; shift ;;
+        --no-audience) AUDIENCE=no; shift ;;
         --native-mode)
             case "$2" in
                 lite|desktop) NATIVE_MODE="$2"; shift 2 ;;
@@ -58,6 +63,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --native URL         Native player (Qt, no browser) with Android-app parity"
             echo "  --native-mode MODE   lite (system service on the display) or desktop (in the"
             echo "                       desktop session); detected when omitted"
+            echo "  --audience           with --native: also install the optional audience-counting"
+            echo "                       add-on (~54 MB, needs a USB webcam). Off by default"
             echo "  --help               Show this help"
             echo ""
             echo "Examples:"
@@ -182,6 +189,18 @@ if [ "$NATIVE" = true ]; then
     fi
     exec > >(tee -a "$LOG_FILE") 2>&1
     log "Native player for $SERVER_URL"
+    # Asked BEFORE the downloads so an unattended run is not left waiting at a prompt halfway.
+    if [ -z "$AUDIENCE" ]; then
+        AUDIENCE=no
+        if [ "$HAVE_TTY" = true ]; then
+            echo ""
+            echo "  Audience counting (optional): counts how many people look at the screen, using a"
+            echo "  USB webcam. Counts only - no images are stored or sent. It needs an extra download"
+            echo "  (about 54 MB, 64-bit Pi OS) and only counts if your organization switches it on."
+            ask AUDIENCE_REPLY "  Install the audience-counting add-on? (y/N) " -n 1; echo
+            if [[ $AUDIENCE_REPLY =~ ^[Yy]$ ]]; then AUDIENCE=yes; fi
+        fi
+    fi
     command -v curl >/dev/null || { apt-get update -qq; apt-get install -y -qq curl; }
     DEB=$(mktemp --suffix=.deb)
     curl -fSL --retry 3 -o "$DEB" "$SERVER_URL/download/pi" \
@@ -229,6 +248,12 @@ if [ "$NATIVE" = true ]; then
     else
         systemctl disable getty@tty1.service 2>/dev/null || true
         screentinker-pi setup "$SERVER_URL" --mode lite
+    fi
+    if [ "$AUDIENCE" = yes ]; then
+        log "Installing the audience-counting add-on..."
+        # Never fatal: a screen without the add-on still plays; retry with the same command.
+        screentinker-pi audience-addon install \
+            || warn "The audience-counting add-on was not installed. Retry later: sudo screentinker-pi audience-addon install"
     fi
     if [ "$NATIVE_MODE" = desktop ]; then
         log "Done. Reboot (or log out and back in as $DESKTOP_USER) to start the player in the desktop."

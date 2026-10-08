@@ -2,7 +2,10 @@
 ;
 ; Silent install (fleet rollout / the helper's self-update):
 ;   ScreenTinker-Setup-X.Y.Z.exe /VERYSILENT /SERVER=https://your-server [/NAME="Lobby"]
-;       [/ALLOWPACKAGES=1]
+;       [/ALLOWPACKAGES=1] [/MERGETASKS=audience]
+; /MERGETASKS=audience = the "Audience counting" checkbox (off by default): downloads the optional
+; add-on (OpenCV + face model, ~55 MB) from the same server into {app}\addons\audience, verified
+; against the sha256 the server publishes. An upgrade keeps the previous choice (UsePreviousTasks).
 ; An upgrade keeps ProgramData\ScreenTinker\config.json (server, options) and the pairing in state\.
 ;
 ; ⚠️ ACLs are the security model here, keep them as written:
@@ -38,6 +41,9 @@ UninstallDisplayName=ScreenTinker Player
 LicenseFile=THIRD-PARTY-NOTICES.txt
 MinVersion=10.0.17763
 
+[Tasks]
+Name: "audience"; Description: "Audience counting add-on (downloads about 55 MB from your ScreenTinker server). It only counts if your organization switches it on for this screen, and it needs a USB webcam."; Flags: unchecked
+
 [Dirs]
 Name: "{commonappdata}\ScreenTinker"
 Name: "{commonappdata}\ScreenTinker\state"; Permissions: users-modify
@@ -45,6 +51,9 @@ Name: "{commonappdata}\ScreenTinker\state"; Permissions: users-modify
 [Files]
 Source: "..\..\build\win\dist\ScreenTinker\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\addons"
 
 [Icons]
 Name: "{group}\ScreenTinker Player"; Filename: "{app}\ScreenTinker.exe"
@@ -67,6 +76,7 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 [Code]
 var
   ServerPage: TInputQueryWizardPage;
+  AddonError: String;
 
 function ConfigPath(): String;
 begin
@@ -142,6 +152,92 @@ begin
        '', SW_HIDE, ewWaitUntilTerminated, Code);
 end;
 
+{ ---- the optional audience-counting add-on (server/routes/audience-addon.js) ------------------------ }
+const
+  AddonPlatform = 'win-x64-cp312';   { the Python the bundle carries: build.ps1 builds with 3.12 }
+
+function ConfiguredServer(): String;
+var
+  Raw: AnsiString;
+  S: String;
+  P: Integer;
+begin
+  { The server the admin-only config names (just written, or kept from the previous install) — the
+    same server the SYSTEM helper trusts, never one the user-level player could change. }
+  Result := '';
+  if not LoadStringFromFile(ConfigPath(), Raw) then exit;
+  S := String(Raw);
+  P := Pos('"server_url"', S);
+  if P = 0 then exit;
+  Delete(S, 1, P + Length('"server_url"') - 1);
+  P := Pos('"', S);
+  if P = 0 then exit;
+  Delete(S, 1, P);
+  P := Pos('"', S);
+  if P = 0 then exit;
+  Result := Copy(S, 1, P - 1);
+  StringChangeEx(Result, '\/', '/', True);
+end;
+
+function AddonProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+begin
+  if ProgressMax > 0 then
+    WizardForm.FilenameLabel.Caption := Format('%d of %d MB', [Integer(Progress div 1048576), Integer(ProgressMax div 1048576)])
+  else
+    WizardForm.FilenameLabel.Caption := Format('%d MB', [Integer(Progress div 1048576)]);
+  Result := True;
+end;
+
+function InstallAudienceAddon(): String;
+var
+  Server, Sha, Dir, NewDir, Stamp: String;
+  Raw: AnsiString;
+  Code: Integer;
+begin
+  { '' on success, else why not. Never fatal: a failed add-on is a screen that cannot count, not a
+    failed player install (the self-update runs this silently, and must still finish). }
+  Result := '';
+  Server := ConfiguredServer();
+  if Server = '' then begin Result := 'no server configured'; exit; end;
+  Dir := ExpandConstant('{app}\addons\audience');
+  NewDir := Dir + '.new';
+  Stamp := Dir + '\ADDON-SHA256';
+  WizardForm.StatusLabel.Caption := 'Downloading the audience-counting add-on...';
+  try
+    DownloadTemporaryFile(Server + '/api/audience-addon/' + AddonPlatform + '/sha256', 'audience.sha256', '', nil);
+  except
+    Result := 'this server does not offer the add-on (' + GetExceptionMessage + ')';
+    exit;
+  end;
+  if not LoadStringFromFile(ExpandConstant('{tmp}\audience.sha256'), Raw) then begin Result := 'no checksum'; exit; end;
+  Sha := Lowercase(Trim(String(Raw)));
+  if Length(Sha) <> 64 then begin Result := 'bad checksum from the server'; exit; end;
+  { Already installed at exactly this build (an upgrade with the box still ticked): nothing to fetch. }
+  if LoadStringFromFile(Stamp, Raw) and (Lowercase(Trim(String(Raw))) = Sha) and FileExists(Dir + '\ADDON.json') then exit;
+  try
+    { DownloadTemporaryFile verifies the sha256 itself and fails on a mismatch. }
+    DownloadTemporaryFile(Server + '/download/audience-addon/' + AddonPlatform, 'audience.zip', Sha, @AddonProgress);
+  except
+    Result := 'download failed (' + GetExceptionMessage + ')';
+    exit;
+  end;
+  WizardForm.StatusLabel.Caption := 'Installing the audience-counting add-on...';
+  WizardForm.FilenameLabel.Caption := '';
+  DelTree(NewDir, True, True, True);
+  ForceDirectories(NewDir);
+  { tar.exe (bsdtar) ships with Windows 10 1803+ and reads zip; MinVersion is 1809. }
+  if not Exec(ExpandConstant('{sys}\tar.exe'), '-xf "' + ExpandConstant('{tmp}\audience.zip') + '" -C "' + NewDir + '"',
+              '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) or not FileExists(NewDir + '\ADDON.json') then
+  begin
+    DelTree(NewDir, True, True, True);
+    Result := 'could not unpack the add-on (tar exit ' + IntToStr(Code) + ')';
+    exit;
+  end;
+  DelTree(Dir, True, True, True);
+  if not RenameFile(NewDir, Dir) then begin Result := 'could not move the add-on into place'; exit; end;
+  SaveStringToFile(Stamp, Sha, False);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   { ssInstall, not ssPostInstall: the [Run] entries start the helper service, and the helper builds its
@@ -151,5 +247,20 @@ begin
     ForceDirectories(ExpandConstant('{commonappdata}\ScreenTinker'));
     WriteConfig();
     SetupAccess();
+    { The add-on here too, not after the files: the [Run] entries start the helper, which starts the
+      player, which looks for the add-on once at start. The player was stopped in PrepareToInstall. }
+    if WizardIsTaskSelected('audience') then
+    begin
+      AddonError := InstallAudienceAddon();
+      if AddonError <> '' then
+      begin
+        Log('audience add-on not installed: ' + AddonError);
+        SuppressibleMsgBox('The player will be installed, but the audience-counting add-on was not: ' + AddonError + '.'#13#10#13#10 +
+                           'Run the installer again to retry. Everything else works without it.', mbError, MB_OK, IDOK);
+      end;
+    end
+    else
+      { Unticked on a reinstall: the add-on goes, and with it the capability. }
+      DelTree(ExpandConstant('{app}\addons\audience'), True, True, True);
   end;
 end;

@@ -106,6 +106,10 @@ class Config:
     def server_url(self, url):
         self.set("server_url", (url or "").rstrip("/"))
 
+    def system_value(self, key, default=None):
+        """A value the INSTALLER/admin wrote (read only to the player)."""
+        return self._system.get(key, default)
+
     @property
     def device_name_hint(self):
         return self._system.get("device_name") or ""

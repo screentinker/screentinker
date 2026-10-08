@@ -160,3 +160,10 @@ run as the player user. That must not become SYSTEM through the helper. So:
 4. **`hold`/`unhold`:** the existing `block_uninstall`/`unblock_uninstall` commands (gated
    `system.device_owner` OR `system.kiosk`); they set `NoRemove`/`NoModify` on the uninstall key.
 5. **Version strings:** as for the Pi.
+
+## Audience counting (optional add-on)
+
+The player declares `audience.camera` only when the optional audience-counting add-on is installed
+and a USB webcam is present. The add-on is OpenCV and the YuNet face model, chosen at install time
+and off by default. It counts with the same rules and wire format as Android (`device:audience`,
+acked by `device:audience-ack`). See [audience-counting.md](audience-counting.md#the-add-on-for-raspberry-pi-and-windows).

@@ -5,7 +5,9 @@
 # Output: native\dist\ScreenTinker-Setup-<Version>.exe - the path the server's /download/win and
 # /api/win/update/check look in (server/lib/win-cache.js). Needs: Python 3.12 x64, Inno Setup 6.
 # !! Version: X.Y.Z or X.Y.Z~rcN (same rule as the Pi .deb; `~` becomes `-` in the server's compare).
-param([string]$Version = "")
+# -Addon also builds the OPTIONAL audience-counting add-on (native\packaging\audience\build-addon.py,
+# native\dist\screentinker-audience_<ver>_win-x64-cp312.zip) that the installer's checkbox downloads.
+param([string]$Version = "", [switch]$Addon)
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $native = Resolve-Path (Join-Path $here "..\..")
@@ -25,6 +27,10 @@ if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
 $py = Join-Path $venv "Scripts\python.exe"
 & $py -m pip install --disable-pip-version-check -q -r (Join-Path $here "requirements.txt")
 if ($LASTEXITCODE) { throw "pip install failed" }
+# numpy + OpenCV in the BUILD venv only: screentinker.spec analyses them to find the standard library
+# the optional audience add-on needs at run time. They are not bundled.
+& $py -m pip install --disable-pip-version-check -q -r (Join-Path $native "packaging\audience\requirements.txt")
+if ($LASTEXITCODE) { throw "pip install (audience probe) failed" }
 
 # Stamp the version into the bundled copy only (version.py falls back to the checkout for -dev).
 $verFile = Join-Path $native "screentinker_native\version.py"
@@ -47,7 +53,9 @@ $lines += & $py -c @"
 import importlib.metadata as m
 for d in sorted(m.distributions(), key=lambda d: (d.metadata['Name'] or '').lower()):
     n = d.metadata['Name']
-    if not n or n.lower() in ('pip', 'setuptools', 'pyinstaller', 'pyinstaller-hooks-contrib', 'altgraph', 'pefile', 'packaging'):
+    # numpy/opencv: in the build venv for the add-on probe only, not bundled (their notices ship in the add-on).
+    if not n or n.lower() in ('pip', 'setuptools', 'pyinstaller', 'pyinstaller-hooks-contrib', 'altgraph', 'pefile', 'packaging',
+                              'numpy', 'opencv-python-headless'):
         continue
     lic = d.metadata.get('License-Expression') or d.metadata.get('License') or ''
     if not lic or len(lic) > 80:
@@ -66,3 +74,9 @@ if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) not found" }
 & $iscc "/DAppVersion=$Version" (Join-Path $here "ScreenTinker.iss")
 if ($LASTEXITCODE) { throw "ISCC failed" }
 Write-Host (Join-Path $native "dist\ScreenTinker-Setup-$Version.exe")
+
+if ($Addon) {
+    # The add-on is tied to the bundle's Python (3.12 here): its platform name says so.
+    & $py (Join-Path $native "packaging\audience\build-addon.py") --platform win-x64-cp312
+    if ($LASTEXITCODE) { throw "audience add-on build failed" }
+}

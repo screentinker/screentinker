@@ -80,12 +80,58 @@ offline at the time stops on its next connection.
 | Player | Counts? | How |
 |---|---|---|
 | Android (phones, tablets, Android TV / Google TV, Fire TV with a USB camera) | Yes | Camera2 plus Android's built-in face detector. No extra download, and no Google Play services needed |
-| Raspberry Pi / Windows (native) | Not yet | Planned. The detector needs OpenCV, which would add about 50 MB to every install |
+| Raspberry Pi / Windows (native) | Yes, with the add-on | A USB webcam plus the optional **audience-counting add-on** (OpenCV and the YuNet face detector, about 54 MB). It's chosen at install time and off by default. See [The add-on for Raspberry Pi and Windows](#the-add-on-for-raspberry-pi-and-windows) |
 | Web, Tizen, webOS, BrightSign | No | No camera access a signage player can rely on |
 
 The **Which screens count** list says when a player hasn't reported a camera.
 
-The camera used is the front camera if there is one, then a USB camera, then any camera.
+On Android the camera used is the front camera if there is one, then a USB camera, then any
+camera. On a Raspberry Pi or Windows player it's the first USB webcam.
+
+### The add-on for Raspberry Pi and Windows
+
+The face detector needs OpenCV, which is too big to put in every player install. So it comes as a
+separate add-on, and **you choose it when you install the player. It's off by default.** Without
+it, the player plays as normal and doesn't report a camera.
+
+| | How to add it |
+|---|---|
+| **Windows** | Tick **Audience counting add-on** in the installer. For a silent install, add `/MERGETASKS=audience`. An upgrade keeps your choice, and running the installer again with the box unticked removes the add-on. |
+| **Raspberry Pi** | Answer **y** when the installer asks, or pass `--audience`. On a Pi that's already installed, run `sudo screentinker-pi audience-addon install`. To remove it, use `... remove`. Needs 64-bit Pi OS. |
+
+The add-on is downloaded from **your own ScreenTinker server** and checked against the SHA-256
+checksum the server publishes. Nothing is installed if they don't match.
+
+| Platform | Download | Size on disk |
+|---|---|---|
+| Windows | about 53 MB | about 150 MB |
+| Raspberry Pi (64-bit) | about 54 MB | about 145 MB |
+
+It's installed where only an administrator can change it: `C:\Program Files\ScreenTinker\addons\audience`
+on Windows, `/opt/screentinker/audience-addon` on a Pi. The player loads code from there, so it must
+not be writable by the player's user or the dashboard's remote terminal.
+
+**Hosting it (self-hosted servers).** Build it with
+`python3 native/packaging/audience/build-addon.py`, which writes
+`native/dist/screentinker-audience_<version>_<platform>.zip` for `win-x64-cp312`,
+`linux-aarch64-cp313` and `linux-x86_64-cp313`. Put the zips in the server's data directory, next
+to the player packages. The platform name includes the Python version, because the add-on only
+loads into the Python it was built for: 3.12 for the Windows player, 3.13 on Pi OS Trixie.
+
+**Cameras.**
+- On a **Pi**, any USB (UVC) webcam works. A camera module on the ribbon connector doesn't, because
+  it needs libcamera, which OpenCV can't read from.
+- On **Windows**, the camera must be allowed for desktop apps under **Settings → Privacy & security
+  → Camera**.
+- To choose a camera other than the first one, set `"audience_camera"` in the player's config file
+  to a device path such as `/dev/video2`, or to a camera index on Windows.
+
+**How it detects.** The player uses OpenCV's YuNet detector on a 480-pixel-wide greyscale frame and
+counts only **frontal** faces: both eyes visible, with the nose between them. This is the same rule
+as Android's detector. The counting rules and the data sent are identical to Android's, so a Pi and
+an Android screen in the same room report comparable numbers. Checked on a test clip: one face in
+view for about 12 seconds gave one arrival and one impression in the 5–15s bucket, with 0.83
+people in view on average.
 
 ## Accuracy
 

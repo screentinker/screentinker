@@ -2075,6 +2075,10 @@ const macCache = require('./lib/mac-cache');
 macCache.start();                                    // native macOS player: newest ScreenTinker-<ver>.dmg + its sha256
 // /download/mac only — a Mac never updates itself, so the factory mounts no update check for it.
 require('./routes/mac-update')(app);
+// The OPTIONAL audience-counting add-on for the Pi/Windows players (OpenCV + face model, per
+// platform), fetched by their installers only when the operator ticks it. Never pushed to a screen.
+require('./lib/audience-addon').start();
+require('./routes/audience-addon')(app);
 require('./lib/revision-retention').start(require('./db/database').db);   // version history: bounded retention, daily
 // Storage backends (docs/storage.md): resume a migration copier a restart interrupted (it never
 // commits or drains by itself), honour STORAGE_DRAIN_AFTER_HOURS, probe open breakers. Idle on an

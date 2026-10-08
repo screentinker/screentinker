@@ -55,6 +55,7 @@ class Stage(QObject):
     kioskCardChanged = Signal()
     kioskHomeChanged = Signal()
     kioskSeqChanged = Signal()
+    audienceIndicatorChanged = Signal()
 
     def __init__(self, engine_cb):
         super().__init__()
@@ -102,6 +103,9 @@ class Stage(QObject):
     kioskCard = Property(str, fget=_g("kioskCard", ""), notify=kioskCardChanged)
     kioskHome = Property(bool, fget=_g("kioskHome", False), notify=kioskHomeChanged)
     kioskSeq = Property(int, fget=_g("kioskSeq", 0), notify=kioskSeqChanged)
+    # Audience counting is on (system/audience.py): a small camera icon in the corner, unless the org
+    # turned the indicator off.
+    audienceIndicator = Property(bool, fget=_g("audienceIndicator", False), notify=audienceIndicatorChanged)
     del _g
 
     def set(self, name, value):

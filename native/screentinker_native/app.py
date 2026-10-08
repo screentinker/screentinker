@@ -39,6 +39,7 @@ from .net.triggers import TriggerManager
 from .player.cache import ContentCache, DownloadCoordinator, trigger_content_ids
 from .player.engine import PlaybackEngine
 from .platform import audio, brightness, deviceinfo, display, ops, privileged, shell
+from .system.audience import AudienceController
 from .system.power_schedule import PowerSchedule
 from .system.updater import Updater
 from .ui.extras import SlideAudio, TriggerOverlay, new_frame_key, rtc_page
@@ -115,6 +116,13 @@ class App:
         self.kiosk_sessions.load()
         self._kiosk_in_flight = False
         self._kiosk_errors = collections.deque(maxlen=10)
+        # Audience counting (system/audience.py): needs the optional add-on; off unless the payload
+        # turns it on. Counts only — queued here, sent on device:audience, dropped on the ack.
+        self._audience_in_flight = False
+        self.audience = AudienceController(
+            self.config.state_dir, on_buckets=self.flush_audience,
+            set_indicator=lambda on: self.on_ui(lambda: self.stage.set("audienceIndicator", on)),
+            camera_override=self.config.system_value("audience_camera"))
         c = self.engine.controller
         self.kiosk = KioskSession(self.stage, self.config.state_dir, hold=c.hold, release=c.release,
                                   skip=c.next, error=self.send_kiosk_error, session_end=self._kiosk_session_end)
@@ -181,7 +189,12 @@ class App:
 
     # ------------------------------------------------------------------ link handlers (net thread)
     def capabilities(self):
-        return capabilities.declared_capabilities(self._brightness_supported)
+        caps = capabilities.declared_capabilities(self._brightness_supported)
+        # A statement of ability only (the add-on is installed and a camera is there); whether it
+        # counts is the organization's switch, sent in the payload.
+        if self.audience.available:
+            caps.append("audience.camera")
+        return caps
 
     def device_info(self):
         w = self.stage.window
@@ -238,6 +251,8 @@ class App:
         self._kiosk_in_flight = False
         self.flush_kiosk_sessions()
         self._flush_kiosk_errors()
+        self._audience_in_flight = False
+        self.flush_audience()
 
     def on_paired(self, device_id, name):
         self.on_ui(lambda: self._status_changed("paired", name))
@@ -329,6 +344,8 @@ class App:
             asyncio.ensure_future(self.pty.close(d))
         elif event == "device:kiosk-sessions-ack":
             self._on_kiosk_ack(d)
+        elif event == "device:audience-ack":
+            self._on_audience_ack(d)
 
     async def _adopt_net_payload(self, d):
         """The parts of a payload that live on the network thread."""
@@ -338,6 +355,7 @@ class App:
     def _adopt_ui_payload(self, d):
         self.power.update(d.get("power_schedule"))
         self.engine.on_payload(d)
+        self.audience.on_payload(d)
 
     # ------------------------------------------------------------------ downloads (any thread)
     def ensure_downloads(self, want, prune):
@@ -369,6 +387,8 @@ class App:
     # ------------------------------------------------------------------ proof of play
     def play_event(self, event, item, completed):
         cid = item.content_id or item.widget_id or ""
+        if event == "play_start":
+            self.audience.set_item("content" if item.content_id else "widget", cid or None)
         if self.link.connected:
             self._offline_open = None
             p = {"device_id": self.config.device_id, "event": event, "content_id": cid or None,
@@ -445,6 +465,32 @@ class App:
         self._kiosk_in_flight = False
         if ids and self.kiosk_sessions.size():
             self.flush_kiosk_sessions()
+
+    # ------------------------------------------------------------------ audience counting
+    def flush_audience(self):
+        """Send queued per-minute counts, one batch at a time (any thread). A bucket leaves the queue
+        only on device:audience-ack, which names what the server stored or refused for good; a lost
+        ack means a resend, and the server keys on device + minute + item."""
+        if self._audience_in_flight or not self.link.connected or not self.config.device_id:
+            return
+        batch = self.audience.peek()
+        if not batch:
+            return
+        self._audience_in_flight = True
+        self.emit("device:audience", {"device_id": self.config.device_id, "buckets": batch})
+        if self.loop:
+            # An older server never acks: stop waiting after a while so a later flush can retry.
+            self.loop.call_soon_threadsafe(lambda: self.loop.call_later(30, self._audience_ack_timeout))
+
+    def _audience_ack_timeout(self):
+        self._audience_in_flight = False
+
+    def _on_audience_ack(self, d):
+        ids = [i for i in (d.get("ids") or []) if isinstance(i, str) and i]
+        left = self.audience.ack(ids)
+        self._audience_in_flight = False
+        if ids and left:
+            self.flush_audience()
 
     def send_kiosk_error(self, reason, detail):
         """A failed interactive page, as a dashboard incident (already throttled by the caller).
@@ -742,6 +788,7 @@ class App:
             return
         self.blanked = off
         self.stage.set("blank", off)
+        self.audience.set_visible(not off)      # nobody can look at a dark screen
         self.restore_mute()
 
         async def go():
@@ -1065,7 +1112,9 @@ class App:
         # showing what it had.
         self.engine.restore_cached()
         threading.Thread(target=self._net_main, name="net", daemon=True).start()
-        return self.qt.exec()
+        rc = self.qt.exec()
+        self.audience.shutdown()      # faces still in view leave now; the partial minute is queued
+        return rc
 
 
 def _single_instance():
@@ -1103,6 +1152,8 @@ def _main(argv=None):
                     help="start this player at login and keep it running (macOS LaunchAgent)")
     ap.add_argument("--remove-autostart", action="store_true", help="undo --install-autostart")
     ap.add_argument("--verbose", "-v", action="store_true")
+    ap.add_argument("--audience-check", nargs="?", const="", metavar="CLIP",
+                    help="check the audience-counting add-on (and count faces in CLIP), then exit")
     args = ap.parse_args(argv)
     if args.install_autostart or args.remove_autostart:
         if not hasattr(ops, "install_autostart"):
@@ -1131,6 +1182,14 @@ def _main(argv=None):
             sys.stdout = open(os.devnull, "w")
     for noisy in ("socketio", "engineio", "aiohttp.access"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    if args.audience_check is not None:
+        import json as _json
+        from .system.audience import self_check
+        result = self_check(args.audience_check or None)
+        line = _json.dumps(result)
+        log.info("audience check: %s", line)
+        print(line)
+        return 0 if result.get("addon") else 3
 
     if sys.platform == "win32" and not _single_instance():
         log.info("another player is already running in this session; exiting")
