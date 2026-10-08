@@ -232,26 +232,44 @@ def test_ptyexec_command_shapes():
     assert ptyexec.dispatch(["player", "--server", "x"]) is None
 
 
+def read_pty_until_exit(master, proc, timeout=20):
+    """Read the pty master WHILE the child runs. ⚠️ Not after it exits: macOS discards whatever is still
+    buffered in a pty once the slave's last descriptor closes (Linux keeps it), so a read after wait()
+    returned nothing on the macOS runner even though the child had printed."""
+    import select
+    import time
+    out = b""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        r, _, _ = select.select([master], [], [], 0.1)
+        if r:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break                      # EIO: the slave side is gone
+            if not chunk:
+                break
+            out += chunk
+        elif proc.poll() is not None:
+            break
+    proc.wait(timeout=5)
+    return out
+
+
 @pytest.mark.skipif(not hasattr(os, "openpty"), reason="POSIX only")
 def test_ptyexec_gives_the_shell_a_controlling_terminal():
     """The real thing, on this machine: the wrapped process is the session leader AND the foreground
     process group of the pty it was started on — which is what job control and ^C need."""
     import pty
+    import time
     master, slave = pty.openpty()
-    probe = ("import os; print('ctty', os.getsid(0) == os.getpid(), os.tcgetpgrp(0) == os.getpgrp(), flush=True)")
+    # The short sleep keeps the slave open until the line has been read (see read_pty_until_exit).
+    probe = ("import os, time; print('ctty', os.getsid(0) == os.getpid(), os.tcgetpgrp(0) == os.getpgrp(), flush=True); "
+             "time.sleep(0.5)")
     p = subprocess.Popen(ptyexec.command([sys.executable, "-c", probe], frozen=False), stdin=slave, stdout=slave,
                          stderr=slave, close_fds=True)
     os.close(slave)
-    p.wait(timeout=20)
-    out = b""
-    while True:
-        try:
-            chunk = os.read(master, 4096)
-        except OSError:
-            break
-        if not chunk:
-            break
-        out += chunk
+    out = read_pty_until_exit(master, p)
     os.close(master)
     assert b"ctty True True" in out, out
 

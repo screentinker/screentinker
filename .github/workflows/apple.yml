@@ -86,19 +86,27 @@ jobs:
           import os, pty, subprocess, sys
           exe = "native/build/mac/dist/ScreenTinker.app/Contents/MacOS/ScreenTinker"
           master, slave = pty.openpty()
-          probe = 'echo pgrp=$(ps -o tpgid= -p $$ | tr -d " ") self=$$'
+          # The sleep keeps the tty open until the line is read: macOS drops a pty's buffered output
+          # once the slave side closes, so the master is read WHILE the shell runs.
+          probe = 'echo pgrp=$(ps -o tpgid= -p $$ | tr -d " ") self=$$; sleep 1'
           p = subprocess.Popen([exe, "--st-pty-exec", "/bin/sh", "-c", probe], stdin=slave, stdout=slave, stderr=slave, close_fds=True)
           os.close(slave)
-          p.wait(timeout=60)
+          import select, time
           out = b""
-          while True:
-              try:
-                  chunk = os.read(master, 4096)
-              except OSError:
+          deadline = time.monotonic() + 60
+          while time.monotonic() < deadline:
+              r, _, _ = select.select([master], [], [], 0.2)
+              if r:
+                  try:
+                      chunk = os.read(master, 4096)
+                  except OSError:
+                      break
+                  if not chunk:
+                      break
+                  out += chunk
+              elif p.poll() is not None:
                   break
-              if not chunk:
-                  break
-              out += chunk
+          p.wait(timeout=10)
           text = out.decode(errors="replace")
           print(text)
           import re
@@ -119,7 +127,8 @@ jobs:
 
   ios-app:
     name: iPad/iPhone app (simulator build + unit tests)
-    runs-on: macos-14
+    # Xcode 16: current XcodeGen writes the Xcode 16 project format, which Xcode 15 cannot open.
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
