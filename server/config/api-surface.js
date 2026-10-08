@@ -62,6 +62,13 @@ const PUBLIC_ROUTERS = [
   // Tracked QR links (lib/qr-links.js): workspace content an integrator may create from their own tooling.
   { path: '/api/qr-links',    mod: './routes/qr-links' },
   /*
+   * Zapier (and any REST-hook client) — lib/automation. On the token door because Zapier IS an API
+   * token: it subscribes to events, polls them, and runs actions. Polling needs 'read'; subscribing
+   * and the data action need 'write'; emergency, trigger and playlist actions need 'full' (they
+   * take over screens). Hook URLs themselves are minted on /api/automation, which is JWT only.
+   */
+  { path: '/api/zapier',      mod: './routes/zapier' },
+  /*
    * Display power schedules — the weekly BACKLIGHT clock. Public (token-reachable) for the same
    * reason as triggers: an integrator provisioning a site sets these from their own tooling, and
    * "the screens are dark 22:00-06:00" is exactly the kind of thing that belongs in a site
@@ -123,6 +130,11 @@ const JWT_ONLY_ROUTERS = [
    * systems. The dashboard widget's public endpoints are on /api/widgets.
    */
   { path: '/api/bi-connections', mod: './routes/bi-connections', tenancy: true },
+  /*
+   * Automation (lib/automation): inbound hook URLs are credentials that can take over screens, so
+   * minting, rotating and test-firing them is a signed-in admin's act. JWT only.
+   */
+  { path: '/api/automation', mod: './routes/automation', tenancy: true },
   /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.

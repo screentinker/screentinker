@@ -296,7 +296,9 @@ app.use((req, res, next) => {
  * with a size decided per upload kind — so the global JSON parser leaves that one path alone.
  */
 const jsonBody = express.json({ limit: '12mb' });
-app.use((req, res, next) => (req.path === '/api/templates/import' ? next() : jsonBody(req, res, next)));
+// Inbound automation hooks are signed over their exact bytes too, and arrive as XML (CAP) as often
+// as JSON — routes/hooks-in.js reads the raw body itself.
+app.use((req, res, next) => (req.path === '/api/templates/import' || req.path.startsWith('/api/hooks/in/') ? next() : jsonBody(req, res, next)));
 const { sanitizeBody } = require('./middleware/sanitize');
 app.use(sanitizeBody);
 
@@ -1273,6 +1275,9 @@ app.get('/q/:code', rateLimit(60000, 120), require('./routes/qr-links').redirect
 // header, so it cannot sit behind the JWT-only /api/canva mount below. It trusts only the signed
 // httpOnly transaction cookie set when the person pressed Connect.
 app.get('/api/canva/callback', rateLimit(60000, 30), require('./routes/canva').callback);
+// Inbound automation hooks (routes/hooks-in.js): the secret URL is the credential. Per-IP limit
+// here; each hook also has its own (30 a minute) inside, so one busy sender cannot starve another.
+app.use('/api/hooks/in', rateLimit(60000, 240), require('./routes/hooks-in'));
 
 app.use('/unsubscribe',
   rateLimit(60000, 20),
@@ -2435,6 +2440,8 @@ require('./lib/local-conditions').start(io);   // local weather for weather cond
 require('./lib/cap/feeds').start(io);   // CAP emergency feeds: polling, expiry, pushes
 require('./lib/canva').start(io);       // Canva: re-export linked designs that changed
 require('./lib/cloud-folders').start(io);   // SharePoint/OneDrive folder syncs
+require('./lib/automation/overrides').setIo(io);   // automation: timed playlist overrides
+require('./lib/automation/events').start();          // automation: REST-hook deliveries, screen up/down events
 
 // Start alert service
 const { startAlertService } = require('./services/alerts');

@@ -20,6 +20,7 @@ import * as triggers from './views/triggers.js';
 import * as qrCodes from './views/qr-codes.js';
 import * as alerts from './views/alerts.js';
 import * as capFeeds from './views/cap-feeds.js';
+import * as automation from './views/automation.js';
 import * as corporate from './views/corporate.js';
 import * as activity from './views/activity.js';
 import * as kiosk from './views/kiosk.js';
@@ -249,6 +250,7 @@ const NAV_LABEL_KEYS = {
   'qr-codes': 'nav.qr_codes',
   alerts: 'nav.alerts',
   'emergency-feeds': 'nav.emergency_feeds',
+  automation: 'nav.automation',
   // corporate is relabelled per viewer (Corporate / Head office) by syncCorporateNav.
   kiosk: 'nav.kiosk',
   designer: 'nav.designer',
@@ -641,6 +643,9 @@ function route() {
   } else if (hash === '#/emergency-feeds') {
     currentView = capFeeds;
     capFeeds.render(app);
+  } else if (hash === '#/automation') {
+    currentView = automation;
+    automation.render(app);
   } else if (hash === '#/corporate' || hash.startsWith('#/corporate/')) {
     // Head office (corporate) playlists: head office's face or a store's, chosen inside the view.
     currentView = corporate;

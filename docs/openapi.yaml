@@ -27,6 +27,8 @@ servers:
   - url: /api
 
 tags:
+  - name: zapier
+    description: 'Zapier and other REST-hook clients: subscribe to events, poll them, and run actions. See docs/automation.md.'
   - name: qr-links
     description: Tracked QR links — a short /q/<code> redirect that counts scans.
   - name: emergency-feeds
@@ -2095,6 +2097,151 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: '{ ok, count | error, feed }.' }
+  /zapier/me:
+    get:
+      tags: [zapier]
+      summary: Auth test — which workspace this token is for
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: '{ workspace_id, workspace_name, token: { name, prefix, scope }, events }.' }
+  /zapier/events:
+    get:
+      tags: [zapier]
+      summary: Recent events of one type, newest first (polling fallback)
+      description: 'Requires scope: read. Each event has a stable string id to deduplicate on. With no events yet, one sample event (sample: true) is returned unless sample=0.'
+      x-required-scope: read
+      parameters:
+        - { name: event, in: query, required: true, schema: { type: string, enum: [device_offline, device_online, emergency_raised, emergency_cleared, content_approved, playlist_published] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { name: sample, in: query, schema: { type: string, enum: ['0', '1'] } }
+      responses:
+        '200': { description: Array of events. }
+        '400': { description: Unknown event. }
+  /zapier/subscriptions:
+    post:
+      tags: [zapier]
+      summary: Subscribe a REST hook to an event
+      description: 'Requires scope: write. target_url must be https on a public address. Deliveries are POSTed as JSON and signed with X-ScreenTinker-Signature (t=<unix>,v1=<hex HMAC-SHA256 of "t.body">) using the signing_secret returned here, once. A 410 from the receiver unsubscribes it; other failures retry at 1, 5, 30 and 120 minutes.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, target_url]
+              properties:
+                event: { type: string, enum: [device_offline, device_online, emergency_raised, emergency_cleared, content_approved, playlist_published] }
+                target_url: { type: string, format: uri }
+      responses:
+        '201': { description: '{ id, event, signing_secret }.' }
+        '400': { description: Invalid event or target URL. }
+  /zapier/subscriptions/{id}:
+    delete:
+      tags: [zapier]
+      summary: Unsubscribe a REST hook (idempotent)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ ok: true, removed }.' }
+  /zapier/options/{kind}:
+    get:
+      tags: [zapier]
+      summary: Choices for a dropdown (groups, playlists, triggers, tables, screens)
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [groups, playlists, triggers, tables, screens] } }
+      responses:
+        '200': { description: 'Array of { id, name }.' }
+  /zapier/actions/emergency:
+    post:
+      tags: [zapier]
+      summary: Raise or clear an emergency alert on screens
+      description: 'Requires scope: full and a workspace admin. Keyed on alert_id: raising the same id twice is one alert, and clear without an alert_id clears every alert Zapier raised. Screens: scopes, or group_id / device_id / tag, or the whole workspace.'
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                op: { type: string, enum: [raise, clear] }
+                alert_id: { type: string }
+                headline: { type: string }
+                message: { type: string }
+                instruction: { type: string }
+                severity: { type: string, enum: [Extreme, Severe, Moderate, Minor, Unknown] }
+                expires_min: { type: integer, minimum: 1, maximum: 10080 }
+                group_id: { type: string }
+                device_id: { type: string }
+                tag: { type: string }
+      responses:
+        '200': { description: '{ ok, result }.' }
+        '403': { description: 'Not a workspace admin, or the token is not full.' }
+  /zapier/actions/playlist:
+    post:
+      tags: [zapier]
+      summary: Switch screens to a playlist for N minutes, or stop
+      description: 'Requires scope: full and a workspace admin. Never applies to a screen on a head office playlist; an emergency alert still outranks it.'
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                op: { type: string, enum: [start, stop] }
+                playlist_id: { type: string }
+                minutes: { type: integer, minimum: 1, maximum: 1440 }
+                group_id: { type: string }
+                device_id: { type: string }
+                tag: { type: string }
+      responses:
+        '200': { description: '{ ok, result }.' }
+  /zapier/actions/trigger:
+    post:
+      tags: [zapier]
+      summary: Fire or clear a trigger on the screens it is assigned to
+      description: 'Requires scope: full and a workspace admin. Relayed to native Pi and Windows players; the result counts screens that can only be fired on their own network.'
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trigger_id]
+              properties:
+                trigger_id: { type: string }
+                op: { type: string, enum: [fire, clear] }
+      responses:
+        '200': { description: '{ ok, result }.' }
+  /zapier/actions/data:
+    post:
+      tags: [zapier]
+      summary: Write rows into a Table data source
+      description: 'Requires scope: write. rows is an array of objects (matched to columns by name) or arrays (by position).'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data_source_id, rows]
+              properties:
+                data_source_id: { type: string }
+                mode: { type: string, enum: [replace, upsert, append] }
+                key_column: { type: string }
+                rows: { type: array, items: {} }
+      responses:
+        '200': { description: '{ ok, result }.' }
   /qr-links:
     get:
       tags: [qr-links]

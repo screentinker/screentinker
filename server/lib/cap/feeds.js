@@ -39,6 +39,8 @@ let io = null;
 let timer = null;
 const polling = new Set();      // feed ids with a poll in flight
 const liveSig = new Map();      // feed id -> signature of its live alert set ('' = none)
+const liveInfo = new Map();     // feed id -> Map(alert key -> summary), for raised/cleared events
+let restoring = false;          // start(): re-deriving what was live is not news
 let clock = () => Math.floor(Date.now() / 1000);
 let testFetcher = null;   // in-process tests only (_setFetcher); never set by a request
 
@@ -303,8 +305,10 @@ function pushTo(deviceIds) {
 function refresh(db, feedId, { extraDevices = [], force = false } = {}) {
   const feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(feedId);
   const before = liveSig.get(feedId) || '';
-  const sig = feed && feed.enabled ? liveAlerts(db, feed).map((a) => `${alertKey(a)}@${a.sent}`).join('\n') : '';
+  const live = feed && feed.enabled ? liveAlerts(db, feed) : [];
+  const sig = live.map((a) => `${alertKey(a)}@${a.sent}`).join('\n');
   if (sig) liveSig.set(feedId, sig); else liveSig.delete(feedId);
+  announce(db, feed, feedId, live);
   if (sig === before && !force) { if (extraDevices.length) pushTo(extraDevices); return false; }
   if (feed) bumpWidget(db, feed);
   pushTo([...new Set([...(feed ? devicesInScope(db, feed) : []), ...extraDevices])]);
@@ -315,6 +319,70 @@ function refresh(db, feedId, { extraDevices = [], force = false } = {}) {
  * The alert this screen must show now, or null. Called for every payload build, so the common case
  * (no feed anywhere has a live alert) is one Map.size test.
  */
+/*
+ * Tell automation (lib/automation/events.js) which alerts went live and which ended, for Zapier-style
+ * subscribers. Diffed by alert key, so a re-poll of the same set says nothing, and silent while
+ * start() restores the live set after a restart.
+ */
+function announce(db, feed, feedId, live) {
+  const prev = liveInfo.get(feedId) || new Map();
+  const next = new Map(live.map((a) => [alertKey(a), {
+    alert_id: a.identifier, event: a.event, headline: a.headline, severity: a.severity, area: a.areaDesc, expires: a.expires,
+  }]));
+  if (next.size) liveInfo.set(feedId, next); else liveInfo.delete(feedId);
+  if (restoring || !feed) return;
+  let ev;
+  try { ev = require('../automation/events'); } catch (_) { return; }
+  const base = { feed_id: feed.id, feed_name: feed.name, source: feed.source === 'hook' ? 'hook' : 'feed' };
+  for (const [k, v] of next) if (!prev.has(k)) ev.emit(db, feed.workspace_id, 'emergency_raised', { ...base, ...v });
+  for (const [k, v] of prev) if (!next.has(k)) ev.emit(db, feed.workspace_id, 'emergency_cleared', { ...base, ...v });
+}
+
+/* ============================== push-mode feeds (lib/automation) ============================== */
+
+/**
+ * Add or update alerts on a push-mode feed. Idempotent on sender + identifier: the same alert sent
+ * twice is one row, and an Update / Cancel ends every alert its references name. Unlike applyPoll,
+ * alerts not mentioned are left alone — a push is one message, not the whole current set.
+ * Returns { raised: [keys new and live], ended: [keys that went from live to ended] }.
+ */
+function applyPush(db, feed, alerts, now = clock()) {
+  const raised = [];
+  const ended = [];
+  db.transaction(() => {
+    const get = db.prepare('SELECT ended FROM cap_alerts WHERE feed_id = ? AND akey = ?');
+    const upsert = db.prepare(`INSERT INTO cap_alerts (feed_id, akey, data, in_feed, ended, first_seen, last_seen)
+      VALUES (?, ?, ?, 1, ?, ?, ?)
+      ON CONFLICT(feed_id, akey) DO UPDATE SET data = excluded.data, last_seen = excluded.last_seen,
+        ended = MAX(cap_alerts.ended, excluded.ended)`);
+    const endOne = db.prepare('UPDATE cap_alerts SET ended = 1, last_seen = ? WHERE feed_id = ? AND akey = ? AND ended = 0');
+    for (const a of alerts) {
+      if (!a || !a.identifier) continue;
+      const refs = (a.msgType === 'Update' || a.msgType === 'Cancel') ? (a.references || []).map(referenceKey) : [];
+      for (const k of refs) if (endOne.run(now, feed.id, k).changes) ended.push(k);
+      const key = alertKey(a);
+      const prior = get.get(feed.id, key);
+      const isEnd = a.msgType === 'Cancel';
+      upsert.run(feed.id, key, JSON.stringify(a), isEnd ? 1 : 0, now, now);
+      if (!prior && !isEnd) raised.push(key);
+      if (prior && !prior.ended && isEnd) ended.push(key);
+    }
+    db.prepare('DELETE FROM cap_alerts WHERE feed_id = ? AND ended = 1 AND last_seen < ?').run(feed.id, now - 7 * 86400);
+  })();
+  return { raised, ended };
+}
+
+/** End alerts on a push-mode feed: the named keys, or every live one when `keys` is null. */
+function endPushed(db, feed, keys = null, now = clock()) {
+  const rows = keys
+    ? keys.map((k) => ({ akey: k }))
+    : db.prepare('SELECT akey FROM cap_alerts WHERE feed_id = ? AND ended = 0').all(feed.id);
+  const endOne = db.prepare('UPDATE cap_alerts SET ended = 1, last_seen = ? WHERE feed_id = ? AND akey = ? AND ended = 0');
+  const ended = [];
+  for (const r of rows) if (endOne.run(now, feed.id, r.akey).changes) ended.push(r.akey);
+  return ended;
+}
+
 function overrideFor(db, deviceId) {
   if (!liveSig.size) return null;
   const dev = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);
@@ -345,6 +413,8 @@ function tick(db) {
   let feeds;
   try { feeds = db.prepare('SELECT * FROM cap_feeds WHERE enabled = 1').all(); } catch { return; }
   for (const f of feeds) {
+    // A hook-owned feed (lib/automation) is pushed to, never fetched.
+    if (f.source && f.source !== 'poll') continue;
     if (!f.last_polled_at || f.last_polled_at + (f.poll_sec || DEFAULT_POLL) <= now) {
       pollFeed(db, f).catch((e) => console.warn(`[cap] poll ${f.id} failed: ${e && e.message}`));
     }
@@ -358,19 +428,21 @@ function start(ioRef) {
   if (timer) return;
   const db = dbOf();
   // Restore what was live before a restart, so screens do not drop an alert while the first poll runs.
+  restoring = true;
   try { for (const f of db.prepare('SELECT id FROM cap_feeds WHERE enabled = 1').all()) refresh(db, f.id); } catch (_) { /* tables absent */ }
+  finally { restoring = false; }
   timer = setInterval(() => { try { tick(db); } catch (e) { console.warn(`[cap] tick: ${e && e.message}`); } }, TICK_MS);
   if (timer.unref) timer.unref();
 }
 
 function _setClock(fn) { clock = fn || (() => Math.floor(Date.now() / 1000)); }
-function _reset() { liveSig.clear(); polling.clear(); }
+function _reset() { liveSig.clear(); liveInfo.clear(); polling.clear(); }
 function _setFetcher(fn) { testFetcher = fn || null; }
 function _setIo(ref) { io = ref || null; }
 
 module.exports = {
   normaliseInput, validateScopes, setScopes, scopesOf, devicesInScope, inScope,
-  ensureWidget, liveAlerts, applyPoll, fetchFeed, pollFeed, refresh, overrideFor, cardItem, describeError,
+  ensureWidget, liveAlerts, applyPoll, applyPush, endPushed, fetchFeed, pollFeed, refresh, overrideFor, cardItem, describeError,
   isLive, matchesFilters, start, tick, severityOf, MIN_POLL, MAX_POLL, DEFAULT_POLL,
   now: () => clock(),
   _setClock, _reset, _setFetcher, _setIo,
