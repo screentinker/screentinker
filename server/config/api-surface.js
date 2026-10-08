@@ -59,6 +59,8 @@ const PUBLIC_ROUTERS = [
   { path: '/api/triggers',    mod: './routes/triggers' },
   // CAP emergency feeds (lib/cap/feeds.js): an integrator wires a site's alert feed from its own tooling.
   { path: '/api/cap-feeds',   mod: './routes/cap-feeds' },
+  // Tracked QR links (lib/qr-links.js): workspace content an integrator may create from their own tooling.
+  { path: '/api/qr-links',    mod: './routes/qr-links' },
   /*
    * Display power schedules — the weekly BACKLIGHT clock. Public (token-reachable) for the same
    * reason as triggers: an integrator provisioning a site sets these from their own tooling, and

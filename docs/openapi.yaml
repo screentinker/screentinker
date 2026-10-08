@@ -27,6 +27,8 @@ servers:
   - url: /api
 
 tags:
+  - name: qr-links
+    description: Tracked QR links — a short /q/<code> redirect that counts scans.
   - name: emergency-feeds
     description: Public CAP alert feeds that take screens over while an alert matches.
   - name: content
@@ -2093,6 +2095,81 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: '{ ok, count | error, feed }.' }
+  /qr-links:
+    get:
+      tags: [qr-links]
+      summary: List tracked QR links, with scan counts
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      responses:
+        '200': { description: '[{ id, name, code, path, target_url, enabled, scans, last_7_days, last_scan_at }].' }
+    post:
+      tags: [qr-links]
+      summary: Create a tracked QR link
+      description: 'Requires scope: write. The short address is /q/<code> on this server.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, target_url]
+              properties:
+                name: { type: string }
+                target_url: { type: string, description: 'http(s) address the QR opens.' }
+      responses:
+        '201': { description: Created link. }
+        '400': { description: Invalid name or address. }
+  /qr-links/{id}:
+    get:
+      tags: [qr-links]
+      summary: A link with its scan statistics (30 days by day, platform split)
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'The link, plus stats: { total, last_7_days, days: [{ date, scans }], platforms: { ios, android, other } }.' }
+        '404': { description: Not found. }
+    put:
+      tags: [qr-links]
+      summary: Rename, retarget or switch off a link (the code and every printed QR stay the same)
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                target_url: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated link. }
+    delete:
+      tags: [qr-links]
+      summary: Delete a link and its scans
+      description: 'Requires scope: write.'
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success: true }.' }
+  /qr-links/{id}/qr.svg:
+    get:
+      tags: [qr-links]
+      summary: The QR code for a link, as SVG
+      description: 'Requires scope: read. `origin` sets the public address encoded (default APP_URL, then this server).'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: origin, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: An SVG image. }
   /triggers:
     get:
       tags: [triggers]

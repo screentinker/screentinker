@@ -807,6 +807,9 @@ function styleFor(e) {
  * for the same reason — nothing serves an SVG document from this origin.
  */
 const qrCache = new Map();
+// Tracked QR links for the QR element's picker, loaded once per page (null = not asked yet).
+let qrLinksCache = null;
+const qrShortUrl = (l) => `${location.origin}${l.path}`;
 const qrKey = (text, ec, fg, bg) => `${ec}|${fg}|${bg}|${text}`;
 
 async function qrDataUrl(text, ec, fg, bg) {
@@ -1303,7 +1306,12 @@ function renderProps(container) {
   if (state.tab === 'content') {
     host.innerHTML =
       (e.kind === 'qr'
-        ? row('Encodes', `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
+        ? row('Tracked link', `<select class="input" id="pQrLink"><option value="">Not tracked</option>${(qrLinksCache || []).map((l) =>
+              `<option value="${esc(l.id)}" ${s.fields[e.slot] === qrShortUrl(l) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>`)
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+               Pick a link from QR codes to count scans. The code then holds its short address, so the
+               link's destination can change later without changing this slide.</p>`
+          + row('Encodes', `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
           + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
                A URL, phone number or plain text. The code is drawn on the server, so it works with
                no network at the panel.</p>`
@@ -1418,6 +1426,20 @@ function renderProps(container) {
       return el;
     };
     bindCfg('#pQrEc', (v) => { e.qr_ec = v; });
+    // A tracked link fills the encoded text with its short address (views/qr-codes.js).
+    const qrLinkSel = host.querySelector('#pQrLink');
+    if (qrLinkSel) qrLinkSel.onchange = () => {
+      const l = (qrLinksCache || []).find((x) => x.id === qrLinkSel.value);
+      if (!l) return;
+      s.fields[e.slot] = qrShortUrl(l);
+      const textEl = host.querySelector('#pText');
+      if (textEl) textEl.value = s.fields[e.slot];
+      touchValue(container);
+    };
+    if (e.kind === 'qr' && qrLinksCache === null) {
+      qrLinksCache = [];
+      api.get('/qr-links').then((rows) => { qrLinksCache = Array.isArray(rows) ? rows : []; if (qrLinksCache.length) renderProps(container); }).catch(() => {});
+    }
     bindCfg('#pFit', (v) => { e.fit = v; });
     bindCfg('#pQrFg', (v) => { e.qr_fg = v; });
     bindCfg('#pQrBg', (v) => { e.qr_bg = v; });

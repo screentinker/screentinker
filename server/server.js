@@ -1261,6 +1261,12 @@ app.use('/api/auth/users', rateLimit(60000, 20));
 // and an RFC 8058 one-click client posts `List-Unsubscribe=One-Click` urlencoded. That parser is not
 // global (see /api/hardware-submissions above for the same reason), so without it req.body is
 // undefined here and the token silently never arrives. Small limit — the body is two short fields.
+/*
+ * Tracked QR links (lib/qr-links.js): the public redirect a phone opens after scanning. No auth by
+ * design. Rate-limited per IP like the other public endpoints; the scan itself stores no IP.
+ */
+app.get('/q/:code', rateLimit(60000, 120), require('./routes/qr-links').redirect);
+
 app.use('/unsubscribe',
   rateLimit(60000, 20),
   express.urlencoded({ extended: false, limit: '4kb' }),

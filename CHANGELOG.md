@@ -4,6 +4,15 @@
 
 ### Added
 
+- **QR codes that count scans** (Create → QR codes).
+  - A tracked link is a short address (`/q/…`) that opens your page and counts the scan: totals,
+    the last 30 days, and iPhone / Android / other.
+  - Use one on a slide (QR element → Tracked link) or download its QR as SVG. Change where the
+    link goes at any time, and the QR on screens and in print keeps working. Switch a link off and
+    scans see "no longer active".
+  - Nothing about the person scanning is stored: no IP address and no browser details. Link
+    previews from chat apps aren't counted.
+
 - **Play an item depending on the weather, or the area, where each screen is.**
   - Give a screen a location (Display → Info → Location: search a city or address).
   - New playlist item conditions: **Weather where the screen is** (clear, cloudy, rain, snow,

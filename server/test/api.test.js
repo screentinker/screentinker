@@ -152,6 +152,10 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
     // tooling. Every mutation is requireScope('full') + workspace admin (a feed can take over every
     // screen in scope); reads are workspace-scoped like the siblings.
     '/api/cap-feeds',
+    // Tracked QR links, added deliberately: workspace content (a name and a target URL) an integrator
+    // may create from their own tooling; reads are workspace-scoped, writes need the write scope.
+    // The public redirect /q/:code is not on this door at all.
+    '/api/qr-links',
     /*
      * Uploaded transitions, added deliberately. Same reasoning as fonts, already on this door: it is
      * workspace content an integrator may reasonably manage from their own tooling, and every route
