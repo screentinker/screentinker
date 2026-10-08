@@ -3273,6 +3273,28 @@ try {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }
   // "Play every N seconds" (lib/repeat-every.js): NULL = plays once per loop, as before.
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN repeat_every_sec INTEGER').run(); console.log('[migrate] playlist_items.repeat_every_sec added'); } catch (_) { /* present */ }
+  // Tracked QR links (lib/qr-links.js): a short /q/<code> redirect that counts scans. A scan keeps a
+  // time and a coarse platform only — no IP, no user agent.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS qr_links (
+      id           TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id      TEXT,
+      code         TEXT NOT NULL UNIQUE,
+      name         TEXT NOT NULL,
+      target_url   TEXT NOT NULL,
+      enabled      INTEGER NOT NULL DEFAULT 1,
+      created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_qr_links_ws ON qr_links(workspace_id);
+    CREATE TABLE IF NOT EXISTS qr_scans (
+      link_id  TEXT NOT NULL REFERENCES qr_links(id) ON DELETE CASCADE,
+      at       INTEGER NOT NULL,
+      platform TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_qr_scans_link_at ON qr_scans(link_id, at);
+  `);
   // Where a screen is (lib/local-conditions.js): its local weather and area conditions.
   try { db.prepare('ALTER TABLE devices ADD COLUMN latitude REAL').run(); console.log('[migrate] devices.latitude added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE devices ADD COLUMN longitude REAL').run(); } catch (_) { /* present */ }

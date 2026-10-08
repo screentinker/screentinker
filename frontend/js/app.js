@@ -17,6 +17,7 @@ import * as reports from './views/reports.js';
 import * as servers from './views/servers.js';
 import * as noc from './views/noc.js';
 import * as triggers from './views/triggers.js';
+import * as qrCodes from './views/qr-codes.js';
 import * as alerts from './views/alerts.js';
 import * as capFeeds from './views/cap-feeds.js';
 import * as corporate from './views/corporate.js';
@@ -245,6 +246,7 @@ const NAV_LABEL_KEYS = {
   reports: 'nav.reports',
   servers: 'nav.servers',
   triggers: 'nav.triggers',
+  'qr-codes': 'nav.qr_codes',
   alerts: 'nav.alerts',
   'emergency-feeds': 'nav.emergency_feeds',
   // corporate is relabelled per viewer (Corporate / Head office) by syncCorporateNav.
@@ -629,6 +631,9 @@ function route() {
   } else if (hash === '#/triggers') {
     currentView = triggers;
     triggers.render(app);
+  } else if (hash === '#/qr-codes') {
+    currentView = qrCodes;
+    qrCodes.render(app);
   } else if (hash === '#/alerts') {
     currentView = alerts;
     alerts.render(app);
