@@ -277,12 +277,16 @@ function alarm() {
 test('⚠️ Activate now: the covered screen plays the alert, with no store trigger, layout, default content or group sync', () => {
   const { e } = alarm();
   const before = JSON.stringify(build(DEV));
+  assert.ok(build(DEV).assignments.every((a) => !('interrupt' in a)), 'no flag before the activation');
   const plainBefore = JSON.stringify(build(DEV_S2));
   const offBefore = JSON.stringify(build(DEV_OFF));
   live.activate(db, e, { userId: 'u-e', durationSec: 600 });
   try {
     const p = build(DEV);
     assert.deepEqual(p.assignments.map((a) => a.content_id), [CE], 'the base IS the alert');
+    // An emergency cuts in on every player at once (player-parity.md, "Emergency alerts cut in").
+    assert.ok(p.assignments.every((a) => a.interrupt === true), 'activated: every alert item carries interrupt:true');
+    assert.ok(p.triggers.every((t) => (t.items || []).every((a) => !('interrupt' in a))), 'trigger items never carry it');
     assert.equal(p.default_content, null);
     assert.equal(p.layout, null);
     assert.equal(p.group_sync, null);
@@ -293,6 +297,7 @@ test('⚠️ Activate now: the covered screen plays the alert, with no store tri
     assert.notEqual(build(DEV_TIZEN).assignments[0]?.content_id, CE, 'Tizen has no trigger listener: not covered');
   } finally { live.end(db, e.id, { reason: 'test' }); }
   assert.equal(JSON.stringify(build(DEV)), before, 'ended: back to exactly its own payload');
+  assert.ok(build(DEV).assignments.every((a) => !('interrupt' in a)), 'ended: the flag is gone');
 });
 
 test('an expired activation never shows, and the sweep ends it without a request', () => {

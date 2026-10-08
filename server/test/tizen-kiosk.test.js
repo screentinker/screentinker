@@ -694,3 +694,54 @@ test('REGRESSION #6: the page leaving by another path (resume / screen_on re-ren
   assert.equal(p.items.length, 3, 'parked update applied after the render');
   assert.equal(p.isHeld(), false);
 });
+
+// ───────────────────────────────────────────── emergency alerts cut in (interrupt: true)
+// QA: an alert card appeared only after the current item finished (#157 deferral, up to 60 s). The
+// server marks the card interrupt:true; a change to the SET of those applies at once, mid-item.
+const CARD = { widget_id: 'w-cap', widget_type: 'cap_alert', duration_sec: 60, sort_order: 0, interrupt: true };
+const IMG_A = { content_id: 'ca', mime_type: 'image/jpeg', duration_sec: 30, sort_order: 0, filename: 'a.jpg' };
+const IMG_B = { content_id: 'cb', mime_type: 'image/jpeg', duration_sec: 30, sort_order: 1, filename: 'b.jpg' };
+const IMG_C = { content_id: 'cc', mime_type: 'image/jpeg', duration_sec: 30, sort_order: 2, filename: 'c.jpg' };
+
+test('interrupt: the set comparison is on interrupt items only, by identity', () => {
+  const { p } = playerEnv();
+  assert.equal(p.interruptChanged([IMG_A], [CARD]), true, 'raised');
+  assert.equal(p.interruptChanged([CARD], [IMG_A, IMG_B]), true, 'cleared');
+  assert.equal(p.interruptChanged([CARD], [Object.assign({}, CARD, { duration_sec: 90 })]), false, 'the same alert re-sent');
+  assert.equal(p.interruptChanged([IMG_A], [IMG_B]), false, 'an ordinary edit');
+  assert.equal(p.interruptChanged([IMG_A], [Object.assign({}, CARD, { interrupt: undefined })]), false, 'the flag is the contract, not the widget');
+});
+
+test('interrupt: clearing an alert swaps at once, where an ordinary edit still defers (#157 unchanged)', () => {
+  // Ordinary: [A,B] playing A, edited to [B,C] -> A removed while live -> deferred.
+  let { p } = playerEnv();
+  p.load([IMG_A, IMG_B]);
+  p.load([IMG_B, IMG_C]);
+  assert.equal(p._deferredRotation, true, 'an ordinary edit keeps the deferral');
+  // Alert clear: [CARD] playing, the loop comes back with 2+ items -> would defer; must not.
+  ({ p } = playerEnv());
+  p.load([IMG_A, IMG_B]);
+  p.load([CARD]);
+  assert.equal(p.items[p.getIndex()].widget_id, 'w-cap', 'raised: the card is on screen now');
+  p.load([IMG_B, IMG_C]);
+  assert.equal(p._deferredRotation, false, 'cleared: not deferred');
+  assert.equal(p.items[p.getIndex()].content_id, 'cb', 'the loop is back immediately');
+});
+
+test('interrupt: an alert is never parked behind an interactive session; the session is ended', () => {
+  const { env, p, stage, s } = playerEnv();
+  p.load([WIDGET, IMAGE]);
+  frameOf(stage).fire('load');
+  tapIntoFrame(env, stage);
+  assert.equal(p.isHeld(), true);
+  p.load([IMAGE, Object.assign({}, IMAGE, { content_id: 'c2' })]);
+  assert.equal(p.items.length, 2, 'an ordinary update is still parked');
+  assert.equal(p.items[0].widget_id, 'w1');
+  p.load([CARD]);
+  assert.equal(p.isHeld(), false, 'the hold is dropped');
+  assert.equal(p.kiosk.isShowing(), false, 'the page is closed');
+  assert.equal(p.items[p.getIndex()].widget_id, 'w-cap', 'the card is on screen now');
+  assert.equal(s.calls.sessions.length, 1, 'the visitor\'s session is still recorded');
+  env.c.advance(1);
+  assert.equal(p.items[0].widget_id, 'w-cap', 'the dropped parked update never comes back over the card');
+});

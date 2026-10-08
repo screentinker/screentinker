@@ -137,6 +137,47 @@ test('a live alert puts the card on every screen in scope; filters decide what c
   assert.deepEqual(shows(D_IN), ['CARD']);
 });
 
+test('the card, and only the card, carries interrupt: true — on a solo, group and wall screen alike', () => {
+  /*
+   * QA: the card showed only after the current item finished (every player's #157 deferral, up to
+   * 60 s). interrupt:true is the "show this now" flag the players switch on (docs/emergency-alerts.md).
+   */
+  assert.equal(feeds.cardItem({ widget_id: 'w', name: 'n' }).interrupt, true);
+  const WALL = 'wall-cap', D_WALL = 'd-cap-wall', D_WALL2 = 'd-cap-wall2';
+  for (const id of [D_WALL, D_WALL2]) {
+    db.prepare("INSERT INTO devices (id, user_id, workspace_id, name, pairing_code, playlist_id, playlist_source) VALUES (?, ?, ?, ?, ?, ?, 'device')")
+      .run(id, ADMIN, WS, id, crypto.randomUUID().slice(0, 6), PL);
+  }
+  db.prepare('INSERT INTO video_walls (id, user_id, workspace_id, name, leader_device_id) VALUES (?, ?, ?, ?, ?)').run(WALL, ADMIN, WS, 'Atrium', D_WALL);
+  db.prepare('INSERT INTO video_wall_devices (wall_id, device_id, grid_col, grid_row) VALUES (?, ?, 0, 0), (?, ?, 1, 0)').run(WALL, D_WALL, WALL, D_WALL2);
+  db.prepare('UPDATE devices SET wall_id = ? WHERE id IN (?, ?)').run(WALL, D_WALL, D_WALL2);
+  try {
+    for (const d of [D_IN, D_GROUP, D_WALL, D_WALL2]) {
+      const p = build(d);
+      assert.deepEqual(p.assignments.map((a) => [a.widget_type, a.interrupt]), [['cap_alert', true]], d);
+    }
+    assert.ok(build(D_WALL).wall_config && build(D_WALL2).wall_config, 'still wall payloads');
+    // A stray flag in a stored snapshot never reaches a screen: nothing but the card carries it.
+    const snap = db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(PL).published_snapshot;
+    db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?')
+      .run(JSON.stringify(JSON.parse(snap).map((a) => ({ ...a, interrupt: true }))), PL);
+    db.prepare('UPDATE cap_feeds SET enabled = 0 WHERE id = ?').run(F);
+    try {
+      const p = build(D_IN);
+      assert.deepEqual(p.assignments.map((a) => a.filename), ['own.png']);
+      assert.equal('interrupt' in p.assignments[0], false, 'stripped from an ordinary item');
+    } finally {
+      db.prepare('UPDATE cap_feeds SET enabled = 1 WHERE id = ?').run(F);
+      db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?').run(snap, PL);
+    }
+  } finally {
+    db.prepare('UPDATE devices SET wall_id = NULL WHERE id IN (?, ?)').run(D_WALL, D_WALL2);
+    db.prepare('DELETE FROM video_wall_devices WHERE wall_id = ?').run(WALL);
+    db.prepare('DELETE FROM video_walls WHERE id = ?').run(WALL);
+    db.prepare('DELETE FROM devices WHERE id IN (?, ?)').run(D_WALL, D_WALL2);
+  }
+});
+
 test('the card escapes third-party text, and its widget is hidden from the library and locked', async () => {
   feedBody = capDoc({ headline: '&lt;img src=x onerror=alert(1)&gt; Tornado' }); await poll(F);
   const wid = db.prepare('SELECT widget_id FROM cap_feeds WHERE id = ?').get(F).widget_id;

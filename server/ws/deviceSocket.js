@@ -669,6 +669,8 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     if (!Array.isArray(assignments)) assignments = [];
     // Head office's content: its data sources and shaders, never the store's (per-origin, §3.2).
     for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = t.workspace_id;
+    // An emergency: activating or ending it cuts in on every player at once (see the strip below).
+    for (const a of assignments) if (a && typeof a === 'object') a.interrupt = true;
     refreshWidgetRevs(assignments, deviceId);
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
@@ -967,6 +969,18 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     console.warn(`[endpoints] resolve failed for ${deviceId}: ${e.message}`);
   }
 
+  /*
+   * `interrupt` (an alert raised or cleared cuts in mid-item on every player) belongs to emergencies
+   * alone: the CAP alert card (lib/cap/feeds.js cardItem) and every item of a head office
+   * "activate now" alert (set above). Anything else carrying it, a stray field in a stored snapshot
+   * or an import, would let an ordinary playlist yank the screen, so it is stripped here, on the one
+   * path every device payload (solo, wall, group, corporate) leaves by.
+   */
+  for (const a of assignments) {
+    if (!a || typeof a !== 'object' || a.interrupt === undefined) continue;
+    const emergencyItem = a.interrupt === true && (emergencyNow || (capNow && a.widget_type === 'cap_alert'));
+    if (!emergencyItem) delete a.interrupt;
+  }
   stampFileUrls(assignments, deviceId);
   if (default_content) stampFileUrls([default_content], deviceId);
 

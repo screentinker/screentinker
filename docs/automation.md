@@ -83,6 +83,11 @@ are shown as text, never as HTML.
 
 - **Raise.** The alert appears on screens in scope, the same way an emergency feed alert does: the
   alert card, or the playlist you chose. Head office emergency alerts still come first.
+- **Shows at once.** The alert card replaces whatever is on screen immediately, mid-video if
+  need be, and the all-clear brings the playlist back just as quickly. Ordinary playlist edits
+  still wait for the current item to finish. (The card is sent with `interrupt: true`; see
+  [player-parity.md](player-parity.md#emergency-alerts-cut-in).) An alert that plays a playlist you
+  chose instead of the card follows the ordinary rule.
 - **Same alert id, same alert.** Sending the same `{{body.id}}` twice while it is showing raises
   one alert. A clear with that id ends it, and a second clear changes nothing.
 - **Raising it again.** The same alert sent after it was cleared, or after it ended on its own,

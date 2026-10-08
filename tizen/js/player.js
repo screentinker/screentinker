@@ -215,6 +215,22 @@ PlaylistPlayer.prototype.setScheduleDriven = function (b) { this.scheduleDriven 
 PlaylistPlayer.prototype.itemIdentity = function (x) {
   return x ? [x.content_id || '', x.widget_id || '', x.remote_url || '', x.filepath || ''].join('|') : '';
 };
+/*
+ * EMERGENCY ALERTS CUT IN. The server marks an emergency alert card (the hidden 'cap_alert' widget,
+ * lib/cap/feeds.js cardItem) `interrupt: true`, and nothing else. When the SET of those differs
+ * between the playlist on screen and the one arriving — an alert raised or cleared — load() applies
+ * it at once, mid-item: no #157 deferral and no parking behind an interactive session. An ordinary
+ * edit (the set unchanged, "no alert" both sides included) behaves exactly as before. Same contract
+ * as the web player's interruptChanged, Android's Interrupt and the native player.
+ */
+PlaylistPlayer.prototype.interruptKeys = function (list) {
+  var out = [];
+  for (var i = 0; list && i < list.length; i++) if (list[i] && list[i].interrupt === true) out.push(this.itemIdentity(list[i]));
+  return out.sort().join('\n');
+};
+PlaylistPlayer.prototype.interruptChanged = function (oldList, newList) {
+  return this.interruptKeys(oldList) !== this.interruptKeys(newList);
+};
 PlaylistPlayer.prototype.indexOfIdentity = function (arr, id) {
   for (var i = 0; i < arr.length; i++) if (this.itemIdentity(arr[i]) === id) return i;
   return -1;
@@ -291,6 +307,9 @@ PlaylistPlayer.prototype._releasePreloadImage = function () {
 
 PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
   var selfL = this;
+  // An alert raised or cleared is never parked behind a visitor: drop the hold and apply it now
+  // (playCurrent of the new item hides the interactive page, which closes the session record).
+  if (this.held && this.interruptChanged(this.items, Array.isArray(assignments) ? assignments : [])) this.dropHold();
   if (this.park(function () { selfL.load(assignments, playbackOrder); })) return;   // #473 held: apply on release
   var nextOrder = playbackOrder || this.playbackOrder || 'sequential';
   if (nextOrder !== this.playbackOrder) this.playOrderState = {};
@@ -367,7 +386,10 @@ PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
   // and the old content stayed on the screen. On Tizen this strands IMAGES too, not just video and
   // widgets as on the web player, because the timer is skipped for every type.
   var outgoingNeverAdvances = !this.items || this.items.length <= 1;
-  if (this.hasContentOnScreen() && !this.wallFollower && !this.scheduleDriven && !outgoingNeverAdvances) {
+  // An emergency alert raised or cleared cuts in now. Followers already swap at once (they obey the
+  // leader's index); this makes the leader do the same, so a wall switches together.
+  var interruptNow = this.interruptChanged(oldItems, items);
+  if (this.hasContentOnScreen() && !this.wallFollower && !this.scheduleDriven && !outgoingNeverAdvances && !interruptNow) {
     this._deferredRotation = true;
     this._deferredSuccessorId = this.itemIdentity(items[nextIdx]);
     // Safety net: a deferral is a bet that an advance will arrive. If it does not, apply the
