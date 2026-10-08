@@ -168,12 +168,31 @@ object PendingSwap {
         hasContentOnScreen: Boolean,
         currentlyPlayingId: String?,
         newContentIds: List<String>,
+        interruptChanged: Boolean = false,
     ): Boolean {
+        if (interruptChanged) return false                   // an alert raised or cleared: cut in now
         if (!isRunning || wallFollower || !hasContentOnScreen) return false
         if (currentlyPlayingId == null) return false
         if (newContentIds.isEmpty()) return false            // guard 1: an explicit stop
         return !newContentIds.contains(currentlyPlayingId)
     }
+}
+
+/**
+ * EMERGENCY ALERTS CUT IN. The server marks an emergency alert card (the hidden 'cap_alert' widget,
+ * server lib/cap/feeds.js cardItem) `interrupt: true`, and nothing else. When the SET of interrupt
+ * items differs between what is playing and what arrived — an alert was raised, or cleared — the
+ * update is applied at once, mid-item: no #157 deferral, no interactive-session parking. Waiting up
+ * to [PendingSwap.DEADLINE_MS] for a tornado warning to reach the screen was the QA finding.
+ *
+ * An ordinary edit (the interrupt set unchanged, including "no alert before or after") keeps the
+ * deferral exactly as it was. Keyed on itemKey, so a card is identified the same way continuity is.
+ * Same contract on every player (web/Tizen shouldInterrupt, native playlist_logic).
+ */
+object Interrupt {
+    fun keys(items: List<PlaylistItem>): Set<String> = items.filter { it.interrupt }.map { it.itemKey }.toSet()
+
+    fun changed(oldKeys: Set<String>, newKeys: Set<String>): Boolean = oldKeys != newKeys
 }
 
 /**

@@ -222,6 +222,31 @@ decline these explicitly and in writing in their own capability modules.
 
 ---
 
+## Emergency alerts cut in
+
+Every player holds an ordinary playlist change until the item on screen finishes (#157, with a
+60 s backstop). Raising an emergency alert replaces the playlist with its card, which is exactly
+that case, so the card used to arrive up to a minute late. The contract that fixes it:
+
+- **Server.** The CAP alert card (`server/lib/cap/feeds.js` `cardItem`, the hidden `cap_alert`
+  widget — emergency feeds, emergency-alert hooks and Zapier all show it) carries `interrupt: true`.
+  Nothing else does: `buildPlaylistPayload` strips the field from every other item, on the one path
+  solo, group, wall and corporate payloads all leave by. A feed configured with its own playlist
+  sends that playlist without the flag.
+- **Players.** When the SET of interrupt items (by item identity) differs between the playlist on
+  screen and the one arriving — raised, cleared, or another feed taking over — the player swaps at
+  once, mid-item. It also ends an interactive-page (#473) session that is holding the playlist,
+  instead of parking the update behind it. An ordinary edit, the set unchanged, defers exactly as before.
+- **Walls and groups.** A wall follower already applies every update at once and obeys the leader's
+  index; the flag makes the leader swap immediately too, so the whole wall switches together.
+  An alert payload carries no `group_sync`, so a synced group leaves sync for the alert and
+  every member swaps on its own; sync resumes from the payload after the all-clear.
+
+| | Android | Web (+ Vega, BrightSign) | Tizen | Raspberry Pi / Windows (native) |
+|---|---|---|---|---|
+| no deferral on an interrupt change | ✅ `PendingSwap.shouldDefer(interruptChanged)` + `Interrupt` (`PlaylistSelection.kt`), JVM-tested | ✅ `interruptChanged` in `handlePlaylistUpdate` (+ `legacy.html`) | ✅ `PlaylistPlayer.interruptChanged` in `load()` | same contract, implemented in `native/` |
+| interactive hold ended, not parked | ✅ `updatePlaylist` drops the hold | ✅ page hidden, `kioskDropHold()` | ✅ `dropHold()` before `park()` | same contract |
+
 ## Where the four declaration sites disagree with each other
 
 | | Android | Web | Tizen | BrightSign | Raspberry Pi (native) | Windows (native) |

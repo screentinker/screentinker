@@ -1430,6 +1430,18 @@
     let deferredRotationDeadline = null;   // a deferral must not wait forever — see the #157 block
     let deferredSuccessorId = null;
     function itemIdentity(x) { return x ? `${x.content_id || ''}|${x.widget_id || ''}|${x.remote_url || ''}|${x.filepath || ''}` : ''; }
+    /*
+     * EMERGENCY ALERTS CUT IN. The server marks an emergency alert card (the hidden 'cap_alert'
+     * widget, lib/cap/feeds.js cardItem) `interrupt: true`, and nothing else. When the SET of those
+     * differs between the playlist on screen and the one arriving — an alert raised or cleared — the
+     * update is applied at once, mid-item: no #157 deferral and no parking behind an interactive
+     * session. An ordinary edit (the set unchanged, "no alert" both sides included) defers exactly as
+     * before. Same contract as Android's Interrupt, Tizen's interruptChanged and the native player.
+     */
+    function interruptKeysOf(list) {
+      return (Array.isArray(list) ? list : []).filter(x => x && x.interrupt === true).map(itemIdentity).sort().join('\n');
+    }
+    function interruptChanged(oldList, newList) { return interruptKeysOf(oldList) !== interruptKeysOf(newList); }
 
     // @exit-signal-slice:start — v4-exit-signal-phase3.test.js evals the lines between these markers.
     // ==================== Exit-signal contract v1 (best-effort last gasp) ====================
@@ -5230,6 +5242,11 @@
       if (data && data.suspended) {
         try { if (kiosk && kiosk.isShowing()) kiosk.hide(); } catch (e) {}
         if (typeof kioskDropHold === 'function') kioskDropHold();   // the suspension replaces playback
+      } else if (typeof kioskHeld !== 'undefined' && kioskHeld && interruptChanged(playlist, data && data.assignments)) {
+        // An emergency alert raised or cleared is never parked behind a visitor: end the session.
+        console.log('[Kiosk] emergency alert changed — ending the interactive session');
+        try { if (kiosk && kiosk.isShowing()) kiosk.hide(); } catch (e) {}
+        kioskDropHold();
       } else if (typeof kioskHeld !== 'undefined' && kioskHeld) {
         kioskParkedUpdate = data;
         console.log('[Kiosk] playlist update parked until the interactive session ends');
@@ -5638,7 +5655,12 @@
       // showed the new playlist published and the device healthy. Only a reboot or a refresh
       // command cleared it.
       const outgoingNeverAdvances = oldPlaylist.length <= 1;
-      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances) {
+      // An emergency alert raised or cleared cuts in now (see interruptChanged). On a wall the
+      // follower already swaps at once (schedule-driven); this makes the leader do the same, so the
+      // whole wall switches together instead of the leader holding out for up to 60 s.
+      const interruptNow = interruptChanged(oldPlaylist, playlist);
+      if (interruptNow) console.log('Emergency alert raised/cleared — swapping now, not at the next advance');
+      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow) {
         deferredRotation = true;
         deferredSuccessorId = itemIdentity(playlist[nextIdx]);
         console.log('#157: current item removed but still live — deferring rotation-out');

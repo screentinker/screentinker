@@ -73,6 +73,60 @@ class PendingSwapTest {
 }
 
 /**
+ * QA: an emergency alert's card appeared only after the current item finished — up to
+ * PendingSwap.DEADLINE_MS later — because raising an alert replaces the playlist with the card,
+ * which removes the live item, which is exactly #157's deferral case. The server now marks the card
+ * `interrupt: true`; a change to the SET of those is applied at once, and nothing else changes.
+ */
+class InterruptTest {
+
+    private fun item(contentId: String = "", widgetId: String? = null, interrupt: Boolean = false) = PlaylistItem(
+        assignmentId = 0, contentId = contentId, filename = "f", mimeType = if (widgetId != null) "text/html" else "image/png",
+        filepath = "", durationSec = 10, fileSize = 0, sortOrder = 0, widgetId = widgetId, interrupt = interrupt,
+    )
+
+    private val ordinary = listOf(item("a"), item("b"))
+    private val card = item(widgetId = "w-cap", interrupt = true)
+
+    private fun changed(old: List<PlaylistItem>, new: List<PlaylistItem>) =
+        Interrupt.changed(Interrupt.keys(old), Interrupt.keys(new))
+
+    @Test fun THE_BUG_raising_an_alert_is_not_deferred() {
+        assertTrue(changed(ordinary, listOf(card)))
+        // The live item "a" is gone from the new list: without the flag this deferred.
+        assertTrue(PendingSwap.shouldDefer(true, false, true, "a|", listOf(card.itemKey)))
+        assertFalse(PendingSwap.shouldDefer(true, false, true, "a|", listOf(card.itemKey), interruptChanged = true))
+    }
+
+    @Test fun clearing_an_alert_is_not_deferred_either() {
+        // The card is on screen and the ordinary loop comes back: the all-clear must land at once too.
+        assertTrue(changed(listOf(card), ordinary))
+        assertFalse(PendingSwap.shouldDefer(true, false, true, card.itemKey, ordinary.map { it.itemKey }, interruptChanged = true))
+    }
+
+    @Test fun a_second_feed_taking_over_is_a_change() {
+        assertTrue(changed(listOf(card), listOf(item(widgetId = "w-other", interrupt = true))))
+    }
+
+    @Test fun an_ordinary_edit_keeps_the_157_deferral() {
+        val edited = listOf(item("b"), item("c"))
+        assertFalse(changed(ordinary, edited))
+        assertTrue(PendingSwap.shouldDefer(true, false, true, "a|", edited.map { it.itemKey }, interruptChanged = false))
+    }
+
+    @Test fun the_same_alert_republished_is_not_a_change() {
+        // Every payload during an alert carries the card again; that must not restart it.
+        assertFalse(changed(listOf(card), listOf(card.copy(durationSec = 60))))
+    }
+
+    @Test fun only_flagged_items_count_the_widget_type_alone_does_not() {
+        // The flag is the contract, not the widget id: an unflagged widget is an ordinary item.
+        assertFalse(changed(ordinary, listOf(item(widgetId = "w-cap"))))
+        assertEquals(setOf("|w-cap"), Interrupt.keys(listOf(card, item("a"))))
+    }
+}
+
+/**
  * The other half of the same report. A YouTube item ended on nothing: no timer was armed for it and
  * a WebView embed reports no completion, so it held the screen forever and stranded whatever
  * playlist change was waiting behind it.

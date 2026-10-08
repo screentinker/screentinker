@@ -967,6 +967,15 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     console.warn(`[endpoints] resolve failed for ${deviceId}: ${e.message}`);
   }
 
+  /*
+   * `interrupt` (an alert raised or cleared cuts in mid-item on every player) belongs to the CAP
+   * alert card alone — lib/cap/feeds.js cardItem sets it. Anything else carrying it, a stray field
+   * in a stored snapshot or an import, would let an ordinary playlist yank the screen, so it is
+   * stripped here, on the one path every device payload (solo, wall, group, corporate) leaves by.
+   */
+  for (const a of assignments) {
+    if (a && typeof a === 'object' && a.interrupt !== undefined && !(a.interrupt === true && a.widget_type === 'cap_alert' && capNow)) delete a.interrupt;
+  }
   stampFileUrls(assignments, deviceId);
   if (default_content) stampFileUrls([default_content], deviceId);
 

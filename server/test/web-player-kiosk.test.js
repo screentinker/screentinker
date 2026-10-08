@@ -591,7 +591,7 @@ test('index.html: fullscreen only — the kiosk path is skipped in zones, walls,
 test('index.html: while held nothing advances, and a playlist update is parked (a suspension is not)', () => {
   const ni = PLAYER.slice(PLAYER.indexOf('function nextItem() {'), PLAYER.indexOf('function nextItem() {') + 400);
   assert.match(ni, /if \(typeof kioskHeld !== 'undefined' && kioskHeld\) \{/);
-  const hp = PLAYER.slice(PLAYER.indexOf('function handlePlaylistUpdate(data) {'), PLAYER.indexOf('function handlePlaylistUpdate(data) {') + 700);
+  const hp = PLAYER.slice(PLAYER.indexOf('function handlePlaylistUpdate(data) {'), PLAYER.indexOf('function handlePlaylistUpdate(data) {') + 1200);   // room for the emergency-alert branch before the park
   assert.match(hp, /data\.suspended[\s\S]*kioskDropHold\(\)[\s\S]*else if \(typeof kioskHeld !== 'undefined' && kioskHeld\) \{\s*kioskParkedUpdate = data;/);
 });
 
@@ -928,4 +928,37 @@ test('bridge: close carries the session and the keep-alive exists', () => {
   const b = loadBridge({ kiosk_toplevel: true, answer: '1' });
   b.api.kioskClose(true, 'S9'); b.api.kioskKeepAlive('S9');
   assert.deepEqual(JSON.parse(JSON.stringify(b.posted.slice(-2))), [{ type: 'kiosk-close', wipe: '1', session: 'S9' }, { type: 'kiosk-keepalive', session: 'S9' }]);
+});
+
+// ───────────────────────────────────────────── emergency alerts cut in (interrupt: true)
+// QA: an alert card appeared only after the current item finished (#157 deferral, up to 60 s). The
+// server marks the card interrupt:true; a change to the SET of those is applied at once, mid-item.
+function interruptFns() {
+  const src = ['itemIdentity', 'interruptKeysOf', 'interruptChanged'].map(extract).join('\n');
+  return new Function(`${src}; return { interruptChanged };`)();
+}
+const CAP_CARD = { widget_id: 'w-cap', widget_type: 'cap_alert', interrupt: true };
+const PLAIN_A = { content_id: 'a', filepath: 'a.png' }, PLAIN_B = { content_id: 'b', filepath: 'b.png' };
+
+test('index.html interruptChanged: raised, cleared and swapped feeds change the set; edits and re-sends do not', () => {
+  const { interruptChanged } = interruptFns();
+  assert.equal(interruptChanged([PLAIN_A, PLAIN_B], [CAP_CARD]), true, 'raised');
+  assert.equal(interruptChanged([CAP_CARD], [PLAIN_A, PLAIN_B]), true, 'cleared');
+  assert.equal(interruptChanged([CAP_CARD], [{ ...CAP_CARD, widget_id: 'w-cap-2' }]), true, 'another feed took over');
+  assert.equal(interruptChanged([CAP_CARD], [{ ...CAP_CARD, duration_sec: 90 }]), false, 'the same alert re-sent');
+  assert.equal(interruptChanged([PLAIN_A, PLAIN_B], [PLAIN_B]), false, 'an ordinary edit keeps #157');
+  assert.equal(interruptChanged([PLAIN_A], [{ ...CAP_CARD, interrupt: undefined }]), false, 'the flag is the contract');
+  assert.equal(interruptChanged([PLAIN_A], undefined), false, 'a malformed payload is not an alert');
+});
+
+test('index.html: an interrupt change skips the #157 deferral and is never parked behind a kiosk session', () => {
+  const body = extract('handlePlaylistUpdate');
+  // The hold branch: an alert closes the page and drops the hold BEFORE the ordinary park.
+  const bypass = body.indexOf("kioskHeld && interruptChanged(playlist, data && data.assignments)");
+  const park = body.indexOf('kioskParkedUpdate = data;');
+  assert.ok(bypass > 0 && park > bypass, 'the interrupt check runs before the park');
+  assert.match(body.slice(bypass, park), /kiosk\.hide\(\);[\s\S]*kioskDropHold\(\);/);
+  // The deferral: gated on the interrupt set, compared old-vs-new.
+  assert.match(body, /const interruptNow = interruptChanged\(oldPlaylist, playlist\);/);
+  assert.match(body, /if \(isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow\) \{\s*deferredRotation = true;/);
 });

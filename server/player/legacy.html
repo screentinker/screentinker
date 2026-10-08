@@ -1399,6 +1399,12 @@ let deferredSuccessorId = null;
 function itemIdentity(x) {
   return x ? "".concat(x.content_id || "", "|").concat(x.widget_id || "", "|").concat(x.remote_url || "", "|").concat(x.filepath || "") : "";
 }
+function interruptKeysOf(list) {
+  return (Array.isArray(list) ? list : []).filter((x) => x && x.interrupt === true).map(itemIdentity).sort().join("\n");
+}
+function interruptChanged(oldList, newList) {
+  return interruptKeysOf(oldList) !== interruptKeysOf(newList);
+}
 let __exitSent = false;
 function sendExitBeacon(reason, detail) {
   try {
@@ -4282,6 +4288,13 @@ function handlePlaylistUpdate(data) {
     } catch (e) {
     }
     if (typeof kioskDropHold === "function") kioskDropHold();
+  } else if (typeof kioskHeld !== "undefined" && kioskHeld && interruptChanged(playlist, data && data.assignments)) {
+    console.log("[Kiosk] emergency alert changed \u2014 ending the interactive session");
+    try {
+      if (kiosk && kiosk.isShowing()) kiosk.hide();
+    } catch (e) {
+    }
+    kioskDropHold();
   } else if (typeof kioskHeld !== "undefined" && kioskHeld) {
     kioskParkedUpdate = data;
     console.log("[Kiosk] playlist update parked until the interactive session ends");
@@ -4502,7 +4515,9 @@ function handlePlaylistUpdate(data) {
   if (nextIdx === -1) nextIdx = 0;
   const scheduleDriven = isWallFollower() || !!groupSync;
   const outgoingNeverAdvances = oldPlaylist.length <= 1;
-  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances) {
+  const interruptNow = interruptChanged(oldPlaylist, playlist);
+  if (interruptNow) console.log("Emergency alert raised/cleared \u2014 swapping now, not at the next advance");
+  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow) {
     deferredRotation = true;
     deferredSuccessorId = itemIdentity(playlist[nextIdx]);
     console.log("#157: current item removed but still live \u2014 deferring rotation-out");

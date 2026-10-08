@@ -425,12 +425,22 @@ function overrideFor(db, deviceId) {
   return best ? { feed: best.feed, alerts: best.alerts } : null;
 }
 
-/** The payload item that shows the card. */
+/**
+ * The payload item that shows the card.
+ *
+ * `interrupt: true` is the "show this now" flag, and this is the ONLY item that carries it
+ * (ws/deviceSocket.js strips it from anything else). Raising an alert replaces the screen's playlist
+ * with this card, which removes the item on screen — exactly the case every player's #157 deferral
+ * holds back "until the current item finishes", so the card used to appear up to 60 s late. A player
+ * that sees the SET of interrupt items change (an alert raised, cleared, or a different feed taking
+ * over) swaps immediately instead; an ordinary edit still defers. See docs/emergency-alerts.md.
+ */
 function cardItem(feed) {
   return {
     content_id: null, widget_id: feed.widget_id, child_playlist_id: null, zone_id: null, sort_order: 0,
     duration_sec: 60, muted: 1, filename: null, mime_type: null, remote_url: null,
     widget_name: `Emergency alert: ${feed.name}`, widget_type: 'cap_alert', widget_config: null, widget_rev: null,
+    interrupt: true,
   };
 }
 

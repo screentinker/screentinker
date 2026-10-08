@@ -50,7 +50,9 @@ data class PlaylistItem(
      * player that only renders the widget iframe makes no sound, which is why this exists. */
     val slideAudio: SlideAudio? = null,
     // feat/transition-engine: the resolved GL transition this item plays INTO (null = hard cut).
-    val transition: TransitionSpec? = null
+    val transition: TransitionSpec? = null,
+    // An emergency alert card: a change to the set of these is applied at once (see Interrupt).
+    val interrupt: Boolean = false
 ) {
     /*
      * ⚠️  WHICH ITEM THIS IS, FOR CONTINUITY — AND IT IS NOT contentId.
@@ -337,6 +339,12 @@ class PlaylistController(
         get() = currentItem?.contentId
 
     fun updatePlaylist(assignmentsJson: JSONArray, order: String = "sequential") {
+        // An alert raised or cleared is never parked behind a visitor's session: drop the hold and
+        // apply it (playing the card hides the interactive page, which closes its session record).
+        if (held && interruptKeysOf(assignmentsJson) != Interrupt.keys(items)) {
+            Log.i("PlaylistController", "emergency alert changed — ending the interactive hold")
+            dropHold()
+        }
         if (held) {
             Log.i("PlaylistController", "playlist update parked until the interactive session ends")
             parkedUpdate = assignmentsJson to order
@@ -385,7 +393,8 @@ class PlaylistController(
                     meta = obj.optJSONObject("meta"),
                     weight = obj.optInt("weight", 1).coerceAtLeast(1),
                     transition = Transitions.parse(obj.optJSONObject("transition")),
-                    slideAudio = parseSlideAudio(obj.optJSONObject("audio"))
+                    slideAudio = parseSlideAudio(obj.optJSONObject("audio")),
+                    interrupt = obj.optBoolean("interrupt", false)
                 )
             )
         }
@@ -419,6 +428,8 @@ class PlaylistController(
             } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "") +
             "|" + (it.playWhen?.let { c -> c.type + c.path + c.op + (c.value ?: "") } ?: "") +
             "|" + it.tags.joinToString(",") + "|" + (it.meta?.toString() ?: "")
+        // Compared BEFORE items is replaced: an alert raised or cleared skips the deferral below.
+        val interruptChanged = Interrupt.changed(Interrupt.keys(items), Interrupt.keys(newItems))
         val oldContentIds = items.map(::sig)
         val newContentIds = newItems.map(::sig)
         val playlistChanged = oldContentIds != newContentIds
@@ -463,6 +474,7 @@ class PlaylistController(
                 hasContentOnScreen = hasContentOnScreen,
                 currentlyPlayingId = currentlyPlayingId,
                 newContentIds = newItems.map { it.itemKey },
+                interruptChanged = interruptChanged,
             )) {
             var succ: String? = null
             if (items.isNotEmpty()) {
@@ -477,6 +489,7 @@ class PlaylistController(
             armPendingSwapDeadline()
             return
         }
+        if (interruptChanged) Log.i("PlaylistController", "Emergency alert raised/cleared — swapping now, not at the next advance")
         // A non-deferred structural update supersedes any pending swap.
         pendingItems = null
         pendingSuccessorId = null
@@ -534,6 +547,19 @@ class PlaylistController(
         } else {
             currentIndex = 0
         }
+    }
+
+    /** The interrupt keys of a raw payload, for the hold check (which runs before parsing). */
+    private fun interruptKeysOf(arr: JSONArray): Set<String> {
+        val out = HashSet<String>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (!o.optBoolean("interrupt", false)) continue
+            val cid = if (o.isNull("content_id")) "" else o.optString("content_id", "")
+            val wid = if (o.isNull("widget_id")) "" else o.optString("widget_id", "")
+            out.add("$cid|$wid")   // itemKey's shape
+        }
+        return out
     }
 
     fun removeContent(contentId: String) {
