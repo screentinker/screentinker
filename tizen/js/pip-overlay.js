@@ -113,6 +113,10 @@ PipOverlay.prototype._buildBox = function (p) {
     media.setAttribute('scrolling', 'no');
     // Mute web audio by default: an empty allow= denies autoplay (incl. audio).
     media.setAttribute('allow', '');
+    // A third-party page over the sign keeps its own origin, forms and popups, but never
+    // allow-top-navigation: unsandboxed, it could navigate the player itself away (the same rule as
+    // the web player's PiP iframe, server/player/index.html). Set BEFORE src, so the first load is sandboxed.
+    media.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
     media.src = p.uri;
   } else { // 'image' (and any non-web MVP type defaults to image render)
     media = d.createElement('img');
