@@ -17,6 +17,17 @@ const API = (url, opts = {}) => fetch('/api' + url, { headers: { 'Content-Type':
   return r.json();
 });
 
+// Pages saved before the defaults became real emoji hold numeric entities ('&#128205;'). esc() then
+// showed the literal entity text in the icon field; decode numeric entities only (the server render
+// does the same) so the field shows - and on save, stores - the character itself.
+function decodeIcon(str) {
+  if (typeof str !== 'string') return str;
+  const cp = (n) => (Number.isInteger(n) && n > 0 && n <= 0x10FFFF && !(n >= 0xD800 && n <= 0xDFFF) ? String.fromCodePoint(n) : null);
+  return str
+    .replace(/&#(\d{1,7});/g, (m, n) => cp(Number(n)) ?? m)
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, n) => cp(parseInt(n, 16)) ?? m);
+}
+
 export async function render(container) {
   const hash = window.location.hash;
   if (hash.startsWith('#/kiosk/')) {
@@ -90,6 +101,7 @@ async function renderEditor(container, pageId) {
   try { page = await API(`/kiosk/${pageId}`); } catch { container.innerHTML = `<div class="empty-state"><h3>${t('kiosk.not_found')}</h3></div>`; return; }
 
   let config = JSON.parse(page.config || '{}');
+  if (Array.isArray(config.buttons)) config.buttons.forEach(b => { if (b && b.icon) b.icon = decodeIcon(b.icon); });
   if (!config.buttons) config.buttons = [];
   if (!config.style) config.style = {};
 
@@ -179,7 +191,7 @@ async function renderEditor(container, pageId) {
   }
 
   document.getElementById('addBtnBtn').onclick = () => {
-    config.buttons.push({ label: t('kiosk.new_button'), sublabel: '', icon: '&#11088;', action: '', url: '' });
+    config.buttons.push({ label: t('kiosk.new_button'), sublabel: '', icon: '⭐', action: '', url: '' });
     renderButtons();
   };
 

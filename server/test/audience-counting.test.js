@@ -330,6 +330,28 @@ test('the report period is a day in the VIEWER\'S time zone (UTC-5)', async () =
   assert.equal(r.body.overall.arrivals, 10);
 });
 
+test('from/to are aliases of start/end (dates in tz); a range that does not parse is a 400, never the default', async () => {
+  const D = new Date((NOW - 3 * 86400) * 1000).toISOString().slice(0, 10);
+  const localMidnight = Date.parse(`${D}T00:00:00Z`) / 1000 + 300 * 60;
+  // These used to be ignored: the report silently covered the default last 30 days instead.
+  const r = await call('GET', `/report?from=${D}&to=${D}&tz=300`, { ws: 'ws-hq' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.period.start, localMidnight);
+  assert.equal(r.body.period.end, localMidnight + 86399);
+  assert.equal(r.body.overall.arrivals, 10);
+  const csv = await call('GET', `/export.csv?from=${D}&to=${D}&tz=300`, { ws: 'ws-hq' });
+  assert.equal(csv.status, 200);
+  assert.equal(csv.body.trim().split('\n').length, 3, 'header + the two buckets of that local day');
+
+  for (const qs of ['from=nope', 'to=2026-13-45', 'from=2026-03-10&to=2026-03-01', `from=${D}&tz=abc`, `from=${D}&tz=9999`,
+    `start=${D}&from=2026-01-01`, 'from=1&from=2']) {
+    const bad = await call('GET', `/report?${qs}`, { ws: 'ws-hq' });
+    assert.equal(bad.status, 400, `${qs} -> ${JSON.stringify(bad.body)}`);
+    assert.ok(bad.body.error, qs);
+    assert.equal((await call('GET', `/export.csv?${qs}`, { ws: 'ws-hq' })).status, 400, `csv ${qs}`);
+  }
+});
+
 test('migration: an old-shaped table gains segment and observed_ms, keyed on segment, rows and indexes kept', () => {
   const { Database } = require('../db/sqlite-driver');
   const d = new Database(':memory:');

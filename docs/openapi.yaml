@@ -625,8 +625,10 @@ components:
           type: string
         start_time:
           type: string
+          description: 'Wall clock in the schedule''s timezone, "YYYY-MM-DDTHH:MM". On write, a time with Z or an offset is converted to it (400 when no zone is known).'
         end_time:
           type: string
+          description: Same format as start_time.
         timezone:
           type: string
         recurrence:
@@ -2634,9 +2636,9 @@ paths:
                 layout_id: { type: string }
                 playlist_id: { type: string }
                 title: { type: string }
-                start_time: { type: string }
-                end_time: { type: string }
-                timezone: { type: string }
+                start_time: { type: string, example: '2026-07-28T09:00', description: 'Wall clock in the schedule''s timezone, "YYYY-MM-DDTHH:MM" (no Z or offset). A time sent with Z or an offset is converted to wall clock in the schedule''s timezone (the explicit timezone, else the target screen''s); with no zone to convert to it is refused with 400.' }
+                end_time: { type: string, example: '2026-07-28T17:00', description: 'Same format and conversion as start_time.' }
+                timezone: { type: string, description: 'IANA zone. Omitted, the target screen''s (or group/wall leader''s) zone is used.' }
                 recurrence: { type: string }
                 recurrence_end: { type: string }
                 priority: { type: integer }
@@ -2647,6 +2649,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Schedule' }
+        '400': { description: 'Missing times or target, or a time with Z/an offset and no timezone to convert it to.' }
   /schedules/device/{deviceId}:
     get:
       tags: [schedules]

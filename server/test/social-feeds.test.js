@@ -312,10 +312,16 @@ test('a wall widget renders posts as data, never markup, with images from this s
   const csp = page.headers.get('content-security-policy');
   assert.match(csp, new RegExp(`img-src ${BASE.replace(/[.]/g, '\\.')} data:`));
   assert.match(csp, new RegExp(`connect-src ${BASE.replace(/[.]/g, '\\.')}`));
+  // Third-party post text must never run on this server's origin, even opened top-level: the page
+  // is sandboxed to an opaque origin, like the BI/room/CAP pages.
+  assert.match(csp, /(^|;)\s*sandbox allow-scripts\s*(;|$)/);
+  assert.doesNotMatch(csp, /allow-same-origin/);
   for (const tok of Object.values(TOKENS)) assert.ok(!html.includes(tok));
 
   const data = await api(`/api/widgets/${WIDGET}/social.json`);
   assert.equal(data.status, 200);
+  // ...so its own poll comes from origin "null": it must be readable cross-origin.
+  assert.equal(data.headers.get('access-control-allow-origin'), '*');
   assert.ok(data.body.posts.length >= 6);
   const withImg = data.body.posts.find((p) => p.m.length);
   assert.match(withImg.m[0], new RegExp(`^/api/widgets/${WIDGET}/social-media/[0-9a-f]{64}$`));

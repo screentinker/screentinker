@@ -48,7 +48,18 @@ export async function render(app) {
     el.querySelector('[data-act="edit"]')?.addEventListener('click', () => openForm(app, feed));
     el.querySelector('[data-act="refresh"]')?.addEventListener('click', async (ev) => {
       ev.target.disabled = true;
-      try { const r = await api.post(`/social/feeds/${feed.id}/refresh`, {}); showToast(t('social.refreshed', { n: r.added || 0 }), 'success'); render(app); }
+      // The fetch answers 200 even when a source failed (the others' posts still count), with the
+      // failures in `errors`. Those are named in the toast and stay on the card (last_error, redrawn
+      // by render()), so the success toast is only for a clean fetch.
+      try {
+        const r = await api.post(`/social/feeds/${feed.id}/refresh`, {});
+        const errs = Array.isArray(r.errors) ? r.errors : [];
+        if (errs.length) {
+          const list = errs.map((e) => `${NETWORK_LABELS[e.network] ? NETWORK_LABELS[e.network]() : e.network}${e.value ? ` (${e.value})` : ''}: ${e.error}`).join('; ');
+          showToast(t('social.refresh_errors', { n: r.added || 0, errors: list }), 'error', 10000);
+        } else showToast(t('social.refreshed', { n: r.added || 0 }), 'success');
+        render(app);
+      }
       catch (e) { showToast(e.message, 'error'); ev.target.disabled = false; }
     });
     el.querySelector('[data-act="del"]')?.addEventListener('click', async () => {

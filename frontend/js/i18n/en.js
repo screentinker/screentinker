@@ -4327,6 +4327,7 @@ export default {
   'social.posts': 'Posts',
   'social.refresh': 'Fetch now',
   'social.refreshed': 'Fetched — {n} new',
+  'social.refresh_errors': 'Fetched — {n} new, but some sources failed: {errors}',
   'social.confirm_delete_feed': 'Delete this feed and its stored posts?',
   'social.off': 'paused',
   'social.mode_auto': 'Show new posts automatically',

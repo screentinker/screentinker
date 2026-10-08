@@ -12,6 +12,19 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Button icons are emoji. The defaults used to be stored as numeric HTML entities ('&#128205;'),
+// which escapeHtml() then rendered as the literal text "&#128205;" on the screen and in the editor.
+// New defaults are real characters; pages already saved with entity strings are decoded here, before
+// escaping. Only NUMERIC entities are decoded (to a valid code point) - everything else, '<' and named
+// entities included, still goes through escapeHtml() untouched.
+function decodeNumericEntities(str) {
+  if (typeof str !== 'string') return str;
+  const cp = (n) => (Number.isInteger(n) && n > 0 && n <= 0x10FFFF && !(n >= 0xD800 && n <= 0xDFFF) ? String.fromCodePoint(n) : null);
+  return str
+    .replace(/&#(\d{1,7});/g, (m, n) => cp(Number(n)) ?? m)
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, n) => cp(parseInt(n, 16)) ?? m);
+}
+
 // Validate CSS color values to prevent style injection
 function safeColor(val, fallback) {
   if (!val) return fallback;
@@ -155,7 +168,7 @@ router.get('/:id/render', (req, res) => {
     <div class="button-grid">
       ${buttons.map(btn => `
         <div class="kiosk-btn" data-action="${escapeHtml(btn.action) || ''}" data-url="${escapeHtml(btn.url) || ''}" data-page="${escapeHtml(btn.page) || ''}">
-          ${btn.icon ? `<div class="icon">${escapeHtml(btn.icon)}</div>` : ''}
+          ${btn.icon ? `<div class="icon">${escapeHtml(decodeNumericEntities(btn.icon))}</div>` : ''}
           <div class="label">${escapeHtml(btn.label) || 'Button'}</div>
           ${btn.sublabel ? `<div class="sublabel">${escapeHtml(btn.sublabel)}</div>` : ''}
         </div>
@@ -265,12 +278,12 @@ function getDefaultKioskConfig() {
     idleSubtitle: '',
     idleTimeout: 60,
     buttons: [
-      { label: 'Directory', sublabel: 'Find a location', icon: '&#128205;', action: 'page', page: '' },
-      { label: 'Events', sublabel: 'See what\'s happening', icon: '&#128197;', action: 'page', page: '' },
-      { label: 'Map', sublabel: 'Building map', icon: '&#128506;', action: 'page', page: '' },
-      { label: 'Contact', sublabel: 'Get in touch', icon: '&#128222;', action: 'page', page: '' },
-      { label: 'WiFi', sublabel: 'Connect to WiFi', icon: '&#128246;', action: 'page', page: '' },
-      { label: 'Help', sublabel: 'Need assistance?', icon: '&#10068;', action: 'page', page: '' },
+      { label: 'Directory', sublabel: 'Find a location', icon: '📍', action: 'page', page: '' },
+      { label: 'Events', sublabel: 'See what\'s happening', icon: '📅', action: 'page', page: '' },
+      { label: 'Map', sublabel: 'Building map', icon: '🗺️', action: 'page', page: '' },
+      { label: 'Contact', sublabel: 'Get in touch', icon: '📞', action: 'page', page: '' },
+      { label: 'WiFi', sublabel: 'Connect to WiFi', icon: '📶', action: 'page', page: '' },
+      { label: 'Help', sublabel: 'Need assistance?', icon: '❔', action: 'page', page: '' },
     ],
     style: {
       background: 'linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #16213e 100%)',
@@ -290,3 +303,4 @@ function getDefaultKioskConfig() {
 }
 
 module.exports = router;
+module.exports.decodeNumericEntities = decodeNumericEntities;

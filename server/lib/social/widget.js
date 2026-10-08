@@ -104,9 +104,13 @@ function cachedPayload(db, widget, config, nowMs = Date.now()) {
 const jsonForScript = (o) => JSON.stringify(o).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
   .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
+// `sandbox allow-scripts` (no allow-same-origin), like the BI, room and CAP pages: the wall draws
+// third-party post text, so opened top-level it must not run on this server's origin (the dashboard's
+// storage and cookies). From the opaque origin its own fetches still work: social.json answers
+// ACAO * and the cached images CORP cross-origin (routes/widgets.js liveSocialWidget).
 function csp(origin) {
   const o = origin || "'self'";
-  return `default-src 'none'; img-src ${o} data:; connect-src ${o}; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`;
+  return `default-src 'none'; img-src ${o} data:; connect-src ${o}; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox allow-scripts`;
 }
 
 /**

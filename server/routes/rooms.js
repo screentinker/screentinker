@@ -26,6 +26,7 @@ const graph = require('../lib/rooms/graph');
 const google = require('../lib/rooms/google');
 const { RoomSourceError } = require('../lib/rooms/http');
 const { checkHttpUrl } = require('../lib/data-sources/http');
+const { SsrfError, GuardedRequestError } = require('../lib/ssrf-guard');
 
 const audit = (req, action, details) => logActivity(req.user.id, action, details, null, getClientIp(req), req.workspaceId || null);
 const str = (v, max = 300) => (v == null ? '' : String(v).trim().slice(0, max));
@@ -34,8 +35,31 @@ const bool01 = (v) => (v === true || v === 1 || v === '1' || v === 'true' ? 1 : 
 // An async handler's failure goes to sendErr, not to an unhandled rejection (Express 4).
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => { if (!res.headersSent) sendErr(res, e); });
 
+/*
+ * An ICS calendar is read through the iCal resolver (lib/rooms/ics.js), which throws the SSRF guard's
+ * own errors, not RoomSourceError. Those are an admin's address being refused or failing, never a
+ * server fault: say which, instead of a generic 500. `status` is what sendErr answers.
+ */
+function icsSourceError(e) {
+  if (e instanceof SsrfError) {
+    const r = String(e.reason || '');
+    let msg = 'This server will not fetch that calendar address.';
+    if (r === 'dns-fail') msg = 'The calendar address’s host could not be found.';
+    else if (r === 'bad-url' || r === 'bad-scheme' || r === 'userinfo') msg = 'The calendar address must be a plain http:// or https:// URL.';
+    else if (r.startsWith('blocked-ip') || r === 'no-address') msg = 'The calendar address points at a private or internal network address, which this server will not fetch.';
+    return { status: 400, message: msg, code: 'ssrf' };
+  }
+  if (e instanceof GuardedRequestError) return { status: 502, message: `${e.message}.`, code: e.code || 'upstream' };
+  if (e && /^Remote calendar data could not be parsed/.test(e.message || '')) {
+    return { status: 502, message: 'The calendar address did not return a calendar (ICS) file.', code: 'bad-ics' };
+  }
+  return null;
+}
+
 function sendErr(res, e) {
   if (e instanceof RoomSourceError || e instanceof svc.ActionError) return res.status(e.status || 400).json({ error: e.message, code: e.code || null });
+  const src = icsSourceError(e);
+  if (src) return res.status(src.status).json({ error: src.message, code: src.code });
   console.error('[rooms]', e && e.message);
   return res.status(500).json({ error: 'Something went wrong with the room calendar' });
 }
@@ -153,6 +177,8 @@ router.post('/connections/:id/test', async (req, res) => {
     res.json(await svc.adapterOf(conn.kind).test(conn));
   } catch (e) {
     if (e instanceof RoomSourceError) return res.json({ ok: false, error: e.message });
+    const src = icsSourceError(e);
+    if (src) return res.json({ ok: false, error: src.message, code: src.code });
     sendErr(res, e);
   }
 });
@@ -344,8 +370,11 @@ router.post('/:id/test', async (req, res) => {
     res.json({ ok: true, events: day.events.length, busy: st.busy, free_until: st.freeUntil, busy_until: st.busyUntil });
   } catch (e) {
     if (e instanceof RoomSourceError) return res.json({ ok: false, error: e.message });
+    const src = icsSourceError(e);
+    if (src) return res.json({ ok: false, error: src.message, code: src.code });
     sendErr(res, e);
   }
 });
 
 module.exports = router;
+module.exports.sendErr = sendErr; // tests
