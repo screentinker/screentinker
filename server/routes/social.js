@@ -160,6 +160,7 @@ router.delete('/feeds/:id', (req, res) => {
     db.prepare('DELETE FROM social_posts WHERE feed_id = ?').run(row.id);
     db.prepare('DELETE FROM social_feeds WHERE id = ?').run(row.id);
   })();
+  feeds.touch(row.id);
   audit(req, 'social_feed.delete', { feed_id: row.id, name: row.name });
   res.json({ success: true });
 });

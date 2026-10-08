@@ -9,16 +9,25 @@
  *
  * MODERATION
  *   - mode 'auto': a new post is shown at once; 'approve': it waits in the dashboard's queue.
- *   - a post matching the blocklist is hidden on arrival.
- *   - ⚠️ A HIDDEN POST STAYS HIDDEN. Refetching never changes a post's status — only a person does.
- *     Its row is kept precisely so the next fetch recognises it: with its content for 30 days (so a
- *     moderator can review and undo), then as a bare marker for up to 90 days after it was last seen.
+ *   - a post matching the blocklist (its text, author name or handle) is hidden on arrival, when a
+ *     refetch shows it was edited to match, and when the blocklist is saved (every stored post of
+ *     the feed is checked again). Matching folds look-alikes first: see fold().
+ *   - on an 'approve' feed, an approved post whose text or images change at the source goes back to
+ *     the queue: what was approved is not what it says any more.
+ *   - ⚠️ A HIDDEN POST STAYS HIDDEN. Refetching never makes a hidden post visible — only a person
+ *     does. Its row is kept precisely so the next fetch recognises it: with its content for 30 days
+ *     (so a moderator can review and undo), then as a bare marker for up to 90 days after it was last
+ *     seen. Nothing but that 90-day prune deletes a hidden row.
  *   - "only posts with images" and "max age" are filters at display time, so changing them takes
  *     effect at once without refetching.
  *
  * DELETED AT THE SOURCE: when a source answers, a stored post from it that falls inside the window
  * the answer covers but is missing from it was deleted (or made private) by its author, and is
- * purged — the wall must not keep showing something its author took down.
+ * purged — the wall must not keep showing something its author took down. A hidden post is not
+ * deleted but kept as a content-less marker (see above). Two kinds of answer are trusted less:
+ *   - an EMPTY answer purges only once the source has answered empty EMPTY_CONFIRMATIONS fetches in
+ *     a row (a transient `{data:[]}` from an API must not empty the wall);
+ *   - a time-windowed search (networks.js windowSec) only vouches for posts inside its window.
  *
  * ⚠️ ONE FETCH PER FEED, CLUSTER-WIDE: a fetch begins by moving next_fetch_at forward in a
  * conditional UPDATE, so of several server nodes only the one whose UPDATE changed the row fetches.
@@ -34,6 +43,9 @@ const MAX_SOURCES = 10;
 const MAX_TEXT = 1000;
 const TICK_MS = 60 * 1000;
 const MAX_BACKOFF_SEC = 2 * 3600;
+const EMPTY_CONFIRMATIONS = 3;
+// A windowed search's edge is fuzzy (clock skew, posted vs indexed time): purge well inside it.
+const WINDOW_MARGIN_SEC = 3600;
 
 class InputError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -120,12 +132,17 @@ function create(db, workspaceId, userId, input) {
 }
 
 function update(db, row, input) {
+  const blocklistChanged = JSON.stringify(input.blocklist) !== JSON.stringify(parse(row.blocklist, []));
   db.prepare(`UPDATE social_feeds SET name = ?, sources = ?, moderation = ?, blocklist = ?, require_media = ?, max_age_days = ?,
       max_posts = ?, refresh_min = ?, enabled = ?, next_fetch_at = CASE WHEN sources != ? THEN 0 ELSE next_fetch_at END,
       updated_at = MAX(updated_at + 1, strftime('%s','now')) WHERE id = ?`)
     .run(input.name, JSON.stringify(input.sources), input.moderation, JSON.stringify(input.blocklist), input.require_media,
       input.max_age_days, input.max_posts, input.refresh_min, input.enabled, JSON.stringify(input.sources), row.id);
-  return db.prepare('SELECT * FROM social_feeds WHERE id = ?').get(row.id);
+  const next = db.prepare('SELECT * FROM social_feeds WHERE id = ?').get(row.id);
+  // A post older than the networks' answers reach is never refetched, so it is checked here.
+  if (blocklistChanged) recheckBlocklist(db, next);
+  touch(row.id);
+  return next;
 }
 
 function present(row, db) {
@@ -147,20 +164,76 @@ function forWorkspace(db, workspaceId, id) {
 
 /* -------------------------------------- ingest -------------------------------------- */
 
+/*
+ * What the blocklist compares: text with its look-alikes folded together, so a word cannot be
+ * slipped past it by writing it differently. Invisible format characters go (zero-width space,
+ * ZWNJ/ZWJ, word joiner, BOM, soft hyphen, bidi controls: "b\u200bad"); NFKC folds compatibility
+ * forms (fullwidth "ｂａｄ", math bold "𝐛𝐚𝐝", ligatures); diacritics are dropped ("bád"). The words
+ * are folded the same way, so an entry typed with an accent still matches.
+ */
+function fold(s) {
+  return String(s || '').replace(/\p{Cf}/gu, '').normalize('NFKC').toLowerCase()
+    .normalize('NFD').replace(/\p{M}/gu, '').normalize('NFC');
+}
+
 /** Whole-word, case-insensitive match against the blocklist (also matches #word and @word). */
 function blocked(text, words) {
   if (!words || !words.length) return false;
-  const hay = ` ${String(text || '').toLowerCase()} `;
-  return words.some((w) => {
+  const hay = ` ${fold(text)} `;
+  return words.some((raw) => {
+    const w = fold(raw).trim();
+    if (!w) return false;
     const esc = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^\\p{L}\\p{N}_])[#@]?${esc}($|[^\\p{L}\\p{N}_])`, 'u').test(hay);
   });
 }
 
 // Controls and stray markup are not ours to keep: the wall renders text with textContent, and this
-// keeps the stored copy plain too.
-const cleanText = (s) => String(s || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f‪-‮⁦-⁩]/g, '').slice(0, MAX_TEXT);
+// keeps the stored copy plain too. So are zero-width space, word joiner, BOM and soft hyphen:
+// invisible, and only ever useful for hiding a word. ZWNJ/ZWJ stay, because they shape scripts and
+// join emoji (the blocklist ignores them anyway, see fold).
+const cleanText = (s) => String(s || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u00ad\u200b\u2060\ufeff‪-‮⁦-⁩]/g, '').slice(0, MAX_TEXT);
 const cleanShort = (s, n = 120) => cleanText(s).replace(/\s+/g, ' ').trim().slice(0, n);
+
+const blockedPost = (text, name, handle, words) => blocked(`${text || ''} ${name || ''} ${handle || ''}`, words);
+
+/** What a post shows: its text and its images (by cache key, so a re-signed CDN URL is no change). */
+const contentHash = (text, urls) => crypto.createHash('sha1')
+  .update(JSON.stringify([text, (urls || []).slice(0, 4).map((u) => media.cacheKey(u))])).digest('hex').slice(0, 24);
+
+/*
+ * Screens' copy of a feed (lib/social/widget.js caches each wall's answer for a few seconds) is
+ * keyed on this in-process revision, so a moderator's change on THIS node shows on the next poll.
+ * Another node's change shows once that short cache expires.
+ */
+const revs = new Map();
+function touch(feedId) {
+  if (revs.size > 10000) revs.clear();
+  revs.set(feedId, (revs.get(feedId) || 0) + 1);
+}
+const contentRev = (feedId) => revs.get(feedId) || 0;
+
+/** Hide every stored post of a feed that its blocklist matches. Returns how many. */
+function recheckBlocklist(db, feed) {
+  const words = parse(feed.blocklist, []);
+  if (!words.length) return 0;
+  const rows = db.prepare("SELECT network, post_id, text, author_name, author_handle FROM social_posts WHERE feed_id = ? AND status != 'hidden'").all(feed.id);
+  const hide = db.prepare(`UPDATE social_posts SET status = 'hidden', hidden_reason = 'blocklist', text = NULL, media = '[]', author_avatar = NULL
+      WHERE feed_id = ? AND network = ? AND post_id = ?`);
+  let n = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      if (!blockedPost(r.text, r.author_name, r.author_handle, words)) continue;
+      hide.run(feed.id, r.network, r.post_id);
+      n++;
+    }
+  })();
+  if (n) touch(feed.id);
+  return n;
+}
+
+// Consecutive empty answers per source (in memory: a restart or another node only delays a purge).
+const emptyAnswers = new Map();
 
 /**
  * Store one source's answer. Returns { added, updated, purged }.
@@ -172,7 +245,7 @@ async function ingest(db, feed, source, result, cacheImage) {
   const t = now();
   let added = 0; let updated = 0;
   const seen = new Set();
-  const getRow = db.prepare('SELECT status FROM social_posts WHERE feed_id = ? AND network = ? AND post_id = ?');
+  const getRow = db.prepare('SELECT status, content_hash FROM social_posts WHERE feed_id = ? AND network = ? AND post_id = ?');
   for (const p of (result.posts || []).slice(0, 50)) {
     if (!p || !p.post_id) continue;
     const postId = String(p.post_id).slice(0, 200);
@@ -184,7 +257,15 @@ async function ingest(db, feed, source, result, cacheImage) {
     }
     const text = cleanText(p.text);
     const author = p.author || {};
-    const isBlocked = blocked(`${text} ${author.name || ''} ${author.handle || ''}`, words);
+    const isBlocked = blockedPost(text, author.name, author.handle, words);
+    if (existing && isBlocked) {
+      // Edited at the source to match the blocklist (or the author renamed): hidden, as on arrival.
+      db.prepare(`UPDATE social_posts SET status = 'hidden', hidden_reason = 'blocklist', text = NULL, media = '[]', author_avatar = NULL,
+          last_seen_at = ? WHERE feed_id = ? AND network = ? AND post_id = ?`).run(t, feed.id, source.network, postId);
+      updated++;
+      continue;
+    }
+    const hash = contentHash(text, p.media);
     // Images are only fetched for something that will be kept visible or queued.
     const mediaHashes = [];
     if (!isBlocked) {
@@ -195,25 +276,49 @@ async function ingest(db, feed, source, result, cacheImage) {
       JSON.stringify(mediaHashes), p.is_video ? 1 : 0, typeof p.permalink === 'string' && /^https:\/\//.test(p.permalink) ? p.permalink.slice(0, 500) : null,
       Number.isFinite(p.posted_at) ? Math.floor(p.posted_at) : t];
     if (existing) {
+      // On an 'approve' feed an edited post is a new thing to approve. A row from before content
+      // hashes were kept (NULL) just records its hash.
+      const requeue = feed.moderation === 'approve' && existing.status === 'approved' && existing.content_hash != null && existing.content_hash !== hash;
       db.prepare(`UPDATE social_posts SET author_name = ?, author_handle = ?, author_avatar = ?, text = ?, media = ?, is_video = ?, permalink = ?,
-          posted_at = ?, last_seen_at = ? WHERE feed_id = ? AND network = ? AND post_id = ?`).run(...fields, t, feed.id, source.network, postId);
+          posted_at = ?, last_seen_at = ?, content_hash = ?, status = CASE WHEN ? THEN 'pending' ELSE status END
+          WHERE feed_id = ? AND network = ? AND post_id = ?`).run(...fields, t, hash, requeue ? 1 : 0, feed.id, source.network, postId);
       updated++;
     } else {
       const status = isBlocked ? 'hidden' : (feed.moderation === 'approve' ? 'pending' : 'approved');
       db.prepare(`INSERT INTO social_posts (feed_id, network, post_id, source_key, status, hidden_reason, author_name, author_handle, author_avatar,
-          text, media, is_video, permalink, posted_at, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(feed.id, source.network, postId, key, status, isBlocked ? 'blocklist' : null, ...fields, t, t);
+          text, media, is_video, permalink, posted_at, first_seen_at, last_seen_at, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(feed.id, source.network, postId, key, status, isBlocked ? 'blocklist' : null, ...fields, t, t, isBlocked ? null : hash);
       added++;
     }
   }
-  // Deleted at the source: missing from an answer that covers its time.
+  // Deleted at the source: missing from an answer that covers its time (see the header).
   let purged = 0;
   const returned = (result.posts || []).filter((p) => p && p.post_id);
-  if (returned.length || result.complete) {
-    const oldest = result.complete ? -Infinity : Math.min(...returned.map((p) => (Number.isFinite(p.posted_at) ? p.posted_at : t)));
-    const stored = db.prepare('SELECT post_id, posted_at FROM social_posts WHERE feed_id = ? AND network = ? AND source_key = ?').all(feed.id, source.network, key);
+  const streakKey = `${feed.id}:${key}`;
+  let from = null; // a stored post at or after this time that the answer lacks was deleted
+  if (returned.length) {
+    emptyAnswers.delete(streakKey);
+    from = result.complete ? -Infinity : Math.min(...returned.map((p) => (Number.isFinite(p.posted_at) ? p.posted_at : t)));
+  } else if (result.complete) {
+    if (emptyAnswers.size > 10000) emptyAnswers.clear();
+    const n = (emptyAnswers.get(streakKey) || 0) + 1;
+    emptyAnswers.set(streakKey, n);
+    if (n >= EMPTY_CONFIRMATIONS) from = -Infinity;
+  }
+  if (from !== null && result.windowSec > 0) from = Math.max(from, t - result.windowSec + WINDOW_MARGIN_SEC);
+  if (from !== null) {
+    const stored = db.prepare('SELECT post_id, posted_at, status, text, media FROM social_posts WHERE feed_id = ? AND network = ? AND source_key = ?').all(feed.id, source.network, key);
     for (const r of stored) {
-      if (seen.has(r.post_id) || r.posted_at < oldest) continue;
+      if (seen.has(r.post_id) || r.posted_at < from) continue;
+      if (r.status === 'hidden') {
+        // ⚠️ Never deleted here: the marker is what keeps it hidden if it comes back (a Mastodon
+        // content warning lifted, an API answer that briefly left it out). Its content goes.
+        if (r.text !== null || (r.media && r.media !== '[]')) {
+          db.prepare("UPDATE social_posts SET text = NULL, media = '[]', author_avatar = NULL WHERE feed_id = ? AND network = ? AND post_id = ?")
+            .run(feed.id, source.network, r.post_id);
+        }
+        continue;
+      }
       db.prepare('DELETE FROM social_posts WHERE feed_id = ? AND network = ? AND post_id = ?').run(feed.id, source.network, r.post_id);
       purged++;
     }
@@ -265,6 +370,7 @@ function moderate(db, feed, network, postId, action) {
       // the next fetch bring it back as a new post.
       db.prepare('DELETE FROM social_posts WHERE feed_id = ? AND network = ? AND post_id = ?').run(feed.id, network, postId);
       db.prepare('UPDATE social_feeds SET next_fetch_at = 0 WHERE id = ?').run(feed.id);
+      touch(feed.id);
       return { ...row, status: 'refetch' };
     }
     db.prepare("UPDATE social_posts SET status = 'approved', hidden_reason = NULL WHERE feed_id = ? AND network = ? AND post_id = ?").run(feed.id, network, postId);
@@ -273,6 +379,7 @@ function moderate(db, feed, network, postId, action) {
     db.prepare(`UPDATE social_posts SET status = 'hidden', hidden_reason = 'moderator', first_seen_at = ?
         WHERE feed_id = ? AND network = ? AND post_id = ?`).run(now(), feed.id, network, postId);
   } else return null;
+  touch(feed.id);
   return db.prepare('SELECT * FROM social_posts WHERE feed_id = ? AND network = ? AND post_id = ?').get(feed.id, network, postId);
 }
 
@@ -292,17 +399,28 @@ function claim(db, feed, force) {
   return r.changes === 1;
 }
 
+/*
+ * ⚠️ Both writes are conditional on the token being the one this refresh started from: an admin
+ * may paste a new token while the refresh is in flight, and theirs wins. The fetch then uses the
+ * row as it is now.
+ */
 async function refreshConnectionToken(db, conn) {
+  const current = () => {
+    const row = db.prepare('SELECT * FROM social_connections WHERE id = ?').get(conn.id);
+    return row ? { ...row, config: connections.parseConfig(row.config) } : conn;
+  };
   try {
     const out = await networks.refreshInstagramToken(conn);
     if (!out) return conn;
     const encd = require('../secretbox').encrypt(out.token);
-    db.prepare('UPDATE social_connections SET secret_enc = ?, token_expires_at = ?, token_refreshed_at = ?, last_error = NULL WHERE id = ?')
-      .run(encd, out.expiresAt, now(), conn.id);
+    const r = db.prepare('UPDATE social_connections SET secret_enc = ?, token_expires_at = ?, token_refreshed_at = ?, last_error = NULL WHERE id = ? AND secret_enc IS ?')
+      .run(encd, out.expiresAt, now(), conn.id, conn.secret_enc);
+    if (r.changes !== 1) return current();
     return { ...conn, secret_enc: encd, token_expires_at: out.expiresAt, token_refreshed_at: now() };
   } catch (e) {
-    db.prepare('UPDATE social_connections SET last_error = ? WHERE id = ?').run(`token refresh failed: ${String(e.message).slice(0, 200)}`, conn.id);
-    return conn; // the current token may still be good for weeks
+    const r = db.prepare('UPDATE social_connections SET last_error = ? WHERE id = ? AND secret_enc IS ?')
+      .run(`token refresh failed: ${String(e.message).slice(0, 200)}`, conn.id, conn.secret_enc);
+    return r.changes === 1 ? conn : current(); // the current token may still be good for weeks
   }
 }
 
@@ -352,8 +470,8 @@ async function fetchFeed(db, feedId, { force = false, cacheImage = null } = {}) 
   }
 }
 
-/** Screens poll /social.json, so a change needs no push; this is a hook for future use. */
-function notifyScreens() { /* walls poll their data every two minutes */ }
+/** Screens poll /social.json, so a change needs no push: it only has to miss the walls' short cache. */
+function notifyScreens(_db, feedId) { touch(feedId); }
 
 /** Feeds shown by at least one widget, or touched recently in the dashboard. */
 function dueFeeds(db) {
@@ -379,6 +497,7 @@ function start(ioRef) {
 
 module.exports = {
   MODES, MAX_SOURCES, InputError, normaliseInput, normaliseSource, sourceKey, normaliseBlocklist, create, update, present, forWorkspace,
-  blocked, ingest, prune, visiblePosts, presentPost, moderate, fetchFeed, claim, tick, start, dueFeeds,
+  blocked, fold, ingest, prune, visiblePosts, presentPost, moderate, fetchFeed, claim, tick, start, dueFeeds,
+  recheckBlocklist, contentHash, touch, contentRev, refreshConnectionToken, EMPTY_CONFIRMATIONS,
   _io: () => io,
 };

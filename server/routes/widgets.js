@@ -500,9 +500,34 @@ function socialConfigOrError(workspaceId, config) {
 
 /*
  * ⚠️ PUBLIC, LIKE /render: a wall's page is a null-origin frame and cannot carry a session. What
- * they hand out is what the wall shows anyway — its visible posts, and the images those posts use —
- * and both are bounded per widget.
+ * they hand out is what the wall shows anyway — its visible posts, and the images those posts use.
+ *
+ * Bounded per CALLER and, much more generously, per widget. A single per-widget budget was a budget
+ * for the whole fleet: past ~120 screens on one wall, polls got 429 and screens kept stale posts.
+ * The per-caller cap is per address, and so per SITE behind a NAT (signage egresses through one
+ * address), which is why it is sized for a large venue rather than one screen. The answer itself
+ * comes from a short server-side cache (lib/social/widget.js cachedPayload), so a big fleet costs
+ * one feed query per interval whatever these allow.
  */
+const socialLimiter = require('../lib/bounded-snapshot-store').createStore({ max: 20000, ttlMs: 60_000 });
+const SOCIAL_LIMITS = {
+  data: { caller: 600, widget: 30000 },   // a screen polls every 2 minutes: 600/min is ~1200 screens behind one address
+  media: { caller: 3000, widget: 120000 }, // a wall's first load is up to ~50 images per screen
+};
+function socialRateLimited(req, kind, widgetId) {
+  const hit = (key, max) => {
+    const win = socialLimiter.get(key) || { receivedAt: Date.now(), n: 0 };
+    win.n += 1;
+    socialLimiter.set(key, win);
+    return win.n > max;
+  };
+  const lim = SOCIAL_LIMITS[kind];
+  const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+  // The caller's own budget first: one noisy address must not spend the wall's.
+  if (hit(`${kind}:${widgetId}:${ip}`, lim.caller)) return true;
+  return hit(`${kind}:${widgetId}`, lim.widget);
+}
+
 function liveSocialWidget(req, res) {
   const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
   res.removeHeader('X-Frame-Options');
@@ -518,8 +543,8 @@ router.get('/:id/social.json', (req, res) => {
   const got = liveSocialWidget(req, res);
   if (!got) return;
   res.setHeader('Cache-Control', 'no-store');
-  if (biRateLimited(`soc:${got.widget.id}`, 60)) return res.status(429).json({ error: 'Too many requests' });
-  res.json(require('../lib/social/widget').payload(db, got.widget, got.config));
+  if (socialRateLimited(req, 'data', got.widget.id)) return res.status(429).json({ error: 'Too many requests' });
+  res.json(require('../lib/social/widget').cachedPayload(db, got.widget, got.config));
 });
 
 router.get('/:id/social-media/:hash', (req, res) => {
@@ -528,7 +553,7 @@ router.get('/:id/social-media/:hash', (req, res) => {
   const media = require('../lib/social/media');
   const hash = String(req.params.hash || '');
   if (!media.HASH_RE.test(hash)) return res.status(404).end();
-  if (biRateLimited(`socimg:${got.widget.id}`, 600)) return res.status(429).end();
+  if (socialRateLimited(req, 'media', got.widget.id)) return res.status(429).end();
   // Only an image one of THIS wall's visible posts uses: this is not a general file server.
   const feedId = String(got.config.feed_id || '');
   const used = db.prepare(`SELECT 1 FROM social_posts p JOIN social_feeds f ON f.id = p.feed_id
@@ -814,7 +839,8 @@ router.get('/:id/render', (req, res) => {
    * CSP keeps images and data to this server, so a screen never talks to a social network.
    */
   if (widget.widget_type === 'social') {
-    const out = require('../lib/social/widget').render(db, widget, config, { origin: `${req.protocol}://${req.get('host')}` });
+    // A rev-pinned page is cached for a year: it must carry no posts (lib/social/widget.js header).
+    const out = require('../lib/social/widget').render(db, widget, config, { origin: `${req.protocol}://${req.get('host')}`, seed: !req.query.rev });
     res.setHeader('Content-Security-Policy', out.csp);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');

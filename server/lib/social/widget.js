@@ -3,8 +3,14 @@
 /*
  * The 'social' widget: a social wall showing one of the workspace's social feeds.
  *
- * The page carries the posts it had when it was rendered (so a cached copy still shows something
- * with the network down) and polls /api/widgets/:id/social.json for newer ones. Images come from
+ * ⚠️ A CACHEABLE PAGE CARRIES NO POSTS. A rev-pinned /render is cached for a year (and by the
+ * player), and its rev is the WIDGET's revision: hiding a post, a deletion at the source or a
+ * refetch does not change it. Posts baked into that page would come back on every load, hidden or
+ * not. So that page asks /api/widgets/:id/social.json at once (retrying every 15 s until it gets an
+ * answer, then every 2 minutes) and only ever shows what the server says now. While it stays
+ * loaded it keeps its last answer through an outage; a screen that RELOADS it offline shows the
+ * title and no posts rather than posts that may since have been hidden. Only the uncacheable
+ * (no-rev) page is seeded with posts. Images come from
  * /api/widgets/:id/social-media/<hash> — this server's cached copies; a screen never fetches from a
  * social network, and the page's CSP says so (img-src and connect-src are this origin only).
  *
@@ -76,6 +82,25 @@ function payload(db, widget, config) {
   return { posts: feeds.visiblePosts(db, feed).map((r) => payloadPost(widget.id, r)), configured: true, title: config.title || '' };
 }
 
+/*
+ * Every screen showing a wall polls the same answer, so it is built once per PAYLOAD_TTL_MS per
+ * widget: a fleet costs one feed query per interval, not one per screen. It is also keyed on the
+ * feed's content revision (feeds.touch), so a hide on this node shows on the very next poll; a
+ * change made on another node shows once the entry expires.
+ */
+const PAYLOAD_TTL_MS = 15 * 1000;
+const payloadCache = new Map();
+function cachedPayload(db, widget, config, nowMs = Date.now()) {
+  const feedId = config && config.feed_id ? String(config.feed_id) : '';
+  const key = `${widget.updated_at}|${widget.config}|${feeds.contentRev(feedId)}`;
+  const hit = payloadCache.get(widget.id);
+  if (hit && hit.key === key && nowMs - hit.at < PAYLOAD_TTL_MS) return hit.body;
+  const body = payload(db, widget, config);
+  if (payloadCache.size > 5000) payloadCache.clear();
+  payloadCache.set(widget.id, { key, at: nowMs, body });
+  return body;
+}
+
 const jsonForScript = (o) => JSON.stringify(o).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
   .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
@@ -84,12 +109,19 @@ function csp(origin) {
   return `default-src 'none'; img-src ${o} data:; connect-src ${o}; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`;
 }
 
-/** The wall page. `origin` is this server, for the CSP and for absolute data/image URLs. */
-function render(db, widget, rawConfig, { origin = '', sample = null, poll = true } = {}) {
+/**
+ * The wall page. `origin` is this server, for the CSP and for absolute data/image URLs. `seed: false`
+ * for a page that may be cached (a rev-pinned /render): it then carries no posts (see the header).
+ */
+function render(db, widget, rawConfig, { origin = '', sample = null, poll = true, seed = true } = {}) {
   let config;
   try { config = normaliseConfig(db, widget.workspace_id, rawConfig); } catch { config = null; }
   if (!config && sample) config = displayOptions(rawConfig);
-  const data = sample ? { posts: sample, configured: true } : (config ? payload(db, widget, config) : { posts: [], configured: false });
+  const seeded = !!sample || seed || !poll || !config; // an unconfigured wall has no posts to go stale
+  let data;
+  if (sample) data = { posts: sample, configured: true };
+  else if (!config) data = { posts: [], configured: false };
+  else data = seeded ? payload(db, widget, config) : { posts: [], configured: true };
   const cfg = config ? {
     layout: config.layout, interval: config.interval_sec, columns: config.columns, showAuthor: config.show_author, showTime: config.show_time,
     title: config.title, accent: config.accent,
@@ -148,6 +180,8 @@ body.ticker-mode #app{padding:0}
 (function(){
   var seed = JSON.parse(document.getElementById('seed').textContent);
   var cfg = seed.cfg, posts = seed.data.posts || [], configured = seed.data.configured;
+  // Unseeded (a cacheable page): nothing is known until the first answer, so not even "no posts".
+  var loaded = ${seeded ? 'true' : 'false'};
   var NETS = ${JSON.stringify(NETWORK_LABELS)};
   var ORIGIN = ${JSON.stringify(origin)};
   var WID = ${JSON.stringify(String(widget.id))};
@@ -220,22 +254,29 @@ body.ticker-mode #app{padding:0}
   function draw(){
     clear();
     var t = document.getElementById('title'); if (cfg.title && cfg.layout !== 'ticker') { t.textContent = cfg.title; t.style.display = 'block'; }
-    if (!posts.length) return empty();
+    if (!posts.length) return loaded ? empty() : null;
     document.body.classList.toggle('ticker-mode', cfg.layout === 'ticker');
     if (cfg.layout === 'grid') grid(); else if (cfg.layout === 'ticker') ticker(); else carousel();
   }
+  // What is on screen. Media are this server's content-addressed URLs, stable across refetches
+  // (lib/social/media.js cacheKey), so an unchanged post never redraws the wall.
+  function sigOf(list){ return (list || []).map(function(p){ return [p.k, p.t, p.a, p.h, p.av, (p.m || []).join(',')].join('\u0001'); }).join('\u0002'); }
+  function later(){ setTimeout(poll, loaded ? 120000 : 15000); }
   function poll(){
+    var x;
     try {
-      var x = new XMLHttpRequest(); x.open('GET', ORIGIN + '/api/widgets/' + encodeURIComponent(WID) + '/social.json'); x.timeout = 20000;
-      x.onload = function(){ if (x.status !== 200) return; try { var d = JSON.parse(x.responseText); var s = (d.posts || []).map(function(p){ return p.k + p.t.length + (p.m || []).join(); }).join('|');
-        if (s !== sig) { sig = s; posts = d.posts || []; configured = d.configured; draw(); } } catch (e) {} };
+      x = new XMLHttpRequest(); x.open('GET', ORIGIN + '/api/widgets/' + encodeURIComponent(WID) + '/social.json'); x.timeout = 20000;
+      x.onload = function(){ if (x.status !== 200) return; try { var d = JSON.parse(x.responseText); var s = sigOf(d.posts);
+        var first = !loaded; loaded = true;
+        if (s !== sig || first) { sig = s; posts = d.posts || []; configured = d.configured; draw(); } } catch (e) {} };
+      x.onloadend = later;
       x.send();
-    } catch (e) {}
+    } catch (e) { later(); }
   }
-  sig = posts.map(function(p){ return p.k + p.t.length + (p.m || []).join(); }).join('|');
+  sig = sigOf(posts);
   draw();
   // Keeps what it has when the server is unreachable: only a successful answer replaces the posts.
-  if (${poll ? 'true' : 'false'} && WID) setInterval(poll, 120000);
+  if (${poll ? 'true' : 'false'} && WID) { if (loaded) setTimeout(poll, 120000); else poll(); }
 })();
 </script></body></html>`;
   return { html, csp: csp(origin) };
@@ -284,4 +325,4 @@ function previewHtml(config) {
   return render(fakeDb, { id: 'preview', workspace_id: null }, config, { origin: '', sample }).html;
 }
 
-module.exports = { LAYOUTS, THEMES, NETWORK_LABELS, normaliseConfig, displayOptions, payload, payloadPost, render, renderSnapshot, previewHtml, csp, jsonForScript };
+module.exports = { LAYOUTS, THEMES, NETWORK_LABELS, normaliseConfig, displayOptions, payload, cachedPayload, payloadPost, render, renderSnapshot, previewHtml, csp, jsonForScript, PAYLOAD_TTL_MS };

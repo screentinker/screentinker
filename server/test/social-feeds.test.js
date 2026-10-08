@@ -12,6 +12,8 @@
  *   - moderation: approve mode queues; hidden stays hidden across refetches; the blocklist hides on
  *     arrival and keeps no text
  *   - a post deleted at the source is purged
+ *   - a rev-pinned (cacheable) wall page carries no posts; a hide shows on the next poll; a big fleet
+ *     on one wall is not throttled as one caller; saving the blocklist re-checks stored posts
  *   - post text never reaches the page as markup; images come only from this server, only those a
  *     wall's visible posts use, and only if the bytes are an image from an allowed address
  *   - a connection or feed from another organization/workspace cannot be used
@@ -325,6 +327,29 @@ test('a wall widget renders posts as data, never markup, with images from this s
   assert.equal((await api(`/api/widgets/${WIDGET}/social-media/..%2f..%2fdb`)).status, 404);
 });
 
+test('a rev-pinned wall page carries no posts: a hide shows on the next load', async () => {
+  const k = 'bluesky:at://did:plc:abc/app.bsky.feed.post/rk2';
+  const pinned = await api(`/api/widgets/${WIDGET}/render?rev=1`);
+  assert.equal(pinned.status, 200);
+  assert.match(pinned.headers.get('cache-control'), /immutable/);
+  assert.ok(!pinned.raw.toString().includes('bluesky post 2'), 'nothing cached for a year that a hide could not take back');
+  assert.ok((await api(`/api/widgets/${WIDGET}/render`)).raw.toString().includes('bluesky post 2'), 'the no-store page is seeded');
+  assert.ok((await api(`/api/widgets/${WIDGET}/social.json`)).body.posts.some((p) => p.k === k));
+  assert.equal((await api(`/api/social/feeds/${FEED}/posts/moderate`, J('admin', { key: k, action: 'hide' }))).status, 200);
+  assert.ok(!(await api(`/api/widgets/${WIDGET}/social.json`)).body.posts.some((p) => p.k === k), 'gone on the very next poll');
+  await api(`/api/social/feeds/${FEED}/posts/moderate`, J('admin', { key: k, action: 'unhide' }));
+});
+
+test('a large fleet polling one wall gets 200s; one address is bounded on its own', async () => {
+  const from = (ip) => ({ headers: { 'X-Forwarded-For': ip } });
+  const codes = await Promise.all(Array.from({ length: 300 }, (_, i) => api(`/api/widgets/${WIDGET}/social.json`, from(`198.51.100.${i % 250}`)).then((r) => r.status)));
+  assert.deepEqual([...new Set(codes)], [200], 'past the old fleet-wide 60/min');
+  let last = 0;
+  for (let i = 0; i < 601; i++) last = (await api(`/api/widgets/${WIDGET}/social.json`, from('203.0.113.9'))).status;
+  assert.equal(last, 429, 'one address past its own budget');
+  assert.equal((await api(`/api/widgets/${WIDGET}/social.json`, from('203.0.113.10'))).status, 200, 'without spending the wall\'s');
+});
+
 test('moderation: approve mode queues, hidden stays hidden, the blocklist hides on arrival', async () => {
   const f = await api('/api/social/feeds', J('admin', { name: 'Moderated', moderation: 'approve', blocklist: 'Roast, spam',
     sources: [{ network: 'youtube', kind: 'channel', value: '@acmetv', connection_id: CONN.yt }, { network: 'bluesky', kind: 'account', value: 'acme.bsky.social' }] }));
@@ -357,6 +382,19 @@ test('moderation: approve mode queues, hidden stays hidden, the blocklist hides 
   assert.deepEqual((await shown()).sort(), [k1, k2].sort());
   // A viewer-less editor check: another org's user cannot moderate this feed.
   assert.equal((await api(`/api/social/feeds/${fid}/posts/moderate`, J('other', { key: k1, action: 'hide' }))).status, 404);
+});
+
+test('saving the blocklist hides stored posts that match it', async () => {
+  const k = 'mastodon:m1';
+  assert.ok((await api(`/api/widgets/${WIDGET}/social.json`)).body.posts.some((p) => p.k === k));
+  const r = await api(`/api/social/feeds/${FEED}`, J('admin', { blocklist: 'ｗｅｌｃｏｍｅ' }, 'PUT'));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const hid = (await posts(FEED, 'hidden')).find((p) => p.key === k);
+  assert.ok(hid, 'hidden without a refetch (and through a fullwidth entry)');
+  assert.equal(hid.hidden_reason, 'blocklist');
+  assert.equal(hid.text, null);
+  assert.ok(!(await api(`/api/widgets/${WIDGET}/social.json`)).body.posts.some((p) => p.k === k));
+  await api(`/api/social/feeds/${FEED}`, J('admin', { blocklist: '' }, 'PUT'));
 });
 
 test('a post deleted at the source is purged', async () => {

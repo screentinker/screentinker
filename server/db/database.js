@@ -3603,6 +3603,9 @@ try {
       created_at   INTEGER NOT NULL
     );
   `);
+  // A hash of what a post shows (lib/social/feeds.js contentHash): an edit at the source sends an
+  // approved post back to review on an 'approve' feed. NULL on older rows = not known yet.
+  try { db.prepare('ALTER TABLE social_posts ADD COLUMN content_hash TEXT').run(); } catch (_) { /* present */ }
   /*
    * Audience counting (lib/audience.js, docs/audience-counting.md). Off unless the org allows it AND
    * a screen or one of its groups has it enabled. audience_buckets holds INTEGERS ONLY — counts per

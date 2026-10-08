@@ -10,9 +10,14 @@
  * passed on. Every connector reads ONE page of at most `limit` posts: a wall shows the latest few,
  * and paging through an account's history would only spend the organization's API quota.
  *
- * fetchSource() returns { posts, complete } — `complete` is true when the source returned fewer
- * than it was asked for, i.e. this is everything it has (lib/social/feeds.js uses that to notice
- * posts deleted at the source).
+ * fetchSource() returns { posts, complete, windowSec? } — `complete` is true when the source
+ * returned fewer than it was asked for, i.e. this is everything it has (lib/social/feeds.js uses that
+ * to notice posts deleted at the source). It is only ever true for an answer of the expected SHAPE:
+ * an error body or a missing list is not "the source has no posts".
+ *
+ * `windowSec` marks a search that only covers recent time (an Instagram hashtag's recent_media: 24
+ * hours; X's search/recent: 7 days). Older posts are missing from its answers because they are old,
+ * not because they were deleted, so feeds.js only treats a post inside that window as deleted.
  */
 
 const { baseFor, getJson, ApiError } = require('./http');
@@ -37,6 +42,10 @@ const toSec = (v) => {
 const enc = encodeURIComponent;
 
 /* ------------------------------------ Instagram ------------------------------------ */
+
+// recent_media only covers the last 24 hours; X's search/recent the last 7 days.
+const IG_HASHTAG_WINDOW = 24 * 3600;
+const X_SEARCH_WINDOW = 7 * 86400;
 
 const IG_FIELDS = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,username,children{media_type,media_url,thumbnail_url}';
 
@@ -65,17 +74,17 @@ async function instagram(source, conn, limit) {
       const tag = source.value.replace(/^#/, '');
       const found = await getJson(`${base}/ig_hashtag_search?user_id=${enc(ig)}&q=${enc(tag)}&access_token=${enc(token)}`);
       const hid = found && found.data && found.data[0] && found.data[0].id;
-      if (!hid) return { posts: [], complete: true };
+      if (!hid) return { posts: [], complete: Array.isArray(found && found.data), windowSec: IG_HASHTAG_WINDOW };
       const r = await getJson(`${base}/${enc(hid)}/recent_media?user_id=${enc(ig)}&fields=${enc(IG_FIELDS.replace('username,', ''))}&limit=${limit}&access_token=${enc(token)}`);
       const data = Array.isArray(r.data) ? r.data : [];
       // Hashtag media carries no author: the wall attributes it to the hashtag.
-      return { posts: data.map((m) => igPost(m, { name: `#${tag}`, handle: `#${tag}`, avatar_url: null })), complete: data.length < limit };
+      return { posts: data.map((m) => igPost(m, { name: `#${tag}`, handle: `#${tag}`, avatar_url: null })), complete: Array.isArray(r.data) && data.length < limit, windowSec: IG_HASHTAG_WINDOW };
     }
     const prof = await getJson(`${base}/${enc(ig)}?fields=username,name,profile_picture_url&access_token=${enc(token)}`);
     const r = await getJson(`${base}/${enc(ig)}/media?fields=${enc(IG_FIELDS)}&limit=${limit}&access_token=${enc(token)}`);
     const data = Array.isArray(r.data) ? r.data : [];
     const author = { name: prof.name || prof.username, handle: `@${prof.username}`, avatar_url: prof.profile_picture_url || null };
-    return { posts: data.map((m) => igPost(m, author)), complete: data.length < limit };
+    return { posts: data.map((m) => igPost(m, author)), complete: Array.isArray(r.data) && data.length < limit };
   }
   if (source.kind === 'hashtag') throw new ApiError('Hashtags need an Instagram connection that uses Facebook Login.', 0);
   const base = baseFor('instagram');
@@ -83,7 +92,7 @@ async function instagram(source, conn, limit) {
   const r = await getJson(`${base}/me/media?fields=${enc(IG_FIELDS)}&limit=${limit}&access_token=${enc(token)}`);
   const data = Array.isArray(r.data) ? r.data : [];
   const author = { name: prof.name || prof.username, handle: `@${prof.username}`, avatar_url: prof.profile_picture_url || null };
-  return { posts: data.map((m) => igPost(m, author)), complete: data.length < limit };
+  return { posts: data.map((m) => igPost(m, author)), complete: Array.isArray(r.data) && data.length < limit };
 }
 
 /**
@@ -116,7 +125,7 @@ async function facebook(source, conn, limit) {
       post_id: String(p.id), author, text: p.message || '', media: p.full_picture ? [p.full_picture] : [],
       is_video: /video/.test(p.status_type || ''), permalink: p.permalink_url || null, posted_at: toSec(p.created_time),
     })),
-    complete: data.length < limit,
+    complete: Array.isArray(r.data) && data.length < limit,
   };
 }
 
@@ -156,7 +165,7 @@ async function youtube(source, conn, limit) {
       posted_at: toSec((it.contentDetails && it.contentDetails.videoPublishedAt) || s.publishedAt),
     });
   }
-  return { posts, complete: items.length < limit };
+  return { posts, complete: Array.isArray(r.items) && items.length < limit };
 }
 
 /* --------------------------------------- X ----------------------------------------- */
@@ -180,6 +189,9 @@ function xPosts(r, usersById) {
   });
 }
 
+// X leaves `data` out of an empty answer and says so in meta.result_count instead.
+const xListed = (r) => !!r && (Array.isArray(r.data) || (!!r.meta && r.meta.result_count === 0));
+
 async function x(source, conn, limit) {
   const h = { Authorization: `Bearer ${secretOf(conn)}` };
   const base = baseFor('x');
@@ -188,14 +200,14 @@ async function x(source, conn, limit) {
     const n = Math.max(10, limit);
     const r = await getJson(`${base}/tweets/search/recent?query=${enc(`${source.value} -is:retweet -is:reply`)}&max_results=${n}&${fields}`, { headers: h });
     const posts = xPosts(r).slice(0, limit);
-    return { posts, complete: (r.data || []).length < n };
+    return { posts, complete: xListed(r) && (r.data || []).length < n, windowSec: X_SEARCH_WINDOW };
   }
   const user = await getJson(`${base}/users/by/username/${enc(source.value.replace(/^@/, ''))}?user.fields=name,username,profile_image_url`, { headers: h });
   if (!user.data || !user.data.id) throw new ApiError('No X account by that name.', 404);
   const n = Math.max(5, limit);
   const r = await getJson(`${base}/users/${enc(user.data.id)}/tweets?max_results=${n}&exclude=replies,retweets&${fields}`, { headers: h });
   const posts = xPosts(r, [[user.data.id, user.data]]).slice(0, limit);
-  return { posts, complete: (r.data || []).length < n };
+  return { posts, complete: xListed(r) && (r.data || []).length < n };
 }
 
 /* ------------------------------------- Bluesky ------------------------------------- */
@@ -227,13 +239,13 @@ async function bluesky(source, _conn, limit) {
   if (source.kind === 'search') {
     const r = await getJson(`${base}/app.bsky.feed.searchPosts?q=${enc(source.value)}&limit=${limit}&sort=latest`);
     const posts = (Array.isArray(r.posts) ? r.posts : []).map(bskyPost);
-    return { posts, complete: posts.length < limit };
+    return { posts, complete: Array.isArray(r.posts) && posts.length < limit };
   }
   const r = await getJson(`${base}/app.bsky.feed.getAuthorFeed?actor=${enc(source.value.replace(/^@/, ''))}&limit=${limit}&filter=posts_no_replies`);
   const feed = Array.isArray(r.feed) ? r.feed : [];
   // A repost is someone else's post: the wall shows the account's own.
   const posts = feed.filter((f) => !f.reason && f.post).map((f) => bskyPost(f.post));
-  return { posts, complete: feed.length < limit };
+  return { posts, complete: Array.isArray(r.feed) && feed.length < limit };
 }
 
 /* ------------------------------------- Mastodon ------------------------------------ */
@@ -291,7 +303,7 @@ async function mastodon(source, _conn, limit) {
     list = await getJson(`${base}/api/v1/accounts/${enc(acct.id)}/statuses?limit=${limit}&exclude_replies=true&exclude_reblogs=true`);
   }
   const arr = Array.isArray(list) ? list : [];
-  return { posts: arr.map(mastoPost).filter((p) => p.public && !p.sensitive), complete: arr.length < limit };
+  return { posts: arr.map(mastoPost).filter((p) => p.public && !p.sensitive), complete: Array.isArray(list) && arr.length < limit };
 }
 
 const FETCHERS = { instagram, facebook, youtube, x, bluesky, mastodon };
