@@ -22,6 +22,8 @@ const crypto = require('crypto');
 const { wwwAuthenticate } = require('../middleware/auth');
 const tools = require('../lib/mcp/tools');
 const protocol = require('../lib/mcp/protocol');
+const { getClientIp } = require('../services/activity');
+const forwardedClientIp = require('../lib/forwarded-client-ip');
 
 const TOKEN_PREFIX = 'st_';
 const CALL_TIMEOUT_MS = 20_000;
@@ -54,8 +56,10 @@ function selfOrigin() {
   return `http://127.0.0.1:${port}`;
 }
 
-/* Run one tool: map it to an API request, make the request as the caller, summarise the answer. */
-async function callTool(name, args, authorization, scope) {
+/* Run one tool: map it to an API request, make the request as the caller, summarise the answer.
+ * `clientIp` is the address the MCP request came from, forwarded so the API attributes and rate
+ * limits the call to it rather than to 127.0.0.1 (lib/forwarded-client-ip.js). */
+async function callTool(name, args, authorization, scope, clientIp) {
   const tool = tools.byName(name);
   if (!tool) return { isError: true, text: `Unknown tool: ${name}` };
 
@@ -77,6 +81,13 @@ async function callTool(name, args, authorization, scope) {
     };
   }
 
+  /*
+   * The tool's own schema, enforced before anything is sent. A failure here is a malformed CALL, so
+   * it is a JSON-RPC invalid-params error rather than a tool result (see protocol.js tools/call).
+   */
+  const invalid = tools.validate(tool, args === undefined ? {} : args);
+  if (invalid) return { invalidParams: true, text: `Invalid arguments for ${name}: ${invalid}` };
+
   let req;
   try {
     req = tools.toRequest(tool, args || {});
@@ -97,6 +108,8 @@ async function callTool(name, args, authorization, scope) {
         'Content-Type': 'application/json',
         // So a handler (and an operator reading logs) can tell an agent from a script.
         'User-Agent': 'ScreenTinker-MCP/1.0',
+        // Signed over (ip, now, path): only this process can mint it, and only for this call.
+        ...(clientIp ? { [forwardedClientIp.HEADER]: forwardedClientIp.sign(clientIp, url.pathname) } : {}),
       },
       body: req.body ? JSON.stringify(req.body) : undefined,
       signal: controller.signal,
@@ -113,9 +126,14 @@ async function callTool(name, args, authorization, scope) {
        * wall, which is the single most expensive thing a confused agent does.
        */
       const detail = payload && payload.error ? payload.error : (typeof payload === 'string' ? payload.slice(0, 300) : res.statusText);
+      /*
+       * ⚠️ The scope hint only when the refusal IS about scope. A 403 for another workspace's
+       * display, or a head office lock, is not fixed by a wider token, and saying it is sends the
+       * user off to mint one. The scope gates' messages all name the scope (middleware/apiToken.js).
+       */
       const hint = res.status === 401
         ? ' (this token cannot reach that endpoint — it is not a credential problem, do not retry)'
-        : res.status === 403 ? ' (the token’s scope does not permit this)' : '';
+        : res.status === 403 && /\bscope\b/i.test(String(detail)) ? ' (the token’s scope does not permit this)' : '';
       return { isError: true, text: `${req.method} ${req.path} failed: ${res.status} ${detail}${hint}` };
     }
 
@@ -144,7 +162,49 @@ then assign_playlist_to_display.
 ⚠️ Playlist edits are a DRAFT. Screens keep playing the last published version until publish_playlist
 is called, so a change that is not published has changed nothing anybody can see.`;
 
-router.post('/', express.json({ limit: '1mb' }), async (req, res) => {
+/*
+ * The body parser AND its errors, both here. server.js skips its global 12 MB parser for /mcp, so
+ * this limit is the real one, and a body that does not parse is answered the way an MCP client
+ * reads an answer: JSON-RPC -32700, not Express's HTML error page (which, in development, carried a
+ * stack trace).
+ */
+const jsonParser = express.json({ limit: '1mb' });
+function parseBody(req, res, next) {
+  jsonParser(req, res, (err) => {
+    if (!err) return next();
+    if (err.type === 'entity.too.large') {
+      return res.status(413).json(protocol.rpcError(null, protocol.ERR.INVALID_REQUEST, 'Request body is larger than 1 MB.'));
+    }
+    if (err.type === 'entity.parse.failed') {
+      return res.status(400).json(protocol.rpcError(null, protocol.ERR.PARSE, 'Parse error: the request body is not valid JSON.'));
+    }
+    return res.status(err.status || 400).json(protocol.rpcError(null, protocol.ERR.INVALID_REQUEST, 'The request body could not be read.'));
+  });
+}
+
+/*
+ * The 429 from the /mcp rate limiter (server.js), in the shape an MCP client understands. The
+ * limiter has already set Retry-After. The body has not been parsed yet — the limiter runs first,
+ * which is the point of it — so there is no id to echo.
+ */
+function rateLimited(_req, res, retryAfter) {
+  return res.status(429).json(protocol.rpcError(null, protocol.ERR.RATE_LIMITED,
+    `Rate limit exceeded. Retry after ${retryAfter} seconds.`, { retryAfter }));
+}
+
+/*
+ * The protocol version to put in the response header: the one `initialize` negotiated when this
+ * request carries one, else the version the client says it is using (when we speak it), else ours.
+ * Always answering LATEST told a client on an older version we had switched it.
+ */
+function responseVersion(req, messages) {
+  const init = messages.find((m) => m && m.method === 'initialize');
+  if (init) return protocol.negotiateVersion(init.params && init.params.protocolVersion);
+  const asked = req.headers['mcp-protocol-version'];
+  return protocol.PROTOCOL_VERSIONS.includes(asked) ? asked : protocol.LATEST;
+}
+
+router.post('/', parseBody, async (req, res) => {
   const scope = scopeOf(req.headers.authorization);
   if (!scope) {
     // WWW-Authenticate so a client knows what to present rather than guessing — and, per RFC 9728
@@ -161,7 +221,7 @@ router.post('/', express.json({ limit: '1mb' }), async (req, res) => {
     version: config.version || require('../package.json').version,
     instructions: INSTRUCTIONS,
     manifest: () => tools.manifest(scope),
-    callTool: (name, args) => callTool(name, args, req.headers.authorization, scope),
+    callTool: (name, args) => callTool(name, args, req.headers.authorization, scope, getClientIp(req)),
   };
 
   // A batch is a JSON array; a single call is an object. Notifications produce no response, so a
@@ -173,7 +233,7 @@ router.post('/', express.json({ limit: '1mb' }), async (req, res) => {
     if (r) out.push(r);
   }
 
-  res.set('MCP-Protocol-Version', protocol.LATEST);
+  res.set('MCP-Protocol-Version', responseVersion(req, messages));
   if (!out.length) return res.status(202).end();
   return res.json(Array.isArray(req.body) ? out : out[0]);
 });
@@ -191,3 +251,4 @@ router.get('/', (_req, res) => {
 module.exports = router;
 module.exports._scopeOf = scopeOf;
 module.exports._callTool = callTool;
+module.exports.rateLimited = rateLimited;

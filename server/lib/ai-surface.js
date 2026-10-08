@@ -69,7 +69,7 @@ function aiCatalog(base) {
       {
         identifier: `${base}/mcp`,
         displayName: 'ScreenTinker MCP server',
-        description: 'Model Context Protocol endpoint. 21 tools, filtered by the token\'s scope.',
+        description: `Model Context Protocol endpoint. ${require('./mcp/tools').TOOLS.length} tools, filtered by the token's scope.`,
         type: 'application/json',
         url: `${base}/.well-known/mcp/server-card.json`,
       },

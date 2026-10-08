@@ -97,7 +97,7 @@
     &ldquo;three offline: Lobby, Caf&eacute;, Window since 09:12&rdquo; is.</p>
 
     <h2>What it can do</h2>
-    <p>Twenty-one tools, chosen rather than generated. The API has 133 operations and wrapping all of them
+    <p>Twenty-two tools, chosen rather than generated. The API has 133 operations and wrapping all of them
     would make the list unusable &mdash; an assistant gets measurably worse at picking the right tool as the
     list grows &mdash; so these are shaped around what people ask for.</p>
     <div class="compare-table-wrap">
@@ -105,8 +105,8 @@
       <thead><tr><th>Scope</th><th>What the assistant can do</th></tr></thead>
       <tbody>
         <tr><td><code>read</code></td><td>List and inspect screens, playlists, content, groups and schedules. Fleet health. Proof-of-play and uptime reports.</td></tr>
-        <tr><td><code>write</code></td><td>Everything above, plus: add YouTube videos and web pages, build and publish playlists, assign them to a screen or a group, send refresh / screen on / screen off / volume commands, rename a screen.</td></tr>
-        <tr><td><code>full</code></td><td>Everything above, plus removing items from a playlist.</td></tr>
+        <tr><td><code>write</code></td><td>Everything above, plus: add YouTube videos, web pages and links to image or video files, build and publish playlists, assign them to a screen or a group, send refresh / screen on / screen off / volume / brightness commands to a screen or a group, rename a screen.</td></tr>
+        <tr><td><code>full</code></td><td>Everything above, plus removing items from a playlist. A <code>write</code> token can send only those five screen commands; reboot, shutdown and the device-owner commands need <code>full</code> on the REST API and are not offered to an assistant at all.</td></tr>
       </tbody>
     </table>
     </div>

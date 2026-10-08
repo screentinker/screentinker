@@ -39,11 +39,11 @@ const TOOLS = [
     // agent needs for the actual task.
     shape: (rows, args) => (Array.isArray(rows) ? rows : [])
       .filter((d) => !args.status || (args.status === 'online' ? d.status === 'online' : d.status !== 'online'))
-      .filter((d) => !args.search || String(d.name || '').toLowerCase().includes(args.search.toLowerCase()))
+      .filter((d) => !args.search || String(d.name || '').toLowerCase().includes(String(args.search).toLowerCase()))
       .map((d) => ({
         id: d.id, name: d.name, status: d.status, platform: d.platform || d.client_type || null,
         last_heartbeat: d.last_heartbeat ? new Date(d.last_heartbeat * 1000).toISOString() : null,
-        playlist_id: d.playlist_id || null, group_id: d.team_id || null,
+        playlist_id: d.playlist_id || null, ...groupsOf(d),
       })),
   },
   {
@@ -65,7 +65,7 @@ const TOOLS = [
         last_heartbeat: d.last_heartbeat ? new Date(d.last_heartbeat * 1000).toISOString() : null,
         offline_reason: d.status === 'online' ? null : (d.offline_reason || null),
         playlist_id: d.playlist_id || null,
-        group_id: d.team_id || null,
+        ...groupsOf(d),
         now_playing: (d.assignments || []).map((a) => ({
           item_id: a.id,
           name: a.widget_name || a.filename || a.remote_url || '(unnamed item)',
@@ -107,6 +107,9 @@ const TOOLS = [
     description: 'List the playlists in this workspace, with how many items each holds and whether it has unpublished changes. `corporate` marks a head office playlist (read-only unless you are a corporate author); `corporate_slot` marks this workspace\'s content for one of head office\'s local slots.',
     input: { type: 'object', properties: {} },
     call: { method: 'GET', path: '/api/playlists' },
+    // The raw rows carry both published snapshots per playlist — see shapePlaylist for why that is
+    // the one thing a playlist answer must not do.
+    shape: (rows) => (Array.isArray(rows) ? rows : []).map(shapePlaylistRow),
   },
   {
     name: 'get_playlist',
@@ -137,7 +140,7 @@ const TOOLS = [
      * as `YouTube: <videoId>` or its title, and a web page gets one derived from its URL.
      */
     shape: (rows, args) => (Array.isArray(rows) ? rows : [])
-      .filter((c) => !args.search || String(c.filename || '').toLowerCase().includes(args.search.toLowerCase()))
+      .filter((c) => !args.search || String(c.filename || '').toLowerCase().includes(String(args.search).toLowerCase()))
       .map((c) => ({
         id: c.id, name: c.filename, type: c.mime_type,
         duration: c.duration_sec ?? null, folder: c.folder_id || null,
@@ -154,8 +157,12 @@ const TOOLS = [
     name: 'list_schedules',
     scope: 'read',
     description: 'Scheduled playlist changes, for one screen or the whole workspace.',
-    input: { type: 'object', properties: { display_id: { type: 'string', description: 'Restrict to one screen.' } } },
-    call: { method: 'GET', path: '/api/schedules' },
+    input: { type: 'object', properties: { display_id: { type: 'string', description: 'Restrict to one screen (its own schedules and its groups\'.)' } } },
+    // ⚠️ display_id was declared and never sent, so "what is scheduled on the lobby screen" answered
+    // with every schedule in the workspace. The endpoint's filter is device_id, and it already
+    // includes schedules aimed at the screen's groups.
+    call: { method: 'GET', path: '/api/schedules', query: ['device_id'] },
+    mapArgs: (a) => ({ device_id: a.display_id }),
   },
   {
     name: 'play_report',
@@ -222,12 +229,46 @@ const TOOLS = [
   {
     name: 'add_web_page',
     scope: 'write',
-    description: 'Add a web page or remote image/video URL to the media library.',
+    /*
+     * ⚠️ A WEB PAGE IS A `webpage` WIDGET, which is how the dashboard adds one. This used to post the
+     * URL to /content/remote with no mime_type, and that route defaults to image/jpeg — so a page was
+     * saved as a JPEG and every player tried to decode HTML as an image. Images and video by URL are
+     * add_media_url.
+     */
+    description: 'Add a web page (any http/https URL) as a web page widget the screens render live. Returns a widget id: add it to a playlist with add_to_playlist and widget_id. For a direct link to an image or video file use add_media_url.',
     input: {
       type: 'object', required: ['url'],
-      properties: { url: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        url: { type: 'string', pattern: '^https?://', description: 'http or https.' },
+        name: { type: 'string', description: 'Defaults to the page\'s host and path.' },
+      },
     },
-    call: { method: 'POST', path: '/api/content/remote', body: ['url', 'name'] },
+    call: { method: 'POST', path: '/api/widgets', body: ['widget_type', 'name', 'config'] },
+    // The config the dashboard's web page form saves: 100% zoom, no forced reload.
+    mapArgs: (a) => ({
+      widget_type: 'webpage',
+      name: a.name || pageName(a.url),
+      config: { url: a.url, zoom: 100, refresh_interval: 0 },
+    }),
+    shape: shapeWidget,
+  },
+  {
+    name: 'add_media_url',
+    scope: 'write',
+    description: 'Add a remote image, video or audio file (a direct URL to the file, not a web page) to the media library. The kind is read from the file extension; pass `type` when the URL has none.',
+    input: {
+      type: 'object', required: ['url'],
+      properties: {
+        url: { type: 'string', pattern: '^https?://', description: 'http or https, ending in the file itself.' },
+        name: { type: 'string' },
+        type: { type: 'string', enum: ['image', 'video', 'audio'], description: 'Only needed when the extension does not say.' },
+      },
+    },
+    // The route defaults a missing mime_type to image/jpeg, so the type is ALWAYS sent from here.
+    call: { method: 'POST', path: '/api/content/remote', body: ['url', 'name', 'mime_type'] },
+    check: (a) => (mediaMime(a.url, a.type) ? null
+      : 'Cannot tell from the URL whether this is an image, a video or audio: pass `type`. For a web page use add_web_page.'),
+    mapArgs: (a) => ({ url: a.url, name: a.name, mime_type: mediaMime(a.url, a.type) }),
     shape: shapeContent,
   },
   {
@@ -244,15 +285,23 @@ const TOOLS = [
   {
     name: 'add_to_playlist',
     scope: 'write',
-    description: 'Append a content item to a playlist. Changes are a DRAFT until publish_playlist is called. Corporate playlists are read-only; to add local content, add to the slot playlist named in the error.',
+    description: 'Append a content item (content_id) or a web page widget (widget_id, from add_web_page) to a playlist — exactly one of the two. Changes are a DRAFT until publish_playlist is called. Corporate playlists are read-only; to add local content, add to the slot playlist named in the error.',
     input: {
-      type: 'object', required: ['playlist_id', 'content_id'],
+      type: 'object', required: ['playlist_id'],
       properties: {
         playlist_id: { type: 'string' }, content_id: { type: 'string' },
-        duration: { type: 'integer', description: 'Seconds on screen. Defaults to the content’s own duration.' },
+        widget_id: { type: 'string', description: 'Instead of content_id: a widget, e.g. one add_web_page created.' },
+        duration: { type: 'integer', minimum: 1, maximum: 86400, description: 'Seconds on screen. Defaults to the content’s own duration.' },
       },
     },
-    call: { method: 'POST', path: '/api/playlists/{playlist_id}/items', body: ['content_id', 'duration'] },
+    check: (a) => (!!a.content_id === !!a.widget_id ? 'Pass exactly one of content_id or widget_id.' : null),
+    /*
+     * ⚠️ THE ROUTE READS duration_sec. The tool sent `duration`, which the route never looks at, so
+     * every "show this for 20 seconds" silently got the content's default — a 200 with the wrong
+     * value in it, the same failure as the report date range.
+     */
+    call: { method: 'POST', path: '/api/playlists/{playlist_id}/items', body: ['content_id', 'widget_id', 'duration_sec'] },
+    mapArgs: (a) => ({ content_id: a.content_id, widget_id: a.widget_id, duration_sec: a.duration }),
     shape: (i) => ({ id: i.id, playlist_id: i.playlist_id, name: itemName(i), kind: itemKind(i),
       duration: i.content_duration ?? i.duration_sec ?? null }),
   },
@@ -300,32 +349,36 @@ const TOOLS = [
   {
     name: 'send_command',
     scope: 'write',
-    description: 'Send an operational command to one screen: refresh it, blank or wake the panel, or set volume. What a given screen can honour depends on its platform.',
+    description: 'Send an operational command to one screen: refresh it, blank or wake the panel, or set volume or brightness (value 0-100). What a given screen can honour depends on its platform.',
     input: {
       type: 'object', required: ['display_id', 'command'],
       properties: {
         display_id: { type: 'string' },
+        // ⚠️ Exactly lib/device-command.js WRITE_SCOPE_COMMANDS — the set the route lets a `write`
+        // token send. test/mcp.test.js holds the two together.
         command: { type: 'string', enum: ['refresh', 'screen_on', 'screen_off', 'set_volume', 'set_brightness'] },
-        value: { type: 'integer', description: '0-100, for set_volume and set_brightness.' },
+        value: { type: 'integer', minimum: 0, maximum: 100, description: 'Percent, required for set_volume and set_brightness.' },
       },
     },
-    call: { method: 'POST', path: '/api/devices/{display_id}/command', body: ['type', 'value'] },
-    mapArgs: (a) => ({ type: a.command, value: a.value }),
+    check: commandValueCheck,
+    call: { method: 'POST', path: '/api/devices/{display_id}/command', body: ['type', 'payload'] },
+    mapArgs: commandArgs,
   },
   {
     name: 'send_group_command',
     scope: 'write',
-    description: 'Send one operational command to every screen in a group.',
+    description: 'Send one operational command to every screen in a group: refresh, screen on/off, or volume or brightness (value 0-100).',
     input: {
       type: 'object', required: ['group_id', 'command'],
       properties: {
         group_id: { type: 'string' },
         command: { type: 'string', enum: ['refresh', 'screen_on', 'screen_off', 'set_volume', 'set_brightness'] },
-        value: { type: 'integer' },
+        value: { type: 'integer', minimum: 0, maximum: 100, description: 'Percent, required for set_volume and set_brightness.' },
       },
     },
-    call: { method: 'POST', path: '/api/groups/{group_id}/command', body: ['type', 'value'] },
-    mapArgs: (a) => ({ type: a.command, value: a.value }),
+    check: commandValueCheck,
+    call: { method: 'POST', path: '/api/groups/{group_id}/command', body: ['type', 'payload'] },
+    mapArgs: commandArgs,
   },
   {
     name: 'rename_display',
@@ -336,8 +389,115 @@ const TOOLS = [
       properties: { display_id: { type: 'string' }, name: { type: 'string' } },
     },
     call: { method: 'PUT', path: '/api/devices/{display_id}', body: ['name'] },
+    // The answer is the whole device row; what the caller needs is that the rename took, and
+    // whether the new name moved the screen into or out of a dynamic group.
+    shape: (d) => (d && typeof d === 'object'
+      ? { id: d.id, name: d.name, status: d.status, ...(d.groups_changed ? { groups_changed: d.groups_changed } : {}) }
+      : d),
   },
 ];
+
+/*
+ * ⚠️ THE PLAYERS READ payload.level, A 0..1 FRACTION. The tools sent `value` at the top level, which
+ * the route never forwards, so the panel received {"type":"set_volume","payload":{}} — and Android's
+ * optDouble("level") on an empty payload is no change at best, while a player that read a missing
+ * level as 0 muted the room. The tool takes a percentage because that is how people say it, and
+ * converts here, exactly as the dashboard's slider does (device-detail.js bindLevel).
+ */
+const LEVEL_COMMANDS = ['set_volume', 'set_brightness'];
+function commandArgs(a) {
+  return { type: a.command, payload: LEVEL_COMMANDS.includes(a.command) ? { level: a.value / 100 } : undefined };
+}
+function commandValueCheck(a) {
+  return LEVEL_COMMANDS.includes(a.command) && (a.value === undefined || a.value === null)
+    ? `${a.command} needs a value: a percentage, 0-100.` : null;
+}
+
+/* Group membership, not devices.team_id (a team is a different thing): see routes/devices.js. */
+function groupsOf(d) {
+  const ids = Array.isArray(d.group_ids) ? d.group_ids : [];
+  // group_id kept for clients written against the old field; it is the first group by name.
+  return { group_ids: ids, group_id: ids[0] || null };
+}
+
+// A widget needs a name, and "https://intranet.example.com/menu" says more than "Web page".
+function pageName(url) {
+  try { const u = new URL(url); return (u.host + (u.pathname === '/' ? '' : u.pathname)).slice(0, 200); } catch (e) { return 'Web page'; }
+}
+
+/*
+ * The mime type for a remote media URL: from the extension when there is one, else the family the
+ * caller named. Null means "cannot tell", which the tool refuses rather than guessing JPEG.
+ */
+const MEDIA_EXT = {
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/mp4', mkv: 'video/mp4', avi: 'video/mp4', webm: 'video/webm',
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+  mp3: 'audio/mpeg', wav: 'audio/wav',
+};
+const MEDIA_DEFAULT = { image: 'image/jpeg', video: 'video/mp4', audio: 'audio/mpeg' };
+function mediaMime(url, type) {
+  let ext = null;
+  try { ext = (new URL(url).pathname.match(/\.([a-z0-9]{2,5})$/i) || [])[1]; } catch (e) { /* not a URL */ }
+  const byExt = ext ? MEDIA_EXT[ext.toLowerCase()] : null;
+  if (byExt && (!type || byExt.startsWith(type + '/'))) return byExt;
+  return (type && MEDIA_DEFAULT[type]) || null;
+}
+
+/*
+ * Every string argument gets a length cap, declared IN the published schema so a client can see it.
+ * The QA run sent 100k-500k character names; the API stored them. Ids are 64 (a UUID is 36), URLs
+ * 2048, a description 1000, anything else — names, search terms, dates — 200.
+ */
+function defaultMaxLength(key) {
+  if (key === 'id' || key.endsWith('_id')) return 64;
+  if (key === 'url') return 2048;
+  if (key === 'description') return 1000;
+  return 200;
+}
+for (const t of TOOLS) {
+  for (const [key, prop] of Object.entries(t.input.properties || {})) {
+    if (prop.type === 'string' && prop.maxLength === undefined) prop.maxLength = defaultMaxLength(key);
+  }
+}
+
+/*
+ * Check a call's arguments against the tool's OWN published schema, before any request is made.
+ *
+ * ⚠️ THE SCHEMA WAS DECORATION. Nothing enforced it, so `command: "shell"` reached the API although
+ * the enum lists five values (the API's scope gate refused it, but that is the wrong layer to be the
+ * only one); a numeric `search` crashed the shape with "toLowerCase is not a function"; an array
+ * `name` made create_playlist answer 500. A model reads the schema as a promise and so should we.
+ *
+ * Returns null when the arguments are acceptable, else one sentence naming the first problem —
+ * which the transport answers as JSON-RPC -32602, invalid params. Optional arguments sent as null
+ * are treated as absent: models do that constantly, and refusing it helps nobody.
+ */
+function validate(tool, args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return 'arguments must be a JSON object';
+  const props = tool.input.properties || {};
+  for (const r of tool.input.required || []) {
+    if (args[r] === undefined || args[r] === null || args[r] === '') return `missing required argument: ${r}`;
+  }
+  for (const [key, prop] of Object.entries(props)) {
+    const v = args[key];
+    if (v === undefined || v === null) continue;
+    if (prop.type === 'string') {
+      if (typeof v !== 'string') return `${key} must be a string`;
+      if (prop.maxLength !== undefined && v.length > prop.maxLength) return `${key} is longer than ${prop.maxLength} characters`;
+      if (prop.pattern && !new RegExp(prop.pattern).test(v)) return `${key} must match ${prop.pattern}`;
+    } else if (prop.type === 'integer') {
+      if (!Number.isInteger(v)) return `${key} must be an integer`;
+    } else if (prop.type === 'number') {
+      if (typeof v !== 'number' || !Number.isFinite(v)) return `${key} must be a number`;
+    } else if (prop.type === 'boolean') {
+      if (typeof v !== 'boolean') return `${key} must be true or false`;
+    }
+    if (prop.enum && !prop.enum.includes(v)) return `${key} must be one of: ${prop.enum.join(', ')}`;
+    if (prop.minimum !== undefined && v < prop.minimum) return `${key} must be at least ${prop.minimum}`;
+    if (prop.maximum !== undefined && v > prop.maximum) return `${key} must be at most ${prop.maximum}`;
+  }
+  return tool.check ? tool.check(args) : null;
+}
 
 const SCOPE_RANK = { read: 1, write: 2, full: 3 };
 
@@ -402,6 +562,36 @@ function shapeContent(c) {
     duration: c.duration_sec ?? null,
     folder: c.folder_id || null,
     ...(c.remote_url ? { url: c.remote_url } : {}),
+  };
+}
+
+/* A playlist LIST row: the counts the list query computes, none of the snapshots. */
+function shapePlaylistRow(p) {
+  if (!p || typeof p !== 'object') return p;
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description || null,
+    status: p.status,
+    item_count: p.item_count ?? 0,
+    display_count: p.display_count ?? 0,
+    ...(p.smart_rules ? { smart: true } : {}),
+    ...(p.corporate ? { corporate: true } : {}),
+    ...(p.corporate_slot ? { corporate_slot: { slot_name: p.corporate_slot.slot_name, corporate_playlist: p.corporate_slot.playlist_name } } : {}),
+  };
+}
+
+/* A widget row (add_web_page): what it is and where it points. config arrives as a JSON string. */
+function shapeWidget(w) {
+  if (!w || typeof w !== 'object') return w;
+  let config = w.config;
+  if (typeof config === 'string') { try { config = JSON.parse(config); } catch (e) { config = {}; } }
+  return {
+    widget_id: w.id,
+    name: w.name,
+    kind: 'widget',
+    type: w.widget_type,
+    ...(config && config.url ? { url: config.url } : {}),
   };
 }
 
@@ -475,4 +665,4 @@ function toRequest(tool, args = {}) {
   return { method: tool.call.method, path, query, body };
 }
 
-module.exports = { TOOLS, toolsForScope, manifest, byName, toRequest, redact, SCOPE_RANK };
+module.exports = { TOOLS, toolsForScope, manifest, byName, toRequest, validate, redact, SCOPE_RANK };

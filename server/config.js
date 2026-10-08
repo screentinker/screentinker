@@ -98,6 +98,9 @@ module.exports = {
   // Scale-out C3: disk a replica may spend on cached media, PER primary (edge). 10 GiB unless set.
   replicaCacheBytes: (() => { const n = Number(process.env.REPLICA_CACHE_BYTES); return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10 * 1024 * 1024 * 1024; })(),
   primaryRedirect: ['1', 'true', 'yes'].includes(String(process.env.PRIMARY_REDIRECT || '').toLowerCase()),
+  // Browser origins allowed to call /mcp cross-origin (comma-separated, exact match). Empty = none:
+  // MCP clients are native or server-side and need no CORS. See the note on mcpCors in server.js.
+  mcpCorsOrigins: String(process.env.MCP_CORS_ORIGINS || '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean),
 
   /* ==========================================================================================
    * PLUGINS — off by default and INVISIBLE.

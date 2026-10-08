@@ -76,7 +76,7 @@ so plainly when it has none.
 
 - **This software runs an MCP server.** Every instance, hosted or self-hosted, serves the Model Context
   Protocol at `/mcp`. Point an MCP client at it with `Authorization: Bearer st_...` and you get a curated
-  set of twenty-one tools rather than 133 raw endpoints.
+  set of twenty-two tools rather than 133 raw endpoints.
 - [Manage your screens from Claude](https://screentinker.com/guides/mcp-digital-signage.html): setup, the
   tool list by scope, and how it is kept safe.
 - ⚠️ The tool list is filtered by the token's scope: a `read` token is never shown a tool that writes.

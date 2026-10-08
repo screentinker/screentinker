@@ -23,6 +23,8 @@ const LATEST = PROTOCOL_VERSIONS[0];
 const ERR = Object.freeze({
   PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601,
   INVALID_PARAMS: -32602, INTERNAL: -32603,
+  // Implementation-defined (JSON-RPC reserves -32000..-32099 for servers): the /mcp rate limit.
+  RATE_LIMITED: -32000,
 });
 
 const rpcError = (id, code, message, data) => ({
@@ -92,7 +94,10 @@ async function handleMessage(msg, ctx) {
       if (!name || typeof name !== 'string') {
         return rpcError(id, ERR.INVALID_PARAMS, 'tools/call requires a tool name');
       }
-      const out = await ctx.callTool(name, (params && params.arguments) || {});
+      const out = await ctx.callTool(name, params && params.arguments != null ? params.arguments : {});
+      // Arguments that break the tool's own schema are a malformed call, so a protocol error — the
+      // one case below where a failure is NOT a result. The message names the argument.
+      if (out.invalidParams) return rpcError(id, ERR.INVALID_PARAMS, out.text);
       /*
        * ⚠️ A FAILED TOOL IS A RESULT, NOT A JSON-RPC ERROR. A protocol error means "this call was
        * malformed"; a 404 from the API means "that display does not exist", which is information the
