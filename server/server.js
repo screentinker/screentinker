@@ -2102,6 +2102,24 @@ app.get('/api/update/check', (req, res) => {
   const onBeta = betaChannel && apkCache.betaAvailable();
   if (onBeta) latestVersion = apkCache.getBeta().version;
 
+  /*
+   * Health-checked rollout (lib/ota-rollout.js): a stable version reaches screens in waves and halts
+   * itself if the screens that took it do worse. Android cannot downgrade, so a halt here only stops
+   * the spread. Beta and forced checks skip the waves; nothing skips a halt.
+   */
+  if (!onBeta) {
+    const g = require('./lib/ota-rollout').gate('android', apkCache.get(), { deviceId, currentVersion, forced });
+    const isUpgrade = currentVersion && (otaBreaker.cmp(String(currentVersion), latestVersion) || 0) < 0;
+    if ((g.action === 'wait' || g.action === 'halted') && isUpgrade) {
+      logOtaCheck(deviceId, currentVersion, latestVersion, false, g.reason);
+      return res.json({
+        latest_version: latestVersion, current_version: currentVersion || 'unknown',
+        update_available: false, reason: g.reason, download_url: '/download/apk', apk_size: 0, apk_modified: 0,
+        retry_after_seconds: 1800,
+      });
+    }
+  }
+
   // The hold-my-prerelease guard only applies when we are NOT actively serving a beta: on the beta
   // channel the beta build is the target, so normal comparison does the right thing.
   const verdict = otaBreaker.decide(currentVersion, latestVersion, deviceId, Date.now(), betaChannel && !onBeta, wasOnBeta, forced);
@@ -2393,6 +2411,7 @@ try { require('./lib/corporate/reconcile').reconcileAtBoot(require('./db/databas
 // timers and the 30-second belt sweep (lib/corporate/emergency-live.js).
 require('./lib/corporate/emergency-live').init(io);
 require('./lib/smart-playlist').start(io);
+require('./lib/ota-rollout').start();   // player rollouts: waves, automatic halt and rollback
 require('./lib/local-conditions').start(io);   // local weather for weather conditions
 // Dynamic device groups: a backstop for membership inputs changed by a path that does not reconcile
 // (an import, a mesh sync, a direct fix-up). A sweep that finds nothing to change writes nothing.

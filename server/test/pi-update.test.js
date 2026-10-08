@@ -91,7 +91,9 @@ before(async () => {
   BASE = `http://127.0.0.1:${PORT}`;
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR: SRV_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', OTA_APK_REFRESH_MS: '300' },
+    env: { ...process.env, DATA_DIR: SRV_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', OTA_APK_REFRESH_MS: '300',
+      // These tests pin the offer itself; health-checked waves are covered by ota-rollout.test.js.
+      OTA_STAGED_ROLLOUT: 'off' },
     stdio: 'ignore',
   });
   for (let i = 0; i < 100; i++) {
