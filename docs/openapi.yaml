@@ -2724,6 +2724,33 @@ paths:
           content:
             text/html:
               schema: { type: string }
+  /widgets/{id}/menu-items/{itemId}:
+    patch:
+      tags: [widgets]
+      summary: Mark a menu-board item sold out, or back on
+      description: |
+        Requires scope: write. For a till or POS system, or a manager's phone. Goes live at once even
+        when the workspace requires approval (it changes availability, not content), is applied to any
+        pending draft as well, and is recorded in the widget's history. A menu whose items come from a
+        data source is refused (409): change the item there.
+      x-required-scope: write
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: itemId, in: path, required: true, schema: { type: string }, description: The item's id in the menu config. }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sold_out]
+              properties:
+                sold_out: { type: boolean }
+      responses:
+        '200': { description: '{ success, item: { id, name, sold_out } }.' }
+        '400': { description: 'Not a menu board, or sold_out is not a boolean.' }
+        '404': { description: No such item. }
+        '409': { description: The menu comes from a data source. }
   /widgets/{id}:
     get:
       tags: [widgets]

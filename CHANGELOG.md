@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Menu boards** (Widgets → Menu Board), for restaurants, cafés and bars.
+  - Sections and items with one or more prices (Small / Large, Glass / Bottle), descriptions,
+    photos and dietary tags (V, VG, GF, DF, nuts, halal, spicy, new, popular), with a key on screen.
+  - Mark items sold out in the editor, or from a till or phone with
+    `PATCH /api/widgets/:id/menu-items/:itemId`. It shows on screens at once, even when approval is
+    required.
+  - Sections that show only at certain times (breakfast until 11:30, happy hour), by each screen's
+    own clock.
+  - Four looks (dark, light, chalkboard, bold), an accent colour, any currency. The columns fit the
+    screen in landscape or portrait, and a long menu turns pages instead of being cut off.
+  - Start from a café, burger bar or bar example, or keep the menu in a Google Sheet or CSV data
+    source with columns like section, item and price. Edits to the sheet reach the screens on the
+    next sync.
+
 - **Device tags and dynamic groups.**
   - Give a screen tags (Display → Tags, or the API) and filter the Displays page by them.
   - A group can fill itself from **rules**: tag is or is not, name contains or starts with,
