@@ -188,6 +188,48 @@ test('the iOS app speaks the host protocol, keeps the sign awake and autoplays',
   assert.equal(fs.existsSync(path.join(ROOT, 'ios', 'ScreenTinker.xcodeproj')), false);
 });
 
+test('a frame cannot move the iOS sign to another server: the move is the shell\'s, the overlay is sandboxed', () => {
+  // The web overlay is a third-party page: unsandboxed, it could navigate the player's top window.
+  const pip = bodyOf(PLAYER, 'pipShow');
+  const sb = (pip.match(/media\.setAttribute\('sandbox', '([^']*)'\)/) || [])[1];
+  assert.ok(sb, 'the PiP web overlay iframe is sandboxed');
+  assert.doesNotMatch(sb, /allow-top-navigation/);
+  assert.ok(pip.indexOf("setAttribute('sandbox'") < pip.indexOf('media.src = p.uri'), 'sandboxed before it loads');
+
+  // On iOS, set_server_url asks the shell (move-server) instead of navigating by itself.
+  const fn = bodyOf(PLAYER, 'moveToServer');
+  const run = (search, iosShell) => {
+    const sent = [];
+    const nav = [];
+    const scope = {
+      socket: null, config: { enrolKey: null }, IS_LEGACY_PLAYER: false,
+      console: { log() {} },
+      onIOS: () => iosShell,
+      HOST: { command: (a, p) => { sent.push([a, p]); return true; } },
+      window: { location: { origin: 'https://old.example', search, replace: (u) => nav.push(u) } },
+      URLSearchParams,
+    };
+    new Function(...Object.keys(scope), `${fn} return moveToServer('https://new.example/', 'K1');`)(...Object.values(scope));
+    return { sent, nav };
+  };
+  const ios = run('?host=ios', true);
+  assert.deepEqual(ios.sent, [['move-server', { url: 'https://new.example/player?k=K1&host=ios' }]]);
+  assert.deepEqual(ios.nav, [], 'the page does not navigate itself on iOS');
+  const browser = run('', false);
+  assert.deepEqual(browser.sent, []);
+  assert.deepEqual(browser.nav, ['https://new.example/player?k=K1']);
+
+  // And the shell refuses another server's /player it did not load, and binds the pairing to its origin.
+  const read = (p) => fs.readFileSync(path.join(ROOT, 'ios', p), 'utf8');
+  const screen = read('ScreenTinker/Player/PlayerScreen.swift');
+  const url = read('ScreenTinker/Core/PlayerURL.swift');
+  assert.match(url, /if !same && !shellLoadInFlight \{ return \.cancel \}/);
+  assert.match(read('ScreenTinker/Core/HostProtocol.swift'), /case "move-server":/);
+  assert.match(screen, /case \.moveServer\(let text\):/);
+  assert.match(screen, /PlayerURL\.releasesIdentity\(boundTo: p\.origin, page: page, shell: origin\)/);
+  assert.match(read('ScreenTinker/App/IdentityStore.swift'), /"origin": origin\.absoluteString/);
+});
+
 /* ---- /download/mac ----------------------------------------------------------------------- */
 
 test('/download/mac serves the .dmg, and there is no Mac update check or rollback path', async () => {

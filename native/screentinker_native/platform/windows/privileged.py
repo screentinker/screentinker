@@ -25,7 +25,23 @@ def available():
     """Is the helper there? ⚠️ NOT os.path.exists(PIPE): that OPENS a connection, which the helper then
     serves as an empty request, and between two pipe instances it can find none — the player declared
     no privileged capabilities at all after one unlucky probe (seen in the Win11 VM). WaitNamedPipe asks
-    without connecting: ERROR_SEM_TIMEOUT means "exists, just busy", which is still yes."""
+    without connecting: ERROR_SEM_TIMEOUT means "exists, just busy", which is still yes.
+
+    The answer is kept for AVAILABLE_TTL_S: the menu refresh asks on the UI thread, and a busy pipe
+    makes WaitNamedPipe wait up to its full second."""
+    import time
+    now = time.monotonic()
+    if _available_cache[0] is not None and now - _available_cache[1] < AVAILABLE_TTL_S:
+        return _available_cache[0]
+    _available_cache[:] = [_probe(), now]
+    return _available_cache[0]
+
+
+AVAILABLE_TTL_S = 30
+_available_cache = [None, 0.0]     # (answer, monotonic time asked)
+
+
+def _probe():
     import ctypes
     k32 = ctypes.windll.kernel32
     if k32.WaitNamedPipeW(PIPE, 1000):

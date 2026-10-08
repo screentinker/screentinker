@@ -144,10 +144,20 @@ def fingerprint():
 
 # --- displays --------------------------------------------------------------------------------
 
+_EDID_TTL_S = 600
+_edid_cache = [None, -_EDID_TTL_S - 1.0]     # (value, monotonic time read)
+
+
 def primary_edid_b64():
+    """Re-read at most every 10 minutes: device_info() runs at every register (each minute), and a full
+    `ioreg -l` walk is not free. A swapped panel shows up within the TTL."""
+    now = time.monotonic()
+    if now - _edid_cache[1] < _EDID_TTL_S:
+        return _edid_cache[0]
     edid = parse_edid_hex(_run(["ioreg", "-l", "-w0", "-d", "8", "-r", "-c", "IOMobileFramebuffer"], timeout=15)) \
         or parse_edid_hex(_run(["ioreg", "-l", "-w0", "-r", "-c", "IODisplayConnect"], timeout=15))
-    return base64.b64encode(edid).decode() if edid else None
+    _edid_cache[:] = [base64.b64encode(edid).decode() if edid else None, now]
+    return _edid_cache[0]
 
 
 def connectors():

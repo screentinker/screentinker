@@ -50,4 +50,74 @@ public enum PlayerURL {
             && url.host?.lowercased() == origin.host?.lowercased()
             && port(url) == port(origin)
     }
+
+    /// `url` with `host=ios` (and no other `host`), the rest of its query — `k=` on a move — kept.
+    public static func tagged(_ url: URL) -> URL? {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        let items = parts.queryItems ?? []
+        parts.queryItems = items.filter { $0.name != "host" } + [URLQueryItem(name: "host", value: "ios")]
+        return parts.url
+    }
+
+    public static func isTagged(_ url: URL) -> Bool {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return items.contains(where: { $0.name == "host" && $0.value == "ios" })
+    }
+
+    /// What the top-level page may do (PlayerScreen's decidePolicyFor).
+    public enum Navigation: Equatable {
+        case allow
+        case cancel
+        /// Cancel, and load this instead: the same address with our host tag.
+        case retag(URL)
+        /// Allow, and remember this as the server from now on.
+        case adopt(URL)
+    }
+
+    /// ⚠️ Another origin's /player is NOT a server move by itself: any frame that can navigate the top
+    /// window (a web overlay, a widget) could send the sign to a server of its choosing, which would then
+    /// be handed the pairing. A move arrives as the page's `move-server` command, and the shell loads it
+    /// (`moveTarget`); the only other cross-origin /player accepted is a server redirect of a load the
+    /// shell itself started (`shellLoadInFlight`: http → https, a renamed host).
+    public static func decide(_ url: URL, current origin: URL, shellLoadInFlight: Bool) -> Navigation {
+        let scheme = url.scheme?.lowercased() ?? ""
+        if scheme == "about" || scheme == "blob" || scheme == "data" { return .allow }
+        let same = isSameOrigin(url, as: origin)
+        guard url.path.hasPrefix("/player") else { return same ? .allow : .cancel }
+        if !same && !shellLoadInFlight { return .cancel }
+        if !isTagged(url) {
+            // Without our tag the page would no longer know it is inside this app.
+            guard let t = tagged(url) else { return .cancel }
+            return .retag(t)
+        }
+        if same { return .allow }
+        guard case .success(let moved) = PlayerURL.origin(from: url.absoluteString) else { return .cancel }
+        return .adopt(moved)
+    }
+
+    /// The page's `move-server` address, checked and tagged: an http(s) `/player` page on a host.
+    public static func moveTarget(from text: String) -> URL? {
+        guard let url = URL(string: text), case .success = PlayerURL.origin(from: text),
+              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              url.path.hasPrefix("/player") else { return nil }
+        return tagged(url)
+    }
+
+    /// The origin a WKSecurityOrigin describes, as a URL (port 0 = the scheme's default).
+    public static func origin(scheme: String, host: String, port: Int) -> URL? {
+        var parts = URLComponents()
+        parts.scheme = scheme.lowercased()
+        parts.host = host.lowercased()
+        if port > 0 { parts.port = port }
+        return parts.url
+    }
+
+    /// Whether the pairing stored for `boundOrigin` may go to a page on `page`, the shell being on
+    /// `origin`. Only the server that issued it gets it back: a page anywhere else — or a pairing that
+    /// says nothing about where it came from — gets none and pairs (or enrols with its `k=`) itself.
+    public static func releasesIdentity(boundTo boundOrigin: String?, page: URL?, shell origin: URL) -> Bool {
+        guard let page, isSameOrigin(page, as: origin),
+              let boundOrigin, let bound = URL(string: boundOrigin) else { return false }
+        return isSameOrigin(bound, as: origin)
+    }
 }

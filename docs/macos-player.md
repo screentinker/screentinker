@@ -34,7 +34,10 @@ Fleet pre-configuration: an admin (or an MDM profile) can drop `/Library/Applica
 - **Restart**: the LaunchAgent has `KeepAlive.SuccessfulExit = false`, so launchd restarts the player
   after a crash (exit 1). The on-screen **Exit player** exits 0 on macOS, so it stays down until the
   next login — launchd cannot tell exit codes apart beyond "clean or not", which is why this backend
-  sets `EXIT_BY_OPERATOR = 0` instead of the 42 Windows uses.
+  sets `EXIT_BY_OPERATOR = 0` instead of the 42 Windows uses. While the **kiosk is locked** (the menu has
+  no Exit player) any other clean quit — Cmd+Q, the window closing, a `kill` — exits 75 instead, so
+  launchd brings the player back after its 10 s throttle. The quit itself is not refused: that would
+  also block logout and shutdown.
 - **Power cut**: turn on automatic login for the player account and *Start up automatically after a
   power failure*. Without automatic login, a Mac that reboots waits at the login window.
 - **One player per user**: an `flock` on `<state>/player.lock`. A second copy exits immediately.

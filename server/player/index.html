@@ -1001,6 +1001,9 @@
       try { host = new URLSearchParams(window.location.search).get('host') || ''; } catch (_) {}
       const target = newUrl + (IS_LEGACY_PLAYER ? '/player/legacy' : '/player') + '?k=' + encodeURIComponent(key)
         + (host ? '&host=' + encodeURIComponent(host) : '');
+      // The iOS app refuses a top-level navigation to another server unless it asked for it (a frame
+      // could otherwise move the sign and collect its pairing), so there the SHELL makes the move.
+      if (host === 'ios' && typeof onIOS === 'function' && onIOS() && HOST && HOST.command('move-server', { url: target })) return;
       try { window.location.replace(target); } catch (_) { window.location.href = target; }
     }
 
@@ -4337,6 +4340,10 @@
           media.setAttribute('frameborder', '0');
           media.setAttribute('scrolling', 'no');
           media.setAttribute('allow', ''); // mute web audio by default (deny autoplay)
+          // A third-party page over the sign: it keeps its own origin, forms and popups, but never
+          // allow-top-navigation — unsandboxed, it could navigate the player itself away (on iOS, to
+          // another "server" that would then be handed the pairing).
+          media.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
           media.src = p.uri;
         } else {
           media = document.createElement('img');

@@ -29,6 +29,52 @@ final class PlayerURLTests: XCTestCase {
         XCTAssertFalse(PlayerURL.isSameOrigin(URL(string: "http://signs.example.com/player")!, as: origin))
         XCTAssertFalse(PlayerURL.isSameOrigin(URL(string: "https://evil.example.com/player")!, as: origin))
     }
+
+    func testAnotherServersPlayerIsNotAMoveUnlessTheShellLoadedIt() throws {
+        let origin = try PlayerURL.origin(from: "https://signs.example.com").get()
+        let evil = URL(string: "https://evil.example/player?k=abc&host=ios")!
+        // A frame navigating the top window (a web overlay) cannot move the sign, tagged or not.
+        XCTAssertEqual(PlayerURL.decide(evil, current: origin, shellLoadInFlight: false), .cancel)
+        XCTAssertEqual(PlayerURL.decide(URL(string: "https://evil.example/player?k=abc")!, current: origin, shellLoadInFlight: false), .cancel)
+        XCTAssertEqual(PlayerURL.decide(URL(string: "https://evil.example/")!, current: origin, shellLoadInFlight: true), .cancel)
+        // A server redirect of the shell's own load (http -> https, a renamed host) is followed and adopted.
+        XCTAssertEqual(PlayerURL.decide(evil, current: origin, shellLoadInFlight: true),
+                       .adopt(URL(string: "https://evil.example")!))
+        XCTAssertEqual(PlayerURL.decide(URL(string: "https://evil.example/player")!, current: origin, shellLoadInFlight: true),
+                       .retag(URL(string: "https://evil.example/player?host=ios")!))
+    }
+
+    func testOnTheSameServer() throws {
+        let origin = try PlayerURL.origin(from: "https://signs.example.com").get()
+        XCTAssertEqual(PlayerURL.decide(URL(string: "https://signs.example.com/player?host=ios")!, current: origin, shellLoadInFlight: false), .allow)
+        XCTAssertEqual(PlayerURL.decide(URL(string: "https://signs.example.com/player?reset=1")!, current: origin, shellLoadInFlight: false),
+                       .retag(URL(string: "https://signs.example.com/player?reset=1&host=ios")!))
+        XCTAssertEqual(PlayerURL.decide(URL(string: "https://signs.example.com/api/x")!, current: origin, shellLoadInFlight: false), .allow)
+        XCTAssertEqual(PlayerURL.decide(URL(string: "about:blank")!, current: origin, shellLoadInFlight: false), .allow)
+    }
+
+    func testMoveTarget() {
+        XCTAssertEqual(PlayerURL.moveTarget(from: "https://new.example.com/player?k=K1&host=ios")?.absoluteString,
+                       "https://new.example.com/player?k=K1&host=ios")
+        XCTAssertEqual(PlayerURL.moveTarget(from: "http://10.0.0.5:3001/player?k=K1")?.absoluteString,
+                       "http://10.0.0.5:3001/player?k=K1&host=ios")
+        XCTAssertNil(PlayerURL.moveTarget(from: "https://new.example.com/app"), "only a player page")
+        XCTAssertNil(PlayerURL.moveTarget(from: "javascript:alert(1)//player"))
+        XCTAssertNil(PlayerURL.moveTarget(from: "file:///player"))
+    }
+
+    func testThePairingGoesOnlyToTheServerThatIssuedIt() throws {
+        let origin = try PlayerURL.origin(from: "https://signs.example.com").get()
+        let page = PlayerURL.origin(scheme: "https", host: "signs.example.com", port: 0)
+        XCTAssertEqual(page, origin)
+        XCTAssertTrue(PlayerURL.releasesIdentity(boundTo: "https://signs.example.com", page: page, shell: origin))
+        XCTAssertFalse(PlayerURL.releasesIdentity(boundTo: "https://old.example.com", page: page, shell: origin), "moved since")
+        XCTAssertFalse(PlayerURL.releasesIdentity(boundTo: nil, page: page, shell: origin), "unbound")
+        XCTAssertFalse(PlayerURL.releasesIdentity(boundTo: "https://signs.example.com", page: nil, shell: origin))
+        let evil = PlayerURL.origin(scheme: "https", host: "evil.example", port: 0)
+        XCTAssertFalse(PlayerURL.releasesIdentity(boundTo: "https://signs.example.com", page: evil, shell: origin))
+        XCTAssertEqual(PlayerURL.origin(scheme: "HTTP", host: "10.0.0.5", port: 3001)?.absoluteString, "http://10.0.0.5:3001")
+    }
 }
 
 final class HostProtocolTests: XCTestCase {
@@ -38,6 +84,9 @@ final class HostProtocolTests: XCTestCase {
         XCTAssertEqual(HostProtocol.parse(#"{"source":"screentinker-player","type":"host:command","action":"set-identity","payload":{"deviceId":"d1","deviceToken":"t1"}}"#),
                        .setIdentity(deviceId: "d1", deviceToken: "t1"))
         XCTAssertEqual(HostProtocol.parse(#"{"source":"screentinker-player","type":"host:command","action":"clear-identity"}"#), .clearIdentity)
+        XCTAssertEqual(HostProtocol.parse(#"{"source":"screentinker-player","type":"host:command","action":"move-server","payload":{"url":"https://n.example/player?k=1"}}"#),
+                       .moveServer(url: "https://n.example/player?k=1"))
+        XCTAssertEqual(HostProtocol.parse(#"{"source":"screentinker-player","type":"host:command","action":"move-server"}"#), .unknown("move-server"))
     }
 
     func testIgnoresAnythingElse() {

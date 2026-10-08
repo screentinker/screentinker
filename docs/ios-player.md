@@ -17,9 +17,12 @@ shape as the Vega app: the player itself is `server/player/index.html`, served f
   status bar and home indicator hidden, `isIdleTimerDisabled` re-armed every time the app is active.
 - **Staying up**: a failed load retries with backoff (5 s → 60 s) and immediately when the network
   returns (`NWPathMonitor`); a web content process iOS kills under memory pressure is reloaded.
-- **Navigation**: top-level navigation stays on the player. When the dashboard moves the screen to
-  another server (`set_server_url`), the player navigates to `<new>/player?k=…`; the shell re-issues it
-  with `host=ios` and remembers the new server.
+- **Navigation**: top-level navigation stays on the player's own server. When the dashboard moves the
+  screen to another server (`set_server_url`), the player sends the shell `move-server` with
+  `<new>/player?k=…`, and the shell loads it (tagged `host=ios`) and remembers the new server. A page
+  that navigates the top window to another server's `/player` by itself — a web overlay or widget
+  frame could — is **cancelled**. The one other cross-origin `/player` followed is a server redirect of
+  a load the shell started (http → https, a renamed host), which is then remembered.
 
 ## The host bridge
 
@@ -30,8 +33,15 @@ The same protocol as the Vega and webOS shells (server/player/index.html, "Host 
 |---|---|
 | `host:hello` | answers `host:ready` with **no capabilities**, the app version, device model and OS, and the pairing if it holds one |
 | `restart` | reloads the web view |
-| `set-identity {deviceId, deviceToken}` | stores the pairing in the **Keychain** (`AfterFirstUnlockThisDeviceOnly`) |
+| `set-identity {deviceId, deviceToken}` | stores the pairing in the **Keychain** (`AfterFirstUnlockThisDeviceOnly`), bound to the server's origin |
 | `clear-identity` | deletes it |
+| `move-server {url}` | loads that http(s) `/player` address and makes it the server (`set_server_url`) |
+
+The shell answers only the top frame, and only while it is on the shell's server. `host:ready` carries
+the pairing only to a page on the origin the pairing was stored for: after a move — or when setup is
+pointed at a different address — the new server's page enrols with its `k=` or pairs, and its own
+`set-identity` replaces the stored pairing. (A pairing stored by an earlier build, with no origin, is
+bound to the server the app is set to on its first start.)
 
 The page treats itself as inside the app only when `?host=ios` **and** the message handler exist
 (`onIOS()`), so a Safari tab with the same URL stays a browser. It then registers as `platform: 'ios'`,

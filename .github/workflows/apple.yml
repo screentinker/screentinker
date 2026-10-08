@@ -59,7 +59,8 @@ jobs:
           kill -INT $pid; sleep 3; kill -9 $pid 2>/dev/null
           cat "$RUNNER_TEMP/src.log"
           set -e
-          ! grep -q Traceback "$RUNNER_TEMP/src.log"
+          # Not `! grep`: bash -e ignores a negated command that is not the last one.
+          if grep -q Traceback "$RUNNER_TEMP/src.log"; then echo "the player logged a Traceback"; exit 1; fi
           grep -q "scene graph" "$RUNNER_TEMP/src.log"
           grep -q "connect to http://127.0.0.1:9" "$RUNNER_TEMP/src.log"
       - name: Build ScreenTinker.app and the .dmg (ad-hoc signed)
@@ -77,7 +78,8 @@ jobs:
           set -e
           # A frozen build logs to <state>/player.log (there is no console).
           cat "$RUNNER_TEMP/st-app/player.log"
-          ! grep -q Traceback "$RUNNER_TEMP/st-app/player.log"
+          # Not `! grep`: bash -e ignores a negated command that is not the last one.
+          if grep -q Traceback "$RUNNER_TEMP/st-app/player.log"; then echo "the player logged a Traceback"; exit 1; fi
           grep -q "scene graph" "$RUNNER_TEMP/st-app/player.log"
           grep -q "connect to http://127.0.0.1:9" "$RUNNER_TEMP/st-app/player.log"
       - name: The frozen app starts a terminal shell with a controlling tty
@@ -117,7 +119,7 @@ jobs:
         run: |
           N=native/build/mac/dist/ScreenTinker.app/Contents/Resources/THIRD-PARTY-NOTICES.txt
           grep -q "LGPL-3.0" "$N"
-          ! grep -i -E "^PyQt" "$N"
+          if grep -i -E "^PyQt" "$N"; then echo "PyQt in the notices (GPL)"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
           name: ScreenTinker-macOS-dmg
