@@ -47,6 +47,17 @@
   - Private meetings show as "Private meeting", or every meeting as "Reserved"; hidden details
     never leave the server. Panels keep switching between free and busy on time with the network
     down. See `docs/room-booking.md`.
+- **Audience counting: how many people looked at a screen, and for how long** (Audience, under
+  Insights). Off by default.
+  - An organization owner or admin allows it, then switches it on for screens or groups. The
+    screen's camera and a detector built into the player count faces looking at the screen, per
+    minute and per item on screen. The report shows impressions, how long people looked, and
+    impressions per play, by content, screen, playlist, hour and day, with CSV export.
+  - **No picture or video is stored or leaves the screen, and nobody is recognised.** Only counts
+    are sent, and the server refuses anything else. A small camera icon shows on screens that are
+    counting (you can turn it off). Counts are kept for 90 days by default.
+  - Android players only for now, with no extra download. The Raspberry Pi and Windows players
+    will follow. See `docs/audience-counting.md`, which includes a notice to put up.
 
 - **SAML 2.0 single sign-on for organizations** (Settings → Single sign-on → Add provider →
   SAML 2.0).

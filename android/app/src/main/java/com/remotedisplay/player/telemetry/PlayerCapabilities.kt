@@ -136,6 +136,12 @@ object PlayerCapabilities {
                 if (com.remotedisplay.player.player.LiveInputPlayer.deviceHasInput(context)) caps += "playback.hdmi_in"
             } catch (_: Throwable) {}
 
+            // Audience counting: a camera this player could count with. A statement of ability only;
+            // whether it counts is the organization's switch, sent in the payload.
+            try {
+                if (com.remotedisplay.player.audience.AudienceController.deviceHasCamera(context)) caps += "audience.camera"
+            } catch (_: Throwable) {}
+
             // Display power is asymmetric and only honest when BOTH halves exist. screen_off needs
             // owner, device-admin FORCE_LOCK, or accessibility; screen_on now works anywhere via a
             // wake lock (WAKE_LOCK is a normal permission). So the binding constraint is the OFF

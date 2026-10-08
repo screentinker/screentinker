@@ -181,6 +181,12 @@ async function pruneDeviceEvents() {
 // #473 v2: interactive-page sessions follow the proof-of-play retention window. They are small (one
 // row per visitor, not per loop) and have no rollup, so they are simply aged out.
 const _delKioskSessions = db.prepare('DELETE FROM kiosk_sessions WHERE rowid IN (SELECT rowid FROM kiosk_sessions WHERE started_at < ? LIMIT ?)');
+// Audience counts age out by their ORGANIZATION's own retention (lib/audience.js, default 90 days).
+async function pruneAudience() {
+  const audience = require('../lib/audience');
+  return (await chunkedDelete((lim) => audience.purgeExpired(lim), { batch: config.statusLogPruneBatch })).deleted;
+}
+
 async function pruneKioskSessions() {
   const cutoff = Math.floor(Date.now() / 1000) - Math.round(config.playLogRetentionDays * 86400);
   return (await chunkedDelete((lim) => _delKioskSessions.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
@@ -342,6 +348,7 @@ async function runMaintenance() {
     await pruneTelemetryRetention({ bandGate: true });   // #240 device_telemetry age sweep (per-device chunked)
     await pruneDeviceEvents();                   // offline-cause log: incident-feed age retention (chunked)
     await pruneKioskSessions();                  // #473 v2: interactive-page sessions, play-log retention
+    try { await pruneAudience(); } catch (e) { console.warn(`[audience] prune failed: ${e.message}`); }   // per-org retention
     await capDeviceEvents();                     // offline-cause log: per-device incident row cap
     await pruneUsageDaily();                     // #146 BILLING rollup retention (chunked)
     await expireStrandedPlaysChunked();          // #307 close plays nothing else will ever close

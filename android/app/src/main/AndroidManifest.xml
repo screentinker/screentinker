@@ -13,6 +13,10 @@
       without required='false'.
     -->
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- Audience counting (opt-in). required=false, or CAMERA would hide the app from every box without one. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.location.network" android:required="false" />
@@ -22,6 +26,8 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Audience counting only, and only when an org admin switches it on for this screen. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- Provisioning-only: lets a device-owner panel enable its OWN accessibility service (the
          durable whole-screen-capture + D-pad path) without a human toggling Settings. Protected /
          signature-level, so it is inert unless granted once at setup:

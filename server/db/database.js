@@ -3563,6 +3563,43 @@ try {
       created_at   INTEGER NOT NULL
     );
   `);
+  /*
+   * Audience counting (lib/audience.js, docs/audience-counting.md). Off unless the org allows it AND
+   * a screen or one of its groups has it enabled. audience_buckets holds INTEGERS ONLY — counts per
+   * screen per minute per item on screen — and no column could hold an image, a face or an identifier.
+   */
+  try { db.prepare('ALTER TABLE devices ADD COLUMN audience_enabled INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] devices.audience_enabled added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE device_groups ADD COLUMN audience_enabled INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audience_org_settings (
+      organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+      allowed         INTEGER NOT NULL DEFAULT 0,
+      show_indicator  INTEGER NOT NULL DEFAULT 1,
+      fps             INTEGER NOT NULL DEFAULT 2,
+      min_dwell_ms    INTEGER NOT NULL DEFAULT 1000,
+      retention_days  INTEGER NOT NULL DEFAULT 90,
+      updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE TABLE IF NOT EXISTS audience_buckets (
+      device_id        TEXT NOT NULL,
+      workspace_id     TEXT,
+      bucket_start     INTEGER NOT NULL,
+      bucket_sec       INTEGER NOT NULL,
+      item_kind        TEXT NOT NULL,
+      item_id          TEXT NOT NULL DEFAULT '',
+      playlist_id      TEXT,
+      present_max      INTEGER NOT NULL,
+      present_avg_x100 INTEGER NOT NULL,
+      arrivals         INTEGER NOT NULL,
+      impressions      INTEGER NOT NULL,
+      d0 INTEGER NOT NULL, d1 INTEGER NOT NULL, d2 INTEGER NOT NULL,
+      d3 INTEGER NOT NULL, d4 INTEGER NOT NULL, d5 INTEGER NOT NULL,
+      received_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      UNIQUE (device_id, bucket_start, item_kind, item_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_audience_ws_time ON audience_buckets(workspace_id, bucket_start);
+    CREATE INDEX IF NOT EXISTS idx_audience_time ON audience_buckets(bucket_start);
+  `);
   // Device tags (JSON array, lib/content-tags normalizer) and dynamic group rules
   // (lib/device-group-rules.js): NULL rules = a hand-built group, as before.
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }

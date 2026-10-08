@@ -96,6 +96,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusOverlay: View
     private lateinit var statusText: TextView
     private lateinit var rootView: View
+    // Audience counting (audience/AudienceController.kt): off unless the server's payload turns it on.
+    private var audience: com.remotedisplay.player.audience.AudienceController? = null
     private lateinit var pipLayout: FrameLayout       // #109: reparented above rootView (see onCreate)
     private var talkRenderer: org.webrtc.SurfaceViewRenderer? = null   // #talk video: operator webcam overlay
     private lateinit var captureRoot: View            // window content; capture source (includes pipLayout)
@@ -229,6 +231,11 @@ class MainActivity : AppCompatActivity() {
         statusOverlay = findViewById(R.id.statusOverlay)
         statusText = findViewById(R.id.statusText)
         rootView = findViewById(R.id.rootLayout)
+        audience = com.remotedisplay.player.audience.AudienceController(
+            activity = this,
+            overlayParent = { findViewById<ViewGroup>(android.R.id.content) },
+            onBuckets = { handler.post { wsService?.flushAudience() } },
+        )
 
         // Hide player controls
         playerView.useController = false
@@ -319,14 +326,19 @@ class MainActivity : AppCompatActivity() {
 
         // Setup playlist controller
         playlistController = PlaylistController(
-            onItemChanged = { item -> item?.let { playItem(it) } },
+            onItemChanged = { item ->
+                // Audience counts are attributed to what is on screen — every item, including ones
+                // left out of proof-of-play (log_play=0), which is why this is not the onPlayLog hook.
+                audience?.setItem(if (item?.contentId?.isNotEmpty() == true) "content" else "widget", item?.contentId?.ifEmpty { item.widgetId } )
+                item?.let { playItem(it) }
+            },
             // #74/#75: clear the last frame when going idle (else a now-filtered item lingers on screen)
-            onPlaylistEmpty = { kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
+            onPlaylistEmpty = { audience?.setItem("none", null); kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
             onRequestRefresh = { wsService?.requestPlaylistRefresh() },
-            onNothingScheduled = { kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.nothing_scheduled)) },
+            onNothingScheduled = { audience?.setItem("none", null); kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.nothing_scheduled)) },
             // Screen-resilience: the defined "waiting for content" state — ONLY on a fresh device
             // with nothing to show yet (never while content is on screen; that path keeps current).
-            onWaitingForContent = { kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
+            onWaitingForContent = { audience?.setItem("none", null); kiosk?.hide(); if (::mediaPlayer.isInitialized) mediaPlayer.stop(); showStatus(getString(R.string.waiting_for_content)) },
             // Proof-of-play: forward play_start/play_end to the server (device:play-event) so this
             // device shows Total Plays / Hours in Reports. Widgets have no content_id, so key on the
             // widget id instead — keeping play_start and play_end consistent so the row's duration closes.
@@ -482,6 +494,8 @@ class MainActivity : AppCompatActivity() {
         if (cachedJson.isNotEmpty()) {
             try {
                 val cached = JSONObject(cachedJson)
+                // An offline cold start keeps counting if it was counting (the cache is the whole payload).
+                try { audience?.onPayload(cached) } catch (e: Throwable) { Log.w("MainActivity", "audience restore: ${e.message}") }
                 val assignments = cached.getJSONArray("assignments")
                 if (assignments.length() > 0) {
                     Log.i("MainActivity", "Restoring cached playlist: ${assignments.length()} items")
@@ -905,6 +919,8 @@ class MainActivity : AppCompatActivity() {
             try { triggerManager?.onPayload(data) } catch (e: Throwable) {
                 Log.w("MainActivity", "trigger adopt failed: ${e.message}")
             }
+            // Audience counting rides every payload; absent means OFF, so this runs before any early return.
+            try { audience?.onPayload(data) } catch (e: Throwable) { Log.w("MainActivity", "audience adopt failed: ${e.message}") }
             /*
              * ⚠️ AND PIN WHAT THEY NEED — the comment above describes the WEB player's mechanism,
              * not this one. There, device-triggers.js appends trigger media to the same
@@ -2171,11 +2187,21 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         if (::mediaPlayer.isInitialized) mediaPlayer.onAppBackgrounded()
+        // The camera runs only while the player is on screen.
+        try { audience?.onStop() } catch (e: Throwable) { }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == com.remotedisplay.player.audience.AudienceController.REQUEST_CODE) {
+            audience?.onPermissionResult(grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED)
+        }
     }
 
     override fun onStart() {
         super.onStart()
         if (::mediaPlayer.isInitialized) mediaPlayer.onAppForegrounded()
+        try { audience?.onStart() } catch (e: Throwable) { }
 
         // Clear the boot "Starting display…" prompt EVERY time the player becomes visible, not
         // just in onCreate.
@@ -2205,6 +2231,8 @@ class MainActivity : AppCompatActivity() {
         try { triggerSweep?.let { handler.removeCallbacks(it) } } catch (e: Throwable) { }
         try { triggerManager?.stop() } catch (e: Throwable) { }
         triggerManager = null
+        try { audience?.onDestroy() } catch (e: Throwable) { }
+        audience = null
         // Drop the window-flag callback so the service stops calling into a dead Activity. The
         // SCHEDULE keeps running — it is the service's, deliberately.
         try { wsService?.onPowerWindow = null } catch (e: Throwable) { }
