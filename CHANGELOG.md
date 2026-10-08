@@ -385,12 +385,78 @@ Thanks to カタカナ for the report and for the approach, which they had alrea
 and Fire tablets in their fork.
 
 
+### Hardened before release (review of this release's new features)
+
+The features added above were reviewed before release, and these were fixed (#529–#539):
+
+- **BI dashboards:** every Power BI, Tableau and Grafana page now runs in a sandbox. Before, a
+  Tableau server address an organization admin entered could run script on the dashboard's own
+  site. On hosted ScreenTinker, a Tableau address must be on `online.tableau.com` unless a
+  platform admin adds it. Rate limits now count only cache misses, per screen, so a large wall no
+  longer goes blank.
+- **Automation:**
+  - A malformed Zapier request could stop the server; it now gets a 400.
+  - An emergency alert that was cleared can be raised again straight away. Before, the same alert
+    sent again within 7 days did nothing.
+  - One Zap's alert can no longer move another's to different screens.
+  - Webhook deliveries are shared fairly between organizations.
+  - A hook's secret no longer appears in the server log.
+- **SAML:**
+  - Sign-in is tied to the browser that started it, which closes a login-CSRF hole.
+  - The identity provider's Issuer is checked.
+  - Transient NameIDs are refused with a clear message.
+- **SharePoint/OneDrive folders:**
+  - A folder of more than 500 files no longer removes synced media.
+  - Syncs are safe on a scaled-out pair.
+  - A sync pauses when its workspace, organization or creator is gone.
+  - Media head office plays in a corporate playlist is only updated by someone who may change it.
+    The same applies to Canva syncs.
+- **Room displays:**
+  - A meeting is released only while a screen that can check in shows the room.
+  - A workspace admin can only pick calendars the connection lists.
+  - On Google, a release declines the room's attendance instead of deleting the event.
+- **Social walls:**
+  - A hidden post stays hidden: it no longer reappears from a cached page or after a refetch.
+  - An edited approved post goes back for review.
+  - Blocked words match through zero-width characters, full-width letters and accents.
+  - Hashtag walls no longer empty out a day after the last post.
+- **Audience counting:**
+  - "Impressions per play" counts only plays on screens that were counting.
+  - Averages are weighted by how long each item was on screen.
+  - Date ranges follow your time zone.
+  - A camera restart mid-minute no longer loses the rest of that minute.
+- **iPad/iPhone app:** the app moves to another server only when the player asks, and its
+  pairing is only given to the server it was paired with. The PiP web overlay on the web player
+  and on Tizen can no longer navigate the player away.
+- **Mac:** a kiosk-locked Mac now restarts after Cmd+Q.
+- **Deleting things:** deleting a workspace, organization or user now also deletes that tenant's
+  data in all of these features. Removing a member or revoking an API token stops their Canva
+  links, folder syncs and Zapier subscriptions.
+
+### Fixed (dashboard)
+
+- **The Content Library's "add content" row no longer crushes the upload area** (#540). With seven
+  ways to add content side by side, the drop zone had shrunk to a sliver with its text one word per
+  line. The upload area is now a full-width strip, and the cards wrap onto as many rows as needed.
+
 ### Upgrade notes
 
 - Player rollouts now go out in waves, so the whole fleet updates over a few hours instead of at
   once. Set `OTA_STAGED_ROLLOUT=off` to keep the old behaviour, and `OTA_ROLLOUT_SOAK_MIN`
   (default 120) to change how long each wave waits. Rollback needs the previous package, which is
   kept from the first release after this one onwards.
+- **SAML sign-in needs HTTPS.** The identity provider returns to ScreenTinker with a cross-site
+  POST, which only carries the new sign-in cookie over HTTPS. Behind a reverse proxy, the server
+  must see the request as HTTPS (trust proxy).
+- **Power BI and Tableau reports run in a sandbox.** Check that your reports still load before
+  rolling out. Turning off "Widget sandbox isolation" no longer changes this.
+- **Who can do what:**
+  - Only an organization owner or admin can add a SharePoint/OneDrive folder.
+  - Only a workspace admin can create or delete Zapier subscriptions.
+  - Hooks no longer fire on a GET unless "Allow GET" is turned on for that hook.
+- **Room auto-release** only happens for rooms shown on a screen that can check in: the web
+  player, Android and the Pi/Windows/Mac players on this release.
+- **The Raspberry Pi audience add-on** now installs in `/usr/lib/screentinker-pi-audience`.
 - The `schedules` table is rebuilt once on first start, to let a schedule target a video wall.
   Every row, column, index and trigger is kept. A table that does not look as expected is left
   alone and logged (`[migrate] wall schedules`), and wall schedules are then unavailable on that

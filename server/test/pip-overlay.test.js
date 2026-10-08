@@ -113,6 +113,9 @@ test('pip: web type renders an iframe; last-show-wins; targeted clear is id-awar
   const box = pip.children[0];
   assert.ok(box.children.some(c => c.tag === 'iframe'), 'web overlay uses an <iframe>');
   assert.equal(box.children.find(c => c.tag === 'iframe').attrs.allow, '', 'web audio muted by default (empty allow)');
+  const sb = box.children.find(c => c.tag === 'iframe').attrs.sandbox;
+  assert.equal(sb, 'allow-scripts allow-same-origin allow-forms allow-popups', 'sandboxed like the web player');
+  assert.ok(!/allow-top-navigation/.test(sb), 'a web overlay can never navigate the player away');
 
   // last-show-wins: a second show replaces the first (still a single slot).
   overlay.show({ pip_id: 'web2', type: 'image', uri: 'http://img/y.png', duration: 0 });
