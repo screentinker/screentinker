@@ -93,6 +93,8 @@ const JWT_ONLY_ROUTERS = [
   { path: '/api/teams',       mod: './routes/teams',        tenancy: true },
   { path: '/api/white-label', mod: './routes/white-label',  tenancy: true },
   { path: '/api/workspaces',  mod: './routes/workspaces' },
+  // Player rollouts (lib/ota-rollout.js). Before /api/admin: Express walks mounts in order.
+  { path: '/api/admin/ota-rollouts', mod: './routes/ota-rollouts' },
   { path: '/api/admin',       mod: './routes/admin' },
   /*
    * Storage profiles (docs/storage.md). JWT only: a profile holds cloud credentials and decides

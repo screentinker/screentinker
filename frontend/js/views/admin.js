@@ -155,6 +155,11 @@ ${section(t('admin.orgs.title'), t('admin.orgs.desc'), `
     html: () => section(t('admin.branding.title'), t('admin.branding.desc'), `<div id="brandingForm">${loading()}</div>`),
     load: () => loadBranding(),
   },
+  rollouts: {
+    tab: 'platform.tab.rollouts', title: 'platform.rollouts.title', subtitle: 'platform.rollouts.subtitle',
+    html: () => section(t('platform.rollouts.title'), t('platform.rollouts.desc'), `<div id="rolloutsBody">${loading()}</div>`),
+    load: () => loadRollouts(),
+  },
   system: {
     tab: 'platform.tab.system', title: 'platform.system.title', subtitle: 'platform.system.subtitle',
     html: () => `
@@ -1500,4 +1505,35 @@ async function mountCleanup(el, days = 180, lastResult = null, noticeDays = 14) 
       },
     });
   };
+}
+
+
+/* ── Player rollouts (server lib/ota-rollout.js) ─────────────────────────────────────────────── */
+const ROLLOUT_ACTIONS = { rolling: ['pause', 'release', 'halt'], paused: ['resume', 'release', 'halt'], halted: ['clear'], complete: [], superseded: [] };
+async function loadRollouts() {
+  const host = document.getElementById('rolloutsBody');
+  if (!host) return;
+  let data;
+  try { data = await api.get('/admin/ota-rollouts'); } catch (e) { host.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
+  const rows = data.rollouts || [];
+  host.innerHTML = `
+    ${data.enabled ? '' : `<p style="color:#ca8a04;font-size:13px">${esc(t('platform.rollouts.disabled'))}</p>`}
+    ${rows.length ? `<table class="table"><thead><tr>
+      <th>${esc(t('platform.rollouts.col.player'))}</th><th>${esc(t('platform.rollouts.col.status'))}</th>
+      <th>${esc(t('platform.rollouts.col.health'))}</th><th></th></tr></thead><tbody>
+      ${rows.map((r) => `<tr>
+        <td><strong>${esc(t(`platform.rollouts.family.${r.family}`))} ${esc(r.version)}</strong>
+          <div class="muted" style="font-size:12px">${esc(t('platform.rollouts.started', { when: new Date(r.started_at * 1000).toLocaleString() }))}</div></td>
+        <td>${esc(t(`platform.rollouts.status.${r.status}`, { pct: r.wave_percent }))}
+          ${r.status === 'halted' ? `<div style="font-size:12px;color:#dc2626;max-width:340px">${esc(r.halted_reason || '')}</div>
+            <div class="muted" style="font-size:12px">${esc(r.family === 'android' ? t('platform.rollouts.android_note') : r.can_roll_back ? t('platform.rollouts.rolled_back', { v: r.prev_version }) : t('platform.rollouts.no_prev'))}</div>` : ''}</td>
+        <td style="font-size:12px">${r.health ? esc(t('platform.rollouts.health', { updated: r.health.updated, bad: r.health.bad, size: r.health.family_size })) : ''}</td>
+        <td style="white-space:nowrap">${(ROLLOUT_ACTIONS[r.status] || []).map((a) => `<button class="btn btn-secondary btn-sm" data-ro="${esc(r.family)}|${esc(r.version)}|${a}" style="margin:2px">${esc(t(`platform.rollouts.act.${a}`))}</button>`).join('')}</td>
+      </tr>`).join('')}</tbody></table>` : `<p class="muted">${esc(t('platform.rollouts.empty'))}</p>`}`;
+  host.querySelectorAll('[data-ro]').forEach((b) => b.addEventListener('click', async () => {
+    const [family, version, action] = b.dataset.ro.split('|');
+    if ((action === 'halt' || action === 'release') && !confirm(t(`platform.rollouts.confirm.${action}`, { v: version }))) return;
+    try { await api.post(`/admin/ota-rollouts/${encodeURIComponent(family)}/${encodeURIComponent(version)}/${action}`, {}); showToast(t('platform.rollouts.done'), 'success'); loadRollouts(); }
+    catch (e) { showToast(e.message, 'error'); }
+  }));
 }

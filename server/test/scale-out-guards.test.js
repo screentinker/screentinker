@@ -91,6 +91,7 @@ test('test_replication_blocklist_covers_every_secret_column: no column that look
  * resolveTenancy, fails this test until it is either mounted correctly or listed here on purpose.
  */
 const NOT_WORKSPACE_SCOPED = Object.freeze({
+  'ota-rollouts.js': 'platform admin: a player rollout is the whole instance\'s fleet, not a workspace\'s',
   // route file -> why its writes are not workspace writes (and so cannot land on a copied workspace)
   'auth.js': 'account/session endpoints; login on a replica proxies for copied users (routes/auth.js /login)',
   'org-sso.js': 'organization-level SSO configuration; not replicated (§3.1)',

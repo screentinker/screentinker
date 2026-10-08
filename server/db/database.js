@@ -3273,6 +3273,28 @@ try {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }
   // "Play every N seconds" (lib/repeat-every.js): NULL = plays once per loop, as before.
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN repeat_every_sec INTEGER').run(); console.log('[migrate] playlist_items.repeat_every_sec added'); } catch (_) { /* present */ }
+  // Health-checked player rollouts (lib/ota-rollout.js): waves, automatic halt, rollback package.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ota_rollouts (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      family           TEXT NOT NULL,
+      version          TEXT NOT NULL,
+      status           TEXT NOT NULL DEFAULT 'rolling',
+      wave             INTEGER NOT NULL DEFAULT 0,
+      started_at       INTEGER NOT NULL,
+      wave_started_at  INTEGER NOT NULL,
+      completed_at     INTEGER,
+      halted_at        INTEGER,
+      halted_reason    TEXT,
+      halted_by        TEXT,
+      prev_version     TEXT,
+      archive_path     TEXT,
+      archive_filename TEXT,
+      archive_sha256   TEXT,
+      archive_size     INTEGER,
+      UNIQUE (family, version)
+    );
+  `);
   // Tracked QR links (lib/qr-links.js): a short /q/<code> redirect that counts scans. A scan keeps a
   // time and a coarse platform only — no IP, no user agent.
   db.exec(`

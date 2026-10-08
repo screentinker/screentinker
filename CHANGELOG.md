@@ -4,6 +4,19 @@
 
 ### Added
 
+- **New player versions roll out in waves, and stop themselves if they're bad** (Platform → Player
+  rollouts).
+  - A new Android, Raspberry Pi or Windows player now goes to about 10% of that platform's screens
+    first, then 50%, then everyone. Each wave waits until the screens that updated look healthy.
+  - If updated screens crash repeatedly or go dark after updating, clearly more than the rest of
+    the fleet, the rollout **halts automatically** and platform admins are emailed. A site-wide
+    outage doesn't count against a release.
+  - **Pi and Windows roll back automatically**: screens on a halted version are given the previous
+    one again. **Android can't go back to an older version**, so there a halt stops the spread and
+    the fix is a newer build.
+  - Pause, resume, release to everyone, halt and clear a halt from the Platform area. Beta-channel
+    screens and Force update skip the waves.
+
 - **QR codes that count scans** (Create → QR codes).
   - A tracked link is a short address (`/q/…`) that opens your page and counts the scan: totals,
     the last 30 days, and iPhone / Android / other.
@@ -257,6 +270,10 @@ and Fire tablets in their fork.
 
 ### Upgrade notes
 
+- Player rollouts now go out in waves, so the whole fleet updates over a few hours instead of at
+  once. Set `OTA_STAGED_ROLLOUT=off` to keep the old behaviour, and `OTA_ROLLOUT_SOAK_MIN`
+  (default 120) to change how long each wave waits. Rollback needs the previous package, which is
+  kept from the first release after this one onwards.
 - The `schedules` table is rebuilt once on first start, to let a schedule target a video wall.
   Every row, column, index and trigger is kept. A table that does not look as expected is left
   alone and logged (`[migrate] wall schedules`), and wall schedules are then unavailable on that
