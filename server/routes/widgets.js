@@ -192,6 +192,11 @@ router.post('/', (req, res) => {
     if (bi.error) return res.status(400).json({ error: bi.error });
     storedConfig = bi.config;
   }
+  if (widget_type === 'social') {
+    const sw = socialConfigOrError(req.workspaceId, config);
+    if (sw.error) return res.status(400).json({ error: sw.error });
+    storedConfig = sw.config;
+  }
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
@@ -355,6 +360,11 @@ router.put('/:id', (req, res) => {
     if (bi.error) return res.status(400).json({ error: bi.error });
     config = bi.config;
   }
+  if (widget.widget_type === 'social' && config) {
+    const sw = socialConfigOrError(widget.workspace_id, config);
+    if (sw.error) return res.status(400).json({ error: sw.error });
+    config = sw.config;
+  }
 
   /*
    * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
@@ -466,6 +476,59 @@ function biConfigOrError(workspaceId, config) {
   }
 }
 
+/*
+ * social wall config (lib/social/widget.js): the feed must be one of the widget's own workspace's.
+ */
+function socialConfigOrError(workspaceId, config) {
+  try { return { config: require('../lib/social/widget').normaliseConfig(db, workspaceId, config) }; }
+  catch (e) { return { error: e.message }; }
+}
+
+/*
+ * ⚠️ PUBLIC, LIKE /render: a wall's page is a null-origin frame and cannot carry a session. What
+ * they hand out is what the wall shows anyway — its visible posts, and the images those posts use —
+ * and both are bounded per widget.
+ */
+function liveSocialWidget(req, res) {
+  const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (!widget || widget.widget_type !== 'social') { res.status(404).json({ error: 'Not a social wall' }); return null; }
+  let config = {};
+  try { config = JSON.parse(widget.config || '{}'); } catch { config = {}; }
+  return { widget, config };
+}
+
+router.get('/:id/social.json', (req, res) => {
+  const got = liveSocialWidget(req, res);
+  if (!got) return;
+  res.setHeader('Cache-Control', 'no-store');
+  if (biRateLimited(`soc:${got.widget.id}`, 60)) return res.status(429).json({ error: 'Too many requests' });
+  res.json(require('../lib/social/widget').payload(db, got.widget, got.config));
+});
+
+router.get('/:id/social-media/:hash', (req, res) => {
+  const got = liveSocialWidget(req, res);
+  if (!got) return;
+  const media = require('../lib/social/media');
+  const hash = String(req.params.hash || '');
+  if (!media.HASH_RE.test(hash)) return res.status(404).end();
+  if (biRateLimited(`socimg:${got.widget.id}`, 600)) return res.status(429).end();
+  // Only an image one of THIS wall's visible posts uses: this is not a general file server.
+  const feedId = String(got.config.feed_id || '');
+  const used = db.prepare(`SELECT 1 FROM social_posts p JOIN social_feeds f ON f.id = p.feed_id
+      WHERE p.feed_id = ? AND f.workspace_id = ? AND p.status = 'approved' AND (p.author_avatar = ? OR p.media LIKE ?) LIMIT 1`)
+    .get(feedId, got.widget.workspace_id, hash, `%"${hash}"%`);
+  const m = used ? media.lookup(db, hash) : null;
+  if (!m) return res.status(404).end();
+  res.setHeader('Content-Type', m.mime);
+  // Content-addressed by source URL; loaded by an opaque-origin page, so CORP must allow it.
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.sendFile(m.file);
+});
+
 function liveBiWidget(req, res) {
   const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
   res.removeHeader('X-Frame-Options');
@@ -569,7 +632,11 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'rss': return renderRSS(config);
     case 'text': return renderText(config, iframeSandbox);
     case 'webpage': return renderWebpage(config, iframeSandbox, opts.origin);
-    case 'social': return renderSocial(config);
+    // The embedded renderer passes the workspace and gets a self-contained snapshot; otherwise this is
+    // the editor's Preview (a saved wall's /render is handled above).
+    case 'social': return opts.workspaceId && config && config.feed_id
+      ? require('../lib/social/widget').renderSnapshot(require('../db/database').db, opts.workspaceId, config)
+      : require('../lib/social/widget').previewHtml(config);
     case 'directory-board': return renderDirectoryBoard(config);
     case 'menu-board': return require('../lib/menu-board').renderMenuBoard(config, {
       dataMap: config && config.source && config.source.slug && opts.workspaceId
@@ -709,6 +776,18 @@ router.get('/:id/render', (req, res) => {
    * come from /bi-image.png and /bi-token at run time — and sets its own CSP naming the one host it
    * may load from.
    */
+  /*
+   * A social wall (lib/social/widget.js). Posts travel as JSON and are drawn with textContent; the
+   * CSP keeps images and data to this server, so a screen never talks to a social network.
+   */
+  if (widget.widget_type === 'social') {
+    const out = require('../lib/social/widget').render(db, widget, config, { origin: `${req.protocol}://${req.get('host')}` });
+    res.setHeader('Content-Security-Policy', out.csp);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    return res.send(out.html);
+  }
   if (widget.widget_type === 'bi-dashboard') {
     const out = require('../lib/bi/widget').render(db, widget, config, {
       origin: `${req.protocol}://${req.get('host')}`, iframeSandbox,
@@ -1209,17 +1288,6 @@ function renderWebpage(c, iframeSandbox = 'allow-scripts', origin) {
 <iframe src="${escapeHtml(url)}" sandbox="${escapeHtml(iframeSandbox)}"></iframe>
 ${c.refresh_interval > 0 ? `<script>setInterval(()=>document.querySelector('iframe').src=document.querySelector('iframe').src,${c.refresh_interval * 1000});</script>` : ''}
 </body></html>`;
-}
-
-function renderSocial(c) {
-  return `<!DOCTYPE html><html><head><style>
-  body { background:${safeCss(c.background, '#000')}; color:${safeCss(c.color, '#FFF')}; font-family:-apple-system,sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
-</style></head><body>
-<div style="text-align:center">
-  <p style="font-size:24px">Social Feed</p>
-  <p style="opacity:0.5;margin-top:8px">${escapeHtml(c.platform) || 'twitter'}: ${escapeHtml(c.query) || ''}</p>
-  <p style="opacity:0.3;margin-top:16px;font-size:13px">Configure API key in widget settings</p>
-</div></body></html>`;
 }
 
 // Directory Board — lobby tenant directory with scrolling content, header/footer,

@@ -3090,6 +3090,41 @@ paths:
         '404': { description: Not a credentialed Power BI / Tableau bi-dashboard widget. }
         '429': { description: Too many requests for this widget. }
         '502': { description: The dashboard service did not issue a token. }
+  /widgets/{id}/social.json:
+    get:
+      tags: [widgets]
+      summary: The posts a social wall widget shows (public)
+      description: |
+        Unauthenticated, like /render: a social wall's page polls this every two minutes. It returns
+        only the feed's visible posts — approved, within the feed's filters — as text and image
+        addresses on this server. Never a token, never a link to the network's own media. Limited per
+        widget.
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ posts: [{ k, n, a, h, av, t, m, v, at }], configured, title }' }
+        '404': { description: Not a social wall widget. }
+        '429': { description: Too many requests for this widget. }
+  /widgets/{id}/social-media/{hash}:
+    get:
+      tags: [widgets]
+      summary: A cached image used by one of a social wall's visible posts (public)
+      description: |
+        This server's copy of a post image or avatar. Only images that one of THIS wall's visible
+        posts uses are served, and only files whose bytes are an image were ever stored.
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: hash, in: path, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
+      responses:
+        '200':
+          description: The image.
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        '404': { description: Not an image this wall shows. }
+        '429': { description: Too many requests for this widget. }
 
   # -------------------------------------------------------------------- kiosk
   /kiosk:
