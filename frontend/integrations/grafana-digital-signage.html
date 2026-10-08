@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grafana Dashboards on Digital Signage and TV | ScreenTinker</title>
+  <meta name="description" content="Put Grafana dashboards on NOC and office screens. The server renders an image, so screens never talk to Grafana and keep the last picture if it goes down.">
+  <meta name="keywords" content="grafana digital signage, grafana dashboard on tv, grafana wall display, grafana kiosk mode, noc dashboard screen, grafana tv mode signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/integrations/grafana-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/integrations/grafana-digital-signage.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/integrations/grafana-digital-signage.html">
+  <meta property="og:title" content="Grafana Dashboards on Digital Signage and TV">
+  <meta property="og:description" content="Put Grafana dashboards on NOC and office screens. The server renders an image, so screens never talk to Grafana and keep the last picture if it goes down.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Grafana Dashboards on Digital Signage and TV">
+  <meta name="twitter:description" content="Put Grafana dashboards on NOC and office screens. The server renders an image, so screens never talk to Grafana and keep the last picture if it goes down.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/integrations/">Integrations</a>
+      <span>/</span>
+      <span>Grafana</span>
+    </nav>
+
+    <h1>Grafana dashboards on digital signage, NOC walls and office TVs</h1>
+    <p class="lead">Show the dashboards your engineers already built on any screen, without putting a Grafana login on a TV. The ScreenTinker server renders the dashboard to an image, and every screen of the same size shares that one picture.</p>
+
+    <h2>How it works</h2>
+    <ul>
+      <li><strong>The server renders, the screen displays.</strong> ScreenTinker asks Grafana for a PNG of the dashboard, or one panel, and sends the image to screens. The screen never talks to Grafana and never holds a Grafana token.</li>
+      <li><strong>One render per screen size.</strong> Screens of the same size share a render, so ten lobby screens don&rsquo;t mean ten renders.</li>
+      <li><strong>It stays up when Grafana doesn&rsquo;t.</strong> If Grafana stops answering, screens keep the last image with a small &ldquo;Showing the last image&rdquo; note.</li>
+      <li><strong>Refresh on your schedule.</strong> Every 5 minutes by default, and as often as every 30 seconds.</li>
+      <li><strong>Works on every player.</strong> It&rsquo;s an image, so even an old TV browser shows it.</li>
+    </ul>
+    <p>You can show a single panel instead of the whole dashboard, set a time range such as <code>now-6h</code>, pass template variables (<code>var-host=web1</code>) and pick a light or dark theme. A Grafana public dashboard also works as a public link, with no token.</p>
+
+    <h2 id="setup">Set it up</h2>
+    <ol>
+      <li><strong>Install the Grafana Image Renderer</strong>, as the plugin or as the remote rendering service. Without it nothing renders.</li>
+      <li><strong>Create a service account</strong> in Grafana with the <strong>Viewer</strong> role, and add a token.</li>
+      <li><strong>In ScreenTinker</strong>, an organization owner or admin opens Settings &rarr; BI dashboards &rarr; Add a connection &rarr; Grafana, and enters the Grafana address and the token. <strong>Test</strong> also checks that the renderer is there.</li>
+      <li><strong>Add a BI Dashboard widget</strong>, choose the connection and <strong>Browse</strong> for a dashboard, or enter its UID (the part after <code>/d/</code>).</li>
+      <li>Put the widget in a playlist and assign it to your screens.</li>
+    </ol>
+    <p>Full options are in <a href="https://github.com/screentinker/screentinker/blob/main/docs/bi-dashboards.md">docs/bi-dashboards.md</a>.</p>
+
+    <h2>Grafana on your own network</h2>
+    <p>The ScreenTinker server connects to Grafana, not the screen. On hosted ScreenTinker, private addresses (10.x, 192.168.x, <code>localhost</code> and so on) are refused, so a hosted server can&rsquo;t reach into your LAN. If your Grafana is internal only, <a href="/guides/self-hosted-digital-signage.html">self-host ScreenTinker</a> on that network and switch on <strong>Allow a private network address</strong> for the connection. Cloud metadata and link-local addresses stay refused either way.</p>
+
+    <h2>Limits</h2>
+    <ul>
+      <li>The Grafana Image Renderer is required.</li>
+      <li>It&rsquo;s a picture, not an interactive dashboard: nobody can click into a panel on the screen.</li>
+      <li>A hosted instance can only reach a Grafana that is on the public internet.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>How do I put a Grafana dashboard on a TV?</h3>
+    <p>Install the Grafana Image Renderer, create a Viewer service-account token, add a Grafana connection in ScreenTinker&rsquo;s Settings, then add a BI Dashboard widget and pick the dashboard. Put the widget in a playlist for the TV.</p>
+
+    <h3>Does the TV need to log in to Grafana?</h3>
+    <p>No. The ScreenTinker server renders the dashboard to an image and sends that. The token stays on the server, encrypted.</p>
+
+    <h3>What happens if Grafana goes down?</h3>
+    <p>Screens keep showing the last image, with a small note saying so, until Grafana answers again.</p>
+
+    <h3>Can I show a Grafana instance that is only on our LAN?</h3>
+    <p>Yes, with a self-hosted ScreenTinker on that network: turn on Allow a private network address for the connection. Hosted ScreenTinker refuses private addresses.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/integrations/power-bi-digital-signage.html">Power BI dashboards on digital signage</a></li>
+        <li><a href="/integrations/tableau-digital-signage.html">Tableau dashboards on digital signage</a></li>
+        <li><a href="/integrations/slack-teams-offline-alerts.html">Screen offline alerts in Slack, Teams and PagerDuty</a></li>
+        <li><a href="/solutions/enterprise-digital-signage.html">Enterprise digital signage: SSO, roles, audit</a></li>
+        <li><a href="/integrations/">All digital signage integrations</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Put your Grafana dashboards on a screen</h2>
+      <p>Add one connection and every screen can show your dashboards. Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Integrations",
+        "item": "https://screentinker.com/integrations/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Grafana",
+        "item": "https://screentinker.com/integrations/grafana-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "How do I put a Grafana dashboard on a TV?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Install the Grafana Image Renderer, create a Viewer service-account token, add a Grafana connection in ScreenTinker’s Settings, then add a BI Dashboard widget and pick the dashboard. Put the widget in a playlist for the TV."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does the TV need to log in to Grafana?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. The ScreenTinker server renders the dashboard to an image and sends that. The token stays on the server, encrypted."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What happens if Grafana goes down?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Screens keep showing the last image, with a small note saying so, until Grafana answers again."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I show a Grafana instance that is only on our LAN?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, with a self-hosted ScreenTinker on that network: turn on Allow a private network address for the connection. Hosted ScreenTinker refuses private addresses."
+        }
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

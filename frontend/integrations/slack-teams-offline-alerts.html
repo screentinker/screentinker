@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Screen Offline Alerts in Slack, Teams &amp; PagerDuty | ScreenTinker</title>
+  <meta name="description" content="Know when a sign goes dark. Send screen offline and back-online alerts to Slack, Microsoft Teams, PagerDuty, email or a signed webhook.">
+  <meta name="keywords" content="digital signage offline alerts, screen offline alert, digital signage monitoring, digital signage slack, digital signage microsoft teams, digital signage pagerduty">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/integrations/slack-teams-offline-alerts.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/integrations/slack-teams-offline-alerts.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/integrations/slack-teams-offline-alerts.html">
+  <meta property="og:title" content="Screen Offline Alerts in Slack, Teams &amp; PagerDuty">
+  <meta property="og:description" content="Know when a sign goes dark. Send screen offline and back-online alerts to Slack, Microsoft Teams, PagerDuty, email or a signed webhook.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Screen Offline Alerts in Slack, Teams &amp; PagerDuty">
+  <meta name="twitter:description" content="Know when a sign goes dark. Send screen offline and back-online alerts to Slack, Microsoft Teams, PagerDuty, email or a signed webhook.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/integrations/">Integrations</a>
+      <span>/</span>
+      <span>Offline alerts</span>
+    </nav>
+
+    <h1>Screen offline alerts in Slack, Microsoft Teams and PagerDuty</h1>
+    <p class="lead">A blank screen in a lobby or a store window costs you until someone notices. Alert channels tell the right team as soon as a screen has been offline for the minutes you choose, and again when it comes back, in the tools they already watch.</p>
+
+    <p>This is about the health of your screens. It sends messages <em>about</em> screens to Slack, Teams and others. It does not put Slack or Teams content on a screen.</p>
+
+    <h2>How it works</h2>
+    <ul>
+      <li><strong>Channels.</strong> Slack and Microsoft Teams (through an incoming webhook), PagerDuty (Events API v2), email (up to 20 addresses) or any webhook.</li>
+      <li><strong>When to alert.</strong> Each channel says how long a screen must be offline first (2 to 1440 minutes, 5 by default) and whether to send &ldquo;back online&rdquo; too.</li>
+      <li><strong>Which screens.</strong> All screens in the workspace, some groups, or some screens. Send the warehouse to one channel and the lobby to another.</li>
+      <li><strong>No noise.</strong> One message per outage per channel, and &ldquo;back online&rdquo; only after an offline alert went out.</li>
+      <li><strong>PagerDuty closes itself.</strong> The incident opens when the screen goes dark and resolves when it comes back.</li>
+      <li><strong>Signed webhooks.</strong> A generic webhook gets a JSON body, signed with your shared secret in <code>X-ScreenTinker-Signature</code> when you set one.</li>
+    </ul>
+
+    <h2 id="setup">Set it up</h2>
+    <ol>
+      <li><strong>Get an address from the other side.</strong> For Slack, create an incoming webhook (it is on <code>hooks.slack.com</code>). For Teams, create a Workflows incoming webhook for the channel. For PagerDuty, copy an Events API v2 routing key from a service.</li>
+      <li><strong>Add a channel.</strong> A workspace admin opens <strong>Automate &rarr; Alerts</strong>, adds a channel of that kind and pastes the address, key or email list.</li>
+      <li><strong>Choose the rules:</strong> minutes offline before alerting, whether to send back-online messages, and which screens.</li>
+      <li><strong>Press Send test.</strong> The message arrives in the channel, or the error is shown on the channel.</li>
+    </ol>
+
+    <h2>Security</h2>
+    <p>A Slack or Teams webhook address lets anyone who holds it post into that channel, and a PagerDuty key opens incidents, so ScreenTinker treats them as credentials. They are never shown again after saving and never logged. Every address is called through the server&rsquo;s network guard: public <code>https</code> addresses only, with no redirects followed. Only workspace admins can add or change channels.</p>
+
+    <h2>Limits</h2>
+    <ul>
+      <li>Alerts cover screens going offline and coming back. Other events, such as an emergency alert or a published playlist, are available as <a href="/integrations/zapier-digital-signage.html">Zapier and webhook triggers</a>.</li>
+      <li>A failed delivery is retried, up to three attempts, and the error is shown on the channel.</li>
+      <li>The account owner&rsquo;s existing offline email is unchanged and works alongside these channels.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>Can ScreenTinker post in Microsoft Teams when a screen goes offline?</h3>
+    <p>Yes. Create a Workflows incoming webhook for the Teams channel, add a Teams alert channel in Automate &rarr; Alerts, paste the address, and press Send test.</p>
+
+    <h3>Will I get a message every few minutes while a screen is down?</h3>
+    <p>No. A channel sends one message per outage, and a back-online message only after an offline alert went out.</p>
+
+    <h3>Does the PagerDuty incident close by itself?</h3>
+    <p>Yes. The incident opens when the screen goes offline and resolves when it comes back online.</p>
+
+    <h3>Can I send different screens to different teams?</h3>
+    <p>Yes. Each channel has its own scope: all screens, some groups or some screens, and its own offline threshold.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/integrations/zapier-digital-signage.html">Zapier, Make and n8n automation</a></li>
+        <li><a href="/integrations/microsoft-365-digital-signage.html">Microsoft 365: SharePoint, OneDrive and Office files</a></li>
+        <li><a href="/solutions/emergency-alert-digital-signage.html">Emergency alerts on every screen</a></li>
+        <li><a href="/solutions/enterprise-digital-signage.html">Enterprise digital signage: SSO, roles, audit</a></li>
+        <li><a href="/integrations/">All digital signage integrations</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Find out before your customers do</h2>
+      <p>Add a Slack or Teams channel and send a test in a minute. Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Integrations",
+        "item": "https://screentinker.com/integrations/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Offline alerts",
+        "item": "https://screentinker.com/integrations/slack-teams-offline-alerts.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Can ScreenTinker post in Microsoft Teams when a screen goes offline?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Create a Workflows incoming webhook for the Teams channel, add a Teams alert channel in Automate → Alerts, paste the address, and press Send test."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Will I get a message every few minutes while a screen is down?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. A channel sends one message per outage, and a back-online message only after an offline alert went out."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does the PagerDuty incident close by itself?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. The incident opens when the screen goes offline and resolves when it comes back online."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I send different screens to different teams?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Each channel has its own scope: all screens, some groups or some screens, and its own offline threshold."
+        }
+      }
+    ]
+  }
+  </script>
+</body>
+</html>
