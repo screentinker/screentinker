@@ -47,6 +47,7 @@ function dateFormatLabel(format) {
  */
 import { esc, hydrateAuthImages } from '../utils.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
+import { mountMenuEditor, readMenuConfig } from '../components/menu-board-editor.js';
 
 // A refused request must reject, not resolve.
 //
@@ -69,7 +70,7 @@ const API = (url, opts = {}) => {
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'transition'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'menu-board', 'transition'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -79,6 +80,7 @@ const WIDGET_ICONS = {
   social: '&#128172;',
   'directory-board': '&#127970;',
   'directory-search': '&#128269;',
+  'menu-board': '&#127860;',
   transition: '&#127916;',
   // Built-in, but never offered in the "new widget" grid: a template widget is created from the
   // Templates library (the server refuses POST /widgets for it) and edited with the same form.
@@ -759,6 +761,10 @@ export async function render(container) {
           <div class="form-group"><label>${t('widget.field.platform')}</label><select id="wPlatform" class="input" style="background:var(--bg-input)"><option value="twitter">${t('widget.field.platform_twitter')}</option><option value="instagram">${t('widget.field.platform_instagram')}</option></select></div>
           <div class="form-group"><label>${t('widget.field.query')}</label><input type="text" id="wQuery" class="input" value="${esc(config.query || '')}" placeholder="${t('widget.field.query_placeholder')}"></div>`;
         break;
+      case 'menu-board':
+        // components/menu-board-editor.js renders into this box once the modal is open.
+        html += `<div id="wMenuEditor"></div>`;
+        break;
       case 'directory-board':
         html += `
           <div class="form-group" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:6px;background:var(--bg-input)">
@@ -853,7 +859,7 @@ export async function render(container) {
 
     document.getElementById('widgetConfigForm').innerHTML = html;
     const modalEl = document.querySelector('#widgetModal .modal');
-    if (modalEl) modalEl.style.width = type === 'directory-board' ? '720px' : (type === 'transition' ? '620px' : '560px');
+    if (modalEl) modalEl.style.width = type === 'menu-board' ? '860px' : type === 'directory-board' ? '720px' : (type === 'transition' ? '620px' : '560px');
     document.getElementById('widgetModal').style.display = 'flex';
     // Transitions carry their own live preview, so the iframe "Preview" button doesn't apply.
     const pvBtn = document.getElementById('previewWidgetBtn');
@@ -912,6 +918,7 @@ export async function render(container) {
       renderLogoPicker();
     }
 
+    if (type === 'menu-board') mountMenuEditor(document.getElementById('wMenuEditor'), config, { apiGet: (u) => API(u) });
     if (type === 'transition') initTransitionForm(config);
     if (type === 'clock') initClockForm();
   }
@@ -1394,6 +1401,7 @@ export async function render(container) {
         break;
       }
       case 'social': Object.assign(config, { platform: val('wPlatform'), query: val('wQuery') }); break;
+      case 'menu-board': Object.assign(config, readMenuConfig()); break;
       case 'transition': {
         const shaders = Array.from(document.querySelectorAll('#wTransList input[type=checkbox]:checked')).map(c => c.dataset.id);
         const params = {}; // per-shader tuned values held in transState.params

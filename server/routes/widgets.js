@@ -381,6 +381,57 @@ router.put('/:id', (req, res) => {
   res.json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id)));
 });
 
+/*
+ * Mark a menu-board item sold out (or back on) without opening the editor: the button a manager
+ * taps on a phone, or a till system calling the API when an item runs out.
+ *
+ * ⚠️ OPERATIONAL, SO IT GOES LIVE EVEN WHEN APPROVAL IS ON. "We are out of salmon" cannot wait for
+ * a review, and it changes availability, not content. It is applied to the live config AND to a
+ * pending draft (so publishing the draft later cannot undo it), recorded in history, and pushed to
+ * the screens showing the menu. Items from a data source are changed in the sheet, not here.
+ */
+router.patch('/:id/menu-items/:itemId', (req, res) => {
+  const widget = checkWidgetWrite(req, res);
+  if (!widget) return;
+  if (widget.widget_type !== 'menu-board') return res.status(400).json({ error: 'Not a menu board' });
+  if (typeof (req.body || {}).sold_out !== 'boolean') return res.status(400).json({ error: 'sold_out must be true or false' });
+  const menu = require('../lib/menu-board');
+  // The LIVE config, not storedWidgetConfig (which prefers a pending draft): writing a draft's
+  // config back as live would publish an unreviewed edit along with the sold-out flag.
+  let config;
+  try { config = JSON.parse(widget.config || '{}'); } catch { config = {}; }
+  if (config.source && config.source.slug) {
+    return res.status(409).json({ error: 'This menu comes from a data source. Change the item there.', code: 'MENU_FROM_DATA_SOURCE' });
+  }
+  const item = menu.findItem(config, req.params.itemId);
+  if (!item) return res.status(404).json({ error: 'Item not found' });
+  item.sold_out = req.body.sold_out;
+  db.transaction(() => {
+    db.prepare("UPDATE widgets SET config = ?, updated_at = MAX(updated_at + 1, strftime('%s','now')) WHERE id = ?")
+      .run(JSON.stringify(config), widget.id);
+    if (widget.draft_config) {
+      try {
+        const draft = JSON.parse(widget.draft_config);
+        const dItem = draft && menu.findItem(draft.config, req.params.itemId);
+        if (dItem) { dItem.sold_out = req.body.sold_out; db.prepare('UPDATE widgets SET draft_config = ? WHERE id = ?').run(JSON.stringify(draft), widget.id); }
+      } catch (_) { /* a draft we cannot read is left as it is */ }
+    }
+  })();
+  require('../lib/revisions').recordCurrent(db, 'widget', widget.id, {
+    actor: require('../lib/releases').actorOf(req),
+    summary: `${req.body.sold_out ? 'Sold out' : 'Back on'}: ${String(item.name || '').slice(0, 80)}`,
+  });
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      const commandQueue = require('../lib/command-queue');
+      for (const id of devicesPlayingWidget(widget.id)) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, buildPlaylistPayload);
+    }
+  } catch (_) { /* best effort */ }
+  res.json({ success: true, item: { id: item.id, name: item.name, sold_out: item.sold_out } });
+});
+
 // Delete widget
 router.delete('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
@@ -402,6 +453,10 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'webpage': return renderWebpage(config, iframeSandbox, opts.origin);
     case 'social': return renderSocial(config);
     case 'directory-board': return renderDirectoryBoard(config);
+    case 'menu-board': return require('../lib/menu-board').renderMenuBoard(config, {
+      dataMap: config && config.source && config.source.slug && opts.workspaceId
+        ? require('../lib/data-sources/service').getWorkspaceDataMapSync(opts.workspaceId) : null,
+    });
     case 'directory-search': return renderDirectorySearch(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
     /*
