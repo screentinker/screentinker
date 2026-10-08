@@ -100,3 +100,75 @@ test('every advertised page declares a canonical', () => {
     assert.match(html, /rel=["']canonical["']/i, `${u} has no canonical`);
   }
 });
+
+/* ─────────────── internal linking, structured data and uniqueness ─────────────── */
+
+// Paths served by a route rather than a file under frontend/ (all of them exist in server.js).
+const ROUTED = [/^\/app(\/|$|#)/, /^\/download(\/|$)/, /^\/player(\/|$)/, /^\/docs$/, /^\/templates$/,
+  /^\/certified-hardware(\/submit)?$/, /^\/openapi\.yaml$/, /^\/\.well-known\//, /^\/mcp$/];
+
+const pages = urls.map((u) => ({ u, html: fs.readFileSync(fileFor(u), 'utf8') }));
+const linksOf = (html) => [...html.matchAll(/<a\b[^>]*href="(\/[^"]*)"/g)].map((m) => m[1].split('#')[0].split('?')[0] || '/');
+
+test('every internal link on an advertised page resolves to a page we serve', () => {
+  // A new page is only as good as the links into and out of it. A typo'd href answers 404 now
+  // (CONTENT_PREFIXES), which a crawler records against the page that linked it.
+  for (const { u, html } of pages) {
+    for (const href of linksOf(html)) {
+      if (ROUTED.some((re) => re.test(href))) continue;
+      assert.ok(fs.existsSync(fileFor(href)), `${u} links ${href}, which does not exist`);
+    }
+  }
+});
+
+test('no orphan pages: every advertised page is linked from another advertised page', () => {
+  const inbound = new Set();
+  // /docs is the route that serves api-docs.html (server.js), and pages link the route.
+  const ALIAS = { '/docs': '/api-docs.html' };
+  for (const { u, html } of pages) for (const href of linksOf(html)) if (href !== u) inbound.add(ALIAS[href] || href);
+  for (const { u } of pages) {
+    if (u === '/') continue;
+    assert.ok(inbound.has(u), `${u} is in the sitemap but no other page links to it`);
+  }
+});
+
+test('titles and descriptions are unique across the sitemap', () => {
+  const seen = { title: new Map(), desc: new Map() };
+  for (const { u, html } of pages) {
+    const t = decode((html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1] || '').trim();
+    const d = decode((html.match(/<meta[^>]+name=["']description["'][^>]*content=["']([\s\S]*?)["']/i) || [])[1] || '').trim();
+    assert.ok(!seen.title.has(t), `${u} shares its title with ${seen.title.get(t)}`);
+    assert.ok(!seen.desc.has(d), `${u} shares its description with ${seen.desc.get(d)}`);
+    seen.title.set(t, u); seen.desc.set(d, u);
+  }
+});
+
+test('solutions and integrations pages: one H1, valid JSON-LD, breadcrumbs, and an FAQ that matches the page', () => {
+  const subs = pages.filter(({ u }) => /^\/(solutions|integrations)\//.test(u));
+  assert.ok(subs.filter(({ u }) => u.startsWith('/solutions/')).length >= 7, 'the solutions pages are in the sitemap');
+  for (const { u, html } of subs) {
+    assert.equal((html.match(/<h1\b/g) || []).length, 1, `${u} must have exactly one H1`);
+    const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
+    assert.ok(blocks.some((b) => b['@type'] === 'BreadcrumbList'), `${u} has no BreadcrumbList`);
+    const faq = blocks.find((b) => b['@type'] === 'FAQPage');
+    if (u.endsWith('/')) continue; // a hub may or may not carry an FAQ
+    assert.ok(faq, `${u} has no FAQPage`);
+    // Every question in the structured data is a visible question on the page.
+    const visible = [...html.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/g)].map((m) => decode(m[1].replace(/<[^>]+>/g, '')).replace(/&rsquo;/g, '’').trim());
+    for (const q of faq.mainEntity) {
+      assert.ok(visible.some((v) => v.replace(/[’']/g, "'") === q.name.replace(/[’']/g, "'")), `${u}: FAQ "${q.name}" is not a visible question`);
+    }
+    // The primary call to action is the hosted trial.
+    assert.match(html, /href="\/app#\/login" class="btn btn-primary"[^>]*>Start your free trial</, `${u} must end in the trial CTA`);
+  }
+});
+
+test('every page that names our trial length names the one the server grants', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server', 'middleware', 'subscription.js'), 'utf8');
+  const days = Number(src.match(/const TRIAL_DAYS = (\d+);/)[1]);
+  for (const { u, html } of pages) {
+    for (const m of html.matchAll(/(\d+)-day (?:free )?Pro trial/g)) {
+      assert.equal(Number(m[1]), days, `${u} offers a ${m[1]}-day Pro trial; the server grants ${days}`);
+    }
+  }
+});

@@ -1,6 +1,6 @@
 # ScreenTinker
 
-> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android TV and Fire TV, Amazon Vega OS, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, Windows, ChromeOS, any web browser, and e-paper/ESP32 panels driven by a server-side renderer — eleven platforms, one CMS.
+> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android TV and Fire TV, Amazon Vega OS, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, Windows, ChromeOS, any web browser, Mac and iPad/iPhone (both beta), and e-paper/ESP32 panels driven by a server-side renderer — twelve platforms, one CMS.
 
 ScreenTinker turns ordinary screens into managed digital signs. A server holds the content, playlists, layouts and schedules; players pair to it and pull what they should be showing. The player is a web page, so a display that can open a URL can run it, and native builds exist for the platforms that need one.
 
@@ -8,10 +8,22 @@ The whole project is MIT licensed and self-hosting is free. A paid hosted versio
 
 ## Start here
 
-- [ScreenTinker home](https://screentinker.com/): what it is, features, pricing, and platform support.
+- [ScreenTinker home](https://screentinker.com/): what it is, features by job (integrations, emergency alerts, enterprise, rooms, measurement), pricing with a hosted 14-day Pro trial (no credit card), and platform support.
 - [What is digital signage?](https://screentinker.com/guides/what-is-digital-signage.html): plain-language explanation of how signage works, what it displays, and what it costs.
 - [Open source digital signage software](https://screentinker.com/guides/open-source-digital-signage.html): the licence, the data-ownership argument, and where ScreenTinker fits.
 - [Certified Hardware](https://screentinker.com/certified-hardware): the device models ByteTinker has tested, what each one does, which are only community-reported, and which are not supported and why.
+
+## Solutions by use case
+
+Each page says how the feature works, how to set it up, and what it does not do.
+
+- [Solutions overview](https://screentinker.com/solutions/): every use case on one page, with pointers by industry.
+- [Emergency alert digital signage](https://screentinker.com/solutions/emergency-alert-digital-signage.html): CAP 1.1/1.2 feeds (US National Weather Service, MeteoAlarm), Alertus and Singlewire InformaCast through hooks, and an alert card that cuts in mid-item on every player. ⚠️ A display channel for alerts, not a certified life-safety or mass notification system.
+- [Meeting room displays](https://screentinker.com/solutions/meeting-room-display.html): Microsoft 365 room mailboxes or Google Workspace resource calendars through the organization's own app, book / end / check in from touch screens, ICS read-only. Not a Microsoft Teams Rooms panel.
+- [Social media walls](https://screentinker.com/solutions/social-media-wall.html): Instagram, Facebook, YouTube, X, Bluesky and Mastodon with moderation; screens never contact a network. LinkedIn and TikTok are not supported, and why.
+- [Digital menu boards](https://screentinker.com/solutions/digital-menu-boards.html): sections, multiple prices, dietary tags, sold-out from a till through the API, dayparted sections, Google Sheet or CSV source.
+- [Audience analytics](https://screentinker.com/solutions/audience-analytics.html): camera-based counts of people who looked, and for how long. Counts only, no image stored or sent, nobody identified, off by default; Android, plus Raspberry Pi/Windows with an optional add-on. Check local law first.
+- [Enterprise digital signage](https://screentinker.com/solutions/enterprise-digital-signage.html): per-organization SAML 2.0 and OIDC SSO with DNS-verified domains and Require SSO, roles, approvals, activity log, storage in your own S3/Azure bucket, player rollouts in waves. No compliance certifications are claimed.
 
 ## Choosing how to run it
 
@@ -48,11 +60,16 @@ so plainly when it has none.
 ## Integrations
 
 - [Templates](https://screentinker.com/templates): the ready-made templates in the signed catalog (menu boards, room signs, KPI dashboards, Wi-Fi QR, clocks, weather), live from the catalog, with interactive previews.
-- [Integrations overview](https://screentinker.com/integrations/): native widgets plus a Webpage widget that embeds any public URL.
+- [Integrations overview](https://screentinker.com/integrations/): every integration grouped by job, and what each needs. Integrations use the customer's own app or keys (bring your own app), encrypted on the server and never sent to a screen.
+- [Microsoft 365, SharePoint and OneDrive](https://screentinker.com/integrations/microsoft-365-digital-signage.html): folder sync of images and video through your own Entra app, and PowerPoint, Word and Excel through Microsoft's viewer.
+- [Tableau dashboards on digital signage](https://screentinker.com/integrations/tableau-digital-signage.html): a connected app with direct trust; hosted instances need Tableau Cloud.
+- [Grafana dashboards on digital signage](https://screentinker.com/integrations/grafana-digital-signage.html): the server renders an image with the Grafana Image Renderer; screens never talk to Grafana.
+- [Zapier, Make and n8n](https://screentinker.com/integrations/zapier-digital-signage.html): triggers and actions over the API, and token-less hooks. ⚠️ The Zapier app is private: you push it to your own Zapier account with the Zapier CLI.
+- [Offline alerts to Slack, Teams and PagerDuty](https://screentinker.com/integrations/slack-teams-offline-alerts.html): screen offline / back online alerts, also by email or signed webhook.
 - [YouTube on digital signage](https://screentinker.com/integrations/youtube-digital-signage.html)
-- [Google Slides on digital signage](https://screentinker.com/integrations/google-slides-digital-signage.html)
-- [Canva designs on digital signage](https://screentinker.com/integrations/canva-digital-signage.html)
-- [Power BI dashboards on digital signage](https://screentinker.com/integrations/power-bi-digital-signage.html)
+- [Google Slides on digital signage](https://screentinker.com/integrations/google-slides-digital-signage.html): the Cloud document widget for Slides, Docs and Sheets.
+- [Canva designs on digital signage](https://screentinker.com/integrations/canva-digital-signage.html): import designs as images or video and keep them in sync with Canva.
+- [Power BI dashboards on digital signage](https://screentinker.com/integrations/power-bi-digital-signage.html): the BI Dashboard widget with your own service principal (needs an Embedded, Fabric or Premium capacity), or a public Publish to web link.
 - [RSS feeds and news tickers](https://screentinker.com/integrations/rss-digital-signage.html)
 - [Weather widget](https://screentinker.com/integrations/weather-digital-signage.html)
 

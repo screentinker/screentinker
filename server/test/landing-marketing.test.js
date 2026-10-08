@@ -335,3 +335,63 @@ test('the banner countdown runs on the server clock and ends the sale at zero', 
   assert.match(LANDING, /promo\.server_now \* 1000 - Date\.now\(\)/, 'skew-corrected against the server clock');
   assert.match(LANDING, /window\.__stPricingSetSale\(null\)/, 'prices revert when the countdown ends');
 });
+
+/* ─────────────── the buyer journey: trial first, grouped capabilities, honest claims ─────────────── */
+
+test('every trial length on the page is the one the server grants', () => {
+  // The trial is the primary call to action, so the number in it must be the real one. It comes from
+  // middleware/subscription.js, not from whoever last edited the copy.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'middleware', 'subscription.js'), 'utf8');
+  const days = Number(src.match(/const TRIAL_DAYS = (\d+);/)[1]);
+  const claims = [...LANDING.matchAll(/(\d+)-day/g)].map((m) => Number(m[1]));
+  assert.ok(claims.length >= 3, 'the page states the trial length');
+  for (const n of claims) assert.equal(n, days, `the page says ${n}-day, the server grants ${days}`);
+  assert.match(LANDING, new RegExp(`${days} days of Pro`), 'the line under the hero buttons');
+});
+
+test('the hero leads with the trial, and self-hosting is the smaller second route', () => {
+  const hero = LANDING.slice(LANDING.indexOf('<section class="hero">'), LANDING.indexOf('class="trust-strip'));
+  const btns = hero.slice(hero.indexOf('class="hero-btns"'), hero.indexOf('class="hero-sub"'));
+  assert.match(btns, /class="btn btn-primary"[^>]*>Start Free Trial</, 'the first button is the trial');
+  assert.ok(!/github\.com/.test(btns), 'GitHub is not a hero button any more');
+  assert.match(hero, /Or host it yourself, free and open source/);
+});
+
+test('the capability groups are on the page, in the order buyers ask, and link to pages that exist', () => {
+  const ids = ['integrations', 'safety', 'enterprise', 'rooms', 'measure', 'platforms', 'why', 'pricing'];
+  let last = -1;
+  for (const id of ids) {
+    const at = LANDING.indexOf(`id="${id}"`);
+    assert.ok(at > last, `section #${id} is missing or out of order`);
+    last = at;
+  }
+  const FRONTEND = path.join(__dirname, '..', '..', 'frontend');
+  const links = [...LANDING.matchAll(/href="(\/(?:solutions|integrations)\/[^"#]*)"/g)].map((m) => m[1]);
+  assert.ok(links.length >= 20, 'the home page links into the solutions and integrations pages');
+  for (const href of new Set(links)) {
+    const file = path.join(FRONTEND, href.endsWith('/') ? href + 'index.html' : href);
+    assert.ok(fs.existsSync(file), `the home page links ${href}, which does not exist`);
+  }
+});
+
+test('the honest-claims lines stay: alerts are a display channel, audience counting states its privacy model', () => {
+  assert.match(LANDING, /not a certified life-safety or mass notification system/);
+  const measure = LANDING.slice(LANDING.indexOf('id="measure"'), LANDING.indexOf('id="platforms"'));
+  for (const phrase of [/no image is stored or sent/, /nobody is identified/, /Off until an admin turns it on/, /Check your local rules/]) {
+    assert.match(measure, phrase);
+  }
+  assert.match(LANDING, /Mac &amp; iPad &amp; iPhone|Mac, iPad &amp; iPhone/);
+  assert.match(LANDING.slice(LANDING.indexOf('Mac, iPad &amp; iPhone')), /^[^\n]*Beta/, 'the Mac/iPad tile says beta');
+  // Claims we cannot support must not appear in visible copy.
+  const visible = LANDING.replace(/<!--[\s\S]*?-->/g, '');
+  for (const word of [/SOC ?2/, /HIPAA/, /GDPR[- ]compliant/i, /ISO ?27001/, /99\.\d+% uptime/i, /seamless/i, /revolutionary/i, /game-changing/i]) {
+    assert.doesNotMatch(visible, word);
+  }
+});
+
+test('the visible FAQ and the FAQPage JSON-LD ask the same questions', () => {
+  const faq = LANDING.slice(LANDING.indexOf('id="faq"'), LANDING.indexOf('<!-- CTA -->'));
+  const visible = [...faq.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/g)].map((m) => m[1].replace(/&rsquo;/g, "'").replace(/&amp;/g, '&'));
+  const ld = JSON.parse(LANDING.match(/<script type="application\/ld\+json">\s*(\{\s*"@context": "https:\/\/schema.org",\s*"@type": "FAQPage"[\s\S]*?)<\/script>/)[1]);
+  assert.deepEqual(ld.mainEntity.map((q) => q.name.replace(/’/g, "'")), visible);
+});
