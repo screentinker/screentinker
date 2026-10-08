@@ -11,7 +11,9 @@ moderation in front of them.
   - **ticker**: one scrolling line, made for a strip zone
 - **Screens never talk to a social network.** This server fetches the posts and keeps its own
   copies of the images. A screen only ever loads the wall, its posts and those images from your
-  ScreenTinker server, which is also why a wall keeps showing its last posts when the network is down.
+  ScreenTinker server, which is also why a wall keeps showing its last posts when the network is down
+  (see [How often posts update](#how-often-posts-update) for what a screen shows after a restart
+  offline).
 
 ## Contents
 
@@ -45,8 +47,8 @@ Each feed has its own settings.
 | Setting | What it does |
 |---|---|
 | **New posts: show automatically** | A fetched post appears on the wall straight away. |
-| **New posts: approve each post first** | New posts wait under **Social feeds → Posts → Waiting** until someone approves them. |
-| **Hide posts containing these words** | A post matching one of these words is hidden as soon as it arrives. Matching is whole-word and ignores case, so `roast` also matches `#roast` and `@roast` but not `roasted`. Its text and images are never stored. |
+| **New posts: approve each post first** | New posts wait under **Social feeds → Posts → Waiting** until someone approves them. An approved post whose text or pictures are later edited by its author goes back to **Waiting**. |
+| **Hide posts containing these words** | A post whose text, author name or handle matches one of these words is hidden as soon as it arrives, or as soon as it is edited to match. Saving the list checks every stored post of the feed again. Matching is whole-word and ignores case, so `roast` also matches `#roast` and `@roast` but not `roasted`. It also ignores accents, invisible characters (zero-width spaces, soft hyphens) and look-alike letters (fullwidth `ｒｏａｓｔ`, math bold `𝐫𝐨𝐚𝐬𝐭`). A matched post's text and images are not kept. |
 | **Only show posts with a picture** | Hides text-only posts. |
 | **Hide posts older than** | In days. 0 shows posts of any age. |
 | **Posts to show** | The wall shows at most this many of the newest posts, up to 50. |
@@ -56,7 +58,13 @@ Each feed has its own settings.
   see what you hid and undo it. After that only a marker remains, so it is still recognised if
   fetched again.
 - **Deleted posts are removed.** When the author deletes a post (or makes it private), it
-  disappears from the wall on the next fetch.
+  disappears from the wall on the next fetch. A hidden post that is deleted keeps only its marker,
+  so it stays hidden if it ever comes back.
+- **A source that suddenly answers with no posts at all** is only believed after three fetches in a
+  row, so a network's brief glitch does not empty the wall.
+- **Searches that only look back a while** (an Instagram hashtag: 24 hours; an X search: 7 days)
+  keep showing older posts after the search stops returning them; only a post inside that window
+  that disappears counts as deleted.
 
 Mastodon posts with a content warning or marked sensitive are never shown, and nor are non-public
 ones. Reposts, retweets and replies are left out everywhere.
@@ -163,8 +171,14 @@ These are deliberately left out rather than built half-way.
   from 5 minutes to 24 hours. **Fetch now** on the feed card fetches straight away.
 - **Errors:** a failing source shows its error on the feed card. If every source fails, the feed
   backs off (up to 2 hours between tries) and keeps showing what it had.
-- **On screens:** a wall checks for new posts every **2 minutes** and only changes what it shows
-  when the server answers.
+- **On screens:** a wall asks for its posts as soon as it loads, then every **2 minutes**, and only
+  changes what it shows when the server answers. A hidden post leaves screens on their next check.
+- **Offline:** a wall that is already showing keeps its posts while the network is down. A screen
+  that restarts the wall while offline shows its title and no posts until the server answers: the
+  wall page screens keep for offline use deliberately carries no posts, because a post hidden since
+  would otherwise come back from that copy.
+- **Large fleets:** every screen showing a wall gets the same answer, built at most every few
+  seconds, so hundreds of screens on one wall are fine.
 - **Multiple servers:** each feed is fetched by one node at a time.
 
 ## Privacy and the networks' terms

@@ -3,7 +3,7 @@
 /*
  * Post images and avatars, cached on this server so screens never fetch from a social network.
  *
- * A file is named by sha256 of its source URL and kept only if its BYTES are an image (JPEG, PNG,
+ * A file is named by sha256 of its source URL's cache key (cacheKey below) and kept only if its BYTES are an image (JPEG, PNG,
  * GIF, WebP or AVIF) — whatever the Content-Type said. That is what makes serving it safe: a CDN
  * answer that turned out to be HTML, or a "media URL" pointing at an internal page, is never
  * stored, and the guarded fetcher (lib/social/http.js getMedia) refuses private addresses anyway.
@@ -38,13 +38,27 @@ function sniff(buf) {
 
 const hashOf = (url) => crypto.createHash('sha256').update(String(url)).digest('hex');
 
+/*
+ * Meta's CDNs (Instagram, Facebook) sign every image URL with query parameters that rotate on each
+ * API answer (oh=, oe=, _nc_…): the same picture comes back under a new URL every fetch. Keyed on
+ * the full URL, each refresh would download every image again and give the post new media hashes,
+ * so the wall would redraw for nothing. On those hosts the path alone names the image.
+ */
+const SIGNED_CDN_RE = /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i;
+function cacheKey(url) {
+  let u;
+  try { u = new URL(String(url)); } catch { return String(url); }
+  if (!SIGNED_CDN_RE.test(u.hostname)) return String(url);
+  return `${u.protocol}//${u.host.toLowerCase()}${u.pathname}`;
+}
+
 /**
  * Cache one image. Returns its hash, or null if it could not be fetched or is not an image.
  * `fetcher` is lib/social/http.js getMedia (injectable for tests).
  */
 async function cache(db, url, fetcher = require('./http').getMedia) {
   if (!url || typeof url !== 'string' || url.length > 2048) return null;
-  const hash = hashOf(url);
+  const hash = hashOf(cacheKey(url));
   const have = db.prepare('SELECT hash FROM social_media WHERE hash = ?').get(hash);
   if (have && fs.existsSync(path.join(dir(), hash))) return hash;
   try {
@@ -89,4 +103,4 @@ function gc(db) {
   return n;
 }
 
-module.exports = { sniff, cache, lookup, gc, hashOf, HASH_RE, MAX_BYTES };
+module.exports = { sniff, cache, lookup, gc, hashOf, cacheKey, HASH_RE, MAX_BYTES };
