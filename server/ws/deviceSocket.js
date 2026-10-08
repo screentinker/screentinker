@@ -3025,7 +3025,32 @@ module.exports = function setupDeviceSocket(io) {
 
     socket.on('device:ota-status', (data) => dispatch('ota-status', data));
 
-    socket.on('device:exit', (data) => dispatch('exit', data));
+    /*
+     * ⚠️ device:exit is sent AS THE SOCKET DIES, and socket.io would drop it.
+     *
+     * socket.io's Socket#dispatch defers every event handler by a process.nextTick and then
+     * ignores the event if the socket is no longer connected ("ignore packet received after
+     * disconnection", node_modules/socket.io/dist/socket.js). A dying app writes its exit frame
+     * and then its close (a namespace DISCONNECT, or just the TCP FIN) back to back; when both land
+     * in one read — routine on a loaded server — the DISCONNECT is handled synchronously in
+     * between, the socket is closed before the deferred handler runs, and the announced reason is
+     * silently lost. The offline transition then records 'silent' for an app that told us it
+     * crashed.
+     *
+     * onAny listeners run SYNCHRONOUSLY on receipt, before that deferral, so the exit is noted
+     * here and applied by the 'disconnect' handler if the normal handler never got to it. The
+     * normal path is unchanged and still wins when it runs; received-vs-dispatched counters (not a
+     * cleared flag) so an earlier exit's handler cannot swallow a later, dropped one. Nothing here makes a VIOLENT death
+     * look announced: only a device:exit frame this socket actually received is ever applied.
+     */
+    let exitsReceived = 0, exitsDispatched = 0, lastExitData;
+    socket.onAny((event, data) => { if (event === 'device:exit') { exitsReceived++; lastExitData = data; } });
+    socket.on('device:exit', (data) => { exitsDispatched++; dispatch('exit', data); });
+    function applyUndispatchedExit() {
+      if (exitsReceived <= exitsDispatched) return;
+      exitsDispatched = exitsReceived;
+      try { dispatch('exit', lastExitData); } catch (e) { console.warn(`[exit] late exit for ${currentDeviceId}: ${e && e.message}`); }
+    }
 
     socket.on('device:event', (data) => dispatch('event', data));
 
@@ -3168,6 +3193,12 @@ module.exports = function setupDeviceSocket(io) {
         console.log(`Stale disconnect for ${currentDeviceId} (socket ${socket.id}); active is ${activeConn.socketId}, skipping offline`);
         return;
       }
+
+      // An exit frame that arrived with the close and that socket.io is about to drop (see
+      // applyUndispatchedExit). Applied here, before the timer is armed, so the offline transition
+      // below keeps the reason the app announced. After the guards above on purpose: an evicted or
+      // superseded socket's late exit must not label a device a newer socket now owns.
+      applyUndispatchedExit();
 
       const deviceId = currentDeviceId;
       const closingSocketId = socket.id;
