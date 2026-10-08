@@ -754,6 +754,21 @@
      * trigger then fires against nothing on precisely the day the WAN is down and the offline
      * guarantee was the entire reason for the feature.
      */
+    /*
+     * Deleted on the dashboard (device:unpaired {reason: 'deleted'}): nothing cached belongs to a
+     * screen any more, except trigger media, which has to fire from disk. ONLY for 'deleted' —
+     * the register path's 'not_found' is also what a restored backup or an unreplicated edge says.
+     */
+    function dropCacheForDeletedDisplay() {
+      try {
+        const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+        if (!sw) return;
+        const keep = triggerItems(triggers)
+          .filter((it) => it && it.filepath && !it.remote_url)
+          .map((it) => mediaUrl(it));
+        sw.postMessage({ type: 'st-device-deleted', keep });
+      } catch (e) { /* best effort */ }
+    }
     function requestOfflineCache(items, extraItems) {
       try {
         const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -2985,9 +3000,10 @@
         }
       });
 
-      socket.on('device:unpaired', () => {
+      socket.on('device:unpaired', (data) => {
         console.warn('Device not found on server — clearing credentials');
         savePlaylistCache([]);
+        if (data && data.reason === 'deleted') dropCacheForDeletedDisplay();
         enterRepairMode('Device was removed from the server. Re-pairing…');
       });
 

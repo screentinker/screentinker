@@ -36,7 +36,7 @@ from .logic.offline_play_queue import OfflinePlayQueue, make_play, new_id
 from .net import device_http
 from .net.link import DeviceLink
 from .net.triggers import TriggerManager
-from .player.cache import ContentCache, DownloadCoordinator
+from .player.cache import ContentCache, DownloadCoordinator, trigger_content_ids
 from .player.engine import PlaybackEngine
 from .platform import audio, brightness, deviceinfo, display, ops, privileged, shell
 from .system.power_schedule import PowerSchedule
@@ -244,6 +244,25 @@ class App:
 
     def on_unpaired(self, reason):
         self.on_ui(lambda: self._status_changed("unpaired", reason))
+
+    def on_deleted(self):
+        """Deleted on the dashboard (net thread): drop every downloaded asset and bundle render
+        EXCEPT trigger media. Trigger items are not in a playlist and must fire from local disk the
+        instant they arrive; the routine prune reclaims them later if a new payload drops them."""
+        engine = getattr(self, "engine", None)
+        keep = trigger_content_ids(getattr(engine, "payload", None))
+        removed = self.cache.prune(keep)
+        bundles = getattr(engine, "bundles", None)
+        if bundles is not None:
+            for n in os.listdir(bundles.root):
+                if n.split(".", 1)[0] in keep:
+                    continue
+                try:
+                    os.unlink(os.path.join(bundles.root, n))
+                    removed += 1
+                except OSError:
+                    pass
+        log.info("device deleted on server: removed %d downloaded file(s)", removed)
 
     def on_offline_ack(self, d):
         pass   # handled by the grace timer in flush_offline_plays (the ack carries counts, not ids)

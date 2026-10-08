@@ -71,6 +71,9 @@
 
 ### Fixed (Android player)
 
+- **A newly paired screen could wait up to a minute before it started downloading its playlist.**
+  It now asks for its playlist as soon as the player screen opens after pairing.
+
 - **A screen deleted from the dashboard stayed on "Waiting for content" instead of showing a new
   pairing code** (#508), whenever it had last been paired through the pairing screen. The pairing
   screen, closing late, removed the main screen's handlers along with its own. The same late close
@@ -145,6 +148,15 @@
   Mr. Car [MHA] for the report.
 
 ### Fixed (server)
+
+- **Deleting a screen didn't reach the screen.** It carried on showing its old content until it
+  next reconnected or restarted, so the pairing code needed to re-pair it wasn't there. The screen
+  is now told straight away and shows its pairing code.
+- **A deleted screen now removes the media it downloaded** (Android, Pi/Windows, Tizen and the web
+  player). Files used by its triggers are kept, so a trigger can still fire from local storage.
+  This happens only for a delete from the dashboard. A screen the server simply doesn't recognise,
+  for example after restoring an older backup, keeps everything, so a restore can't wipe the
+  whole fleet.
 
 - **The standby image never reached Android screens unless it was also in a playlist.** The
   Android player downloads it like any other media so it can show offline, and the server refused

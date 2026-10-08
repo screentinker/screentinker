@@ -372,9 +372,19 @@
       del(LS.code); clearToast(); show(elStage);
     });
 
-    socket.on('device:unpaired', function () {
+    socket.on('device:unpaired', function (data) {
       del(LS.id); del(LS.token); del(LS.code); del(LS.payload);
       deviceId = null; deviceToken = null;
+      // Deleted on the dashboard: nothing it downloaded belongs to a screen any more. ONLY on
+      // 'deleted' — the register path's 'not_found' is also what a restored backup or an
+      // unreplicated edge says, and wiping on it would empty every panel at once.
+      if (data && data.reason === 'deleted') {
+        try {
+          if (!window.__stMediaCache && window.MediaCache) window.__stMediaCache = window.MediaCache.create();
+          if (window.__stMediaCache) window.__stMediaCache.prune([]);
+        } catch (e) { /* best effort */ }
+        try { if (window.BundleStore) window.BundleStore.prune([]); } catch (e) { /* best effort */ }
+      }
       // FIX F — back off 3s before re-registering, symmetric with the auth-error path below,
       // so a repeatedly-unpaired device (e.g. MDM re-pair churn) can't tight-loop
       // register -> unpaired -> register.

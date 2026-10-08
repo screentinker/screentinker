@@ -121,3 +121,42 @@ test('a message that is not ours is ignored', async () => {
   await settle();
   assert.deepEqual(keys(content), [A, B].sort());
 });
+
+// Deleted on the dashboard (device:unpaired {reason: 'deleted'}): the page sends st-device-deleted
+// with the trigger media to keep. Unlike st-cache-playlist, an empty keep list here DOES empty the
+// cache — it comes only from an explicit operator delete, never from a payload.
+test('a deleted display drops everything except its trigger media', async () => {
+  const { content, post } = load();
+  await seed(content, [A, B, OLD]);
+  post({ type: 'st-device-deleted', keep: [B] });
+  await settle();
+  assert.deepEqual(keys(content), [B], 'trigger media (B) must survive the wipe');
+});
+
+test('a deleted display with no triggers ends up with an empty cache', async () => {
+  const { content, post } = load();
+  await seed(content, [A, B]);
+  post({ type: 'st-device-deleted', keep: [] });
+  await settle();
+  assert.deepEqual(keys(content), []);
+});
+
+test('a malformed delete message deletes nothing', async () => {
+  const { content, post } = load();
+  await seed(content, [A, B]);
+  post({ type: 'st-device-deleted' });
+  post({ type: 'st-device-deleted', keep: 'all' });
+  await settle();
+  assert.deepEqual(keys(content), [A, B].sort());
+});
+
+test('the page sends the wipe only for reason deleted, keeping trigger media', () => {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'player', 'index.html'), 'utf8');
+  const h = page.slice(page.indexOf("socket.on('device:unpaired'"));
+  const body = h.slice(0, h.indexOf('socket.on(', 10));
+  assert.match(body, /data\.reason === 'deleted'\) dropCacheForDeletedDisplay\(\)/);
+  const fn = page.slice(page.indexOf('function dropCacheForDeletedDisplay'));
+  const fnBody = fn.slice(0, fn.indexOf('\n    }\n'));
+  assert.match(fnBody, /triggerItems\(triggers\)/);
+  assert.match(fnBody, /type: 'st-device-deleted'/);
+});
