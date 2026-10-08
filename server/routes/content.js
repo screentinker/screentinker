@@ -1246,4 +1246,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true, affectedDevices });
 });
 
+// For lib/cloud-folders.js, which retires library items whose file left a synced folder.
+router.purgeContentRow = purgeContentRow;
+
 module.exports = router;

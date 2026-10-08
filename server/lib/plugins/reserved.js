@@ -17,6 +17,7 @@ const BUILTIN_WIDGET_TYPES = Object.freeze([
   'directory-search',
   'diag-smoothness',
   'menu-board',
+  'cloud-doc',
 ]);
 
 const RESERVED_WIDGET_TYPES = new Set([

@@ -3283,6 +3283,62 @@ try {
   db.exec('CREATE TABLE IF NOT EXISTS saml_requests (id TEXT PRIMARY KEY, value TEXT NOT NULL, created_at INTEGER NOT NULL)');
   // Assertion ids already consumed (lib/saml.js): a unique insert makes a replayed response fail even when two copies race.
   db.exec('CREATE TABLE IF NOT EXISTS saml_used_assertions (id TEXT PRIMARY KEY, used_at INTEGER NOT NULL)');
+  /*
+   * Microsoft 365 (lib/m365.js): an organization's own Entra app, for reading SharePoint/OneDrive.
+   * The client secret is secretbox-encrypted and never returned by the API.
+   */
+  db.exec(`CREATE TABLE IF NOT EXISTS org_m365_apps (
+    organization_id   TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    tenant_id         TEXT NOT NULL,
+    client_id         TEXT NOT NULL,
+    client_secret_enc TEXT,
+    last_test_at      INTEGER,
+    last_test_ok      INTEGER,
+    last_error        TEXT,
+    created_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`);
+  // SharePoint/OneDrive folder syncs (lib/cloud-folders.js): one folder into one workspace's library.
+  db.exec(`CREATE TABLE IF NOT EXISTS cloud_folders (
+    id                   TEXT PRIMARY KEY,
+    workspace_id         TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    organization_id      TEXT NOT NULL,
+    user_id              TEXT,
+    provider             TEXT NOT NULL DEFAULT 'm365',
+    name                 TEXT NOT NULL,
+    share_url            TEXT NOT NULL,
+    drive_id             TEXT NOT NULL,
+    item_id              TEXT NOT NULL,
+    web_url              TEXT,
+    playlist_id          TEXT,
+    auto_playlist        INTEGER NOT NULL DEFAULT 1,
+    interval_min         INTEGER NOT NULL DEFAULT 15,
+    default_duration_sec INTEGER NOT NULL DEFAULT 10,
+    enabled              INTEGER NOT NULL DEFAULT 1,
+    last_sync_at         INTEGER,
+    last_status          TEXT,
+    last_error           TEXT,
+    last_summary         TEXT,
+    sync_lease_until     INTEGER,
+    created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_cloud_folders_ws ON cloud_folders(workspace_id)');
+  db.exec(`CREATE TABLE IF NOT EXISTS cloud_folder_items (
+    folder_id  TEXT NOT NULL REFERENCES cloud_folders(id) ON DELETE CASCADE,
+    remote_id  TEXT NOT NULL,
+    content_id TEXT NOT NULL,
+    name       TEXT NOT NULL DEFAULT '',
+    tag        TEXT NOT NULL DEFAULT '',
+    size       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (folder_id, remote_id)
+  )`);
+  // Content a sync created whose file has since left the folder, until it is out of the playlist and retired.
+  db.exec(`CREATE TABLE IF NOT EXISTS cloud_folder_removed (
+    folder_id  TEXT NOT NULL,
+    content_id TEXT NOT NULL,
+    PRIMARY KEY (folder_id, content_id)
+  )`);
   // Health-checked player rollouts (lib/ota-rollout.js): waves, automatic halt, rollback package.
   db.exec(`
     CREATE TABLE IF NOT EXISTS ota_rollouts (

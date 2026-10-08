@@ -16,6 +16,7 @@
     "lib/revisions.js": { "count": 3, "coverage": "routes/revisions.js restore -> assertPlaylistWritable(op='restore') / assertMediaWritable. BS." },
     "lib/device-bring.js": { "count": 1, "coverage": "Move-workspace 'bring its playlist': copies the screen's OWN playlist into NEW playlists in the target workspace (item schedules here; the items themselves through the dynamic copyRow, listed under dynamic). Never copies a corporate playlist or slot content (ownPlaylistOf -> governanceOf), never writes the source. Reached only from POST /api/devices/move-workspace after validate (admin of both workspaces; another organization = platform admin) and inside assertNoMandateLoss. BS." },
     "lib/auto-playlist.js": { "count": 3, "coverage": "NEW auto-generated playlists, not governed. BS." },
+    "lib/cloud-folders.js": { "count": 3, "coverage": "SharePoint/OneDrive folder sync: writes ONLY the auto-generated playlist the sync created for itself (cloud_folders.playlist_id, set solely by ensurePlaylist via lib/auto-playlist; no API sets it), in the folder's own workspace — never a head office playlist. System actor. BS." },
     "db/database.js": { "count": 3, "coverage": "Boot migrations — system (no actor)." }
   },
   "dynamic": {

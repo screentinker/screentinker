@@ -125,6 +125,19 @@ export function render(container) {
       <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          ${t('content.cloud_docs')}
+        </div>
+        <p style="font-size:12px;color:var(--text-muted)">${t('content.cloud_docs_desc')}</p>
+        <input type="text" id="cloudDocUrlInput" class="input" placeholder="${t('content.cloud_docs_url_placeholder')}">
+        <input type="text" id="cloudDocNameInput" class="input" placeholder="${t('content.cloud_docs_name_placeholder')}">
+        <button class="btn btn-primary" id="addCloudDocBtn">${t('content.cloud_docs_add_btn')}</button>
+        <button class="btn btn-secondary" id="cloudFoldersBtn">${t('content.cloud_folders_btn')}</button>
+      </div>
+      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="23 7 16 12 23 17 23 7"/>
             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
           </svg>
@@ -254,6 +267,24 @@ export function render(container) {
   });
 
   // Remote URL handling
+  // Google / Office documents become a cloud-doc WIDGET (lib/cloud-docs.js): the screen shows the
+  // provider's own embed, so there is no file to store. The server rebuilds and checks the link.
+  document.getElementById('addCloudDocBtn')?.addEventListener('click', async () => {
+    const url = document.getElementById('cloudDocUrlInput').value.trim();
+    const name = document.getElementById('cloudDocNameInput').value.trim() || t('content.cloud_docs_default_name');
+    if (!url) { showToast(t('content.cloud_docs_need_url'), 'error'); return; }
+    try {
+      await api.post('/widgets', { widget_type: 'cloud-doc', name, config: { url } });
+      document.getElementById('cloudDocUrlInput').value = '';
+      document.getElementById('cloudDocNameInput').value = '';
+      showToast(t('content.cloud_docs_added'), 'success');
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+  document.getElementById('cloudFoldersBtn')?.addEventListener('click', async () => {
+    const { openCloudFolders } = await import('../components/m365-settings.js');
+    openCloudFolders({ onChange: () => loadContent() });
+  });
+
   document.getElementById('addRemoteBtn').addEventListener('click', async () => {
     const url = document.getElementById('remoteUrlInput').value.trim();
     const name = document.getElementById('remoteNameInput').value.trim();
