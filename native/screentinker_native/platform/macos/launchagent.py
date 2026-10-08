@@ -5,8 +5,9 @@
 
 A LaunchAgent (not a LaunchDaemon): the player draws on the user's display, and only a process in the
 user's GUI session can. KeepAlive restarts it if it exits or crashes — except a clean "Exit player"
-from the on-screen menu, which exits with EXIT_STAY_DOWN so launchd leaves it stopped until the next
-login (KeepAlive.SuccessfulExit = false means "restart only after a non-zero exit"). A kiosk Mac needs
+from the on-screen menu, which exits 0 (ops.EXIT_BY_OPERATOR) so launchd leaves it stopped until the next
+login (KeepAlive.SuccessfulExit = false means "restart only after a non-zero exit"). While the kiosk is
+locked any other clean quit exits non-zero (ops.final_exit_code), so it comes back. A kiosk Mac needs
 automatic login for this to cover a power cut; docs/macos-player.md.
 """
 

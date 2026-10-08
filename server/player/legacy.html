@@ -1012,6 +1012,7 @@ function moveToServer(rawUrl, handoffKey) {
     } catch (_) {
     }
     const target = newUrl + (IS_LEGACY_PLAYER ? "/player/legacy" : "/player") + "?k=" + encodeURIComponent(key) + (host ? "&host=" + encodeURIComponent(host) : "");
+    if (host === "ios" && typeof onIOS === "function" && onIOS() && HOST && HOST.command("move-server", { url: target })) return;
     try {
       window.location.replace(target);
     } catch (_) {
@@ -3568,6 +3569,7 @@ function pipShow(p) {
       media.setAttribute("frameborder", "0");
       media.setAttribute("scrolling", "no");
       media.setAttribute("allow", "");
+      media.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
       media.src = p.uri;
     } else {
       media = document.createElement("img");

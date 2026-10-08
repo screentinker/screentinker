@@ -92,16 +92,28 @@ struct PlayerWebView: UIViewRepresentable {
         private var lastLoadFailed = false
         private var retryDelay: TimeInterval = 5
         private var retryTimer: Timer?
+        /// A load this shell started is still provisional: its server redirects may change the origin.
+        private var shellLoadInFlight = false
 
         init(origin: URL, onSetupRequested: @escaping () -> Void, onOriginChanged: @escaping (URL) -> Void) {
             self.origin = origin
             self.onSetupRequested = onSetupRequested
             self.onOriginChanged = onOriginChanged
+            super.init()
+            // A pairing stored before it was bound to an origin belongs to the server this app is set to.
+            if let pair = identity.load(), pair.origin == nil {
+                identity.save(deviceId: pair.deviceId, deviceToken: pair.deviceToken, origin: origin)
+            }
         }
 
         func load() {
             retryTimer?.invalidate()
-            webView?.load(URLRequest(url: PlayerURL.player(for: origin)))
+            shellLoad(PlayerURL.player(for: origin))
+        }
+
+        private func shellLoad(_ url: URL) {
+            shellLoadInFlight = true
+            webView?.load(URLRequest(url: url))
         }
 
         // MARK: network — the page reconnects its own socket; this only covers a load that never happened.
@@ -137,31 +149,25 @@ struct PlayerWebView: UIViewRepresentable {
                 decisionHandler(.allow)          // iframes: widgets, YouTube, bundles
                 return
             }
-            if url.scheme == "about" || url.scheme == "blob" || url.scheme == "data" {
+            // Anything top-level off the player, or to another server's player the shell did not load
+            // itself (a move is the page's move-server command), would take the sign away. Stay put.
+            switch PlayerURL.decide(url, current: origin, shellLoadInFlight: shellLoadInFlight) {
+            case .allow:
                 decisionHandler(.allow)
-                return
-            }
-            if url.path.hasPrefix("/player") {
-                // The player moving this screen to another server (set_server_url) navigates top-level
-                // to <new>/player?k=…, without our host tag. Re-issue it WITH the tag, or the page on
-                // the new server would no longer know it is inside this app — and remember the server.
-                var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
-                let items = parts?.queryItems ?? []
-                if !items.contains(where: { $0.name == "host" && $0.value == "ios" }) {
-                    parts?.queryItems = items.filter { $0.name != "host" } + [URLQueryItem(name: "host", value: "ios")]
-                    decisionHandler(.cancel)
-                    if let tagged = parts?.url { webView.load(URLRequest(url: tagged)) }
-                    return
-                }
-                if !PlayerURL.isSameOrigin(url, as: origin), case .success(let moved) = PlayerURL.origin(from: url.absoluteString) {
-                    origin = moved
-                    onOriginChanged(moved)
-                }
+            case .cancel:
+                decisionHandler(.cancel)
+            case .retag(let tagged):
+                decisionHandler(.cancel)
+                shellLoad(tagged)
+            case .adopt(let moved):
+                origin = moved
+                onOriginChanged(moved)
                 decisionHandler(.allow)
-                return
             }
-            // Anything else top-level would take the sign off the player. Stay put.
-            decisionHandler(PlayerURL.isSameOrigin(url, as: origin) ? .allow : .cancel)
+        }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            shellLoadInFlight = false
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -170,6 +176,10 @@ struct PlayerWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            // A navigation this shell cancelled (a retag, a refused address) is not a failed load.
+            let e = error as NSError
+            if e.code == NSURLErrorCancelled || (e.domain == "WebKitErrorDomain" && e.code == 102) { return }
+            shellLoadInFlight = false
             scheduleRetry()
         }
 
@@ -191,18 +201,34 @@ struct PlayerWebView: UIViewRepresentable {
         // MARK: the host bridge
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame, let incoming = HostProtocol.parse(message.body) else { return }
+            // Only the player on this shell's server speaks for the sign.
+            let so = message.frameInfo.securityOrigin
+            guard let page = PlayerURL.origin(scheme: so.`protocol`, host: so.host, port: so.port),
+                  PlayerURL.isSameOrigin(page, as: origin) else { return }
             switch incoming {
             case .hello:
-                send(HostProtocol.ready(info()))
+                send(HostProtocol.ready(info(page: page)))
             case .restart:
                 send(HostProtocol.result(action: "restart", ok: true))
                 webView?.reload()
             case let .setIdentity(deviceId, deviceToken):
-                identity.save(deviceId: deviceId, deviceToken: deviceToken)
+                identity.save(deviceId: deviceId, deviceToken: deviceToken, origin: origin)
                 send(HostProtocol.result(action: "set-identity", ok: true))
             case .clearIdentity:
                 identity.clear()
                 send(HostProtocol.result(action: "clear-identity", ok: true))
+            case .moveServer(let text):
+                // set_server_url, verified by the player over its authenticated socket. The pairing stays
+                // bound to the old server: the new page enrols with the k= in the address.
+                guard let target = PlayerURL.moveTarget(from: text),
+                      case .success(let moved) = PlayerURL.origin(from: target.absoluteString) else {
+                    send(HostProtocol.result(action: "move-server", ok: false, error: "not a player address"))
+                    return
+                }
+                send(HostProtocol.result(action: "move-server", ok: true))
+                origin = moved
+                onOriginChanged(moved)
+                shellLoad(target)
             case .unknown(let what):
                 send(HostProtocol.result(action: what, ok: false, error: "not supported on iOS"))
             }
@@ -213,10 +239,11 @@ struct PlayerWebView: UIViewRepresentable {
             webView?.evaluateJavaScript(js, completionHandler: nil)
         }
 
-        private func info() -> HostProtocol.Info {
+        private func info(page: URL) -> HostProtocol.Info {
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
             let d = UIDevice.current
-            let pair = identity.load()
+            var pair = identity.load()
+            if let p = pair, !PlayerURL.releasesIdentity(boundTo: p.origin, page: page, shell: origin) { pair = nil }
             return HostProtocol.Info(version: version, model: "\(d.model) (\(Self.machine()))",
                                      os: "\(d.systemName) \(d.systemVersion)",
                                      deviceId: pair?.deviceId, deviceToken: pair?.deviceToken)

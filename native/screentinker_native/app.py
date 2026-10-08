@@ -89,6 +89,7 @@ class App:
         if args.server:
             self.config.server_url = args.server
         self.qt = QGuiApplication.instance()
+        self._operator_exit = False     # the on-screen "Exit player" was chosen (see run())
         self._post = _UiPost()
         self.stage = Stage(self)
         self.cache = ContentCache(os.path.join(self.config.state_dir, "content"))
@@ -1039,6 +1040,7 @@ class App:
             # relaunching (winhelper/service.py EXIT_BY_OPERATOR). A backend may name its own code:
             # launchd can only tell "clean" (0) from "not", so macOS stays down on 0.
             code = getattr(ops, "EXIT_BY_OPERATOR", EXIT_BY_OPERATOR)
+            self._operator_exit = True
             QTimer.singleShot(300, lambda: self.qt.exit(code))
 
     # ------------------------------------------------------------------ Stage callbacks
@@ -1114,6 +1116,11 @@ class App:
         threading.Thread(target=self._net_main, name="net", daemon=True).start()
         rc = self.qt.exec()
         self.audience.shutdown()      # faces still in view leave now; the partial minute is queued
+        # A backend whose supervisor only tells "clean" from "not" (macOS launchd) turns a clean quit
+        # nobody chose from the menu into one that brings the player back while the kiosk is locked.
+        final = getattr(ops, "final_exit_code", None)
+        if final is not None:
+            rc = final(rc, self._operator_exit, bool(self.config.get("kiosk_locked")))
         return rc
 
 

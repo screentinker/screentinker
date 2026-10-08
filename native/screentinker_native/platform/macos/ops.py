@@ -26,6 +26,19 @@ UNSUPPORTED_CAPABILITIES = ("system.self_update",)
 # launchd's KeepAlive can only tell a clean exit (0) from any other: the on-screen "Exit player" must be
 # 0 so the LaunchAgent stays down, and a crash (1) is what brings the player back.
 EXIT_BY_OPERATOR = 0
+# ...so while the kiosk is locked (no "Exit player" in the menu) every other way out — Cmd+Q, the last
+# window closing, a SIGTERM from `kill` — exits with this instead, and launchd brings the player back
+# (after its ThrottleInterval). Not an event filter that swallows the quit: that would also refuse the
+# quit macOS sends at logout and shutdown, and an MDM restart would stall on "ScreenTinker interrupted".
+EXIT_KIOSK_RESTART = 75
+
+
+def final_exit_code(rc, by_operator, kiosk_locked):
+    """The code the player exits with, given what Qt's loop returned (app.py run())."""
+    if rc == 0 and kiosk_locked and not by_operator:
+        return EXIT_KIOSK_RESTART
+    return rc
+
 HIDE_CURSOR = True
 
 APP_SUPPORT = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "ScreenTinker")

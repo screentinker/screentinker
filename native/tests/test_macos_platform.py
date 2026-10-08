@@ -153,6 +153,29 @@ def test_operator_exit_is_clean_for_launchd():
     assert ops.EXIT_BY_OPERATOR == 0
 
 
+def test_a_locked_kiosk_comes_back_after_any_quit_but_the_operators():
+    # Cmd+Q, the window closing, SIGTERM: Qt returns 0, and launchd would leave the sign dark.
+    assert ops.final_exit_code(0, by_operator=False, kiosk_locked=True) == ops.EXIT_KIOSK_RESTART != 0
+    # Unlocked, a quit is a quit; the menu's Exit player always stays down.
+    assert ops.final_exit_code(0, by_operator=False, kiosk_locked=False) == 0
+    assert ops.final_exit_code(ops.EXIT_BY_OPERATOR, by_operator=True, kiosk_locked=True) == 0
+    # A failure keeps its own code.
+    assert ops.final_exit_code(1, by_operator=False, kiosk_locked=True) == 1
+
+
+def test_edid_is_not_reread_at_every_register(monkeypatch):
+    calls = []
+    blob = "<" + "00ffffffffffff00" + "10ac" * 60 + ">"
+    monkeypatch.setattr(deviceinfo, "_run", lambda argv, timeout=10: calls.append(argv) or '"EDID" = %s' % blob)
+    monkeypatch.setattr(deviceinfo, "_edid_cache", [None, -deviceinfo._EDID_TTL_S - 1.0])
+    first = deviceinfo.primary_edid_b64()
+    assert first and deviceinfo.primary_edid_b64() == first
+    assert len(calls) == 1
+    deviceinfo._edid_cache[1] -= deviceinfo._EDID_TTL_S + 1
+    deviceinfo.primary_edid_b64()
+    assert len(calls) == 2, "re-read once the TTL has passed"
+
+
 def test_launchagent_plist(tmp_path):
     data = plistlib.loads(launchagent.build_plist(["/Applications/ScreenTinker.app/Contents/MacOS/ScreenTinker"],
                                                   server="https://signs.example.com", log_dir="/tmp/st"))

@@ -8,15 +8,19 @@ import Foundation
 ///   shell -> page    {source:"screentinker-host",   type:"host:ready", capabilities, info}
 ///                    {source:"screentinker-host",   type:"host:result", action, ok, error?}
 ///
+/// Commands: restart, set-identity {deviceId, deviceToken}, clear-identity, move-server {url}.
+///
 /// ⚠️ host:ready carries the pairing (deviceId + deviceToken) so a page whose web storage was cleared
 /// gets its identity back instead of pairing as a new screen. That is the ONE secret on this channel:
-/// never log a message whole.
+/// never log a message whole, and never hand it to a page on another origin than the one it was issued
+/// for (PlayerURL.releasesIdentity).
 public enum HostProtocol {
     public enum Incoming: Equatable {
         case hello
         case restart
         case setIdentity(deviceId: String, deviceToken: String)
         case clearIdentity
+        case moveServer(url: String)
         case unknown(String)
     }
 
@@ -45,6 +49,12 @@ public enum HostProtocol {
             return .setIdentity(deviceId: id, deviceToken: token)
         case "clear-identity":
             return .clearIdentity
+        case "move-server":
+            // set_server_url: the page asks the shell to load <new>/player?k=… — the only way the sign
+            // goes to another server (PlayerURL.decide refuses one the page navigates to by itself).
+            let p = msg["payload"] as? [String: Any] ?? [:]
+            guard let url = p["url"] as? String, !url.isEmpty, url.count <= 4096 else { return .unknown(action) }
+            return .moveServer(url: url)
         default:
             return .unknown(action)
         }
