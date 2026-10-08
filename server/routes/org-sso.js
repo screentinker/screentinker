@@ -75,9 +75,56 @@ function requireVerifiedAdmin(req, res, next) {
  */
 const newSlug = () => `org${crypto.randomBytes(6).toString('hex')}`;
 
+/*
+ * SAML fields from a create/update body (lib/saml.js): IdP metadata XML, or the three values by hand.
+ * Returns { issuer, ssoUrl, cert } (only what was supplied, for an update) or { error }.
+ */
+function samlFieldsFrom(body, existing = null) {
+  const saml = require('../lib/saml');
+  const b = body || {};
+  let issuer = b.idp_entity_id !== undefined ? String(b.idp_entity_id || '').trim() : undefined;
+  let ssoUrl = b.sso_url !== undefined ? String(b.sso_url || '').trim() : undefined;
+  let certs = b.cert !== undefined ? saml.normaliseCerts(b.cert) : undefined;
+  if (b.metadata_xml) {
+    const m = saml.parseIdpMetadata(b.metadata_xml);
+    if (m.error) return { error: m.error };
+    issuer = m.entityId; ssoUrl = m.ssoUrl; certs = m.certs;
+  }
+  if (!existing || issuer !== undefined) { if (!issuer) return { error: 'The identity provider entity ID is required (paste its metadata, or enter it).' }; }
+  if (!existing || ssoUrl !== undefined) {
+    let u; try { u = new URL(ssoUrl); } catch { return { error: 'The sign-in (SSO) address is not a valid URL.' }; }
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && /^(localhost|127\.0\.0\.1)$/.test(u.hostname))) return { error: 'The sign-in (SSO) address must use https.' };
+  }
+  if (!existing || certs !== undefined) { if (!certs) return { error: 'A valid signing certificate (PEM) is required.' }; }
+  return { issuer, ssoUrl, cert: certs ? certs.join('\n') : undefined };
+}
+
+function publicOrigin(req) {
+  const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
+  return configured || `${req.protocol}://${req.get('host')}`;
+}
+
 /** Never let a secret out of the API, in either direction of a round trip. */
-function toPublic(row) {
+function toPublic(row, req = null) {
+  if (row.kind === 'saml') {
+    const saml = require('../lib/saml');
+    const origin = req ? publicOrigin(req) : '';
+    const certs = saml.normaliseCerts(row.saml_cert);
+    return {
+      id: row.id, slug: row.slug, name: row.name, kind: 'saml',
+      idp_entity_id: row.issuer, sso_url: row.saml_sso_url,
+      cert: certs ? saml.certInfo(certs) : null,
+      email_domains: row.email_domains, enabled: !!row.enabled,
+      login_url: `/api/auth/saml/${row.slug}/start`,
+      // What the admin gives their IdP.
+      sp_entity_id: saml.spEntityIdFor(origin, row.slug),
+      acs_url: saml.acsUrlFor(origin, row.slug),
+      metadata_url: `${origin}/api/auth/saml/${row.slug}/metadata`,
+      domains: domainsFor(row.id),
+    };
+  }
   return {
+    kind: 'oidc',
     id: row.id,
     slug: row.slug,
     name: row.name,
@@ -436,10 +483,11 @@ router.use(requireAuth, resolveTenancy);
 // List an organization's providers.
 router.get('/:orgId/sso', requireOrgAdmin, (req, res) => {
   const rows = db.prepare('SELECT * FROM org_sso_providers WHERE organization_id = ? ORDER BY created_at').all(req.orgId);
-  res.json({ providers: rows.map(toPublic) });
+  res.json({ providers: rows.map((r) => toPublic(r, req)) });
 });
 
 router.post('/:orgId/sso', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(async (req, res) => {
+  if ((req.body || {}).kind === 'saml') return createSamlProvider(req, res);
   const { name, issuer, client_id: clientId, client_secret: clientSecret, scopes, email_domains: domains } = req.body || {};
   if (!name || !issuer || !clientId) {
     return res.status(400).json({ error: 'name, issuer and client_id are required' });
@@ -497,8 +545,38 @@ router.post('/:orgId/sso', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(asy
 
   // (userId, action, details, deviceId, ipAddress, workspaceId) — the org id is NOT the 4th arg.
   logActivity(req.user.id, 'org_sso_created', `${name} (${slug}) org=${req.orgId}`, null, getClientIp(req));
-  res.status(201).json(toPublic(db.prepare('SELECT * FROM org_sso_providers WHERE id = ?').get(id)));
+  res.status(201).json(toPublic(db.prepare('SELECT * FROM org_sso_providers WHERE id = ?').get(id), req));
 }));
+
+/** Create a SAML provider: same domain claiming, transaction and audit trail as an OIDC one. */
+function createSamlProvider(req, res) {
+  const { name, email_domains: domains } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const f = samlFieldsFrom(req.body);
+  if (f.error) return res.status(400).json({ error: f.error });
+  let cleanDomains;
+  try { cleanDomains = normaliseDomains(domains); assertDomainsFree(cleanDomains, req.orgId, null); }
+  catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  const id = crypto.randomUUID();
+  const slug = newSlug();
+  let newlyClaimed = [];
+  try {
+    db.transaction(() => {
+      assertDomainsFree(cleanDomains, req.orgId, null);
+      db.prepare(`INSERT INTO org_sso_providers (id, organization_id, slug, name, issuer, client_id, client_secret_enc, scopes, email_domains, enabled, kind, saml_sso_url, saml_cert)
+        VALUES (?, ?, ?, ?, ?, '', NULL, '', ?, 1, 'saml', ?, ?)`)
+        .run(id, req.orgId, slug, String(name).trim(), f.issuer, cleanDomains, f.ssoUrl, f.cert);
+      newlyClaimed = syncDomains(id, req.orgId, cleanDomains);
+    })();
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('[org-sso] SAML create failed:', e.message);
+    return res.status(500).json({ error: 'Could not save that provider' });
+  }
+  notifyOperatorOfClaim(req, { domains: newlyClaimed, orgId: req.orgId, providerName: String(name).trim() });
+  logActivity(req.user.id, 'org_sso_created', `${name} (${slug}, SAML) org=${req.orgId}`, null, getClientIp(req));
+  res.status(201).json(toPublic(db.prepare('SELECT * FROM org_sso_providers WHERE id = ?').get(id), req));
+}
 
 router.put('/:orgId/sso/:id', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(async (req, res) => {
   const existing = db.prepare('SELECT * FROM org_sso_providers WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
@@ -520,8 +598,15 @@ router.put('/:orgId/sso/:id', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(
     }
   }
 
-  const nextIssuer = issuer !== undefined ? String(issuer).trim().replace(/\/+$/, '') : existing.issuer;
-  if (nextIssuer !== existing.issuer) {
+  const isSaml = existing.kind === 'saml';
+  let samlNext = null;
+  if (isSaml) {
+    samlNext = samlFieldsFrom(req.body, existing);
+    if (samlNext.error) return res.status(400).json({ error: samlNext.error });
+  }
+  const nextIssuer = isSaml ? (samlNext.issuer !== undefined ? samlNext.issuer : existing.issuer)
+    : (issuer !== undefined ? String(issuer).trim().replace(/\/+$/, '') : existing.issuer);
+  if (!isSaml && nextIssuer !== existing.issuer) {
     try { await oidc.discover(nextIssuer); }
     catch (e) { return res.status(400).json({ error: `Could not read OpenID configuration from that issuer: ${discoveryErrorMessage(e, nextIssuer)}` }); }
   }
@@ -583,6 +668,11 @@ router.put('/:orgId/sso/:id', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(
         enabled === undefined ? existing.enabled : (enabled ? 1 : 0),
         existing.id,
       );
+      if (isSaml) {
+        db.prepare('UPDATE org_sso_providers SET saml_sso_url = ?, saml_cert = ? WHERE id = ?').run(
+          samlNext.ssoUrl !== undefined ? samlNext.ssoUrl : existing.saml_sso_url,
+          samlNext.cert !== undefined ? samlNext.cert : existing.saml_cert, existing.id);
+      }
       if (domainsSupplied) newlyClaimed = syncDomains(existing.id, req.orgId, cleanDomains);
     })();
   } catch (e) {
@@ -596,7 +686,7 @@ router.put('/:orgId/sso/:id', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(
   notifyOperatorOfClaim(req, { domains: newlyClaimed, orgId: req.orgId, providerName: existing.name });
 
   logActivity(req.user.id, 'org_sso_updated', `${existing.name} (${existing.slug}) org=${req.orgId}`, null, getClientIp(req));
-  res.json(toPublic(db.prepare('SELECT * FROM org_sso_providers WHERE id = ?').get(existing.id)));
+  res.json(toPublic(db.prepare('SELECT * FROM org_sso_providers WHERE id = ?').get(existing.id), req));
 }));
 
 /*
@@ -615,6 +705,19 @@ router.put('/:orgId/sso/:id', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(
 router.post('/:orgId/sso/:id/test', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(async (req, res) => {
   const row = db.prepare('SELECT * FROM org_sso_providers WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.kind === 'saml') {
+    // SAML has nothing to discover: check what we hold, and hand back what the IdP needs from us.
+    const saml = require('../lib/saml');
+    const certs = saml.normaliseCerts(row.saml_cert);
+    const info = certs ? saml.certInfo(certs) : null;
+    const expired = info && Date.parse(info.valid_to) < Date.now();
+    const checks = [
+      { name: 'certificate', ok: !!certs && !expired, detail: info ? `${info.subject} — valid to ${info.valid_to}` : 'no valid certificate' },
+      { name: 'sso_url', ok: /^https:\/\//.test(row.saml_sso_url || '') || /^http:\/\/(localhost|127\.0\.0\.1)/.test(row.saml_sso_url || ''), detail: row.saml_sso_url || 'missing' },
+    ];
+    const pub = toPublic(row, req);
+    return res.json({ ok: checks.every((c) => c.ok), checks, sp_entity_id: pub.sp_entity_id, acs_url: pub.acs_url, metadata_url: pub.metadata_url, note: 'unverifiable_by_test' });
+  }
 
   const checks = [];
   let doc = null;

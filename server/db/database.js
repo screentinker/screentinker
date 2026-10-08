@@ -3273,6 +3273,16 @@ try {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }
   // "Play every N seconds" (lib/repeat-every.js): NULL = plays once per loop, as before.
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN repeat_every_sec INTEGER').run(); console.log('[migrate] playlist_items.repeat_every_sec added'); } catch (_) { /* present */ }
+  // SAML 2.0 org providers (lib/saml.js). A SAML row keeps the IdP's entityID in `issuer` and an empty
+  // client_id (both NOT NULL in the original table), so no rebuild is needed.
+  try { db.prepare("ALTER TABLE org_sso_providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'oidc'").run(); console.log('[migrate] org_sso_providers.kind added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE org_sso_providers ADD COLUMN saml_sso_url TEXT').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE org_sso_providers ADD COLUMN saml_cert TEXT').run(); } catch (_) { /* present */ }
+  // Outstanding SAML AuthnRequest ids (lib/saml.js): the ACS accepts only a response to one of these,
+  // once. In the database, not memory, so a scaled-out node can complete a login another began.
+  db.exec('CREATE TABLE IF NOT EXISTS saml_requests (id TEXT PRIMARY KEY, value TEXT NOT NULL, created_at INTEGER NOT NULL)');
+  // Assertion ids already consumed (lib/saml.js): a unique insert makes a replayed response fail even when two copies race.
+  db.exec('CREATE TABLE IF NOT EXISTS saml_used_assertions (id TEXT PRIMARY KEY, used_at INTEGER NOT NULL)');
   // Health-checked player rollouts (lib/ota-rollout.js): waves, automatic halt, rollback package.
   db.exec(`
     CREATE TABLE IF NOT EXISTS ota_rollouts (
