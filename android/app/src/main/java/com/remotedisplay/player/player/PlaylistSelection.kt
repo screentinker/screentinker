@@ -145,6 +145,13 @@ object PlaybackResume {
  *     showing that", so it must take effect now. Deferring it left the old content up forever.
  *  2. Deferring assumes an advance is coming. A YouTube item never advanced (see endsOnTimer), so
  *     the pending swap was stranded permanently — the caller must pair this with a deadline.
+ *  3. A ONE-ITEM outgoing playlist has no rotation to wait for. Its single item never "finishes"
+ *     into a next item: at best it replays itself (a timed image/widget re-arms onto the same
+ *     index, a video ends and restarts), at worst nothing ever ends it (a live stream with no
+ *     dwell). Deferring there only kept the replaced content up — for a whole long clip, a long
+ *     dwell, or the full [DEADLINE_MS] — after the operator had changed the playlist. Same rule as
+ *     the web player and Tizen (`outgoingNeverAdvances = oldPlaylist.length <= 1`), and keyed on
+ *     the OUTGOING list, never the incoming one: many -> one still defers like any rotation.
  *
  * Pure so the rule can be checked without a device or a WebView.
  */
@@ -169,11 +176,13 @@ object PendingSwap {
         currentlyPlayingId: String?,
         newContentIds: List<String>,
         interruptChanged: Boolean = false,
+        outgoingCount: Int = Int.MAX_VALUE,
     ): Boolean {
         if (interruptChanged) return false                   // an alert raised or cleared: cut in now
         if (!isRunning || wallFollower || !hasContentOnScreen) return false
         if (currentlyPlayingId == null) return false
         if (newContentIds.isEmpty()) return false            // guard 1: an explicit stop
+        if (outgoingCount <= 1) return false                 // guard 3: a one-item list never rotates
         return !newContentIds.contains(currentlyPlayingId)
     }
 }
