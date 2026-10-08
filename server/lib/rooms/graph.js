@@ -52,9 +52,25 @@ const userPath = (room) => `${endpoints().graph}/users/${encodeURIComponent(room
 const graphTime = (dt) => Date.parse(String(dt || '').replace(/(\.\d{3})\d*$/, '$1') + 'Z');
 const graphStamp = (ms) => new Date(ms).toISOString().replace(/Z$/, '');
 
+/*
+ * Every page of a Graph collection, following @odata.nextLink up to MAX_PAGES. The link comes from the
+ * response, so it is followed only while it points back at the fixed Graph base (lib/rooms/http.js).
+ */
+const MAX_PAGES = 10;
+async function allPages(url, headers) {
+  const base = `${endpoints().graph}/`;
+  const out = [];
+  for (let page = 0; url && page < MAX_PAGES; page++) {
+    const r = await request(url, { headers, what: 'Microsoft Graph' });
+    out.push(...((r && r.value) || []));
+    const next = r && r['@odata.nextLink'];
+    url = typeof next === 'string' && next.startsWith(base) ? next : null;
+  }
+  return out;
+}
+
 async function listRooms(conn) {
-  const r = await request(`${endpoints().graph}/places/microsoft.graph.room?$top=200`, { headers: await auth(conn), what: 'Microsoft Graph' });
-  return ((r && r.value) || [])
+  return (await allPages(`${endpoints().graph}/places/microsoft.graph.room?$top=200`, await auth(conn)))
     .filter((p) => p && p.emailAddress)
     .map((p) => ({ calendar_id: String(p.emailAddress), name: String(p.displayName || p.emailAddress) }));
 }
@@ -84,10 +100,8 @@ async function events(conn, room, fromMs, toMs) {
     $orderby: 'start/dateTime',
     $select: 'id,subject,organizer,start,end,isAllDay,sensitivity,showAs,isCancelled,responseStatus',
   });
-  const r = await request(`${userPath(room)}/calendarView?${qs}`, {
-    headers: { ...(await auth(conn)), Prefer: 'outlook.timezone="UTC"' }, what: 'Microsoft Graph',
-  });
-  return ((r && r.value) || []).map(mapEvent).filter((e) => e && Number.isFinite(e.start) && Number.isFinite(e.end));
+  const list = await allPages(`${userPath(room)}/calendarView?${qs}`, { ...(await auth(conn)), Prefer: 'outlook.timezone="UTC"' });
+  return list.map(mapEvent).filter((e) => e && Number.isFinite(e.start) && Number.isFinite(e.end));
 }
 
 /** A meeting in the room's own calendar, organised by the room. Returns its id. */

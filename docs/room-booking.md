@@ -87,7 +87,7 @@ Treat the address as a password: anyone who has it can read the calendar. Screen
 
 1. Go to **Widgets → Room Display**, then open **Add a room**.
 2. Pick the room's calendar:
-   - **A connection:** press **Find rooms** to choose from a list, or type the room's calendar address.
+   - **A connection:** press **Find rooms** to choose from a list, or type the room's calendar address. A workspace admin can only use a room the connection lists. Only an organization admin can type another calendar, because the connection can read more than the rooms. If the connection can't list rooms (a Google one without **Admin to act as**), an organization admin adds the room.
    - **An ICS address:** paste it.
 3. Name the room, set its **time zone**, and press **Add room**.
 4. Choose a layout. **Follow the screen** turns portrait or landscape with the display. Save the widget, and put it in the playlist of the screen at the door.
@@ -103,13 +103,18 @@ Treat the address as a password: anyone who has it can read the calendar. Screen
 
 The calendar is re-read before anything is booked, so a meeting someone booked a moment ago wins. A double tap creates one meeting, not two.
 
-**End meeting** shortens a meeting **booked at the panel** so it ends now. Your organization can also let a panel end any meeting (**Settings → Meeting rooms → Let a panel end any meeting early**). The room then **declines** the meeting, or leaves it on Google. The organiser is told, and the meeting itself isn't cancelled for its attendees.
+**End meeting** shortens a meeting **booked at the panel** so it ends now. Your organization can also let a panel end any meeting (**Settings → Meeting rooms → Let a panel end any meeting early**). The room then **declines** the meeting. The organiser is told, and the meeting itself isn't cancelled for its attendees. On Google, a meeting the **room itself organises** (one created straight on the room's calendar) can't be ended this way, because removing the room would cancel it for everyone. End it from the calendar.
 
-**Check in and auto-release** is off by default. Set **Release a room nobody checks in to** to a number of minutes. A meeting then shows **Check in** for that long after it starts. A meeting nobody checks in to gives the room back, in the same way as above. Some meetings are never released:
+**Check in and auto-release** is off by default. Set **Release a room nobody checks in to** to a number of minutes. A meeting then shows **Check in** for that long after it starts. A meeting nobody checks in to gives the room back, in the same way as above.
+
+A room is only released while a screen where someone **could** check in is showing it. That means the screen is online, its player can book (see [Which screens can book](#which-screens-can-book)), and the room display is on screen at the time. Otherwise nobody had a button to press, so the meeting is kept. This covers rooms shown only on read-only players, on older player versions, on a screen that is offline, or on no screen at all. It also covers a head office room display playing on a store's screen. If the room display is one item in a rotating playlist, a meeting is only released while it's on screen.
+
+Some meetings are never released:
 
 - meetings booked at the panel (someone was standing there)
 - all-day blocks
 - meetings that started before the setting was turned on
+- on Google, meetings the room itself organises
 
 Every action is recorded in the activity log with the screen that made it.
 
@@ -135,6 +140,8 @@ Hidden details are removed **on the server**, so they aren't in the page or anyt
 | Web player (browsers, kiosks, Chromebooks) | ✅ | ✅ (touch or mouse) |
 | Raspberry Pi and Windows native player | ✅ | ✅ (touch) |
 | Samsung Tizen, LG webOS, BrightSign, Vega | ✅ | read-only |
+
+Only screens that can book count for auto-release, and only on player versions that tell the server so (`room.panel`). An Android, Pi or Windows player from before room displays doesn't count until it's updated. A screen that can book reports that it's showing the room about once a minute.
 
 The page can book only when the player passes it this screen's **panel capability**. The server gives each paired screen its own capability, over that screen's authenticated connection. It is tied to the screen's pairing, so re-pairing or removing the screen cancels it. The player puts it in the part of the address that browsers never send to a server. Screens that don't pass one show the room read-only.
 

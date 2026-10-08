@@ -13,7 +13,10 @@
  *   /graph/users/<room>/events/<id>         PATCH end
  *   /graph/users/<room>/events/<id>/decline POST
  *   /google/token                           JWT bearer grant; records the decoded assertion
- *   /gcal/calendars/<cal>/events[/<id>]     list / POST / PATCH / DELETE
+ *   /gcal/calendars/<cal>/events[/<id>]     list / POST / GET / PATCH / DELETE
+ *
+ * With state.pageSize set, lists come back in pages: Graph with @odata.nextLink, Google with
+ * nextPageToken, as the real services do.
  *   /gdir/customer/my_customer/resources/calendars
  */
 
@@ -28,12 +31,28 @@ function createMock() {
     requests: [],   // { method, path, auth, body }
     assertions: [], // decoded Google JWT claims
     failGraph: 0,   // answer the next N Graph calls with 503
+    pageSize: 0,    // > 0: page every list
     seq: 0,
   };
   const ms = (iso) => Date.parse(iso);
   const graphDt = (msv) => new Date(msv).toISOString().replace('Z', '0000');
 
   function json(status, body) { return { status, body: body == null ? '' : JSON.stringify(body) }; }
+  // One page of a Graph list, with the absolute nextLink Graph sends.
+  function graphPage(u, list) {
+    if (!state.pageSize) return { value: list };
+    const skip = Number(u.searchParams.get('$skip') || 0);
+    const out = { value: list.slice(skip, skip + state.pageSize) };
+    if (skip + state.pageSize < list.length) { const n = new URL(u); n.searchParams.set('$skip', String(skip + state.pageSize)); out['@odata.nextLink'] = n.toString(); }
+    return out;
+  }
+  function googlePage(u, list) {
+    if (!state.pageSize) return { items: list };
+    const at = Number(u.searchParams.get('pageToken') || 0);
+    const out = { items: list.slice(at, at + state.pageSize) };
+    if (at + state.pageSize < list.length) out.nextPageToken = String(at + state.pageSize);
+    return out;
+  }
 
   function handle(method, rawUrl, headers, bodyText) {
     const u = new URL(rawUrl, 'http://mock');
@@ -51,13 +70,13 @@ function createMock() {
     if (/\/graph\//.test(p) && state.failGraph > 0) { state.failGraph--; return json(503, { error: { code: 'ServiceUnavailable', message: 'Try later' } }); }
     if (/\/graph\//.test(p) && !/^Bearer ms-/.test(headers.authorization || '')) return json(401, { error: { code: 'InvalidAuthenticationToken', message: 'no token' } });
     if (/\/graph\/places\/microsoft\.graph\.room$/.test(p)) {
-      return json(200, { value: [{ emailAddress: 'boardroom@acme.test', displayName: 'Boardroom' }, { emailAddress: 'huddle@acme.test', displayName: 'Huddle 1' }] });
+      return json(200, graphPage(u, [{ emailAddress: 'boardroom@acme.test', displayName: 'Boardroom' }, { emailAddress: 'huddle@acme.test', displayName: 'Huddle 1' }]));
     }
     if ((m = /\/graph\/users\/([^/]+)\/calendarView$/.exec(p))) {
       const from = ms(u.searchParams.get('startDateTime'));
       const to = ms(u.searchParams.get('endDateTime'));
       const list = (state.graph[m[1]] || []).filter((e) => e.start < to && e.end > from);
-      return json(200, { value: list.map((e) => ({ ...e, start: { dateTime: graphDt(e.start), timeZone: 'UTC' }, end: { dateTime: graphDt(e.end), timeZone: 'UTC' } })) });
+      return json(200, graphPage(u, list.map((e) => ({ ...e, start: { dateTime: graphDt(e.start), timeZone: 'UTC' }, end: { dateTime: graphDt(e.end), timeZone: 'UTC' } }))));
     }
     if ((m = /\/graph\/users\/([^/]+)\/events$/.exec(p)) && method === 'POST') {
       const id = `g-${++state.seq}`;
@@ -87,7 +106,7 @@ function createMock() {
     }
     if (/\/(gcal|gdir)\//.test(p) && !/^Bearer goog-/.test(headers.authorization || '')) return json(401, { error: { message: 'no token' } });
     if (/\/gdir\/customer\/my_customer\/resources\/calendars$/.test(p)) {
-      return json(200, { items: [{ resourceEmail: 'c_room1@resource.calendar.google.com', resourceName: 'Room 1' }] });
+      return json(200, googlePage(u, [{ resourceEmail: 'c_room1@resource.calendar.google.com', resourceName: 'Room 1' }]));
     }
     if ((m = /\/gcal\/calendars\/([^/]+)\/events$/.exec(p))) {
       const list = (state.google[m[1]] = state.google[m[1]] || []);
@@ -95,13 +114,22 @@ function createMock() {
       const from = ms(u.searchParams.get('timeMin'));
       const to = ms(u.searchParams.get('timeMax'));
       const t = (v) => (v.dateTime ? ms(v.dateTime) : ms(v.date + 'T00:00:00Z'));
-      return json(200, { items: list.filter((e) => t(e.start) < to && t(e.end) > from) });
+      return json(200, googlePage(u, list.filter((e) => t(e.start) < to && t(e.end) > from)));
     }
     if ((m = /\/gcal\/calendars\/([^/]+)\/events\/([^/]+)$/.exec(p))) {
       const list = state.google[m[1]] || [];
       const i = list.findIndex((x) => x.id === m[2]);
       if (i < 0) return json(404, { error: { message: 'Not Found' } });
+      if (method === 'GET') return json(200, list[i]);
       if (method === 'DELETE') { list.splice(i, 1); return json(204, null); }
+      if (method === 'PATCH' && body && body.attendeesOmitted) {
+        // Only the caller's own response changes, as Google does with attendeesOmitted.
+        for (const a of body.attendees || []) {
+          const mine = (list[i].attendees || []).find((x) => x.email === a.email);
+          if (mine) Object.assign(mine, a);
+        }
+        return json(200, { id: list[i].id });
+      }
       if (method === 'PATCH') { Object.assign(list[i], body); return json(200, { id: list[i].id }); }
     }
     return json(404, { error: { message: `mock: no route for ${method} ${p}` } });

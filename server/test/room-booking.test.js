@@ -11,7 +11,11 @@
  *   - privacy applied before anything leaves the server
  *   - book now: refused when busy, clamped to the next meeting, refused when the gap is too short;
  *     end early: panel meetings shortened, others only with the org rule (and then declined)
- *   - check-in and auto-release; the cache, backoff, and last-good copy on upstream errors
+ *   - check-in and auto-release — only while a screen that could check in shows the room; Google
+ *     releases decline, never delete, and never touch a meeting the room organises
+ *   - paging: Graph @odata.nextLink and Google nextPageToken, capped, on fixed hosts only
+ *   - a workspace admin may point a room only at a calendar the connection lists
+ *   - the cache, backoff, and last-good copy on upstream errors
  *   - the panel capability: bound to widget, device AND the device's token
  */
 
@@ -82,6 +86,7 @@ beforeEach(() => {
   db.prepare('UPDATE rooms SET cache_json = NULL, cache_at = NULL, last_error = NULL, error_count = 0, next_poll_at = NULL, details = \'private_hidden\', allow_booking = 1').run();
   db.prepare('DELETE FROM room_bookings').run();
   db.prepare('DELETE FROM room_checkins').run();
+  db.prepare('DELETE FROM room_panel_presence').run();
   db.prepare('UPDATE organizations SET room_end_any = 0, room_release_min = 0 WHERE id = ?').run(ORG);
 });
 
@@ -92,6 +97,21 @@ after(() => {
 });
 
 const room = (id) => db.prepare('SELECT * FROM rooms WHERE id = ?').get(id);
+
+/*
+ * A screen showing a room: a device, a room-display widget for that room, and the page's "seen"
+ * report. Defaults to an online Android panel declaring room.panel; pass overrides for the others.
+ */
+function showOn(roomId, { caps = ['playback.widget', 'room.panel'], status = 'online', clientType = 'apk', platform = null, ws = WS, widgetRoom = roomId } = {}) {
+  const dev = crypto.randomUUID();
+  const w = crypto.randomUUID();
+  db.prepare(`INSERT INTO devices (id, name, status, workspace_id, device_token, client_type, platform, capabilities)
+    VALUES (?, 'Panel', ?, ?, ?, ?, ?, ?)`).run(dev, status, ws, crypto.randomBytes(8).toString('hex'), clientType, platform, caps == null ? null : JSON.stringify(caps));
+  db.prepare("INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, 'room-display', 'Door', ?)")
+    .run(w, USER, ws, JSON.stringify({ room_id: widgetRoom }));
+  svc.recordPresence(room(roomId), w, dev);
+  return { dev, w };
+}
 const ev = (id, startMin, endMin, extra = {}) => ({ id, start: NOW + startMin * MIN, end: NOW + endMin * MIN, ...extra });
 const graphEvent = (id, startMin, endMin, extra = {}) => ({
   id, subject: `Meeting ${id}`, organizer: { emailAddress: { name: 'Sam Organiser', address: 'sam@acme.test' } },
@@ -351,6 +371,7 @@ test('auto-release: off by default; on, it releases only an unattended meeting, 
     graphEvent('allday', -600, 800, { isAllDay: true }),
   ];
   await svc.panelState(room(ROOM_M));
+  showOn(ROOM_M);
   assert.equal(await svc.sweepReleases(), 0, 'off: nothing happens');
   db.prepare('UPDATE organizations SET room_release_min = 5 WHERE id = ?').run(ORG);
   await svc.checkIn(room(ROOM_M), 'dev-1', 'present');
@@ -367,6 +388,7 @@ test('auto-release: never a meeting booked at the panel, and not before the dead
   db.prepare('UPDATE organizations SET room_release_min = 10 WHERE id = ?').run(ORG);
   mock.state.graph['boardroom@acme.test'] = [graphEvent('early', -7, 53)];   // 7 < 10 minutes
   await svc.panelState(room(ROOM_M));
+  showOn(ROOM_M);
   assert.equal(await svc.sweepReleases(), 0);
   mock.state.graph['boardroom@acme.test'] = [];
   now = NOW;
@@ -375,6 +397,154 @@ test('auto-release: never a meeting booked at the panel, and not before the dead
   await svc.panelState(room(ROOM_M));
   assert.equal(await svc.sweepReleases(), 0);
   assert.ok(!mock.state.requests.some((r) => r.path.includes(`${b.event_id}/decline`)));
+});
+
+test('auto-release: never while no screen that could check in is showing the room', async () => {
+  db.prepare('UPDATE organizations SET room_release_min = 5 WHERE id = ?').run(ORG);
+  mock.state.graph['boardroom@acme.test'] = [graphEvent('nobody', -7, 53)];
+  await svc.panelState(room(ROOM_M));
+  const declines = () => mock.state.requests.filter((r) => /decline$/.test(r.path)).length;
+
+  assert.equal(await svc.sweepReleases(), 0, 'on no screen at all');
+  // A read-only player: a Tizen TV that declares what it can do, without room.panel.
+  showOn(ROOM_M, { caps: ['playback.widget'], clientType: 'wgt', platform: 'tizen' });
+  // An old player that declares nothing falls back to a baseline, and no baseline has room.panel.
+  showOn(ROOM_M, { caps: null, clientType: 'apk' });
+  assert.equal(await svc.sweepReleases(), 0, 'on read-only and pre-room-display players only');
+  showOn(ROOM_M, { status: 'offline' });
+  assert.equal(await svc.sweepReleases(), 0, 'a capable panel that is offline');
+  showOn(ROOM_M, { widgetRoom: ROOM_G });
+  assert.equal(await svc.sweepReleases(), 0, 'a panel whose widget now shows another room');
+  const otherWs = crypto.randomUUID();
+  db.prepare("INSERT INTO workspaces (id, organization_id, name) VALUES (?, ?, 'Store')").run(otherWs, ORG);
+  showOn(ROOM_M, { ws: otherWs });
+  assert.equal(await svc.sweepReleases(), 0, 'a screen in another workspace (a head office widget on a store screen)');
+  showOn(ROOM_M);
+  now = NOW + 4 * MIN;
+  assert.equal(await svc.sweepReleases(), 0, 'a capable panel last seen over three minutes ago');
+  assert.equal(declines(), 0);
+
+  now = NOW;
+  showOn(ROOM_M);
+  assert.equal(await svc.sweepReleases(), 1, 'an online panel that can check in is showing it');
+  assert.equal(declines(), 1);
+});
+
+test('auto-release on Google: the room declines (never a DELETE), and a meeting the room organises is kept', async () => {
+  db.prepare('UPDATE organizations SET room_release_min = 5 WHERE id = ?').run(ORG);
+  const CAL = 'c_room1@resource.calendar.google.com';
+  const at = (min) => ({ dateTime: new Date(NOW + min * MIN).toISOString() });
+  mock.state.google[CAL] = [
+    { id: 'theirs', summary: 'Standup', organizer: { email: 'sam@acme.test' }, start: at(-7), end: at(53),
+      attendees: [{ email: 'sam@acme.test', responseStatus: 'accepted' }, { email: CAL, resource: true, self: true, responseStatus: 'accepted' }] },
+    { id: 'ours', summary: 'Typed into the room', organizer: { email: CAL, self: true }, start: at(-7), end: at(53),
+      attendees: [{ email: 'alex@acme.test', responseStatus: 'accepted' }] },
+  ];
+  await svc.panelState(room(ROOM_G));
+  showOn(ROOM_G);
+  assert.equal(await svc.sweepReleases(), 1, 'only the meeting someone else organised');
+  assert.ok(!mock.state.requests.some((r) => r.method === 'DELETE'), 'nothing is deleted');
+  const patch = mock.state.requests.find((r) => r.method === 'PATCH' && r.path.endsWith('/events/theirs'));
+  assert.equal(patch.body.attendeesOmitted, true, 'only the room’s own response is sent');
+  assert.deepEqual(patch.body.attendees.map((a) => [a.email, a.responseStatus]), [[CAL, 'declined']]);
+  const theirs = mock.state.google[CAL].find((e) => e.id === 'theirs');
+  assert.equal(theirs.attendees.find((a) => a.email === 'sam@acme.test').responseStatus, 'accepted', 'the others are untouched');
+  const ours = mock.state.google[CAL].find((e) => e.id === 'ours');
+  assert.ok(ours, 'the room’s own meeting still exists');
+  assert.ok(!mock.state.requests.some((r) => r.method !== 'GET' && r.path.endsWith('/events/ours')));
+  const before = mock.state.requests.length;
+  now = NOW + MIN;
+  showOn(ROOM_G);
+  assert.equal(await svc.sweepReleases(), 0);
+  assert.ok(!mock.state.requests.slice(before).some((r) => r.path.endsWith('/events/ours')), 'and is not tried again every minute');
+});
+
+test('end early on Google: a meeting the room organises is refused, not cancelled for everyone', async () => {
+  db.prepare('UPDATE organizations SET room_end_any = 1 WHERE id = ?').run(ORG);
+  const CAL = 'c_room1@resource.calendar.google.com';
+  const at = (min) => ({ dateTime: new Date(NOW + min * MIN).toISOString() });
+  mock.state.google[CAL] = [{ id: 'ours', summary: 'x', organizer: { email: CAL }, start: at(-7), end: at(53), attendees: [] }];
+  await assert.rejects(svc.endMeeting(room(ROOM_G), 'dev-1', 'ours'), (e) => e instanceof svc.ActionError && e.code === 'room-organiser');
+  assert.equal(mock.state.google[CAL].length, 1);
+  assert.ok(!mock.state.requests.some((r) => r.method === 'DELETE' || r.method === 'PATCH'));
+});
+
+/* ================================ paging ================================ */
+
+test('paging: Graph nextLink and Google nextPageToken are followed, and a nextLink off the Graph host is not', async () => {
+  mock.state.pageSize = 2;
+  mock.state.graph['boardroom@acme.test'] = [1, 2, 3, 4, 5].map((i) => graphEvent(`m${i}`, i * 10, i * 10 + 5));
+  const conn = svc.connectionFor(CONN_M, ORG);
+  assert.equal((await graph.events(conn, 'boardroom@acme.test', NOW - 3600000, NOW + 86400000)).length, 5);
+  assert.equal((await graph.listRooms(conn)).length, 2);
+  assert.equal(mock.state.requests.filter((r) => /places/.test(r.path)).length, 1, 'two rooms, page size two: one page');
+
+  const CAL = 'c_room1@resource.calendar.google.com';
+  mock.state.google[CAL] = [1, 2, 3, 4, 5].map((i) => ({ id: `g${i}`, start: { dateTime: new Date(NOW + i * 10 * MIN).toISOString() }, end: { dateTime: new Date(NOW + (i * 10 + 5) * MIN).toISOString() } }));
+  const g = await google.events(svc.connectionFor(CONN_G, ORG), CAL, NOW - 3600000, NOW + 86400000, 'UTC');
+  assert.deepEqual(g.map((e) => e.id), ['g1', 'g2', 'g3', 'g4', 'g5']);
+
+  // A nextLink pointing anywhere else is a response trying to choose the host: not followed.
+  const realHandle = mock.fetch;
+  mock.fetch = async (url, opts) => {
+    const r = await realHandle(url, opts);
+    if (!/calendarView/.test(String(url))) return r;
+    const body = await r.json();
+    body['@odata.nextLink'] = 'http://evil.example/graph/next';
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const views = () => mock.state.requests.filter((r) => /calendarView/.test(r.path)).length;
+  assert.equal(views(), 3, 'five events, two to a page');
+  mock.state.pageSize = 0;
+  const list = await graph.events(conn, 'boardroom@acme.test', NOW - 3600000, NOW + 86400000);
+  assert.equal(list.length, 5);
+  assert.equal(views(), 4, 'one more page, and no request for the foreign link');
+  assert.ok(!mock.state.requests.some((r) => r.path === '/graph/next'), 'the foreign nextLink was never fetched');
+});
+
+/* ================================ who may choose a calendar ================================ */
+
+test('a workspace admin may point a room only at a calendar the connection lists; an org admin may enter any', async () => {
+  const http = require('node:http');
+  const express = require('express');
+  let role = { workspaceRole: 'workspace_admin', orgRole: null };
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => { Object.assign(req, { user: { id: USER }, organizationId: ORG, workspaceId: WS }, role); next(); });
+  app.use('/api/rooms', require('../routes/rooms'));
+  const srv = await new Promise((resolve) => { const x = app.listen(0, '127.0.0.1', () => resolve(x)); });
+  const call = (method, p, body) => new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const r = http.request({ host: '127.0.0.1', port: srv.address().port, method, path: p, headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (res) => {
+      let t = ''; res.on('data', (c) => { t += c; }); res.on('end', () => resolve({ status: res.statusCode, body: t ? JSON.parse(t) : null }));
+    });
+    r.on('error', reject); r.end(data);
+  });
+  try {
+    const mk = (calendar_id, connection_id = CONN_M) => call('POST', '/api/rooms', { name: 'R', source: connection_id === CONN_M ? 'm365' : 'google', connection_id, calendar_id, timezone: 'UTC' });
+    const ceo = await mk('ceo@acme.test');
+    assert.equal(ceo.status, 403, 'a mailbox that is not one of the connection’s rooms');
+    assert.equal(ceo.body.code, 'calendar-not-listed');
+    const ok = await mk('Huddle@acme.test');
+    assert.equal(ok.status, 201, 'a listed room (case-insensitive)');
+    assert.equal((await call('PUT', `/api/rooms/${ok.body.id}`, { calendar_id: 'ceo@acme.test' })).status, 403, 'nor moved to one later');
+    assert.equal((await call('PUT', `/api/rooms/${ok.body.id}`, { name: 'Huddle' })).status, 200, 'a rename is not re-checked');
+
+    // Listing fails (a Google connection without delegation cannot list): closed, not open.
+    db.prepare('UPDATE room_connections SET subject = NULL WHERE id = ?').run(CONN_G);
+    try {
+      const g = await mk('c_room1@resource.calendar.google.com', CONN_G);
+      assert.equal(g.status, 403);
+      assert.match(g.body.error, /could not be listed/);
+    } finally { db.prepare("UPDATE room_connections SET subject = 'admin@acme.test' WHERE id = ?").run(CONN_G); }
+
+    role = { workspaceRole: null, orgRole: 'org_admin' };
+    const any = await mk('ceo@acme.test');
+    assert.equal(any.status, 201, 'an org admin may enter any calendar id');
+    for (const id of [ok.body.id, any.body.id]) db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
+  } finally {
+    srv.close();
+  }
 });
 
 test('check-in: refused for a meeting that is over or more than ten minutes away', async () => {

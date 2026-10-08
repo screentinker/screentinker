@@ -15,7 +15,8 @@
  *              from that device's own token (panelToken below), and are checked against a FRESH copy
  *              of the calendar, not the cache, so two panels cannot book the same slot off stale data.
  *   RELEASE    Optional, per organization: a meeting nobody checks in to within N minutes of its
- *              start gives the room back. Off by default.
+ *              start gives the room back. Off by default, and only while a screen someone could
+ *              have checked in at is showing the room (panelPresent below).
  */
 
 const crypto = require('crypto');
@@ -27,6 +28,7 @@ const { RoomSourceError } = require('./http');
 const graph = require('./graph');
 const google = require('./google');
 const ics = require('./ics');
+const capsLib = require('../player-capabilities');
 
 const FRESH_MS = 60 * 1000;
 const BACKOFF_MIN_MS = 30 * 1000;
@@ -35,6 +37,8 @@ const BOOK_OPTIONS = [15, 30, 60];
 const MIN_BOOK_MS = 5 * 60 * 1000;
 const CHECKIN_EARLY_MS = 10 * 60 * 1000;
 const RELEASE_GRACE_MS = 15 * 60 * 1000;   // release only shortly after the deadline, never hours later
+const PRESENCE_MS = 3 * 60 * 1000;         // a panel reports every minute while the room is on screen
+const PRESENCE_WRITE_MS = 20 * 1000;       // and at most this often is written down
 const PANEL_TITLE = 'Booked at the room display';
 
 let clock = () => Date.now();
@@ -216,6 +220,48 @@ function verifyPanelToken(widgetId, device, presented) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+/* ================================ panel presence ================================ */
+
+/*
+ * Which screens are showing a room with WORKING buttons, right now.
+ *
+ * The page reports itself (POST /api/room-panel/:widget/seen) once a minute, and only when it holds
+ * the panel capability, so a report proves three things together: the room's widget is on that
+ * screen at this moment, the player passed the capability (a read-only player, or one older than
+ * room displays, never does), and the screen is paired in the widget's own workspace (the route
+ * checks it, as it does for an action). The release sweep adds the rest when it reads it back: the
+ * screen is still online, not blocked, and declares room.panel (lib/player-capabilities.js) — so a
+ * BrightSign or a webOS TV, which pass the capability but have nobody to press a button, does not
+ * count — and the widget still shows that room.
+ */
+const lastPresenceWrite = new Map();   // `${widget}|${device}` -> ms, bounded below
+function recordPresence(room, widgetId, deviceId) {
+  const now = clock();
+  const key = `${widgetId}|${deviceId}`;
+  if (now - (lastPresenceWrite.get(key) || 0) < PRESENCE_WRITE_MS) return;
+  lastPresenceWrite.delete(key);
+  lastPresenceWrite.set(key, now);
+  if (lastPresenceWrite.size > 5000) lastPresenceWrite.delete(lastPresenceWrite.keys().next().value);
+  db.prepare(`INSERT INTO room_panel_presence (room_id, widget_id, device_id, seen_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (room_id, widget_id, device_id) DO UPDATE SET seen_at = excluded.seen_at`).run(room.id, widgetId, deviceId, now);
+}
+
+/** True when a screen someone could check in at is showing this room right now. */
+function panelPresent(room) {
+  const rows = db.prepare(`
+    SELECT p.widget_id, w.widget_type, w.workspace_id AS widget_ws, w.config,
+           d.workspace_id, d.status, d.blocked, d.capabilities, d.platform, d.android_version, d.client_type
+    FROM room_panel_presence p
+    JOIN devices d ON d.id = p.device_id
+    JOIN widgets w ON w.id = p.widget_id
+    WHERE p.room_id = ? AND p.seen_at >= ?
+  `).all(room.id, clock() - PRESENCE_MS);
+  return rows.some((r) => r.status === 'online' && !r.blocked
+    && r.workspace_id === room.workspace_id && r.widget_ws === room.workspace_id
+    && r.widget_type === 'room-display' && safeJson(r.config || '{}', {}).room_id === room.id
+    && capsLib.supports(r, 'room.panel'));
+}
+
 /* ================================ actions ================================ */
 
 class ActionError extends Error {
@@ -280,9 +326,14 @@ async function endMeeting(room, deviceId, eventId) {
       if (end < st.current.end) await a.shorten(conn, room.calendar_id, eventId, end);
       db.prepare('UPDATE room_bookings SET ended_at = ? WHERE room_id = ? AND event_id = ?').run(now, room.id, eventId);
     } else if (s.end_any) {
-      // Someone else's: the room declines it (Microsoft) or leaves it (Google). The meeting itself is
+      // Someone else's: the room declines it (both adapters). The meeting itself is
       // not cancelled for its attendees, and the organiser is told.
-      await a.release(conn, room.calendar_id, eventId, 'Ended early at the room display.');
+      try {
+        await a.release(conn, room.calendar_id, eventId, 'Ended early at the room display.');
+      } catch (e) {
+        if (e instanceof RoomSourceError && KEEP_CODES.has(e.code)) throw new ActionError(e.message, 409, e.code);
+        throw e;
+      }
       db.prepare('INSERT OR REPLACE INTO room_checkins (room_id, event_id, kind, device_id, at) VALUES (?, ?, ?, ?, ?)')
         .run(room.id, eventId, 'released', deviceId, now);
     } else {
@@ -303,11 +354,20 @@ async function checkIn(room, deviceId, eventId) {
   return { checked_in: eventId };
 }
 
+// What an adapter's release() says when the room may not give the meeting up (Google: the room is
+// its organiser, so removing the room would cancel it for everyone; or the room is not an attendee).
+const KEEP_CODES = new Set(['room-organiser', 'not-attendee']);
+
 /*
  * Give back rooms nobody turned up to. Runs every minute; does nothing for an organization that has
  * not turned it on. Only timed meetings, only between the deadline and 15 minutes after it (so a
  * meeting that started before the setting was turned on is not released hours in), never one booked
  * at a panel (someone was standing there), and checked against a fresh copy before acting.
+ *
+ * ⚠️ And only while a screen someone could have checked in at is showing the room (panelPresent).
+ * Without that, a room shown only on a read-only TV, on a screen that is offline, through a head
+ * office widget the store's screen cannot act on, or on no screen at all lost every meeting, and
+ * each organiser was sent a decline. Nobody was absent; there was simply no button.
  */
 async function sweepReleases({ log } = {}) {
   const now = clock();
@@ -329,17 +389,28 @@ async function sweepReleases({ log } = {}) {
         && e.start + graceMs <= now && now < e.end && now < e.start + graceMs + RELEASE_GRACE_MS);
     };
     if (!due(cached).length) continue;
+    if (!panelPresent(room)) continue;
     try {
       const { conn, a } = writableRoom(room);
       const day = await getDay(room.id, { force: true });
+      let here = 0;
       for (const e of due(day.events)) {
-        await a.release(conn, room.calendar_id, e.id, `Released: nobody checked in at the room display within ${room.release_min} minutes.`);
+        try {
+          await a.release(conn, room.calendar_id, e.id, `Released: nobody checked in at the room display within ${room.release_min} minutes.`);
+        } catch (err) {
+          if (!(err instanceof RoomSourceError && KEEP_CODES.has(err.code))) throw err;
+          // Never releasable: remember it, so it is not tried again every minute.
+          db.prepare('INSERT OR IGNORE INTO room_checkins (room_id, event_id, kind, device_id, at) VALUES (?, ?, ?, ?, ?)')
+            .run(room.id, e.id, 'kept', null, now);
+          continue;
+        }
         db.prepare('INSERT OR REPLACE INTO room_checkins (room_id, event_id, kind, device_id, at) VALUES (?, ?, ?, ?, ?)')
           .run(room.id, e.id, 'released', null, now);
         released++;
+        here++;
         if (log) log(room, e);
       }
-      if (released) await getDay(room.id, { force: true }).catch(() => {});
+      if (here) await getDay(room.id, { force: true }).catch(() => {});
     } catch (e) {
       console.warn(`[rooms] release sweep ${room.id}: ${e && e.message}`);
     }
@@ -348,6 +419,7 @@ async function sweepReleases({ log } = {}) {
   const old = now - 36 * 3600 * 1000;
   db.prepare('DELETE FROM room_bookings WHERE end_ms < ?').run(old);
   db.prepare('DELETE FROM room_checkins WHERE at < ?').run(old);
+  db.prepare('DELETE FROM room_panel_presence WHERE seen_at < ?').run(old);
   return released;
 }
 
@@ -364,12 +436,12 @@ function start() {
 }
 
 function _setClock(fn) { clock = fn || (() => Date.now()); }
-function _reset() { inflight.clear(); roomLocks.clear(); graph._reset(); google._reset(); }
+function _reset() { inflight.clear(); roomLocks.clear(); lastPresenceWrite.clear(); graph._reset(); google._reset(); }
 
 module.exports = {
   DETAILS, SOURCES, BOOK_OPTIONS, PANEL_TITLE,
   connectionFor, orgSettings, orgOfWorkspace, getDay, panelState, publicEvent,
-  panelToken, verifyPanelToken, book, endMeeting, checkIn, sweepReleases, start,
+  panelToken, verifyPanelToken, recordPresence, panelPresent, book, endMeeting, checkIn, sweepReleases, start,
   ActionError, adapterOf,
   _setClock, _reset,
 };

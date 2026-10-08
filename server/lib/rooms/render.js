@@ -54,6 +54,7 @@ function renderRoomDisplay({ widgetId, origin, config = {}, initial = null }) {
   const cfg = {
     stateUrl: `${origin}/api/room-panel/${encodeURIComponent(widgetId)}/state`,
     actionUrl: `${origin}/api/room-panel/${encodeURIComponent(widgetId)}/action`,
+    seenUrl: `${origin}/api/room-panel/${encodeURIComponent(widgetId)}/seen`,
     locale: LOCALE_RE.test(String(config.locale || '')) ? config.locale : null,
     layout: ['portrait', 'landscape'].includes(config.layout) ? config.layout : 'auto',
     showSchedule: config.show_schedule !== false,
@@ -170,6 +171,12 @@ ${dayBounds.toString()}
       .then(function (s) { accept(s); paint(true); })
       .catch(function () { paint(true); });
   }
+  // "This screen is showing the room, with working buttons": the no-show release waits for it
+  // (lib/rooms/service.js panelPresent). Only with the capability; a read-only sign says nothing.
+  function seen() {
+    if (!PANEL || !DEVICE) return;
+    try { fetch(CFG.seenUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ device: DEVICE, panel: PANEL }), cache: 'no-store' }).catch(function () {}); } catch (e) {}
+  }
   function paint(force) {
     if (!state || !state.room) {
       $('name').textContent = ''; $('word').textContent = ''; $('detail').textContent = S.no_room;
@@ -237,6 +244,8 @@ ${dayBounds.toString()}
   paint(true);
   poll();
   setInterval(poll, 30000);
+  seen();
+  setInterval(seen, 60000);
   setInterval(function () { paint(false); }, 1000);
 })();
 </script></body></html>`;
