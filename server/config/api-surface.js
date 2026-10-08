@@ -147,6 +147,11 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/rooms', mod: './routes/rooms', tenancy: true },
   /*
+   * Audience counting (lib/audience.js). JWT only: switching a screen's camera on is a privacy
+   * decision for an org owner or admin, never something an API token can do.
+   */
+  { path: '/api/audience',    mod: './routes/audience',     tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */

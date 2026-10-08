@@ -151,6 +151,12 @@ const CAPABILITIES = [
    * In NO baseline — brand new, and a fielded player simply ignores the unknown command.
    */
   'net.http_request',
+  /*
+   * Audience counting (lib/audience.js): the player has a camera it can open and an on-device face
+   * detector, and will report COUNTS ONLY. Declared by a player that could count if asked — not a
+   * statement that it is counting; that is the org's switch, sent in the payload. In NO baseline.
+   */
+  'audience.camera',
 
   // synchronisation
   'sync.clock', 'sync.native',

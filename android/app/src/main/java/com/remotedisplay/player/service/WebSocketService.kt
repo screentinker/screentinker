@@ -455,6 +455,20 @@ class WebSocketService : Service() {
                     kioskFlushInFlight = false
                     flushKioskSessions()
                     flushKioskErrors()
+                    audienceFlushInFlight = false
+                    flushAudience()
+                }
+
+                // Audience counts the server has (or refused for good): drop them from the queue.
+                safeOn("device:audience-ack") { args ->
+                    val data = args.firstOrNull() as? JSONObject ?: return@safeOn
+                    val ids = data.optJSONArray("ids") ?: JSONArray()
+                    val list = (0 until ids.length()).map { ids.optString(it, "") }.filter { it.isNotEmpty() }
+                    com.remotedisplay.player.audience.AudienceLog.ack(applicationContext, list)
+                    audienceFlushInFlight = false
+                    if (list.isNotEmpty() && com.remotedisplay.player.audience.AudienceLog.peek(applicationContext).isNotEmpty()) {
+                        handler.post { flushAudience() }
+                    }
                 }
 
                 // #473 v2: the server stored these session ids (or already had them): drop them.
@@ -1760,6 +1774,27 @@ class WebSocketService : Service() {
             socket?.emit("device:connectivity-report", data)
             Log.i("WebSocketService", "connectivity-report offline_ms=$offlineMs link_lost=$linkLost internet_ok=$internetOk cold_start=$coldStart ip_changed=$ipChanged")
         } catch (e: Throwable) { Log.w("WebSocketService", "emitConnectivityReport: ${e.message}") }
+    }
+
+    // ── Audience counting: per-minute counts, queued until acked (audience/AudienceController.kt) ──
+    @Volatile private var audienceFlushInFlight = false
+
+    fun flushAudience() {
+        if (audienceFlushInFlight || socket?.connected() != true || config.deviceId.isEmpty()) return
+        val batch = com.remotedisplay.player.audience.AudienceLog.peek(applicationContext)
+        if (batch.isEmpty()) return
+        audienceFlushInFlight = true
+        try {
+            socket?.emit("device:audience", JSONObject().apply {
+                put("device_id", config.deviceId)
+                put("buckets", JSONArray().apply { batch.forEach { put(it.toJson()) } })
+            })
+            // An older server never acks: stop waiting after a while so a later flush can retry.
+            handler.postDelayed({ audienceFlushInFlight = false }, 30_000)
+        } catch (e: Throwable) {
+            audienceFlushInFlight = false
+            Log.w("WebSocketService", "flushAudience: ${e.message}")
+        }
     }
 
     // ── #473 v2: interactive web pages ──────────────────────────────────────────────────────────

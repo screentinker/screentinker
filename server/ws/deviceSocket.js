@@ -972,7 +972,14 @@ function buildPlaylistPayloadUnchecked(deviceId) {
 
   // Weather and area conditions are decided here, for this screen (lib/local-conditions.js).
   assignments = require('../lib/local-conditions').filterItems(assignments, device);
-  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
+  const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
+  /*
+   * Audience counting (lib/audience.js). Top-level and outside the item list, so switching it on or
+   * off never restarts playback (#234). Rides EVERY payload, and null means OFF — so a screen that
+   * missed the change still stops counting on its next payload.
+   */
+  assembled.audience = require('../lib/audience').payloadConfig(deviceId);
+  return assembled;
 }
 
 // #104: the canonical player payload shape, shared by the device path
@@ -1667,6 +1674,18 @@ const EVENT_APPLIERS = Object.freeze({
       try { written += _insertKioskSession.run(deviceId, ws, wid, id, Math.floor(started), dur, reason, pages).changes; } catch (_) { /* best effort */ }
     }
     try { ctx.reply('device:kiosk-sessions-ack', { ids, written }); } catch (_) { /* best effort */ }
+  },
+
+  /*
+   * Audience counts (lib/audience.js): per-minute INTEGERS from the player's on-device detector,
+   * queued on the player until this ack names them. Validated strictly and kept only while the org
+   * has counting on for this screen — the device cannot turn it on by sending.
+   */
+  'audience'(deviceId, data, ctx) {
+    let out = { ids: [], written: 0 };
+    try { const r = require('../lib/audience').ingest(deviceId, data); out = { ids: r.ids, written: r.written }; }
+    catch (e) { console.warn(`[audience] ingest from ${deviceId} failed: ${e.message}`); }
+    try { ctx.reply('device:audience-ack', out); } catch (_) { /* best effort */ }
   },
 
   'connectivity-report'(deviceId, data, ctx) {
@@ -3001,6 +3020,7 @@ module.exports = function setupDeviceSocket(io) {
     socket.on('device:play-event', (data) => dispatch('play-event', data));
 
     socket.on('device:kiosk-sessions', (data) => dispatch('kiosk-sessions', data));
+    socket.on('device:audience', (data) => dispatch('audience', data));
 
     /*
      * Interactive terminal output (lib/pty-relay.js). NOT a dispatch(): it writes nothing, is never
