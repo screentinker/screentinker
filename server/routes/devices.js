@@ -11,7 +11,7 @@ const { resourceAccess } = require('../lib/tenancy');
 // requireScope gates by API-token scope; the workspace WRITE gate is checkDeviceOwnership, which
 // already rejects workspace_viewer — the same check requireFleetWrite performs in routes/triggers.js.
 const { requireScope } = require('../middleware/apiToken');
-const { ALLOWED_COMMANDS, LOCAL_API_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const { ALLOWED_COMMANDS, LOCAL_API_COMMANDS, deliverCommand, validateCommand, requireCommandScope } = require('../lib/device-command');
 const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens } = require('../lib/device-sanitize');
 const { layoutZones, orphanCountsByDevice } = require('../lib/zone-validate');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings preservation
@@ -58,6 +58,7 @@ router.get('/', (req, res) => {
   // #zone-orphan: lightweight per-device count of playlist items whose zone_id isn't in
   // the device's active layout, so the dashboard can flag screens that need attention.
   const orphanCounts = orphanCountsByDevice(devices.map(d => d.id));
+  const groupIds = groupIdsByDevice(devices.map(d => d.id));
   // The RESOLVED capability set, the same shape GET /:id returns. The raw column shipped here
   // before: a JSON *string* ('[]') or null, which every consumer would have had to parse — and
   // `Array.isArray("[]")` is false, so the dashboard's `can()` helper reads a device that declared
@@ -73,8 +74,30 @@ router.get('/', (req, res) => {
     platform_family: playerCapabilities.platformFamily(d),
     orphan_count: orphanCounts[d.id] || 0,
     tags: parseTags(d.tags),
+    group_ids: groupIds[d.id] || [],
   })));
 });
+
+/*
+ * The device groups each screen belongs to, as { deviceId: [groupId, ...] }, ordered by group name.
+ *
+ * ⚠️ NOT devices.team_id. That column is a TEAM (the old sharing unit), and the MCP tools reported it
+ * as `group_id` — so an agent asked "which group is the lobby screen in" answered with a team id that
+ * no group endpoint recognises. Membership lives in device_group_members, and a screen can be in
+ * several groups, so it is a list.
+ */
+function groupIdsByDevice(deviceIds) {
+  const out = {};
+  if (!deviceIds.length) return out;
+  const rows = db.prepare(`
+    SELECT m.device_id, m.group_id FROM device_group_members m
+    JOIN device_groups g ON g.id = m.group_id
+    WHERE m.device_id IN (${deviceIds.map(() => '?').join(',')})
+    ORDER BY g.name ASC, g.id ASC
+  `).all(...deviceIds);
+  for (const r of rows) (out[r.device_id] = out[r.device_id] || []).push(r.group_id);
+  return out;
+}
 
 // #106: reorder display tiles (cosmetic, within-section). Writes devices.sort_order
 // = position in the given id array. Workspace-scoped: the UPDATE matches WHERE
@@ -445,7 +468,7 @@ router.get('/:id', (req, res) => {
   // that never reported one, or whose block is unreadable — the card simply does not render.
   const edid = require('../lib/edid').parseEdid(device.hardware_edid);
 
-  res.json({ ...stripDeviceSecrets(device), tags: parseTags(device.tags), local_weather: require('../lib/local-conditions').readingFor(device), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
+  res.json({ ...stripDeviceSecrets(device), tags: parseTags(device.tags), group_ids: groupIdsByDevice([device.id])[device.id] || [], local_weather: require('../lib/local-conditions').readingFor(device), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
 });
 
 /*
@@ -737,11 +760,12 @@ router.put('/:id', (req, res) => {
  * mesh write channel re-enters this node's own HTTP API precisely so that a remote request passes
  * the same guards a local one does. Without an HTTP surface there was nothing for it to re-enter.
  *
- * Guarded exactly as the group route is: requireScope('full') for API tokens (a fleet-affecting
- * action is not an ordinary write), checkDeviceOwnership for the workspace, the shared command
- * allowlist, and the panel's own declared capabilities.
+ * Guarded exactly as the group route is: requireCommandScope for API tokens (`full`, except the
+ * five undoable commands a `write` token may send — lib/device-command.js WRITE_SCOPE_COMMANDS),
+ * checkDeviceOwnership for the workspace, the shared command allowlist, and the panel's own
+ * declared capabilities.
  */
-router.post('/:id/command', requireScope('full'), (req, res) => {
+router.post('/:id/command', requireCommandScope, (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 

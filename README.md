@@ -226,6 +226,7 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `MESH_MIN_NODE_VERSION` | Oldest peer version this server will pair with. | `2.0.0-0` |
 | `PRIMARY_URL` | On a replica: where writes for copied workspaces are forwarded. No default — unset, a replica is read-only. See [Scale-out](docs/scale-out.md). | unset |
 | `PRIMARY_REDIRECT` | Answer those writes with a `307` to `PRIMARY_URL` instead of proxying. Only behind one load balancer. | `false` |
+| `MCP_CORS_ORIGINS` | Browser origins allowed to call `/mcp` cross-origin, comma-separated (e.g. `http://localhost:6274` for the MCP Inspector in direct mode). Unset means no CORS on `/mcp`; native and server-side MCP clients need none. | unset |
 | `PLUGINS_ENABLED` | Load the plugin system (widget types, data-source resolvers, optional routes). Off by default and invisible — see [Plugins](docs/plugins.md). | unset |
 | `PLUGINS_DIR` | Operator-installed plugins. Survives `git pull`. | `$DATA_DIR/plugins` |
 | `PLUGIN_INBOX_DIR` | Quarantine for uploaded plugin zips. Not a plugin root. | `$DATA_DIR/plugin-inbox` |

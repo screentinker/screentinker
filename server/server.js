@@ -256,10 +256,27 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(cors({
+/*
+ * ⚠️ /mcp HAS ITS OWN CORS POLICY: NONE, unless the operator names origins in MCP_CORS_ORIGINS.
+ *
+ * MCP clients are native apps and server-side connectors, not web pages, and the endpoint
+ * authenticates with a bearer token, never a cookie. Under the global policy below a self-hosted or
+ * development instance reflected ANY Origin with credentials, which no documented client needs and
+ * which the MCP transport spec warns against (validate Origin; DNS rebinding). Without an approved
+ * preflight a browser cannot send the Authorization header at all, so withholding CORS is what
+ * stops a web page driving /mcp. A browser-based client (e.g. the MCP Inspector in direct mode)
+ * still works once its origin is listed.
+ */
+const isMcpPath = (p) => p === '/mcp' || p.startsWith('/mcp/');
+const mcpCors = cors({
+  origin: (origin, cb) => cb(null, !!origin && config.mcpCorsOrigins.includes(origin)),
+  credentials: false,
+});
+const globalCors = cors({
   origin: corsOriginCheck,
   credentials: true,
-}));
+});
+app.use((req, res, next) => (isMcpPath(req.path) ? mcpCors : globalCors)(req, res, next));
 // Stripe webhook needs raw body (before express.json parses it)
 const stripeRouter = require('./routes/stripe');
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeRouter);
@@ -298,7 +315,13 @@ app.use((req, res, next) => {
 const jsonBody = express.json({ limit: '12mb' });
 // Inbound automation hooks are signed over their exact bytes too, and arrive as XML (CAP) as often
 // as JSON — routes/hooks-in.js reads the raw body itself.
-app.use((req, res, next) => (req.path === '/api/templates/import' || req.path.startsWith('/api/hooks/in/') ? next() : jsonBody(req, res, next)));
+/*
+ * ⚠️ /mcp PARSES ITS OWN BODY. Parsed here, malformed JSON became Express's HTML 400 (with a stack
+ * trace in development) instead of a JSON-RPC -32700 an MCP client can read, and the route's 1 MB
+ * limit never applied because this 12 MB parser had already consumed the body. routes/mcp.js has
+ * the parser and the error handler both.
+ */
+app.use((req, res, next) => (req.path === '/api/templates/import' || req.path.startsWith('/api/hooks/in/') || isMcpPath(req.path) ? next() : jsonBody(req, res, next)));
 const { sanitizeBody } = require('./middleware/sanitize');
 app.use(sanitizeBody);
 
@@ -1166,7 +1189,13 @@ const rateLimits = new Map();
  */
 const { canonicalLimitPath } = require('./lib/limit-paths');
 
-function rateLimit(windowMs, maxRequests) {
+/*
+ * `onReject(req, res, retryAfterSec)`, when given, writes the 429 itself — for a surface whose
+ * clients only understand their own error shape (/mcp answers JSON-RPC). The default body is
+ * unchanged. Every 429 now carries Retry-After, so a client in a loop knows how long to back off
+ * instead of guessing — which, for an agent, means retrying immediately.
+ */
+function rateLimit(windowMs, maxRequests, onReject) {
   return (req, res, next) => {
     // #100: key on the FULL path, not req.path. These limiters are mounted via
     // app.use('/api/auth/login', ...) etc., and Express strips the mount path, so
@@ -1209,6 +1238,10 @@ function rateLimit(windowMs, maxRequests) {
           { warn: t.distinctIdentifiers >= 3 },
         );
       } catch (_) { /* telemetry must never break the limiter */ }
+      // Seconds until the oldest hit in the window expires, i.e. until one more request fits.
+      const retryAfter = Math.max(1, Math.ceil((hits[0] + windowMs - now) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      if (onReject) return onReject(req, res, retryAfter);
       return res.status(429).json({ error: 'Too many requests, try again later' });
     }
     hits.push(now);
@@ -1306,7 +1339,8 @@ app.use('/unsubscribe',
  *
  * Rate-limited per IP: a model in a loop is the normal failure mode here, not an attacker.
  */
-app.use('/mcp', rateLimit(60000, 120), require('./routes/mcp'));
+const mcpRoute = require('./routes/mcp');
+app.use('/mcp', rateLimit(60000, 120, mcpRoute.rateLimited), mcpRoute);
 
 app.use('/api/auth', require('./routes/auth'));
 // Per-organization SSO configuration. Mounted under /api/organizations so the org id is the

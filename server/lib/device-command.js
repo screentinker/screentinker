@@ -95,6 +95,37 @@ const LOCAL_API_COMMANDS = Object.freeze([
 ]);
 
 /*
+ * ⚠️ WHAT A `write` TOKEN MAY SEND. Everything else on the command routes still needs `full`.
+ *
+ * The command routes required `full` for every type, so an MCP agent holding a `write` token was
+ * shown send_command, told by the guide it could refresh a screen, and refused with a 403 on every
+ * call. The fix is not to drop the routes to `write`: `reboot`, `shell`, `install_apk` and
+ * `set_server_url` are fleet-affecting and stay where they were. These five are the ones an
+ * operator undoes by sending the opposite (or simply waiting), the same reasoning as the LAN door
+ * above minus set_system_brightness, which reaches past the player into the panel's own settings.
+ *
+ * A JWT session is untouched: requireScope passes sessions straight through, as before.
+ */
+const WRITE_SCOPE_COMMANDS = Object.freeze([
+  'refresh', 'screen_on', 'screen_off', 'set_volume', 'set_brightness',
+]);
+
+/* The scope a token needs to send `type`. Unknown types answer 'full', so a typo never widens. */
+function commandScope(type) {
+  return WRITE_SCOPE_COMMANDS.includes(type) ? 'write' : 'full';
+}
+
+/*
+ * Route guard for POST /devices/:id/command and /groups/:id/command — ONE helper for both, so the
+ * two routes cannot disagree about what a `write` token can do. Reads req.body.type, which the
+ * global JSON parser has already populated by the time a router runs.
+ */
+function requireCommandScope(req, res, next) {
+  const { requireScope } = require('../middleware/apiToken');
+  return requireScope(commandScope(req.body && req.body.type))(req, res, next);
+}
+
+/*
  * ⚠️ WHAT ANOTHER SERVER MAY SEND — A SUBSET, AND THE CONSENT TEXT IS WHY.
  *
  * The device-command grant says, in the words the customer reads before ticking it: "Reboot,
@@ -311,4 +342,4 @@ function validateCommand(type, payload) {
   return { ok: true };
 }
 
-module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, LOCAL_API_COMMANDS, HTTP_METHODS, isMeshCommand, deliverCommand, validateCommand };
+module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, LOCAL_API_COMMANDS, WRITE_SCOPE_COMMANDS, commandScope, requireCommandScope, HTTP_METHODS, isMeshCommand, deliverCommand, validateCommand };

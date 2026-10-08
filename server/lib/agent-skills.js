@@ -51,7 +51,9 @@ rather call it directly than speak MCP.
 - \`publish_playlist\`
 - \`assign_playlist_to_display\`, \`assign_playlist_to_group\`
 - \`send_command\`, \`send_group_command\` — \`refresh\`, \`screen_on\`, \`screen_off\`,
-  \`set_volume\`, \`set_brightness\`.
+  \`set_volume\`, \`set_brightness\` (a value of 0-100 for the last two).
+- \`add_youtube_video\`, \`add_media_url\` (an image or video file), \`add_web_page\` (a live page: it
+  returns a widget id, which \`add_to_playlist\` takes instead of a content id).
 
 ## Two things that will catch you out
 

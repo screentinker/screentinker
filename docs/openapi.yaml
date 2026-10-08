@@ -307,6 +307,10 @@ components:
           type: array
           items: { type: string }
           description: Labels for this screen (lower-case). Dynamic groups match on them.
+        group_ids:
+          type: array
+          items: { type: string }
+          description: The device groups this screen is a member of, ordered by group name.
         latitude: { type: [number, "null"], description: Where the screen is. Used by weather and area conditions. }
         longitude: { type: [number, "null"] }
         location_label: { type: [string, "null"] }
@@ -1756,9 +1760,12 @@ paths:
       summary: Send an operational command to every device in a group
       description: |
         Sends reboot / shutdown / screen on/off / launch / update to all devices
-        in the group. Requires scope: full (the highest scope; tokens with only
-        read or write are rejected).
+        in the group. Requires scope: full (the highest scope), EXCEPT for the five
+        undoable commands listed in `x-write-scope-commands` (refresh, screen_on,
+        screen_off, set_volume, set_brightness), which a `write` token may also send.
+        A read token is always rejected.
       x-required-scope: full
+      x-write-scope-commands: [refresh, screen_on, screen_off, set_volume, set_brightness]
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -1799,14 +1806,22 @@ paths:
         (`POST /groups/{id}/command`) has existed far longer; this route did not, so commanding one
         screen was reachable only over the dashboard's websocket and not over the API at all.
 
-        Requires scope: full (the highest scope; read and write tokens are rejected), the same as
-        the group route — a fleet-affecting action is not an ordinary write.
+        Requires scope: full (the highest scope), the same as the group route — a fleet-affecting
+        action is not an ordinary write. The exception is the five commands in
+        `x-write-scope-commands` (refresh, screen_on, screen_off, set_volume, set_brightness): each is
+        undone by sending its opposite, so a `write` token may send those. A read token is always
+        rejected.
+
+        `set_volume` and `set_brightness` take `payload: { level }`, a 0..1 fraction (brightness
+        also accepts -1, "follow the system"). That is what the dashboard sends and what every
+        player reads.
 
         A panel that does not support the command is answered `400` with a `capability` field
         naming what it lacks, rather than a generic failure: "this screen cannot do that" is
         actionable and "failed" is not. The `status` in a success response says whether the panel
         actually received it or the command was queued for a device that is currently offline.
       x-required-scope: full
+      x-write-scope-commands: [refresh, screen_on, screen_off, set_volume, set_brightness]
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       requestBody:

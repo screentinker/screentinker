@@ -5,9 +5,8 @@ const { db } = require('../db/database');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2i: workspace-aware access. Same pattern as devices/content/widgets.
 const { resourceAccess, denyReadOnly } = require('../lib/tenancy');
-// #public-api: operational fleet commands (reboot/shutdown/...) need the 'full' token
-// scope. No-op for JWT sessions; for tokens a read/write scope is rejected.
-const { requireScope } = require('../middleware/apiToken');
+// #public-api: operational fleet commands (reboot/shutdown/...) need the 'full' token scope, bar
+// the five undoable ones a 'write' token may send — lib/device-command.js requireCommandScope.
 const { resolveSyncBackend, BACKENDS } = require('../lib/sync-backend');
 const playerCapabilities = require('../lib/player-capabilities');
 const { resolveItemDuration } = require('../lib/item-duration');
@@ -26,7 +25,7 @@ const express_ = express; // for express.text() below
 const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
 // ⚠️ Moved to lib/device-command.js — this list and the delivery logic below existed in three
 // places and had already drifted (the socket path queued for an offline device; this one did not).
-const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand, requireCommandScope } = require('../lib/device-command');
 
 // Phase 2.2i: split read/write access checks. Both attach req.group on success.
 function loadGroupAccessCtx(req, res) {
@@ -563,8 +562,9 @@ router.post('/:id/assign-playlist', requireGroupWrite, (req, res) => {
   res.json({ success: true, devices_updated: members.length, ...(coverage.mandated_members ? { mandated_members: coverage.mandated_members } : {}) });
 });
 
-// Send command to all devices in a group (reboot/shutdown/screen on/off etc.)
-router.post('/:id/command', requireScope('full'), requireGroupWrite, (req, res) => {
+// Send command to all devices in a group (reboot/shutdown/screen on/off etc.). Token scope by
+// command type, shared with the single-device route: see requireCommandScope.
+router.post('/:id/command', requireCommandScope, requireGroupWrite, (req, res) => {
   const { type, payload } = req.body;
   if (!type) return res.status(400).json({ error: 'command type required' });
   if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });

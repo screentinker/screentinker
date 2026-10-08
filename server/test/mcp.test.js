@@ -211,8 +211,8 @@ test('⚠️ a playlist answer does not carry the playlist twice', () => {
     assert.ok(!JSON.stringify(tools.byName(t).shape(row, {})).includes('STALE'));
   }
   // And a content row says what it is called, not where its bytes live.
-  const c = tools.byName('add_web_page').shape(
-    { id: 'c1', filename: 'Ward board', mime_type: 'text/html', duration_sec: null,
+  const c = tools.byName('add_media_url').shape(
+    { id: 'c1', filename: 'Ward board', mime_type: 'video/mp4', duration_sec: null,
       remote_url: 'https://example.com/b', filepath: '/uploads/y', byte_digest: 'abc' }, {});
   assert.equal(c.name, 'Ward board');
   assert.equal(c.url, 'https://example.com/b');
@@ -516,4 +516,154 @@ test('get_playlist: a head office playlist says it is locked, and a local slot i
   for (const name of ['add_to_playlist', 'publish_playlist']) {
     assert.match(tools.byName(name).description, /Corporate playlists are read-only; to add local content, add to the slot playlist named in the error\./);
   }
+});
+
+// ───────────────────────────── QA fixes (end-to-end run on 86f00d24) ─────────────────────────────
+// The behaviour is exercised against a real server in test/mcp-integration.test.js; these pin the
+// mappings at the unit level, where a regression names the line that broke.
+
+test('⚠️ the command tools offer exactly what a write token may send', () => {
+  const { WRITE_SCOPE_COMMANDS, commandScope } = require('../lib/device-command');
+  for (const name of ['send_command', 'send_group_command']) {
+    const t = tools.byName(name);
+    assert.equal(t.scope, 'write');
+    assert.deepEqual([...t.input.properties.command.enum].sort(), [...WRITE_SCOPE_COMMANDS].sort(),
+      `${name} must list exactly the commands the route lets a write token send`);
+  }
+  assert.equal(commandScope('refresh'), 'write');
+  for (const t of ['reboot', 'shell', 'install_apk', 'set_server_url', 'set_system_brightness', undefined, 'made_up']) {
+    assert.equal(commandScope(t), 'full', `${t} must need full`);
+  }
+  // One helper on both routes.
+  for (const f of ['devices.js', 'device-groups.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'routes', f), 'utf8');
+    assert.match(src, /router\.post\('\/:id\/command', requireCommandScope,/, `${f} must gate commands with requireCommandScope`);
+  }
+});
+
+test('⚠️ set_volume / set_brightness send payload.level as a 0..1 fraction', () => {
+  for (const name of ['send_command', 'send_group_command']) {
+    const idKey = name === 'send_command' ? 'display_id' : 'group_id';
+    const vol = tools.toRequest(tools.byName(name), { [idKey]: 'x', command: 'set_volume', value: 40 });
+    assert.deepEqual(vol.body, { type: 'set_volume', payload: { level: 0.4 } });
+    const bri = tools.toRequest(tools.byName(name), { [idKey]: 'x', command: 'set_brightness', value: 100 });
+    assert.deepEqual(bri.body, { type: 'set_brightness', payload: { level: 1 } });
+    assert.deepEqual(tools.toRequest(tools.byName(name), { [idKey]: 'x', command: 'refresh' }).body, { type: 'refresh' });
+    assert.match(tools.validate(tools.byName(name), { [idKey]: 'x', command: 'set_volume' }), /needs a value/);
+    assert.match(tools.validate(tools.byName(name), { [idKey]: 'x', command: 'set_volume', value: 101 }), /at most 100/);
+  }
+});
+
+test('add_to_playlist sends duration_sec, and takes a widget instead of content', () => {
+  const t = tools.byName('add_to_playlist');
+  assert.deepEqual(tools.toRequest(t, { playlist_id: 'p', content_id: 'c', duration: 20 }).body, { content_id: 'c', duration_sec: 20 });
+  assert.deepEqual(tools.toRequest(t, { playlist_id: 'p', widget_id: 'w' }).body, { widget_id: 'w' });
+  assert.match(tools.validate(t, { playlist_id: 'p' }), /exactly one/);
+  assert.match(tools.validate(t, { playlist_id: 'p', content_id: 'c', widget_id: 'w' }), /exactly one/);
+});
+
+test('list_schedules sends display_id as the device_id filter', () => {
+  assert.deepEqual(tools.toRequest(tools.byName('list_schedules'), { display_id: 'd1' }).query, { device_id: 'd1' });
+  assert.deepEqual(tools.toRequest(tools.byName('list_schedules'), {}).query, {});
+});
+
+test('display group fields come from membership, never team_id', () => {
+  const [d] = tools.byName('list_displays').shape([{ id: 'd', team_id: 'TEAM', group_ids: ['g1', 'g2'] }], {});
+  assert.deepEqual(d.group_ids, ['g1', 'g2']);
+  assert.equal(d.group_id, 'g1');
+  const one = tools.byName('get_display').shape({ id: 'd', team_id: 'TEAM' });
+  assert.deepEqual(one.group_ids, []);
+  assert.equal(one.group_id, null);
+  assert.ok(!/team_id/.test(TOOLS_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')), 'no tool reads team_id');
+});
+
+test('⚠️ add_web_page makes a webpage widget; add_media_url always sends a mime type', () => {
+  const page = tools.toRequest(tools.byName('add_web_page'), { url: 'https://intranet.example.com/menu' });
+  assert.equal(page.path, '/api/widgets');
+  assert.deepEqual(page.body, { widget_type: 'webpage', name: 'intranet.example.com/menu',
+    config: { url: 'https://intranet.example.com/menu', zoom: 100, refresh_interval: 0 } });
+  assert.match(tools.validate(tools.byName('add_web_page'), { url: 'javascript:alert(1)' }), /must match/);
+
+  const m = tools.byName('add_media_url');
+  const mime = (url, type) => tools.toRequest(m, { url, type }).body.mime_type;
+  assert.equal(mime('https://x.test/a.MP4'), 'video/mp4');
+  assert.equal(mime('https://x.test/a.webm?sig=1'), 'video/webm');
+  assert.equal(mime('https://x.test/a.png'), 'image/png');
+  assert.equal(mime('https://x.test/a.mp3'), 'audio/mpeg');
+  assert.equal(mime('https://x.test/feed', 'video'), 'video/mp4');
+  assert.equal(mime('https://x.test/a.png', 'video'), 'video/mp4', 'an explicit family wins over a contradicting extension');
+  assert.match(tools.validate(m, { url: 'https://x.test/page' }), /pass `type`/);
+});
+
+test('⚠️ every argument is validated against the published schema', () => {
+  const v = (name, args) => tools.validate(tools.byName(name), args);
+  assert.match(v('send_command', { display_id: 'd', command: 'shell' }), /must be one of/);
+  assert.match(v('list_displays', { search: 7 }), /must be a string/);
+  assert.match(v('list_content', { search: { $ne: 1 } }), /must be a string/);
+  assert.match(v('create_playlist', { name: ['x'] }), /must be a string/);
+  assert.match(v('create_playlist', { name: 'x'.repeat(100000) }), /longer than 200/);
+  assert.match(v('create_playlist', { name: 'ok', description: 'x'.repeat(1001) }), /longer than 1000/);
+  assert.match(v('get_playlist', { playlist_id: 'x'.repeat(65) }), /longer than 64/);
+  assert.match(v('uptime_report', { days: 1.5 }), /must be an integer/);
+  assert.match(v('uptime_report', { days: 0 }), /at least 1/);
+  assert.match(v('get_display', []), /JSON object/);
+  assert.equal(v('create_playlist', { name: 'Lobby' }), null);
+  assert.equal(v('create_playlist', { name: 'Lobby', description: null }), null, 'an optional null is absent');
+  assert.equal(v('list_displays', { status: 'online', search: 'lob' }), null);
+  // The caps are in the PUBLISHED schema, so a client can see them before it calls.
+  for (const t of tools.manifest('full')) {
+    for (const [k, p] of Object.entries(t.inputSchema.properties || {})) {
+      if (p.type === 'string') assert.ok(Number.isInteger(p.maxLength), `${t.name}.${k} has no maxLength`);
+    }
+  }
+});
+
+test('an invalid-params tool call is a JSON-RPC -32602, not a result', async () => {
+  const c = { ...ctx(), callTool: async () => ({ invalidParams: true, text: 'Invalid arguments for x: name must be a string' }) };
+  const r = await protocol.handleMessage({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'x', arguments: { name: 1 } } }, c);
+  assert.equal(r.error.code, protocol.ERR.INVALID_PARAMS);
+  assert.match(r.error.message, /name must be a string/);
+});
+
+test('list_playlists and rename_display are shaped', () => {
+  const [p] = tools.byName('list_playlists').shape([{ id: 'p', name: 'n', status: 'draft', item_count: 2, display_count: 1,
+    published_snapshot: '{"STALE":1}', published_structure: '{}', user_id: 'u', workspace_id: 'w' }]);
+  assert.deepEqual(p, { id: 'p', name: 'n', description: null, status: 'draft', item_count: 2, display_count: 1 });
+  const r = tools.byName('rename_display').shape({ id: 'd', name: 'Lobby', status: 'online', device_token: 't', user_id: 'u' });
+  assert.deepEqual(r, { id: 'd', name: 'Lobby', status: 'online' });
+});
+
+test('the forwarded client address is believed only when signed, fresh, for this path, from loopback', () => {
+  const f = require('../lib/forwarded-client-ip');
+  const { getClientIp } = require('../services/activity');
+  const now = Date.now();
+  const req = (peer, value, url = '/api/content', ip = peer) => ({
+    headers: value === undefined ? {} : { [f.HEADER]: value }, socket: { remoteAddress: peer }, originalUrl: url, ip,
+  });
+  const good = f.sign('198.51.100.5', '/api/content', now);
+  assert.equal(f.verify(req('127.0.0.1', good), now), '198.51.100.5');
+  assert.equal(f.verify(req('::ffff:127.0.0.1', good, '/api/content?x=1'), now), '198.51.100.5', 'query is not part of the path');
+  assert.equal(getClientIp(req('127.0.0.1', good)), '198.51.100.5');
+  // From outside: ignored even when correctly signed.
+  assert.equal(f.verify(req('203.0.113.9', good), now), null);
+  assert.equal(getClientIp(req('203.0.113.9', good)), '203.0.113.9');
+  // Wrong path, stale, tampered address, bad MAC, garbage.
+  assert.equal(f.verify(req('127.0.0.1', good, '/api/playlists'), now), null);
+  assert.equal(f.verify(req('127.0.0.1', good), now + f.MAX_AGE_MS + 1), null);
+  assert.equal(f.verify(req('127.0.0.1', good.replace('198.51.100.5', '198.51.100.6')), now), null);
+  assert.equal(f.verify(req('127.0.0.1', `198.51.100.5;${now};${'0'.repeat(64)}`), now), null);
+  for (const junk of ['', 'x', 'a;b;c', `not-an-ip;${now};${'0'.repeat(64)}`, 'x'.repeat(500)]) {
+    assert.equal(f.verify(req('127.0.0.1', junk), now), null, `accepted ${junk.slice(0, 20)}`);
+  }
+  // No header: getClientIp unchanged.
+  assert.equal(getClientIp(req('127.0.0.1', undefined, '/', '192.0.2.1')), '192.0.2.1');
+  // And the MCP route actually sends it.
+  assert.match(ROUTE_SRC, /forwardedClientIp\.sign\(clientIp, url\.pathname\)/);
+});
+
+test('/mcp parses its own body: the global parser skips it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(src, /isMcpPath\(req\.path\) \? next\(\) : jsonBody\(req, res, next\)/);
+  assert.match(ROUTE_SRC, /entity\.parse\.failed/);
+  assert.match(ROUTE_SRC, /express\.json\(\{ limit: '1mb' \}\)/);
 });

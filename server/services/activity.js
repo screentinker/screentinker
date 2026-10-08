@@ -1,6 +1,7 @@
 const { db } = require('../db/database');
 const proxyaddr = require('proxy-addr');
 const { cloudflareIps } = require('../config/cloudflareIps');
+const forwardedClientIp = require('../lib/forwarded-client-ip');
 
 // Peer gate for CF-Connecting-IP: ONLY Cloudflare's published edge ranges, deliberately
 // NOT the loopback/linklocal/uniquelocal entries that `trust proxy` also carries.
@@ -22,6 +23,10 @@ const isCloudflarePeer = proxyaddr.compile(cloudflareIps);
 // never be able to choose it.
 function getClientIp(req) {
   if (!req) return null;
+  // This server calling itself on a client's behalf (routes/mcp.js). Believed only from loopback,
+  // with a valid per-process HMAC, fresh, for this path — lib/forwarded-client-ip.js says why.
+  const forwarded = forwardedClientIp.verify(req);
+  if (forwarded) return forwarded;
   const cf = req.headers && req.headers['cf-connecting-ip'];
   if (typeof cf === 'string' && cf.trim().length > 0) {
     const peer = req.socket && req.socket.remoteAddress;
