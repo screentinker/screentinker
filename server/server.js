@@ -1266,6 +1266,10 @@ app.use('/api/auth/users', rateLimit(60000, 20));
  * design. Rate-limited per IP like the other public endpoints; the scan itself stores no IP.
  */
 app.get('/q/:code', rateLimit(60000, 120), require('./routes/qr-links').redirect);
+// Canva OAuth callback (routes/canva.js): the browser returns from canva.com with no Authorization
+// header, so it cannot sit behind the JWT-only /api/canva mount below. It trusts only the signed
+// httpOnly transaction cookie set when the person pressed Connect.
+app.get('/api/canva/callback', rateLimit(60000, 30), require('./routes/canva').callback);
 
 app.use('/unsubscribe',
   rateLimit(60000, 20),
@@ -2422,6 +2426,7 @@ require('./lib/local-conditions').start(io);   // local weather for weather cond
   if (t.unref) t.unref();
 }
 require('./lib/cap/feeds').start(io);   // CAP emergency feeds: polling, expiry, pushes
+require('./lib/canva').start(io);       // Canva: re-export linked designs that changed
 
 // Start alert service
 const { startAlertService } = require('./services/alerts');

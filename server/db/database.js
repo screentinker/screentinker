@@ -3368,6 +3368,61 @@ try {
       PRIMARY KEY (channel_id, device_id, outage)
     );
   `);
+  // Canva (lib/canva.js). An organization may bring its own Canva integration (else the instance's
+  // CANVA_CLIENT_ID applies); each person connects their own Canva account to it. Secrets and
+  // tokens are secretbox-encrypted. A link ties a library item to the Canva design page(s) it was
+  // exported from, so it can be refreshed when the design changes. foreign_keys is OFF in
+  // production, so content deletion clears links explicitly (routes/content.js purgeContentRow).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS canva_integrations (
+      organization_id   TEXT PRIMARY KEY,
+      client_id         TEXT NOT NULL,
+      client_secret_enc TEXT,
+      updated_by        TEXT,
+      updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE TABLE IF NOT EXISTS canva_connections (
+      user_id         TEXT NOT NULL,
+      integration_key TEXT NOT NULL,
+      canva_user_id   TEXT,
+      display_name    TEXT,
+      access_enc      TEXT NOT NULL,
+      refresh_enc     TEXT,
+      expires_at      INTEGER NOT NULL DEFAULT 0,
+      scopes          TEXT,
+      created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      PRIMARY KEY (user_id, integration_key)
+    );
+    CREATE TABLE IF NOT EXISTS canva_links (
+      content_id        TEXT PRIMARY KEY,
+      workspace_id      TEXT NOT NULL,
+      user_id           TEXT NOT NULL,
+      integration_key   TEXT NOT NULL,
+      design_id         TEXT NOT NULL,
+      design_title      TEXT,
+      pages             TEXT NOT NULL,
+      format            TEXT NOT NULL,
+      design_updated_at INTEGER,
+      last_synced_at    INTEGER,
+      last_checked_at   INTEGER,
+      last_error        TEXT,
+      created_at        INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_canva_links_ws ON canva_links(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_canva_links_design ON canva_links(design_id);
+    CREATE TABLE IF NOT EXISTS canva_jobs (
+      id           TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      user_id      TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      error        TEXT,
+      result       TEXT,
+      created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+  `);
   // Device tags (JSON array, lib/content-tags normalizer) and dynamic group rules
   // (lib/device-group-rules.js): NULL rules = a hand-built group, as before.
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }

@@ -107,6 +107,12 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/alert-channels', mod: './routes/alert-channels', tenancy: true },
   /*
+   * Canva (lib/canva.js). JWT only: a Canva connection is a person's grant to read their designs,
+   * and the org integration holds a client secret. The OAuth callback is mounted on its own in
+   * server.js, because the browser comes back from canva.com without a bearer token.
+   */
+  { path: '/api/canva',       mod: './routes/canva',        tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */

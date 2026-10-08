@@ -4,6 +4,7 @@
     "routes/playlists.js": { "count": 27, "coverage": "JS: loadPlaylistAccess(requireWrite) -> assertPlaylistWritable on every write route (items, selection, bulk, reorder, discard, duplicate, item schedules). BS." },
     "routes/assignments.js": { "count": 7, "coverage": "JS: mandated device -> add REDIRECTED into the screen's local slot content (lib/corporate/fills.js redirectTarget + assertCanAdd), never head office's playlist; reorder/copy-to refused, copy-to skips slot rows; checkItemWrite -> assertPlaylistWritable. BS." },
     "routes/device-groups.js": { "count": 2, "coverage": "JS: assign-content puts mandated members' item into the GROUP-level slot content (ensureGroupFill + assertCanAdd), never into head office's playlist. BS." },
+    "lib/canva.js": { "count": 1, "coverage": "Inserts items only into a playlist it creates in the same transaction (an import's optional page-order playlist), owned by the importing workspace; never into an existing or head office playlist, so nothing governed is written." },
     "routes/schedules.js": { "count": 1, "coverage": "New store playlist (auto-generated), not governed; schedules on mandated targets refused. BS." },
     "routes/agency.js": { "count": 2, "coverage": "JS: assertPlaylistWritable with the agency token actor -> CORPORATE_TOKEN; governed playlists cannot be allowlisted (lib/agency-targets.js). BS." },
     "routes/slide-decks.js": { "count": 1, "coverage": "JS: checkDeckAccess(write) -> assertMediaWritable('slide_deck'). BS." },

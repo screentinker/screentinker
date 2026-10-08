@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { mountCanvaSettings } from '../components/canva-settings.js';
 import * as whatsNew from '../components/whats-new.js';
 import { showToast } from '../components/toast.js';
 import { getLanguage, setLanguage, getAvailableLanguages, t } from '../i18n.js';
@@ -93,6 +94,8 @@ export async function render(container) {
 
     <!-- Where media is stored (org owners/admins). Mounted only for them; the server enforces it. -->
     <div class="settings-section" id="storageCard" style="display:none"></div>
+
+    <div class="settings-section" id="canvaSettingsCard" style="display:none"></div>
 
     <div class="settings-section" id="ssoCard" style="display:none">
       <h3>${t('sso.title')}</h3>
@@ -1520,6 +1523,7 @@ export async function render(container) {
   });
 
   loadSso();
+  if (canManageOrgSecurity) mountCanvaSettings(document.getElementById('canvaSettingsCard'));
   mountCorporateSettings(document.getElementById('corporateCard'));
   // Org admins always; a workspace admin too, because the org may let workspaces choose their own
   // storage — when it does not, the server answers 403 and the card stays hidden.
