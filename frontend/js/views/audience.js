@@ -122,9 +122,9 @@ async function loadScreens() {
   const off = !(settings && settings.allowed);
   const row = (kind, x, extra) => `
     <tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:8px">${esc(x.name || x.id)}</td>
+      <td style="padding:8px;min-width:96px;overflow-wrap:break-word">${esc(x.name || x.id)}</td>
       <td style="padding:8px;color:var(--text-muted);font-size:12px">${extra}</td>
-      <td style="padding:8px;text-align:right">
+      <td style="padding:8px;text-align:right;white-space:nowrap">
         <label style="display:inline-flex;gap:6px;align-items:center;font-size:13px">
           <input type="checkbox" data-aud-kind="${kind}" data-aud-id="${esc(x.id)}" ${x.enabled ? 'checked' : ''} ${manage && !off ? '' : 'disabled'}>
           ${t('audience.count_here')}
@@ -139,7 +139,7 @@ async function loadScreens() {
   box.innerHTML = `
     <h3 style="font-size:14px;margin-bottom:6px">${t('audience.screens_heading')}</h3>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${off ? t('audience.screens_hint_off') : t('audience.screens_hint')}</div>
-    <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:420px">
+    <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:13px">
       <tbody>
         ${data.groups.map((g) => row('group', g, t('audience.kind_group'))).join('')}
         ${data.devices.map((d) => row('device', d, devStatus(d))).join('')}

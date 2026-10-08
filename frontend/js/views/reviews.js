@@ -17,7 +17,7 @@ export async function render(container) {
       <div style="display:flex;gap:8px"><select id="reviewFilter" class="input" style="width:auto">
         <option value="open">${esc(t('review.filter.open'))}</option><option value="all">${esc(t('review.filter.all'))}</option><option value="mine">${esc(t('review.filter.mine'))}</option>
       </select></div></div>
-    <div style="display:grid;grid-template-columns:minmax(280px,1fr) 2fr;gap:16px">
+    <div class="review-split">
       <div id="reviewList" class="settings-section" style="padding:0;max-height:75vh;overflow:auto">${esc(t('common.loading'))}</div>
       <div id="reviewDetail" class="settings-section" style="padding:16px;min-height:300px;color:var(--text-muted)">${esc(t('review.pick_hint'))}</div>
     </div>`;

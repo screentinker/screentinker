@@ -697,7 +697,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ${(() => { const b = livenessBadge(device); return `<span class="device-status-badge ${b.state}"${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.label)}</span>`; })()}
           ${device.owner_name || device.owner_email ? `<span style="font-size:12px;color:var(--text-muted)">${t('device.owner_label', { owner: esc(device.owner_name || device.owner_email) })}</span>` : ''}
         </div>
-        <div style="display:flex;gap:8px">
+        <div class="device-header-actions">
           <button class="btn btn-secondary btn-sm" id="devicePreviewBtn">${t('device.preview_btn')}</button>
           <button class="btn btn-secondary btn-sm" id="renameBtn">${t('device.rename')}</button>
           ${can('remote.screenshot') ? `

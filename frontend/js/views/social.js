@@ -34,14 +34,14 @@ export function cleanup() { releaseBlobs(); }
 
 export async function render(app) {
   releaseBlobs();
-  app.innerHTML = `<div class="view"><h1>${esc(t('nav.social'))}</h1><p class="muted">${esc(t('social.intro'))}</p><div id="socBody"></div></div>`;
+  app.innerHTML = `<div class="page-header"><div><h1>${esc(t('nav.social'))}</h1><div class="subtitle">${esc(t('social.intro'))}</div></div></div><div id="socBody"></div>`;
   const body = document.getElementById('socBody');
   try {
     const [f, c] = await Promise.all([api.get('/social/feeds'), api.get('/social/connections')]);
     state.feeds = f.feeds || []; state.kinds = f.networks || {}; state.canEdit = !!f.can_edit; state.connections = c.connections || [];
-  } catch (e) { body.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
-  body.innerHTML = `${state.canEdit ? `<div class="toolbar"><button class="btn btn-primary" id="socNew">${esc(t('social.new_feed'))}</button></div>` : ''}
-    ${state.feeds.length ? state.feeds.map(feedCard).join('') : `<p class="muted">${esc(t('social.no_feeds'))}</p>`}`;
+  } catch (e) { body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc(e.message)}</p>`; return; }
+  body.innerHTML = `${state.canEdit ? `<div class="corp-toolbar"><button class="btn btn-primary" id="socNew">${esc(t('social.new_feed'))}</button></div>` : ''}
+    ${state.feeds.length ? state.feeds.map(feedCard).join('') : `<div class="corp-empty">${esc(t('social.no_feeds'))}</div>`}`;
   document.getElementById('socNew')?.addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('[data-feed]').forEach((el) => {
     const feed = state.feeds.find((x) => x.id === el.dataset.feed);
@@ -88,15 +88,15 @@ function sourceLine(s) {
 
 function feedCard(f) {
   const errs = Array.isArray(f.last_error) ? f.last_error : [];
-  return `<div class="card" data-feed="${esc(f.id)}" style="margin-bottom:12px;padding:16px">
+  return `<div class="corp-card" data-feed="${esc(f.id)}" style="margin-bottom:12px;padding:16px">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div style="min-width:0">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><strong>${esc(f.name)}</strong>
-          <span class="muted" style="font-size:12px">${esc(f.moderation === 'approve' ? t('social.mode_approve') : t('social.mode_auto'))}</span>
-          ${f.enabled ? '' : `<span class="muted" style="font-size:12px">${esc(t('social.off'))}</span>`}</div>
-        <div class="muted" style="font-size:12px;margin-top:4px">${f.sources.map((s) => esc(sourceLine(s))).join('<br>')}</div>
+          <span class="corp-help" style="font-size:12px">${esc(f.moderation === 'approve' ? t('social.mode_approve') : t('social.mode_auto'))}</span>
+          ${f.enabled ? '' : `<span class="corp-help" style="font-size:12px">${esc(t('social.off'))}</span>`}</div>
+        <div class="corp-help" style="font-size:12px;margin-top:4px">${f.sources.map((s) => esc(sourceLine(s))).join('<br>')}</div>
         <div style="font-size:13px;margin-top:6px">${esc(tn('social.n_shown', f.counts.approved))}${f.counts.pending ? ` · <strong>${esc(tn('social.n_pending', f.counts.pending))}</strong>` : ''}${f.counts.hidden ? ` · ${esc(tn('social.n_hidden', f.counts.hidden))}` : ''}
-          ${f.last_fetch_at ? `<span class="muted"> · ${esc(t('social.fetched', { time: new Date(f.last_fetch_at * 1000).toLocaleTimeString() }))}</span>` : ''}</div>
+          ${f.last_fetch_at ? `<span class="corp-help"> · ${esc(t('social.fetched', { time: new Date(f.last_fetch_at * 1000).toLocaleTimeString() }))}</span>` : ''}</div>
         ${errs.map((e) => `<div style="font-size:12px;color:var(--danger,#b91c1c);margin-top:2px;overflow-wrap:anywhere">${esc(NETWORK_LABELS[e.network] ? NETWORK_LABELS[e.network]() : e.network)}${e.value ? ` (${esc(e.value)})` : ''}: ${esc(e.error)}</div>`).join('')}
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">
@@ -126,21 +126,21 @@ async function loadQueue(app, feed, box) {
   const tabLabel = { pending: t('social.tab_pending'), approved: t('social.tab_approved'), hidden: t('social.tab_hidden') };
   box.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${tabs.map((k) =>
     `<button class="btn btn-sm ${state.tab === k ? 'btn-primary' : 'btn-secondary'}" data-tab="${k}">${esc(tabLabel[k])} (${feed.counts[k] || 0})</button>`).join('')}</div>
-    <div class="soc-posts muted" style="font-size:13px">${esc(t('social.loading'))}</div>`;
+    <div class="soc-posts corp-help" style="font-size:13px">${esc(t('social.loading'))}</div>`;
   box.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { state.tab = b.dataset.tab; loadQueue(app, feed, box); }));
   let posts = [];
   try { posts = (await api.get(`/social/feeds/${feed.id}/posts?status=${state.tab}`)).posts || []; }
   catch (e) { box.querySelector('.soc-posts').textContent = e.message; return; }
   const list = box.querySelector('.soc-posts');
-  list.classList.remove('muted');
-  if (!posts.length) { list.innerHTML = `<p class="muted">${esc(t('social.queue_empty'))}</p>`; return; }
+  list.classList.remove('corp-help');
+  if (!posts.length) { list.innerHTML = `<p class="corp-help">${esc(t('social.queue_empty'))}</p>`; return; }
   list.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px';
   list.innerHTML = posts.map((p) => `<div data-key="${esc(p.key)}" style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;min-width:0">
       ${p.media.length ? `<div style="aspect-ratio:16/10;background:#000"><img data-hash="${esc(p.media[0])}" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></div>` : ''}
       <div style="padding:8px;font-size:12px;flex:1;min-width:0">
-        <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.author_name || p.author_handle || '')} <span class="muted">· ${esc(NETWORK_LABELS[p.network] ? NETWORK_LABELS[p.network]() : p.network)}</span></div>
+        <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.author_name || p.author_handle || '')} <span class="corp-help">· ${esc(NETWORK_LABELS[p.network] ? NETWORK_LABELS[p.network]() : p.network)}</span></div>
         <div style="margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:7.5em;overflow:hidden">${esc(p.text || (p.hidden_reason === 'blocklist' ? t('social.blocked_text') : ''))}</div>
-        <div class="muted" style="margin-top:4px">${esc(new Date(p.posted_at * 1000).toLocaleString())}${p.permalink ? ` · <a href="${esc(p.permalink)}" target="_blank" rel="noopener noreferrer">${esc(t('social.open_post'))}</a>` : ''}</div>
+        <div class="corp-help" style="margin-top:4px">${esc(new Date(p.posted_at * 1000).toLocaleString())}${p.permalink ? ` · <a href="${esc(p.permalink)}" target="_blank" rel="noopener noreferrer">${esc(t('social.open_post'))}</a>` : ''}</div>
       </div>
       ${state.canEdit ? `<div style="display:flex;gap:6px;padding:8px;border-top:1px solid var(--border)">
         ${p.status !== 'approved' ? `<button class="btn btn-primary btn-sm" data-mod="${p.status === 'hidden' ? 'unhide' : 'approve'}">${esc(p.status === 'hidden' ? t('social.unhide') : t('social.approve'))}</button>` : ''}
@@ -171,7 +171,7 @@ function sourceRow(s, i) {
       ${net === 'mastodon' ? `<input class="input" data-s="instance" value="${esc(s.instance || '')}" placeholder="mastodon.social">` : ''}
     </div>
     <div style="display:flex;gap:8px">
-      ${showValue ? `<input class="input" data-s="value" style="flex:1;min-width:0" value="${esc(s.value || '')}" placeholder="${esc(VALUE_PH[`${net}:${s.kind || kinds[0]}`] || '')}">` : `<div class="muted" style="flex:1;font-size:12px;align-self:center">${esc(t('social.own_posts_hint'))}</div>`}
+      ${showValue ? `<input class="input" data-s="value" style="flex:1;min-width:0" value="${esc(s.value || '')}" placeholder="${esc(VALUE_PH[`${net}:${s.kind || kinds[0]}`] || '')}">` : `<div class="corp-help" style="flex:1;font-size:12px;align-self:center">${esc(t('social.own_posts_hint'))}</div>`}
       <button class="btn btn-secondary btn-sm" data-s="remove" title="${esc(t('common.delete'))}">✕</button>
     </div>
     ${NEEDS_CONN.includes(net) && !conns.length ? `<div style="font-size:12px;color:var(--warning,#b45309)">${esc(t('social.needs_connection'))}</div>` : ''}

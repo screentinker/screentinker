@@ -401,7 +401,14 @@ export async function openContentPicker(opts = {}) {
     }));
   }
 
-  const WIDGET_ICONS = { clock: '&#128339;', weather: '&#9925;', rss: '&#128240;', text: '&#128221;', webpage: '&#127760;', social: '&#128172;', slide: '&#128444;', template: '&#10024;' };
+  // The same glyphs the Widgets page uses (views/widgets.js WIDGET_ICONS), so a widget looks the same
+  // in the picker as on its card; the gear is only for a type neither list knows (a plugin).
+  const WIDGET_ICONS = {
+    clock: '&#128339;', weather: '&#9925;', rss: '&#128240;', text: '&#128221;', webpage: '&#127760;', social: '&#128172;',
+    slide: '&#128444;', template: '&#10024;', 'directory-board': '&#127970;', 'directory-search': '&#128269;',
+    'menu-board': '&#127860;', 'cloud-doc': '&#128209;', 'bi-dashboard': '&#128202;', 'room-display': '&#128682;',
+    transition: '&#127916;',
+  };
 
   /*
    * ⚠️ The RENDER is capped, the FETCH is not: a list shows a bounded number of rows and SAYS

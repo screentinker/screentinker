@@ -9,6 +9,7 @@
  * (by -rotation), exactly as the panel's own mount does in the room.
  */
 import { esc, screenshotUrl } from '../utils.js';
+import { t } from '../i18n.js';
 import { on, off, requestScreenshot } from '../socket.js';
 
 const BASE_W = 320, BASE_H = 180;
@@ -42,6 +43,11 @@ function bounds(rects) {
  */
 export function mountWallLive(container, { wall, devices = [], live = false, refreshMs = 0, compact = false }) {
   const rects = wallPanelRects(wall);
+  // No panels placed yet: say so, rather than drawing an empty black box that reads as "broken".
+  if (!rects.length) {
+    container.innerHTML = `<div class="wall-live-empty">${esc(t('wall.live_empty'))}</div>`;
+    return { refresh() {}, destroy() {} };
+  }
   const b = bounds(rects);
   const byId = new Map(devices.map((d) => [d.id, d]));
   container.innerHTML = `

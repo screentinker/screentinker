@@ -2494,3 +2494,37 @@ tr[hidden] { display: none; }
 }
 /* A schedule head office's playlist shadows (it would never show): hatched, labelled in the block. */
 .corp-shadowed { background-image: repeating-linear-gradient(135deg, rgba(0,0,0,.28) 0 6px, transparent 6px 12px) !important; opacity: .72; }
+
+/* ─── Layout fixes from the dashboard look QA pass ─── */
+
+/* Icon-only buttons on card action rows (History, Duplicate, Delete): the label lives in title and
+   aria-label, so Edit plus three icons stays on one line instead of dropping Delete to its own row. */
+.btn-sm.btn-icon-only { padding-left: 7px; padding-right: 7px; justify-content: center; }
+@media (max-width: 768px) { .btn-sm.btn-icon-only { min-width: 34px; padding-left: 8px; padding-right: 8px; } }
+/* 190px, not 150px, between the phone and desktop layouts: the narrowest card that still holds that
+   row once the phone-size tap targets apply. At 480px and below the grid is one column anyway. */
+@media (min-width: 481px) and (max-width: 768px) { .content-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
+
+/* A colour picker styled as an .input. The text-field padding squashed the native swatch into a grey
+   line; this keeps the input's height, border and focus ring and lets the swatch fill it. */
+.input[type="color"] { height: 38px; padding: 3px; cursor: pointer; }
+.input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.input[type="color"]::-webkit-color-swatch { border: 0; border-radius: calc(var(--radius) - 3px); }
+.input[type="color"]::-moz-color-swatch { border: 0; border-radius: calc(var(--radius) - 3px); }
+
+/* Reviews: list + detail side by side, stacked on a narrow screen. */
+.review-split { display: grid; grid-template-columns: minmax(280px, 1fr) 2fr; gap: 16px; }
+.review-split > * { min-width: 0; }
+@media (max-width: 900px) { .review-split { grid-template-columns: 1fr; } }
+
+/* Screen detail header: the action row wraps instead of running off the right edge. */
+.device-header { gap: 12px; flex-wrap: wrap; }
+.device-header-left { flex-wrap: wrap; min-width: 0; }
+.device-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 768px) { .device-header { flex-direction: column; } }
+
+/* Storage profiles: the per-row buttons wrap inside their cell. */
+.storage-row-actions { display: flex; flex-wrap: wrap; gap: 4px; min-width: 170px; }
+
+/* Video wall Live tab with no panels assigned. */
+.wall-live-empty { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 160px; padding: 24px; color: var(--text-muted); font-size: 13px; }
