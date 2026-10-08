@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Device tags and dynamic groups.**
+  - Give a screen tags (Display → Tags, or the API) and filter the Displays page by them.
+  - A group can fill itself from **rules**: tag is or is not, name contains or starts with,
+    platform, timezone. Matching screens join, and leave when their tags change. Anything assigned
+    to the group follows: its playlist, schedules, triggers, emergency alerts, power schedule and
+    sync. Group → **Rules** shows which screens match before you save.
+  - Screens on a video wall never join a group. A tag change that would change which head office
+    playlist a screen plays is refused for store users, as moving the screen by hand would be.
+  - Tags survive deleting and re-pairing a screen, so it rejoins its groups.
+
 - **A video wall now works like one big screen.** See `docs/video-walls.md`.
   - **Zones on a wall.** A wall can take a layout: put content anywhere on it, in one screen,
     across a bezel or over the whole wall. **One zone per screen** builds the obvious layout in one
@@ -154,6 +164,13 @@
 
 ### Fixed (server)
 
+- **A tag typed with a leading `#` (such as `#lobby`) was silently dropped.** Tags are shown with
+  a `#`, so people type one. It's now ignored and the tag is kept.
+- **Adding or removing a screen in a synced group left the other members out of step** until
+  something else re-sent their playlist. They're now updated straight away.
+- **Mesh replication missed edits to device settings added after it was turned on.** Its change
+  tracking listed the device columns once, when it was first set up. It now refreshes itself when
+  the table changes.
 - **Deleting a screen didn't reach the screen.** It carried on showing its old content until it
   next reconnected or restarted, so the pairing code needed to re-pair it wasn't there. The screen
   is now told straight away and shows its pairing code.

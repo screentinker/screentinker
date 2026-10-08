@@ -257,6 +257,23 @@ function triggerSql(db, spec) {
   ];
 }
 
+/** Specs whose installed UPDATE OF trigger lists different columns from what the table has now. */
+function staleUpdateTriggers(db) {
+  const out = [];
+  for (const spec of TABLES) {
+    if (spec.updateOf !== 'config' || !tableInfo(db, spec.table).length) continue;
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(triggerName(spec.table, 'upd'));
+    if (!row) continue;   // absent: the create path below installs it fresh
+    // Compare the column lists only: SQLite normalises the stored text (it drops IF NOT EXISTS).
+    const cols = (q) => {
+      const m = /UPDATE\s+OF\s+(.+?)\s+ON\s/i.exec(String(q || ''));
+      return m ? m[1].split(',').map((c) => c.trim()).sort().join(',') : '';
+    };
+    if (cols(row.sql) !== cols(triggerSql(db, spec)[1])) out.push(spec);
+  }
+  return out;
+}
+
 function installedTriggers(db) {
   return db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'mesh_cl_%'")
     .all().map((r) => r.name);
@@ -280,7 +297,23 @@ function replicationWanted(db) {
 function ensureTriggers(db, { wanted = replicationWanted(db) } = {}) {
   const have = installedTriggers(db);
   if (wanted) {
-    if (have.length === TABLES.length * 3) return { action: 'kept', count: have.length };
+    /*
+     * ⚠️ A COLUMN-LISTED TRIGGER GOES STALE WHEN THE TABLE GROWS. `devices` replicates on
+     * UPDATE OF <its config columns>, and that list is read from the table when the trigger is
+     * created. A column added by a later migration (devices.tags, say) is not in an existing
+     * trigger, so edits to it never reached the change log, and a count check alone kept the stale
+     * trigger forever. Rebuild any such trigger whose SQL no longer matches the table.
+     */
+    const stale = staleUpdateTriggers(db);
+    if (stale.length) {
+      db.transaction(() => {
+        for (const spec of stale) {
+          db.exec(`DROP TRIGGER IF EXISTS ${triggerName(spec.table, 'upd')}`);
+          db.exec(triggerSql(db, spec)[1]);
+        }
+      })();
+    }
+    if (have.length === TABLES.length * 3) return { action: stale.length ? 'refreshed' : 'kept', count: have.length };
     db.transaction(() => {
       for (const spec of TABLES) {
         if (!tableInfo(db, spec.table).length) continue; // table absent on this build: skip, never fail boot

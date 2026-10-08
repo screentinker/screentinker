@@ -640,6 +640,7 @@ export const api = {
   getGroups: () => request('/groups'),
   createGroup: (name, color) => request('/groups', { method: 'POST', body: JSON.stringify({ name, color }) }),
   updateGroup: (id, data) => request(`/groups/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  groupRulesPreview: (rules) => request('/groups/rules-preview', { method: 'POST', body: JSON.stringify({ rules }) }),
   resyncGroup: (id) => request(`/groups/${id}/resync`, { method: 'POST' }),
   // opts.acknowledge_impact: resend after the person ticked "I've checked these" (store triggers
   // the change would hide — components/corporate-ui.js withImpactAck).

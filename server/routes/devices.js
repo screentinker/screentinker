@@ -15,6 +15,8 @@ const { ALLOWED_COMMANDS, LOCAL_API_COMMANDS, deliverCommand, validateCommand } 
 const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens } = require('../lib/device-sanitize');
 const { layoutZones, orphanCountsByDevice } = require('../lib/zone-validate');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings preservation
+const { normalizeTags, parseTags } = require('../lib/content-tags');
+const groupRules = require('../lib/device-group-rules');
 const playerCapabilities = require('../lib/player-capabilities');
 
 // List devices in the caller's current workspace.
@@ -27,6 +29,8 @@ router.get('/', (req, res) => {
   if (!req.workspaceId) return res.json([]);
   const limit = Math.min(parseInt(req.query.limit) || 100, 500);
   const offset = parseInt(req.query.offset) || 0;
+  // ?tag=lobby narrows the list to screens carrying that tag (normalised like the stored ones).
+  const tagFilter = req.query.tag ? ((normalizeTags([String(req.query.tag)]) || [])[0] || '\u0000') : null;
   const devices = db.prepare(`
     SELECT d.*,
       t.battery_level, t.battery_charging, t.storage_free_mb, t.storage_total_mb,
@@ -47,9 +51,10 @@ router.get('/', (req, res) => {
       ON sc.device_id = latest.device_id AND sc.captured_at = latest.max_at
     ) s ON d.id = s.device_id
     WHERE d.workspace_id = ?
+      AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(d.tags) THEN d.tags ELSE '[]' END) WHERE value = ?))
     ORDER BY d.sort_order ASC, d.created_at ASC
     LIMIT ? OFFSET ?
-  `).all(req.workspaceId, limit, offset);
+  `).all(req.workspaceId, tagFilter, tagFilter, limit, offset);
   // #zone-orphan: lightweight per-device count of playlist items whose zone_id isn't in
   // the device's active layout, so the dashboard can flag screens that need attention.
   const orphanCounts = orphanCountsByDevice(devices.map(d => d.id));
@@ -67,6 +72,7 @@ router.get('/', (req, res) => {
     // from the rest without re-deriving the precedence rules client-side.
     platform_family: playerCapabilities.platformFamily(d),
     orphan_count: orphanCounts[d.id] || 0,
+    tags: parseTags(d.tags),
   })));
 });
 
@@ -198,6 +204,8 @@ router.post('/move-workspace', (req, res) => {
       } catch (e) { console.warn(`[move-workspace] notify failed for ${m.device_id}: ${e && e.message}`); }
     }
   }
+  // In its new workspace the screen joins whichever dynamic groups its tags and name match there.
+  for (const m of moved) groupRules.reconcileDeviceAsSystem(db, io, m.device_id);
   res.json({
     success: true, workspace_id: target.id, moved,
     store_triggers_hidden: after.store_triggers_hidden || [],
@@ -424,7 +432,7 @@ router.get('/:id', (req, res) => {
   // that never reported one, or whose block is unreadable — the card simply does not render.
   const edid = require('../lib/edid').parseEdid(device.hardware_edid);
 
-  res.json({ ...stripDeviceSecrets(device), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
+  res.json({ ...stripDeviceSecrets(device), tags: parseTags(device.tags), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
 });
 
 /*
@@ -549,7 +557,9 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled } = req.body;
+  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags } = req.body;
+  const normTags = normalizeTags(tags);
+  if (normTags === false) return res.status(400).json({ error: 'tags must be an array of labels or a comma-separated string' });
   // #150: validate orientation against the known enum (previously accepted any string, which
   // let a bad value reach the player -> unknown rotation falls back to landscape silently).
   // #325: a CSS colour that reaches the player's inline style, so it is constrained to a hex
@@ -616,9 +626,35 @@ router.put('/:id', (req, res) => {
     updates.push('reboot_schedule = ?'); values.push(val);
     updates.push('reboot_last_date = ?'); values.push(null);
   }
+  if (normTags !== undefined) { updates.push('tags = ?'); values.push(JSON.stringify(normTags)); }
+  /*
+   * Tags, name and timezone are what dynamic groups match on, so this edit can move the screen into
+   * or out of groups. Planned against the NEW values, then written together with the membership
+   * under the corporate guard, as this operator: a change that would alter which head office
+   * playlist the screen plays is refused exactly like dragging it out of the group by hand, and
+   * nothing is written.
+   */
+  const dynOverrides = {};
+  if (normTags !== undefined) dynOverrides.tags = JSON.stringify(normTags);
+  if (name !== undefined) dynOverrides.name = name;
+  if (timezone !== undefined) dynOverrides.timezone = timezone;
+  const dynOps = Object.keys(dynOverrides).length ? groupRules.planDevice(db, req.params.id, dynOverrides) : [];
   if (updates.length > 0) {
     values.push(req.params.id);
-    db.prepare(`UPDATE devices SET ${updates.join(', ')}, updated_at = strftime('%s','now') WHERE id = ?`).run(...values);
+    const write = () => {
+      db.prepare(`UPDATE devices SET ${updates.join(', ')}, updated_at = strftime('%s','now') WHERE id = ?`).run(...values);
+      if (dynOps.length) groupRules.applyOps(db, dynOps);
+      return true;
+    };
+    if (dynOps.length) {
+      const corpGuard = require('../lib/corporate/guard');
+      const ok = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, [req.params.id], write,
+        (c) => `This change would move the screen ${dynOps[0].op === 'add' ? 'into' : 'out of'} the group "${dynOps[0].group.name}", which changes what it plays (head office's "${c.name}"). Ask your organization admin to do it.`));
+      if (!ok) return;
+      groupRules.pushTo(req.app.get('io'), groupRules.devicesToPush(db, dynOps));
+    } else {
+      write();
+    }
     // Allowed on a head office screen, and recorded so head office can see who changed it.
     if (orientation !== undefined || timezone !== undefined) {
       require('../lib/corporate/guard').auditMandatedAction(req, device, orientation !== undefined ? 'orientation' : 'timezone');
@@ -626,6 +662,8 @@ router.put('/:id', (req, res) => {
   }
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
+  updated.tags = parseTags(updated.tags);
+  if (dynOps.length) updated.groups_changed = dynOps.map((o) => ({ group_id: o.group.id, name: o.group.name, op: o.op }));
   // ⚠️ stripDeviceSecrets only removes device_token. GET /:id additionally calls
   // stripSecretsForTokens; these two echo paths did not, so a token got the trigger secret
   // back from a rename — the escalation lib/device-sanitize.js exists to prevent.

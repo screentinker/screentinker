@@ -20,7 +20,9 @@ function normalizeTags(v) {
   const out = [];
   const seen = new Set();
   for (const raw of arr) {
-    const s = String(raw).trim().toLowerCase().slice(0, MAX_TAG);
+    // Tags are shown as "#lobby", so people type the '#'. It is never part of the tag; without
+    // this the whole tag failed TAG_RE and was dropped without a word.
+    const s = String(raw).trim().replace(/^#+/, '').toLowerCase().slice(0, MAX_TAG);
     if (!s || seen.has(s) || !TAG_RE.test(s)) continue;
     seen.add(s);
     out.push(s);

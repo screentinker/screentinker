@@ -16,11 +16,11 @@ const ORIENTATIONS = new Set(['landscape', 'portrait', 'landscape-flipped', 'por
 const validOrientation = (o) => (ORIENTATIONS.has(o) ? o : 'landscape');
 
 // The devices-row columns we preserve/restore (approved scope: orientation, name, timezone,
-// notes, default_content_id, layout_id, playlist_id, blocked, team_id). sort_order is out of
+// notes, default_content_id, layout_id, playlist_id, blocked, team_id, tags). sort_order is out of
 // scope by decision; wall membership (video_wall_devices grid geometry) is a deferred follow-up.
 const _selDevice = db.prepare(
   `SELECT name, orientation, timezone, notes, default_content_id, layout_id, playlist_id,
-          blocked, team_id, workspace_id, last_heartbeat
+          blocked, team_id, tags, workspace_id, last_heartbeat
      FROM devices WHERE id = ?`
 );
 const _fpForDevice = db.prepare(
@@ -29,15 +29,15 @@ const _fpForDevice = db.prepare(
 const _upsert = db.prepare(`
   INSERT INTO device_settings
     (fingerprint, workspace_id, device_name, orientation, timezone, notes, default_content_id,
-     layout_id, playlist_id, blocked, team_id, last_seen, removed_at)
+     layout_id, playlist_id, blocked, team_id, tags, last_seen, removed_at)
   VALUES
     (@fingerprint, @workspace_id, @device_name, @orientation, @timezone, @notes, @default_content_id,
-     @layout_id, @playlist_id, @blocked, @team_id, @last_seen, @removed_at)
+     @layout_id, @playlist_id, @blocked, @team_id, @tags, @last_seen, @removed_at)
   ON CONFLICT(fingerprint) DO UPDATE SET
     workspace_id=excluded.workspace_id, device_name=excluded.device_name, orientation=excluded.orientation,
     timezone=excluded.timezone, notes=excluded.notes, default_content_id=excluded.default_content_id,
     layout_id=excluded.layout_id, playlist_id=excluded.playlist_id, blocked=excluded.blocked,
-    team_id=excluded.team_id, last_seen=excluded.last_seen, removed_at=excluded.removed_at
+    team_id=excluded.team_id, tags=excluded.tags, last_seen=excluded.last_seen, removed_at=excluded.removed_at
 `);
 
 // Snapshot a device's current settings keyed by its fingerprint, called BEFORE the row is
@@ -61,6 +61,7 @@ function snapshot(deviceId, now = Math.floor(Date.now() / 1000)) {
     playlist_id: d.playlist_id || null,
     blocked: d.blocked ? 1 : 0,
     team_id: d.team_id || null,
+    tags: d.tags || null,
     last_seen: d.last_heartbeat || now,
     removed_at: now,
   });
@@ -108,6 +109,8 @@ function applyToDevice(deviceId, fingerprint) {
   if (s.notes != null) put('notes', s.notes);
   put('blocked', s.blocked ? 1 : 0);          // security: a blocked device stays blocked across re-pair
   if (s.team_id != null) put('team_id', s.team_id);
+  // Tags come back too, so a re-paired screen rejoins its dynamic groups (the claim reconciles).
+  if (s.tags != null) put('tags', s.tags);
   // FK-existence guards — only restore if the referenced row still exists.
   if (s.playlist_id && db.prepare('SELECT 1 FROM playlists WHERE id = ?').get(s.playlist_id)) put('playlist_id', s.playlist_id);
   if (s.layout_id && db.prepare('SELECT 1 FROM layouts WHERE id = ?').get(s.layout_id)) put('layout_id', s.layout_id);

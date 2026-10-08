@@ -9,6 +9,11 @@ const { conditionOk, itemShouldPlay } = require('../lib/schedule-eval');
 
 const ROOT = path.join(__dirname, '..', '..');
 
+test('a typed leading # is not part of the tag (it used to drop the whole tag)', () => {
+  assert.deepEqual(normalizeTags('#Lobby, ##promo, retail'), ['lobby', 'promo', 'retail']);
+  assert.deepEqual(normalizeTags(['#', '#a#b']), [], 'a lone # or an inner # is still junk');
+});
+
 test('normalizeTags lowercases, dedupes, and drops junk', () => {
   assert.deepEqual(normalizeTags('Promo, lobby, PROMO, bad tag!'), ['promo', 'lobby']);
   assert.deepEqual(normalizeTags(['A', 'a', 'b_1']), ['a', 'b_1']);

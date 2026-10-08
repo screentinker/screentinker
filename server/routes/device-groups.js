@@ -20,6 +20,7 @@ const appConfig = require('../config');
 const corpGuard = require('../lib/corporate/guard');
 const corpResolve = require('../lib/corporate/resolve');
 const corpCleanup = require('../lib/corporate/cleanup');
+const groupRules = require('../lib/device-group-rules');
 const express_ = express; // for express.text() below
 
 const VALID_COLOR = /^#[0-9A-Fa-f]{6}$/;
@@ -83,7 +84,22 @@ router.get('/', (req, res) => {
     GROUP BY g.id
     ORDER BY g.name ASC
   `).all(req.workspaceId);
-  res.json(groups.map(g => ({ ...g, ...syncDecisionFor(g) })));
+  res.json(groups.map(g => ({ ...g, rules: groupRules.parseRules(g.rules), ...syncDecisionFor(g) })));
+});
+
+/*
+ * Which screens a rule set would select, before it is saved. Read-only; scoped to the caller's
+ * workspace exactly like the list. Excludes screens on a video wall, as the membership does.
+ */
+router.post('/rules-preview', (req, res) => {
+  if (!req.workspaceId) return res.json({ devices: [] });
+  const rules = groupRules.normalizeRules(req.body && req.body.rules);
+  if (!rules) return res.status(400).json({ error: 'rules must be { match: "all"|"any", rules: [{ field, op, value }] }' });
+  const plan = groupRules.planGroup(db, { id: '\u0000', workspace_id: req.workspaceId }, rules);
+  const devices = plan.add.length
+    ? db.prepare(`SELECT id, name, status, platform FROM devices WHERE id IN (${plan.add.map(() => '?').join(',')}) ORDER BY name`).all(...plan.add)
+    : [];
+  res.json({ devices });
 });
 
 // Create group in the caller's current workspace.
@@ -96,10 +112,29 @@ router.post('/', (req, res) => {
   const { name, color } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   if (color && !VALID_COLOR.test(color)) return res.status(400).json({ error: 'invalid color format, use #RRGGBB' });
+  const rules = groupRules.normalizeRules(req.body.rules);
+  if (rules === false) return res.status(400).json({ error: 'rules must be { match: "all"|"any", rules: [{ field, op, value }] }' });
   const id = uuidv4();
-  db.prepare('INSERT INTO device_groups (id, user_id, workspace_id, name, color) VALUES (?, ?, ?, ?, ?)')
-    .run(id, req.user.id, req.workspaceId, name, color || '#3B82F6');
-  res.status(201).json(db.prepare('SELECT * FROM device_groups WHERE id = ?').get(id));
+  const insert = () => {
+    db.prepare('INSERT INTO device_groups (id, user_id, workspace_id, name, color, rules) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, req.user.id, req.workspaceId, name, color || '#3B82F6', rules ? JSON.stringify(rules) : null);
+    return true;
+  };
+  if (!rules) {
+    insert();
+  } else {
+    // A brand-new group carries no mandate, so joining it cannot change what a screen plays; it is
+    // still filled under the guard, which also records the change.
+    const group = { id, workspace_id: req.workspaceId, name, sync_enabled: 0 };
+    const ops = groupRules.groupOps(group, groupRules.planGroup(db, group, rules));
+    const ok = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, ops.map((o) => o.deviceId), () => {
+      insert(); groupRules.applyOps(db, ops); return true;
+    }));
+    if (!ok) return;
+    groupRules.pushTo(req.app.get('io'), groupRules.devicesToPush(db, ops));
+  }
+  const created = db.prepare('SELECT * FROM device_groups WHERE id = ?').get(id);
+  res.status(201).json({ ...created, rules: groupRules.parseRules(created.rules) });
 });
 
 // Update group
@@ -112,6 +147,28 @@ router.put('/:id', requireGroupWrite, (req, res) => {
     return res.status(400).json({ error: `sync_backend must be one of: ${BACKENDS.join(', ')}` });
   }
   if (color && !VALID_COLOR.test(color)) return res.status(400).json({ error: 'invalid color format, use #RRGGBB' });
+  const rules = groupRules.normalizeRules(req.body.rules);
+  if (rules === false) return res.status(400).json({ error: 'rules must be { match: "all"|"any", rules: [{ field, op, value }] } or null' });
+  /*
+   * Rules first, before anything else is written: a rule change re-fills the group, and a re-fill
+   * that would change which head office playlist a screen plays is refused for a non-admin exactly
+   * as moving those screens by hand would be. Clearing rules (null) keeps today's members and turns
+   * the group back into a hand-built one.
+   */
+  if (rules !== undefined) {
+    if (rules === null) {
+      db.prepare('UPDATE device_groups SET rules = NULL WHERE id = ?').run(req.params.id);
+    } else {
+      const ops = groupRules.groupOps(req.group, groupRules.planGroup(db, req.group, rules));
+      const ok = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, ops.map((o) => o.deviceId), () => {
+        db.prepare('UPDATE device_groups SET rules = ? WHERE id = ?').run(JSON.stringify(rules), req.params.id);
+        groupRules.applyOps(db, ops);
+        return true;
+      }, (c) => `These rules would change what a screen plays (head office's "${c.name}"). Ask your organization admin to do it.`));
+      if (!ok) return;
+      groupRules.pushTo(req.app.get('io'), groupRules.devicesToPush(db, ops));
+    }
+  }
   // #12 scheduled reboot: group-level default nightly-reboot time ("HH:MM" or null/'' = off).
   // A member device's own reboot_schedule overrides this in the scheduler.
   if (reboot_schedule !== undefined) {
@@ -148,7 +205,7 @@ router.put('/:id', requireGroupWrite, (req, res) => {
     for (const m of members) pushPlaylistToDevice(req, m.device_id);
   }
   const updated = db.prepare('SELECT * FROM device_groups WHERE id = ?').get(req.params.id);
-  res.json({ ...updated, ...syncDecisionFor(updated) });
+  res.json({ ...updated, rules: groupRules.parseRules(updated.rules), ...syncDecisionFor(updated) });
 });
 
 // #group-sync: manual "Resync now" — nudge every member to re-snap to the shared schedule
@@ -267,6 +324,7 @@ router.get('/:id/devices', requireGroupRead, (req, res) => {
 // device in another workspace could add it to a group in this workspace.
 // Now: the device must belong to the same workspace as the group.
 router.post('/:id/devices', requireGroupWrite, (req, res) => {
+  if (req.group.rules) return res.status(409).json({ error: 'This group fills itself from its rules. Change the rules, or the screen\'s tags, instead.', code: 'DYNAMIC_GROUP' });
   const { device_id } = req.body;
   if (!device_id) return res.status(400).json({ error: 'device_id required' });
   const device = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(device_id);
@@ -308,6 +366,7 @@ router.post('/:id/devices', requireGroupWrite, (req, res) => {
 // Without this, a device dragged out of a group keeps stale playlist state
 // from the group it just left.
 router.delete('/:id/devices/:deviceId', requireGroupWrite, (req, res) => {
+  if (req.group.rules) return res.status(409).json({ error: 'This group fills itself from its rules. Change the rules, or the screen\'s tags, instead.', code: 'DYNAMIC_GROUP' });
   const deviceId = req.params.deviceId;
   // CORPORATE: leaving is refused when it would change which head office playlist this screen plays.
   const left = corpGuard.guarded(req, res, () => corpGuard.assertNoMandateLoss(req, [deviceId], () => {
