@@ -148,6 +148,10 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
     // ⚠️ The FIRE path is NOT here — it is device-local, because a trigger that needs this server is
     // a trigger that fails with the WAN down. See docs/triggers-design.md.
     '/api/triggers',
+    // CAP emergency feeds, added deliberately: an integrator wires a site's alert feed from its own
+    // tooling. Every mutation is requireScope('full') + workspace admin (a feed can take over every
+    // screen in scope); reads are workspace-scoped like the siblings.
+    '/api/cap-feeds',
     /*
      * Uploaded transitions, added deliberately. Same reasoning as fonts, already on this door: it is
      * workspace content an integrator may reasonably manage from their own tooling, and every route

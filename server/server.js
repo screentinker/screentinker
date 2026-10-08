@@ -1788,6 +1788,7 @@ app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview sessio
 // `/test` triggers an outbound fetch of an arbitrary calendar feed; cap it so a single
 // workspace cannot fan out unbounded requests to third-party URLs.
 app.use('/api/data-sources/test', rateLimit(60000, 10));
+app.use('/api/cap-feeds/test', rateLimit(60000, 10));   // fetches an arbitrary public URL, like the data-source test
 app.post('/api/plugin-submissions', rateLimit(3600000, 10)); // 10 plugin zips per hour per IP
 app.post('/api/admin/plugins/submissions', rateLimit(3600000, 20));
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
@@ -2394,6 +2395,7 @@ require('./lib/smart-playlist').start(io);
   }, 5 * 60 * 1000);
   if (t.unref) t.unref();
 }
+require('./lib/cap/feeds').start(io);   // CAP emergency feeds: polling, expiry, pushes
 
 // Start alert service
 const { startAlertService } = require('./services/alerts');
