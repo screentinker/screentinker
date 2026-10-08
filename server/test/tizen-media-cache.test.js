@@ -161,6 +161,30 @@ test('items dropped from the playlist have their bytes deleted', async () => {
   assert.equal(mc.index.c1, undefined);
 });
 
+test('THE EMPTY PAYLOAD: a playlist update with no media never wipes the cache', async () => {
+  // assignments: [] also arrives when a published snapshot fails to parse on the server, which is
+  // the same message as "this screen needs nothing". Pruning on it emptied the panel's cache.
+  const b = fakeBackend(asset(CHUNK, 1));
+  const mc = new MediaCache(b);
+  await mc.sync([{ content_id: 'c1', content_rev: 5 }], urlFor);
+  assert.ok(b.files.get('c1'));
+
+  await mc.sync([], urlFor);
+  await mc.sync(null, urlFor);
+  await mc.sync([{ widget_id: 'w1' }], urlFor);     // widgets only: still no media referenced
+  assert.ok(b.files.get('c1'), 'the cached asset must survive an update that references no media');
+  assert.ok(mc.index.c1);
+});
+
+test('...but an explicit prune([]) (a delete from the dashboard) still empties it', async () => {
+  const b = fakeBackend(asset(CHUNK, 1));
+  const mc = new MediaCache(b);
+  await mc.sync([{ content_id: 'c1', content_rev: 5 }], urlFor);
+  mc.prune([]);
+  assert.equal(b.files.get('c1'), undefined);
+  assert.equal(mc.index.c1, undefined);
+});
+
 test('a cached asset costs no requests on later sweeps', async () => {
   const b = fakeBackend(asset(CHUNK, 1));
   const mc = new MediaCache(b);

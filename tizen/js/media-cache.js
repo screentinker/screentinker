@@ -232,7 +232,18 @@
     this.busy = true;
     var self = this;
 
-    try { this.prune(items); } catch (e) { /* pruning must never block fetching */ }
+    /*
+     * ⚠️ A PAYLOAD THAT REFERENCES NO MEDIA IS NEVER A PRUNE. The server sends `assignments: []` for
+     * a screen between playlists, for a playlist never published, AND when a published snapshot
+     * fails to parse, and that last one is indistinguishable on the wire from "needs nothing".
+     * Pruning on it deleted every cached asset, leaving the panel nothing to play offline until it
+     * had re-downloaded it all. Same rule as Android (CacheJanitor), Pi/Windows and the web
+     * player's worker. An explicit delete from the dashboard calls prune([]) directly instead.
+     */
+    var referencesMedia = (items || []).some(function (it) { return it && it.content_id; });
+    if (referencesMedia) {
+      try { this.prune(items); } catch (e) { /* pruning must never block fetching */ }
+    }
     // A hold item (application/x-st-hold, remote_url hold://…) has NO bytes: never fetch or cache it.
     // remote_url already excludes it; the mime check keeps that true if a hold ever arrives bare.
     var list = (items || []).filter(function (it) {

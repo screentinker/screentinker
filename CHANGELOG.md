@@ -141,6 +141,11 @@
 
 ### Fixed (Samsung Tizen player)
 
+- **A playlist update with no media deleted every file the TV had downloaded.** The server sends
+  an empty playlist for a screen with nothing assigned, an unpublished playlist, or a published
+  playlist it fails to read, and the TV treated each one as "delete everything". It then had nothing
+  to play offline until it had downloaded it all again. An update with no media now leaves the
+  cache alone, as on the other players.
 - **The setup screen could not be finished with a TV remote.** Down in the Server URL field only
   moved the cursor, so the Connect button was reachable only with a USB keyboard's Tab, and the
   on-screen keyboard's Done key just closed the keyboard. Down and Up now move between the field
