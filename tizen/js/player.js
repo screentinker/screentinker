@@ -346,6 +346,8 @@ PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
   // Structural change. Preserve continuity like the web/Android players instead of always
   // restarting from the top: if the on-screen item survives, keep playing it; if it was removed
   // while live in SOLO playback (#157 e.g. an expiry), let it finish then rotate to the successor.
+  // Everything about the OUTGOING playlist is captured here, BEFORE this.items is replaced below;
+  // everything after the swap must read oldItems / oldIndex / curId, not this.items / this.index.
   var oldItems = this.items;
   var oldIndex = this.index;
   var curId = this.itemIdentity(oldItems[oldIndex]);
@@ -385,7 +387,12 @@ PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
   // item is meant to sit there), so replacing the one item of a one-item playlist deferred forever
   // and the old content stayed on the screen. On Tizen this strands IMAGES too, not just video and
   // widgets as on the web player, because the timer is skipped for every type.
-  var outgoingNeverAdvances = !this.items || this.items.length <= 1;
+  // ⚠️ OUTGOING list, never this.items: that was replaced with the incoming list above, so reading
+  // it here measured the NEW playlist. A one-item list replaced by a longer one was then deferred
+  // (its solo item has no timer -> stuck for the full 60 s deadline), and a playing multi-item
+  // list replaced by a one-item one was cut mid-item instead of deferred. Same as the web player's
+  // `oldPlaylist.length <= 1`.
+  var outgoingNeverAdvances = !oldItems || oldItems.length <= 1;
   // An emergency alert raised or cleared cuts in now. Followers already swap at once (they obey the
   // leader's index); this makes the leader do the same, so a wall switches together.
   var interruptNow = this.interruptChanged(oldItems, items);
