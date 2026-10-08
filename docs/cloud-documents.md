@@ -134,6 +134,10 @@ Only an organization owner or admin can add a folder, because the app can read m
 workspace should see (with Files.Read.All, anyone's OneDrive). Once a folder is added, any
 workspace editor can press **Sync now**, change how often it syncs, pause it, or stop syncing it.
 
+**Head office's media is safe.** A synced file that a corporate playlist plays is only updated if
+the folder's creator may change corporate media (an organization owner or admin). Otherwise that file
+is listed as an error in the sync summary and left as it is; the rest of the folder still syncs.
+
 **Stop syncing** keeps everything already in the library and the playlist. It only stops future
 syncs.
 
