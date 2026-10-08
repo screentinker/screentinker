@@ -266,6 +266,17 @@
     nullable columns. All additive; nothing is backfilled at boot.
   - New dependencies: `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` (Apache-2.0), and
     `@azure/storage-blob` (MIT). Each is loaded only when its provider is used.
+- **New screens get the right time zone.** A Raspberry Pi set up without the Imager's locale
+  settings is on UK time (Pi OS's default), and schedules ran on it.
+  - On screentinker.com, the installers ask the server which time zone it sees the screen in
+    (`GET /api/public/timezone`, answered from Cloudflare). No outside location service is used.
+  - On a self-hosted server, which can't tell where a screen is, pairing a screen that's still
+    on a default zone (UTC or Europe/London) sets it to the time zone of the browser you pair it
+    from. The dashboard sends the zone name only.
+  - A zone you set on the screen, or chose on the device, is never changed. Players that can set
+    their own clock get this: the Raspberry Pi, Linux and Windows players.
+  - Fixed along the way: what a new screen says it can do is now recorded as soon as it shows a
+    pairing code, not only after its first reconnect.
 
 ### Fixed (Android player)
 

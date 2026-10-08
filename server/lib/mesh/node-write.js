@@ -452,6 +452,7 @@ function applyPlayerOp(db, edge, req, { writeGrant, writeScope, now }) {
       fingerprint: typeof p.fingerprint === 'string' ? p.fingerprint : null,
       hw_fingerprint: typeof p.hw_fingerprint === 'string' ? p.hw_fingerprint : null,
       ip: typeof p.ip === 'string' ? p.ip.slice(0, 45) : null, nodeId: edge.peer_node_id,
+      capabilities: Array.isArray(p.capabilities) ? p.capabilities.slice(0, 64) : null,
     });
   } else {
     const deviceId = typeof req.deviceId === 'string' ? req.deviceId : null;

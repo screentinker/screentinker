@@ -1,5 +1,5 @@
 import { showToast } from '../components/toast.js';
-import { api } from '../api.js';
+import { api, browserTimezone } from '../api.js';
 import { t } from '../i18n.js';
 
 // Steps are computed lazily so translated strings refresh on language change.
@@ -392,7 +392,7 @@ export function render(container) {
         const res = await fetch('/api/provision/pair', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ pairing_code: code, name: name || undefined })
+          body: JSON.stringify({ pairing_code: code, name: name || undefined, browser_timezone: browserTimezone() })
         });
         const data = await res.json();
         if (!res.ok) { if (status) status.textContent = data.error || t('onboarding.toast.pair_failed'); return; }

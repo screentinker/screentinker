@@ -57,7 +57,7 @@ Unchanged wire format (`device:command {type, payload}`), gated by capability as
 | `shell {cmd}` | `system.shell` | one-shot; answer with `device:shell-result {cmd, output, exit}` (output capped at 8000 chars server-side) |
 | `install_apk {url}` | `system.install_apk` | the dashboard labels it "Install package (.deb URL)" for a Pi; the Pi hands the URL to dpkg |
 | `kiosk_lock` / `kiosk_unlock` / `lock_now` / `power_menu` | `system.kiosk` (stand-in for `system.device_owner`) | the dashboard shows these for a Pi that declares `system.kiosk` |
-| `set_time` / `set_timezone` | `system.time` | no dashboard control exists yet |
+| `set_time` / `set_timezone` | `system.time` | no dashboard control yet; pairing sends `set_timezone` (the pairing browser's zone) to a screen still on a default zone (UTC, Europe/London) with no override |
 | `set_server_url {url}` | `remote.set_server_url` | no enrol key is minted for `client_type 'pi'` (that is for browser players only) |
 
 ## 3. Interactive terminal (PTY) — `system.pty`

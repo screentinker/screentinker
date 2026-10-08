@@ -1280,10 +1280,13 @@ function insertProvisioningRow({ id, pairing_code, token, ip, device_info, attac
  * token minting, same fingerprint bookkeeping as the local path; the pairing code is what the
  * operator will claim in a dashboard. Returns what the replica hands the screen ONCE.
  */
-function provisionViaReplica({ pairing_code, device_info, fingerprint, hw_fingerprint, ip, nodeId }) {
+function provisionViaReplica({ pairing_code, device_info, fingerprint, hw_fingerprint, ip, nodeId, capabilities }) {
   const id = uuidv4();
   const token = generateDeviceToken();
   insertProvisioningRow({ id, pairing_code, token, ip, device_info, attachedNodeId: nodeId });
+  // As on the direct path: what the screen declares, before anyone pairs it. parseDeclared drops
+  // anything this server doesn't know; an older replica sends none, and the baseline stays.
+  applyCapabilities(id, { capabilities });
   if (fingerprint) {
     try {
       db.prepare("INSERT INTO device_fingerprints (fingerprint, device_id, last_seen, hw_fingerprint) VALUES (?, ?, strftime('%s','now'), ?) ON CONFLICT(fingerprint) DO UPDATE SET device_id = excluded.device_id, last_seen = excluded.last_seen, hw_fingerprint = COALESCE(excluded.hw_fingerprint, device_fingerprints.hw_fingerprint)")
@@ -2166,7 +2169,8 @@ module.exports = function setupDeviceSocket(io) {
         const res = await writeTo(edge.peer_node_id, {
           type: 'player-provision', opId: crypto.randomUUID(), sentAt, notAfter: sentAt + 60_000,
           payload: { pairing_code, device_info: data.device_info || null, fingerprint: data.fingerprint || null,
-                     hw_fingerprint: data.hw_fingerprint || null, ip: getClientIp(socket) },
+                     hw_fingerprint: data.hw_fingerprint || null, ip: getClientIp(socket),
+                     capabilities: data.capabilities ?? (data.device_info && data.device_info.capabilities) ?? null },
         });
         if (!res || !res.ok) {
           if (res && (res.offline || res.indeterminate)) return wait('primary_unreachable');
@@ -2854,6 +2858,10 @@ module.exports = function setupDeviceSocket(io) {
         // AFTER the row exists, so a failed insert leaves no half-authenticated socket.
         try {
           insertProvisioningRow({ id, pairing_code, token: newToken, ip: getClientIp(socket), device_info });
+          // ⚠️ NOW, not at the first post-pairing reconnect: the pairing claim acts on what the
+          // screen can do (it sends set_timezone to a display that declares system.time), and
+          // without this every new screen looked like its platform's baseline at that moment.
+          applyCapabilities(id, data);
         } catch (e) {
           console.warn(`Provisioning rejected for pairing_code ${pairing_code} from ${getClientIp(socket)}: ${e.message}`);
           socket.emit('device:auth-error', { error: 'Registration failed, please retry.' });
