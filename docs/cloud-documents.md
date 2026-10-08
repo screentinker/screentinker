@@ -76,7 +76,7 @@ library:
 |---|---|
 | A new file | Added to the library, like an upload |
 | A changed file | Replaced in place. Playlists keep it, and screens fetch the new version. |
-| A removed file | Taken out of the folder's playlist. Deleted from the library, unless another playlist or schedule uses it, in which case it stays. |
+| A removed file | Taken out of the folder's playlist. Deleted from the library, unless something else uses it (another playlist, a schedule, a video wall, a screen's default content or a direct assignment), in which case it stays. |
 | PowerPoint, Word, Excel, PDF | Not synced, and counted as skipped. Use a Cloud document widget. |
 
 Each folder can keep a **playlist** of its files in file-name order. The playlist is published
@@ -86,6 +86,14 @@ folder's files.
 
 Syncs run every 15 minutes by default (5 to 1440). Press **Sync now** at any time. Files count
 against your plan's storage, and a file larger than the server's upload limit is skipped.
+
+Up to 500 media files per folder are synced (Office files do not count towards that). While a
+folder holds more than that, or is too large to list in full, the sync adds and updates the files
+it saw but removes nothing, and its summary says so. Split a larger folder into several.
+
+A sync runs as the person who added the folder. If they leave the workspace (or can only view
+it), or the workspace is deleted, the folder is paused and shows the reason. Remove it and have an
+organization admin add it again.
 
 ### 1. Register an app in your tenant (once per organization)
 
@@ -117,10 +125,14 @@ You need a Microsoft Entra admin.
 The secret is encrypted on the server, and no screen or API ever shows it again. Leave the field
 empty on a later save to keep it. Secrets expire, so set a reminder for the date Entra shows.
 
-### 2. Add a folder (any workspace editor)
+### 2. Add a folder (an organization owner or admin)
 
 **Content → SharePoint & OneDrive folders… → Add a folder.** In SharePoint or OneDrive, select
 the folder, choose **Share → Copy link**, and paste the link.
+
+Only an organization owner or admin can add a folder, because the app can read more than one
+workspace should see (with Files.Read.All, anyone's OneDrive). Once a folder is added, any
+workspace editor can press **Sync now**, change how often it syncs, pause it, or stop syncing it.
 
 **Stop syncing** keeps everything already in the library and the playlist. It only stops future
 syncs.

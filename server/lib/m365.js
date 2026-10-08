@@ -175,26 +175,40 @@ async function resolveFolder(orgId, shareUrl) {
 const MEDIA_MIME_RE = /^(image\/(jpeg|png|gif|webp|bmp|svg\+xml)|video\/(mp4|webm|quicktime|x-matroska)|audio\/(mpeg|mp4|aac|ogg|wav|x-wav))$/i;
 const MEDIA_EXT_RE = /\.(jpe?g|png|gif|webp|bmp|svg|mp4|m4v|webm|mov|mkv|mp3|m4a|aac|ogg|wav)$/i;
 
-/** Every file directly in a folder (not recursive), following paging. Capped at `max`. */
-async function listFolder(orgId, driveId, itemId, { max = 1000 } = {}) {
+/**
+ * Every file directly in a folder (not recursive), following paging. Stops once `maxMedia` media
+ * files are listed — Office files and the like do not count towards it, so a folder of PowerPoints
+ * cannot crowd its images out. Returns { files, complete }: `complete` is false when the listing
+ * stopped early (the cap, or the page limit), and then a file missing from `files` may still be
+ * in the folder — a caller must not treat it as removed.
+ */
+async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
   const out = [];
+  let media = 0;
   let next = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children?$top=200&$select=id,name,size,file,folder,cTag,eTag,lastModifiedDateTime`;
   let pages = 0;
-  while (next && pages++ < 50 && out.length < max) {
+  let complete = true;
+  while (next) {
+    if (pages++ >= 50 || media >= maxMedia) { complete = false; break; }
     const body = await graphGet(orgId, next);
-    for (const it of (body && body.value) || []) {
+    const value = (body && body.value) || [];
+    let i = 0;
+    for (; i < value.length && media < maxMedia; i++) {
+      const it = value[i];
       if (!it || it.folder || !it.file) continue;
       const mime = String((it.file && it.file.mimeType) || '');
-      out.push({
+      const f = {
         id: String(it.id), name: String(it.name || ''), size: Number(it.size) || 0,
         tag: String(it.cTag || it.eTag || it.lastModifiedDateTime || ''),
         mime, media: MEDIA_MIME_RE.test(mime) || MEDIA_EXT_RE.test(it.name || ''),
-      });
-      if (out.length >= max) break;
+      };
+      out.push(f);
+      if (f.media) media++;
     }
+    if (i < value.length) { complete = false; break; }
     next = body && body['@odata.nextLink'] ? String(body['@odata.nextLink']) : null;
   }
-  return out;
+  return { files: out, complete };
 }
 
 /**

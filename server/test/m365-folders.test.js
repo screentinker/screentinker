@@ -14,6 +14,11 @@
  *   - a file removed upstream leaves the playlist, and the library too unless something else uses it
  *   - a download link to a private address, or a Graph nextLink off graph.microsoft.com, is refused
  *   - a file over the server's size limit is skipped up front, not downloaded
+ *   - only org owners/admins add a folder; editors sync existing ones
+ *   - an incomplete listing (over the media cap) removes nothing; Office files do not count to the cap
+ *   - a sync that loses its lease stops, and never clears the new holder's lease
+ *   - a folder whose workspace is gone, or whose creator can no longer write there, is paused
+ *   - content a video wall, a screen's default or an assignment uses is kept, not deleted
  */
 
 const path = require('node:path');
@@ -95,6 +100,7 @@ async function mockFetch(url, opts = {}) {
   }
   if (u.hostname === 'contoso.sharepoint.com' && u.pathname === '/_layouts/15/download.aspx') {
     const f = files[u.searchParams.get('id')];
+    if (f.onDownload) f.onDownload();
     return new Response(f.bytes, { status: 200 });
   }
   throw new Error(`unexpected fetch ${url}`);
@@ -173,8 +179,10 @@ const playlistNames = () => db.prepare(`SELECT c.filename FROM playlist_items pi
   WHERE pi.playlist_id = ? ORDER BY pi.sort_order`).all(playlistId).map((r) => r.filename);
 
 test('adding a folder syncs its media into the library and a published playlist, in name order', async () => {
-  assert.equal((await call('editor', 'POST', '/folders', { share_url: 'https://evil.example/x' })).status, 400);
-  const r = await call('editor', 'POST', '/folders', { share_url: SHARE, default_duration_sec: 12 });
+  assert.equal((await call('editor', 'POST', '/folders', { share_url: SHARE })).status, 403, 'an editor cannot choose what is synced');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM cloud_folders').get().n, 0);
+  assert.equal((await call('admin', 'POST', '/folders', { share_url: 'https://evil.example/x' })).status, 400);
+  const r = await call('admin', 'POST', '/folders', { share_url: SHARE, default_duration_sec: 12 });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   folderId = r.body.id;
   assert.equal(r.body.name, 'Lobby screens', 'named after the folder');
@@ -254,6 +262,116 @@ test('a file over the server limit is skipped before it is downloaded', async ()
     assert.match(r.body.summary.errors.join(' '), /huge\.png: larger than this server accepts/);
     assert.equal(db.prepare("SELECT 1 x FROM cloud_folder_items WHERE remote_id = 'big'").get(), undefined);
   } finally { config.maxFileSize = cap; delete files.big; }
+});
+
+test('a listing over the media cap removes nothing; Office files do not count towards it', async () => {
+  const cId = db.prepare("SELECT content_id FROM cloud_folder_items WHERE folder_id = ? AND remote_id = 'c'").get(folderId).content_id;
+  const keep = files;
+  // 300 PowerPoints, then a new image, then the already-synced c.
+  files = {};
+  for (let i = 0; i < 300; i++) files[`p${i}`] = { name: `deck ${i}.pptx`, bytes: Buffer.from('x'), tag: 'c1', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' };
+  files.n0 = { name: 'n0-new.png', bytes: png(2, 2, [7, 7, 7]), tag: 'c1', mime: 'image/png' };
+  files.c = keep.c;
+  try {
+    folders._setMaxFiles(1);
+    const r = await call('editor', 'POST', `/folders/${folderId}/sync`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.summary.listing_complete, false);
+    assert.equal(r.body.summary.added, 1, 'the first media file is still synced');
+    assert.equal(r.body.summary.removed, 0, 'c is past the cut-off, not gone');
+    assert.match(r.body.summary.errors.join(' '), /nothing is removed/);
+    assert.ok(db.prepare("SELECT 1 x FROM cloud_folder_items WHERE folder_id = ? AND remote_id = 'c'").get(folderId));
+    assert.ok(db.prepare('SELECT id FROM content WHERE id = ?').get(cId), 'not retired');
+
+    folders._setMaxFiles(2);
+    const r2 = await call('editor', 'POST', `/folders/${folderId}/sync`);
+    assert.equal(r2.body.summary.listing_complete, true, '300 Office files do not use up a cap of 2');
+    assert.equal(r2.body.summary.skipped_other, 300);
+    assert.equal(r2.body.summary.removed, 0);
+    assert.equal(r2.body.summary.unchanged, 2);
+  } finally {
+    folders._setMaxFiles(500);
+    files = keep;
+  }
+  // A complete listing again: n0 left the folder, so it goes.
+  const r3 = await call('editor', 'POST', `/folders/${folderId}/sync`);
+  assert.equal(r3.body.summary.removed, 1);
+  assert.deepEqual(playlistNames(), ['c-third.png']);
+});
+
+test('a sync that loses its lease stops, and leaves the new holder\'s lease alone', async () => {
+  const OTHER = Math.floor(Date.now() / 1000) + 3600;
+  // Held elsewhere: refused.
+  db.prepare('UPDATE cloud_folders SET sync_lease_until = ? WHERE id = ?').run(OTHER, folderId);
+  assert.equal((await call('editor', 'POST', `/folders/${folderId}/sync`)).status, 409);
+  db.prepare('UPDATE cloud_folders SET sync_lease_until = NULL WHERE id = ?').run(folderId);
+
+  const before = db.prepare('SELECT last_sync_at, last_summary FROM cloud_folders WHERE id = ?').get(folderId);
+  // Mid-download, our lease "runs out" and another node takes the folder.
+  files.e = { name: 'e.png', bytes: png(2, 2, [4, 4, 4]), tag: 'c1', mime: 'image/png',
+    onDownload: () => db.prepare('UPDATE cloud_folders SET sync_lease_until = ? WHERE id = ?').run(OTHER, folderId) };
+  files.f = { name: 'f.png', bytes: png(2, 2, [6, 6, 6]), tag: 'c1', mime: 'image/png' };
+  try {
+    const out = await folders.syncFolder(folderId, { trigger: 'manual' });
+    assert.equal(out.status, 'error');
+    assert.match(out.error, /another server took the folder over/);
+    const row = db.prepare('SELECT sync_lease_until, last_sync_at, last_summary FROM cloud_folders WHERE id = ?').get(folderId);
+    assert.equal(row.sync_lease_until, OTHER, 'the new holder\'s lease is not cleared');
+    assert.equal(row.last_summary, before.last_summary, 'nor its outcome written over');
+    assert.equal(db.prepare("SELECT 1 x FROM cloud_folder_items WHERE folder_id = ? AND remote_id = 'f'").get(folderId), undefined, 'it stopped at the next file');
+  } finally {
+    db.prepare('UPDATE cloud_folders SET sync_lease_until = NULL WHERE id = ?').run(folderId);
+    delete files.e; delete files.f;
+  }
+  const r = await call('editor', 'POST', `/folders/${folderId}/sync`);
+  assert.equal(r.body.summary.removed, 1, 'e goes again on the next full sync');
+  assert.deepEqual(playlistNames(), ['c-third.png']);
+});
+
+test('a folder whose workspace is gone, or whose creator can no longer write there, is paused', async () => {
+  const mk = (id, ws, user) => db.prepare(`INSERT INTO cloud_folders (id, workspace_id, organization_id, user_id, name, share_url, drive_id, item_id, auto_playlist)
+    VALUES (?, ?, ?, ?, 'x', ?, ?, ?, 0)`).run(id, ws, O, user, SHARE, DRIVE, FOLDER);
+  const GONE = 'u-m365-gone';
+  db.prepare("INSERT INTO users (id, email, password_hash, role) VALUES (?, 'm365gone@t.local', 'x', 'user')").run(GONE);
+  db.prepare("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'workspace_viewer')").run(WS, GONE);
+  // A folder left behind by a workspace delete that did not cascade to it.
+  db.exec('PRAGMA foreign_keys = OFF');
+  try { mk('cf-orphan', 'ws-deleted', ADMIN); } finally { db.exec('PRAGMA foreign_keys = ON'); }
+  mk('cf-viewer', WS, GONE);
+  try {
+    for (const [id, re] of [['cf-orphan', /workspace no longer exists/], ['cf-viewer', /can no longer edit this workspace/]]) {
+      const out = await folders.syncFolder(id);
+      assert.equal(out.status, 'error');
+      assert.match(out.error, re);
+      const row = db.prepare('SELECT enabled, last_error, sync_lease_until FROM cloud_folders WHERE id = ?').get(id);
+      assert.equal(row.enabled, 0, `${id} paused`);
+      assert.match(row.last_error, re);
+      assert.equal(row.sync_lease_until, null);
+    }
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM cloud_folder_items WHERE folder_id IN ('cf-orphan','cf-viewer')").get().n, 0, 'nothing synced');
+  } finally {
+    db.prepare("DELETE FROM cloud_folders WHERE id IN ('cf-orphan','cf-viewer')").run();
+    db.prepare('DELETE FROM workspace_members WHERE user_id = ?').run(GONE);
+  }
+});
+
+test('content a video wall, a screen default or an assignment uses is kept when its file leaves', async () => {
+  const uses = [
+    ['w', (cid) => db.prepare("INSERT INTO video_walls (id, user_id, workspace_id, name, content_id) VALUES ('vw-m365', ?, ?, 'Wall', ?)").run(ADMIN, WS, cid)],
+    ['d', (cid) => db.prepare("INSERT INTO devices (id, user_id, workspace_id, default_content_id) VALUES ('dev-m365', ?, ?, ?)").run(ADMIN, WS, cid)],
+    ['s', (cid) => db.prepare("INSERT INTO assignments (device_id, content_id) VALUES ('dev-m365', ?)").run(cid)],
+  ];
+  for (const [id] of uses) files[id] = { name: `${id}-used.png`, bytes: png(2, 2, [id.charCodeAt(0), 1, 1]), tag: 'c1', mime: 'image/png' };
+  const r = await call('editor', 'POST', `/folders/${folderId}/sync`);
+  assert.equal(r.body.summary.added, 3, JSON.stringify(r.body));
+  const ids = {};
+  for (const [id, use] of uses) { ids[id] = db.prepare('SELECT content_id FROM cloud_folder_items WHERE folder_id = ? AND remote_id = ?').get(folderId, id).content_id; use(ids[id]); }
+  for (const [id] of uses) delete files[id];
+  const r2 = await call('editor', 'POST', `/folders/${folderId}/sync`);
+  assert.equal(r2.body.summary.removed, 3);
+  assert.equal(r2.body.summary.kept, 3);
+  for (const [id] of uses) assert.ok(db.prepare('SELECT id FROM content WHERE id = ?').get(ids[id]), `${id}: kept`);
+  assert.deepEqual(playlistNames(), ['c-third.png']);
 });
 
 test('removing the sync keeps the library items and the playlist', async () => {
