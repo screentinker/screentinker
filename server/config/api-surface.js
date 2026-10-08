@@ -141,6 +141,12 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/social', mod: './routes/social', tenancy: true },
   /*
+   * Meeting-room displays (lib/rooms). JWT only: a connection holds an organization's Microsoft 365
+   * client secret or Google service-account key, and a room may hold a private calendar address.
+   * The page-facing reads and actions are /api/room-panel, mounted separately in server.js.
+   */
+  { path: '/api/rooms', mod: './routes/rooms', tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */

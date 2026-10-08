@@ -144,6 +144,16 @@ function validateTimezone(config) {
        + 'America/New_York or UTC — a country name or a GMT offset will not work.';
 }
 
+// A room display may only show a room of its OWN workspace: the id comes from a config blob a user
+// typed, and the panel would otherwise read — and book — another tenant's room.
+function validateRoomDisplay(type, config, workspaceId) {
+  if (type !== 'room-display') return null;
+  const id = config && config.room_id;
+  if (!id) return null;   // an unconfigured display says so on screen
+  const ok = workspaceId && db.prepare('SELECT 1 FROM rooms WHERE id = ? AND workspace_id = ?').get(String(id), workspaceId);
+  return ok ? null : 'That room is not in this workspace.';
+}
+
 // Validate ISO date string format
 function safeDateString(d) {
   if (!d) return '';
@@ -197,6 +207,8 @@ router.post('/', (req, res) => {
     if (sw.error) return res.status(400).json({ error: sw.error });
     storedConfig = sw.config;
   }
+  const roomErr = validateRoomDisplay(widget_type, config, req.workspaceId);
+  if (roomErr) return res.status(400).json({ error: roomErr });
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
@@ -365,6 +377,8 @@ router.put('/:id', (req, res) => {
     if (sw.error) return res.status(400).json({ error: sw.error });
     config = sw.config;
   }
+  const roomErr = config ? validateRoomDisplay(widget.widget_type, config, widget.workspace_id) : null;
+  if (roomErr) return res.status(400).json({ error: roomErr });
 
   /*
    * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
@@ -797,6 +811,25 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('Referrer-Policy', 'no-referrer');
     if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
     return res.send(out.html);
+  }
+  /*
+   * A meeting-room display (lib/rooms/render.js): meeting titles typed by anyone who can send an
+   * invitation, so the same opaque-origin sandbox as the alert card, plus the one connection the page
+   * needs — back to this server for its room's state. Rendered with the current state so the first
+   * paint is right; the page then keeps itself current.
+   */
+  if (widget.widget_type === 'room-display') {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    res.setHeader('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${origin}; sandbox allow-scripts`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    const room = config.room_id ? db.prepare('SELECT * FROM rooms WHERE id = ? AND workspace_id = ?').get(String(config.room_id), widget.workspace_id) : null;
+    const rooms = require('../lib/rooms/service');
+    const { renderRoomDisplay } = require('../lib/rooms/render');
+    return (room ? rooms.panelState(room) : Promise.resolve(null))
+      .catch(() => null)
+      .then((initial) => res.send(renderRoomDisplay({ widgetId: widget.id, origin, config, initial })));
   }
   if (widget.widget_type === 'template') {
     const out = require('../lib/templates/widget').renderTemplateWidget(widget, {

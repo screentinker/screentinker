@@ -402,7 +402,8 @@ class WallZoneRenderer(
             widgetType != null || widgetId != null -> {
                 val wv = WebView(context).also { com.remotedisplay.player.util.WebViewSupport.configure(it, "WallZone") }
                 wv.loadUrl("$serverUrl/api/widgets/$widgetId/render" +
-                    (if (deviceId.isNotEmpty()) "?device=" + Uri.encode(deviceId) else "?d=") + "&rev=" + a.optLong("widget_rev", 0L))
+                    (if (deviceId.isNotEmpty()) "?device=" + Uri.encode(deviceId) else "?d=") + "&rev=" + a.optLong("widget_rev", 0L) +
+                    com.remotedisplay.player.util.WidgetUrls.panelFragment(a.optString("widget_panel", "")))
                 Media(wv)
             }
             mime == ItemTiming.BUNDLE_MIME -> {

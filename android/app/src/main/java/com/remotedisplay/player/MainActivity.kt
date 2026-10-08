@@ -1519,8 +1519,9 @@ class MainActivity : AppCompatActivity() {
             // edit reloads while an untouched widget still hits the no-flash reuse path.
             val url = "${config.serverUrl}/api/widgets/${item.widgetId}/render" +
                 (if (config.deviceId.isNotEmpty()) "?device=" + android.net.Uri.encode(config.deviceId) else "?d=") +
-                "&rev=${item.widgetRev}"
-            Log.i("MainActivity", "Playing widget fullscreen: $url")
+                "&rev=${item.widgetRev}" +
+                com.remotedisplay.player.util.WidgetUrls.panelFragment(item.widgetPanel)
+            Log.i("MainActivity", "Playing widget fullscreen: ${url.substringBefore('#')}")
             mediaPlayer.showWidget(url)
             wsService?.sendPlaybackState(item.contentId.ifEmpty { item.widgetId ?: "" }, 0f)
             return

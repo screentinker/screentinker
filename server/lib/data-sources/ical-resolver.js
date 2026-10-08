@@ -202,6 +202,15 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
     if (eventType === 'allday' && !isAllDay) continue;
 
     const summary = hidePrivate ? L.busyMask : (rawSummary || L.eventFallback);
+    // Facts only the raw_events mode (lib/rooms/ics.js) reads: the room display decides free/busy
+    // and privacy itself, so it needs TRANSP and CLASS rather than the display strings below.
+    const rawFacts = {
+      uid: ev.uid || k,
+      transparent: String(ev.transparency || '').toUpperCase() === 'TRANSPARENT',
+      private: /^(PRIVATE|CONFIDENTIAL)$/i.test(String(ev.class || '')),
+      status: String(ev.status || '').toUpperCase(),
+      organizerName: (ev.organizer && ev.organizer.params && ev.organizer.params.CN) ? String(ev.organizer.params.CN).replace(/^"|"$/g, '') : '',
+    };
     const organizer = hidePrivate ? '' : (ev.organizer?.val || ev.organizer || '');
     const location = ev.location || '';
     const description = hidePrivate ? '' : (ev.description || '');
@@ -292,6 +301,8 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
             organizer,
             location: occLocation,
             description: occDescription,
+            ...rawFacts,
+            uid: `${rawFacts.uid}@${occStart.toISOString()}`,
           });
         }
       } catch (e) {
@@ -317,6 +328,7 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
           organizer,
           location,
           description,
+          ...rawFacts,
         });
       }
     }
@@ -324,6 +336,9 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
 
   // Sort events chronologically
   flatEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  // The expanded occurrences themselves, for callers that compute their own view (room displays).
+  if (config && config.raw_events) return flatEvents;
 
   // Truncate to max events
   const selectedEvents = flatEvents.slice(0, maxEvents);

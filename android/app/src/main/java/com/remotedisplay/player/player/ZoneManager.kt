@@ -281,7 +281,8 @@ class ZoneManager(
                 val wRev = a.optLong("widget_rev", 0L)
                 val wUrl = "$renderServerUrl/api/widgets/$widgetId/render" +
                     (if (renderDeviceId.isNotEmpty()) "?device=" + android.net.Uri.encode(renderDeviceId) else "?d=") +
-                    "&rev=" + wRev
+                    "&rev=" + wRev +
+                    com.remotedisplay.player.util.WidgetUrls.panelFragment(a.optString("widget_panel", ""))
                 webView.loadUrl(wUrl)
                 webView.layoutParams = params
                 addZoneView(zone, webView)

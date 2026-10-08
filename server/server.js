@@ -1279,6 +1279,15 @@ app.get('/api/canva/callback', rateLimit(60000, 30), require('./routes/canva').c
 // here; each hook also has its own (30 a minute) inside, so one busy sender cannot starve another.
 app.use('/api/hooks/in', rateLimit(60000, 240), require('./routes/hooks-in'));
 
+/*
+ * Meeting-room display pages (lib/rooms/render.js) read their room's state and send book / end /
+ * check-in here. No session by design: the page runs in a sandboxed frame. Reads are what the
+ * widget's own render already shows; actions need the panel capability the server gave that screen
+ * (routes/room-panel.js), and are limited per device inside. The per-IP limit here is generous on
+ * purpose — every panel in a building polls from one NAT address.
+ */
+app.use('/api/room-panel', rateLimit(60000, 1200), require('./routes/room-panel'));
+
 app.use('/unsubscribe',
   rateLimit(60000, 20),
   express.urlencoded({ extended: false, limit: '4kb' }),
@@ -2447,6 +2456,7 @@ require('./lib/cloud-folders').start(io);   // SharePoint/OneDrive folder syncs
 require('./lib/automation/overrides').setIo(io);   // automation: timed playlist overrides
 require('./lib/automation/events').start();          // automation: REST-hook deliveries, screen up/down events
 require('./lib/social/feeds').start(io);   // social walls: fetch feeds, cache images
+require('./lib/rooms/service').start();   // meeting rooms: release meetings nobody checked in to (off unless an org turns it on)
 
 // Start alert service
 const { startAlertService } = require('./services/alerts');

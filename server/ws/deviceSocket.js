@@ -423,6 +423,7 @@ function resolveGroupSync(device, deviceId) {
 // and only then, so the anti-flash reuse still holds for widgets nobody has touched.
 const widgetFactsOf = db.prepare(`
   SELECT w.updated_at AS rev,
+         w.widget_type AS type,
          w.config,
          w.widget_type,
          w.workspace_id,
@@ -438,13 +439,25 @@ const widgetFactsOf = db.prepare(`
 // also max'd every '{{ds:' widget against the workspace-wide MAX(data_sources.updated_at), which
 // re-revved twenty unrelated room signs, and reloaded their WebViews, whenever one source was
 // renamed. The targeted bump is the whole mechanism now.
-function refreshWidgetRevs(assignments) {
+/*
+ * A meeting-room display's PANEL capability (lib/rooms/service.js panelToken), for this device only.
+ * It lets the page book and end meetings; the player puts it in the widget URL's fragment. Derived
+ * from the device's own token, so it is only ever sent here, over the device's authenticated socket.
+ */
+const panelDeviceOf = db.prepare('SELECT id, device_token FROM devices WHERE id = ?');
+function refreshWidgetRevs(assignments, deviceId = null) {
   if (!Array.isArray(assignments)) return;
+  let panelDevice;
   for (const a of assignments) {
     if (!a || !a.widget_id) continue;
     try {
       const facts = widgetFactsOf.get(a.widget_id);
       if (!facts) continue;
+      if (facts.type === 'room-display' && deviceId) {
+        if (panelDevice === undefined) panelDevice = panelDeviceOf.get(deviceId) || null;
+        const tok = require('../lib/rooms/service').panelToken(a.widget_id, panelDevice);
+        if (tok) a.widget_panel = tok;
+      }
       const rev = facts.rev ?? a.widget_rev ?? 0;
       a.widget_rev = rev;
       // A cloud document is framed same-origin too: Google's embed breaks in an opaque origin, and its
@@ -656,7 +669,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     if (!Array.isArray(assignments)) assignments = [];
     // Head office's content: its data sources and shaders, never the store's (per-origin, §3.2).
     for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = t.workspace_id;
-    refreshWidgetRevs(assignments);
+    refreshWidgetRevs(assignments, deviceId);
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
     playback_order = (pl && pl.published_playback_order) || 'sequential';
@@ -677,14 +690,14 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     }
     for (const a of items) if (a && typeof a === 'object') a.__origin_ws = feed.workspace_id;
     assignments = items;
-    refreshWidgetRevs(assignments);
+    refreshWidgetRevs(assignments, deviceId);
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
   } else if (hookNow) {
     assignments = hookNow.items;
     for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = hookNow.override.workspace_id;
     playback_order = hookNow.playback_order;
-    refreshWidgetRevs(assignments);
+    refreshWidgetRevs(assignments, deviceId);
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
   } else if (corporateSource && device?.playlist_id) {
@@ -701,14 +714,14 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = (pl && pl.workspace_id) || null;
       if (pl && pl.published_playback_order) playback_order = pl.published_playback_order;
     }
-    refreshWidgetRevs(assignments);
+    refreshWidgetRevs(assignments, deviceId);
     refreshContentRevs(assignments);   // re-stamps a.mime_type, so strip live AFTER it
     assignments = dropLiveIfUnsupported(assignments);
   } else if (device?.playlist_id) {
     const playlist = db.prepare('SELECT published_snapshot, published_playback_order, workspace_id FROM playlists WHERE id = ?').get(device.playlist_id);
     if (playlist?.published_snapshot) {
       try { assignments = JSON.parse(playlist.published_snapshot); } catch (e) { assignments = []; }
-      refreshWidgetRevs(assignments);
+      refreshWidgetRevs(assignments, deviceId);
       refreshContentRevs(assignments);   // re-stamps a.mime_type, so strip live AFTER it
       assignments = dropLiveIfUnsupported(assignments);
     }
@@ -740,7 +753,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
         ).get(t.target_ref, t.workspace_id);
         if (pl?.published_snapshot) {
           try { items = JSON.parse(pl.published_snapshot); } catch (e) { items = []; }
-          refreshWidgetRevs(items);
+          refreshWidgetRevs(items, deviceId);
           refreshContentRevs(items);
           items = dropLiveIfUnsupported(items);   // a trigger playlist can carry a live item too
         }

@@ -3610,6 +3610,71 @@ try {
       UNIQUE (feed_id, akey)
     );
   `);
+  /*
+   * Meeting-room displays (lib/rooms). A CONNECTION is an organization's own Microsoft 365 app or
+   * Google service account (secret encrypted with lib/secretbox, never returned); a ROOM belongs to
+   * a workspace and reads one calendar through a connection or an ICS URL. room_bookings remembers
+   * the meetings a panel created (they may be ended from the panel), room_checkins the meetings
+   * checked in to or released. Org settings for both are on organizations.
+   */
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS room_connections (
+      id               TEXT PRIMARY KEY,
+      organization_id  TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      kind             TEXT NOT NULL,
+      name             TEXT NOT NULL,
+      tenant_id        TEXT,
+      client_id        TEXT,
+      secret_enc       TEXT,
+      subject          TEXT,
+      read_only        INTEGER NOT NULL DEFAULT 0,
+      created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_room_connections_org ON room_connections(organization_id);
+    CREATE TABLE IF NOT EXISTS rooms (
+      id             TEXT PRIMARY KEY,
+      workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      name           TEXT NOT NULL,
+      source         TEXT NOT NULL,
+      connection_id  TEXT,
+      calendar_id    TEXT,
+      ics_url_enc    TEXT,
+      timezone       TEXT NOT NULL DEFAULT 'UTC',
+      details        TEXT NOT NULL DEFAULT 'private_hidden',
+      allow_booking  INTEGER NOT NULL DEFAULT 1,
+      cache_json     TEXT,
+      cache_at       INTEGER,
+      last_error     TEXT,
+      error_count    INTEGER NOT NULL DEFAULT 0,
+      next_poll_at   INTEGER,
+      created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_rooms_ws ON rooms(workspace_id);
+    CREATE TABLE IF NOT EXISTS room_bookings (
+      id          TEXT PRIMARY KEY,
+      room_id     TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      event_id    TEXT NOT NULL,
+      device_id   TEXT,
+      start_ms    INTEGER NOT NULL,
+      end_ms      INTEGER NOT NULL,
+      created_at  INTEGER NOT NULL,
+      ended_at    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_room_bookings_room ON room_bookings(room_id, event_id);
+    CREATE TABLE IF NOT EXISTS room_checkins (
+      room_id    TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      event_id   TEXT NOT NULL,
+      kind       TEXT NOT NULL,
+      device_id  TEXT,
+      at         INTEGER NOT NULL,
+      PRIMARY KEY (room_id, event_id)
+    );
+  `);
+  // End any meeting from a panel (not only ones booked there), and release-if-nobody-checks-in.
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN room_end_any INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN room_release_min INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
 
   /*
    * Automation (lib/automation): inbound hooks (a secret URL that raises an emergency alert, fires a

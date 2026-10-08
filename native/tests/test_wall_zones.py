@@ -575,3 +575,14 @@ def test_hold_items_are_not_renderable_media(eng):
     h = Item.parse({"content_id": "H", "mime_type": wz.HOLD_MIME, "remote_url": "hold://blank"})
     assert e.item_dict(h) is None          # never a "video"/"image" load of hold://
     assert e._ready(h)                     # and never "waiting for download"
+
+
+def test_a_room_display_widget_carries_its_panel_capability_in_the_fragment(eng):
+    # The server gives a meeting-room display's screen a capability to book the room (widget_panel);
+    # it must reach the page, and only in the fragment, which never travels to a server log.
+    e, app = eng
+    w = Item.parse({"widget_id": "W1", "widget_type": "room-display", "widget_rev": 3, "widget_panel": "a+b/c="})
+    src = e.item_dict(w)["source"]
+    assert src.endswith("&rev=3#panel=a%2Bb%2Fc%3D")
+    plain = Item.parse({"widget_id": "W2", "widget_type": "clock", "widget_rev": 1})
+    assert "#" not in e.item_dict(plain)["source"]
