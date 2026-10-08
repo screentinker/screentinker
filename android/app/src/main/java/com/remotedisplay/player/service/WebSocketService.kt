@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.remotedisplay.player.MainActivity
 import com.remotedisplay.player.RemoteDisplayApp
+import com.remotedisplay.player.data.DeletedDeviceWipe
 import com.remotedisplay.player.data.OfflinePlayQueue
 import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.telemetry.DeviceInfo
@@ -480,7 +481,17 @@ class WebSocketService : Service() {
                     (args.firstOrNull() as? JSONObject)?.let { ingestClockSample(it.optLong("server_ms", 0L), it.optLong("client_ms", 0L)) }
                 }
 
-                safeOn("device:unpaired") { handleServerRejection("device:unpaired (removed on server)") }
+                safeOn("device:unpaired") { args ->
+                    // Deleted by an operator: its downloads belong to nobody now (DeletedDeviceWipe
+                    // says why not_found never gets here). Done in the service, not MainActivity, so
+                    // it happens even when no Activity is attached to hear about it.
+                    if (DeletedDeviceWipe.isDeletion(args.firstOrNull())) {
+                        val keep = lastTriggerContentIds + DeletedDeviceWipe.triggerContentIds(config.cachedPlaylist)
+                        config.cachedPlaylist = ""
+                        DeletedDeviceWipe.wipe(DeletedDeviceWipe.dirsUnder(filesDir), keep)
+                    }
+                    handleServerRejection("device:unpaired (removed on server)")
+                }
 
                 /*
                  * ⚠️ HONOUR device:throttled INSTEAD OF RECONNECTING INTO IT (#314).
@@ -562,6 +573,9 @@ class WebSocketService : Service() {
                         return@safeOn
                     }
                     Log.i("WebSocketService", "Playlist update received, assignments=${data.optJSONArray("assignments")?.length() ?: "null"}")
+                    // Remembered for DeletedDeviceWipe: the stored offline payload is only written
+                    // when it has assignments, so a trigger-only screen's triggers are not in it.
+                    data.optJSONArray("triggers")?.let { lastTriggerContentIds = DeletedDeviceWipe.triggerContentIds(it) }
                     /*
                      * ⚠️ The power schedule is adopted HERE, in the service, and not in the
                      * Activity's onPlaylistUpdate. The Activity may be stopped or destroyed — it
@@ -892,6 +906,9 @@ class WebSocketService : Service() {
      * thrashed the socket). While awaitingRepair, ALL registration is suppressed except the single
      * scheduled retry, so the screen is stable — no register/reject/register churn.
      */
+    /** Content ids the last payload's triggers referenced; kept by the delete wipe. */
+    @Volatile private var lastTriggerContentIds: Set<String> = emptySet()
+
     private fun handleServerRejection(reason: String) {
         lastRejectionReason = reason
         val settleSec = parseSettleSeconds(reason)
@@ -995,14 +1012,20 @@ class WebSocketService : Service() {
 
     @Volatile private var lastRefreshAt = 0L
 
-    fun requestPlaylistRefresh() {
+    /**
+     * [force] skips the throttle. Only for MainActivity's catch-up on bind: the payload sent when a
+     * screen is paired arrives while ProvisioningActivity is showing, before MainActivity listens,
+     * so without a fresh one the screen waited for the next 60s heartbeat pull. That cost little
+     * while a re-paired screen still had its files, and a minute of nothing once a delete wiped them.
+     */
+    fun requestPlaylistRefresh(force: Boolean = false) {
         if (socket?.connected() != true || config.deviceId.isEmpty()) return
         // #234 follow-up: this emits a FULL device:register (7+ server statements + the identity
         // path + a playlist rebuild), and PlaylistController.next() calls it on every item advance.
         // A 10-second image therefore re-registered six times a minute. The heartbeat already pulls
         // a fresh playlist every 60s, so the per-item call bought nothing and cost a great deal.
         val now = System.currentTimeMillis()
-        if (!RefreshThrottle.shouldRefresh(lastRefreshAt, now)) return
+        if (!force && !RefreshThrottle.shouldRefresh(lastRefreshAt, now)) return
         lastRefreshAt = now
         Log.i("WebSocketService", "Requesting playlist refresh")
         try {

@@ -827,6 +827,15 @@ function mediaUrl(it) {
   const base = "".concat(config.serverUrl, "/uploads/content/").concat(it.filepath);
   return it.content_rev ? "".concat(base, "?rev=").concat(encodeURIComponent(it.content_rev)) : base;
 }
+function dropCacheForDeletedDisplay() {
+  try {
+    const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!sw) return;
+    const keep = triggerItems(triggers).filter((it) => it && it.filepath && !it.remote_url).map((it) => mediaUrl(it));
+    sw.postMessage({ type: "st-device-deleted", keep });
+  } catch (e) {
+  }
+}
 function requestOfflineCache(items, extraItems) {
   try {
     const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -2515,9 +2524,10 @@ function connect(serverUrl) {
       console.log("[settings] PIN updated from the dashboard");
     }
   });
-  socket.on("device:unpaired", () => {
+  socket.on("device:unpaired", (data) => {
     console.warn("Device not found on server \u2014 clearing credentials");
     savePlaylistCache([]);
+    if (data && data.reason === "deleted") dropCacheForDeletedDisplay();
     enterRepairMode("Device was removed from the server. Re-pairing\u2026");
   });
   socket.on("device:auth-error", (data) => {

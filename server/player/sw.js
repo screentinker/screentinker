@@ -176,6 +176,17 @@ let prefetchChain = Promise.resolve();
 
 self.addEventListener('message', (event) => {
   const data = event.data;
+  /*
+   * The display was DELETED on the dashboard (device:unpaired {reason: 'deleted'}), so nothing it
+   * cached belongs to a screen any more — except trigger media, which the page lists in `keep`.
+   * A separate message on purpose: st-cache-playlist's "an empty list never prunes" guard below is
+   * right for a payload and must stay; this one is an explicit operator delete, where empty means
+   * empty. Never sent for reason 'not_found', which a restored backup also produces.
+   */
+  if (data && data.type === 'st-device-deleted' && Array.isArray(data.keep)) {
+    prefetchChain = prefetchChain.then(() => pruneToPlaylist(data.keep)).catch(() => {});
+    return;
+  }
   if (!data || data.type !== 'st-cache-playlist' || !Array.isArray(data.urls)) return;
 
   // The player sends the COMPLETE set of media this display needs, so anything else in the content

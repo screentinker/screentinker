@@ -1155,6 +1155,11 @@ router.delete('/:id', (req, res) => {
   if (io) {
     const { workspaceRoom, emitToWorkspace } = require('../lib/socket-rooms');
     emitToWorkspace(io.of('/dashboard'), workspaceRoom(device.workspace_id), 'dashboard:device-removed', { device_id: req.params.id });
+    // Tell the screen now. Without this a connected player only learned on its next register (a
+    // reconnect, or an app restart), and sat on its old content until then. `reason: 'deleted'` is
+    // what lets a player wipe its downloads: the not_found a register gets is also what a restored
+    // backup or an unreplicated edge says, so players must never wipe on that.
+    io.of('/device').to(req.params.id).emit('device:unpaired', { reason: 'deleted' });
   }
 
   res.json({ success: true });

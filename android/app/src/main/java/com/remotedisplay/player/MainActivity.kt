@@ -130,7 +130,7 @@ class MainActivity : AppCompatActivity() {
             // boot status until the playlist arrives (no blank screen) rather than blindly hiding it.
             if (wsService?.isConnected() == true && !playlistController.isPlaying) {
                 ackedContent.clear()
-                wsService?.requestPlaylistRefresh()
+                wsService?.requestPlaylistRefresh(force = true)   // once per bind, so the throttle has nothing to protect
             }
         }
 
@@ -876,8 +876,9 @@ class MainActivity : AppCompatActivity() {
                 //
                 // A terminal rejection means this device really is gone from the server, and the
                 // operator needs the pairing code, so provisioning is right. The cache is kept
-                // either way: it is what lets the screen keep showing content while someone walks
-                // over to re-pair it, and re-pairing restores the settings anyway.
+                // here: re-pairing restores the settings, so the same files are wanted again. The
+                // one exception is an explicit delete from the dashboard, which the service has
+                // already wiped before this runs (DeletedDeviceWipe).
                 if (!transient && !blocked) {
                     handler.post {
                         startActivity(Intent(this@MainActivity, ProvisioningActivity::class.java).apply {

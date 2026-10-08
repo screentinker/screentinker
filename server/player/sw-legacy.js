@@ -86,6 +86,11 @@ const prefetching = /* @__PURE__ */ new Set();
 let prefetchChain = Promise.resolve();
 self.addEventListener("message", (event) => {
   const data = event.data;
+  if (data && data.type === "st-device-deleted" && Array.isArray(data.keep)) {
+    prefetchChain = prefetchChain.then(() => pruneToPlaylist(data.keep)).catch(() => {
+    });
+    return;
+  }
   if (!data || data.type !== "st-cache-playlist" || !Array.isArray(data.urls)) return;
   if (data.prune && data.urls.length > 0) {
     prefetchChain = prefetchChain.then(() => pruneToPlaylist(data.urls)).catch(() => {

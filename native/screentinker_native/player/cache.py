@@ -259,3 +259,17 @@ class DownloadCoordinator:
 
     def reset_all_backoff(self):
         self.next_attempt.clear()
+
+
+def trigger_content_ids(payload):
+    """Every content id the payload's `triggers` reference (what a delete wipe must keep)."""
+    out = set()
+    if not isinstance(payload, dict):
+        return out
+    for t in payload.get("triggers") or []:
+        if not isinstance(t, dict):
+            continue
+        for a in t.get("items") or []:
+            if isinstance(a, dict) and a.get("content_id"):
+                out.add(str(a["content_id"]))
+    return out
