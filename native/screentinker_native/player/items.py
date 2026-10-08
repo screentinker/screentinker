@@ -50,6 +50,9 @@ class Item:
     transition: dict = None
     audio: dict = None
     tags: list = field(default_factory=list)
+    # An emergency alert card (the hidden cap_alert widget). A change in the SET of these between two
+    # playlists is applied at once, never deferred to the next advance (controller.update_playlist).
+    interrupt: bool = False
 
     @classmethod
     def parse(cls, o):
@@ -79,6 +82,7 @@ class Item:
             transition=transitions.parse(o.get("transition")),
             audio=o.get("audio") if isinstance(o.get("audio"), dict) else None,
             tags=[str(t).strip() for t in (o.get("tags") or []) if str(t).strip()],
+            interrupt=o.get("interrupt") is True or _i(o.get("interrupt")) == 1,
         )
 
     # ⚠️ Continuity key — NOT content_id. Widget items carry content_id "" so keying on it alone made
@@ -125,6 +129,8 @@ class Item:
             "%s~%s" % (r.get("play_from") or "", r.get("play_until") or ""),
             "1" if self.enabled else "0", self.fit_mode or "", transitions.sig(self.transition),
             cond, ",".join(self.tags), json.dumps(meta, sort_keys=True) if isinstance(meta, dict) else "",
+            # Structural: the same item turning into (or out of) an alert must not pass as "unchanged".
+            "i" if self.interrupt else "",
             # ⚠️ content_rev is deliberately NOT here (Android's sig() omits it too). A replaced asset
             # reaches the screen through the READY check on the next mount of that item, and adding a
             # field to a structural fingerprint to fix a stale-content symptom restarts playback on

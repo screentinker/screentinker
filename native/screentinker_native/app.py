@@ -259,12 +259,23 @@ class App:
         self.on_ui(lambda: self._status_changed("paired", name))
 
     def on_unpaired(self, reason):
+        self.stop_audience()
         self.on_ui(lambda: self._status_changed("unpaired", reason))
+
+    def stop_audience(self):
+        """Unpaired or deleted (any reason, any thread): the camera stops NOW — no organization is
+        asking for counts any more — and the saved payload forgets the switch, so a restart before the
+        panel is paired again cannot turn it back on. The controller is thread-safe."""
+        self.audience.on_payload({})
+        cached = self.config.get("cached_payload")
+        if isinstance(cached, dict) and "audience" in cached:
+            self.config.set("cached_payload", {k: v for k, v in cached.items() if k != "audience"})
 
     def on_deleted(self):
         """Deleted on the dashboard (net thread): drop every downloaded asset and bundle render
         EXCEPT trigger media. Trigger items are not in a playlist and must fire from local disk the
         instant they arrive; the routine prune reclaims them later if a new payload drops them."""
+        self.stop_audience()            # before the wipe: privacy first, even if the wipe fails
         engine = getattr(self, "engine", None)
         keep = trigger_content_ids(getattr(engine, "payload", None))
         removed = self.cache.prune(keep)

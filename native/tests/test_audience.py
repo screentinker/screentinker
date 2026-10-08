@@ -570,3 +570,48 @@ def test_the_camera_worker_stops_and_joins_even_with_no_camera(tmp_path):
     w.stop()
     w.join(5)
     assert not w.is_alive()
+
+
+# ---------------------------------------------------------------------- unpaired / deleted
+
+class _Cfg:
+    def __init__(self, d):
+        self.d = d
+
+    def get(self, k, default=None):
+        return self.d.get(k, default)
+
+    def set(self, k, v):
+        self.d[k] = v
+
+
+def _fake_app(ctl, cached):
+    from screentinker_native.app import App
+
+    class _App:
+        stop_audience = App.stop_audience
+        on_unpaired = App.on_unpaired
+        on_deleted = App.on_deleted
+
+        def __init__(self):
+            self.audience, self.config, self.ui = ctl, _Cfg({"cached_payload": cached} if cached else {}), []
+            self.cache = type("C", (), {"prune": lambda self, keep: 0})()
+            self.engine = None
+
+        def on_ui(self, fn):
+            self.ui.append(fn)
+    return _App()
+
+
+@pytest.mark.parametrize("how", ["unpaired", "deleted"])
+def test_unpairing_or_deleting_stops_the_camera_and_forgets_the_switch(ctl, how):
+    """Privacy: a screen removed from its organization must not keep counting, nor turn the camera
+    back on from the saved payload at the next start."""
+    ctl.on_payload(ON)
+    [w] = FakeWorker.started
+    assert w.alive
+    app = _fake_app(ctl, dict(ON, assignments=[{"id": 1}]))
+    app.on_unpaired("not_found") if how == "unpaired" else app.on_deleted()
+    assert not w.alive and ctl.ind[-1] is False           # stopped at once, not on the UI queue
+    assert app.config.d["cached_payload"] == {"assignments": [{"id": 1}]}
+    _fake_app(ctl, None).stop_audience()                  # nothing cached: no error

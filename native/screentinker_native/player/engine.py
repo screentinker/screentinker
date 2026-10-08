@@ -364,6 +364,12 @@ class PlaybackEngine:
                 self._exit_group()
                 return
             self._enter_single()
+        if self.controller.held and self.controller.interrupts_changed(assignments):
+            # An emergency alert raised or cleared is never parked behind a visitor's session: end the
+            # session (wiped) and drop the hold, as joining a group does, so it applies now.
+            log.info("emergency alert changed: ending the interactive session")
+            self._hide_kiosk()
+            self.controller.drop_hold()
         self.controller.update_playlist(assignments, p.get("playback_order") or "sequential")
         if group and not wall:
             if not self.playing:

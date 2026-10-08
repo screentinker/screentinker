@@ -34,6 +34,10 @@ def _timer(cb):
     return t
 
 
+def _interrupt_keys(items):
+    return {i.key for i in items if i.interrupt}
+
+
 class PlaylistController:
     def __init__(self, on_item_changed, on_playlist_empty, on_request_refresh=None,
                  on_nothing_scheduled=None, on_waiting_for_content=None, on_play_log=None,
@@ -208,6 +212,13 @@ class PlaylistController:
         old_sig = [i.sig() for i in self.items]
         new_sig = [i.sig() for i in new_items]
         if old_sig == new_sig and self.items:
+            # Back to what is already playing (A -> B -> A, or an alert raised then cleared before the
+            # deferred swap landed): the swap to B is now stale. Left armed, the next advance or the
+            # deadline applied it anyway and showed a cleared alert for minutes.
+            if self.pending_items is not None:
+                log.info("playlist back to the current items: cancelling the deferred swap")
+                self.pending_items = self.pending_successor = None
+                self._pending_deadline.stop()
             # Duration/weight-only edit: patch in place, no restart (a sync group re-anchors on it).
             changed = False
             for i, ni in enumerate(new_items):
@@ -218,16 +229,21 @@ class PlaylistController:
                     changed = True
                 elif cur.raw.get("_ds") != ni.raw.get("_ds"):
                     cur.raw = ni.raw        # fresh data-source values for play_when, no restart
-            log.info("durations updated in place" if changed else "playlist unchanged (%d items)", len(self.items))
+            log.info("durations updated in place (%d items)" if changed else "playlist unchanged (%d items)", len(self.items))
             return
 
         log.info("playlist changed: %d -> %d items", len(self.items), len(new_items))
         cur = self.current_item
         playing_key = cur.key if cur else None
         playing_rev = cur.widget_rev if cur else 0
+        # An emergency alert raised or cleared: applied NOW, mid-item, never deferred; a raised one is
+        # put on screen at once rather than when the rotation reaches it.
+        old_int, new_int = _interrupt_keys(self.items), _interrupt_keys(new_items)
+        interrupt_changed = old_int != new_int
+        raised = new_int - old_int
 
         if PL.should_defer_swap(self.is_running, self.wall_follower, self.has_content_on_screen,
-                                playing_key, [i.key for i in new_items]):
+                                playing_key, [i.key for i in new_items], interrupt_changed):
             succ = None
             n = len(self.items)
             for k in range(1, n + 1):
@@ -248,6 +264,13 @@ class PlaylistController:
             self._advance.stop()
             self._emit_empty()
         elif self.is_running:
+            if raised and not self.wall_follower:
+                ai = next((i for i, it in enumerate(self.items) if it.key in raised and self._playable_now(i)), -1)
+                if ai >= 0:
+                    log.info("emergency alert raised: interrupting at index %d", ai)
+                    self.current_index = ai
+                    self._play_current()
+                    return
             if playing_key is not None:
                 ni = next((i for i, it in enumerate(self.items) if it.key == playing_key), -1)
                 if ni >= 0 and self.has_content_on_screen:
@@ -268,6 +291,10 @@ class PlaylistController:
                 self._on_content_not_ready()
         else:
             self.current_index = 0
+
+    def interrupts_changed(self, assignments):
+        """Would this playlist raise or clear an emergency alert against the one playing?"""
+        return _interrupt_keys(self.items) != _interrupt_keys([Item.parse(a) for a in (assignments or [])])
 
     def remove_content(self, content_id):
         was = self.current_item.content_id if self.current_item else None
