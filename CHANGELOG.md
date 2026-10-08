@@ -34,6 +34,15 @@
     - removed files are taken out
   - The folder sync uses your organization's own Microsoft Entra app (Settings → Microsoft 365),
     so files are read with permissions your admins control. See `docs/cloud-documents.md`.
+- **Grafana, Power BI and Tableau dashboards on screens**, with the new **BI Dashboard** widget.
+  - An organization admin adds the organization's own Grafana token, Power BI app or Tableau
+    connected app in **Settings → BI dashboards**, and editors pick a dashboard from it. A public
+    link also works: a Grafana public dashboard, Power BI "Publish to web", or Tableau Public.
+  - Credentials stay on the server. Screens get a rendered image (Grafana) or a short-lived,
+    view-only token (Power BI, Tableau).
+  - Grafana images refresh on a schedule and stay up when Grafana is down. Power BI pages and
+    Tableau sheets can rotate.
+  - See `docs/bi-dashboards.md`, including what each service needs set up on its side.
 
 - **New player versions roll out in waves, and stop themselves if they're bad** (Platform → Player
   rollouts).

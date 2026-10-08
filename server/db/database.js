@@ -3479,6 +3479,23 @@ try {
       updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
   `);
+  // BI connections (lib/bi/connections.js): an organization's Grafana / Power BI / Tableau
+  // credentials for the bi-dashboard widget. The secret is secretbox-encrypted and never returned.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bi_connections (
+      id              TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      created_by      TEXT,
+      kind            TEXT NOT NULL,
+      name            TEXT NOT NULL,
+      config          TEXT NOT NULL DEFAULT '{}',
+      secret_enc      TEXT,
+      allow_private   INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_bi_connections_org ON bi_connections(organization_id);
+  `);
   // Device tags (JSON array, lib/content-tags normalizer) and dynamic group rules
   // (lib/device-group-rules.js): NULL rules = a hand-built group, as before.
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }
