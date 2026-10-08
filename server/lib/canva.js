@@ -441,18 +441,78 @@ async function importDesign(opts) {
   return { content: made, playlist_id: playlistId };
 }
 
+/*
+ * May the person who made this link still replace this item? A sync writes AS them (their Canva
+ * grant, their name in version history), so it may do only what they could do by pressing Replace
+ * file themselves: they must still have an account, still be able to write the item's workspace
+ * (lib/tenancy accessContext, as checkContentWrite asks it), and the item must not be media head
+ * office's playlist plays unless they may author it (corporate guard, CORPORATE_MEDIA). Removing
+ * their links when they are deleted or leave is done there; this is the check at the moment of
+ * writing, which also covers a role change. Returns null, or the reason to record on the link.
+ */
+function ownerRefusal(db, owner, content) {
+  if (!owner) return 'The person who imported this from Canva no longer has an account, so it is no longer synced. Import the design again to keep it up to date.';
+  const notWriter = 'The person who imported this from Canva can no longer edit this workspace, so it is no longer synced. Import the design again to keep it up to date.';
+  const ws = content.workspace_id && db.prepare('SELECT * FROM workspaces WHERE id = ?').get(content.workspace_id);
+  const ctx = ws && require('./tenancy').accessContext(owner.id, owner.role, ws);
+  if (!ctx || (!ctx.actingAs && ctx.workspaceRole !== 'workspace_admin' && ctx.workspaceRole !== 'workspace_editor')) return notWriter;
+  try { require('./corporate/guard').assertMediaWritable(ownerActor(owner), 'content', content.id); } catch (e) {
+    if (e && e.name === 'CorporateError') return `Not synced from Canva. ${e.message}`;
+    throw e;
+  }
+  return null;
+}
+
+const ownerActor = (owner) => require('./corporate/actor').fromUser(owner);
+
+/*
+ * Content ids with a sync running in THIS process. A forced "Sync now" and the sweep (or two
+ * presses) would otherwise both export and both replace the same item, racing the file moves in
+ * lib/content-replace. The route answers 409 for an id in here; the sweep skips it. ⚠️ In-process
+ * only: with scale-out two nodes can still sync one link at once (the sweep runs on each), which
+ * costs a second export but each replace is still complete on its own.
+ */
+const inFlight = new Set();
+const syncing = (contentId) => inFlight.has(contentId);
+
 /**
  * Refresh every link of one design (for one person and format) if the design changed.
  * Resolves { checked, replaced, unchanged, errors }.
+ *
+ * ⚠️ The claim on `inFlight` is taken before the first await, so a caller that starts this in the
+ * same tick as it answered (routes/canva.js through runJob) is already marked when the next
+ * request is handled.
  */
-async function syncDesign(links, { force = false, reqOrIo = null } = {}) {
+async function syncDesign(links, opts = {}) {
+  const mine = links.filter((l) => !inFlight.has(l.content_id));
+  for (const l of mine) inFlight.add(l.content_id);
+  try { return await syncClaimed(mine, opts); }
+  finally { for (const l of mine) inFlight.delete(l.content_id); }
+}
+
+async function syncClaimed(links, { force = false, reqOrIo = null } = {}) {
   const db = dbOf();
   const out = { checked: links.length, replaced: 0, unchanged: 0, errors: 0 };
+  if (!links.length) return out;
+
+  // Before anything is asked of Canva: a link whose owner may no longer write the item spends
+  // nothing of their grant and changes nothing.
+  const owner = db.prepare('SELECT id, role FROM users WHERE id = ?').get(links[0].user_id) || null;
+  const allowed = [];
+  for (const l of links) {
+    const content = db.prepare('SELECT * FROM content WHERE id = ?').get(l.content_id);
+    if (!content) { db.prepare('DELETE FROM canva_links WHERE content_id = ?').run(l.content_id); out.checked--; continue; }
+    const why = ownerRefusal(db, owner, content);
+    if (!why) { allowed.push(l); continue; }
+    db.prepare('UPDATE canva_links SET last_error = ?, last_checked_at = ? WHERE content_id = ?').run(why, now(), l.content_id);
+    out.errors++;
+  }
+  links = allowed;
   if (!links.length) return out;
   const first = links[0];
   const fail = (msg) => {
     for (const l of links) db.prepare('UPDATE canva_links SET last_error = ?, last_checked_at = ? WHERE content_id = ?').run(msg, now(), l.content_id);
-    out.errors = links.length;
+    out.errors += links.length;
     return out;
   };
   const integration = integrationByKey(first.integration_key);
@@ -489,7 +549,9 @@ async function syncDesign(links, { force = false, reqOrIo = null } = {}) {
       try {
         if (!url) throw new CanvaError('Canva returned fewer files than pages asked for.', 'export_short');
         const file = await downloadExport(url, content.filename);
-        const r = await replaceContentBytes({ content, file, actor: { userId: l.user_id, kind: 'import', label: 'Canva sync' }, reqOrIo });
+        // `writer`: the corporate rule is judged again at the write, for an item head office took
+        // into a corporate playlist while the export was rendering.
+        const r = await replaceContentBytes({ content, file, actor: { userId: l.user_id, kind: 'import', label: 'Canva sync' }, writer: ownerActor(owner), reqOrIo });
         if (r.status >= 400) throw new CanvaError((r.body && r.body.error) || 'The item could not be replaced.', 'replace');
         db.prepare('UPDATE canva_links SET design_updated_at = ?, design_title = ?, last_synced_at = ?, last_checked_at = ?, last_error = NULL WHERE content_id = ?')
           .run(design.updated_at, safeTitle(design.title), now(), now(), l.content_id);
@@ -568,5 +630,5 @@ function runJob({ workspaceId, userId, kind }, work) {
 module.exports = {
   SCOPES, CanvaError, integrationForOrg, integrationForWorkspace, integrationByKey, redirectUri, newPkce, authorizeUrl,
   tokenRequest, completeConnect, connectionRow, accessToken, refreshConnection, revoke, api, listDesigns, getDesign,
-  listPages, exportDesign, checkExportUrl, downloadExport, importDesign, syncDesign, syncContent, sweep, start, runJob,
+  listPages, exportDesign, checkExportUrl, downloadExport, importDesign, syncDesign, syncContent, syncing, sweep, start, runJob,
 };

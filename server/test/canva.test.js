@@ -12,6 +12,9 @@
  *     and can build a playlist in page order
  *   - sync replaces bytes ONLY when the design changed, through the replace path (revision bumps)
  *   - an export URL outside canva.com is never fetched
+ *   - a sync writes only what the link's owner could: they must still exist, still write the
+ *     workspace, and may not change media head office's corporate playlist plays (CORPORATE_MEDIA)
+ *   - force is the owner's or an admin's; a second sync of an item that is syncing answers 409
  *   - disconnect revokes at Canva and removes the connection
  */
 
@@ -263,12 +266,14 @@ test('designs are listed; an expired token is refreshed once and the rotated ref
 });
 
 let IMPORTED = [];
+let PLAYLIST = null;
 test('import exports the pages, creates one item per page, links them, and builds a playlist', async () => {
   const r = await api('/api/canva/import', auth({ design_id: 'DAF1', pages: [2, 1], format: 'png', playlist_name: 'Spring menu' }));
   assert.equal(r.status, 202, JSON.stringify(r.body));
   const job = await pollJob(r.body.job_id);
   assert.equal(job.status, 'done', JSON.stringify(job));
   IMPORTED = job.result.content_ids;
+  PLAYLIST = job.result.playlist_id;
   assert.equal(IMPORTED.length, 2);
   const rows = IMPORTED.map((id) => q1('SELECT * FROM content WHERE id = ?', id));
   assert.deepEqual(rows.map((c) => c.filename), ['Spring menu — page 1.png', 'Spring menu — page 2.png'], 'page order');
@@ -338,6 +343,119 @@ test('Canva is JWT only: an API token cannot reach it', async () => {
   assert.ok(raw, JSON.stringify(tok.body));
   const r = await api('/api/canva/status', { headers: { Authorization: `Bearer ${raw}` } });
   assert.equal(r.status, 401);
+});
+
+let EDITOR;
+const asEditor = (body) => ({
+  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${EDITOR.token}`, 'X-Workspace-Id': ADMIN.ws },
+  body: JSON.stringify(body),
+});
+const lastError = (id) => q1('SELECT last_error FROM canva_links WHERE content_id = ?', id).last_error;
+
+test('force is the owner\'s or an admin\'s, and an item already syncing answers 409', async () => {
+  const reg = await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'editor@example.test', password: 'Passw0rd123', name: 'Editor' }) });
+  assert.equal(reg.status, 201, JSON.stringify(reg.body));
+  EDITOR = { token: reg.body.token, id: reg.body.user.id };
+  run("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'workspace_editor')", ADMIN.ws, EDITOR.id);
+
+  const forced = await api(`/api/canva/links/${IMPORTED[0]}/sync`, asEditor({ force: true }));
+  assert.equal(forced.status, 403, 'an editor who is not the owner may not spend the owner\'s grant');
+  assert.equal(forced.body.code, 'force_not_allowed');
+  const check = await api(`/api/canva/links/${IMPORTED[0]}/sync`, asEditor({}));
+  assert.equal(check.status, 202, 'but may still ask for a check');
+  assert.equal((await pollJob(check.body.job_id)).status, 'done');
+
+  const exportsBefore = M.exportsCreated;
+  const first = await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({ force: true }));
+  assert.equal(first.status, 202, JSON.stringify(first.body));
+  const second = await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({ force: true }));
+  assert.equal(second.status, 409, 'a second sync of an item that is syncing is refused');
+  assert.equal(second.body.code, 'sync_running');
+  const job = await pollJob(first.body.job_id);
+  assert.equal(job.status, 'done', JSON.stringify(job));
+  assert.equal(job.result.replaced, 1, 'the owner\'s force re-exports an unchanged design');
+  assert.equal(M.exportsCreated, exportsBefore + 1, 'exactly one export');
+  const again = await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({}));
+  assert.equal(again.status, 202, 'the claim is released when the sync ends');
+  await pollJob(again.body.job_id);
+});
+
+test('a sync refuses when the link owner is gone or can no longer write the workspace', async () => {
+  const before = q1('SELECT updated_at, byte_digest FROM content WHERE id = ?', IMPORTED[0]);
+  const exportsBefore = M.exportsCreated;
+  M.designUpdatedAt = 3000; M.version = 3;   // a real change, so only the owner check can stop it
+
+  run('UPDATE canva_links SET user_id = ? WHERE content_id = ?', EDITOR.id, IMPORTED[0]);
+  run('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?', ADMIN.ws, EDITOR.id);
+  let job = await pollJob((await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({}))).body.job_id);
+  assert.equal(job.status, 'done', JSON.stringify(job));
+  assert.equal(job.result.errors, 1);
+  assert.match(lastError(IMPORTED[0]), /can no longer edit this workspace/);
+
+  run("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'workspace_viewer')", ADMIN.ws, EDITOR.id);
+  job = await pollJob((await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({}))).body.job_id);
+  assert.equal(job.result.errors, 1, 'a viewer is not a writer');
+  assert.match(lastError(IMPORTED[0]), /can no longer edit this workspace/);
+
+  run('UPDATE canva_links SET user_id = ? WHERE content_id = ?', 'no-such-user', IMPORTED[0]);
+  job = await pollJob((await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({}))).body.job_id);
+  assert.equal(job.result.errors, 1);
+  assert.match(lastError(IMPORTED[0]), /no longer has an account/);
+
+  assert.equal(M.exportsCreated, exportsBefore, 'nothing was asked of Canva');
+  assert.deepEqual(q1('SELECT updated_at, byte_digest FROM content WHERE id = ?', IMPORTED[0]), before, 'and nothing was replaced');
+  run('UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_id = ?', 'workspace_editor', ADMIN.ws, EDITOR.id);
+});
+
+test('a sync may not change media head office\'s corporate playlist plays, unless the owner may author it', async () => {
+  const before = q1('SELECT updated_at, byte_digest FROM content WHERE id = ?', IMPORTED[0]);
+  const exportsBefore = M.exportsCreated;
+  run('UPDATE canva_links SET user_id = ? WHERE content_id = ?', EDITOR.id, IMPORTED[0]);   // a store editor's design
+  run('UPDATE playlists SET corporate = 1 WHERE id = ?', PLAYLIST);                           // head office mandates it
+  try {
+    const job = await pollJob((await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({}))).body.job_id);
+    assert.equal(job.status, 'done', JSON.stringify(job));
+    assert.equal(job.result.errors, 1);
+    assert.equal(job.result.replaced, 0);
+    assert.match(lastError(IMPORTED[0]), /^Not synced from Canva\. .*head office/);
+    assert.equal(M.exportsCreated, exportsBefore, 'refused before the export');
+    assert.deepEqual(q1('SELECT updated_at, byte_digest FROM content WHERE id = ?', IMPORTED[0]), before);
+
+    // The rule is ALSO judged inside replaceContentBytes, for every caller that names a writer
+    // (an item that became governed while its export rendered): the bytes are discarded, the row untouched.
+    const out = await new Promise((resolve) => {
+      const lib = (m) => JSON.stringify(path.join(__dirname, '..', 'lib', m));
+      const child = spawn(process.execPath, ['-e', `
+        process.env.DATA_DIR = ${JSON.stringify(DATA_DIR)};
+        const fs = require('fs'), path = require('path');
+        const config = require(${JSON.stringify(path.join(__dirname, '..', 'config'))});
+        const { db } = require(${JSON.stringify(path.join(__dirname, '..', 'db', 'database'))});
+        const tmp = path.join(config.contentDir, 'canva-belt.part');
+        fs.writeFileSync(tmp, Buffer.from(${JSON.stringify(png(9, 9, 9).toString('base64'))}, 'base64'));
+        const content = db.prepare('SELECT * FROM content WHERE id = ?').get(${JSON.stringify(IMPORTED[0])});
+        const writer = require(${lib('corporate/actor')}).fromUser(db.prepare('SELECT id, role FROM users WHERE id = ?').get(${JSON.stringify(EDITOR.id)}));
+        require(${lib('content-replace')}).replaceContentBytes({ content, file: { path: tmp, size: fs.statSync(tmp).size, originalname: 'x.png' }, actor: null, writer })
+          .then((r) => { console.log(JSON.stringify({ status: r.status, code: r.body.code, left: fs.existsSync(tmp) })); process.exit(0); }, (e) => { console.error(e); process.exit(1); });
+      `], { env: { ...process.env, DATA_DIR, NODE_ENV: 'test' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let o = '';
+      child.stdout.on('data', (d) => { o += d; });
+      child.stderr.on('data', (d) => { o += d; });
+      child.on('exit', () => resolve(o));
+    });
+    const r = JSON.parse(out.trim().split('\n').pop());
+    assert.deepEqual(r, { status: 403, code: 'CORPORATE_MEDIA', left: false }, out);
+    assert.deepEqual(q1('SELECT updated_at, byte_digest FROM content WHERE id = ?', IMPORTED[0]), before);
+
+    // The org owner may author corporate content, so their link still syncs.
+    run('UPDATE canva_links SET user_id = ? WHERE content_id = ?', ADMIN.id, IMPORTED[0]);
+    const ok = await pollJob((await api(`/api/canva/links/${IMPORTED[0]}/sync`, auth({}))).body.job_id);
+    assert.equal(ok.result.replaced, 1, JSON.stringify(ok));
+    assert.equal(lastError(IMPORTED[0]), null);
+  } finally {
+    run('UPDATE playlists SET corporate = 0 WHERE id = ?', PLAYLIST);
+    run('UPDATE canva_links SET user_id = ? WHERE content_id = ?', ADMIN.id, IMPORTED[0]);
+  }
 });
 
 test('disconnect revokes at Canva and forgets the connection', async () => {

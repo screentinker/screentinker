@@ -1122,7 +1122,7 @@ router.put('/:id/replace', replacePreflight, upload.single('file'), async (req, 
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
   const { replaceContentBytes } = require('../lib/content-replace');
-  const out = await replaceContentBytes({ content, file: req.file, actor: require('../lib/releases').actorOf(req), reqOrIo: req });
+  const out = await replaceContentBytes({ content, file: req.file, actor: require('../lib/releases').actorOf(req), writer: req, reqOrIo: req });
   res.status(out.status).json(out.body);
 });
 

@@ -17,7 +17,7 @@ const router = express.Router();
 const config = require('../config');
 const { db } = require('../db/database');
 const canva = require('../lib/canva');
-const { canRead, canWrite, isOrgAdmin } = require('../lib/permissions');
+const { canRead, canWrite, canAdmin, isOrgAdmin } = require('../lib/permissions');
 const { checkStorageLimit } = require('../middleware/subscription');
 
 const TX_COOKIE = 'st_canva_tx';
@@ -268,12 +268,21 @@ function linkInWorkspace(req, res) {
   return l;
 }
 
+/*
+ * Sync now. Any writer may ask for a CHECK (it exports only if the design changed). `force`
+ * re-exports regardless, spending the link owner's Canva grant, so only that person or a
+ * workspace/org admin may ask for it. One sync per item at a time (lib/canva.js inFlight).
+ */
 router.post('/links/:contentId/sync', (req, res) => {
   if (!needWorkspace(req, res)) return;
   if (!canWrite(req)) return res.status(403).json({ error: 'Read-only access' });
   const l = linkInWorkspace(req, res);
   if (!l) return;
   const force = !!(req.body && req.body.force);
+  if (force && l.user_id !== req.user.id && !canAdmin(req)) {
+    return res.status(403).json({ error: 'Only the person who imported this, or an admin, can force a sync.', code: 'force_not_allowed' });
+  }
+  if (canva.syncing(l.content_id)) return res.status(409).json({ error: 'This item is already being synced. Try again in a moment.', code: 'sync_running' });
   const io = req.app.get('io');
   const jobId = canva.runJob({ workspaceId: req.workspaceId, userId: req.user.id, kind: 'sync' },
     () => canva.syncContent([l.content_id], { force, reqOrIo: io }));
