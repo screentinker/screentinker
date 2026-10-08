@@ -271,22 +271,25 @@ test('the platforms and comparison sections each end in a call to action', () =>
   assert.match(LANDING, /href="\/compare\/optisigns-alternative\.html"[^>]*>OptiSigns alternative/);
 });
 
-test('the live deployed count sits in the trust strip and degrades to three columns', () => {
+test('the live deployed count sits in the hero, hidden until a real number arrives, and is shown once', () => {
   /*
    * ⚠️ Only the deployment that collects install statistics answers /api/public/stats. Everywhere
-   * else it 404s, and on a new instance the count is 0 — so the cell starts hidden and the strip is
-   * three columns until a number arrives. A marketing page must not show an empty frame or a zero.
+   * else it 404s, and on a new instance the count is 0 — so the line starts hidden and stays hidden.
+   * A marketing page must not show an empty frame or a zero.
    */
+  const hero = LANDING.slice(LANDING.indexOf('<section class="hero">'), LANDING.indexOf('</section>', LANDING.indexOf('<section class="hero">')));
+  assert.match(hero, /<p class="hero-proof" id="deployed-stat" hidden>/);
+  assert.match(hero, /id="deployed-count"/);
+  // It must sit AFTER the trial CTA: social proof backs the ask, it doesn't replace it.
+  assert.ok(hero.indexOf('id="deployed-stat"') > hero.indexOf('Start Free Trial'));
+  // Rendered once: not also in the trust strip.
+  assert.equal((LANDING.match(/id="deployed-count"/g) || []).length, 1);
   const strip = LANDING.slice(LANDING.indexOf('<div class="trust-strip'), LANDING.indexOf('class="price-math"'));
-  assert.match(strip, /class="trust-strip cols-3" id="trustStrip"/);
-  assert.match(strip, /<div id="deployed-stat" hidden>/);
-  assert.match(strip, /id="deployed-count"/);
-  assert.match(LANDING, /\.trust-strip\.cols-3 \{ grid-template-columns:repeat\(3/);
-  // And the existing stats fetch is what widens it — the cell and the switch must move together.
+  assert.ok(!strip.includes('deployed'), 'the strip no longer carries the count');
+  // The fetch only reveals it for a real, positive number.
   const fetchBlock = LANDING.slice(LANDING.indexOf("fetch('/api/public/stats')"));
-  assert.match(fetchBlock.slice(0, 900), /classList\.remove\('cols-3'\)/);
-  // The old standalone paragraph is gone, so the count is not rendered twice.
-  assert.ok(!LANDING.includes('screens deployed with ScreenTinker'));
+  assert.match(fetchBlock.slice(0, 600), /s\.screens > 0/);
+  assert.match(fetchBlock.slice(0, 600), /getElementById\('deployed-stat'\)\.hidden = false/);
 });
 
 /* ─────────────── sales (lib/promotions.js): the page shows what checkout charges ─────────────── */
