@@ -281,6 +281,7 @@ export default {
   'auth.sso_required': "あなたの組織ではシングル サインオンが必要です。上記の「シングル サインオンを続行」を使用してください。ここではパスワードは機能しません。",
   'auth.sso_err_sso_required': "あなたの組織には独自のシングル サインオンが必要です。組織にはシングル サインオン オプションを使用してください。",
   'auth.sso_err_domain_not_allowed': "あなたの組織は、サインイン用の電子メール ドメインを検証していません。 {brandName} で確認するよう管理者に依頼してください。",
+  'auth.sso_err_saml_transient_nameid': "組織の SAML ID プロバイダーが一時的な (transient) ユーザー ID を送信しました。永続的な NameID またはメール形式の NameID を設定するよう管理者に依頼してください。",
   'auth.sso_err_account_exists_other_provider': "このメールアドレスを持つアカウントはすでに存在しており、別のプロバイダーを通じてサインインしています。そのプロバイダーを使用するか、管理者に問い合わせてください。",
   'auth.signin_microsoft': "Microsoft でサインイン",
   'auth.back_to_signin': "サインインに戻る",

@@ -12,9 +12,14 @@
  * ⚠️ WHAT IS REQUIRED OF A RESPONSE (node-saml does the XML work; these are our choices):
  *   - the ASSERTION is signed by the IdP certificate we were given (wantAssertionsSigned); a signed
  *     Response wrapping an unsigned assertion is not enough, which closes the classic wrapping hole
- *   - its Issuer is the IdP entityID we were given, its Audience is our SP entityID
+ *   - its Issuer is the IdP entityID we were given (issuerMatches, below: node-saml does not check
+ *     it on login responses), its Audience is our SP entityID
  *   - it answers an AuthnRequest WE sent (InResponseTo, kept in saml_requests for 10 minutes so a
  *     scaled-out node can finish a login another began) — so IdP-initiated logins are refused
+ *   - ...and that request was started by THIS browser: /start binds the request ID to it in a signed
+ *     cookie (st_saml_tx, routes/auth.js), so a response cannot be posted from someone else's browser
+ *     to sign them into the attacker's account (login CSRF)
+ *   - its NameID is not transient (we key accounts on it; a transient one changes every login)
  *   - it is current (NotBefore/NotOnOrAfter, 3 minutes of clock skew)
  *   - its assertion id has not been used before (saml_used_assertions; a unique insert, so two
  *     copies of one response racing each other cannot both succeed)
@@ -129,7 +134,11 @@ const cacheProvider = {
 const spEntityIdFor = (origin, slug) => `${origin}/api/auth/saml/${slug}/metadata`;
 const acsUrlFor = (origin, slug) => `${origin}/api/auth/saml/${slug}/acs`;
 
-function samlFor(provider, origin) {
+/**
+ * `extra` is merged into node-saml's options; the start route passes generateUniqueId so it knows the
+ * AuthnRequest ID it is about to send and can bind it to the browser (routes/auth.js, st_saml_tx).
+ */
+function samlFor(provider, origin, extra = {}) {
   const { SAML, ValidateInResponseTo } = require('@node-saml/node-saml');
   const certs = normaliseCerts(provider.samlCert);
   if (!certs) throw new Error('This provider has no valid signing certificate.');
@@ -151,8 +160,33 @@ function samlFor(provider, origin) {
     identifierFormat: null,                   // let the IdP choose; we key on the NameID it sends
     disableRequestedAuthnContext: true,       // requesting one breaks Entra ID and ADFS with MFA
     authnRequestBinding: 'HTTP-Redirect',
+    ...extra,
   });
 }
+
+/** A fresh AuthnRequest ID, in node-saml's own shape ('_' + 40 hex). */
+const newRequestId = () => `_${crypto.randomBytes(20).toString('hex')}`;
+
+/*
+ * ⚠️ node-saml's `idpIssuer` is checked ONLY on LogoutRequest/LogoutResponse, never on a login
+ * response, so the Issuer promise at the top of this file was not being kept by the library. This is
+ * where it is kept. profile.issuer is the ASSERTION's Issuer (the signed one), not the Response's.
+ * Trailing slashes are stripped on both sides: rowToProvider strips the configured one, and Entra ID
+ * entityIDs end in '/'.
+ */
+function issuerMatches(profile, provider) {
+  const strip = (v) => String(v || '').trim().replace(/\/+$/, '');
+  const got = strip(profile && profile.issuer);
+  return !!got && got === strip(provider && provider.issuer);
+}
+
+/*
+ * A transient NameID is a fresh opaque value on every login. We key the account on the NameID
+ * (provider_id), so the first login would work and every later one would fail as subject_mismatch —
+ * a lockout that looks like an attack. Refused up front with a reason the admin can act on.
+ */
+const TRANSIENT_NAMEID = 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient';
+const isTransientNameId = (profile) => String((profile && profile.nameIDFormat) || '').trim() === TRANSIENT_NAMEID;
 
 function pick(profile, keys) {
   for (const k of keys) {
@@ -197,4 +231,7 @@ function consumeAssertion(id) {
   } catch { return false; }
 }
 
-module.exports = { assertionIdOf, normaliseCerts, certInfo, parseIdpMetadata, samlFor, profileToClaims, consumeAssertion, spEntityIdFor, acsUrlFor, cacheProvider };
+module.exports = {
+  assertionIdOf, normaliseCerts, certInfo, parseIdpMetadata, samlFor, profileToClaims, consumeAssertion,
+  spEntityIdFor, acsUrlFor, cacheProvider, newRequestId, issuerMatches, isTransientNameId,
+};

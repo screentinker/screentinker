@@ -1033,6 +1033,7 @@ export default {
   'auth.sso_required': 'Your organization requires single sign-on. Use \u201cContinue with single sign-on\u201d above \u2014 your password will not work here.',
   'auth.sso_err_sso_required': 'Your organization requires its own single sign-on. Use the single sign-on option for your organization.',
   'auth.sso_err_domain_not_allowed': 'Your organization has not verified that email domain for sign-in. Ask your administrator to verify it in {brandName}.',
+  'auth.sso_err_saml_transient_nameid': 'Your organization\'s SAML identity provider sent a temporary (transient) user ID. Ask your administrator to configure a persistent NameID or an email-format NameID.',
   'auth.sso_err_account_exists_other_provider': 'An account with this email already exists and signs in through a different provider. Use that provider, or ask your administrator.',
   'auth.signin_microsoft': 'Sign in with Microsoft',
   'auth.back_to_signin': 'Back to Sign In',

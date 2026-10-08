@@ -12,6 +12,9 @@
  *   - refused: a replay, an unsolicited (IdP-initiated) response, a tampered assertion, one signed
  *     by another key, one for another audience, an expired one, and an email outside the org's
  *     verified domains
+ *   - refused: a response posted from a browser that did not start that login (login CSRF: no
+ *     st_saml_tx cookie, or another browser's), an assertion from the wrong Issuer, a transient NameID
+ *   - a provider that throws while loading becomes a server_error redirect, not a dead process
  *
  * The IdP keys are generated per run with openssl, so no private key lives in the repository.
  */
@@ -69,25 +72,38 @@ function metadataXml(cert) {
 </md:EntityDescriptor>`;
 }
 
-/** Start a login and return the AuthnRequest id the server minted. */
+/*
+ * The browser that started the latest login: startLogin() stores its st_saml_tx cookie here and
+ * postAcs() sends it, as a real browser would. Pass { tx } to post from a different "browser".
+ */
+let TX = null;
+
+/** Start a login and return the AuthnRequest id the server minted (and remember its cookie). */
 async function startLogin() {
   const r = await api(`/api/auth/saml/${PROVIDER.slug}/start`);
   assert.equal(r.status, 302);
   const loc = new URL(r.headers.get('location'));
   assert.equal(loc.origin + loc.pathname, 'https://idp.acme.test/sso');
   const xml = zlib.inflateRawSync(Buffer.from(loc.searchParams.get('SAMLRequest'), 'base64')).toString();
+  const setCookie = r.headers.get('set-cookie') || '';
+  const m = /st_saml_tx=([^;]+)/.exec(setCookie);
+  assert.ok(m, 'the start binds the request to this browser');
+  assert.match(setCookie, /HttpOnly/i);
+  assert.match(setCookie, /Path=\/api\/auth\/saml/);
+  TX = m[1];
   return /\sID="([^"]+)"/.exec(xml)[1];
 }
 
 /** A SAMLResponse as an IdP would post it, with the assertion signed. */
 function samlResponse({ inResponseTo, email = 'pat@acme.test', nameId = 'pat-0001', key = KEYS.idp.key,
-  audience = PROVIDER.sp_entity_id, notOnOrAfterMs = 5 * 60 * 1000, tamper = null } = {}) {
+  audience = PROVIDER.sp_entity_id, notOnOrAfterMs = 5 * 60 * 1000, tamper = null, issuer = IDP_ENTITY,
+  nameIdFormat = 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified' } = {}) {
   const now = new Date();
   const later = new Date(now.getTime() + notOnOrAfterMs).toISOString();
   const before = new Date(now.getTime() - 60 * 1000).toISOString();
   const aid = `_a${crypto.randomBytes(12).toString('hex')}`;
   const irt = inResponseTo ? ` InResponseTo="${inResponseTo}"` : '';
-  const assertion = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${aid}" Version="2.0" IssueInstant="${now.toISOString()}"><saml:Issuer>${IDP_ENTITY}</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">${nameId}</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData${irt} NotOnOrAfter="${later}" Recipient="${PROVIDER.acs_url}"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="${before}" NotOnOrAfter="${later}"><saml:AudienceRestriction><saml:Audience>${audience}</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant="${now.toISOString()}" SessionIndex="${aid}"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>${email}</saml:AttributeValue></saml:Attribute><saml:Attribute Name="displayName"><saml:AttributeValue>Pat Example</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion>`;
+  const assertion = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${aid}" Version="2.0" IssueInstant="${now.toISOString()}"><saml:Issuer>${issuer}</saml:Issuer><saml:Subject><saml:NameID Format="${nameIdFormat}">${nameId}</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData${irt} NotOnOrAfter="${later}" Recipient="${PROVIDER.acs_url}"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="${before}" NotOnOrAfter="${later}"><saml:AudienceRestriction><saml:Audience>${audience}</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant="${now.toISOString()}" SessionIndex="${aid}"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>${email}</saml:AttributeValue></saml:Attribute><saml:Attribute Name="displayName"><saml:AttributeValue>Pat Example</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion>`;
   const sig = new SignedXml({ privateKey: key, signatureAlgorithm: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
     canonicalizationAlgorithm: 'http://www.w3.org/2001/10/xml-exc-c14n#' });
   sig.addReference({ xpath: "//*[local-name(.)='Assertion']", digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
@@ -95,13 +111,13 @@ function samlResponse({ inResponseTo, email = 'pat@acme.test', nameId = 'pat-000
   sig.computeSignature(assertion, { location: { reference: "//*[local-name(.)='Issuer']", action: 'after' } });
   let signed = sig.getSignedXml();
   if (tamper) signed = tamper(signed);
-  const xml = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_r${crypto.randomBytes(12).toString('hex')}" Version="2.0" IssueInstant="${now.toISOString()}" Destination="${PROVIDER.acs_url}"${irt}><saml:Issuer>${IDP_ENTITY}</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>${signed}</samlp:Response>`;
+  const xml = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_r${crypto.randomBytes(12).toString('hex')}" Version="2.0" IssueInstant="${now.toISOString()}" Destination="${PROVIDER.acs_url}"${irt}><saml:Issuer>${issuer}</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>${signed}</samlp:Response>`;
   return Buffer.from(xml).toString('base64');
 }
 
-async function postAcs(b64) {
+async function postAcs(b64, { tx = TX } = {}) {
   const r = await api(`/api/auth/saml/${PROVIDER.slug}/acs`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...(tx ? { Cookie: `st_saml_tx=${tx}` } : {}) },
     body: new URLSearchParams({ SAMLResponse: b64 }).toString(),
   });
   assert.equal(r.status, 302);
@@ -242,6 +258,65 @@ test('a validly signed assertion outside the org verified domains is refused (no
   const r = await postAcs(samlResponse({ inResponseTo: id, email: 'owner@example.test', nameId: 'evil' }));
   assert.equal(ssoError(r.location), 'domain_not_allowed');
   assert.equal(q1('SELECT auth_provider FROM users WHERE id = ?', ADMIN.id).auth_provider, 'local');
+});
+
+test('a response posted from a browser that did not start the login is refused (login CSRF)', async () => {
+  // The attacker starts a login in their own browser and keeps the response the IdP gives them.
+  const attackerId = await startLogin();
+  const attackerTx = TX;
+  const attackerResp = samlResponse({ inResponseTo: attackerId, email: 'pat@acme.test', nameId: 'pat-0001' });
+
+  // ...and auto-posts it from a victim who never started one: no cookie, or a forged one.
+  let r = await postAcs(attackerResp, { tx: null });
+  assert.equal(ssoError(r.location), 'expired');
+  assert.ok(!/st_sso_claim=[^;]/.test(r.cookie), 'no session is handed out');
+  assert.equal(ssoError((await postAcs(attackerResp, { tx: 'not-a-token' })).location), 'expired');
+
+  // A victim who HAS started their own login: their cookie names their request, not the attacker's.
+  await startLogin();
+  const victimTx = TX;
+  r = await postAcs(attackerResp, { tx: victimTx });
+  assert.equal(ssoError(r.location), 'bad_state');
+  assert.ok(!/st_sso_claim=[^;]/.test(r.cookie), 'no session is handed out');
+  assert.match(r.cookie, /st_saml_tx=;/, 'the transaction cookie is cleared');
+  assert.notEqual(attackerTx, victimTx);
+
+  // The normal flow, in one browser, still works.
+  const id = await startLogin();
+  r = await postAcs(samlResponse({ inResponseTo: id }));
+  assert.equal(r.location, '/app#/login?sso=1', r.location);
+  assert.match(r.cookie, /st_saml_tx=;/, 'cleared on success too');
+});
+
+test('an assertion signed by the right key but from another Issuer is refused', async () => {
+  let id = await startLogin();
+  assert.equal(ssoError((await postAcs(samlResponse({ inResponseTo: id, issuer: 'https://evil.test/saml' }))).location), 'verification_failed');
+  // A trailing slash is the same entity (Entra ID entityIDs end in '/').
+  id = await startLogin();
+  assert.equal((await postAcs(samlResponse({ inResponseTo: id, issuer: `${IDP_ENTITY}/` }))).location, '/app#/login?sso=1');
+});
+
+test('a transient NameID is refused with a reason (it would lock the user out next time)', async () => {
+  const id = await startLogin();
+  const r = await postAcs(samlResponse({ inResponseTo: id, nameId: `_t${crypto.randomBytes(8).toString('hex')}`,
+    nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient' }));
+  assert.equal(ssoError(r.location), 'saml_transient_nameid');
+  assert.equal(q1('SELECT provider_id FROM users WHERE email = ?', 'pat@acme.test').provider_id, 'pat-0001', 'the link is untouched');
+});
+
+test('a provider that throws while loading is a server_error redirect, not a dead process', async () => {
+  // An undecryptable secret makes oidcProviders.get() throw (fail closed). It used to run outside
+  // any try in a bare async handler, and server.js exits on an unhandled rejection.
+  run("UPDATE org_sso_providers SET client_secret_enc = 'not-decryptable' WHERE id = ?", PROVIDER.id);
+  try {
+    const s = await api(`/api/auth/saml/${PROVIDER.slug}/start`);
+    assert.equal(s.status, 302);
+    assert.equal(ssoError(s.headers.get('location')), 'server_error');
+    assert.equal(ssoError((await postAcs(samlResponse({ inResponseTo: '_x' }))).location), 'server_error');
+    assert.equal((await api('/api/status')).status, 200, 'the server is still up');
+  } finally {
+    run('UPDATE org_sso_providers SET client_secret_enc = NULL WHERE id = ?', PROVIDER.id);
+  }
 });
 
 test('a certificate can be replaced, and the old key stops working', async () => {

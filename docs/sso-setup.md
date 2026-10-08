@@ -190,16 +190,25 @@ ADFS, Google Workspace, OneLogin, PingFederate, JumpCloud and so on.
    - **SP metadata URL**: the same address as the entity ID. Some IdPs can import from it.
 5. In the IdP, send the user's email address as an attribute named `email` (`mail` and the usual
    Microsoft claim URIs work too), or use an email-format NameID. The NameID must stay the same
-   for each person: it is what we match an account on.
+   for each person: it is what we match an account on. Use a **persistent**, email-address or
+   unspecified-but-stable NameID format. A **transient** NameID (a new random value at every
+   sign-in) is refused with an error that says so, because it would sign someone in once and lock
+   them out the next time.
 6. **Verify each domain** with a DNS TXT record, exactly as for OIDC above.
 
 What we require of every sign-in:
 
 - **The assertion itself is signed** with the certificate you gave us. A signed response that
   wraps an unsigned assertion is refused.
-- **It answers a sign-in we started.** IdP-initiated sign-in (clicking the tile in an IdP's app
-  portal) is refused. Start from the ScreenTinker sign-in page instead: type your email and choose
-  **Continue with single sign-on**.
+- **It answers a sign-in we started, in the same browser.** IdP-initiated sign-in (clicking the
+  tile in an IdP's app portal) is refused. Start from the ScreenTinker sign-in page instead: type
+  your email and choose **Continue with single sign-on**. Starting a sign-in sets a short-lived
+  cookie (`st_saml_tx`, 10 minutes) that ties it to the browser, so a response can't be posted
+  from someone else's browser to sign them into a different account. That cookie has to survive
+  the IdP's cross-site POST back to us, which browsers allow only over **HTTPS**, so SAML sign-in
+  needs the server on HTTPS. Starting a second sign-in in another tab replaces the first one.
+- **It comes from your IdP.** The assertion's Issuer must be the IdP entity ID you configured
+  (a trailing `/` is ignored on both sides).
 - **It's addressed to us and still current.** The audience must match, and there are 3 minutes of
   clock skew allowed.
 - **It hasn't been used before.** Replaying a captured response fails.
