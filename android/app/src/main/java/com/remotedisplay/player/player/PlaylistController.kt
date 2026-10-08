@@ -468,6 +468,8 @@ class PlaylistController(
         // explicit "stop showing that" from an operator, not an item rotating out — deferring it
         // meant selecting "no playlist" left the old content up indefinitely, which is the opposite
         // of what was asked for and looked like the setting had done nothing.
+        // Nor is a ONE-ITEM outgoing playlist: it has no next item to rotate to (PendingSwap guard 3,
+        // web/Tizen `outgoingNeverAdvances`), so its replacement is applied now.
         if (PendingSwap.shouldDefer(
                 isRunning = isRunning,
                 wallFollower = wallFollower,
@@ -475,6 +477,8 @@ class PlaylistController(
                 currentlyPlayingId = currentlyPlayingId,
                 newContentIds = newItems.map { it.itemKey },
                 interruptChanged = interruptChanged,
+                // ⚠️ The OUTGOING list: `items` has not been replaced yet at this point.
+                outgoingCount = items.size,
             )) {
             var succ: String? = null
             if (items.isNotEmpty()) {

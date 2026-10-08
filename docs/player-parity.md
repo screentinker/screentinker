@@ -225,7 +225,9 @@ decline these explicitly and in writing in their own capability modules.
 ## Emergency alerts cut in
 
 Every player holds an ordinary playlist change until the item on screen finishes (#157, with a
-60 s backstop). Raising an emergency alert replaces the playlist with its card, which is exactly
+60 s backstop) — unless the OUTGOING playlist has at most one item, which has no next item to
+rotate to, so its replacement lands at once (web `outgoingNeverAdvances`, Tizen `load()`, Android
+`PendingSwap.shouldDefer(outgoingCount)`; many -> one still defers). Raising an emergency alert replaces the playlist with its card, which is exactly
 that case, so the card used to arrive up to a minute late. The contract that fixes it:
 
 - **Server.** The CAP alert card (`server/lib/cap/feeds.js` `cardItem`, the hidden `cap_alert`

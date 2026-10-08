@@ -62,6 +62,29 @@ class PendingSwapTest {
         assertFalse(defer(newIds = listOf("other-a"), wallFollower = true))
     }
 
+    @Test fun THE_GAP_a_one_item_playlist_replaced_by_many_swaps_now() {
+        // The single item never "finishes" into a next item (it replays itself, or a live stream
+        // never ends), so deferring only held the replaced content up to DEADLINE_MS. Web/Tizen
+        // parity: `outgoingNeverAdvances = oldPlaylist.length <= 1`.
+        assertFalse(PendingSwap.shouldDefer(true, false, true, LIVE, listOf("other-a", "other-b"), outgoingCount = 1))
+        assertFalse(PendingSwap.shouldDefer(true, false, true, LIVE, listOf("other-a"), outgoingCount = 1))
+    }
+
+    @Test fun many_items_replaced_by_one_still_defers_the_rule_reads_the_OUTGOING_list() {
+        // Tizen's bug before #549 was measuring the incoming list: this must still let the live item
+        // finish its turn, exactly like any multi-item rotation.
+        assertTrue(PendingSwap.shouldDefer(true, false, true, LIVE, listOf("other-a"), outgoingCount = 3))
+        assertTrue(PendingSwap.shouldDefer(true, false, true, LIVE, listOf("other-a"), outgoingCount = 2))
+    }
+
+    @Test fun the_one_item_exemption_does_not_change_the_other_guards() {
+        // An interrupt change and a wall follower still never defer, whatever the outgoing size.
+        assertFalse(PendingSwap.shouldDefer(true, false, true, LIVE, listOf("other-a"), interruptChanged = true, outgoingCount = 3))
+        assertFalse(PendingSwap.shouldDefer(true, true, true, LIVE, listOf("other-a"), outgoingCount = 3))
+        // And a one-item list that still contains the live item is unchanged (no deferral needed).
+        assertFalse(PendingSwap.shouldDefer(true, false, true, LIVE, listOf(LIVE, "other-a"), outgoingCount = 1))
+    }
+
     @Test fun the_deferral_deadline_is_long_enough_for_a_normal_item_and_short_enough_to_notice() {
         // The deadline is the backstop for "no advance ever arrives". It must clear a typical dwell
         // comfortably (or it would cut ordinary items short) while still resolving fast enough that
