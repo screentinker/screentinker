@@ -406,14 +406,8 @@ const migrations = [
   // first may be pulled back to stable. Without it, publishing a beta would drag every existing
   // pre-release tester backwards, which is the harm the opt-in exists to prevent.
   "ALTER TABLE devices ADD COLUMN ota_channel_served TEXT",
-  // Repair for schedules orphaned by a group deletion before the conversion carried workspace_id.
-  // Such rows are invisible (list/calendar filter on workspace), undeletable (PUT/DELETE 403 on a
-  // null workspace) and still firing (the scheduler has no workspace filter) — so an operator
-  // cannot fix them from the dashboard at all. Recover the workspace from the device the schedule
-  // targets; anything still unresolvable is left alone rather than guessed at.
-  `UPDATE schedules SET workspace_id = (SELECT d.workspace_id FROM devices d WHERE d.id = schedules.device_id)
-     WHERE workspace_id IS NULL AND device_id IS NOT NULL
-       AND (SELECT d.workspace_id FROM devices d WHERE d.id = schedules.device_id) IS NOT NULL`,
+  // (The orphaned-schedule workspace repair and organizations.widget_sandbox_isolation_disabled
+  // used to be here; both need the multi-tenancy tables, so they run after it — see below.)
   // #161: privilege tier reported by the player (0 unprivileged / 1 device-admin / 2 owner-or-
   // delegated-install) + whether a foreign device owner (MDM) manages it. Drives dashboard gating
   // of Tier-2 controls (reboot/kiosk/time) — shown only for owned panels.
@@ -697,7 +691,6 @@ const migrations = [
   "ALTER TABLE users ADD COLUMN past_due_since INTEGER",
   "ALTER TABLE users ADD COLUMN payment_failed_email_sent_at INTEGER",
   "ALTER TABLE users ADD COLUMN subscription_lapsed_email_sent_at INTEGER",
-  "ALTER TABLE organizations ADD COLUMN widget_sandbox_isolation_disabled INTEGER NOT NULL DEFAULT 0",
   // AUTH-05: make break-glass recovery revocable, single-use and auditable.
   //
   // scripts/reset-admin.js mints a JWT carrying `recovery: true`, which middleware/auth.js
@@ -2849,9 +2842,14 @@ function migrateAudienceSegments(conn = db) {
   const cols = db.prepare('PRAGMA table_info(audience_buckets)').all().map((c) => c.name);
   if (!cols.length) return;
   if (!cols.includes('segment')) db.exec('ALTER TABLE audience_buckets ADD COLUMN segment INTEGER NOT NULL DEFAULT 0');
+  // ⚠️ ONE transaction: the column's DEFAULT is 60000, so a crash between the ALTER and the
+  // back-fill would leave 30-second buckets claiming a full minute for good — the next boot sees
+  // the column and never back-fills. SQLite DDL is transactional, so both land or neither does.
   if (!cols.includes('observed_ms')) {
-    db.exec('ALTER TABLE audience_buckets ADD COLUMN observed_ms INTEGER NOT NULL DEFAULT 60000');
-    db.exec('UPDATE audience_buckets SET observed_ms = bucket_sec * 1000');
+    db.transaction(() => {
+      db.exec('ALTER TABLE audience_buckets ADD COLUMN observed_ms INTEGER NOT NULL DEFAULT 60000');
+      db.exec('UPDATE audience_buckets SET observed_ms = bucket_sec * 1000');
+    })();
   }
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'audience_buckets'").get();
   const OLD_UNIQUE = /UNIQUE\s*\(\s*device_id\s*,\s*bucket_start\s*,\s*item_kind\s*,\s*item_id\s*\)/;
@@ -2894,6 +2892,44 @@ try {
   }
 } catch (e) {
   console.error('[migrate] could not add organizations.sso_only:', e.message);
+}
+
+/*
+ * Two more that once sat in the migrations array and hit the same wall on a fresh install: they
+ * need what the multi-tenancy phase creates (organizations; devices.workspace_id), so each printed
+ * a `[migrate] FAILED` line on first boot. Both are guarded on what they touch rather than on
+ * error text, so neither a fresh nor an upgraded install logs anything when there is nothing to do.
+ *
+ * organizations.widget_sandbox_isolation_disabled: a fresh install already has it (the
+ * multi-tenancy script's CREATE TABLE carries it); an organizations table from before it gains it.
+ */
+try {
+  const orgCols = db.prepare('PRAGMA table_info(organizations)').all().map((c) => c.name);
+  if (orgCols.length && !orgCols.includes('widget_sandbox_isolation_disabled')) {
+    db.exec('ALTER TABLE organizations ADD COLUMN widget_sandbox_isolation_disabled INTEGER NOT NULL DEFAULT 0');
+    console.log('[migrate] added organizations.widget_sandbox_isolation_disabled');
+  }
+} catch (e) {
+  console.error('[migrate] could not add organizations.widget_sandbox_isolation_disabled:', e.message);
+}
+
+/*
+ * Repair for schedules orphaned by a group deletion before the conversion carried workspace_id.
+ * Such rows are invisible (list/calendar filter on workspace), undeletable (PUT/DELETE 403 on a
+ * null workspace) and still firing (the scheduler has no workspace filter) — so an operator
+ * cannot fix them from the dashboard at all. Recover the workspace from the device the schedule
+ * targets; anything still unresolvable is left alone rather than guessed at. Runs every boot; a
+ * healthy database matches no rows.
+ */
+try {
+  const hasCol = (t, c) => db.prepare(`PRAGMA table_info(${t})`).all().some((r) => r.name === c);
+  if (hasCol('schedules', 'workspace_id') && hasCol('devices', 'workspace_id')) {
+    db.exec(`UPDATE schedules SET workspace_id = (SELECT d.workspace_id FROM devices d WHERE d.id = schedules.device_id)
+       WHERE workspace_id IS NULL AND device_id IS NOT NULL
+         AND (SELECT d.workspace_id FROM devices d WHERE d.id = schedules.device_id) IS NOT NULL`);
+  }
+} catch (e) {
+  console.error('[migrate] orphaned-schedule workspace repair failed:', e.message);
 }
 
 // Phase 2.2c migration: backfill content_folders.workspace_id from owner's
@@ -3259,22 +3295,18 @@ function pruneScreenshots(deviceId) {
   `).run(deviceId, deviceId);
 }
 
-// De-duplicate built-in template zones. A prior layout-editor save regenerated
-// every zone id on save; schema.sql's INSERT OR IGNORE then re-seeded the
-// canonical zone on the next boot, so template layouts accumulated positional
-// duplicates (e.g. a 2-zone split template grew to 4+). For each position in a
-// template, keep ONE zone, preferring the canonical seeded id (the built-in
-// template zones use 'z-...' ids; bug copies are uuids) so schema.sql's re-seed
-// stays an idempotent no-op; tiebreak by earliest rowid. One-time; the atomic
-// id-preserving save prevents recurrence.
-try {
-  /*
-   * Version history baseline. Every existing content row, playlist, layout, slide deck and
-   * widget gets revision #1 from its CURRENT state, stamped with the row's own updated_at and no
-   * author: the upgrade did not save anything, so it invents neither a person nor a moment.
-   * Later saves build on this so "what changed since" has an answer from day one. One-shot, so a
-   * baseline is never re-taken over real history.
-   */
+/*
+ * The schema added by the later feature PRs, one NAMED step per feature. Each step is independent:
+ * a statement that throws is logged under its own feature's name and skips only the rest of that
+ * feature, never every table and column after it. (These all used to share one try whose catch
+ * said "template-zone dedupe failed", so one bad statement silently dropped a dozen features and
+ * blamed the wrong one.) Every step is idempotent and runs on every boot.
+ */
+function migrationStep(name, fn) {
+  try { fn(); } catch (e) { console.error(`[migrate] ${name} failed:`, e.message); }
+}
+
+migrationStep('workspace and organization settings', () => {
   // workspaces is created by the multitenancy phase, after the migrations array above has run,
   // so its column is added here where the table exists. Idempotent: a duplicate column throws.
   try { db.prepare('ALTER TABLE workspaces ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] workspaces.require_approval added (default off)'); } catch (_) { /* present */ }
@@ -3308,11 +3340,17 @@ try {
   try { db.prepare('ALTER TABLE storage_profiles ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE organizations ADD COLUMN storage_workspace_choice INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE storage_migrations ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
+});
+
+migrationStep('smart playlists', () => {
   // Smart playlists (lib/smart-playlist.js): JSON rule set; NULL = an ordinary hand-built playlist.
   try { db.prepare('ALTER TABLE playlists ADD COLUMN smart_rules TEXT').run(); console.log('[migrate] playlists.smart_rules added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }
   // "Play every N seconds" (lib/repeat-every.js): NULL = plays once per loop, as before.
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN repeat_every_sec INTEGER').run(); console.log('[migrate] playlist_items.repeat_every_sec added'); } catch (_) { /* present */ }
+});
+
+migrationStep('SAML', () => {
   // SAML 2.0 org providers (lib/saml.js). A SAML row keeps the IdP's entityID in `issuer` and an empty
   // client_id (both NOT NULL in the original table), so no rebuild is needed.
   try { db.prepare("ALTER TABLE org_sso_providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'oidc'").run(); console.log('[migrate] org_sso_providers.kind added'); } catch (_) { /* present */ }
@@ -3323,6 +3361,9 @@ try {
   db.exec('CREATE TABLE IF NOT EXISTS saml_requests (id TEXT PRIMARY KEY, value TEXT NOT NULL, created_at INTEGER NOT NULL)');
   // Assertion ids already consumed (lib/saml.js): a unique insert makes a replayed response fail even when two copies race.
   db.exec('CREATE TABLE IF NOT EXISTS saml_used_assertions (id TEXT PRIMARY KEY, used_at INTEGER NOT NULL)');
+});
+
+migrationStep('Microsoft 365 and cloud folders', () => {
   /*
    * Microsoft 365 (lib/m365.js): an organization's own Entra app, for reading SharePoint/OneDrive.
    * The client secret is secretbox-encrypted and never returned by the API.
@@ -3379,6 +3420,9 @@ try {
     content_id TEXT NOT NULL,
     PRIMARY KEY (folder_id, content_id)
   )`);
+});
+
+migrationStep('OTA rollouts', () => {
   // Health-checked player rollouts (lib/ota-rollout.js): waves, automatic halt, rollback package.
   db.exec(`
     CREATE TABLE IF NOT EXISTS ota_rollouts (
@@ -3401,6 +3445,9 @@ try {
       UNIQUE (family, version)
     );
   `);
+});
+
+migrationStep('QR links', () => {
   // Tracked QR links (lib/qr-links.js): a short /q/<code> redirect that counts scans. A scan keeps a
   // time and a coarse platform only — no IP, no user agent.
   db.exec(`
@@ -3423,11 +3470,17 @@ try {
     );
     CREATE INDEX IF NOT EXISTS idx_qr_scans_link_at ON qr_scans(link_id, at);
   `);
+});
+
+migrationStep('local conditions', () => {
   // Where a screen is (lib/local-conditions.js): its local weather and area conditions.
   try { db.prepare('ALTER TABLE devices ADD COLUMN latitude REAL').run(); console.log('[migrate] devices.latitude added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE devices ADD COLUMN longitude REAL').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE devices ADD COLUMN location_label TEXT').run(); } catch (_) { /* present */ }
   db.exec('CREATE TABLE IF NOT EXISTS weather_cells (cell TEXT PRIMARY KEY, data TEXT NOT NULL, at INTEGER NOT NULL)');
+});
+
+migrationStep('alert channels', () => {
   // Alert channels (lib/alert-channels.js): Slack / Teams / PagerDuty / webhook / email per workspace.
   // Workspace-owned and FK-cascaded; alert_deliveries is the once-per-outage ledger.
   db.exec(`
@@ -3464,6 +3517,9 @@ try {
       PRIMARY KEY (channel_id, device_id, outage)
     );
   `);
+});
+
+migrationStep('Canva', () => {
   // Canva (lib/canva.js). An organization may bring its own Canva integration (else the instance's
   // CANVA_CLIENT_ID applies); each person connects their own Canva account to it. Secrets and
   // tokens are secretbox-encrypted. A link ties a library item to the Canva design page(s) it was
@@ -3519,6 +3575,9 @@ try {
       updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
   `);
+});
+
+migrationStep('BI connections', () => {
   // BI connections (lib/bi/connections.js): an organization's Grafana / Power BI / Tableau
   // credentials for the bi-dashboard widget. The secret is secretbox-encrypted and never returned.
   db.exec(`
@@ -3536,6 +3595,9 @@ try {
     );
     CREATE INDEX IF NOT EXISTS idx_bi_connections_org ON bi_connections(organization_id);
   `);
+});
+
+migrationStep('social walls', () => {
   // Social walls (lib/social/*): an organization's API credentials (Instagram, Facebook, YouTube, X),
   // a workspace's feeds (sources + moderation), the posts fetched for them, and their cached images.
   db.exec(`
@@ -3606,6 +3668,9 @@ try {
   // A hash of what a post shows (lib/social/feeds.js contentHash): an edit at the source sends an
   // approved post back to review on an 'approve' feed. NULL on older rows = not known yet.
   try { db.prepare('ALTER TABLE social_posts ADD COLUMN content_hash TEXT').run(); } catch (_) { /* present */ }
+});
+
+migrationStep('audience counting', () => {
   /*
    * Audience counting (lib/audience.js, docs/audience-counting.md). Off unless the org allows it AND
    * a screen or one of its groups has it enabled. audience_buckets holds INTEGERS ONLY — counts per
@@ -3656,11 +3721,17 @@ try {
     CREATE INDEX IF NOT EXISTS idx_audience_ingested_time ON audience_ingested(bucket_start);
   `);
   migrateAudienceSegments(db);
+});
+
+migrationStep('device tags and dynamic groups', () => {
   // Device tags (JSON array, lib/content-tags normalizer) and dynamic group rules
   // (lib/device-group-rules.js): NULL rules = a hand-built group, as before.
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE device_groups ADD COLUMN rules TEXT').run(); console.log('[migrate] device_groups.rules added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE device_settings ADD COLUMN tags TEXT').run(); } catch (_) { /* present */ }
+});
+
+migrationStep('CAP feeds', () => {
   // CAP emergency feeds (lib/cap/feeds.js). Workspace-owned and FK-cascaded, so deleting a
   // workspace takes its feeds, scopes and seen alerts with it.
   db.exec(`
@@ -3703,6 +3774,9 @@ try {
       UNIQUE (feed_id, akey)
     );
   `);
+});
+
+migrationStep('meeting rooms', () => {
   /*
    * Meeting-room displays (lib/rooms). A CONNECTION is an organization's own Microsoft 365 app or
    * Google service account (secret encrypted with lib/secretbox, never returned); a ROOM belongs to
@@ -3777,7 +3851,9 @@ try {
   // End any meeting from a panel (not only ones booked there), and release-if-nobody-checks-in.
   try { db.prepare('ALTER TABLE organizations ADD COLUMN room_end_any INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE organizations ADD COLUMN room_release_min INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
+});
 
+migrationStep('automation', () => {
   /*
    * Automation (lib/automation): inbound hooks (a secret URL that raises an emergency alert, fires a
    * trigger, writes a table data source or switches screens to a playlist for a while), Zapier-style
@@ -3864,7 +3940,16 @@ try {
       status    TEXT NOT NULL
     );
   `);
+});
 
+/*
+ * Version history baseline. Every existing content row, playlist, layout, slide deck and
+ * widget gets revision #1 from its CURRENT state, stamped with the row's own updated_at and no
+ * author: the upgrade did not save anything, so it invents neither a person nor a moment.
+ * Later saves build on this so "what changed since" has an answer from day one. One-shot, so a
+ * baseline is never re-taken over real history.
+ */
+migrationStep('version history baseline', () => {
   const BASELINE_ID = 'revisions_baseline_v1';
   if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(BASELINE_ID)) {
     try {
@@ -3875,7 +3960,17 @@ try {
     }
     db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(BASELINE_ID);
   }
+});
 
+// De-duplicate built-in template zones. A prior layout-editor save regenerated
+// every zone id on save; schema.sql's INSERT OR IGNORE then re-seeded the
+// canonical zone on the next boot, so template layouts accumulated positional
+// duplicates (e.g. a 2-zone split template grew to 4+). For each position in a
+// template, keep ONE zone, preferring the canonical seeded id (the built-in
+// template zones use 'z-...' ids; bug copies are uuids) so schema.sql's re-seed
+// stays an idempotent no-op; tiebreak by earliest rowid. One-time; the atomic
+// id-preserving save prevents recurrence.
+migrationStep('template-zone dedupe', () => {
   const DEDUPE_ID = 'dedupe_template_zones_v1';
   if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(DEDUPE_ID)) {
     const removed = db.prepare(`
@@ -3899,7 +3994,7 @@ try {
     if (removed > 0) console.log(`[migrate] removed ${removed} duplicate template zone(s)`);
     db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(DEDUPE_ID);
   }
-} catch (e) { console.error('[migrate] template-zone dedupe failed:', e.message); }
+});
 
 /*
  * Corporate (head office) playlists: every table and column of the feature, applied here because

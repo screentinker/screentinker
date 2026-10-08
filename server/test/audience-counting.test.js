@@ -378,6 +378,30 @@ test('migration: an old-shaped table gains segment and observed_ms, keyed on seg
   d.close();
 });
 
+test('migration: observed_ms and its back-fill land together — a back-fill that dies takes the column with it', () => {
+  const { Database } = require('../db/sqlite-driver');
+  const d = new Database(':memory:');
+  d.exec(`CREATE TABLE audience_buckets (
+      device_id TEXT NOT NULL, workspace_id TEXT, bucket_start INTEGER NOT NULL, bucket_sec INTEGER NOT NULL,
+      item_kind TEXT NOT NULL, item_id TEXT NOT NULL DEFAULT '', playlist_id TEXT,
+      present_max INTEGER NOT NULL, present_avg_x100 INTEGER NOT NULL, arrivals INTEGER NOT NULL, impressions INTEGER NOT NULL,
+      d0 INTEGER NOT NULL, d1 INTEGER NOT NULL, d2 INTEGER NOT NULL, d3 INTEGER NOT NULL, d4 INTEGER NOT NULL, d5 INTEGER NOT NULL,
+      received_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      UNIQUE (device_id, bucket_start, item_kind, item_id));
+    INSERT INTO audience_buckets (device_id, bucket_start, bucket_sec, item_kind, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5)
+      VALUES ('d', 60, 30, 'none', 1, 100, 2, 1, 1, 1, 0, 0, 0, 0);
+    -- stands in for a crash between the ALTER and the back-fill
+    CREATE TRIGGER die BEFORE UPDATE ON audience_buckets BEGIN SELECT RAISE(ABORT, 'simulated crash'); END;`);
+  const { _migrateAudienceSegments } = require('../db/database');
+  assert.throws(() => _migrateAudienceSegments(d), /simulated crash/);
+  const cols = d.prepare('PRAGMA table_info(audience_buckets)').all().map((c) => c.name);
+  assert.ok(!cols.includes('observed_ms'), 'the ALTER rolled back with the failed back-fill');
+  d.exec('DROP TRIGGER die');
+  _migrateAudienceSegments(d);   // the next boot
+  assert.equal(d.prepare('SELECT observed_ms FROM audience_buckets').get().observed_ms, 30000, 'a 30-second bucket is not left at 60000');
+  d.close();
+});
+
 test('switching the org OFF stops every screen, and its counts are refused from then on', async () => {
   const r = await call('PUT', '/settings', { body: { allowed: false } });
   assert.equal(r.status, 200);
