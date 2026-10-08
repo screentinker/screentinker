@@ -39,6 +39,20 @@ hidden = (collect_submodules("screentinker_native") + collect_submodules("engine
                                             "PySide6.QtWebEngineQuick", "PySide6.QtMultimedia",
                                             "PySide6.QtNetwork"])   # #473 kiosk: consent cookies (QNetworkCookie)
 
+# ⚠️ The OPTIONAL audience-counting add-on (numpy + OpenCV, packaging/audience) is NOT in this bundle;
+# the installer's checkbox downloads it into {app}\addons\audience and the player imports it from
+# there into THIS interpreter. A frozen app carries only the standard library its own code reaches, so
+# the stdlib the add-on needs is found here, from an analysis of a two-line probe, and added — the
+# add-on's own packages are filtered out, so not one byte of numpy/OpenCV is bundled.
+import sys as _sys
+_std_roots = tuple(os.path.normcase(os.path.abspath(p)) for p in (_sys.base_prefix, _sys.base_exec_prefix))
+probe = Analysis([os.path.join(HERE, "audience_probe.py")], pathex=[], binaries=[], datas=[], hiddenimports=[],
+                 excludes=["PyQt6", "PyQt5", "tkinter", "PySide6"], noarchive=False)
+for _name, _path, _kind in probe.pure:
+    _p = os.path.normcase(os.path.abspath(_path or ""))
+    if _p.startswith(_std_roots) and "site-packages" not in _p:
+        hidden.append(_name)
+
 player = Analysis([os.path.join(HERE, "player_main.py")], pathex=[NATIVE], binaries=binaries, datas=datas,
                   hiddenimports=hidden, excludes=["PyQt6", "PyQt5", "tkinter"], noarchive=False)
 helper = Analysis([os.path.join(HERE, "helper_main.py")], pathex=[NATIVE], binaries=[],

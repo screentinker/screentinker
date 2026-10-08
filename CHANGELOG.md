@@ -56,8 +56,17 @@
   - **No picture or video is stored or leaves the screen, and nobody is recognised.** Only counts
     are sent, and the server refuses anything else. A small camera icon shows on screens that are
     counting (you can turn it off). Counts are kept for 90 days by default.
-  - Android players only for now, with no extra download. The Raspberry Pi and Windows players
-    will follow. See `docs/audience-counting.md`, which includes a notice to put up.
+  - Android players need no extra download. **Raspberry Pi and Windows players count with an
+    optional add-on** that you choose when installing, and it's **off by default**. On Windows it's
+    the **Audience counting add-on** checkbox (silent installs: `/MERGETASKS=audience`). On a Pi,
+    answer **y** at the installer's prompt, or pass `--audience`, or run
+    `sudo screentinker-pi audience-addon install` later.
+  - The add-on is about 54 MB. It comes from your own server and is checked against the checksum
+    the server publishes. It needs a USB webcam (a Pi camera module isn't supported) and, on a Pi,
+    64-bit Pi OS.
+  - The server hosts the add-on at `/download/audience-addon/<platform>`. Build it with
+    `native/packaging/audience/build-addon.py`.
+  - See `docs/audience-counting.md`, which includes a notice to put up.
 - **Mac and iPad/iPhone players (beta).**
   - **Mac:** the native player that runs on Raspberry Pi and Windows now runs on macOS 12 or later, as
     `ScreenTinker.app` in a .dmg on your instance's download page. It plays from its own offline cache

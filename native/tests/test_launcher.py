@@ -71,3 +71,101 @@ def test_wayland_session_asks_for_qt_with_an_xcb_fallback(launcher, monkeypatch)
 def test_the_package_depends_on_the_wayland_platform_plugin():
     # libqwayland-*.so is in qt6-wayland, NOT qt6-qpa-plugins (which carries only the VNC plugin).
     assert "qt6-wayland" in open(BUILD_DEB).read()
+
+
+# ---------------------------------------------------------------------- audience-counting add-on
+
+def test_addon_platform_names_the_cpu_and_the_python(launcher):
+    assert launcher.addon_platform("aarch64", (3, 13)) == "linux-aarch64-cp313"
+    assert launcher.addon_platform("x86_64", (3, 13)) == "linux-x86_64-cp313"
+    assert launcher.addon_platform("armv7l", (3, 13)) is None, "no 32-bit wheels exist"
+
+
+def _zip(path, members):
+    import zipfile
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+
+
+@pytest.mark.parametrize("bad", ["../evil.py", "/etc/passwd", "a/../../evil.py"])
+def test_safe_extract_refuses_paths_out_of_the_addon_dir(launcher, tmp_path, bad):
+    import zipfile
+    zpath = tmp_path / "a.zip"
+    _zip(zpath, {"ADDON.json": "{}", bad: "x"})
+    dest = tmp_path / "out"
+    dest.mkdir()
+    with zipfile.ZipFile(zpath) as zf, pytest.raises(ValueError):
+        launcher.safe_extract(zf, str(dest))
+    assert not (tmp_path / "evil.py").exists()
+
+
+@pytest.fixture
+def addon_server(tmp_path):
+    """A server offering one add-on zip: (base_url, state) — state['sha'] can be falsified."""
+    import hashlib
+    import http.server
+    import sys
+    import threading
+    zpath = tmp_path / "addon.zip"
+    _zip(zpath, {"ADDON.json": json.dumps({"name": "screentinker-audience", "version": "1.0.0",
+                                           "python": "%d.%d" % sys.version_info[:2]}),
+                 "cv2/__init__.py": "", "face.onnx": "model"})
+    body = zpath.read_bytes()
+    state = {"sha": hashlib.sha256(body).hexdigest(), "downloads": 0}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            if self.path.startswith("/api/audience-addon/"):
+                out = json.dumps({"available": True, "version": "1.0.0", "sha256": state["sha"], "size": len(body),
+                                  "download_url": "/download/audience-addon/x"}).encode()
+            elif self.path.startswith("/download/audience-addon/"):
+                state["downloads"] += 1
+                out = body
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield "http://127.0.0.1:%d" % srv.server_address[1], state
+    srv.shutdown()
+
+
+def test_addon_install_verifies_the_checksum_and_is_idempotent(launcher, tmp_path, addon_server, monkeypatch):
+    base, state = addon_server
+    launcher.AUDIENCE_DIR = str(tmp_path / "opt" / "audience-addon")
+    monkeypatch.setattr(launcher, "addon_platform", lambda: "linux-aarch64-cp313")
+    monkeypatch.setattr(launcher, "_restart_player", lambda cfg: None)
+    run = lambda: launcher.cmd_audience_addon(types.SimpleNamespace(action="install", server=base))
+
+    real = state["sha"]
+    state["sha"] = "0" * 64
+    with pytest.raises(SystemExit, match="Checksum mismatch"):
+        run()
+    assert not os.path.exists(launcher.AUDIENCE_DIR), "nothing installed from an unverified download"
+
+    state["sha"] = real
+    run()
+    assert os.path.isfile(os.path.join(launcher.AUDIENCE_DIR, "ADDON.json"))
+    assert open(os.path.join(launcher.AUDIENCE_DIR, "ADDON-SHA256")).read().strip() == real
+    n = state["downloads"]
+    run()
+    assert state["downloads"] == n, "the same build is not downloaded again"
+
+    launcher.cmd_audience_addon(types.SimpleNamespace(action="remove", server=None))
+    assert not os.path.exists(launcher.AUDIENCE_DIR)
+
+
+def test_build_deb_purge_removes_the_addon():
+    with open(BUILD_DEB) as f:
+        src = f.read()
+    assert "rm -rf /opt/screentinker/audience-addon" in src and '"$1" = "purge"' in src

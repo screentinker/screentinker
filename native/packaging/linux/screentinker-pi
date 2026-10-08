@@ -6,6 +6,9 @@
   screentinker-pi run                  start the player in the foreground (what the service runs)
   screentinker-pi status               show configuration and service state
   screentinker-pi unpair               forget this panel's pairing (as root, or as the player user)
+  screentinker-pi audience-addon install [--server URL] | remove | status          (as root)
+                                       the OPTIONAL audience-counting add-on (OpenCV + face model,
+                                       ~54 MB) from the configured server; off unless installed
 
 Two run modes:
   lite     Pi OS Lite, no desktop: a system service draws straight to the display over KMS (eglfs)
@@ -16,15 +19,23 @@ Two run modes:
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import pwd
+import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
+import zipfile
 
 LIB = "/usr/lib/screentinker-pi"
 SYSTEM_CONFIG = "/etc/screentinker-pi/config.json"
 SERVICE = "screentinker-pi"
+# Root-owned on purpose: the player imports code from here, so the player user (and with it the
+# dashboard's remote shell) must not be able to write it. screentinker_native/system/audience.py.
+AUDIENCE_DIR = "/opt/screentinker/audience-addon"
 
 
 def load_cfg():
@@ -203,6 +214,121 @@ def cmd_unpair(args):
     sh("systemctl", "restart", SERVICE)
 
 
+# ---------------------------------------------------------------------- audience-counting add-on
+
+def addon_platform(machine=None, version=None):
+    """The server's platform name (server/lib/audience-addon.js): the add-on holds compiled modules,
+    so it names the CPU AND the Python (this launcher runs on the same /usr/bin/python3 as the player)."""
+    machine = machine or os.uname().machine
+    version = version or sys.version_info[:2]
+    arch = {"aarch64": "aarch64", "arm64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}.get(machine)
+    if not arch:
+        return None
+    return "linux-%s-cp%d%d" % (arch, version[0], version[1])
+
+
+def safe_extract(zf, dest):
+    """Extract every member under dest, refusing absolute paths, `..` and links."""
+    root = os.path.realpath(dest)
+    for info in zf.infolist():
+        name = info.filename
+        if name.startswith("/") or "\\" in name or any(part == ".." for part in name.split("/")):
+            raise ValueError("unsafe path in add-on: %r" % name)
+        if (info.external_attr >> 16) & 0o170000 == 0o120000:
+            raise ValueError("symlink in add-on: %r" % name)
+        target = os.path.realpath(os.path.join(root, name))
+        if target != root and not target.startswith(root + os.sep):
+            raise ValueError("unsafe path in add-on: %r" % name)
+        if name.endswith("/"):
+            os.makedirs(target, mode=0o755, exist_ok=True)
+            continue
+        os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
+        with zf.open(info) as src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out)
+        os.chmod(target, 0o644)
+
+
+def _restart_player(cfg):
+    if cfg.get("mode") == "desktop":
+        print("Log out and back in (or reboot) for the player to pick it up.")
+    elif subprocess.run(["systemctl", "is-active", "--quiet", SERVICE]).returncode == 0:
+        sh("systemctl", "restart", SERVICE)
+        print("Player restarted.")
+
+
+def cmd_audience_addon(args):
+    cfg = load_cfg()
+    if args.action == "status":
+        try:
+            with open(os.path.join(AUDIENCE_DIR, "ADDON.json")) as f:
+                print(json.dumps(json.load(f), indent=1))
+        except (OSError, ValueError):
+            print("not installed")
+        return 0
+    need_root()
+    if args.action == "remove":
+        if os.path.isdir(AUDIENCE_DIR):
+            shutil.rmtree(AUDIENCE_DIR)
+            print("Audience-counting add-on removed.")
+            _restart_player(cfg)
+        else:
+            print("not installed")
+        return 0
+    platform = addon_platform()
+    if not platform:
+        sys.exit("Audience counting needs a 64-bit OS (aarch64 or x86_64); this is %s." % os.uname().machine)
+    server = (args.server or cfg.get("server_url") or "").rstrip("/")
+    if not server:
+        sys.exit("No server configured: sudo screentinker-pi audience-addon install --server https://your-server")
+    try:
+        with urllib.request.urlopen("%s/api/audience-addon/%s" % (server, platform), timeout=30) as r:
+            meta = json.load(r)
+    except Exception as e:
+        sys.exit("Could not ask %s for the add-on (the server may be older than the add-on): %s" % (server, e))
+    if not meta.get("available"):
+        sys.exit("%s does not offer the audience-counting add-on for %s (%s)." % (server, platform, meta.get("reason")))
+    sha = str(meta.get("sha256") or "").lower()
+    try:
+        with open(os.path.join(AUDIENCE_DIR, "ADDON-SHA256")) as f:
+            if f.read().strip() == sha and os.path.isfile(os.path.join(AUDIENCE_DIR, "ADDON.json")):
+                print("Audience-counting add-on %s is already installed." % meta.get("version"))
+                return 0
+    except OSError:
+        pass
+    print("Downloading the audience-counting add-on %s (%d MB)..." % (meta.get("version"), int(meta.get("size") or 0) // 1048576))
+    parent = os.path.dirname(AUDIENCE_DIR)
+    os.makedirs(parent, mode=0o755, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".audience-", dir=parent) as tmp:
+        zpath = os.path.join(tmp, "addon.zip")
+        h = hashlib.sha256()
+        with urllib.request.urlopen(server + meta["download_url"], timeout=60) as r, open(zpath, "wb") as out:
+            for chunk in iter(lambda: r.read(1 << 20), b""):
+                h.update(chunk)
+                out.write(chunk)
+        if h.hexdigest() != sha:
+            sys.exit("Checksum mismatch: the download is not the add-on the server describes. Nothing was installed.")
+        new = os.path.join(tmp, "audience")
+        os.makedirs(new, mode=0o755)
+        with zipfile.ZipFile(zpath) as zf:
+            safe_extract(zf, new)
+        with open(os.path.join(new, "ADDON.json")) as f:
+            manifest = json.load(f)
+        want = "%d.%d" % sys.version_info[:2]
+        if manifest.get("python") != want:
+            sys.exit("The add-on is built for Python %s; this Pi runs %s." % (manifest.get("python"), want))
+        with open(os.path.join(new, "ADDON-SHA256"), "w") as f:
+            f.write(sha + "\n")
+        old = os.path.join(tmp, "old")
+        if os.path.isdir(AUDIENCE_DIR):
+            os.rename(AUDIENCE_DIR, old)
+        os.rename(new, AUDIENCE_DIR)
+    print("Audience-counting add-on %s installed in %s." % (manifest.get("version"), AUDIENCE_DIR))
+    print("It counts only when your organization switches audience counting on for this screen, and")
+    print("needs a USB webcam (a Pi camera module on the ribbon connector is not supported).")
+    _restart_player(cfg)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(prog="screentinker-pi")
     sub = ap.add_subparsers(dest="cmd")
@@ -218,6 +344,9 @@ def main():
     sub.add_parser("autostart")
     sub.add_parser("status")
     sub.add_parser("unpair")
+    a = sub.add_parser("audience-addon", help="the optional audience-counting add-on")
+    a.add_argument("action", choices=("install", "remove", "status"))
+    a.add_argument("--server", help="default: the configured server")
     # parse_known_args: `run` hands every option it does not know to the player itself.
     args, extra = ap.parse_known_args()
     if args.cmd not in (None, "run") and extra:
@@ -231,6 +360,8 @@ def main():
         return cmd_status(args)
     if args.cmd == "unpair":
         return cmd_unpair(args)
+    if args.cmd == "audience-addon":
+        return cmd_audience_addon(args)
     return cmd_run(args)
 
 

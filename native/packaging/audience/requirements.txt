@@ -1,0 +1,5 @@
+# The audience-counting add-on (build-addon.py). Binary wheels only, for each target platform.
+# opencv 4.x on purpose: FaceDetectorYN with the static-shape YuNet model; OpenCV 5's DNN engine
+# wants the dynamic-shape re-export. Licences: Apache-2.0 (OpenCV), BSD-3-Clause (numpy).
+opencv-python-headless==4.14.0.94
+numpy==2.5.3

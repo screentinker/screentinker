@@ -104,7 +104,18 @@ if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
 fi
 exit 0
 EOF
-chmod 0755 "$ROOT/DEBIAN/postinst" "$ROOT/DEBIAN/prerm"
+# The optional audience-counting add-on is not in this package (screentinker-pi audience-addon
+# install puts it in /opt/screentinker/audience-addon). Purging the player takes it too.
+cat > "$ROOT/DEBIAN/postrm" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = "purge" ]; then
+  rm -rf /opt/screentinker/audience-addon
+  rmdir /opt/screentinker 2>/dev/null || true
+fi
+exit 0
+EOF
+chmod 0755 "$ROOT/DEBIAN/postinst" "$ROOT/DEBIAN/prerm" "$ROOT/DEBIAN/postrm"
 
 OUT="$PI/dist/screentinker-pi_${VERSION}_all.deb"
 dpkg-deb --root-owner-group --build "$ROOT" "$OUT" >/dev/null

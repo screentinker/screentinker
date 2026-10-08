@@ -784,7 +784,7 @@ export default {
   'audience.kind_group': 'Group',
   'audience.state_counting': 'Counting',
   'audience.state_off': 'Off',
-  'audience.state_no_camera': 'This player has not reported a camera it can count with',
+  'audience.state_no_camera': 'This player has not reported a camera it can count with. A Raspberry Pi or Windows player also needs the audience-counting add-on (chosen when installing) and a USB webcam',
   'audience.no_screens': 'No screens in this workspace yet.',
   'audience.enabled_toast': 'Counting switched on',
   'audience.disabled_toast': 'Counting switched off',

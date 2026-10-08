@@ -311,6 +311,9 @@ class PlaybackEngine:
 
     def _idle(self, title, detail):
         self._hide_kiosk()
+        aud = getattr(self.app, "audience", None)
+        if aud is not None:
+            aud.set_item("none", None)
         if self.mode == "single":
             self.stage.clearSurface.emit("main")
         self.app.show_status(title, detail)
