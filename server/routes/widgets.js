@@ -181,10 +181,16 @@ router.post('/', (req, res) => {
   }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
+  let storedConfig = config;
+  if (widget_type === 'cloud-doc') {
+    const cd = cloudDocConfig(config);
+    if (cd.error) return res.status(400).json({ error: cd.error });
+    storedConfig = cd.config;
+  }
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(id, req.user.id, req.workspaceId, widget_type, name, JSON.stringify(config || {}));
+    .run(id, req.user.id, req.workspaceId, widget_type, name, JSON.stringify(storedConfig || {}));
 
   require('../lib/revisions').recordCurrent(db, 'widget', id, { actor: require('../lib/releases').actorOf(req), summary: 'Created' });
   res.status(201).json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id)));
@@ -334,6 +340,11 @@ router.put('/:id', (req, res) => {
   }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
+  if (widget.widget_type === 'cloud-doc' && config) {
+    const cd = cloudDocConfig(config);
+    if (cd.error) return res.status(400).json({ error: cd.error });
+    config = cd.config;
+  }
 
   /*
    * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
@@ -442,6 +453,23 @@ router.delete('/:id', (req, res) => {
 });
 
 const KNOWN_WIDGET_TYPES = new Set(BUILTIN_WIDGET_TYPES);
+
+/*
+ * A cloud-doc's config is REBUILT from the pasted link (lib/cloud-docs.js), never stored as sent: the
+ * stored URL is the one players frame with allow-same-origin, so it must be one we constructed on an
+ * allowlisted provider host. Returns { config } or { error }.
+ */
+function cloudDocConfig(config) {
+  const c = config && typeof config === 'object' ? config : {};
+  try {
+    const n = require('../lib/cloud-docs').normaliseCloudDoc(c.url, { delaySec: c.delay_sec, refreshMin: c.refresh_min });
+    const zoom = Math.min(Math.max(Number(c.zoom) || 100, 25), 400);
+    const background = /^#[0-9a-f]{3,8}$/i.test(c.background || '') ? c.background : '#000000';
+    return { config: { ...n, zoom, background } };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
 function renderWidgetHtml(type, config, opts = {}) {
   const iframeSandbox = opts.iframeSandbox || 'allow-scripts';
   config = config || {};
@@ -458,6 +486,7 @@ function renderWidgetHtml(type, config, opts = {}) {
         ? require('../lib/data-sources/service').getWorkspaceDataMapSync(opts.workspaceId) : null,
     });
     case 'directory-search': return renderDirectorySearch(config);
+    case 'cloud-doc': return require('../lib/cloud-docs').renderCloudDoc(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
     /*
      * ⚠️ THE ONLY WIDGET WHOSE CONTENT IS NOT BAKED INTO ITS CONFIG. A slide keeps its layout in
@@ -572,6 +601,16 @@ router.get('/:id/render', (req, res) => {
     // Rev-pinned like every widget, but private: a shared cache must not keep a cleared alert.
     if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
     return res.send(require('../lib/cap/card').renderCard(alerts, { title: feed ? feed.name : 'Emergency alert' }));
+  }
+  /*
+   * A cloud document runs NO script (lib/cloud-docs.js): that is what lets players frame it with
+   * allow-same-origin, which Google's embed needs. The CSP is the guarantee, not a convention.
+   */
+  if (widget.widget_type === 'cloud-doc') {
+    const cd = require('../lib/cloud-docs');
+    res.setHeader('Content-Security-Policy', cd.RENDER_CSP);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(cd.renderCloudDoc(config));
   }
   if (widget.widget_type === 'template') {
     const out = require('../lib/templates/widget').renderTemplateWidget(widget, {
@@ -720,6 +759,13 @@ router.get('/:id/telemetry', (req, res) => {
   res.json(rec || null);
 });
 
+// What a pasted cloud document link resolves to, for the editor (no side effects; the save re-checks).
+router.post('/cloud-doc/check', (req, res) => {
+  const cd = cloudDocConfig(req.body || {});
+  if (cd.error) return res.status(400).json({ error: cd.error });
+  res.json(cd.config);
+});
+
 // Preview unsaved widget from config (used by editor Preview button)
 router.post('/preview', (req, res) => {
   const { widget_type, config } = req.body || {};
@@ -779,6 +825,8 @@ router.get('/preview-session/:id', (req, res) => {
   res.removeHeader('X-Frame-Options');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'text/html');
+  // The editor previews a cloud document with allow-same-origin (as players do); script-free by CSP.
+  if (entry.widget_type === 'cloud-doc') res.setHeader('Content-Security-Policy', require('../lib/cloud-docs').RENDER_CSP);
   res.send(html);
 });
 

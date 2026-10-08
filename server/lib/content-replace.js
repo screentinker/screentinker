@@ -199,4 +199,5 @@ async function replaceContentBytes({ content, file, actor, reqOrIo = null }) {
   return reply(200, db.prepare('SELECT * FROM content WHERE id = ?').get(content.id));
 }
 
-module.exports = { replaceContentBytes };
+// pushDevices: also used by lib/cloud-folders.js after it retires a synced item.
+module.exports = { replaceContentBytes, pushDevices };

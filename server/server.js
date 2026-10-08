@@ -2427,6 +2427,7 @@ require('./lib/local-conditions').start(io);   // local weather for weather cond
 }
 require('./lib/cap/feeds').start(io);   // CAP emergency feeds: polling, expiry, pushes
 require('./lib/canva').start(io);       // Canva: re-export linked designs that changed
+require('./lib/cloud-folders').start(io);   // SharePoint/OneDrive folder syncs
 
 // Start alert service
 const { startAlertService } = require('./services/alerts');

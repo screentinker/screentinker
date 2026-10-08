@@ -22,6 +22,18 @@
     screens re-download, history keeps the old version, and approval applies.
   - Org admins add their Canva integration in Settings, or operators set `CANVA_CLIENT_ID` /
     `CANVA_CLIENT_SECRET` for the whole server. See `docs/canva.md`.
+- **Google and Microsoft documents on screens.**
+  - A new **Cloud document** widget shows a Google Slides, Docs or Sheets file, or a PowerPoint,
+    Word or Excel file from OneDrive or SharePoint, through the provider's own viewer. Paste the
+    share link, published link or embed code (Content → Google & Microsoft documents). Slides
+    advance and loop on their own; Docs and Sheets reload every few minutes.
+  - **SharePoint & OneDrive folder sync** keeps a folder's images, videos and audio in the content
+    library, with an optional playlist in file-name order:
+    - new files are added
+    - changed files are replaced, so screens pick up the new version
+    - removed files are taken out
+  - The folder sync uses your organization's own Microsoft Entra app (Settings → Microsoft 365),
+    so files are read with permissions your admins control. See `docs/cloud-documents.md`.
 
 - **New player versions roll out in waves, and stop themselves if they're bad** (Platform → Player
   rollouts).

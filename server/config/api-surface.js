@@ -113,6 +113,11 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/canva',       mod: './routes/canva',        tenancy: true },
   /*
+   * Microsoft 365 app + SharePoint/OneDrive folder syncs (routes/m365.js). JWT only: the app is a
+   * credential into the customer's own tenant, configured from the dashboard.
+   */
+  { path: '/api/m365', mod: './routes/m365', tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */

@@ -424,6 +424,7 @@ function resolveGroupSync(device, deviceId) {
 const widgetFactsOf = db.prepare(`
   SELECT w.updated_at AS rev,
          w.config,
+         w.widget_type,
          w.workspace_id,
          COALESCE(o.widget_sandbox_isolation_disabled, 0) AS same_origin
   FROM widgets w
@@ -446,7 +447,9 @@ function refreshWidgetRevs(assignments) {
       if (!facts) continue;
       const rev = facts.rev ?? a.widget_rev ?? 0;
       a.widget_rev = rev;
-      a.widget_allow_same_origin = Number(facts.same_origin || 0) === 1;
+      // A cloud document is framed same-origin too: Google's embed breaks in an opaque origin, and its
+      // render document runs no script at all (lib/cloud-docs.js, enforced by its CSP).
+      a.widget_allow_same_origin = Number(facts.same_origin || 0) === 1 || facts.widget_type === 'cloud-doc';
       // #473: an interactive webpage is configured by its widget_config ON THE PLAYER (start URL,
       // idle timeout, allowed domains), so the config must be as fresh as the rev that tells the
       // player to remount — otherwise an edit reloads the page with the settings from the last
@@ -3147,6 +3150,7 @@ module.exports.ingestScreenshot = ingestScreenshot;
 module.exports.validateDeviceToken = validateDeviceToken;
 module.exports.__applyHardwareIdentity = applyHardwareIdentity;
 module.exports.__hasPendingOffline = (deviceId) => pendingOfflines.has(deviceId);
+module.exports.__refreshWidgetRevs = refreshWidgetRevs;
 module.exports.__pendingOfflineCount = () => pendingOfflines.size;
 module.exports.__evictedSize = () => evictedSockets.size;
 module.exports.__resetTimers = () => {

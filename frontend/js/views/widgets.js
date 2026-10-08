@@ -70,7 +70,7 @@ const API = (url, opts = {}) => {
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'social', 'directory-board', 'directory-search', 'menu-board', 'transition'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'transition'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -81,6 +81,7 @@ const WIDGET_ICONS = {
   'directory-board': '&#127970;',
   'directory-search': '&#128269;',
   'menu-board': '&#127860;',
+  'cloud-doc': '&#128209;',
   transition: '&#127916;',
   // Built-in, but never offered in the "new widget" grid: a template widget is created from the
   // Templates library (the server refuses POST /widgets for it) and edited with the same form.
@@ -469,8 +470,8 @@ function showPreviewModal(sessionId, widgetType) {
   // #104: webpage widgets pointing at frame-denying sites (X-Frame-Options) can't be
   // embedded in a browser preview — and an XFO refusal is provably indistinguishable
   // client-side from a working embed, so we don't guess. Always show the honest note.
-  const webpageNote = widgetType === 'webpage'
-    ? `<div style="padding:8px 16px;border-top:1px solid var(--border);color:var(--text-secondary);font-size:13px;text-align:center">${t('widget.webpage_blocked_note')}</div>`
+  const webpageNote = widgetType === 'webpage' || widgetType === 'cloud-doc'
+    ? `<div style="padding:8px 16px;border-top:1px solid var(--border);color:var(--text-secondary);font-size:13px;text-align:center">${t(widgetType === 'cloud-doc' ? 'widget.cloud.preview_note' : 'widget.webpage_blocked_note')}</div>`
     : '';
   overlay.innerHTML = `
     <div style="width:100%;max-width:1400px;height:90vh;background:var(--bg-card);border-radius:8px;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border)">
@@ -756,6 +757,19 @@ export async function render(container) {
             </div>
           </div>`;
         break;
+      case 'cloud-doc':
+        // The server rebuilds the link (lib/cloud-docs.js); #wCloudCheck shows what it resolved to.
+        html += `
+          <div class="form-group"><label>${t('widget.cloud.url')}</label>
+            <textarea id="wCloudUrl" class="input" rows="2" spellcheck="false" placeholder="https://docs.google.com/presentation/d/…">${escAttr(config.url || '')}</textarea>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.cloud.url_hint')}</div>
+            <div id="wCloudCheck" style="font-size:12px;margin-top:6px"></div></div>
+          <div class="form-group"><label>${t('widget.cloud.delay')}</label><input type="number" id="wCloudDelay" class="input" min="1" max="3600" value="${escAttr(Number(config.delay_sec) || 10)}"></div>
+          <div class="form-group"><label>${t('widget.cloud.refresh')}</label><input type="number" id="wCloudRefresh" class="input" min="0" max="1440" value="${escAttr(config.refresh_min ?? '')}" placeholder="${escAttr(t('widget.cloud.refresh_ph'))}">
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.cloud.refresh_hint')}</div></div>
+          <div class="form-group"><label>${t('widget.field.zoom_pct')}</label><input type="number" id="wZoom" class="input" min="25" max="400" value="${escAttr(Number(config.zoom) || 100)}"></div>
+          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
+        break;
       case 'social':
         html += `
           <div class="form-group"><label>${t('widget.field.platform')}</label><select id="wPlatform" class="input" style="background:var(--bg-input)"><option value="twitter">${t('widget.field.platform_twitter')}</option><option value="instagram">${t('widget.field.platform_instagram')}</option></select></div>
@@ -919,8 +933,35 @@ export async function render(container) {
     }
 
     if (type === 'menu-board') mountMenuEditor(document.getElementById('wMenuEditor'), config, { apiGet: (u) => API(u) });
+    if (type === 'cloud-doc') initCloudDocForm();
     if (type === 'transition') initTransitionForm(config);
     if (type === 'clock') initClockForm();
+  }
+
+  function initCloudDocForm() {
+    const box = document.getElementById('wCloudUrl');
+    const out = document.getElementById('wCloudCheck');
+    if (!box || !out) return;
+    const KIND = { slides: t('widget.cloud.kind_slides'), doc: t('widget.cloud.kind_doc'), sheet: t('widget.cloud.kind_sheet'), office: t('widget.cloud.kind_office') };
+    let seq = 0;
+    const check = async () => {
+      const url = box.value.trim();
+      if (!url) { out.textContent = ''; return; }
+      const mine = ++seq;
+      try {
+        const r = await API('/widgets/cloud-doc/check', { method: 'POST', body: JSON.stringify({ url, delay_sec: document.getElementById('wCloudDelay')?.value }) });
+        if (mine !== seq) return;
+        out.style.color = 'var(--success,#15803d)';
+        out.innerHTML = `✓ ${esc(r.provider === 'google' ? 'Google' : 'Microsoft')} · ${esc(KIND[r.kind] || r.kind)} — <a href="${escAttr(r.url)}" target="_blank" rel="noopener noreferrer">${esc(t('widget.cloud.open'))}</a>`;
+      } catch (e) {
+        if (mine !== seq) return;
+        out.style.color = 'var(--danger,#b91c1c)';
+        out.textContent = e.message;
+      }
+    };
+    box.addEventListener('change', check);
+    box.addEventListener('blur', check);
+    check();
   }
 
   function initClockForm() {
@@ -1398,6 +1439,12 @@ export async function render(container) {
             ? String(val('wKeepNames') || '').split(/[\s,]+/).map((d) => d.trim()).filter((d) => /^[A-Za-z0-9_.-]+[*]?$/.test(d) && d !== '*')
             : [];
         }
+        break;
+      }
+      case 'cloud-doc': {
+        const refresh = String(val('wCloudRefresh') || '').trim();
+        Object.assign(config, { url: val('wCloudUrl'), delay_sec: parseInt(val('wCloudDelay')) || 10, zoom: parseInt(val('wZoom')) || 100, background: val('wBg') || '#000000' });
+        if (refresh !== '') config.refresh_min = Math.max(0, parseInt(refresh) || 0);
         break;
       }
       case 'social': Object.assign(config, { platform: val('wPlatform'), query: val('wQuery') }); break;
