@@ -34,6 +34,12 @@ const LIMIT_PATH_SHAPES = [
   [/^\/api\/templates\/preview\/[^/]+$/, () => '/api/templates/preview/:token'],
   [/^\/api\/templates\/thumb\/[^/]+$/, () => '/api/templates/thumb/:sha'],
   [/^\/api\/templates\/asset\/.+$/, () => '/api/templates/asset/:sha/:path'],
+  /*
+   * ⚠️ THE LAST SEGMENT IS A CREDENTIAL. An inbound hook's URL carries its secret, so without this
+   * the per-IP bucket was keyed on it (a new bucket per probe) and the `[limit] 429 <endpoint>`
+   * warning wrote the secret into the server log. Anything under the mount is one bucket.
+   */
+  [/^\/api\/hooks\/in(\/.*)?$/, () => '/api/hooks/in/:id/:secret'],
 ];
 
 /*

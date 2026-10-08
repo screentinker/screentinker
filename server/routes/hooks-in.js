@@ -1,7 +1,8 @@
 'use strict';
 
 /*
- * The inbound hook door: POST (or GET) /api/hooks/in/<hook id>/<secret>.
+ * The inbound hook door: POST /api/hooks/in/<hook id>/<secret> (and GET, only for a hook with
+ * "allow GET" switched on).
  *
  * No session and no API token — the secret in the URL is the credential, which is what Zapier,
  * Make, n8n, Alertus, InformaCast and a building's fire panel can all actually send. See
@@ -30,6 +31,12 @@ async function handle(req, res) {
   // Compared even when the hook is unknown (against a dummy hash), so timing says nothing either way.
   const ok = hooks.secretMatches(hook || { secret_hash: '0'.repeat(64) }, String(req.params.secret || '').slice(0, 200));
   if (!hook || !ok || !hook.enabled) return res.status(404).json(NOT_FOUND);
+  /*
+   * ⚠️ GET IS OPT-IN, per hook. A link unfurler (Slack, Teams), a mail scanner or a browser
+   * prefetch GETs any URL it sees, and a hook URL pasted into a chat would have raised an alert.
+   * Refused with the same 404 as everything else, so the method says nothing about the hook.
+   */
+  if (req.method === 'GET' && !hooks.parseConfig(hook).allow_get) return res.status(404).json(NOT_FOUND);
 
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   if (hook.hmac_secret_enc) {
@@ -55,7 +62,7 @@ async function handle(req, res) {
 
 const wrap = (fn) => (req, res) => fn(req, res).catch((e) => {
   console.error('[automation] inbound hook error:', e && e.message);
-  if (!res.headersSent) res.status(500).json({ error: 'Internal error' });
+  try { if (!res.headersSent) res.status(500).json({ error: 'Internal error' }); } catch (_) { /* the socket is gone */ }
 });
 
 // Raw body, any type: CAP arrives as XML, InformaCast and Alertus as JSON, a form as urlencoded —

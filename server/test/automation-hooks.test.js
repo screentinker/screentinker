@@ -340,5 +340,150 @@ test('test-fire runs the hook for real and is marked as a test', async () => {
   const calls = (await api(`/api/automation/${h.id}/calls`, J(undefined, 'GET'))).body;
   assert.equal(calls[0].test, true);
   await api(`/api/automation/${h.id}`, J(undefined, 'DELETE'));
-  assert.equal(q1('SELECT COUNT(*) AS n FROM cap_feeds WHERE url = ?', `hook:${h.id}`).n, 0, 'deleting a hook removes its feed and what it raised');
+  assert.equal(q1('SELECT COUNT(*) AS n FROM cap_feeds WHERE url = ? OR url LIKE ?', `hook:${h.id}`, `hook:${h.id}|%`).n, 0, 'deleting a hook removes its feeds and what they raised');
+});
+
+/* ============================== review fixes ============================== */
+
+const hookOf = (via) => q1("SELECT * FROM automation_hooks WHERE json_extract(config, '$.via') = ?", via);
+/** Every alert row on any of a hook's feeds, with the scopes of the feed it is on. */
+const alertsOf = (hookId) => q(`SELECT a.akey, a.ended, a.feed_id FROM cap_alerts a JOIN cap_feeds f ON f.id = a.feed_id
+    WHERE f.source = 'hook' AND (f.url = ? OR f.url LIKE ?)`, `hook:${hookId}`, `hook:${hookId}|%`)
+  .map((a) => ({ ...a, scopes: q('SELECT scope_kind, scope_id FROM cap_feed_scopes WHERE feed_id = ?', a.feed_id).map((s) => `${s.scope_kind}:${s.scope_id}`) }));
+const fullToken = async () => (await api('/api/tokens', J({ name: `zap-full-${crypto.randomUUID().slice(0, 4)}`, scope: 'full' }))).body.token;
+
+test('a non-string id in a Zapier action is a 400, and the server keeps running', async () => {
+  const full = await fullToken();
+  const bad = [
+    ['/api/zapier/actions/emergency', { headline: 'x', alert_id: 'BAD-1', playlist_id: {} }],
+    ['/api/zapier/actions/emergency', { headline: 'x', alert_id: 'BAD-2', playlist_id: ['a', 'b'] }],
+    ['/api/zapier/actions/playlist', { playlist_id: {}, minutes: 5 }],
+    ['/api/zapier/actions/trigger', { trigger_id: { id: 1 } }],
+    ['/api/zapier/actions/data', { data_source_id: [], rows: [] }],
+    ['/api/zapier/actions/emergency', { headline: 'x', alert_id: 'BAD-3', group_id: [{}] }],
+  ];
+  for (const [p, body] of bad) {
+    const r = await api(p, J(body, 'POST', full));
+    assert.equal(r.status, 400, `${p} ${JSON.stringify(body)} -> ${JSON.stringify(r.body)}`);
+  }
+  // The same through the Automation page's own validation.
+  assert.equal((await api('/api/automation', J({ name: 'x', kind: 'emergency', config: { scopes: [{ scope_kind: 'workspace' }], playlist_id: {} } }))).status, 400);
+  assert.equal(proc.exitCode, null, 'the server process is still alive');
+  assert.equal((await fetch(BASE + '/api/status')).status, 200);
+});
+
+test('an alert raised again after it was cleared shows again; a duplicate while live does not', async () => {
+  // No alert id: the body is the key, so the second "Evacuate" is the same key as the first.
+  const h = await mkHook({ name: 'Panel', kind: 'emergency', config: { op: 'auto', alert_id: '', scopes: [{ scope_kind: 'workspace' }] } });
+  const evac = { headline: 'Evacuate', status: 'active' };
+  assert.match((await post(h.url, evac)).body.result, /raised 1/);
+  assert.match((await post(h.url, evac)).body.result, /no change/, 'a duplicate while live is still one alert');
+  assert.match((await post(h.url, { status: 'all clear' })).body.result, /cleared 1/);
+  assert.equal(liveAlerts(h.id).length, 0);
+  const again = await post(h.url, evac);
+  assert.match(again.body.result, /raised 1/, JSON.stringify(again.body));
+  assert.equal(liveAlerts(h.id).length, 1, 'on screens again');
+  assert.match((await post(h.url, evac)).body.result, /no change/);
+  await api(`/api/automation/${h.id}`, J(undefined, 'DELETE'));
+
+  // A sender's CAP Cancel is final: the same identifier again is a retry of something already over.
+  const m = await mkHook({ name: 'CAP sender', kind: 'mass_notification', config: { scopes: [{ scope_kind: 'workspace' }] } });
+  const sent = new Date(Date.now() - 2000).toISOString();
+  const cap = (msgType, id, refs = '') => `<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><identifier>${id}</identifier><sender>s@x.test</sender><sent>${sent}</sent>
+<status>Actual</status><msgType>${msgType}</msgType><scope>Public</scope>${refs ? `<references>${refs}</references>` : ''}
+<info><event>Lockdown</event><severity>Extreme</severity><headline>Lockdown</headline></info></alert>`;
+  assert.match((await post(m.url, cap('Alert', 'F-1'))).body.result, /raised 1/);
+  assert.match((await post(m.url, cap('Cancel', 'F-2', `s@x.test,F-1,${sent}`))).body.result, /cleared 1/);
+  assert.match((await post(m.url, cap('Alert', 'F-1'))).body.result, /no change/);
+  assert.equal(liveAlerts(m.id).length, 0);
+  await api(`/api/automation/${m.id}`, J(undefined, 'DELETE'));
+});
+
+test('Zapier: each alert keeps its own screens; another raise or a clear by id never moves it', async () => {
+  const full = await fullToken();
+  const gx = crypto.randomUUID();
+  const gy = crypto.randomUUID();
+  run('INSERT INTO device_groups (id, user_id, workspace_id, name) VALUES (?, ?, ?, ?)', gx, ADMIN.id, ADMIN.ws, 'Group X');
+  run('INSERT INTO device_groups (id, user_id, workspace_id, name) VALUES (?, ?, ?, ?)', gy, ADMIN.id, ADMIN.ws, 'Group Y');
+  const a = await api('/api/zapier/actions/emergency', J({ headline: 'Alert A', alert_id: 'SC-A', group_id: gx }, 'POST', full));
+  assert.match(a.body.result, /raised 1/, JSON.stringify(a.body));
+  const b = await api('/api/zapier/actions/emergency', J({ headline: 'Alert B', alert_id: 'SC-B', group_id: gy }, 'POST', full));
+  assert.match(b.body.result, /raised 1/, JSON.stringify(b.body));
+  const zh = hookOf('zapier');
+  const find = (id) => alertsOf(zh.id).find((r) => r.akey === `hook:${zh.id}|${id}`);
+  assert.deepEqual(find('SC-A').scopes, [`group:${gx}`], 'B raising on group Y did not move A');
+  assert.deepEqual(find('SC-B').scopes, [`group:${gy}`]);
+  assert.equal(find('SC-A').ended, 0);
+
+  // A clear by id with no screens named (which defaults to the whole workspace) ends B and moves nothing.
+  const c = await api('/api/zapier/actions/emergency', J({ op: 'clear', alert_id: 'SC-B' }, 'POST', full));
+  assert.match(c.body.result, /cleared 1/, JSON.stringify(c.body));
+  assert.deepEqual(find('SC-A').scopes, [`group:${gx}`], 'the clear did not re-scope A');
+  assert.equal(find('SC-A').ended, 0, 'A is still live');
+  assert.notEqual(find('SC-B').ended, 0);
+  assert.ok(!alertsOf(zh.id).some((r) => r.akey.includes('|SC-') && r.scopes.includes(`workspace:${ADMIN.ws}`) && r.ended === 0), 'neither alert went workspace-wide');
+  await api('/api/zapier/actions/emergency', J({ op: 'clear', alert_id: 'SC-A' }, 'POST', full));
+});
+
+test('a disabled Zapier hook stays disabled after an edit, and the action is refused with 409', async () => {
+  const full = await fullToken();
+  assert.equal((await api('/api/zapier/actions/emergency', J({ headline: 'warm-up', alert_id: 'DIS-0' }, 'POST', full))).status, 200);
+  const zh = hookOf('zapier');
+  const shown = (await api(`/api/automation/${zh.id}`, J(undefined, 'GET'))).body;
+  // What the edit form sends: the whole config back, rebuilt from the form's fields, plus enabled.
+  const { via: _via, ...formConfig } = shown.config;
+  const put = await api(`/api/automation/${zh.id}`, J({ name: shown.name, enabled: false, config: formConfig }, 'PUT'));
+  assert.equal(put.status, 200, JSON.stringify(put.body));
+  assert.equal(hookOf('zapier').id, zh.id, 'via survives the edit');
+  const before = q1('SELECT COUNT(*) AS n FROM automation_hooks').n;
+  const r = await api('/api/zapier/actions/emergency', J({ headline: 'After disable', alert_id: 'DIS-1' }, 'POST', full));
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'ZAPIER_HOOK_DISABLED');
+  assert.equal(q1('SELECT COUNT(*) AS n FROM automation_hooks').n, before, 'no fresh hook was created');
+  assert.equal(q1('SELECT enabled FROM automation_hooks WHERE id = ?', zh.id).enabled, 0);
+  await api(`/api/automation/${zh.id}`, J({ enabled: true }, 'PUT'));
+});
+
+test('a workspace viewer signed in with a session cannot add or remove Zapier subscriptions', async () => {
+  const reg = await api('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `viewer-${crypto.randomUUID().slice(0, 6)}@example.test`, password: 'Passw0rd123', name: 'Viewer' }) });
+  assert.equal(reg.status, 201, JSON.stringify(reg.body));
+  run("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'workspace_viewer')", ADMIN.ws, reg.body.user.id);
+  const asViewer = (body, method) => ({ ...J(body, method, reg.body.token), headers: { ...J(body, method, reg.body.token).headers, 'X-Workspace-Id': ADMIN.ws } });
+  assert.equal((await api('/api/zapier/me', asViewer(undefined, 'GET'))).status, 200, 'the viewer can read');
+  const add = await api('/api/zapier/subscriptions', asViewer({ event: 'emergency_raised', target_url: 'https://hooks.zapier.com/hooks/catch/9/viewer/' }, 'POST'));
+  assert.equal(add.status, 403, JSON.stringify(add.body));
+  const sub = await api('/api/zapier/subscriptions', J({ event: 'emergency_raised', target_url: 'https://hooks.zapier.com/hooks/catch/9/admin/' }));
+  assert.equal(sub.status, 201, JSON.stringify(sub.body));
+  assert.equal((await api(`/api/zapier/subscriptions/${sub.body.id}`, asViewer(undefined, 'DELETE'))).status, 403);
+  assert.ok(q1('SELECT 1 AS x FROM automation_subscriptions WHERE id = ?', sub.body.id), 'still there');
+  assert.equal((await api(`/api/zapier/subscriptions/${sub.body.id}`, J(undefined, 'DELETE'))).status, 200);
+});
+
+test('a hook answers GET only when it allows GET', async () => {
+  const h = await mkHook({ name: 'Getter', kind: 'emergency', config: { op: 'clear', scopes: [{ scope_kind: 'workspace' }] } });
+  const get = (url) => fetch(url).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+  const off = await get(h.url);
+  assert.equal(off.status, 404, 'a link preview does not fire it');
+  assert.deepEqual(off.body, (await post(`${BASE}/api/hooks/in/${crypto.randomUUID()}/x`, {})).body, 'the same 404 as a wrong address');
+  assert.equal((await post(h.url, {})).status, 200, 'POST works');
+  const put = await api(`/api/automation/${h.id}`, J({ allow_get: true }, 'PUT'));
+  assert.equal(put.body.config.allow_get, true);
+  assert.equal((await get(h.url)).status, 200);
+  // An edit that resends the config keeps the choice unless it says otherwise.
+  await api(`/api/automation/${h.id}`, J({ config: { op: 'clear', scopes: [{ scope_kind: 'workspace' }] } }, 'PUT'));
+  assert.equal((await get(h.url)).status, 200);
+  await api(`/api/automation/${h.id}`, J({ allow_get: false }, 'PUT'));
+  assert.equal((await get(h.url)).status, 404);
+  await api(`/api/automation/${h.id}`, J(undefined, 'DELETE'));
+});
+
+test('the rate-limit key for a hook URL never contains its secret', () => {
+  const { canonicalLimitPath } = require('../lib/limit-paths');
+  const secret = crypto.randomBytes(32).toString('base64url');
+  const a = canonicalLimitPath(`/api/hooks/in/${crypto.randomUUID()}/${secret}`);
+  const b = canonicalLimitPath(`/api/hooks/in/${crypto.randomUUID()}/${crypto.randomBytes(32).toString('base64url')}/`);
+  assert.equal(a, '/api/hooks/in/:id/:secret');
+  assert.equal(a, b, 'one bucket, not one per probe');
+  assert.ok(!a.toLowerCase().includes(secret.toLowerCase()));
 });

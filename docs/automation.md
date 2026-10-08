@@ -33,9 +33,15 @@ https://<your server>/api/hooks/in/<hook id>/<secret>
 secret itself. If the address is lost, use **New address** to make another; the old one stops
 working at once.
 
-A hook accepts `POST` (JSON, XML or a form) and `GET` (query parameters), up to 256 KB. It
-answers `200` with `{ "ok": true, "result": "raised 1 on 12 screen(s)" }`. Every call goes into
-the hook's **Calls** list and the activity log.
+A hook accepts `POST` (JSON, XML or a form), up to 256 KB. It answers `200` with
+`{ "ok": true, "result": "raised 1 on 12 screen(s)" }`. Every call goes into the hook's **Calls**
+list and the activity log.
+
+**`GET` is off by default.** Chat apps that preview links, email security scanners and browser
+prefetch all open any address they see with `GET`, so a hook address pasted into a chat or an email
+would call the hook. For a sender that can't `POST`, switch on **Also accept GET requests** on the
+hook; it then takes the query parameters as its body. A `GET` to a hook without it answers the same
+`404` as a wrong address.
 
 ### Security
 
@@ -48,10 +54,17 @@ the hook's **Calls** list and the activity log.
   - `X-Hub-Signature-256`
 
   Its value can take any of these forms:
+  - `t=<unix seconds>,v1=<hex of HMAC("t.body")>`. **Use this one if your sender can.** It is
+    refused when more than 5 minutes old, so a captured request can't be replayed later.
   - `sha256=<hex>`
   - `<hex>`
-  - `t=<unix seconds>,v1=<hex of HMAC("t.body")>`. Refused when more than 5 minutes old.
-- **Rate limits.** 30 calls a minute per hook. Each sending address also has its own limit.
+
+  The last two sign the body only. They prove who sent it, but **a captured request stays valid**:
+  anyone who records one signed call can send it again at any time. They are accepted for senders
+  that can't add a timestamp (GitHub-style webhooks, for example). With them, keep the hook address
+  private and rotate it if it may have leaked.
+- **Rate limits.** 30 calls a minute per hook. Each sending address also has a limit of 240 calls a
+  minute across all hooks.
 - **Who can do it.** Only a workspace admin can create, change, test or delete hooks.
 - **Mesh replication.** Hooks aren't available in a workspace replicated over the mesh.
 
@@ -70,8 +83,11 @@ are shown as text, never as HTML.
 
 - **Raise.** The alert appears on screens in scope, the same way an emergency feed alert does: the
   alert card, or the playlist you chose. Head office emergency alerts still come first.
-- **Same alert id, same alert.** Sending the same `{{body.id}}` twice raises one alert. A clear
-  with that id ends it, and a second clear changes nothing.
+- **Same alert id, same alert.** Sending the same `{{body.id}}` twice while it is showing raises
+  one alert. A clear with that id ends it, and a second clear changes nothing.
+- **Raising it again.** The same alert sent after it was cleared, or after it ended on its own,
+  shows again. This includes an alert with no id, which is keyed on its exact body: "Evacuate",
+  then the all-clear, then the same "Evacuate" shows the second time too.
 - **Automatic end.** Alerts end on their own after the minutes you set, 60 by default.
 - **One hook for both.** "Raise or clear, depending on a field" reads a field such as
   `{{body.status}}`. Values like `cleared`, `ended`, `cancelled` or `all clear` clear the alert;
@@ -89,7 +105,9 @@ hook.
 **CAP 1.2 XML.** Each `<alert>` is keyed on its own `sender` and `identifier`.
 
 - **Updates and cancels.** An `Update` or `Cancel` ends the alerts its `<references>` name, so a
-  cancel from the sender clears the screens.
+  cancel from the sender clears the screens. That is final: the same `identifier` sent again after
+  its cancel is treated as a retry and stays off screens. A clear from the hook itself (a JSON
+  all-clear, say) is not final, and the alert can be raised again.
 - **Not shown.** `Exercise`, `Test` and `System` messages never take a screen.
 - **Expiry.** With no `<expires>`, an alert ends after the minutes you set, 120 by default.
 
@@ -173,11 +191,22 @@ Zapier account with the Zapier CLI, as its README describes. Connect it with:
 | Token scope | What it can do |
 | --- | --- |
 | `read` | Test the connection, read recent events, fill dropdowns |
-| `write` | The above, plus subscribe to triggers and update tables |
+| `write` | The above, plus update tables. Subscribing to triggers also needs a workspace admin's token. |
 | `full` | Everything, including alerts, playlists and triggers. Also needs a workspace admin's token. |
+
+Subscribing and unsubscribing send this workspace's events to an outside address, so they need a
+workspace admin, the same as managing subscriptions on the Automation page.
 
 Alerts raised from Zapier appear on the Automation page as the **Zapier: emergency alerts** hook,
 where they can be seen, cleared or switched off.
+
+- **Each alert keeps its own screens.** An alert stays on the screens its own call chose. Another
+  Zap raising a different alert somewhere else doesn't move it, and a clear by alert id never
+  changes which screens anything is on. Raising the same alert id again with different screens
+  moves that alert.
+- **Switched off means off.** While the hook is switched off, the emergency action answers `409`
+  with `code: "ZAPIER_HOOK_DISABLED"`. Switch it back on, or delete it so the next call starts a
+  new one.
 
 ### The API, for Make, n8n, Power Automate or your own code
 
@@ -207,6 +236,9 @@ endpoints are in the [API reference](openapi.yaml):
 - **410 Gone.** The subscription is removed, which is Zapier's convention.
 - **Other failures.** Retried after 1, 5, 30 and 120 minutes, then kept as failed. The Automation
   page shows each subscriber's deliveries.
+- **Fair delivery.** Deliveries are sent several at a time, taking turns between workspaces, with a
+  cap per workspace and per receiving host. A receiver that is slow or down delays only its own
+  deliveries, never another workspace's.
 
 **Make and n8n.** Use their "custom webhook" trigger with `POST /subscriptions`, or poll
 `GET /events`. For actions, either call the endpoints above with an HTTP module, or call a hook

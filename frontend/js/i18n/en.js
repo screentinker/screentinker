@@ -4975,6 +4975,8 @@ export default {
   'auto.f.minutes': 'For how many minutes',
   'auto.f.minutes_field': 'Or take the minutes from a field (optional)',
   'auto.f.enabled': 'Enabled',
+  'auto.f.allow_get': 'Also accept GET requests (query parameters)',
+  'auto.f.allow_get_hint': 'Off by default. Link previews in chat apps and email scanners open any address they see with GET, which would call the hook. Only turn this on for a sender that cannot POST.',
   'auto.signing': 'Request signing (optional)',
   'auto.signing_hint': 'If the sender signs its requests with a shared secret (HMAC-SHA256), enter it here and unsigned requests will be refused.',
   'auto.signing_set': 'A secret is set — leave empty to keep it',

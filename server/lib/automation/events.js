@@ -145,17 +145,82 @@ async function attempt(db, d) {
   return 'retry';
 }
 
-let delivering = false;
-async function deliverDue(db = dbOf(), { limit = 50 } = {}) {
-  if (delivering) return { skipped: true };
-  delivering = true;
+/*
+ * ⚠️ FAIR, CONCURRENT DELIVERY. Deliveries used to go one at a time behind a single lock, 50 a tick,
+ * each allowed 10 s: one tenant with 200 dead endpoints held every other tenant's emergency_raised
+ * back for minutes. Now:
+ *   - up to MAX_CONCURRENT attempts run at once across the server, at most PER_WORKSPACE of them for
+ *     one workspace and PER_HOST for one receiving host (a dead host ties up its own slots only);
+ *   - one at a time per subscription, oldest first: a receiver sees its events in order, and a 410
+ *     on the first stops the rest before they are sent;
+ *   - the due list is taken round-robin across workspaces, so a big backlog cannot sit in front of a
+ *     small one;
+ *   - there is no tick-wide lock: a tick starts what fits and keeps feeding freed slots from its own
+ *     list, and the next tick runs beside it. A delivery already in flight is skipped, and each one is
+ *     re-read just before it is sent, so two ticks never send the same delivery twice.
+ * Retries and backoff are attempt()'s, unchanged.
+ */
+const MAX_CONCURRENT = 16;
+const PER_WORKSPACE = 4;
+const PER_HOST = 8;
+const inFlight = new Set();              // delivery ids
+const wsRunning = new Map();             // workspace id -> attempts in flight
+const hostRunning = new Map();           // receiving host -> attempts in flight
+const subRunning = new Set();            // subscription ids with an attempt in flight
+
+function hostOf(url) { try { return new URL(url).host.toLowerCase(); } catch { return ''; } }
+const bump = (m, k, n) => { const v = (m.get(k) || 0) + n; if (v > 0) m.set(k, v); else m.delete(k); };
+
+/** Round-robin by workspace, each workspace's own deliveries oldest first. */
+function fairOrder(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const k = r.ws || '';
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(r);
+  }
+  const lists = [...by.values()];
+  const out = [];
+  for (let i = 0; out.length < rows.length; i++) for (const l of lists) if (i < l.length) out.push(l[i]);
+  return out;
+}
+
+async function deliverDue(db = dbOf(), { limit = 200 } = {}) {
   const out = { ok: 0, retry: 0, failed: 0, gone: 0 };
-  try {
-    const due = db.prepare("SELECT * FROM automation_deliveries WHERE status = 'pending' AND next_at <= ? ORDER BY id LIMIT ?").all(now(), limit);
-    for (const d of due) {
-      try { out[await attempt(db, d)]++; } catch (e) { console.warn(`[automation] delivery ${d.id}: ${e && e.message}`); }
-    }
-  } finally { delivering = false; }
+  const due = db.prepare(`SELECT d.id, d.subscription_id AS sub, s.workspace_id AS ws, s.target_url AS target FROM automation_deliveries d
+      LEFT JOIN automation_subscriptions s ON s.id = d.subscription_id
+      WHERE d.status = 'pending' AND d.next_at <= ? ORDER BY d.next_at, d.id LIMIT ?`).all(now(), Math.max(limit, 1) * 4);
+  const queue = fairOrder(due.filter((d) => !inFlight.has(d.id))).slice(0, limit);
+  for (const d of queue) d.host = hostOf(d.target);
+  const reread = db.prepare("SELECT * FROM automation_deliveries WHERE id = ? AND status = 'pending' AND next_at <= ?");
+  const fits = (d) => inFlight.size < MAX_CONCURRENT && !subRunning.has(d.sub)
+    && (wsRunning.get(d.ws || '') || 0) < PER_WORKSPACE && (hostRunning.get(d.host) || 0) < PER_HOST;
+
+  await new Promise((resolve) => {
+    let running = 0;
+    const pump = () => {
+      for (let i = 0; i < queue.length;) {
+        const d = queue[i];
+        if (inFlight.has(d.id)) { queue.splice(i, 1); continue; }
+        if (!fits(d)) { i++; continue; }
+        queue.splice(i, 1);
+        const row = reread.get(d.id, now());
+        if (!row) continue;   // another tick sent it, or it was unsubscribed
+        inFlight.add(d.id); subRunning.add(d.sub); bump(wsRunning, d.ws || '', 1); bump(hostRunning, d.host, 1); running++;
+        attempt(db, row)
+          .then((r) => { out[r]++; })
+          .catch((e) => console.warn(`[automation] delivery ${d.id}: ${e && e.message}`))
+          .finally(() => {
+            inFlight.delete(d.id); subRunning.delete(d.sub); bump(wsRunning, d.ws || '', -1); bump(hostRunning, d.host, -1); running--;
+            pump();
+          });
+      }
+      // Nothing of ours running and nothing startable left: what remains is held by another tick's
+      // slots, and the next tick picks it up.
+      if (!running) resolve();
+    };
+    pump();
+  });
   return out;
 }
 
@@ -201,4 +266,4 @@ function start() {
 function _setClock(fn) { clock = fn || (() => Math.floor(Date.now() / 1000)); }
 function _setSender(fn) { sendOverride = fn || null; }
 
-module.exports = { EVENTS, emit, recent, sample, present, sign, deliverDue, deviceStateTick, tick, start, prune, _setClock, _setSender };
+module.exports = { EVENTS, emit, recent, sample, present, sign, deliverDue, fairOrder, MAX_CONCURRENT, PER_WORKSPACE, PER_HOST, deviceStateTick, tick, start, prune, _setClock, _setSender };

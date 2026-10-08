@@ -32,6 +32,21 @@ function access(req, res, { write = false } = {}) {
   return ctx;
 }
 
+/*
+ * Express 4 does not await a handler and server.js exits on an unhandled rejection: an async handler
+ * here is wrapped so a throw is a 500, not a dead server (asyncRoute in routes/auth.js).
+ */
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch((err) => {
+    console.error(`[automation] unhandled error in ${req.method} ${req.path}:`, err && err.message);
+    try {
+      if (!res.headersSent) res.status(500).json({ error: 'Something went wrong' });
+    } catch (e2) {
+      console.error('[automation] failed to report an error:', e2 && e2.message);
+    }
+  });
+}
+
 function meshRefusal(req) {
   try {
     if (require('../lib/corporate/guard').isReplicatedWorkspace(db, req.workspaceId)) {
@@ -49,11 +64,7 @@ const hookUrl = (req, id, secret) => `${publicOrigin(req)}/api/hooks/in/${id}/${
 
 function present(req, h) {
   const cfg = hooks.parseConfig(h);
-  let live = 0;
-  if (h.feed_id) {
-    const feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(h.feed_id);
-    if (feed) live = require('../lib/cap/feeds').liveAlerts(db, feed).length;
-  }
+  const live = hooks.liveCount(db, h);
   const now = Math.floor(Date.now() / 1000);
   const overrides = db.prepare('SELECT COUNT(*) AS n FROM automation_overrides WHERE hook_id = ? AND ends_at > ?').get(h.id, now).n;
   return {
@@ -152,12 +163,10 @@ router.put('/:id', (req, res) => {
   }
   const after = db.prepare('SELECT * FROM automation_hooks WHERE id = ?').get(h.id);
   // Disabling an emergency hook takes down what it raised; re-enabling does not resurrect it.
-  if (h.enabled && !after.enabled && after.feed_id) {
-    const feeds = require('../lib/cap/feeds');
-    const feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(after.feed_id);
-    if (feed) { feeds.endPushed(db, feed, null); feeds.refresh(db, feed.id); }
+  if (h.enabled && !after.enabled) {
+    hooks.endAll(db, after);
+    require('../lib/automation/overrides').stop(db, { workspaceId: h.workspace_id, hookId: h.id });
   }
-  if (h.enabled && !after.enabled) require('../lib/automation/overrides').stop(db, { workspaceId: h.workspace_id, hookId: h.id });
   logActivity(req.user.id, 'automation:hook_updated', `${after.name} (${after.kind})`, null, getClientIp(req), req.workspaceId);
   res.json(present(req, after));
 });
@@ -176,7 +185,7 @@ router.post('/:id/rotate', (req, res) => {
  * in the call log. It is not a dry run — a test of an emergency hook shows the alert on screens, so
  * the page says so and offers the clear straight after.
  */
-router.post('/:id/test', async (req, res) => {
+router.post('/:id/test', asyncRoute(async (req, res) => {
   if (!access(req, res, { write: true })) return;
   const h = loadHook(req, res); if (!h) return;
   const body = req.body && req.body.body !== undefined ? req.body.body : sampleBody(h);
@@ -185,7 +194,7 @@ router.post('/:id/test', async (req, res) => {
   const r = await hooks.run(db, h, parsed, { io: req.app.get('io'), test: true });
   logActivity(req.user.id, 'automation:hook_tested', `${h.name}: ${r.outcome}`, null, getClientIp(req), req.workspaceId);
   res.status(r.ok ? 200 : 422).json({ ok: r.ok, outcome: r.outcome });
-});
+}));
 
 function sampleBody(h) {
   if (h.kind === 'emergency') return { id: 'test-1', headline: 'Test alert', message: 'This is a test of the emergency hook.', status: 'active' };

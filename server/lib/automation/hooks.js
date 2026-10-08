@@ -17,9 +17,10 @@
  *     tells a prober nothing — not even that the hook id exists.
  *   - Optional HMAC signing on top (lib/secretbox stores the signing key): when set, an unsigned or
  *     wrongly signed call is refused (401 — by then the caller has proved it holds the URL).
- *   - Emergency alerts are raised on a hidden push-mode CAP feed owned by the hook
- *     (cap_feeds.source = 'hook'), so the alert card, scopes, severity ordering, expiry and the
- *     payload override are CAP's own (lib/cap/feeds.js) — one emergency mechanism, not two.
+ *   - Emergency alerts are raised on hidden push-mode CAP feeds owned by the hook, one per screen
+ *     selection (cap_feeds.source = 'hook'; see ensureFeed), so the alert card, scopes, severity
+ *     ordering, expiry and the payload override are CAP's own (lib/cap/feeds.js) — one emergency
+ *     mechanism, not two.
  *   - Every alert is keyed on the SENDER'S alert id. A mass-notification system that retries, or
  *     sends the same alert to two of our hooks' URLs twice, raises it once; a clear sent twice
  *     clears once. Without an id, the exact body is the id, so a duplicate POST is still one alert.
@@ -153,7 +154,9 @@ function validateScopes(db, workspaceId, scopes) {
   for (const s of scopes.slice(0, 100)) {
     const kind = s && s.scope_kind;
     if (!SCOPE_KINDS.has(kind)) return { error: `invalid scope_kind: ${kind}` };
-    let id = kind === 'workspace' ? workspaceId : String((s && s.scope_id) || '').trim();
+    const sid = idField(s.scope_id, 'scope_id');
+    if (sid.error) return sid;
+    let id = kind === 'workspace' ? workspaceId : (sid.id || '');
     if (kind === 'group' && !db.prepare('SELECT 1 FROM device_groups WHERE id = ? AND workspace_id = ?').get(id, workspaceId)) return { error: `group ${id} is not in this workspace` };
     if (kind === 'device' && !db.prepare('SELECT 1 FROM devices WHERE id = ? AND workspace_id = ?').get(id, workspaceId)) return { error: `screen ${id} is not in this workspace` };
     if (kind === 'tag') { id = id.replace(/^#/, '').toLowerCase(); if (!id || id.length > 64) return { error: 'a tag scope needs a tag' }; }
@@ -166,6 +169,18 @@ function validateScopes(db, workspaceId, scopes) {
 }
 
 function text(v, max = MAX_TEXT) { return v == null ? '' : String(v).slice(0, max); }
+
+/*
+ * ⚠️ AN ID FIELD IS A STRING OR NOTHING. These values come straight from a request body (a hook
+ * edit, or a Zapier action) and go into a bound SQL parameter, and better-sqlite3 THROWS on an object
+ * or an array ("Too few parameter values were provided") — which, in an async handler, used to be an
+ * unhandled rejection and a dead server. Refused here with a 400 instead.
+ */
+function idField(v, name) {
+  if (v === undefined || v === null || v === '') return { id: null };
+  if (typeof v === 'string' || typeof v === 'number') return { id: String(v).trim().slice(0, 200) || null };
+  return { error: `${name} must be a string` };
+}
 function minutes(v, def, max) {
   if (v === undefined || v === null || v === '') return def;
   const n = parseInt(v, 10);
@@ -182,8 +197,10 @@ function validateConfig(db, workspaceId, kind, c) {
     if (exp === null) return { error: `expires_min must be 1–${MAX_EXPIRES_MIN}` };
     const sev = c.severity === undefined ? 'Extreme' : String(c.severity);
     if (!sev.includes('{{') && !SEVERITIES.includes(sev)) return { error: `severity must be one of ${SEVERITIES.join(', ')} (or a {{template}})` };
-    if (c.playlist_id && !db.prepare('SELECT 1 FROM playlists WHERE id = ? AND workspace_id = ?').get(c.playlist_id, workspaceId)) return { error: 'playlist_id must be a playlist in this workspace' };
-    const out = { scopes: sc.scopes, expires_min: exp, severity: sev, playlist_id: c.playlist_id || null };
+    const pid = idField(c.playlist_id, 'playlist_id');
+    if (pid.error) return pid;
+    if (pid.id && !db.prepare('SELECT 1 FROM playlists WHERE id = ? AND workspace_id = ?').get(pid.id, workspaceId)) return { error: 'playlist_id must be a playlist in this workspace' };
+    const out = { scopes: sc.scopes, expires_min: exp, severity: sev, playlist_id: pid.id };
     if (kind === 'emergency') {
       const op = c.op || 'raise';
       if (!['raise', 'clear', 'auto'].includes(op)) return { error: 'op must be raise, clear or auto' };
@@ -206,7 +223,9 @@ function validateConfig(db, workspaceId, kind, c) {
     return { config: out };
   }
   if (kind === 'trigger') {
-    const t = db.prepare('SELECT id, kind FROM triggers WHERE id = ? AND workspace_id = ?').get(String(c.trigger_id || ''), workspaceId);
+    const tid = idField(c.trigger_id, 'trigger_id');
+    if (tid.error) return tid;
+    const t = db.prepare('SELECT id, kind FROM triggers WHERE id = ? AND workspace_id = ?').get(tid.id || '', workspaceId);
     if (!t) return { error: 'trigger_id must be a trigger in this workspace' };
     if (t.kind === 'emergency') return { error: "Head office emergency alerts can't be fired from a hook." };
     const op = c.op || 'fire';
@@ -214,24 +233,30 @@ function validateConfig(db, workspaceId, kind, c) {
     return { config: { trigger_id: t.id, op } };
   }
   if (kind === 'data') {
-    const ds = db.prepare('SELECT id, type FROM data_sources WHERE id = ? AND workspace_id = ?').get(String(c.data_source_id || ''), workspaceId);
+    const dsid = idField(c.data_source_id, 'data_source_id');
+    if (dsid.error) return dsid;
+    const ds = db.prepare('SELECT id, type FROM data_sources WHERE id = ? AND workspace_id = ?').get(dsid.id || '', workspaceId);
     if (!ds) return { error: 'data_source_id must be a data source in this workspace' };
     if (ds.type !== 'table') return { error: 'A hook can write to a Table data source only.' };
     const mode = c.mode || 'replace';
     if (!['replace', 'upsert', 'append'].includes(mode)) return { error: 'mode must be replace, upsert or append' };
-    if (mode === 'upsert' && !c.key_column) return { error: 'upsert needs key_column' };
-    return { config: { data_source_id: ds.id, mode, rows: text(c.rows || '{{body}}', 300), key_column: c.key_column ? text(c.key_column, 80) : null } };
+    const key = idField(c.key_column, 'key_column');
+    if (key.error) return key;
+    if (mode === 'upsert' && !key.id) return { error: 'upsert needs key_column' };
+    return { config: { data_source_id: ds.id, mode, rows: text(c.rows || '{{body}}', 300), key_column: key.id ? text(key.id, 80) : null } };
   }
   if (kind === 'playlist') {
     const op = c.op || 'start';
     if (!['start', 'stop'].includes(op)) return { error: 'op must be start or stop' };
     const sc = validateScopes(db, workspaceId, c.scopes);
     if (sc.error) return sc;
-    const pl = db.prepare('SELECT 1 FROM playlists WHERE id = ? AND workspace_id = ?').get(String(c.playlist_id || ''), workspaceId);
+    const pid = idField(c.playlist_id, 'playlist_id');
+    if (pid.error) return pid;
+    const pl = db.prepare('SELECT 1 FROM playlists WHERE id = ? AND workspace_id = ?').get(pid.id || '', workspaceId);
     if (op === 'start' && !pl) return { error: 'playlist_id must be a playlist in this workspace' };
     const mins = minutes(c.minutes, 30, require('./overrides').MAX_MINUTES);
     if (mins === null) return { error: 'minutes must be 1–1440' };
-    return { config: { op, playlist_id: c.playlist_id || null, minutes: mins, minutes_field: c.minutes_field ? text(c.minutes_field, 300) : null, scopes: sc.scopes } };
+    return { config: { op, playlist_id: pid.id, minutes: mins, minutes_field: c.minutes_field ? text(c.minutes_field, 300) : null, scopes: sc.scopes } };
   }
   return { error: `kind must be one of: ${KINDS.join(', ')}` };
 }
@@ -249,10 +274,26 @@ function normaliseInput(db, workspaceId, body, existing = null) {
     out.name = name;
   }
   if (b.enabled !== undefined) out.enabled = b.enabled ? 1 : 0;
-  if (b.config !== undefined || !existing) {
-    const v = validateConfig(db, workspaceId, kind, b.config);
-    if (v.error) return v;
-    out.config = JSON.stringify(v.config);
+  if (b.config !== undefined || b.allow_get !== undefined || !existing) {
+    let cfg;
+    if (b.config !== undefined || !existing) {
+      const v = validateConfig(db, workspaceId, kind, b.config);
+      if (v.error) return v;
+      cfg = v.config;
+    } else cfg = parseConfig(existing);
+    const prev = existing ? parseConfig(existing) : {};
+    /*
+     * ⚠️ `via` IS THE SERVER'S, NEVER THE FORM'S. The Zapier hook is found by via = 'zapier'
+     * (routes/zapier.js); the edit form always sends a whole config, which validateConfig rebuilds
+     * without it. Dropping it made the next Zapier call miss the hook an admin had just switched
+     * off and create a fresh, enabled one — the off switch bypassed.
+     */
+    if (prev.via) cfg.via = prev.via;
+    else delete cfg.via;
+    // GET is opt-in (routes/hooks-in.js): a link preview or a mail scanner must not fire a hook.
+    const allowGet = b.allow_get !== undefined ? !!b.allow_get : !!prev.allow_get;
+    if (allowGet && !cfg.via) cfg.allow_get = true; else delete cfg.allow_get;
+    out.config = JSON.stringify(cfg);
   }
   if (b.signing_secret !== undefined) {
     const s = String(b.signing_secret || '');
@@ -278,29 +319,70 @@ function capScopesFor(db, workspaceId, scopes) {
   return rows.filter((r) => { const k = `${r.scope_kind}|${r.scope_id}`; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
-/** The hook's hidden feed, created on first use, with its scopes and playlist kept in step. */
+/*
+ * ⚠️ ONE HIDDEN FEED PER SCREEN SELECTION, NOT PER HOOK. A feed has one set of scopes and one card,
+ * and the Zapier hook (routes/zapier.js) takes its screens from each CALL. With one feed per hook,
+ * Zap B raising on group Y — or a clear by id, whose default scope is the whole workspace — re-scoped
+ * the feed and moved Zap A's live alert off group X. So an alert is raised on the hook's feed whose
+ * scopes and playlist match ITS call, and keeps them until it ends:
+ *   - a raise finds the hook feed with exactly these scopes + playlist, else re-scopes one of the
+ *     hook's feeds that has nothing live (which moves nobody's alert), else adds a feed;
+ *   - a clear never touches scopes: it ends the named alert (or, with no id, every alert) on all of
+ *     the hook's feeds;
+ *   - the same alert id raised again with different screens is the sender moving ITS OWN alert: it
+ *     ends on the old feed and goes live on the new one.
+ * The first feed is hook.feed_id (url `hook:<id>`); the others are `hook:<id>|<n>`.
+ */
+const MAX_FEEDS_PER_HOOK = 20;
+
+/** Every hidden feed a hook owns, oldest first. */
+function hookFeeds(db, hook) {
+  return db.prepare(`SELECT * FROM cap_feeds WHERE workspace_id = ? AND source = 'hook'
+      AND (id = ? OR url = ? OR substr(url, 1, ?) = ?) ORDER BY created_at, rowid`)
+    .all(hook.workspace_id, hook.feed_id || '', `hook:${hook.id}`, `hook:${hook.id}|`.length, `hook:${hook.id}|`);
+}
+
+function feedSig(scopes, playlistId) {
+  return JSON.stringify([scopes.map((r) => `${r.scope_kind}|${r.scope_id}`).sort(), playlistId || null]);
+}
+
+/** The hook's feed for these screens + playlist (see above). Returns { feed, left } or { error }. */
 function ensureFeed(db, hook, cfg) {
   const feeds = require('../cap/feeds');
-  let feed = hook.feed_id ? db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(hook.feed_id) : null;
+  const resolved = capScopesFor(db, hook.workspace_id, cfg.scopes || []);
+  const rows = resolved.length ? resolved : [{ scope_kind: 'device', scope_id: '__none__' }];
+  const playlistId = cfg.playlist_id || null;
+  const sig = feedSig(rows, playlistId);
+  const all = hookFeeds(db, hook);
+  let feed = all.find((f) => feedSig(feeds.scopesOf(db, f.id), f.playlist_id) === sig) || null;
+  let left = [];
   if (!feed) {
-    const id = crypto.randomUUID();
-    db.prepare(`INSERT INTO cap_feeds (id, workspace_id, user_id, name, url, enabled, poll_sec, min_severity, language, playlist_id, source)
-      VALUES (?, ?, ?, ?, ?, 1, 3600, 'Unknown', 'en', ?, 'hook')`)
-      .run(id, hook.workspace_id, hook.created_by || null, hook.name, `hook:${hook.id}`, cfg.playlist_id || null);
-    db.prepare('UPDATE automation_hooks SET feed_id = ? WHERE id = ?').run(id, hook.id);
-    hook.feed_id = id;
-    feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(id);
-  } else {
-    db.prepare("UPDATE cap_feeds SET name = ?, playlist_id = ?, enabled = 1, min_severity = 'Unknown', updated_at = strftime('%s','now') WHERE id = ?")
-      .run(hook.name, cfg.playlist_id || null, feed.id);
-    feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(feed.id);
+    // A feed with nothing live can be re-pointed: no screen is showing anything from it.
+    feed = all.find((f) => !feeds.liveAlerts(db, f).length) || null;
+    if (feed) {
+      const before = new Set(feeds.devicesInScope(db, feed));
+      feeds.setScopes(db, feed.id, rows);
+      db.prepare('UPDATE cap_feeds SET playlist_id = ? WHERE id = ?').run(playlistId, feed.id);
+      const after = new Set(feeds.devicesInScope(db, feed));
+      left = [...before].filter((d) => !after.has(d));
+    } else if (all.length >= MAX_FEEDS_PER_HOOK) {
+      return { error: `This hook already has live alerts on ${MAX_FEEDS_PER_HOOK} different screen selections. Clear some first.` };
+    } else {
+      const id = crypto.randomUUID();
+      const url = all.length ? `hook:${hook.id}|${crypto.randomBytes(6).toString('hex')}` : `hook:${hook.id}`;
+      db.prepare(`INSERT INTO cap_feeds (id, workspace_id, user_id, name, url, enabled, poll_sec, min_severity, language, playlist_id, source)
+        VALUES (?, ?, ?, ?, ?, 1, 3600, 'Unknown', 'en', ?, 'hook')`)
+        .run(id, hook.workspace_id, hook.created_by || null, hook.name, url, playlistId);
+      feeds.setScopes(db, id, rows);
+      if (!all.length) { db.prepare('UPDATE automation_hooks SET feed_id = ? WHERE id = ?').run(id, hook.id); hook.feed_id = id; }
+      feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(id);
+    }
   }
-  const scopes = capScopesFor(db, hook.workspace_id, cfg.scopes || []);
-  const before = new Set(feeds.devicesInScope(db, feed));
-  feeds.setScopes(db, feed.id, scopes.length ? scopes : [{ scope_kind: 'device', scope_id: '__none__' }]);
+  db.prepare("UPDATE cap_feeds SET name = ?, enabled = 1, min_severity = 'Unknown', updated_at = strftime('%s','now') WHERE id = ?")
+    .run(hook.name, feed.id);
+  feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(feed.id);
   feeds.ensureWidget(db, feed);
-  const after = new Set(feeds.devicesInScope(db, feed));
-  return { feed, left: [...before].filter((d) => !after.has(d)) };
+  return { feed, left };
 }
 
 function severityFrom(v, fallback) {
@@ -338,21 +420,53 @@ function isClearValue(v) {
   return CLEAR_WORDS.has(String(v).trim().toLowerCase());
 }
 
-/** Raise/clear on the hook's feed. `alerts` are CAP-shaped; `clears` are identifiers ([] none, null all). */
+/** Raise/clear on the hook's feeds. `alerts` are CAP-shaped; `clears` are identifiers ([] none, null all). */
 function applyEmergency(db, hook, cfg, { alerts = [], clears = [] }) {
   const feeds = require('../cap/feeds');
-  const { feed, left } = ensureFeed(db, hook, cfg);
-  const r = feeds.applyPush(db, feed, alerts);
-  let ended = r.ended;
-  if (clears === null) ended = ended.concat(feeds.endPushed(db, feed, null));
-  else if (clears.length) ended = ended.concat(feeds.endPushed(db, feed, clears.map((id) => `hook:${hook.id}|${id}`)));
-  feeds.refresh(db, feed.id, { extraDevices: left, force: left.length > 0 });
-  const screens = feeds.devicesInScope(db, feed).length;
+  const { alertKey, referenceKey } = require('../cap/parse');
+  const touched = new Map();   // feed id -> screens that left it and need their normal payload back
+  let raised = [];
+  let ended = [];
+  let screens = new Set();
+  if (alerts.length) {
+    const ef = ensureFeed(db, hook, cfg);
+    if (ef.error) return { ok: false, status: 409, outcome: ef.error };
+    const { feed, left } = ef;
+    touched.set(feed.id, left);
+    // What this push ends or moves, wherever it currently lives among the hook's other feeds.
+    const keys = [];
+    for (const a of alerts) {
+      if (!a || !a.identifier) continue;
+      keys.push(alertKey(a));
+      if (a.msgType === 'Update' || a.msgType === 'Cancel') for (const r of a.references || []) keys.push(referenceKey(r));
+    }
+    for (const f of hookFeeds(db, hook)) {
+      if (f.id === feed.id) continue;
+      const e = feeds.endPushed(db, f, keys);
+      if (e.length) { ended = ended.concat(e); touched.set(f.id, touched.get(f.id) || []); }
+    }
+    const r = feeds.applyPush(db, feed, alerts);
+    raised = r.raised;
+    // A move is not a clear: an alert that went live here is not also counted as cleared there.
+    ended = ended.filter((k) => !raised.includes(k)).concat(r.ended);
+    for (const d of feeds.devicesInScope(db, feed)) screens.add(d);
+  } else if (clears === null || clears.length) {
+    // A clear never re-scopes anything: it ends what it names wherever it is.
+    for (const f of hookFeeds(db, hook)) {
+      const e = feeds.endPushed(db, f, clears === null ? null : clears.map((id) => `hook:${hook.id}|${id}`));
+      if (!e.length) continue;
+      ended = ended.concat(e);
+      touched.set(f.id, []);
+      for (const d of feeds.devicesInScope(db, f)) screens.add(d);
+    }
+  }
+  for (const [id, extra] of touched) feeds.refresh(db, id, { extraDevices: extra, force: extra.length > 0 });
+  const n = screens.size;
   const parts = [];
-  if (r.raised.length) parts.push(`raised ${r.raised.length}`);
+  if (raised.length) parts.push(`raised ${raised.length}`);
   if (ended.length) parts.push(`cleared ${ended.length}`);
   if (!parts.length) parts.push('no change (already raised or cleared)');
-  return { ok: true, raised: r.raised.length, cleared: ended.length, screens, outcome: `${parts.join(', ')} on ${screens} screen(s)` };
+  return { ok: true, raised: raised.length, cleared: ended.length, screens: n, outcome: `${parts.join(', ')} on ${n} screen(s)` };
 }
 
 function runEmergency(db, hook, cfg, ctx, parsed) {
@@ -589,30 +703,39 @@ function record(db, hook, status, outcome, test = false) {
   } catch (_) { /* the log is best effort; the action already happened */ }
 }
 
-/** Remove a hook and everything it owns (its feed — clearing what it raised — and its overrides). */
+/** Remove a hook and everything it owns (its feeds — clearing what it raised — and its overrides). */
 function removeHook(db, hook) {
   const feeds = require('../cap/feeds');
-  let devices = [];
-  if (hook.feed_id) {
-    const feed = db.prepare('SELECT * FROM cap_feeds WHERE id = ?').get(hook.feed_id);
-    if (feed) {
-      devices = feeds.devicesInScope(db, feed);
-      if (feed.widget_id) db.prepare('DELETE FROM widgets WHERE id = ?').run(feed.widget_id);
-      db.prepare('DELETE FROM cap_alerts WHERE feed_id = ?').run(feed.id);
-      db.prepare('DELETE FROM cap_feed_scopes WHERE feed_id = ?').run(feed.id);
-      db.prepare('DELETE FROM cap_feeds WHERE id = ?').run(feed.id);
-    }
+  const gone = [];
+  for (const feed of hookFeeds(db, hook)) {
+    gone.push({ id: feed.id, devices: feeds.devicesInScope(db, feed) });
+    if (feed.widget_id) db.prepare('DELETE FROM widgets WHERE id = ?').run(feed.widget_id);
+    db.prepare('DELETE FROM cap_alerts WHERE feed_id = ?').run(feed.id);
+    db.prepare('DELETE FROM cap_feed_scopes WHERE feed_id = ?').run(feed.id);
+    db.prepare('DELETE FROM cap_feeds WHERE id = ?').run(feed.id);
   }
   require('./overrides').stop(db, { workspaceId: hook.workspace_id, hookId: hook.id });
   db.prepare('DELETE FROM automation_hook_calls WHERE hook_id = ?').run(hook.id);
   db.prepare('DELETE FROM automation_hooks WHERE id = ?').run(hook.id);
-  if (hook.feed_id) feeds.refresh(db, hook.feed_id, { extraDevices: devices, force: true });
+  for (const g of gone) feeds.refresh(db, g.id, { extraDevices: g.devices, force: true });
+}
+
+/** End everything a hook has live (switching it off). Re-enabling does not resurrect it. */
+function endAll(db, hook) {
+  const feeds = require('../cap/feeds');
+  for (const feed of hookFeeds(db, hook)) { feeds.endPushed(db, feed, null); feeds.refresh(db, feed.id); }
+}
+
+/** How many alerts a hook has on screens now, across its feeds. */
+function liveCount(db, hook) {
+  const feeds = require('../cap/feeds');
+  return hookFeeds(db, hook).reduce((n, f) => n + feeds.liveAlerts(db, f).length, 0);
 }
 
 function _resetBuckets() { buckets.clear(); }
 
 module.exports = {
   KINDS, SEVERITIES, newSecret, hashSecret, secretMatches, verifySignature, allowCall, parseBody, lookup, render, renderValue,
-  normaliseInput, validateConfig, parseConfig, run, record, removeHook, severityFrom, isClearValue, guess, FIELD_GUESS,
+  normaliseInput, validateConfig, parseConfig, run, record, removeHook, endAll, liveCount, hookFeeds, severityFrom, isClearValue, guess, FIELD_GUESS,
   _resetBuckets,
 };
