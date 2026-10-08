@@ -598,7 +598,8 @@ function route() {
     const deviceId = hash.split('#/device/')[1].split('/')[0];
     currentView = deviceDetail;
     deviceDetail.render(app, deviceId);
-  } else if (hash === '#/content') {
+  } else if (hash === '#/content' || hash.startsWith('#/content?')) {
+    // ?canva=connected / ?canva_error=… come back from the Canva connect round trip.
     currentView = contentLibrary;
     contentLibrary.render(app);
   } else if (hash === '#/playlists' || hash.startsWith('#/playlists/')) {

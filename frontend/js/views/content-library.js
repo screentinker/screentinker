@@ -7,6 +7,7 @@ import { t } from '../i18n.js';
 import { openHistoryModal } from '../components/history-modal.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
 import { isPdf, renderPdfToPages, baseName } from '../components/pdf-pages.js';
+import { mountCanvaCard, reportConnectResult, loadCanvaLinks, syncCanvaLink } from '../components/canva-import.js';
 
 /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Kept as a constant rather than
  * spelled out at each site: it is compared in three places here, and a typo in one of them is a
@@ -167,6 +168,8 @@ export function render(container) {
         </select>
         <button class="btn btn-primary" id="addHoldBtn">${t('content.hold_add_btn')}</button>
       </div>
+      <!-- Canva (components/canva-import.js): hidden until /api/canva/status answers. -->
+      <div id="canvaCard" style="display:none;width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;flex-direction:column;gap:12px"></div>
     </div>
     </div>
 
@@ -221,6 +224,14 @@ export function render(container) {
   }).catch(() => {});
 
   uploadArea.addEventListener('click', () => fileInput.click());
+
+  reportConnectResult();
+  {
+    const canvaCard = document.getElementById('canvaCard');
+    mountCanvaCard(canvaCard, { onImported: () => loadContent() }).then(() => {
+      if (canvaCard && canvaCard.style.display !== 'none') canvaCard.style.display = 'flex';
+    });
+  }
 
   uploadArea.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -487,11 +498,12 @@ async function loadContent() {
   if (!grid || !folderGrid || !breadcrumb) return;
 
   try {
-    const [content, folders] = await Promise.all([
+    const [content, folders, canvaLinks] = await Promise.all([
       api.getContent(state.currentFolderId === null ? null : state.currentFolderId, state.showExpired, {
         q: state.search, type: state.type, sort: state.sort,
       }),
       api.getFolders(),
+      loadCanvaLinks(),
     ]);
     state.folders = folders;
 
@@ -699,6 +711,11 @@ async function loadContent() {
             ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
             ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}
           </div>
+          ${canvaLinks.has(c.id) ? (() => {
+            const l = canvaLinks.get(c.id);
+            return `<div style="font-size:11px;margin-top:4px;color:${l.last_error ? 'var(--danger,#e5484d)' : 'var(--text-muted)'}" title="${esc(l.last_error || '')}">${esc(t('canva.linked_badge'))}${l.last_error ? ` &middot; ${esc(t('canva.sync_problem'))}` : ''}
+              <button class="btn btn-secondary btn-sm" data-canva-sync="${c.id}" style="margin-left:4px;padding:1px 6px;font-size:11px">${esc(t('canva.sync_now'))}</button></div>`;
+          })() : ''}
           ${exp.expired
             ? `<div style="font-size:11px;color:var(--danger,#e5484d);font-weight:600;margin-top:4px">${t('content.expired_badge')}${exp.dateLabel ? ` &middot; ${exp.dateLabel}` : ''}</div>`
             : (exp.dateLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_label', { date: exp.dateLabel })}</div>` : '')}
@@ -759,6 +776,18 @@ async function loadContent() {
 
     // Delete handler via event delegation
     grid.onclick = async (e) => {
+      const syncBtn = e.target.closest('[data-canva-sync]');
+      if (syncBtn) {
+        syncBtn.disabled = true;
+        syncBtn.textContent = t('canva.syncing');
+        try {
+          const r = await syncCanvaLink(syncBtn.dataset.canvaSync);
+          if (r.errors) showToast(t('canva.sync_failed'), 'error');
+          else showToast(r.replaced ? t('canva.synced') : t('canva.up_to_date'), 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+        loadContent();
+        return;
+      }
       const histBtn = e.target.closest('[data-history-content]');
       if (histBtn) {
         const c = content.find(x => x.id === histBtn.dataset.historyContent);

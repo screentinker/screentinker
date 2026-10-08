@@ -14,6 +14,14 @@
   - Signing in is otherwise the same as with OIDC: **Require SSO**, joining your organization on
     first sign-in, and the same protections against account takeover all apply. See
     `docs/sso-setup.md`.
+- **Import designs from Canva, and keep them up to date** (Content → Canva).
+  - Each person connects their own Canva account. Pick a design, choose its pages, and import
+    them as images (one per page) or as one video, optionally with a playlist in page order.
+  - Imported items stay linked. When the design changes in Canva, they update within 30 minutes,
+    or straight away with **Sync now**. Updates go through the same path as **Replace file**:
+    screens re-download, history keeps the old version, and approval applies.
+  - Org admins add their Canva integration in Settings, or operators set `CANVA_CLIENT_ID` /
+    `CANVA_CLIENT_SECRET` for the whole server. See `docs/canva.md`.
 
 - **New player versions roll out in waves, and stop themselves if they're bad** (Platform → Player
   rollouts).
