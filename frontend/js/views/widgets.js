@@ -48,6 +48,7 @@ function dateFormatLabel(format) {
 import { esc, hydrateAuthImages } from '../utils.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 import { mountMenuEditor, readMenuConfig } from '../components/menu-board-editor.js';
+import { mountBiEditor, readBiConfig } from '../components/bi-dashboard-editor.js';
 
 // A refused request must reject, not resolve.
 //
@@ -70,7 +71,7 @@ const API = (url, opts = {}) => {
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'transition'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'bi-dashboard', 'transition'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -82,6 +83,7 @@ const WIDGET_ICONS = {
   'directory-search': '&#128269;',
   'menu-board': '&#127860;',
   'cloud-doc': '&#128209;',
+  'bi-dashboard': '&#128202;',
   transition: '&#127916;',
   // Built-in, but never offered in the "new widget" grid: a template widget is created from the
   // Templates library (the server refuses POST /widgets for it) and edited with the same form.
@@ -779,6 +781,9 @@ export async function render(container) {
         // components/menu-board-editor.js renders into this box once the modal is open.
         html += `<div id="wMenuEditor"></div>`;
         break;
+      case 'bi-dashboard':
+        html += `<div id="wBiEditor"></div>`;
+        break;
       case 'directory-board':
         html += `
           <div class="form-group" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:6px;background:var(--bg-input)">
@@ -934,6 +939,7 @@ export async function render(container) {
 
     if (type === 'menu-board') mountMenuEditor(document.getElementById('wMenuEditor'), config, { apiGet: (u) => API(u) });
     if (type === 'cloud-doc') initCloudDocForm();
+    if (type === 'bi-dashboard') mountBiEditor(document.getElementById('wBiEditor'), config, { apiGet: (u) => API(u) });
     if (type === 'transition') initTransitionForm(config);
     if (type === 'clock') initClockForm();
   }
@@ -1449,6 +1455,7 @@ export async function render(container) {
       }
       case 'social': Object.assign(config, { platform: val('wPlatform'), query: val('wQuery') }); break;
       case 'menu-board': Object.assign(config, readMenuConfig()); break;
+      case 'bi-dashboard': Object.assign(config, readBiConfig()); break;
       case 'transition': {
         const shaders = Array.from(document.querySelectorAll('#wTransList input[type=checkbox]:checked')).map(c => c.dataset.id);
         const params = {}; // per-shader tuned values held in transState.params

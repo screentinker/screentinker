@@ -610,6 +610,9 @@ app.use(express.static(config.frontendDir, { index: false, etag: true, lastModif
   } else if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|webp|mp4|webm)$/i.test(filePath)) {
     res.setHeader('Cache-Control', 'public, max-age=2592000'); // 30 days
   }
+  // The Power BI client is loaded by the bi-dashboard widget page, which a player frames in a
+  // sandboxed (opaque-origin) iframe — helmet's same-origin CORP would block the script there.
+  if (filePath.includes(`${path.sep}vendor${path.sep}powerbi${path.sep}`)) res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 }}));
 
 // Player HTML: dynamic route. Injects a small inline window.__playerConfig
@@ -1753,6 +1756,10 @@ app.get('/api/widgets/:id/data.json', (req, res, next) => { req._skipAuth = true
 app.post('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); }); // diag widget reports frame stats (null-origin iframe)
 app.get('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth = true; next(); });
+// bi-dashboard (lib/bi/widget.js): the Grafana image and the Power BI / Tableau embed token a
+// screen's widget page fetches. Public like /render, and for the same reason (a null-origin frame).
+app.get('/api/widgets/:id/bi-image.png', (req, res, next) => { req._skipAuth = true; next(); });
+app.get('/api/widgets/:id/bi-token', (req, res, next) => { req._skipAuth = true; next(); });
 /*
  * ⚠️ AI GENERATION IS HEAVIER THAN THE PREVIEW ROUTES BELOW AND WAS THE ONLY ONE UNLIMITED.
  *

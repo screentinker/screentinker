@@ -18,6 +18,7 @@ const BUILTIN_WIDGET_TYPES = Object.freeze([
   'diag-smoothness',
   'menu-board',
   'cloud-doc',
+  'bi-dashboard',
 ]);
 
 const RESERVED_WIDGET_TYPES = new Set([

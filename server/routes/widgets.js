@@ -187,6 +187,11 @@ router.post('/', (req, res) => {
     if (cd.error) return res.status(400).json({ error: cd.error });
     storedConfig = cd.config;
   }
+  if (widget_type === 'bi-dashboard') {
+    const bi = biConfigOrError(req.workspaceId, config);
+    if (bi.error) return res.status(400).json({ error: bi.error });
+    storedConfig = bi.config;
+  }
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
@@ -345,6 +350,11 @@ router.put('/:id', (req, res) => {
     if (cd.error) return res.status(400).json({ error: cd.error });
     config = cd.config;
   }
+  if (widget.widget_type === 'bi-dashboard' && config) {
+    const bi = biConfigOrError(widget.workspace_id, config);
+    if (bi.error) return res.status(400).json({ error: bi.error });
+    config = bi.config;
+  }
 
   /*
    * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
@@ -443,6 +453,86 @@ router.patch('/:id/menu-items/:itemId', (req, res) => {
   res.json({ success: true, item: { id: item.id, name: item.name, sold_out: item.sold_out } });
 });
 
+/*
+ * bi-dashboard config, validated as a whole at save time (lib/bi/widget.js). The connection must
+ * belong to the widget's own organization — the id is a value an editor typed.
+ */
+function biConfigOrError(workspaceId, config) {
+  try {
+    const orgId = require('../lib/bi/connections').orgOfWorkspace(db, workspaceId);
+    return { config: require('../lib/bi/widget').normaliseConfig(db, orgId, config) };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+function liveBiWidget(req, res) {
+  const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (!widget || widget.widget_type !== 'bi-dashboard') { res.status(404).json({ error: 'Not a dashboard widget' }); return null; }
+  let config = {};
+  try { config = JSON.parse(widget.config || '{}'); } catch { config = {}; }
+  return { widget, config };
+}
+
+/*
+ * ⚠️ PUBLIC, LIKE /render (a screen's widget page is a null-origin frame and cannot carry a session),
+ * so both of these are bounded per widget: an address that leaks lets someone view the dashboard —
+ * as the screen does — but not make this server hammer Grafana or mint tokens without limit.
+ */
+const biLimiter = require('../lib/bounded-snapshot-store').createStore({ max: 2000, ttlMs: 60_000 });
+function biRateLimited(key, max) {
+  // A fixed one-minute window: the store expires an entry 60s after its receivedAt.
+  const win = biLimiter.get(key) || { receivedAt: Date.now(), n: 0 };
+  win.n += 1;
+  biLimiter.set(key, win);
+  return win.n > max;
+}
+
+// The latest Grafana render for a dashboard widget. The token never leaves this server.
+router.get('/:id/bi-image.png', async (req, res) => {
+  const got = liveBiWidget(req, res);
+  if (!got) return;
+  const { widget, config } = got;
+  if (config.provider !== 'grafana' || config.mode === 'public') return res.status(404).json({ error: 'Not a Grafana image dashboard' });
+  if (biRateLimited(`img:${widget.id}`, 120)) return res.status(429).json({ error: 'Too many requests' });
+  const conn = require('../lib/bi/connections').forWidget(db, widget, config);
+  if (!conn || conn.kind !== 'grafana') return res.status(404).json({ error: 'No connection' });
+  try {
+    const grafana = require('../lib/bi/grafana');
+    const img = await grafana.imageFor(widget.id, conn, grafana.normaliseWidgetConfig(config),
+      { width: req.query.w, height: req.query.h }, { refreshSec: config.refresh_sec });
+    res.setHeader('Content-Type', img.type);
+    res.setHeader('Cache-Control', 'private, max-age=30');
+    // Loaded by the widget page, a sandboxed (opaque-origin) document: same-origin CORP blocks it.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (img.stale) res.setHeader('X-Dashboard-Stale', '1');
+    res.send(img.buf);
+  } catch (e) {
+    console.warn(`[bi] grafana render for widget ${widget.id}: ${e.message}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(502).json({ error: 'The dashboard could not be rendered' });
+  }
+});
+
+// A fresh Power BI embed token / Tableau JWT for a dashboard widget's page. Never a secret.
+router.get('/:id/bi-token', async (req, res) => {
+  const got = liveBiWidget(req, res);
+  if (!got) return;
+  const { widget, config } = got;
+  res.setHeader('Cache-Control', 'no-store');
+  if (biRateLimited(`tok:${widget.id}`, 30)) return res.status(429).json({ error: 'Too many requests' });
+  try {
+    res.json(await require('../lib/bi/widget').tokenFor(db, widget, config));
+  } catch (e) {
+    if (e.status === 404) return res.status(404).json({ error: e.message });
+    console.warn(`[bi] token for widget ${widget.id}: ${e.message}`);
+    res.status(502).json({ error: 'The dashboard service did not issue a token' });
+  }
+});
+
 // Delete widget
 router.delete('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
@@ -488,6 +578,8 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'directory-search': return renderDirectorySearch(config);
     case 'cloud-doc': return require('../lib/cloud-docs').renderCloudDoc(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
+    // Only reached by the editor's Preview: a saved widget's /render is handled above.
+    case 'bi-dashboard': return require('../lib/bi/widget').previewHtml(config);
     /*
      * ⚠️ THE ONLY WIDGET WHOSE CONTENT IS NOT BAKED INTO ITS CONFIG. A slide keeps its layout in
      * `config.template` and its words in `config.fields`, and they are joined here — which is what
@@ -611,6 +703,21 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('Content-Security-Policy', cd.RENDER_CSP);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     return res.send(cd.renderCloudDoc(config));
+  }
+  /*
+   * A Grafana / Power BI / Tableau dashboard (lib/bi/widget.js). Its page carries no token — those
+   * come from /bi-image.png and /bi-token at run time — and sets its own CSP naming the one host it
+   * may load from.
+   */
+  if (widget.widget_type === 'bi-dashboard') {
+    const out = require('../lib/bi/widget').render(db, widget, config, {
+      origin: `${req.protocol}://${req.get('host')}`, iframeSandbox,
+    });
+    res.setHeader('Content-Security-Policy', out.csp);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    return res.send(out.html);
   }
   if (widget.widget_type === 'template') {
     const out = require('../lib/templates/widget').renderTemplateWidget(widget, {

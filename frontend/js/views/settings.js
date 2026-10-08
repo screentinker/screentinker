@@ -8,6 +8,7 @@ import { resetBranding, applyAccent } from '../branding.js';
 import { mountCorporateSettings } from '../components/corporate-settings.js';
 import { mountStorageSettings } from '../components/storage-settings.js';
 import { mountM365Settings } from '../components/m365-settings.js';
+import { mountBiConnections } from '../components/bi-connections-settings.js';
 import { formatRow, buyPack, usd } from '../components/ai-hosted-picker.js';
 
 export async function render(container) {
@@ -96,6 +97,7 @@ export async function render(container) {
     <!-- Where media is stored (org owners/admins). Mounted only for them; the server enforces it. -->
     <div class="settings-section" id="storageCard" style="display:none"></div>
     <div class="settings-section" id="m365Card" style="display:none"></div>
+    <div class="settings-section" id="biCard" style="display:none"></div>
 
     <div class="settings-section" id="canvaSettingsCard" style="display:none"></div>
 
@@ -1532,6 +1534,8 @@ export async function render(container) {
   if (canManageOrgSecurity || user.current_workspace_role === 'workspace_admin') mountStorageSettings(document.getElementById('storageCard'));
   // The server decides (can_manage): org owners and admins only.
   if (canManageOrgSecurity) mountM365Settings(document.getElementById('m365Card'));
+  // BI connections belong to the organization; the card hides itself unless the server says can_manage.
+  if (canManageOrgSecurity) mountBiConnections(document.getElementById('biCard'));
 
 
   document.getElementById('createTokenBtn')?.addEventListener('click', async () => {

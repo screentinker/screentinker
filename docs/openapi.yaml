@@ -2903,6 +2903,47 @@ paths:
             text/html:
               schema: { type: string }
 
+  /widgets/{id}/bi-image.png:
+    get:
+      tags: [widgets]
+      summary: The latest Grafana render of a BI dashboard widget (public)
+      description: |
+        Unauthenticated, like /render: a bi-dashboard widget's page on a screen loads this image. The
+        server renders the dashboard with the organization's Grafana token (which never leaves the
+        server), caches it for the widget's refresh interval, and serves the last good image while
+        Grafana is unreachable (header X-Dashboard-Stale: 1). Limited per widget.
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: w, in: query, schema: { type: integer }, description: 'Width in pixels; rounded to 64, 320-3840.' }
+        - { name: h, in: query, schema: { type: integer }, description: 'Height in pixels; rounded to 64, 240-2160.' }
+      responses:
+        '200':
+          description: The dashboard image.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        '404': { description: 'Not a Grafana bi-dashboard widget, or its connection is gone.' }
+        '429': { description: Too many requests for this widget. }
+        '502': { description: Grafana could not render it and there is no earlier image. }
+  /widgets/{id}/bi-token:
+    get:
+      tags: [widgets]
+      summary: A fresh embed token for a Power BI or Tableau dashboard widget (public)
+      description: |
+        Unauthenticated, like /render: the widget's page on a screen fetches this at run time, so the
+        cached page never holds a token. Power BI returns a view-only embed token for the one report
+        (cached server-side until shortly before it expires); Tableau returns a five-minute
+        connected-app JWT scoped to embedding views. Never a client secret. Limited per widget.
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'Power BI: { provider, embedUrl, reportId, token, expiration }. Tableau: { provider, src, token, expires_in }.' }
+        '404': { description: Not a credentialed Power BI / Tableau bi-dashboard widget. }
+        '429': { description: Too many requests for this widget. }
+        '502': { description: The dashboard service did not issue a token. }
+
   # -------------------------------------------------------------------- kiosk
   /kiosk:
     get:

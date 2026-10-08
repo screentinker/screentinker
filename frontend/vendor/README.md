@@ -79,3 +79,22 @@ be kept as a separate file next to it. Record the licence below and add a `<name
   cp x/package/LICENSE "$V"/xterm.LICENSE && cp f/package/LICENSE "$V"/addon-fit.LICENSE
   sed -i '/^\/\/# sourceMappingURL=/d' "$V"/xterm.mjs "$V"/addon-fit.mjs
   ```
+
+## powerbi/
+- **Library:** Power BI JavaScript client (`powerbi-client`), which embeds a Power BI report in the
+  `bi-dashboard` widget's page on a screen (`server/lib/bi/widget.js`). Loaded only by that page,
+  never by the dashboard.
+- **Version:** 2.25.0
+- **Licence:** MIT — Copyright (c) Microsoft Corporation. Full text in
+  [`powerbi/powerbi.LICENSE`](powerbi/powerbi.LICENSE). The bundle includes powerbi-models,
+  powerbi-router, http-post-message and window-post-message-proxy, all MIT (Microsoft); the
+  bundle keeps their headers.
+- **Files:** `powerbi.min.js` (UMD; sets `window.powerbi`).
+- **Why committed:** screens must not depend on a CDN, and players cache the widget page offline.
+- **Regenerate / update:**
+  ```sh
+  cd "$(mktemp -d)" && npm pack powerbi-client@2.25.0 --silent && tar xzf powerbi-client-*.tgz
+  cp package/dist/powerbi.min.js <repo>/frontend/vendor/powerbi/
+  cp package/LICENSE.txt <repo>/frontend/vendor/powerbi/powerbi.LICENSE
+  sed -i '/sourceMappingURL=/d' <repo>/frontend/vendor/powerbi/powerbi.min.js
+  ```

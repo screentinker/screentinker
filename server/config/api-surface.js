@@ -118,6 +118,12 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/m365', mod: './routes/m365', tenancy: true },
   /*
+   * BI connections (lib/bi/connections.js): an organization's Grafana / Power BI / Tableau
+   * credentials. JWT only for the same reason as alert channels — they reach into someone else's
+   * systems. The dashboard widget's public endpoints are on /api/widgets.
+   */
+  { path: '/api/bi-connections', mod: './routes/bi-connections', tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */
