@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Menu Board Software for Restaurants &amp; QSR | ScreenTinker</title>
+  <meta name="description" content="Digital menu boards with prices, dietary tags, dayparts and one-tap sold out. Run them from the editor, a Google Sheet or your till, on screens you already own.">
+  <meta name="keywords" content="digital menu board software, restaurant menu board, qsr digital signage, digital menu board, cafe menu screen, bar menu display, menu board google sheets, sold out menu board">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/solutions/digital-menu-boards.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/solutions/digital-menu-boards.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/solutions/digital-menu-boards.html">
+  <meta property="og:title" content="Digital menu boards for restaurants, cafés and bars">
+  <meta property="og:description" content="Digital menu boards with prices, dietary tags, dayparts and one-tap sold out. Run them from the editor, a Google Sheet or your till, on screens you already own.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Digital menu boards for restaurants, cafés and bars">
+  <meta name="twitter:description" content="Digital menu boards with prices, dietary tags, dayparts and one-tap sold out. Run them from the editor, a Google Sheet or your till, on screens you already own.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/solutions/">Solutions</a>
+      <span>/</span>
+      <span>Digital menu boards</span>
+    </nav>
+
+    <h1>Digital menu board software for restaurants, cafés and bars</h1>
+    <p class="lead">A menu board earns its keep when it is right every minute of service: the breakfast menu goes at 11:30, the fish is crossed off when it runs out, and a price change reaches every store at once. ScreenTinker&rsquo;s <strong>Menu Board</strong> widget does that from a simple editor, a Google Sheet or your till, on TVs and players you can buy anywhere.</p>
+
+    <h2>How it works</h2>
+    <ul>
+      <li><strong>Sections and items</strong>, each with a description, a photo and one or more prices (Small / Large, Glass / Bottle).</li>
+      <li><strong>Dietary tags</strong> as short codes with a key on screen: V, VG, GF, DF, nuts, halal, spicy, new and popular.</li>
+      <li><strong>Dayparts.</strong> A section can show only at certain times, such as breakfast until 11:30 or happy hour, by each screen&rsquo;s own clock.</li>
+      <li><strong>Four looks</strong> (dark, light, chalkboard, bold), an accent colour and any currency.</li>
+      <li><strong>It fits the screen.</strong> The columns fit landscape or portrait, and a long menu turns pages instead of being cut off at the bottom.</li>
+      <li><strong>Start from an example</strong>: a café, a burger bar or a bar.</li>
+    </ul>
+
+    <h2>Sold out in one tap</h2>
+    <p>Mark an item sold out in the editor and it shows on screens at once, even when your workspace requires content approval. A till, a kitchen display or a phone shortcut can do the same through the API:</p>
+    <pre><code>PATCH /api/widgets/:id/menu-items/:itemId
+{ "sold_out": true }</code></pre>
+    <p>Choose per menu whether a sold-out item stays on the board marked &ldquo;Sold out&rdquo; or disappears. Only workspace editors and admins can change it.</p>
+
+    <h2>Keep the menu in a spreadsheet</h2>
+    <p>If your prices already live in a Google Sheet or a CSV file, point the menu board at it as a <strong>data source</strong>, with columns such as section, item and price. Edits to the sheet reach the screens on the next sync, so head office can change a price once for every store. The same live data can go on any slide with a tag like <code>{{ds:menu.latte_price}}</code>.</p>
+
+    <h2>More than the menu</h2>
+    <ul>
+      <li><strong>Weather and location.</strong> Give each screen a location, and play an item only when it is raining, snowing or above a temperature where that screen is. One playlist shows the hot soup offer only where it is cold.</li>
+      <li><strong>Designs from Canva.</strong> Import a Canva design as images or a video. When the design changes in Canva, the screens update within 30 minutes.</li>
+      <li><strong>Templates.</strong> Ready-made menu and promotion templates in the <a href="/templates">template library</a>, which you fill in or bind to a sheet.</li>
+      <li><strong>Head office control.</strong> Head office playlists that stores can&rsquo;t change, with local slots for each store&rsquo;s own content.</li>
+      <li><strong>Scheduling and power.</strong> Day and time schedules per screen or group, and panels that switch off after closing.</li>
+      <li><strong>Offline playback.</strong> Screens keep playing cached content when the internet drops.</li>
+    </ul>
+
+    <h2>Set it up</h2>
+    <ol>
+      <li>Pair a screen: install the player on an Android TV or Fire TV box, a Raspberry Pi or a Windows PC, or use a Samsung, LG or BrightSign display. Players come from your server&rsquo;s <a href="/download/">downloads page</a>.</li>
+      <li>Go to <strong>Widgets &rarr; Menu Board</strong>, start from an example, and add your sections, items and prices. Or choose a Google Sheet or CSV data source.</li>
+      <li>Pick a look, an accent colour and your currency, and set time windows for sections such as breakfast.</li>
+      <li>Add the widget to a playlist and assign it to the screens behind the counter.</li>
+      <li>Want a ready-made design instead? The menu templates, and how a template binds to live data, are in the <a href="https://github.com/screentinker/screentinker/blob/main/docs/templates.md" target="_blank" rel="noopener">templates guide</a>.</li>
+    </ol>
+
+    <h2>Limits</h2>
+    <ul>
+      <li><strong>A menu kept in a sheet is changed in the sheet.</strong> The one-tap sold-out call works on menus kept in the editor; a sheet-driven menu marks sold out in a column instead.</li>
+      <li><strong>Sheet edits arrive on the next sync</strong>, not instantly.</li>
+      <li><strong>No point-of-sale integration is built in.</strong> Your till or kitchen system needs to call the API itself, with an API token.</li>
+      <li><strong>Streaming sticks can&rsquo;t drive LED walls</strong> or odd resolutions. Use a Raspberry Pi or a small PC for those.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>Can I update menu prices from a Google Sheet?</h3>
+    <p>Yes. Use a Google Sheet or CSV file as the menu board&rsquo;s data source, with columns like section, item and price. Edits reach the screens on the next sync.</p>
+
+    <h3>How do I mark an item sold out?</h3>
+    <p>Mark it in the editor, or call PATCH /api/widgets/:id/menu-items/:itemId from a till or phone. It shows on screens at once, even when approval is required.</p>
+
+    <h3>Can breakfast and lunch menus switch automatically?</h3>
+    <p>Yes. Give a section a time window and it shows only then, by each screen&rsquo;s own clock. Playlist schedules can also switch whole menus by day and time.</p>
+
+    <h3>Do menu boards work in portrait?</h3>
+    <p>Yes. The columns fit landscape or portrait screens, and a long menu turns pages instead of being cut off.</p>
+
+    <h3>What hardware do I need?</h3>
+    <p>Any supported player: an Android TV or Fire TV box, a Raspberry Pi, a Windows PC, or a Samsung Tizen, LG webOS or BrightSign display. See the certified hardware list for tested models.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/solutions/">All solutions</a></li>
+        <li><a href="/templates">Template library</a></li>
+        <li><a href="/integrations/canva-digital-signage.html">Canva designs on digital signage</a></li>
+        <li><a href="/integrations/google-slides-digital-signage.html">Google Slides, Docs and Sheets</a></li>
+        <li><a href="/integrations/weather-digital-signage.html">Weather on digital signage</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Put your menu on screen today</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card. Start from the café example and change the prices.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Solutions",
+      "item": "https://screentinker.com/solutions/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Digital menu boards",
+      "item": "https://screentinker.com/solutions/digital-menu-boards.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Can I update menu prices from a Google Sheet?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Use a Google Sheet or CSV file as the menu board’s data source, with columns like section, item and price. Edits reach the screens on the next sync."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I mark an item sold out?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Mark it in the editor, or call PATCH /api/widgets/:id/menu-items/:itemId from a till or phone. It shows on screens at once, even when approval is required."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can breakfast and lunch menus switch automatically?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Give a section a time window and it shows only then, by each screen’s own clock. Playlist schedules can also switch whole menus by day and time."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do menu boards work in portrait?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The columns fit landscape or portrait screens, and a long menu turns pages instead of being cut off."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What hardware do I need?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Any supported player: an Android TV or Fire TV box, a Raspberry Pi, a Windows PC, or a Samsung Tizen, LG webOS or BrightSign display. See the certified hardware list for tested models."
+      }
+    }
+  ]
+}
+  </script>
+</body>
+</html>

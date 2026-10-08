@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enterprise Digital Signage with SAML SSO and Roles | ScreenTinker</title>
+  <meta name="description" content="Digital signage your IT team can approve: SAML and OIDC single sign-on, roles, approvals, an activity log, and the choice to self-host on your own servers.">
+  <meta name="keywords" content="enterprise digital signage, saml sso digital signage, digital signage for it, digital signage single sign-on, okta digital signage, entra id digital signage, self-hosted enterprise signage, digital signage audit log">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/solutions/enterprise-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/solutions/enterprise-digital-signage.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/solutions/enterprise-digital-signage.html">
+  <meta property="og:title" content="Enterprise digital signage: SSO, roles, approvals and your own infrastructure">
+  <meta property="og:description" content="Digital signage your IT team can approve: SAML and OIDC single sign-on, roles, approvals, an activity log, and the choice to self-host on your own servers.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Enterprise digital signage: SSO, roles, approvals and your own infrastructure">
+  <meta name="twitter:description" content="Digital signage your IT team can approve: SAML and OIDC single sign-on, roles, approvals, an activity log, and the choice to self-host on your own servers.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/solutions/">Solutions</a>
+      <span>/</span>
+      <span>Enterprise</span>
+    </nav>
+
+    <h1>Enterprise digital signage your IT team can sign off</h1>
+    <p class="lead">Screens across many sites, many teams publishing to them, and an IT department that has to answer for all of it. ScreenTinker gives you single sign-on with your own identity provider, roles that match how you work, approvals before anything goes live, and a full activity log. Run it on our hosted service, or on your own servers with the same software, because it is open source.</p>
+
+    <h2>Single sign-on with your identity provider</h2>
+    <ul>
+      <li><strong>SAML 2.0 and OpenID Connect, per organization.</strong> Okta, Microsoft Entra ID, ADFS, Google Workspace, OneLogin, PingFederate, JumpCloud and others. An organization admin sets it up in <strong>Settings &rarr; Single sign-on</strong>, with no restart and no help from us.</li>
+      <li><strong>DNS-verified domains.</strong> You prove each email domain with a TXT record. Your provider can only sign in addresses at domains you have verified, and a domain belongs to one organization.</li>
+      <li><strong>Require SSO.</strong> Turn it on and passwords and other sign-in methods are refused for everyone at your domains. Turning it off needs a platform administrator to approve it, so one compromised admin can&rsquo;t quietly reopen password sign-in.</li>
+      <li><strong>Strict SAML checks.</strong> Every assertion must be signed, answer a sign-in we started in the same browser, come from your IdP, be addressed to us and be used only once.</li>
+      <li><strong>Two-factor authentication</strong> (TOTP, with recovery codes) for anyone not on SSO.</li>
+    </ul>
+
+    <h2>Roles, workspaces and head office control</h2>
+    <ul>
+      <li><strong>Organizations and workspaces.</strong> One organization can hold a workspace per site, region, client or department. Organization owners and admins run the organization; inside each workspace, people are admins, editors or viewers.</li>
+      <li><strong>Head office playlists.</strong> Head office publishes playlists that stores can&rsquo;t change, decides where they play, and leaves local slots for each store&rsquo;s own content. It can also run emergency alerts across the estate. All of it is enforced on the server.</li>
+      <li><strong>Approval before release.</strong> Turn on approvals for a workspace and nothing goes live until a reviewer approves the exact version. No self-approval.</li>
+      <li><strong>Version history.</strong> Every meaningful save of content, playlists, layouts, slides and widgets is kept, can be compared, and can be restored.</li>
+      <li><strong>Activity log.</strong> Who changed what, and when, including sign-ins, support sessions, room bookings and automation calls.</li>
+      <li><strong>Consent-gated support access.</strong> Our support can only look inside a self-hosted instance after an admin generates a single-use request code, for a limited window, and every step lands in your activity log.</li>
+    </ul>
+
+    <h2>Fleet operations at scale</h2>
+    <ul>
+      <li><strong>Device tags and dynamic groups.</strong> Tag screens by site, floor or type, and let groups fill themselves from rules. Playlists, schedules, triggers, emergency alerts and power schedules follow the group.</li>
+      <li><strong>Player updates in waves.</strong> A new Android, Raspberry Pi or Windows player goes to about 10% of screens first, then 50%, then everyone. If updated screens crash or go dark more than the rest, the rollout halts itself. Pi and Windows screens roll back automatically; Android can&rsquo;t install an older version, so there a halt stops the spread until a fixed build ships.</li>
+      <li><strong>Offline alerts to your tools.</strong> Slack, Microsoft Teams, PagerDuty, email or a signed webhook, for the screens and groups you choose. PagerDuty incidents close themselves when a screen comes back.</li>
+      <li><strong>An open API and an MCP server.</strong> API tokens are bound to one workspace and one scope, and can never reach administration, billing or provisioning. AI assistants connect through the same API.</li>
+    </ul>
+
+    <h2>Your infrastructure, if you want it</h2>
+    <ul>
+      <li><strong>Hosted or self-hosted, same software.</strong> The hosted service and the open-source server run the same code, MIT licensed, so leaving the hosted service never means leaving the software.</li>
+      <li><strong>Your own storage.</strong> Keep media in Amazon S3, an S3-compatible store (MinIO, Ceph, R2, B2, Wasabi and others) or Azure Blob, per organization or per workspace, and move existing media across while screens keep playing.</li>
+      <li><strong>Scale-out replicas</strong> (self-hosted). Add read replicas near your operators and screens. Writes still go to one primary, and a replica is not a backup.</li>
+      <li><strong>Node mesh.</strong> One screen on a site downloads a video once and shares it with its neighbours over the LAN.</li>
+    </ul>
+
+    <h2>Set it up</h2>
+    <ol>
+      <li>Start a trial, or install the server on your own infrastructure with the <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a>.</li>
+      <li>In <strong>Settings &rarr; Single sign-on &rarr; Add provider</strong>, choose SAML 2.0 and paste your IdP&rsquo;s metadata, or enter your OIDC issuer and client.</li>
+      <li>Publish the TXT record for each email domain and press <strong>Verify</strong>.</li>
+      <li>Sign in through SSO once, then turn on <strong>Require single sign-on</strong>.</li>
+      <li>Create workspaces, invite people with the right roles, and turn on approvals where you need them.</li>
+      <li>The full walkthrough, with troubleshooting codes, is in the <a href="https://github.com/screentinker/screentinker/blob/main/docs/sso-setup.md" target="_blank" rel="noopener">SSO setup guide</a>. Approvals are covered in <a href="https://github.com/screentinker/screentinker/blob/main/docs/approvals-and-history.md" target="_blank" rel="noopener">approvals and history</a>, head office playlists in <a href="https://github.com/screentinker/screentinker/blob/main/docs/corporate-playlists.md" target="_blank" rel="noopener">corporate playlists</a>, and storage in <a href="https://github.com/screentinker/screentinker/blob/main/docs/storage.md" target="_blank" rel="noopener">the storage guide</a>.</li>
+    </ol>
+
+    <h2>Limits, plainly</h2>
+    <ul>
+      <li><strong>No compliance certifications.</strong> ScreenTinker does not hold SOC 2, ISO 27001 or HIPAA attestations. If you need your data under your own controls and audits, self-host it: the server, database and media then live in your environment.</li>
+      <li><strong>SAML needs HTTPS</strong>, and IdP-initiated sign-in (starting from an app tile in your IdP portal) is refused. People start from the ScreenTinker sign-in page.</li>
+      <li><strong>Require SSO clears the passwords</strong> of members at your verified domains, and that can&rsquo;t be undone without a reset.</li>
+      <li><strong>Microsoft multi-tenant sign-in isn&rsquo;t supported</strong> for the instance-wide Microsoft provider. Each organization connects its own tenant.</li>
+      <li><strong>Scale-out has documented gaps</strong>, such as live view and playback history staying on the primary. Read the scale-out guide before planning on it.</li>
+    </ul>
+
+    <h2>Talk to us</h2>
+    <p>Many organizations, volume pricing or a custom hosting arrangement? Use the <a href="/#pricing">Enterprise contact form on the pricing section</a> and tell us about your deployment.</p>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>Does ScreenTinker support SAML single sign-on?</h3>
+    <p>Yes. Each organization can add its own SAML 2.0 or OpenID Connect provider, such as Okta, Entra ID, ADFS, Google Workspace or OneLogin, and verify its email domains with a DNS TXT record.</p>
+
+    <h3>Can we force everyone to sign in with SSO?</h3>
+    <p>Yes. Require single sign-on refuses passwords and other providers for everyone at your verified domains. Turning it off needs a platform administrator to approve it.</p>
+
+    <h3>Is ScreenTinker SOC 2 or HIPAA certified?</h3>
+    <p>No. It holds no compliance certifications. Organizations that need their data under their own controls can self-host it, so the server, database and media live in their own environment.</p>
+
+    <h3>Can head office stop stores changing content?</h3>
+    <p>Yes. Head office playlists can&rsquo;t be changed by stores, and head office decides where they play. Stores fill only the local slots head office leaves them.</p>
+
+    <h3>Is there an audit trail?</h3>
+    <p>Yes. The activity log records changes, sign-ins, support sessions and automation calls, and version history keeps every meaningful save of content and playlists.</p>
+
+    <h3>Can we run it on our own servers?</h3>
+    <p>Yes. ScreenTinker is open source under the MIT licence, and the self-hosted server is the same software as the hosted service, with no device cap.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/solutions/">All solutions</a></li>
+        <li><a href="/solutions/emergency-alert-digital-signage.html">Emergency alerts on every screen</a></li>
+        <li><a href="/integrations/microsoft-365-digital-signage.html">Microsoft 365, SharePoint and OneDrive</a></li>
+        <li><a href="/integrations/slack-teams-offline-alerts.html">Offline alerts to Slack, Teams and PagerDuty</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage guide</a></li>
+        <li><a href="/cloud-digital-signage.html">Hosted digital signage</a></li>
+        <li><a href="/guides/mcp-digital-signage.html">Manage screens from an AI assistant (MCP)</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Prove it out before you roll it out</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card. Connect your identity provider on day one.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Solutions",
+      "item": "https://screentinker.com/solutions/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Enterprise",
+      "item": "https://screentinker.com/solutions/enterprise-digital-signage.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Does ScreenTinker support SAML single sign-on?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Each organization can add its own SAML 2.0 or OpenID Connect provider, such as Okta, Entra ID, ADFS, Google Workspace or OneLogin, and verify its email domains with a DNS TXT record."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can we force everyone to sign in with SSO?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Require single sign-on refuses passwords and other providers for everyone at your verified domains. Turning it off needs a platform administrator to approve it."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is ScreenTinker SOC 2 or HIPAA certified?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. It holds no compliance certifications. Organizations that need their data under their own controls can self-host it, so the server, database and media live in their own environment."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can head office stop stores changing content?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Head office playlists can’t be changed by stores, and head office decides where they play. Stores fill only the local slots head office leaves them."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is there an audit trail?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The activity log records changes, sign-ins, support sessions and automation calls, and version history keeps every meaningful save of content and playlists."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can we run it on our own servers?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. ScreenTinker is open source under the MIT licence, and the self-hosted server is the same software as the hosted service, with no device cap."
+      }
+    }
+  ]
+}
+  </script>
+</body>
+</html>

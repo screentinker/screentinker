@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Emergency Alert Digital Signage: CAP, Alertus | ScreenTinker</title>
+  <meta name="description" content="Put weather warnings and emergency alerts on every screen at once. CAP 1.2 feeds, Alertus, Singlewire InformaCast and hooks from a fire panel or script.">
+  <meta name="keywords" content="emergency alert digital signage, mass notification digital signage, cap alerts digital signage, alertus digital signage, informacast digital signage, emergency notification screens, nws alerts signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/solutions/emergency-alert-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/solutions/emergency-alert-digital-signage.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/solutions/emergency-alert-digital-signage.html">
+  <meta property="og:title" content="Emergency alerts on every screen: CAP, Alertus and InformaCast">
+  <meta property="og:description" content="Put weather warnings and emergency alerts on every screen at once. CAP 1.2 feeds, Alertus, Singlewire InformaCast and hooks from a fire panel or script.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Emergency alerts on every screen: CAP, Alertus and InformaCast">
+  <meta name="twitter:description" content="Put weather warnings and emergency alerts on every screen at once. CAP 1.2 feeds, Alertus, Singlewire InformaCast and hooks from a fire panel or script.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/solutions/">Solutions</a>
+      <span>/</span>
+      <span>Emergency alerts</span>
+    </nav>
+
+    <h1>Emergency alert digital signage</h1>
+    <p class="lead">When something goes wrong, every screen in the building should say so, at once, in words people can act on. ScreenTinker takes alerts from public warning feeds, from your mass notification system and from your own building systems, and puts a full-screen alert card on the screens you choose. When the all-clear comes, the normal playlist comes back by itself.</p>
+
+    <h2>How it works</h2>
+    <p>There are three ways an alert reaches your screens. You can use any or all of them.</p>
+    <ul>
+      <li><strong>Public warning feeds.</strong> Subscribe to the US National Weather Service by state or zone, MeteoAlarm for 38 European countries, or any CAP 1.1 or 1.2 feed (a CAP document, an Atom or RSS index, or NWS GeoJSON). You set the filters: minimum severity, alert types and areas.</li>
+      <li><strong>Your mass notification system.</strong> Point Alertus, Singlewire InformaCast or anything that sends CAP 1.2 at a <strong>mass notification hook</strong>. The usual JSON field names are found automatically, and you can map your own. The same alert sent twice shows once, and a cancel from the sender clears the screens.</li>
+      <li><strong>Your own systems.</strong> An <strong>emergency alert hook</strong> is a secret web address. A fire panel, a building management system or a short script can call it to raise or clear an alert. It needs no account. Zapier, Make and n8n can raise and clear alerts through the API too.</li>
+    </ul>
+    <p>While an alert is live, every screen in its scope shows a full-screen card with the headline, the area, what to do and until when, colour-coded by severity. You can choose a playlist to show instead of the card. Scope an alert to all screens, to some groups or to single screens.</p>
+
+    <h2>The alert cuts in at once</h2>
+    <p>Ordinary playlist changes wait for the item on screen to finish. An emergency alert card does not. It replaces whatever is playing straight away, mid-video if need be, and the all-clear brings the playlist back just as quickly. This works on every player: Android and Fire TV, the web player (also used by BrightSign and Vega), Samsung Tizen, and the Raspberry Pi and Windows players. On a video wall the whole wall switches together.</p>
+    <p>One exception: if you choose to show a playlist instead of the alert card, that playlist follows the ordinary rule and starts when the current item ends.</p>
+
+    <h2>Who is in charge</h2>
+    <ul>
+      <li><strong>Head office comes first.</strong> If your organization uses head office (corporate) playlists, a head office emergency alert takes priority over a feed or hook alert on the same screen.</li>
+      <li><strong>Workspace admins only.</strong> Only a workspace admin can create emergency feeds and hooks.</li>
+      <li><strong>Every call is logged.</strong> Each hook call goes into the hook&rsquo;s call list and the activity log. Hook addresses are shown once and stored only as a fingerprint, and signing requests is optional.</li>
+    </ul>
+
+    <h2>When the network is down</h2>
+    <p>If an alert feed can&rsquo;t be reached, alerts already showing stay up until they expire. For alerts that must work with the internet down, use <strong>triggers</strong>: a Crestron or Extron panel, a PLC or a button on your own network can put a playlist over whatever is showing, and the screen resolves it itself. Over the internet, a hook can fire a trigger only on Raspberry Pi and Windows screens. Other players listen for triggers on their own network.</p>
+
+    <h2>Set it up</h2>
+    <ol>
+      <li><strong>Public feeds:</strong> go to <strong>Automate &rarr; Emergency feeds</strong>, pick the National Weather Service, MeteoAlarm or a custom CAP address, set the filters and the scope, and press <strong>Test feed</strong> to see what would be on screens before you save.</li>
+      <li><strong>Alertus, InformaCast or another CAP sender:</strong> on the <strong>Automation</strong> page, create a <strong>Mass notification</strong> hook. Copy its address (it is shown once) into the system&rsquo;s webhook, &ldquo;CAP to IP&rdquo; or &ldquo;HTTP POST&rdquo; output.</li>
+      <li><strong>A fire panel or script:</strong> create an <strong>Emergency alert</strong> hook and have the system POST to it to raise, and again to clear.</li>
+      <li><strong>Test with a real alert.</strong> The hook&rsquo;s <strong>Test</strong> runs it for real, so warn people first. Vendors&rsquo; payloads differ by version and setup, so check one before you rely on it.</li>
+      <li>Read the details in the <a href="https://github.com/screentinker/screentinker/blob/main/docs/automation.md" target="_blank" rel="noopener">automation guide</a>.</li>
+    </ol>
+
+    <h2>Limits</h2>
+    <ul>
+      <li><strong>This is a display channel.</strong> ScreenTinker is not a certified life-safety or mass notification system, and it does not replace your fire alarm, public address or notification platform. Use it to put their message on your screens as well.</li>
+      <li><strong>Screens need power and a connection to receive a new alert.</strong> A screen that is off or offline shows the alert when it reconnects, if the alert is still live.</li>
+      <li><strong>CAP Exercise, Test and System messages never take a screen.</strong> Only actual alerts do.</li>
+      <li><strong>Field mapping covers the common payloads.</strong> Alertus and InformaCast payloads vary, so test with a real alert from your own setup.</li>
+      <li><strong>Hooks and feeds aren&rsquo;t available</strong> in a workspace replicated over the mesh.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>Can ScreenTinker show National Weather Service alerts automatically?</h3>
+    <p>Yes. Subscribe to an emergency feed for your state or zone, set a minimum severity and the alert types you care about, and matching alerts appear on the screens in scope until they are cancelled, replaced or expire.</p>
+
+    <h3>Does it work with Alertus and Singlewire InformaCast?</h3>
+    <p>Yes, through a mass notification hook. Point the system&rsquo;s webhook or CAP output at the hook address. The common field names are found automatically, and you can map others. Payloads vary by vendor version, so test with a real alert first.</p>
+
+    <h3>How fast does an alert appear?</h3>
+    <p>The alert card replaces whatever is on screen as soon as the screen receives it, mid-video if need be. It does not wait for the current item to finish.</p>
+
+    <h3>Is ScreenTinker a certified mass notification system?</h3>
+    <p>No. It holds no life-safety certification and does not replace your fire alarm or notification system. It puts those systems&rsquo; alerts on your screens as an extra channel.</p>
+
+    <h3>What happens if the internet goes down during an alert?</h3>
+    <p>Alerts already showing stay up until they expire. For alerts that must work without the internet, use triggers on your local network, which the screen resolves itself.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/solutions/">All solutions</a></li>
+        <li><a href="/integrations/zapier-digital-signage.html">Zapier, Make and n8n</a></li>
+        <li><a href="/integrations/slack-teams-offline-alerts.html">Offline alerts to Slack, Teams and PagerDuty</a></li>
+        <li><a href="/solutions/enterprise-digital-signage.html">Enterprise digital signage</a></li>
+        <li><a href="/integrations/weather-digital-signage.html">Weather on digital signage</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi player setup</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Put your alerts on every screen</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card. Add a feed and press Test feed to see it work.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Solutions",
+      "item": "https://screentinker.com/solutions/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Emergency alerts",
+      "item": "https://screentinker.com/solutions/emergency-alert-digital-signage.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Can ScreenTinker show National Weather Service alerts automatically?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Subscribe to an emergency feed for your state or zone, set a minimum severity and the alert types you care about, and matching alerts appear on the screens in scope until they are cancelled, replaced or expire."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does it work with Alertus and Singlewire InformaCast?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, through a mass notification hook. Point the system’s webhook or CAP output at the hook address. The common field names are found automatically, and you can map others. Payloads vary by vendor version, so test with a real alert first."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How fast does an alert appear?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The alert card replaces whatever is on screen as soon as the screen receives it, mid-video if need be. It does not wait for the current item to finish."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is ScreenTinker a certified mass notification system?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. It holds no life-safety certification and does not replace your fire alarm or notification system. It puts those systems’ alerts on your screens as an extra channel."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What happens if the internet goes down during an alert?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Alerts already showing stay up until they expire. For alerts that must work without the internet, use triggers on your local network, which the screen resolves itself."
+      }
+    }
+  ]
+}
+  </script>
+</body>
+</html>
