@@ -68,6 +68,18 @@ test('BASELINE.macos is the Windows one: the shared engine only, and never self-
   }
 });
 
+test('neither Apple player has audience counting: not in either baseline, and neither declares it', () => {
+  assert.equal(caps.BASELINE.macos.includes('audience.camera'), false);
+  assert.equal(caps.BASELINE.ios.includes('audience.camera'), false);
+  assert.equal(caps.capabilitiesFor({ client_type: 'mac' }).includes('audience.camera'), false);
+  assert.equal(caps.capabilitiesFor({ platform: 'ios' }).includes('audience.camera'), false);
+  const nativeSrc = fs.readFileSync(path.join(NATIVE, 'capabilities.py'), 'utf8')
+    + fs.readdirSync(path.join(NATIVE, 'platform', 'macos')).filter((f) => f.endsWith('.py'))
+      .map((f) => fs.readFileSync(path.join(NATIVE, 'platform', 'macos', f), 'utf8')).join('\n');
+  assert.doesNotMatch(nativeSrc, /audience\.camera/, 'the Mac player has no detector and must not declare one');
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'ios', 'ScreenTinker', 'Core', 'HostProtocol.swift'), 'utf8'), /audience/);
+});
+
 test('BASELINE.ios is the web baseline minus media volume and the offline cache', () => {
   for (const c of caps.BASELINE.ios) assert.ok(caps.BASELINE.web.includes(c), `ios claims ${c}, which a browser does not have`);
   assert.equal(caps.BASELINE.ios.includes('audio.volume'), false, 'HTMLMediaElement.volume is read-only on iOS');
