@@ -14,6 +14,7 @@ const { isPlatformRole } = require('../middleware/auth');       // #146: billing
 // tokenScopeGate-mounted router rejects it; it reaches only the AGENCY_ROUTER via agencyGate.
 // #146: 'billing:read' is likewise off-ladder — reaches only /api/billing via requireBillingRead.
 const { SCOPES } = require('../lib/api-scopes');   // shared with the published resource metadata
+const { dropTokenSubscriptions } = require('../lib/user-deletion'); // revoking a token ends its Zapier subscriptions
 
 // #158: per-workspace folder cap (mirrors folders.js) — auto-creating an agency folder must
 // respect the same ceiling so a token-mint can't blow past it.
@@ -136,9 +137,14 @@ router.post('/', (req, res) => {
 router.delete('/:id', (req, res) => {
   const row = db.prepare('SELECT id, revoked_at FROM api_tokens WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!row) return res.status(404).json({ error: 'Token not found' });
-  if (!row.revoked_at) {
-    db.prepare("UPDATE api_tokens SET revoked_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
-  }
+  // The REST-hook (Zapier) subscriptions it made go too, on every call: a repeat revoke also sweeps
+  // any left by a revoke that predates this cleanup.
+  db.transaction(() => {
+    if (!row.revoked_at) {
+      db.prepare("UPDATE api_tokens SET revoked_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+    }
+    dropTokenSubscriptions(db, [row.id]);
+  })();
   res.json({ success: true });
 });
 
