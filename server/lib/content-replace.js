@@ -13,6 +13,15 @@
  * `<uuid>.part` ({ path, size, originalname }). `reqOrIo` is an Express request or a socket.io
  * server — whichever the caller has — and is used only to push the change to screens.
  * Resolves { status, body }; the caller decides how to answer.
+ *
+ * `writer` is WHO the new bytes are written for (a request, or a corporate actor from
+ * lib/corporate/actor fromUser) and is judged by the corporate media rule before anything else
+ * (guard.assertMediaWritable — the check checkContentWrite makes for the manual replace). Every
+ * caller acting for a PERSON must pass it: a sync that runs in the background (lib/canva.js) has no
+ * request for the guard to find, so without it a store editor's linked design that head office
+ * later put in a corporate playlist would be rewritten on every mandated screen from outside
+ * ScreenTinker. Omitted = system work, which the guard allows. `actor` stays the revisions actor
+ * (the name in version history); it is not a permission.
  */
 
 const path = require('path');
@@ -42,7 +51,16 @@ function pushDevices(reqOrIo, deviceIds) {
   } catch (e) { /* silent */ }
 }
 
-async function replaceContentBytes({ content, file, actor, reqOrIo = null }) {
+async function replaceContentBytes({ content, file, actor, writer = null, reqOrIo = null }) {
+  if (writer) {
+    const guard = require('./corporate/guard');
+    try { guard.assertMediaWritable(writer, 'content', content.id); } catch (e) {
+      const r = guard.toResponse(e);
+      if (!r) throw e;
+      try { fs.unlinkSync(file.path); } catch (_) { /* best effort */ }
+      return reply(r.status, r.body);
+    }
+  }
   const policy = require('./release-policy');
   const revisions = require('./revisions');
   const approvalOn = !!(content.workspace_id && policy.approvalRequired(db, content.workspace_id));

@@ -84,7 +84,9 @@ tags, folders, scheduling, approvals and version history all apply.
 Imported items show **Linked to Canva**. ScreenTinker checks linked designs every 30 minutes. When
 a design has changed in Canva, it exports the linked pages again and replaces the items' files.
 
-- **Sync now** on an item checks immediately.
+- **Sync now** on an item checks immediately. If that item is already syncing, wait for it to
+  finish and try again. Through the API, `{"force": true}` re-exports even an unchanged design;
+  only the person who imported the item, or a workspace or organization admin, can force a sync.
 - A design that hasn't changed isn't exported again, and nothing is rewritten.
 - A replacement works exactly like **Replace file**. Screens download the new version, version
   history keeps the old one, and **if your workspace requires approval, the new version waits as a
@@ -94,6 +96,12 @@ a design has changed in Canva, it exports the linked pages again and replaces th
   reason.
 - If you delete a page in Canva that an item is linked to, that item reports the problem and
   keeps showing the last version.
+- A sync can only change what the person who imported the item could change with **Replace
+  file**. The item stops syncing, keeps its last version, and shows **last sync failed** when:
+  - that person's account is deleted;
+  - they are no longer an editor or admin of the workspace;
+  - head office uses the item in a corporate playlist, and that person isn't allowed to change
+    corporate content. Someone who can (an organization admin) can import the design again.
 
 ---
 
