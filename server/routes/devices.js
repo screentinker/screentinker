@@ -238,6 +238,19 @@ router.get('/removed', (req, res) => {
   res.json(deviceSettings.listRemoved(req.workspaceId));
 });
 
+/*
+ * Place search for a screen's location (Open-Meteo geocoding, keyless, through the weather source's
+ * allowlisted and SSRF-guarded fetch). Workspace members only; returns names and coordinates.
+ */
+router.get('/geocode', async (req, res) => {
+  if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context' });
+  try {
+    res.json(await require('../lib/local-conditions').searchPlaces(req.query.q, req.query.lang || 'en'));
+  } catch (e) {
+    res.status(502).json({ error: 'Place search is unavailable right now.' });
+  }
+});
+
 // Get single device with telemetry history
 router.get('/:id', (req, res) => {
   const device = db.prepare('SELECT d.*, u.email as owner_email, u.name as owner_name FROM devices d LEFT JOIN users u ON d.user_id = u.id WHERE d.id = ?').get(req.params.id);
@@ -432,7 +445,7 @@ router.get('/:id', (req, res) => {
   // that never reported one, or whose block is unreadable — the card simply does not render.
   const edid = require('../lib/edid').parseEdid(device.hardware_edid);
 
-  res.json({ ...stripDeviceSecrets(device), tags: parseTags(device.tags), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
+  res.json({ ...stripDeviceSecrets(device), tags: parseTags(device.tags), local_weather: require('../lib/local-conditions').readingFor(device), capabilities, edid, telemetry, screenshot, assignments, active_layout_zones, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents });
 });
 
 /*
@@ -558,6 +571,20 @@ router.put('/:id', (req, res) => {
   if (!device) return;
 
   const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags } = req.body;
+  // Where the screen is (lib/local-conditions.js). Both coordinates or neither; both null clears.
+  let locUpdate = null;
+  if (req.body.latitude !== undefined || req.body.longitude !== undefined || req.body.location_label !== undefined) {
+    const clear = req.body.latitude === null && req.body.longitude === null;
+    const lat = Number(req.body.latitude), lon = Number(req.body.longitude);
+    if (!clear && (req.body.latitude !== undefined || req.body.longitude !== undefined)
+        && !(Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) {
+      return res.status(400).json({ error: 'latitude and longitude must both be given, as -90..90 and -180..180 (or both null to clear)' });
+    }
+    locUpdate = {
+      ...(req.body.latitude !== undefined || req.body.longitude !== undefined ? { latitude: clear ? null : lat, longitude: clear ? null : lon } : {}),
+      ...(req.body.location_label !== undefined ? { location_label: req.body.location_label ? String(req.body.location_label).replace(/[\u0000-\u001f<>]/g, '').slice(0, 120) : null } : {}),
+    };
+  }
   const normTags = normalizeTags(tags);
   if (normTags === false) return res.status(400).json({ error: 'tags must be an array of labels or a comma-separated string' });
   // #150: validate orientation against the known enum (previously accepted any string, which
@@ -627,6 +654,7 @@ router.put('/:id', (req, res) => {
     updates.push('reboot_last_date = ?'); values.push(null);
   }
   if (normTags !== undefined) { updates.push('tags = ?'); values.push(JSON.stringify(normTags)); }
+  if (locUpdate) for (const [k, v] of Object.entries(locUpdate)) { updates.push(`${k} = ?`); values.push(v); }
   /*
    * Tags, name and timezone are what dynamic groups match on, so this edit can move the screen into
    * or out of groups. Planned against the NEW values, then written together with the membership

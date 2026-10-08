@@ -52,6 +52,8 @@ function parsePlayWhen(v) {
   const obj = typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return false; } })() : v;
   if (!obj || typeof obj !== 'object') return false;
   const type = obj.type || (obj.slug ? 'ds' : (obj.tag || obj.op === 'has' || obj.op === 'lacks' ? 'tag' : 'ds'));
+  // Where the screen is: its local weather, or an area (lib/local-conditions.js, server-evaluated).
+  if (type === 'weather' || type === 'geo') return require('../lib/local-conditions').normalise(obj);
   if (type === 'tag') {
     const tag = String(obj.value || obj.tag || '').trim().toLowerCase();
     if (!tag) return false;
@@ -1506,7 +1508,7 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
   }
   if (Object.prototype.hasOwnProperty.call(req.body, 'play_when')) {
     const when = parsePlayWhen(req.body.play_when);
-    if (when === false) return res.status(400).json({ error: 'play_when must be { slug, path, op, value }, { type:tag }, { type:meta }, or empty' });
+    if (when === false) return res.status(400).json({ error: 'play_when must be { slug, path, op, value }, { type:tag }, { type:meta }, { type:weather }, { type:geo }, or empty' });
     updates.push('play_when = ?'); values.push(when ? JSON.stringify(when) : null);
   }
   if (Object.prototype.hasOwnProperty.call(req.body, 'weight')) {
@@ -1890,7 +1892,7 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
 
     if (action === 'play_when') {
       const when = parsePlayWhen(req.body.play_when);
-      if (when === false) return res.status(400).json({ error: 'play_when must be a data-source, tag, or meta condition, or empty' });
+      if (when === false) return res.status(400).json({ error: 'play_when must be a data-source, tag, meta, weather or area condition, or empty' });
       const up = db.prepare("UPDATE playlist_items SET play_when = ?, updated_at = strftime('%s','now') WHERE id = ?");
       const json = when ? JSON.stringify(when) : null;
       db.transaction(() => { for (const r of rows) up.run(json, r.id); })();

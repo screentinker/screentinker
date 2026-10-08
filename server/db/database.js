@@ -3273,6 +3273,11 @@ try {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }
   // "Play every N seconds" (lib/repeat-every.js): NULL = plays once per loop, as before.
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN repeat_every_sec INTEGER').run(); console.log('[migrate] playlist_items.repeat_every_sec added'); } catch (_) { /* present */ }
+  // Where a screen is (lib/local-conditions.js): its local weather and area conditions.
+  try { db.prepare('ALTER TABLE devices ADD COLUMN latitude REAL').run(); console.log('[migrate] devices.latitude added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN longitude REAL').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN location_label TEXT').run(); } catch (_) { /* present */ }
+  db.exec('CREATE TABLE IF NOT EXISTS weather_cells (cell TEXT PRIMARY KEY, data TEXT NOT NULL, at INTEGER NOT NULL)');
   // Alert channels (lib/alert-channels.js): Slack / Teams / PagerDuty / webhook / email per workspace.
   // Workspace-owned and FK-cascaded; alert_deliveries is the once-per-outage ledger.
   db.exec(`

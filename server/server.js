@@ -2387,6 +2387,7 @@ try { require('./lib/corporate/reconcile').reconcileAtBoot(require('./db/databas
 // timers and the 30-second belt sweep (lib/corporate/emergency-live.js).
 require('./lib/corporate/emergency-live').init(io);
 require('./lib/smart-playlist').start(io);
+require('./lib/local-conditions').start(io);   // local weather for weather conditions
 // Dynamic device groups: a backstop for membership inputs changed by a path that does not reconcile
 // (an import, a mesh sync, a direct fix-up). A sweep that finds nothing to change writes nothing.
 {

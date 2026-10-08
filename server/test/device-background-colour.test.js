@@ -109,7 +109,7 @@ test('#336: the device query that feeds the payload actually selects background_
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
       trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
       local_api_enabled INTEGER, local_api_secret TEXT,
-      default_content_id TEXT, workspace_id TEXT,
+      default_content_id TEXT, workspace_id TEXT, latitude REAL, longitude REAL,
       capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT,
       playlist_id TEXT, layout_id TEXT
     );
@@ -144,7 +144,7 @@ test('the device query selects workspace_id (data-source play_when + custom shad
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
       trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
       local_api_enabled INTEGER, local_api_secret TEXT,
-      default_content_id TEXT, workspace_id TEXT,
+      default_content_id TEXT, workspace_id TEXT, latitude REAL, longitude REAL,
       capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT, playlist_id TEXT, layout_id TEXT
     );
     CREATE VIEW device_resolved_playlist AS SELECT id AS device_id, playlist_id, 'device' AS source, layout_id FROM devices;
@@ -153,6 +153,35 @@ test('the device query selects workspace_id (data-source play_when + custom shad
   const got = mem.prepare(m[1]).get('d1');
   mem.close();
   assert.equal(got.workspace_id, 'ws-42', 'workspace_id must come out of the query the payload is built from');
+});
+
+/*
+ * Same class again, for lib/local-conditions.js: weather and area conditions read the screen's
+ * latitude/longitude off this row. Unselected, every screen would look unplaced — weather items
+ * would always play and area-limited items never would, with nothing failing loudly.
+ */
+test('the device query selects latitude and longitude (weather and area conditions depend on them)', () => {
+  const ds = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
+  const m = ds.match(/const device = db\.prepare\(`(SELECT r\.playlist_id AS playlist_id[\s\S]*?WHERE d\.id = \?)`\)\.get\(deviceId\);/);
+  assert.ok(m, 'device SELECT not found');
+  const mem = new Database(':memory:');
+  mem.exec(`
+    CREATE TABLE devices (
+      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
+      reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
+      trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
+      trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
+      local_api_enabled INTEGER, local_api_secret TEXT,
+      default_content_id TEXT, workspace_id TEXT, latitude REAL, longitude REAL,
+      capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT, playlist_id TEXT, layout_id TEXT
+    );
+    CREATE VIEW device_resolved_playlist AS SELECT id AS device_id, playlist_id, 'device' AS source, layout_id FROM devices;
+    INSERT INTO devices (id, orientation, latitude, longitude) VALUES ('d1', 'landscape', 41.88, -87.63);
+  `);
+  const got = mem.prepare(m[1]).get('d1');
+  mem.close();
+  assert.equal(got.latitude, 41.88);
+  assert.equal(got.longitude, -87.63);
 });
 
 test('#336: the fullscreen video and widget surfaces no longer paint their own black over it', () => {
