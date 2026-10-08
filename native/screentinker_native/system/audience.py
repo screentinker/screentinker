@@ -21,6 +21,8 @@ absent in a payload means OFF — camera closed, indicator hidden, counts flushe
 import json
 import logging
 import os
+import random
+import stat
 import sys
 import threading
 import time
@@ -37,6 +39,19 @@ NMS_THRESHOLD = 0.3
 
 # ---------------------------------------------------------------------- the add-on
 
+# ⚠️ NOT under /opt/screentinker: raspberry-pi-setup.sh gives that tree to the player user (chown -R),
+# who could then swap in their own cv2. /usr/lib is root:root 0755 on every Pi OS (unlike /usr/local,
+# which Debian has shipped as root:staff 2775), and the .deb's own code lives next to it.
+LINUX_ADDON_DIR = "/usr/lib/screentinker-pi-audience"
+
+
+def _windows_base():
+    """The player's install dir: Program Files ACLs (admin-only write) cover everything under it."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "ScreenTinker")
+
+
 def addon_dir():
     """Where the installer puts the add-on. Root/admin-owned in both cases: the player loads code from
     here, so it must not be a directory the player user (or the dashboard's remote shell) can write."""
@@ -44,12 +59,45 @@ def addon_dir():
     if env:
         return env
     if sys.platform == "win32":
-        base = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.join(
-            os.environ.get("ProgramFiles", r"C:\Program Files"), "ScreenTinker")
-        return os.path.join(base, "addons", "audience")
+        return os.path.join(_windows_base(), "addons", "audience")
     if sys.platform.startswith("linux"):
-        return "/opt/screentinker/audience-addon"
+        return LINUX_ADDON_DIR
     return None                      # macOS: not offered
+
+
+def root_owned(st):
+    """Could only root have changed this directory entry? Owned by uid 0, not group/world-writable."""
+    return st.st_uid == 0 and not (st.st_mode & 0o022)
+
+
+def untrusted_component(path, lstat=os.lstat):
+    """None if `path` and every directory above it up to / is a real directory only root can write;
+    else why not. A symlink anywhere is refused: whoever owns the link's directory chose its target."""
+    path = os.path.abspath(path)
+    while True:
+        try:
+            st = lstat(path)
+        except OSError as e:
+            return "%s: %s" % (path, e)
+        if stat.S_ISLNK(st.st_mode):
+            return "%s is a symlink" % path
+        if not root_owned(st):
+            return "%s is not owned by root, or is writable by others" % path
+        up = os.path.dirname(path)
+        if up == path:
+            return None
+        path = up
+
+
+def addon_dir_untrusted(root):
+    """The production gate: None if the player may import code from `root`, else why not."""
+    if sys.platform == "win32":
+        base = os.path.normcase(os.path.realpath(_windows_base()))
+        real = os.path.normcase(os.path.realpath(root))
+        if not real.startswith(base + os.sep):
+            return "%s is not inside the player's install directory %s" % (root, base)
+        return None
+    return untrusted_component(root)
 
 
 class Addon:
@@ -63,10 +111,19 @@ class Addon:
 
 def load_addon(root=None):
     """(Addon, None) or (None, reason). Never raises: a broken add-on is a screen that cannot count,
-    not a player that cannot start."""
+    not a player that cannot start. With no `root` (the player), the installed dir must be one only
+    root/admin can change — checked BEFORE anything in it is read, let alone imported."""
+    verify = root is None
     root = root or addon_dir()
     if not root or not os.path.isdir(root):
         return None, "not installed"
+    if verify and os.environ.get("ST_AUDIENCE_ADDON_DIR"):
+        log.warning("ST_AUDIENCE_ADDON_DIR is set: loading the add-on from %s WITHOUT the ownership check "
+                    "(for development only)", root)
+    elif verify:
+        why = addon_dir_untrusted(root)
+        if why:
+            return None, "add-on refused, its directory is not admin-only: %s" % why
     try:
         with open(os.path.join(root, "ADDON.json"), encoding="utf-8") as f:
             manifest = json.load(f)
@@ -160,16 +217,26 @@ def list_cameras():
 
 # ---------------------------------------------------------------------- the worker
 
+MAX_BACKOFF_S = 60
+RESCAN_AFTER = 5           # consecutive failures before looking for the camera again (rescan)
+
+
 class CameraWorker(threading.Thread):
     """Reads frames at `fps`, hands face boxes to on_faces(boxes, now_ms). Its own thread, so a slow
-    camera or detector never stalls playback."""
+    camera or detector never stalls playback.
 
-    def __init__(self, addon, source, fps, on_faces):
+    A camera that will not open, or opens and then delivers no frames, is retried with the same
+    backoff (2 s per consecutive failure, capped at MAX_BACKOFF_S) and logged on the 1st, 10th and
+    every 100th failure only. Every RESCAN_AFTER failures, `rescan()` (when given: the camera was not
+    pinned in config) names the camera to use now — a webcam replugged as /dev/video2, say."""
+
+    def __init__(self, addon, source, fps, on_faces, rescan=None):
         super().__init__(name="audience-camera", daemon=True)
         self.addon = addon
         self.source = source
         self.fps = max(1, min(5, int(fps)))
         self.on_faces = on_faces
+        self.rescan = rescan
         self._halt = threading.Event()
         self.running = False
 
@@ -178,6 +245,21 @@ class CameraWorker(threading.Thread):
 
     def set_fps(self, fps):
         self.fps = max(1, min(5, int(fps)))
+
+    def _failed(self, failures, what):
+        """One more consecutive failure: log (throttled), maybe switch camera, back off."""
+        if failures in (1, 10) or failures % 100 == 0:
+            log.warning("camera %s %s (%d attempt(s))", self.source, what, failures)
+        if self.rescan and failures % RESCAN_AFTER == 0:
+            try:
+                nxt = self.rescan()
+            except Exception:
+                log.exception("camera rescan failed")
+                nxt = None
+            if nxt and nxt != self.source:
+                log.info("camera %s replaced by %s", self.source, nxt)
+                self.source = nxt
+        self._halt.wait(min(MAX_BACKOFF_S, 2 * failures))
 
     def _open(self):
         cv2 = self.addon.cv2
@@ -208,14 +290,12 @@ class CameraWorker(threading.Thread):
                 if cap is None or not cap.isOpened():
                     cap, is_file = self._open()
                     if not cap.isOpened():
-                        failures += 1
-                        if failures in (1, 10) or failures % 100 == 0:
-                            log.warning("camera %s did not open (%d attempt(s))", self.source, failures)
                         cap = None
-                        self._halt.wait(min(30, 2 * failures))
+                        failures += 1
+                        self._failed(failures, "did not open")
                         continue
-                    log.info("camera %s open", self.source)
-                    failures = 0
+                    if failures in (0, 1) or failures % 10 == 0:
+                        log.info("camera %s open", self.source)
                 if not is_file:
                     cap.grab()                         # drop the frame that has waited in the buffer
                 ok, frame = cap.read()
@@ -223,11 +303,14 @@ class CameraWorker(threading.Thread):
                     if is_file:                        # a test clip loops
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         continue
-                    log.warning("camera %s stopped delivering frames; reopening", self.source)
+                    # Opened but no frame: the same failure as not opening. Counting only open
+                    # failures (reset by every successful open) reopened a dead camera every 2 s forever.
                     cap.release()
                     cap = None
-                    self._halt.wait(2)
+                    failures += 1
+                    self._failed(failures, "delivered no frames; reopening")
                     continue
+                failures = 0                           # only a FRAME means the camera works
                 self.running = True
                 h, w = frame.shape[:2]
                 tw = min(FRAME_WIDTH, w)
@@ -271,6 +354,8 @@ class AudienceController:
         self.set_indicator = set_indicator     # bool -> the corner camera icon (any thread)
         self.queue = AudienceQueue(path=os.path.join(state_dir, "audience-queue.json"))
         self.queue.load()
+        self._segment_path = os.path.join(state_dir, "audience-segment")
+        self._segment = self._load_segment()
         self._lock = threading.RLock()
         self._config = None
         self._agg = None
@@ -279,7 +364,9 @@ class AudienceController:
         self._visible = True
         self.addon, self.reason = load_addon()
         self.cameras = list_cameras() if self.addon else []
-        self.source = camera_override or os.environ.get("ST_AUDIENCE_CAMERA") or (self.cameras[0][0] if self.cameras else None)
+        pinned = camera_override or os.environ.get("ST_AUDIENCE_CAMERA")
+        self._pinned = bool(pinned)                # chosen in config / env: never switched for another
+        self.source = pinned or (self.cameras[0][0] if self.cameras else None)
         if self.addon and not self.cameras and not self.source:
             self.reason = ("no camera found (a USB webcam is needed; a Pi camera module is not supported)"
                            if sys.platform.startswith("linux") else
@@ -313,8 +400,9 @@ class AudienceController:
                 return
             if prev is None or prev["min_dwell_ms"] != nxt["min_dwell_ms"]:
                 self._stop_counting()
-                self._agg = Aggregator(min_dwell_ms=nxt["min_dwell_ms"])
-                self._agg.item = self._item
+                self._agg = self._new_aggregator()
+            if self._agg:
+                self._agg.frame_interval_ms = 1000 // nxt["fps"]
             if self._worker:
                 self._worker.set_fps(nxt["fps"])
             if self._visible:
@@ -357,11 +445,44 @@ class AudienceController:
         if not self.available or (self._worker and self._worker.is_alive()):
             return
         if self._agg is None:
-            self._agg = Aggregator(min_dwell_ms=self._config["min_dwell_ms"])
-            self._agg.item = self._item
-        self._worker = CameraWorker(self.addon, self.source, self._config["fps"], self._on_faces)
+            self._agg = self._new_aggregator()
+        self._worker = CameraWorker(self.addon, self.source, self._config["fps"], self._on_faces,
+                                    rescan=None if self._pinned else self._rescan)
         self._worker.start()
         self._update_indicator()
+
+    def _new_aggregator(self):
+        """Every counting run gets the next segment number (Bucket.segment), persisted first, so a run
+        that starts in the minute the last one flushed — blank/unblank, off/on, a restart — never
+        sends a bucket id the server already has."""
+        self._segment = (self._segment + 1) % 10000
+        try:
+            tmp = self._segment_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(str(self._segment))
+            os.replace(tmp, self._segment_path)
+        except OSError as e:
+            log.warning("audience segment not saved: %s", e)
+        a = Aggregator(min_dwell_ms=self._config["min_dwell_ms"], segment=self._segment,
+                       frame_interval_ms=1000 // self._config["fps"])
+        a.item = self._item
+        return a
+
+    def _load_segment(self):
+        try:
+            with open(self._segment_path, encoding="utf-8") as f:
+                return int(f.read().strip()) % 10000
+        except (OSError, ValueError):
+            return random.randrange(10000)     # no record (first run, or lost): unlikely to repeat one
+
+    def _rescan(self):
+        """The worker's camera keeps failing: is there another one now? (worker thread)"""
+        cams = list_cameras()
+        with self._lock:
+            self.cameras = cams
+            if cams:
+                self.source = cams[0][0]
+            return self.source if cams else None
 
     def _stop_camera(self, flush):
         w, self._worker = self._worker, None
@@ -369,6 +490,7 @@ class AudienceController:
             w.stop()
         if flush and self._agg:
             self._queue(self._agg.flush_all(int(time.time() * 1000)))
+            self._agg = None                   # flushed: the next start is a new run (a new segment)
         self._update_indicator()
 
     def _stop_counting(self):
