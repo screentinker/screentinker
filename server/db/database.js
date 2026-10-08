@@ -2836,6 +2836,46 @@ function migrateWallSchedules(conn = db) {
 migrateWallSchedules();
 
 /*
+ * Audience buckets: `segment` and `observed_ms` (docs/audience-counting.md, lib/audience.js).
+ * A player restarting its counter inside a minute sends a second, partial bucket for that minute
+ * under a new segment number, so the uniqueness key gains `segment` — and SQLite cannot alter a
+ * table's UNIQUE constraint, so the table is rebuilt from its OWN current CREATE text with only
+ * that clause changed (the same way as migrateWallSchedules above), its indexes put back. A row
+ * from before the change is segment 0 and was observed for its whole bucket. Called where the
+ * table is created, below; a parameter so a test can run it on an old-shaped database.
+ */
+function migrateAudienceSegments(conn = db) {
+  const db = conn;
+  const cols = db.prepare('PRAGMA table_info(audience_buckets)').all().map((c) => c.name);
+  if (!cols.length) return;
+  if (!cols.includes('segment')) db.exec('ALTER TABLE audience_buckets ADD COLUMN segment INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('observed_ms')) {
+    db.exec('ALTER TABLE audience_buckets ADD COLUMN observed_ms INTEGER NOT NULL DEFAULT 60000');
+    db.exec('UPDATE audience_buckets SET observed_ms = bucket_sec * 1000');
+  }
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'audience_buckets'").get();
+  const OLD_UNIQUE = /UNIQUE\s*\(\s*device_id\s*,\s*bucket_start\s*,\s*item_kind\s*,\s*item_id\s*\)/;
+  if (!row || !OLD_UNIQUE.test(row.sql)) return;   // already keyed on segment (or a fresh install)
+  if (!/^CREATE TABLE\s+"?audience_buckets"?\s*\(/.test(row.sql)) {
+    console.error('[migrate] audience segments: audience_buckets is not the shape expected — left as is');
+    return;
+  }
+  const createSql = row.sql
+    .replace(/^CREATE TABLE\s+"?audience_buckets"?/, 'CREATE TABLE audience_buckets_seg_new')
+    .replace(OLD_UNIQUE, 'UNIQUE (device_id, bucket_start, item_kind, item_id, segment)');
+  const keep = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name = 'audience_buckets' AND type IN ('index', 'trigger') AND sql IS NOT NULL").all().map((r) => r.sql);
+  const names = db.prepare('PRAGMA table_info(audience_buckets)').all().map((c) => `"${c.name}"`).join(', ');
+  db.transaction(() => {
+    db.exec(createSql);
+    db.exec(`INSERT INTO audience_buckets_seg_new (${names}) SELECT ${names} FROM audience_buckets`);
+    db.exec('DROP TABLE audience_buckets');
+    db.exec('ALTER TABLE audience_buckets_seg_new RENAME TO audience_buckets');
+    for (const sql of keep) db.exec(sql);
+  })();
+  console.log('[migrate] audience segments: audience_buckets rebuilt, unique on (device, minute, item, segment)');
+}
+
+/*
  * `organizations.sso_only` — added HERE, not in the migrations array above.
  *
  * That array runs BEFORE ensureMultitenancyMigration(), which is what creates the organizations
@@ -3595,11 +3635,24 @@ try {
       d0 INTEGER NOT NULL, d1 INTEGER NOT NULL, d2 INTEGER NOT NULL,
       d3 INTEGER NOT NULL, d4 INTEGER NOT NULL, d5 INTEGER NOT NULL,
       received_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-      UNIQUE (device_id, bucket_start, item_kind, item_id)
+      segment          INTEGER NOT NULL DEFAULT 0,
+      observed_ms      INTEGER NOT NULL DEFAULT 60000,
+      UNIQUE (device_id, bucket_start, item_kind, item_id, segment)
     );
     CREATE INDEX IF NOT EXISTS idx_audience_ws_time ON audience_buckets(workspace_id, bucket_start);
     CREATE INDEX IF NOT EXISTS idx_audience_time ON audience_buckets(bucket_start);
+    -- Which client bucket ids are already stored, so a resend is idempotent even where two ids
+    -- MERGE into one row (lib/audience.js ingest). A 48-bit hash of the id, never the id itself:
+    -- integers only, like the buckets.
+    CREATE TABLE IF NOT EXISTS audience_ingested (
+      device_id    TEXT NOT NULL,
+      bucket_start INTEGER NOT NULL,
+      id_hash      INTEGER NOT NULL,
+      PRIMARY KEY (device_id, bucket_start, id_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_audience_ingested_time ON audience_ingested(bucket_start);
   `);
+  migrateAudienceSegments(db);
   // Device tags (JSON array, lib/content-tags normalizer) and dynamic group rules
   // (lib/device-group-rules.js): NULL rules = a hand-built group, as before.
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }
@@ -4005,4 +4058,5 @@ const PLAY_LOGS_WORKSPACE_BACKFILL_ID = 'play_logs_workspace_backfill';
 // Read once by services/heartbeat to arm the 2.0.1 player defer (lib/boot-defer.js). The loop
 // that sets it runs at require time, well above this line, so the value is already final here.
 module.exports = { db, pruneTelemetry, pruneTelemetryRetention, pruneScreenshots, pruneStatusLog, getMaintenanceStats,
-                   playsMigrationTouched: _playsMigrationTouched, _migrateWallSchedules: migrateWallSchedules };
+                   playsMigrationTouched: _playsMigrationTouched, _migrateWallSchedules: migrateWallSchedules,
+                   _migrateAudienceSegments: migrateAudienceSegments };

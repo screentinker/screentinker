@@ -182,6 +182,8 @@ test('PRIVACY: a record with ANY field beyond the counts, or any non-integer, is
   const text = cols.filter((c) => /TEXT|BLOB/i.test(c.type)).map((c) => c.name).sort();
   assert.deepEqual(text, ['device_id', 'item_id', 'item_kind', 'playlist_id', 'workspace_id'],
     'the table has no column that could hold an image, a face or a person');
+  const ledger = db.prepare("SELECT name, type FROM pragma_table_info('audience_ingested')").all();
+  assert.deepEqual(ledger.filter((c) => /TEXT|BLOB/i.test(c.type)).map((c) => c.name), ['device_id'], 'the resend ledger keeps a hash, not the id');
 });
 
 test('the report: by item with plays beside it, by screen, playlist, hour and day; CSV export', async () => {
@@ -220,6 +222,138 @@ test('formula injection in a name is neutralised in the CSV', () => {
   const csv = audience.toCsv([{ bucket_start: MIN, bucket_sec: 60, device_id: 'd', device_name: '=HYPERLINK("x")', item_kind: 'none',
     item_id: null, item_name: null, playlist_id: null, present_max: 0, present_avg_x100: 0, arrivals: 0, impressions: 0, d0: 0, d1: 0, d2: 0, d3: 0, d4: 0, d5: 0 }]);
   assert.match(csv, /"'=HYPERLINK\(""x""\)"/);
+});
+
+test('impressions per play counts only plays on a screen, in a minute, that was counting', async () => {
+  // Ten screens play the item; only dev-a has a camera on. Nine of those plays had no chance to be seen.
+  db.prepare("INSERT INTO content (id, filename, mime_type, workspace_id) VALUES ('c-pp', 'ten.jpg', 'image/jpeg', 'ws-a')").run();
+  const at = MIN - 3000;
+  for (let i = 1; i <= 9; i++) {
+    db.prepare("INSERT INTO devices (id, name, status, workspace_id, created_at) VALUES (?, ?, 'online', 'ws-a', 0)").run(`dev-p${i}`, `P${i}`);
+    db.prepare("INSERT INTO play_logs (device_id, content_id, workspace_id, started_at) VALUES (?, 'c-pp', 'ws-a', ?)").run(`dev-p${i}`, at + 5);
+  }
+  db.prepare("INSERT INTO play_logs (device_id, content_id, workspace_id, started_at) VALUES ('dev-a', 'c-pp', 'ws-a', ?), ('dev-a', 'c-pp', 'ws-a', ?)")
+    .run(at + 5, at - 1800);   // the second: a minute dev-a was not counting
+  assert.equal(send('dev-a', [bucket('pp1', { start: at, item_id: 'c-pp', arrivals: 6, impressions: 4 })]).written, 1);
+  const r = await call('GET', `/report?start=${MIN - 86400}&end=${NOW}&tz=0`);
+  const it = r.body.by_item.find((i) => i.item_id === 'c-pp');
+  assert.equal(it.plays, 1, 'only the play on the counting screen, in a counted minute');
+  assert.equal(it.impressions_per_play, 4);
+});
+
+test('avg presence and observed minutes are weighted by observed_ms; a departure-only bucket adds no time', async () => {
+  db.prepare("INSERT INTO content (id, filename, mime_type, workspace_id) VALUES ('c-ob', 'short.jpg', 'image/jpeg', 'ws-a')").run();
+  const at = MIN - 4200;
+  const ack = send('dev-a', [
+    bucket('ob1', { start: at, item_id: 'c-ob', present_max: 2, present_avg_x100: 200, observed_ms: 10000 }),
+    bucket('ob2', { start: at - 60, item_id: 'c-ob', present_max: 0, present_avg_x100: 0, arrivals: 0, impressions: 0, dwell: [0, 0, 0, 0, 0, 0], observed_ms: 50000 }),
+    // Arrivals filed for a face that was confirmed on this item, after the item left the screen.
+    bucket('ob3', { start: at + 60, item_id: 'c-ob', present_max: 0, present_avg_x100: 0, arrivals: 1, impressions: 1, dwell: [1, 0, 0, 0, 0, 0], observed_ms: 0 }),
+  ]);
+  assert.equal(ack.written, 3);
+  const r = await call('GET', `/report?start=${at - 60}&end=${at + 119}&tz=0`);
+  const it = r.body.by_item.find((i) => i.item_id === 'c-ob');
+  assert.equal(it.observed_minutes, 1, '10 s + 50 s + 0 s, not three minutes');
+  assert.equal(it.avg_present, 0.33, '2 people for 10 s of 60 s watched');
+  assert.equal(it.arrivals, 6);
+  // Bounds: observed_ms is a whole number within the bucket; segment is 0-9999.
+  const bad = send('dev-a', [
+    bucket('ob4', { start: at - 120, observed_ms: 60001 }),
+    bucket('ob5', { start: at - 120, observed_ms: '5' }),
+    bucket('ob6', { start: at - 120, observed_ms: -1 }),
+    bucket('ob7', { start: at - 120, segment: 10000 }),
+    bucket('ob8', { start: at - 120, segment: 1.5 }),
+  ]);
+  assert.equal(bad.written, 0);
+  assert.equal(bad.ids.length, 5);
+});
+
+test('a counter restarted inside a minute sends a new segment: both parts are kept, a resend is not', () => {
+  const at = MIN - 5400;
+  let ack = send('dev-a', [
+    bucket(`m${at}-s1-content-c-a`, { start: at, segment: 1, arrivals: 2, impressions: 1, dwell: [2, 0, 0, 0, 0, 0], observed_ms: 20000 }),
+    bucket(`m${at}-s2-content-c-a`, { start: at, segment: 2, arrivals: 3, impressions: 2, dwell: [3, 0, 0, 0, 0, 0], observed_ms: 30000 }),
+  ]);
+  assert.equal(ack.written, 2);
+  ack = send('dev-a', [bucket(`m${at}-s2-content-c-a`, { start: at, segment: 2, arrivals: 3, impressions: 2, dwell: [3, 0, 0, 0, 0, 0], observed_ms: 30000 })]);
+  assert.equal(ack.written, 0, 'the same id and segment again is the lost-ack resend');
+  const rows = stored('dev-a').filter((x) => x.bucket_start === at);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((x) => x.segment).sort(), [1, 2]);
+  assert.equal(rows.reduce((n, x) => n + x.arrivals, 0), 5);
+  // An old player (no segment) is segment 0 and observed for the whole bucket.
+  send('dev-a', [bucket('legacy1', { start: at - 60 })]);
+  const legacy = stored('dev-a').find((x) => x.bucket_start === at - 60);
+  assert.equal(legacy.segment, 0);
+  assert.equal(legacy.observed_ms, 60000);
+});
+
+test('two items downgraded to "none" in one minute are MERGED, and resending either changes nothing', () => {
+  db.prepare("INSERT INTO content (id, filename, mime_type, workspace_id) VALUES ('c-b2', 'theirs2.jpg', 'image/jpeg', 'ws-b')").run();
+  const at = MIN - 6600;
+  const one = bucket('dn1', { start: at, item_id: 'c-b', present_max: 2, present_avg_x100: 100, arrivals: 2, impressions: 1, dwell: [1, 1, 0, 0, 0, 0], observed_ms: 40000 });
+  const two = bucket('dn2', { start: at, item_id: 'c-b2', present_max: 3, present_avg_x100: 300, arrivals: 3, impressions: 3, dwell: [0, 2, 1, 0, 0, 0], observed_ms: 20000 });
+  assert.equal(send('dev-a', [one, two]).written, 2);
+  const check = () => {
+    const rows = stored('dev-a').filter((x) => x.bucket_start === at);
+    assert.equal(rows.length, 1);
+    const r = rows[0];
+    assert.equal(r.item_kind, 'none');
+    assert.equal(r.arrivals, 5);
+    assert.equal(r.impressions, 4);
+    assert.deepEqual([r.d0, r.d1, r.d2], [1, 3, 1]);
+    assert.equal(r.present_max, 3);
+    assert.equal(r.present_avg_x100, 167, '(100 x 40 s + 300 x 20 s) / 60 s');
+    assert.equal(r.observed_ms, 60000);
+  };
+  check();
+  assert.equal(send('dev-a', [two, one]).written, 0);
+  check();
+});
+
+test('the report period is a day in the VIEWER\'S time zone (UTC-5)', async () => {
+  // Day D as a UTC-5 viewer sees it runs 05:00 UTC on D to 04:59:59 UTC on D+1.
+  const D = new Date((NOW - 3 * 86400) * 1000).toISOString().slice(0, 10);
+  const localMidnight = Date.parse(`${D}T00:00:00Z`) / 1000 + 300 * 60;
+  const ins = db.prepare(`INSERT INTO audience_buckets (device_id, workspace_id, bucket_start, bucket_sec, item_kind, item_id, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5)
+    VALUES ('dev-a', 'ws-hq', ?, 60, 'none', '', 1, 100, ?, 0, 0, 0, 0, 0, 0, 0)`);
+  ins.run(localMidnight - 3600, 100);        // 23:00 the evening before, local (04:00 UTC on D)
+  ins.run(localMidnight + 60, 7);            // 00:01 local
+  ins.run(localMidnight + 86400 - 120, 3);   // 23:58 local (04:58 UTC on D+1)
+  let r = await call('GET', `/report?start=${D}&end=${D}&tz=300`, { ws: 'ws-hq' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.overall.arrivals, 10, 'the two buckets in the local day, not the one the evening before');
+  assert.equal(r.body.period.start, localMidnight);
+  assert.deepEqual(r.body.by_day.map((d) => d.day), [D]);
+  // Epoch bounds, as the dashboard sends them, give the same.
+  r = await call('GET', `/report?start=${localMidnight}&end=${localMidnight + 86399}&tz=300`, { ws: 'ws-hq' });
+  assert.equal(r.body.overall.arrivals, 10);
+});
+
+test('migration: an old-shaped table gains segment and observed_ms, keyed on segment, rows and indexes kept', () => {
+  const { Database } = require('../db/sqlite-driver');
+  const d = new Database(':memory:');
+  d.exec(`CREATE TABLE audience_buckets (
+      device_id TEXT NOT NULL, workspace_id TEXT, bucket_start INTEGER NOT NULL, bucket_sec INTEGER NOT NULL,
+      item_kind TEXT NOT NULL, item_id TEXT NOT NULL DEFAULT '', playlist_id TEXT,
+      present_max INTEGER NOT NULL, present_avg_x100 INTEGER NOT NULL, arrivals INTEGER NOT NULL, impressions INTEGER NOT NULL,
+      d0 INTEGER NOT NULL, d1 INTEGER NOT NULL, d2 INTEGER NOT NULL, d3 INTEGER NOT NULL, d4 INTEGER NOT NULL, d5 INTEGER NOT NULL,
+      received_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      UNIQUE (device_id, bucket_start, item_kind, item_id));
+    CREATE INDEX idx_audience_time ON audience_buckets(bucket_start);
+    INSERT INTO audience_buckets (device_id, bucket_start, bucket_sec, item_kind, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5)
+      VALUES ('d', 60, 120, 'none', 1, 100, 2, 1, 1, 1, 0, 0, 0, 0);`);
+  const { _migrateAudienceSegments } = require('../db/database');
+  _migrateAudienceSegments(d);
+  _migrateAudienceSegments(d);   // idempotent
+  const r = d.prepare('SELECT * FROM audience_buckets').get();
+  assert.equal(r.segment, 0);
+  assert.equal(r.observed_ms, 120000, 'an old row was observed for its whole bucket');
+  assert.equal(r.arrivals, 2);
+  assert.ok(d.prepare("SELECT 1 FROM sqlite_master WHERE name = 'idx_audience_time'").get(), 'indexes put back');
+  d.prepare("INSERT INTO audience_buckets (device_id, bucket_start, bucket_sec, item_kind, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5, segment) VALUES ('d', 60, 60, 'none', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)").run();
+  assert.throws(() => d.prepare("INSERT INTO audience_buckets (device_id, bucket_start, bucket_sec, item_kind, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5, segment) VALUES ('d', 60, 60, 'none', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)").run(), /UNIQUE/);
+  d.close();
 });
 
 test('switching the org OFF stops every screen, and its counts are refused from then on', async () => {

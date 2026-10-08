@@ -21,6 +21,13 @@ import org.json.JSONObject
  *     the histogram. Counted at the END because only then is the dwell known — and that keeps
  *     impressions <= arrivals in every bucket by construction.
  *   - it is attributed to the item that was on screen when it was confirmed: what they came to look at.
+ *     So a bucket can hold departures for an item no longer on screen — it then has no frames and
+ *     observed_ms 0, and adds arrivals without adding watched time.
+ *   - observed_ms: the time within the minute this item was on screen while the camera counted, from
+ *     the frame timestamps (each frame credits the gap since the previous one, capped, so a stalled
+ *     camera is not time watched). The server weights the average presence by it.
+ *   - segment: a new number every time counting (re)starts. A restart inside a minute sends a second
+ *     partial bucket for that minute; the segment keeps it from colliding with the first.
  */
 
 /** A face box in normalised [0,1] frame coordinates. */
@@ -36,15 +43,20 @@ data class AudienceBucket(
     val start: Long,                // epoch seconds, a multiple of 60
     val seconds: Int,
     val item: ScreenItem,
+    val segment: Int = 0,           // 0-9999: which counting run (see the file comment)
+    var observedMs: Long = 0,       // ms of this minute the item was on screen while counting
     var presentMax: Int = 0,
     var presentSum: Long = 0,       // sum of per-frame counts (for the average)
     var frames: Int = 0,
     var arrivals: Int = 0,
     var impressions: Int = 0,
     val dwell: IntArray = IntArray(6),
+    // The id it was queued under, kept across a restart so a resend is the SAME id (an entry queued
+    // by a build before segments has the old id shape, and the server must see it unchanged).
+    private val queuedId: String? = null,
 ) {
-    /** The ack key. Unique per screen: one bucket per minute per item. */
-    val id: String get() = "m$start-${item.kind}-${item.id ?: "x"}".take(80)
+    /** The ack key. Unique per screen: one bucket per minute per counting run per item. */
+    val id: String get() = queuedId ?: makeId(start, segment, item)
 
     fun presentAvgX100(): Int =
         if (frames == 0) 0 else ((presentSum * 100 + frames / 2) / frames).toInt().coerceIn(0, presentMax * 100)
@@ -60,20 +72,35 @@ data class AudienceBucket(
         put("arrivals", arrivals.coerceIn(0, 5000))
         put("impressions", impressions.coerceIn(0, arrivals.coerceIn(0, 5000)))
         put("dwell", JSONArray().apply { dwell.forEach { put(it.coerceIn(0, 5000)) } })
+        put("segment", segment.coerceIn(0, 9999))
+        put("observed_ms", observedMs.coerceIn(0L, seconds * 1000L))
     }
 
     companion object {
+        private val ID_RE = Regex("^[A-Za-z0-9:_-]{1,80}$")
+
+        /** m<start>-s<segment>-<kind>-<item id>, at most 80 characters: the item id is what gives. */
+        fun makeId(start: Long, segment: Int, item: ScreenItem): String {
+            val head = "m$start-s$segment-${item.kind}-"
+            return head + (item.id ?: "x").take((80 - head.length).coerceAtLeast(1))
+        }
+
         fun fromJson(o: JSONObject): AudienceBucket? = try {
             val kind = o.getString("item_kind")
             val d = o.getJSONArray("dwell")
+            val seconds = o.getInt("seconds")
             AudienceBucket(
-                start = o.getLong("start"), seconds = o.getInt("seconds"),
+                start = o.getLong("start"), seconds = seconds,
                 item = ScreenItem(kind, if (o.has("item_id")) o.getString("item_id") else null),
+                segment = o.optInt("segment", 0).coerceIn(0, 9999),
+                // Queued before observed_ms existed: the server reads absent as the whole bucket.
+                observedMs = o.optLong("observed_ms", seconds * 1000L),
                 presentMax = o.getInt("present_max"),
                 // The average is carried as avg x100 over one pseudo-frame, which round-trips exactly.
                 presentSum = o.getInt("present_avg_x100").toLong(), frames = 100,
                 arrivals = o.getInt("arrivals"), impressions = o.getInt("impressions"),
                 dwell = IntArray(6) { d.optInt(it, 0) },
+                queuedId = o.optString("id", "").takeIf { ID_RE.matches(it) },
             )
         } catch (_: Exception) { null }
     }
@@ -86,20 +113,26 @@ class AudienceAggregator(
     private val lostAfterMs: Long = 1500,
     private val matchIou: Float = 0.25f,
     private val maxTracks: Int = 100,
+    private val maxFrameGapMs: Long = 2000,     // a longer gap between frames is not time watched
 ) {
     private class Track(var box: FaceBox, val firstSeenMs: Long, var lastSeenMs: Long, var hits: Int, var item: ScreenItem)
 
     private val tracks = ArrayList<Track>()
     private val open = LinkedHashMap<String, AudienceBucket>()
     var item: ScreenItem = ScreenItem.NONE
+    private var lastFrameMs: Long? = null
+
+    /** The counting run new buckets belong to. Set a NEW one every time the camera (re)starts. */
+    var segment: Int = 0
+        set(v) { field = v.coerceIn(0, 9999); lastFrameMs = null }
 
     // No Math.floorMod(Long, Long): that is API 24 and minSdk is 23. Times here are never negative.
     private fun minuteOf(ms: Long): Long { val s = ms / 1000; return s - (s % bucketSec) }
 
-    private fun bucket(minute: Long, it: ScreenItem): AudienceBucket {
-        val key = "$minute|${it.kind}|${it.id}"
-        return open.getOrPut(key) { AudienceBucket(minute, bucketSec, it) }
-    }
+    private fun key(minute: Long, it: ScreenItem) = "$minute|$segment|${it.kind}|${it.id}"
+
+    private fun bucket(minute: Long, it: ScreenItem): AudienceBucket =
+        open.getOrPut(key(minute, it)) { AudienceBucket(minute, bucketSec, it, segment) }
 
     /**
      * One frame's detections at [nowMs]. Returns the buckets that are now complete (their minute has
@@ -127,11 +160,29 @@ class AudienceAggregator(
         endLost(nowMs)
 
         val present = tracks.count { it.hits >= confirmFrames && it.lastSeenMs == nowMs }
-        val b = bucket(minuteOf(nowMs), item)
+        val minute = minuteOf(nowMs)
+        val b = bucket(minute, item)
+        creditObserved(b, minute, nowMs)
         b.frames++
         b.presentSum += present
         if (present > b.presentMax) b.presentMax = present
         return closeBefore(minuteOf(nowMs))
+    }
+
+    /**
+     * The time since the previous frame was watched, with this frame's item on screen. Across a
+     * minute boundary the part before it goes to the previous minute's bucket for the same item,
+     * if it is still open; otherwise all of it is this frame's (a gap is at most maxFrameGapMs).
+     */
+    private fun creditObserved(b: AudienceBucket, minute: Long, nowMs: Long) {
+        val prev = lastFrameMs
+        lastFrameMs = nowMs
+        if (prev == null || nowMs <= prev) return              // the first frame of a run credits nothing
+        val gap = minOf(nowMs - prev, maxFrameGapMs)
+        val minuteStartMs = minute * 1000
+        val before = (minuteStartMs - (nowMs - gap)).coerceIn(0L, gap)
+        val prevBucket = if (before > 0) open[key(minute - bucketSec, item)] else null
+        if (prevBucket != null) { prevBucket.observedMs += before; b.observedMs += gap - before } else b.observedMs += gap
     }
 
     /** End every track that has not been seen for lostAfterMs. */
@@ -166,6 +217,7 @@ class AudienceAggregator(
     fun flushAll(nowMs: Long): List<AudienceBucket> {
         tracks.forEach { finish(it, nowMs) }
         tracks.clear()
+        lastFrameMs = null
         val all = open.values.toList()
         open.clear()
         return all

@@ -26,9 +26,14 @@ For each screen, each minute, and each item that was on screen during that minut
 | Arrivals | Faces that came into view and then left |
 | Impressions | Arrivals that looked at the screen for at least the impression time (default **1 second**) |
 | How long they looked | How many looks lasted under 2s, 2–5s, 5–15s, 15–30s, 30–60s, and over 60s |
+| Time observed | How much of the minute the item was on screen while the camera was counting |
 
 A look is counted when it **ends**, because only then is its length known. It's attributed to the
-item that was on screen when the person started looking.
+item that was on screen when the person started looking. If that item has left the screen by
+then, its minute carries the look but no observed time.
+
+If the camera stops and starts again within a minute (the screen blanks, the settings change, the
+player restarts), the two parts of that minute are sent and kept separately, so neither is lost.
 
 ## What it never does
 
@@ -73,7 +78,18 @@ offline at the time stops on its next connection.
 - **by content**, with plays beside it and impressions per play
 - **by screen** and **by playlist**
 
-**Export CSV** gives one row per screen, per minute, per item.
+The dates are days in **your** time zone: a day runs from your midnight to your midnight.
+
+**Average people in view** is weighted by the time observed. An item that was on screen for 10
+seconds of a minute counts for 10 seconds, not the whole minute. **Minutes observed** is the total
+of that time.
+
+**Plays** and **impressions per play** only count plays that started on a screen, in a minute, when
+that screen was counting. A play on a screen without a camera, or while the camera was off, couldn't
+have been seen, so it isn't counted.
+
+**Export CSV** gives one row per screen, per minute, per item, with the seconds observed in the last
+column. A minute where the camera restarted can have two rows for the same item.
 
 ## Which players can count
 

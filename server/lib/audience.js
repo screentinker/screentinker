@@ -25,8 +25,13 @@
  *   arrivals           people who came into view
  *   impressions        of those, people who LOOKED at the screen for at least min_dwell_ms
  *   dwell[6]           how long each look lasted: <2s, 2-5s, 5-15s, 15-30s, 30-60s, 60s+
+ *   observed_ms        how much of the minute this item was on screen WHILE the camera counted
+ *                      (absent = the whole bucket, as players before it sent)
+ *   segment            0-9999, a new number each time the player's counter restarts, so a second,
+ *                      partial bucket for the same minute and item is a row of its own
  */
 
+const crypto = require('crypto');
 const { db } = require('../db/database');
 
 const DWELL_LABELS = ['<2s', '2-5s', '5-15s', '15-30s', '30-60s', '60s+'];
@@ -34,7 +39,7 @@ const DWELL_LABELS = ['<2s', '2-5s', '5-15s', '15-30s', '30-60s', '60s+'];
 const DWELL_MID_SEC = [1, 3.5, 10, 22.5, 45, 90];
 const ITEM_KINDS = new Set(['content', 'widget', 'none']);
 const BUCKET_KEYS = new Set(['id', 'start', 'seconds', 'item_kind', 'item_id', 'playlist_id',
-  'present_max', 'present_avg_x100', 'arrivals', 'impressions', 'dwell']);
+  'present_max', 'present_avg_x100', 'arrivals', 'impressions', 'dwell', 'segment', 'observed_ms']);
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const CLIENT_ID_RE = /^[A-Za-z0-9:_-]{1,80}$/;
 const MAX_BATCH = 200;
@@ -147,22 +152,53 @@ function validateBucket(r, nowS) {
   if (!Array.isArray(r.dwell) || r.dwell.length !== DWELL_LABELS.length) return null;
   if (!r.dwell.every((n) => isInt(n, 0, 5000))) return null;
   if (r.dwell.reduce((a, b) => a + b, 0) > 5000) return null;
+  if (r.segment !== undefined && !isInt(r.segment, 0, 9999)) return null;
+  if (r.observed_ms !== undefined && !isInt(r.observed_ms, 0, r.seconds * 1000)) return null;
   return {
     start: r.start, seconds: r.seconds, item_kind: r.item_kind, item_id: itemId,
     playlist_id: r.playlist_id || null,
     present_max: r.present_max, present_avg_x100: r.present_avg_x100,
     arrivals: r.arrivals, impressions: r.impressions, dwell: r.dwell,
+    segment: r.segment === undefined ? 0 : r.segment,
+    observed_ms: r.observed_ms === undefined ? r.seconds * 1000 : r.observed_ms,
   };
 }
 
+/*
+ * Two DIFFERENT client buckets can land on one row: two items in the same minute whose attribution
+ * is dropped (both become 'none'), say. They are MERGED — counts and dwell summed, the max kept, the
+ * average weighted by observed time — never ignored, or the second item's people vanish. A RESEND of
+ * an id already stored is stopped before this by audience_ingested, so it is never merged twice.
+ */
 let _ins = null;
 function insertStmt() {
   if (!_ins) {
-    _ins = db.prepare(`INSERT OR IGNORE INTO audience_buckets (device_id, workspace_id, bucket_start, bucket_sec, item_kind, item_id,
-        playlist_id, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5)
-      VALUES (?, ?, ?, ?, ?, COALESCE(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    _ins = db.prepare(`INSERT INTO audience_buckets (device_id, workspace_id, bucket_start, bucket_sec, item_kind, item_id,
+        playlist_id, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5, segment, observed_ms)
+      VALUES (?, ?, ?, ?, ?, COALESCE(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (device_id, bucket_start, item_kind, item_id, segment) DO UPDATE SET
+        bucket_sec = MAX(bucket_sec, excluded.bucket_sec),
+        playlist_id = COALESCE(playlist_id, excluded.playlist_id),
+        present_max = MAX(present_max, excluded.present_max),
+        present_avg_x100 = CASE WHEN observed_ms + excluded.observed_ms > 0
+          THEN (present_avg_x100 * observed_ms + excluded.present_avg_x100 * excluded.observed_ms + (observed_ms + excluded.observed_ms) / 2)
+               / (observed_ms + excluded.observed_ms)
+          ELSE MAX(present_avg_x100, excluded.present_avg_x100) END,
+        observed_ms = MIN(observed_ms + excluded.observed_ms, MAX(bucket_sec, excluded.bucket_sec) * 1000),
+        arrivals = arrivals + excluded.arrivals, impressions = impressions + excluded.impressions,
+        d0 = d0 + excluded.d0, d1 = d1 + excluded.d1, d2 = d2 + excluded.d2,
+        d3 = d3 + excluded.d3, d4 = d4 + excluded.d4, d5 = d5 + excluded.d5`);
   }
   return _ins;
+}
+
+let _seen = null;
+/** Record that this client id is stored. false = it already was: a resend, to be acked and skipped. */
+function firstSighting(deviceId, start, clientId) {
+  if (!_seen) _seen = db.prepare('INSERT OR IGNORE INTO audience_ingested (device_id, bucket_start, id_hash) VALUES (?, ?, ?)');
+  // 48 bits of a hash, never the id: the id names an item, and this table holds integers only.
+  const h = crypto.createHash('sha256').update(clientId).digest().readUIntBE(0, 6);
+  return _seen.run(deviceId, start, h).changes === 1;
 }
 
 /**
@@ -215,8 +251,9 @@ function ingest(deviceId, data, nowS = Math.floor(Date.now() / 1000)) {
       if (kind === 'widget' && !widgetIn.get(item, ws)) { kind = 'none'; item = null; }
       const claimed = raw.playlist_id === undefined ? currentPlaylist : b.playlist_id;
       const pl = claimed && playlistIn.get(claimed, ws) ? claimed : null;
+      if (!firstSighting(deviceId, b.start, raw.id)) continue;   // the lost-ack resend: stored once already
       written += insertStmt().run(deviceId, ws, b.start, b.seconds, kind, item, pl,
-        b.present_max, b.present_avg_x100, b.arrivals, b.impressions, ...b.dwell).changes;
+        b.present_max, b.present_avg_x100, b.arrivals, b.impressions, ...b.dwell, b.segment, b.observed_ms).changes;
     }
   });
   tx();
@@ -228,7 +265,7 @@ function ingest(deviceId, data, nowS = Math.floor(Date.now() / 1000)) {
 const avgDwellSql = `(${DWELL_MID_SEC.map((m, i) => `SUM(d${i}) * ${m}`).join(' + ')}) * 1.0 / NULLIF(${DWELL_MID_SEC.map((_, i) => `SUM(d${i})`).join(' + ')}, 0)`;
 const metricsSql = `SUM(arrivals) AS arrivals, SUM(impressions) AS impressions, MAX(present_max) AS peak_present,
   ${avgDwellSql} AS avg_dwell_sec, ${DWELL_MID_SEC.map((_, i) => `SUM(d${i}) AS d${i}`).join(', ')},
-  SUM(present_avg_x100 * bucket_sec) / 100.0 AS person_seconds, SUM(bucket_sec) AS observed_sec`;
+  SUM(present_avg_x100 * observed_ms) / 100000.0 AS person_seconds, SUM(observed_ms) / 1000.0 AS observed_sec`;
 
 function shapeMetrics(r) {
   const n = (v) => Number(v) || 0;
@@ -236,9 +273,13 @@ function shapeMetrics(r) {
     arrivals: n(r.arrivals), impressions: n(r.impressions), peak_present: n(r.peak_present),
     avg_dwell_sec: r.avg_dwell_sec == null ? 0 : Math.round(r.avg_dwell_sec * 10) / 10,
     dwell: DWELL_LABELS.map((label, i) => ({ label, count: n(r[`d${i}`]) })),
-    // Average people in view across the minutes counted.
+    /*
+     * Average people in view, weighted by how long each bucket was actually watched: an item on
+     * screen for 10 s of a minute weighs 10 s, not 60, and a bucket that only carries departures
+     * (observed_ms 0) adds no time at all. Minutes are the sum of that time, not one per bucket.
+     */
     avg_present: n(r.observed_sec) ? Math.round((n(r.person_seconds) / n(r.observed_sec)) * 100) / 100 : 0,
-    observed_minutes: Math.round(n(r.observed_sec) / 60),
+    observed_minutes: Math.round((n(r.observed_sec) / 60) * 10) / 10,
   };
 }
 
@@ -259,9 +300,18 @@ function report(workspaceId, { start, end, deviceId = null, tzOffsetMin = 0 }) {
       LEFT JOIN content c ON ab.item_kind = 'content' AND c.id = ab.item_id
       LEFT JOIN widgets w ON ab.item_kind = 'widget' AND w.id = ab.item_id
       WHERE ${where} GROUP BY ab.item_kind, ab.item_id ORDER BY impressions DESC LIMIT 200`).all(...p);
-  // Proof-of-play beside the counts: impressions per play is the number a buyer asks for.
-  const plays = db.prepare(`SELECT content_id, COUNT(*) AS plays FROM play_logs
-      WHERE workspace_id = ? AND started_at >= ? AND started_at <= ?${deviceId ? ' AND device_id = ?' : ''} GROUP BY content_id`).all(...p);
+  /*
+   * Proof-of-play beside the counts: impressions per play is the number a buyer asks for. Only plays
+   * that STARTED on a screen in a minute it was counting are the denominator — a play on a screen
+   * with no camera, or while the camera was off, had no chance to make an impression, and counting
+   * it would make one counting screen among ten look a tenth as good.
+   */
+  const plays = db.prepare(`SELECT pl.content_id, COUNT(*) AS plays FROM play_logs pl
+      WHERE pl.workspace_id = ? AND pl.started_at >= ? AND pl.started_at <= ?${deviceId ? ' AND pl.device_id = ?' : ''}
+        AND EXISTS (SELECT 1 FROM audience_buckets ab WHERE ab.device_id = pl.device_id
+          AND ab.bucket_start > pl.started_at - 3600 AND ab.bucket_start <= pl.started_at
+          AND ab.bucket_start + ab.bucket_sec > pl.started_at)
+      GROUP BY pl.content_id`).all(...p);
   const playsBy = new Map(plays.map((r) => [r.content_id, r.plays]));
   const byDevice = db.prepare(`SELECT ab.device_id, d.name AS device_name, ${metricsSql}
       FROM audience_buckets ab LEFT JOIN devices d ON d.id = ab.device_id
@@ -299,7 +349,7 @@ function exportRows(workspaceId, { start, end, deviceId = null }) {
   const p = [workspaceId, start, end, ...(deviceId ? [deviceId] : [])];
   return db.prepare(`SELECT ab.bucket_start, ab.bucket_sec, ab.device_id, d.name AS device_name, ab.item_kind,
         NULLIF(ab.item_id, '') AS item_id, COALESCE(c.filename, w.name) AS item_name, ab.playlist_id,
-        ab.present_max, ab.present_avg_x100, ab.arrivals, ab.impressions, ab.d0, ab.d1, ab.d2, ab.d3, ab.d4, ab.d5
+        ab.present_max, ab.present_avg_x100, ab.arrivals, ab.impressions, ab.d0, ab.d1, ab.d2, ab.d3, ab.d4, ab.d5, ab.observed_ms
       FROM audience_buckets ab
       LEFT JOIN devices d ON d.id = ab.device_id
       LEFT JOIN content c ON ab.item_kind = 'content' AND c.id = ab.item_id
@@ -317,12 +367,12 @@ function csvCell(v) {
 
 function toCsv(rows) {
   const head = ['minute_utc', 'bucket_sec', 'device_id', 'device_name', 'item_kind', 'item_id', 'item_name', 'playlist_id',
-    'people_max', 'people_avg', 'arrivals', 'impressions', ...DWELL_LABELS.map((l) => `dwell_${l}`)];
+    'people_max', 'people_avg', 'arrivals', 'impressions', ...DWELL_LABELS.map((l) => `dwell_${l}`), 'observed_sec'];
   const lines = [head.join(',')];
   for (const r of rows) {
     lines.push([new Date(r.bucket_start * 1000).toISOString(), r.bucket_sec, r.device_id, r.device_name, r.item_kind, r.item_id,
       r.item_name, r.playlist_id, r.present_max, (r.present_avg_x100 / 100).toFixed(2), r.arrivals, r.impressions,
-      r.d0, r.d1, r.d2, r.d3, r.d4, r.d5].map(csvCell).join(','));
+      r.d0, r.d1, r.d2, r.d3, r.d4, r.d5, r.observed_ms == null ? '' : (r.observed_ms / 1000).toFixed(1)].map(csvCell).join(','));
   }
   return lines.join('\n') + '\n';
 }
@@ -331,6 +381,9 @@ function toCsv(rows) {
 
 /** Delete buckets past their organization's retention (default 90 days). Returns rows deleted. */
 function purgeExpired(limit = 5000, nowS = Math.floor(Date.now() / 1000)) {
+  // The resend ledger is only needed while a bucket could still be accepted (MAX_AGE_SEC).
+  db.prepare(`DELETE FROM audience_ingested WHERE rowid IN (SELECT rowid FROM audience_ingested WHERE bucket_start < ? LIMIT ?)`)
+    .run(nowS - MAX_AGE_SEC - 86400, limit);
   return db.prepare(`DELETE FROM audience_buckets WHERE rowid IN (
       SELECT ab.rowid FROM audience_buckets ab
         LEFT JOIN workspaces w ON w.id = ab.workspace_id

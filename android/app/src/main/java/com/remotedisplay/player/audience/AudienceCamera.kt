@@ -56,8 +56,17 @@ class AudienceCamera(
     private var detector: FaceDetector? = null
     private var sensorRotation = 0
 
-    @SuppressLint("MissingPermission")   // the controller checks CAMERA before calling start()
+    /**
+     * Never throws. getCameraCharacteristics, getOutputSizes and the like can throw on a device whose
+     * camera is busy, vanished (a USB camera unplugged) or misreports itself; any of that is a failed
+     * start — logged, cleaned up, reported through onError — not a crashed player.
+     */
     fun start(fps: Int) {
+        try { startCamera(fps) } catch (e: Throwable) { fail("start: ${e.message}") }
+    }
+
+    @SuppressLint("MissingPermission")   // the controller checks CAMERA before calling start()
+    private fun startCamera(fps: Int) {
         if (running) { setFps(fps); return }
         setFps(fps)
         val mgr = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return onError("no camera service")
