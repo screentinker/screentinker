@@ -4929,7 +4929,7 @@ function renderWidgetBuffered(item) {
   container.style.display = "block";
   discardPendingSwap();
   const iframe = document.createElement("iframe");
-  iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0);
+  iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0).concat(item.widget_panel ? "#panel=" + encodeURIComponent(item.widget_panel) : "");
   iframe.style.background = "#000";
   iframe.style.visibility = "hidden";
   iframe.allow = "autoplay; fullscreen";
@@ -5744,7 +5744,7 @@ function renderContent(item) {
       if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1e3);
     } else if (item.widget_id) {
       const iframe = document.createElement("iframe");
-      iframe.src = "".concat(serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0);
+      iframe.src = "".concat(serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0).concat(item.widget_panel ? "#panel=" + encodeURIComponent(item.widget_panel) : "");
       iframe.style.cssText = "width:100%;height:100%;border:none;background:transparent";
       iframe.allow = "autoplay; fullscreen";
       iframe.setAttribute("sandbox", widgetSandboxAttr(item));
@@ -6013,7 +6013,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   const dur = (a.duration_sec || 10) * 1e3;
   if (a.widget_id) {
     const iframe = document.createElement("iframe");
-    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0);
+    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
     iframe.setAttribute("sandbox", widgetSandboxAttr(a));
     div.appendChild(iframe);
     if (PREVIEW_MODE && a.widget_type === "webpage") addWebpageNote(div);
@@ -6291,7 +6291,7 @@ function wallZoneElement(zs, a, opts) {
   const src = mediaUrl(a);
   if (a.widget_id) {
     const iframe = document.createElement("iframe");
-    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0);
+    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
     iframe.setAttribute("sandbox", widgetSandboxAttr(a));
     return { el: iframe, video: null };
   }

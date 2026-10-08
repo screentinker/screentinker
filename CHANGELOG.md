@@ -33,6 +33,20 @@
     always shown as plain text.
   - LinkedIn and TikTok are not supported; `docs/social-feeds.md` explains why, and covers each
     network's setup, permissions, costs and limits.
+- **Meeting-room displays** (Widgets → Room Display).
+  - The screen outside a room shows **Available** or **In use** in large type, the meeting in
+    progress and time left, the rest of today's meetings, and when it is next free. Portrait or
+    landscape, readable from across a corridor, and not reliant on colour alone.
+  - Reads **Microsoft 365** room mailboxes or **Google Workspace** resource calendars through your
+    organization's own app or service account (Settings → Meeting rooms), or any calendar
+    published as an ICS address.
+  - On touch screens running the Android, web or Raspberry Pi / Windows player, people can **book
+    the room now** (15, 30 or 60 minutes, never into the next meeting) and **end a meeting** booked
+    there. Organizations can also allow ending any meeting, and **release rooms nobody checks in
+    to**. Both are off by default.
+  - Private meetings show as "Private meeting", or every meeting as "Reserved"; hidden details
+    never leave the server. Panels keep switching between free and busy on time with the network
+    down. See `docs/room-booking.md`.
 
 - **SAML 2.0 single sign-on for organizations** (Settings → Single sign-on → Add provider →
   SAML 2.0).

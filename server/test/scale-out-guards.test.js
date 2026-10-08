@@ -133,6 +133,10 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   // workspace. Hooks are refused in a mesh-replicated workspace at creation (routes/automation.js)
   // and automation_hooks is never replicated, so a replica has no hook for this door to find.
   'hooks-in.js': 'inbound automation hook (secret URL); hooks are node-local and refused in replicated workspaces',
+  // A room display page's book / end / check-in, authorised by the panel capability rather than a
+  // session. Not exempt on trust: a guard forwards every action for a copied workspace to the
+  // primary before the body is read (asserted below).
+  'room-panel.js': 'room display actions; a guard forwards every one for a copied workspace to the primary (asserted below)',
 });
 
 const INLINE_NOT_WORKSPACE_SCOPED = Object.freeze({
@@ -183,6 +187,10 @@ test('test_every_mutating_route_passes_resolveTenancy: no second writer can hide
   assert.match(tenancy, /replicaProxy\.proxyToPrimary\(req, res, config\)/);
   // The two listed routers that CAN write to a copied workspace carry the same interception
   // themselves. Their allowlist reasons above claim it; this is the claim checked.
+  const roomPanel = read('routes/room-panel.js');
+  assert.match(roomPanel, /replicaProxy\.shouldIntercept\(req, ws\)/);
+  assert.match(roomPanel, /router\.post\('\/:widgetId\/action', forwardIfCopy, express\.text/,
+    'the copy guard runs before the body parser, so an unparsed body can be streamed to the primary');
   const workspaces = read('routes/workspaces.js');
   assert.match(workspaces, /router\.param\('id'/, 'workspaces.js: router.param guard');
   assert.match(workspaces, /replicaProxy\.shouldIntercept\(req, ws\)\) return replicaProxy\.proxyToPrimary\(req, res, appConfig\)/);

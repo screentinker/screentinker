@@ -50,6 +50,7 @@ import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 import { mountMenuEditor, readMenuConfig } from '../components/menu-board-editor.js';
 import { mountBiEditor, readBiConfig } from '../components/bi-dashboard-editor.js';
 import { mountSocialEditor, readSocialConfig } from '../components/social-wall-editor.js';
+import { mountRoomEditor, readRoomConfig } from '../components/room-display-editor.js';
 
 // A refused request must reject, not resolve.
 //
@@ -72,7 +73,7 @@ const API = (url, opts = {}) => {
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'bi-dashboard', 'transition'];
+const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'bi-dashboard', 'room-display', 'transition'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -85,6 +86,7 @@ const WIDGET_ICONS = {
   'menu-board': '&#127860;',
   'cloud-doc': '&#128209;',
   'bi-dashboard': '&#128202;',
+  'room-display': '&#128682;',
   transition: '&#127916;',
   // Built-in, but never offered in the "new widget" grid: a template widget is created from the
   // Templates library (the server refuses POST /widgets for it) and edited with the same form.
@@ -783,6 +785,10 @@ export async function render(container) {
       case 'bi-dashboard':
         html += `<div id="wBiEditor"></div>`;
         break;
+      case 'room-display':
+        // components/room-display-editor.js renders into this box once the modal is open.
+        html += `<div id="wRoomEditor"></div>`;
+        break;
       case 'directory-board':
         html += `
           <div class="form-group" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:6px;background:var(--bg-input)">
@@ -881,7 +887,8 @@ export async function render(container) {
     document.getElementById('widgetModal').style.display = 'flex';
     // Transitions carry their own live preview, so the iframe "Preview" button doesn't apply.
     const pvBtn = document.getElementById('previewWidgetBtn');
-    if (pvBtn) pvBtn.style.display = (type === 'transition') ? 'none' : '';
+    // A room display reads its saved room's live state, which an unsaved preview has no id for.
+    if (pvBtn) pvBtn.style.display = (type === 'transition' || type === 'room-display') ? 'none' : '';
 
     if (type === 'webpage') {
       const box = document.getElementById('wInteractive');
@@ -940,6 +947,11 @@ export async function render(container) {
     if (type === 'cloud-doc') initCloudDocForm();
     if (type === 'bi-dashboard') mountBiEditor(document.getElementById('wBiEditor'), config, { apiGet: (u) => API(u) });
     if (type === 'social') mountSocialEditor(document.getElementById('wSocialEditor'), config, { apiGet: (u) => API(u) });
+    if (type === 'room-display') mountRoomEditor(document.getElementById('wRoomEditor'), config, {
+      get: (u) => API(u),
+      post: (u, b) => API(u, { method: 'POST', body: JSON.stringify(b || {}) }),
+      put: (u, b) => API(u, { method: 'PUT', body: JSON.stringify(b || {}) }),
+    });
     if (type === 'transition') initTransitionForm(config);
     if (type === 'clock') initClockForm();
   }
@@ -1456,6 +1468,8 @@ export async function render(container) {
       case 'social': Object.assign(config, readSocialConfig()); break;
       case 'menu-board': Object.assign(config, readMenuConfig()); break;
       case 'bi-dashboard': Object.assign(config, readBiConfig()); break;
+        break;
+      case 'room-display': Object.assign(config, readRoomConfig()); break;
       case 'transition': {
         const shaders = Array.from(document.querySelectorAll('#wTransList input[type=checkbox]:checked')).map(c => c.dataset.id);
         const params = {}; // per-shader tuned values held in transState.params

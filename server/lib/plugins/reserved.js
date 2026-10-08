@@ -19,6 +19,7 @@ const BUILTIN_WIDGET_TYPES = Object.freeze([
   'menu-board',
   'cloud-doc',
   'bi-dashboard',
+  'room-display',
 ]);
 
 const RESERVED_WIDGET_TYPES = new Set([

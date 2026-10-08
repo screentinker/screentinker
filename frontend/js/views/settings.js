@@ -10,6 +10,7 @@ import { mountStorageSettings } from '../components/storage-settings.js';
 import { mountM365Settings } from '../components/m365-settings.js';
 import { mountBiConnections } from '../components/bi-connections-settings.js';
 import { mountSocialConnections } from '../components/social-connections-settings.js';
+import { mountRoomSettings } from '../components/room-settings.js';
 import { formatRow, buyPack, usd } from '../components/ai-hosted-picker.js';
 
 export async function render(container) {
@@ -102,6 +103,7 @@ export async function render(container) {
     <div class="settings-section" id="socialConnCard" style="display:none"></div>
 
     <div class="settings-section" id="canvaSettingsCard" style="display:none"></div>
+    <div class="settings-section" id="roomsCard" style="display:none"></div>
 
     <div class="settings-section" id="ssoCard" style="display:none">
       <h3>${t('sso.title')}</h3>
@@ -1539,6 +1541,8 @@ export async function render(container) {
   // BI connections belong to the organization; the card hides itself unless the server says can_manage.
   if (canManageOrgSecurity) mountBiConnections(document.getElementById('biCard'));
   if (canManageOrgSecurity) mountSocialConnections(document.getElementById('socialConnCard'));
+  // Meeting-room calendar connections: org owners and admins (the server agrees, and says can_manage).
+  if (canManageOrgSecurity) mountRoomSettings(document.getElementById('roomsCard'));
 
 
   document.getElementById('createTokenBtn')?.addEventListener('click', async () => {

@@ -519,7 +519,13 @@ class PlaybackEngine:
              "muted": muted, "loop": loop, "live": it.is_live}
         if it.is_widget:
             q = ("?device=" + urllib.parse.quote(self.config.device_id)) if self.config.device_id else "?d="
-            d.update(kind="web", source="%s/api/widgets/%s/render%s&rev=%d" % (server, it.widget_id, q, it.widget_rev))
+            src = "%s/api/widgets/%s/render%s&rev=%d" % (server, it.widget_id, q, it.widget_rev)
+            # A meeting-room display's panel capability (server/lib/rooms/service.js panelToken) rides in
+            # the FRAGMENT: it lets the page book the room, and a fragment never reaches a server log.
+            panel = (it.raw or {}).get("widget_panel")
+            if isinstance(panel, str) and panel:
+                src += "#panel=" + urllib.parse.quote(panel, safe="")
+            d.update(kind="web", source=src)
             return d
         if it.is_bundle:
             html = self.bundles.get(it.content_id, it.content_rev)
