@@ -18,6 +18,7 @@ import * as servers from './views/servers.js';
 import * as noc from './views/noc.js';
 import * as triggers from './views/triggers.js';
 import * as qrCodes from './views/qr-codes.js';
+import * as socialFeeds from './views/social.js';
 import * as alerts from './views/alerts.js';
 import * as capFeeds from './views/cap-feeds.js';
 import * as automation from './views/automation.js';
@@ -248,6 +249,7 @@ const NAV_LABEL_KEYS = {
   servers: 'nav.servers',
   triggers: 'nav.triggers',
   'qr-codes': 'nav.qr_codes',
+  social: 'nav.social',
   alerts: 'nav.alerts',
   'emergency-feeds': 'nav.emergency_feeds',
   automation: 'nav.automation',
@@ -577,6 +579,7 @@ function route() {
     else if (hash === '#/schedule' && link.dataset.view === 'schedule') link.classList.add('active');
     else if (hash === '#/widgets' && link.dataset.view === 'widgets') link.classList.add('active');
     else if (hash === '#/slides' && link.dataset.view === 'slides') link.classList.add('active');
+    else if (hash === '#/social' && link.dataset.view === 'social') link.classList.add('active');
     else if (hash === '#/templates' && link.dataset.view === 'templates') link.classList.add('active');
     else if ((hash === '#/data-sources' || hash.startsWith('#/data-sources/')) && link.dataset.view === 'data-sources') link.classList.add('active');
     else if ((hash.startsWith('#/wall') || hash === '#/walls') && link.dataset.view === 'walls') link.classList.add('active');
@@ -637,6 +640,9 @@ function route() {
   } else if (hash === '#/qr-codes') {
     currentView = qrCodes;
     qrCodes.render(app);
+  } else if (hash === '#/social') {
+    currentView = socialFeeds;
+    socialFeeds.render(app);
   } else if (hash === '#/alerts') {
     currentView = alerts;
     alerts.render(app);

@@ -15,6 +15,24 @@
     alerts, switch playlists, fire triggers and update tables. Make and n8n can use the same API.
   - Hook addresses are shown once and stored only as a fingerprint. Signing is optional, and every
     call is logged. See `docs/automation.md`.
+- **Social walls: real posts from Instagram, Facebook, YouTube, X, Bluesky and Mastodon** (menu →
+  Social feeds, and the Social wall widget). The old Social Feed widget only ever said "Configure
+  API key"; existing ones now ask you to choose a feed.
+  - A feed collects posts from up to 10 sources: accounts, hashtags, a Facebook Page, a YouTube
+    channel or playlist, or a search. Bluesky and Mastodon need no setup. For the others, an
+    organization admin adds your own access token or key in Settings → Social connections. Tokens
+    are stored encrypted and never shown again; Instagram tokens renew themselves.
+  - **Moderation:** show new posts straight away, or approve each one first. You can also hide a
+    post at any time, hide posts containing blocked words, show only posts with pictures, and
+    leave out old posts. A hidden post never comes back by itself, and posts their authors delete
+    disappear from the wall.
+  - **Three layouts:** one large post at a time, a rotating grid, or a scrolling ticker for a strip
+    zone. All work in portrait and landscape.
+  - **Screens never contact a social network.** Your server fetches the posts and keeps copies of
+    the images, so a wall keeps showing its last posts when the internet is down. Post text is
+    always shown as plain text.
+  - LinkedIn and TikTok are not supported; `docs/social-feeds.md` explains why, and covers each
+    network's setup, permissions, costs and limits.
 
 - **SAML 2.0 single sign-on for organizations** (Settings → Single sign-on → Add provider →
   SAML 2.0).

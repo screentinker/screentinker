@@ -1,0 +1,287 @@
+'use strict';
+
+/*
+ * The 'social' widget: a social wall showing one of the workspace's social feeds.
+ *
+ * The page carries the posts it had when it was rendered (so a cached copy still shows something
+ * with the network down) and polls /api/widgets/:id/social.json for newer ones. Images come from
+ * /api/widgets/:id/social-media/<hash> — this server's cached copies; a screen never fetches from a
+ * social network, and the page's CSP says so (img-src and connect-src are this origin only).
+ *
+ * ⚠️ POST TEXT IS DATA, NEVER MARKUP. It reaches the page as JSON inside a
+ * <script type="application/json"> block with every `<` escaped, and is put on screen with
+ * textContent. Nothing a stranger posts is ever parsed as HTML here.
+ *
+ * Layouts: carousel (one post at a time, large), grid (a page of cards, rotating), ticker (one line,
+ * scrolling). Sizes are in vmin so a post reads the same on a portrait or landscape panel.
+ */
+
+const feeds = require('./feeds');
+
+const LAYOUTS = ['carousel', 'grid', 'ticker'];
+const THEMES = ['dark', 'light'];
+const NETWORK_LABELS = { instagram: 'Instagram', facebook: 'Facebook', youtube: 'YouTube', x: 'X', bluesky: 'Bluesky', mastodon: 'Mastodon' };
+
+const intIn = (v, lo, hi, def) => {
+  if (v === undefined || v === null || v === '') return def;
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : def;
+};
+const colour = (v, d) => (/^#[0-9a-f]{6}$/i.test(String(v || '')) ? String(v) : d);
+
+/** Validate a widget config at save time. The feed must be in the widget's own workspace. */
+function normaliseConfig(db, workspaceId, raw) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  const feed = feeds.forWorkspace(db, workspaceId, c.feed_id);
+  if (!feed) throw new Error('Choose one of this workspace’s social feeds (Social feeds in the menu).');
+  return { feed_id: feed.id, ...displayOptions(c) };
+}
+
+function displayOptions(raw) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  return {
+    layout: LAYOUTS.includes(c.layout) ? c.layout : 'carousel',
+    interval_sec: intIn(c.interval_sec, 4, 300, 10),
+    columns: intIn(c.columns, 0, 6, 0),
+    show_author: c.show_author !== false,
+    show_time: c.show_time !== false,
+    theme: THEMES.includes(c.theme) ? c.theme : 'dark',
+    background: colour(c.background, ''),
+    accent: colour(c.accent, '#4f8cff'),
+    title: String(c.title || '').trim().slice(0, 80),
+  };
+}
+
+/** What a screen receives about a post. Nothing more than it shows. */
+function payloadPost(widgetId, r) {
+  const m = (h) => `/api/widgets/${encodeURIComponent(widgetId)}/social-media/${h}`;
+  let media = [];
+  try { media = JSON.parse(r.media || '[]'); } catch { media = []; }
+  return {
+    k: `${r.network}:${r.post_id}`,
+    n: r.network,
+    a: r.author_name || '',
+    h: r.author_handle || '',
+    av: r.author_avatar ? m(r.author_avatar) : null,
+    t: r.text || '',
+    m: media.slice(0, 4).map(m),
+    v: !!r.is_video,
+    at: r.posted_at,
+  };
+}
+
+function payload(db, widget, config) {
+  const feed = config && config.feed_id ? feeds.forWorkspace(db, widget.workspace_id, config.feed_id) : null;
+  if (!feed) return { posts: [], configured: false };
+  return { posts: feeds.visiblePosts(db, feed).map((r) => payloadPost(widget.id, r)), configured: true, title: config.title || '' };
+}
+
+const jsonForScript = (o) => JSON.stringify(o).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
+  .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+
+function csp(origin) {
+  const o = origin || "'self'";
+  return `default-src 'none'; img-src ${o} data:; connect-src ${o}; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`;
+}
+
+/** The wall page. `origin` is this server, for the CSP and for absolute data/image URLs. */
+function render(db, widget, rawConfig, { origin = '', sample = null, poll = true } = {}) {
+  let config;
+  try { config = normaliseConfig(db, widget.workspace_id, rawConfig); } catch { config = null; }
+  if (!config && sample) config = displayOptions(rawConfig);
+  const data = sample ? { posts: sample, configured: true } : (config ? payload(db, widget, config) : { posts: [], configured: false });
+  const cfg = config ? {
+    layout: config.layout, interval: config.interval_sec, columns: config.columns, showAuthor: config.show_author, showTime: config.show_time,
+    title: config.title, accent: config.accent,
+  } : { layout: 'carousel', interval: 10, columns: 0, showAuthor: true, showTime: true, title: '', accent: '#4f8cff' };
+  const dark = !config || config.theme === 'dark';
+  const bg = (config && config.background) || (dark ? '#0d1117' : '#f5f6f8');
+  const fg = dark ? '#f2f4f8' : '#16181d';
+  const muted = dark ? 'rgba(242,244,248,.62)' : 'rgba(22,24,29,.6)';
+  const card = dark ? 'rgba(255,255,255,.06)' : '#ffffff';
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Social wall</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:${bg};color:${fg};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+#app{position:absolute;inset:0;display:flex;flex-direction:column;padding:3vmin}
+#title{font-size:4.2vmin;font-weight:700;margin-bottom:2vmin;display:none}
+#stage{position:relative;flex:1;min-height:0}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:${muted};font-size:3.4vmin;padding:6vmin}
+.post{display:flex;flex-direction:column;background:${card};border-radius:2vmin;overflow:hidden;min-height:0}
+.who{display:flex;align-items:center;gap:1.6vmin;padding:2vmin 2.4vmin 1vmin}
+.av{width:6vmin;height:6vmin;border-radius:50%;object-fit:cover;flex:none;background:${muted}}
+.names{min-width:0;flex:1}
+.name{font-weight:700;font-size:2.8vmin;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.handle{color:${muted};font-size:2.2vmin;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.net{flex:none;font-size:1.9vmin;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#fff;background:${cfg.accent};padding:.6vmin 1.2vmin;border-radius:1vmin}
+.media{position:relative;flex:1;min-height:0;background:rgba(0,0,0,.35)}
+.media img{width:100%;height:100%;object-fit:contain;display:block}
+.play{position:absolute;left:50%;top:50%;width:12vmin;height:12vmin;margin:-6vmin 0 0 -6vmin;border-radius:50%;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center}
+.play:after{content:"";border-left:4.4vmin solid #fff;border-top:2.6vmin solid transparent;border-bottom:2.6vmin solid transparent;margin-left:1vmin}
+.text{padding:1.4vmin 2.4vmin 0;font-size:3vmin;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical}
+.when{color:${muted};font-size:2vmin;padding:1vmin 2.4vmin 2vmin}
+/* carousel */
+.carousel .post{position:absolute;inset:0;opacity:0;transition:opacity 1s ease}
+.carousel .post.on{opacity:1}
+.carousel .text{font-size:3.6vmin;-webkit-line-clamp:6}
+.carousel .post.textonly .text{font-size:5vmin;-webkit-line-clamp:10;flex:1;padding-top:3vmin}
+/* grid */
+.grid{display:grid;gap:2vmin;height:100%}
+.grid .post{opacity:0;transition:opacity .8s ease}
+.grid .post.on{opacity:1}
+.grid .text{font-size:2.5vmin;-webkit-line-clamp:4}
+.grid .post.textonly .text{-webkit-line-clamp:9;flex:1}
+/* ticker */
+/* ticker: made for a strip zone, so it fills its zone and sizes from the zone's HEIGHT (capped by width) */
+body.ticker-mode #app{padding:0}
+.ticker{position:absolute;inset:0;display:flex;align-items:center;overflow:hidden;background:${card};font-size:min(30vh,4.2vw)}
+.tick-track{display:flex;gap:2.5em;white-space:nowrap;will-change:transform;padding-left:100%}
+.tick-item{display:flex;align-items:center;gap:.5em;font-size:1em}
+.tick-item .av{width:1.6em;height:1.6em}
+.tick-item .net{font-size:.55em;padding:.2em .45em;border-radius:.3em}
+.tick-item .handle{font-size:.75em}
+</style></head><body>
+<div id="app"><div id="title"></div><div id="stage"></div></div>
+<script type="application/json" id="seed">${jsonForScript({ cfg, data })}</script>
+<script>
+(function(){
+  var seed = JSON.parse(document.getElementById('seed').textContent);
+  var cfg = seed.cfg, posts = seed.data.posts || [], configured = seed.data.configured;
+  var NETS = ${JSON.stringify(NETWORK_LABELS)};
+  var ORIGIN = ${JSON.stringify(origin)};
+  var WID = ${JSON.stringify(String(widget.id))};
+  var stage = document.getElementById('stage');
+  var timer = null, idx = 0, sig = '';
+  function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function abs(u){ return u && u.charAt(0) === '/' ? ORIGIN + u : u; }
+  function ago(t){
+    var s = Math.max(0, Math.floor(Date.now()/1000) - t);
+    if (s < 3600) return Math.max(1, Math.floor(s/60)) + ' min ago';
+    if (s < 86400) return Math.floor(s/3600) + ' h ago';
+    var d = new Date(t*1000); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  function who(p){
+    var w = el('div','who');
+    if (cfg.showAuthor) {
+      if (p.av) { var i = el('img','av'); i.alt = ''; i.src = abs(p.av); w.appendChild(i); }
+      var n = el('div','names'); n.appendChild(el('div','name', p.a || p.h)); if (p.h && p.h !== p.a) n.appendChild(el('div','handle', p.h)); w.appendChild(n);
+    } else w.appendChild(el('div','names'));
+    w.appendChild(el('div','net', NETS[p.n] || p.n));
+    return w;
+  }
+  function card(p){
+    var c = el('div','post' + (p.m && p.m.length ? '' : ' textonly'));
+    c.appendChild(who(p));
+    if (p.m && p.m.length) {
+      var m = el('div','media'); var im = el('img'); im.alt = ''; im.src = abs(p.m[0]); m.appendChild(im);
+      if (p.v) m.appendChild(el('div','play'));
+      c.appendChild(m);
+    }
+    if (p.t) c.appendChild(el('div','text', p.t));
+    if (cfg.showTime) c.appendChild(el('div','when', ago(p.at)));
+    return c;
+  }
+  function clear(){ if (timer) { clearInterval(timer); timer = null; } while (stage.firstChild) stage.removeChild(stage.firstChild); }
+  function empty(){ stage.appendChild(el('div','empty', configured ? 'No posts to show yet.' : 'Choose a social feed for this wall in the widget settings.')); }
+  function carousel(){
+    var box = el('div','carousel'); box.style.position='absolute'; box.style.inset='0'; stage.appendChild(box);
+    var cards = posts.map(card); cards.forEach(function(c){ box.appendChild(c); });
+    idx = idx % cards.length; cards[idx].classList.add('on');
+    if (cards.length > 1) timer = setInterval(function(){ cards[idx].classList.remove('on'); idx = (idx + 1) % cards.length; cards[idx].classList.add('on'); }, cfg.interval * 1000);
+  }
+  function grid(){
+    var portrait = window.innerHeight > window.innerWidth;
+    var cols = cfg.columns || (portrait ? 2 : 3), rows = portrait ? 3 : 2, per = cols * rows;
+    var box = el('div','grid'); box.style.gridTemplateColumns = 'repeat(' + cols + ',minmax(0,1fr))'; box.style.gridTemplateRows = 'repeat(' + rows + ',minmax(0,1fr))';
+    stage.appendChild(box);
+    var page = 0, pages = Math.max(1, Math.ceil(posts.length / per));
+    function show(){
+      while (box.firstChild) box.removeChild(box.firstChild);
+      posts.slice(page * per, page * per + per).forEach(function(p){ var c = card(p); box.appendChild(c); requestAnimationFrame(function(){ c.classList.add('on'); }); });
+    }
+    show();
+    if (pages > 1) timer = setInterval(function(){ page = (page + 1) % pages; show(); }, cfg.interval * 1000);
+  }
+  function ticker(){
+    var box = el('div','ticker'); var tr = el('div','tick-track'); box.appendChild(tr); stage.appendChild(box);
+    posts.forEach(function(p){
+      var it = el('div','tick-item');
+      if (cfg.showAuthor && p.av) { var i = el('img','av'); i.alt=''; i.src = abs(p.av); it.appendChild(i); }
+      it.appendChild(el('span','net', NETS[p.n] || p.n));
+      if (cfg.showAuthor) it.appendChild(el('span','handle', p.h || p.a));
+      it.appendChild(el('span','', (p.t || '').replace(/\\s+/g, ' ').slice(0, 280)));
+      tr.appendChild(it);
+    });
+    var x = 0, speed = Math.max(40, window.innerWidth / 12); var last = performance.now();
+    function step(now){ x -= speed * (now - last) / 1000; last = now; if (-x > tr.scrollWidth) x = 0; tr.style.transform = 'translateX(' + x + 'px)'; requestAnimationFrame(step); }
+    requestAnimationFrame(step);
+  }
+  function draw(){
+    clear();
+    var t = document.getElementById('title'); if (cfg.title && cfg.layout !== 'ticker') { t.textContent = cfg.title; t.style.display = 'block'; }
+    if (!posts.length) return empty();
+    document.body.classList.toggle('ticker-mode', cfg.layout === 'ticker');
+    if (cfg.layout === 'grid') grid(); else if (cfg.layout === 'ticker') ticker(); else carousel();
+  }
+  function poll(){
+    try {
+      var x = new XMLHttpRequest(); x.open('GET', ORIGIN + '/api/widgets/' + encodeURIComponent(WID) + '/social.json'); x.timeout = 20000;
+      x.onload = function(){ if (x.status !== 200) return; try { var d = JSON.parse(x.responseText); var s = (d.posts || []).map(function(p){ return p.k + p.t.length + (p.m || []).join(); }).join('|');
+        if (s !== sig) { sig = s; posts = d.posts || []; configured = d.configured; draw(); } } catch (e) {} };
+      x.send();
+    } catch (e) {}
+  }
+  sig = posts.map(function(p){ return p.k + p.t.length + (p.m || []).join(); }).join('|');
+  draw();
+  // Keeps what it has when the server is unreachable: only a successful answer replaces the posts.
+  if (${poll ? 'true' : 'false'} && WID) setInterval(poll, 120000);
+})();
+</script></body></html>`;
+  return { html, csp: csp(origin) };
+}
+
+/**
+ * A self-contained wall for the embedded (server-side screenshot) renderer: images inlined as data
+ * URIs, no polling — that renderer has neither the widget's address nor a network to reach it by.
+ */
+function renderSnapshot(db, workspaceId, rawConfig) {
+  let config;
+  try { config = normaliseConfig(db, workspaceId, rawConfig); } catch { config = null; }
+  if (!config) return render(db, { id: '', workspace_id: workspaceId }, rawConfig, { poll: false }).html;
+  const media = require('./media');
+  const fs = require('fs');
+  let budget = 8 * 1024 * 1024;
+  const inline = (hash) => {
+    const m = media.lookup(db, hash);
+    if (!m) return null;
+    try {
+      const buf = fs.readFileSync(m.file);
+      if (buf.length > budget) return null;
+      budget -= buf.length;
+      return `data:${m.mime};base64,${buf.toString('base64')}`;
+    } catch { return null; }
+  };
+  const feed = feeds.forWorkspace(db, workspaceId, config.feed_id);
+  const posts = feeds.visiblePosts(db, feed).map((r) => {
+    let hashes = [];
+    try { hashes = JSON.parse(r.media || '[]'); } catch { hashes = []; }
+    return { ...payloadPost('', { ...r, media: '[]', author_avatar: null }), av: r.author_avatar ? inline(r.author_avatar) : null,
+      m: hashes.slice(0, 1).map(inline).filter(Boolean) };
+  });
+  return render(db, { id: '', workspace_id: workspaceId }, rawConfig, { sample: posts, poll: false }).html;
+}
+
+/** The editor's preview (no saved widget yet): a sample wall, no network. */
+function previewHtml(config) {
+  const t = Math.floor(Date.now() / 1000);
+  const sample = [
+    { k: 'bluesky:1', n: 'bluesky', a: 'Your brand', h: '@yourbrand.bsky.social', av: null, t: 'Doors open at 9 — come and see the new collection in store this weekend.', m: [], v: false, at: t - 900 },
+    { k: 'instagram:2', n: 'instagram', a: 'yourbrand', h: '@yourbrand', av: null, t: 'Behind the scenes of our autumn shoot 🍂', m: [], v: false, at: t - 7200 },
+    { k: 'youtube:3', n: 'youtube', a: 'Your brand', h: '', av: null, t: 'How we make it — a five-minute tour', m: [], v: true, at: t - 86400 },
+  ];
+  const fakeDb = { prepare: () => ({ get: () => null, all: () => [] }) };
+  return render(fakeDb, { id: 'preview', workspace_id: null }, config, { origin: '', sample }).html;
+}
+
+module.exports = { LAYOUTS, THEMES, NETWORK_LABELS, normaliseConfig, displayOptions, payload, payloadPost, render, renderSnapshot, previewHtml, csp, jsonForScript };

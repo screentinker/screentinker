@@ -1765,6 +1765,10 @@ app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth 
 // screen's widget page fetches. Public like /render, and for the same reason (a null-origin frame).
 app.get('/api/widgets/:id/bi-image.png', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/:id/bi-token', (req, res, next) => { req._skipAuth = true; next(); });
+// Social walls (lib/social/widget.js): the posts and cached images a wall's page fetches. Public for
+// the same reason (a null-origin frame), and limited to what that wall shows.
+app.get('/api/widgets/:id/social.json', (req, res, next) => { req._skipAuth = true; next(); });
+app.get('/api/widgets/:id/social-media/:hash', (req, res, next) => { req._skipAuth = true; next(); });
 /*
  * ⚠️ AI GENERATION IS HEAVIER THAN THE PREVIEW ROUTES BELOW AND WAS THE ONLY ONE UNLIMITED.
  *
@@ -2442,6 +2446,7 @@ require('./lib/canva').start(io);       // Canva: re-export linked designs that 
 require('./lib/cloud-folders').start(io);   // SharePoint/OneDrive folder syncs
 require('./lib/automation/overrides').setIo(io);   // automation: timed playlist overrides
 require('./lib/automation/events').start();          // automation: REST-hook deliveries, screen up/down events
+require('./lib/social/feeds').start(io);   // social walls: fetch feeds, cache images
 
 // Start alert service
 const { startAlertService } = require('./services/alerts');

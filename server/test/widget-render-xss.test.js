@@ -84,7 +84,10 @@ test('social widget: an ARRAY config field cannot inject markup (non-string esca
   seed('social1', 'social', { platform: ['<img src=x onerror=alert(document.domain)>'], query: '#ok' });
   const html = await render('social1');
   assert.ok(!/<img src=x onerror=/.test(html), 'array value must not reach the document as raw markup');
-  assert.ok(html.includes('&lt;img src=x onerror='), 'it must land as escaped characters instead');
+  // The social wall (lib/social/widget.js) no longer prints the old placeholder's platform/query
+  // fields at all: a legacy config renders the "choose a feed" page, and the payload goes nowhere.
+  assert.ok(!html.includes('onerror'), 'the legacy field is not rendered in any form');
+  assert.match(html, /Choose a social feed/);
 });
 
 test('rss widget: an ARRAY feed_url cannot break out of the JS string (non-string escape bypass)', async () => {

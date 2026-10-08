@@ -3496,6 +3496,73 @@ try {
     );
     CREATE INDEX IF NOT EXISTS idx_bi_connections_org ON bi_connections(organization_id);
   `);
+  // Social walls (lib/social/*): an organization's API credentials (Instagram, Facebook, YouTube, X),
+  // a workspace's feeds (sources + moderation), the posts fetched for them, and their cached images.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS social_connections (
+      id               TEXT PRIMARY KEY,
+      organization_id  TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      created_by       TEXT,
+      kind             TEXT NOT NULL,
+      name             TEXT NOT NULL,
+      config           TEXT NOT NULL DEFAULT '{}',
+      secret_enc       TEXT,
+      token_expires_at INTEGER,
+      token_refreshed_at INTEGER,
+      last_error       TEXT,
+      created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_connections_org ON social_connections(organization_id);
+    CREATE TABLE IF NOT EXISTS social_feeds (
+      id            TEXT PRIMARY KEY,
+      workspace_id  TEXT NOT NULL,
+      created_by    TEXT,
+      name          TEXT NOT NULL,
+      sources       TEXT NOT NULL DEFAULT '[]',
+      moderation    TEXT NOT NULL DEFAULT 'auto',
+      blocklist     TEXT NOT NULL DEFAULT '[]',
+      require_media INTEGER NOT NULL DEFAULT 0,
+      max_age_days  INTEGER NOT NULL DEFAULT 0,
+      max_posts     INTEGER NOT NULL DEFAULT 20,
+      refresh_min   INTEGER NOT NULL DEFAULT 10,
+      enabled       INTEGER NOT NULL DEFAULT 1,
+      next_fetch_at INTEGER NOT NULL DEFAULT 0,
+      fail_count    INTEGER NOT NULL DEFAULT 0,
+      last_fetch_at INTEGER,
+      last_error    TEXT,
+      created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_feeds_ws ON social_feeds(workspace_id);
+    CREATE TABLE IF NOT EXISTS social_posts (
+      feed_id       TEXT NOT NULL,
+      network       TEXT NOT NULL,
+      post_id       TEXT NOT NULL,
+      source_key    TEXT NOT NULL,
+      status        TEXT NOT NULL,
+      hidden_reason TEXT,
+      author_name   TEXT,
+      author_handle TEXT,
+      author_avatar TEXT,
+      text          TEXT,
+      media         TEXT,
+      is_video      INTEGER NOT NULL DEFAULT 0,
+      permalink     TEXT,
+      posted_at     INTEGER NOT NULL,
+      first_seen_at INTEGER NOT NULL,
+      last_seen_at  INTEGER NOT NULL,
+      PRIMARY KEY (feed_id, network, post_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_posts_feed ON social_posts(feed_id, status, posted_at);
+    CREATE TABLE IF NOT EXISTS social_media (
+      hash         TEXT PRIMARY KEY,
+      url          TEXT NOT NULL,
+      mime         TEXT NOT NULL,
+      bytes        INTEGER NOT NULL,
+      created_at   INTEGER NOT NULL
+    );
+  `);
   // Device tags (JSON array, lib/content-tags normalizer) and dynamic group rules
   // (lib/device-group-rules.js): NULL rules = a hand-built group, as before.
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }

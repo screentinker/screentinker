@@ -136,6 +136,11 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/automation', mod: './routes/automation', tenancy: true },
   /*
+   * Social walls (lib/social/*): an organization's social network credentials (secrets never
+   * returned) and a workspace's feeds and moderation queue. JWT only — no API token reaches them.
+   */
+  { path: '/api/social', mod: './routes/social', tenancy: true },
+  /*
    * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
    * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
    */

@@ -49,6 +49,7 @@ import { esc, hydrateAuthImages } from '../utils.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 import { mountMenuEditor, readMenuConfig } from '../components/menu-board-editor.js';
 import { mountBiEditor, readBiConfig } from '../components/bi-dashboard-editor.js';
+import { mountSocialEditor, readSocialConfig } from '../components/social-wall-editor.js';
 
 // A refused request must reject, not resolve.
 //
@@ -773,9 +774,7 @@ export async function render(container) {
           <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
         break;
       case 'social':
-        html += `
-          <div class="form-group"><label>${t('widget.field.platform')}</label><select id="wPlatform" class="input" style="background:var(--bg-input)"><option value="twitter">${t('widget.field.platform_twitter')}</option><option value="instagram">${t('widget.field.platform_instagram')}</option></select></div>
-          <div class="form-group"><label>${t('widget.field.query')}</label><input type="text" id="wQuery" class="input" value="${esc(config.query || '')}" placeholder="${t('widget.field.query_placeholder')}"></div>`;
+        html += `<div id="wSocialEditor"></div>`;
         break;
       case 'menu-board':
         // components/menu-board-editor.js renders into this box once the modal is open.
@@ -940,6 +939,7 @@ export async function render(container) {
     if (type === 'menu-board') mountMenuEditor(document.getElementById('wMenuEditor'), config, { apiGet: (u) => API(u) });
     if (type === 'cloud-doc') initCloudDocForm();
     if (type === 'bi-dashboard') mountBiEditor(document.getElementById('wBiEditor'), config, { apiGet: (u) => API(u) });
+    if (type === 'social') mountSocialEditor(document.getElementById('wSocialEditor'), config, { apiGet: (u) => API(u) });
     if (type === 'transition') initTransitionForm(config);
     if (type === 'clock') initClockForm();
   }
@@ -1453,7 +1453,7 @@ export async function render(container) {
         if (refresh !== '') config.refresh_min = Math.max(0, parseInt(refresh) || 0);
         break;
       }
-      case 'social': Object.assign(config, { platform: val('wPlatform'), query: val('wQuery') }); break;
+      case 'social': Object.assign(config, readSocialConfig()); break;
       case 'menu-board': Object.assign(config, readMenuConfig()); break;
       case 'bi-dashboard': Object.assign(config, readBiConfig()); break;
       case 'transition': {
