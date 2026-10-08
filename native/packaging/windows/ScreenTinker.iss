@@ -1,8 +1,10 @@
 ; ScreenTinker native player for Windows — Inno Setup script (built by build.ps1).
 ;
 ; Silent install (fleet rollout / the helper's self-update):
-;   ScreenTinker-Setup-X.Y.Z.exe /VERYSILENT /SERVER=https://your-server [/NAME="Lobby"]
+;   ScreenTinker-Setup-X.Y.Z.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVER=https://your-server [/NAME="Lobby"]
 ;       [/ALLOWPACKAGES=1] [/MERGETASKS=audience]
+; /SUPPRESSMSGBOXES: without it a message box still waits for a click under /VERYSILENT. (A failed
+; add-on is only logged when silent, but keep it for anything else that asks.)
 ; /MERGETASKS=audience = the "Audience counting" checkbox (off by default): downloads the optional
 ; add-on (OpenCV + face model, ~55 MB) from the same server into {app}\addons\audience, verified
 ; against the sha256 the server publishes. An upgrade keeps the previous choice (UsePreviousTasks).
@@ -255,8 +257,11 @@ begin
       if AddonError <> '' then
       begin
         Log('audience add-on not installed: ' + AddonError);
-        SuppressibleMsgBox('The player will be installed, but the audience-counting add-on was not: ' + AddonError + '.'#13#10#13#10 +
-                           'Run the installer again to retry. Everything else works without it.', mbError, MB_OK, IDOK);
+        { Silent (a fleet rollout, the helper's self-update): log only. A box would wait for a click
+          that never comes unless /SUPPRESSMSGBOXES was also passed. }
+        if not WizardSilent() then
+          SuppressibleMsgBox('The player will be installed, but the audience-counting add-on was not: ' + AddonError + '.'#13#10#13#10 +
+                             'Run the installer again to retry. Everything else works without it.', mbError, MB_OK, IDOK);
       end;
     end
     else

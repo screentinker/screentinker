@@ -60,7 +60,7 @@ Download `ScreenTinker-Setup-<version>.exe` from your server (`https://your-serv
 run it, or roll it out silently:
 
 ```
-ScreenTinker-Setup-X.Y.Z.exe /VERYSILENT /SERVER=https://your-server [/NAME="Lobby"] [/ALLOWPACKAGES=1]
+ScreenTinker-Setup-X.Y.Z.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVER=https://your-server [/NAME="Lobby"] [/ALLOWPACKAGES=1]
 ```
 
 It installs the player to Program Files, the **ScreenTinkerHelper** service (LocalSystem), a firewall

@@ -79,6 +79,23 @@ def test_addon_platform_names_the_cpu_and_the_python(launcher):
     assert launcher.addon_platform("aarch64", (3, 13)) == "linux-aarch64-cp313"
     assert launcher.addon_platform("x86_64", (3, 13)) == "linux-x86_64-cp313"
     assert launcher.addon_platform("armv7l", (3, 13)) is None, "no 32-bit wheels exist"
+    # 32-bit Pi OS on a 64-bit kernel: uname says aarch64, the Python (and the player) is 32-bit.
+    assert launcher.addon_platform("aarch64", (3, 13), pointer_bits=32) is None
+    assert launcher.addon_platform("aarch64", (3, 13), pointer_bits=64) == "linux-aarch64-cp313"
+
+
+def test_a_32_bit_userland_is_told_why(launcher, monkeypatch):
+    monkeypatch.setattr(launcher.struct, "calcsize", lambda fmt: 4)
+    monkeypatch.setattr(launcher, "OLD_AUDIENCE_DIRS", ())
+    with pytest.raises(SystemExit, match="64-bit userland.*32-bit Python"):
+        launcher.cmd_audience_addon(types.SimpleNamespace(action="install", server="http://x"))
+
+
+def test_the_addon_is_not_under_the_tree_the_pi_setup_gives_away(launcher):
+    # raspberry-pi-setup.sh (all-in-one) chowns /opt/screentinker to the Pi user.
+    assert launcher.AUDIENCE_DIR == "/usr/lib/screentinker-pi-audience"
+    from screentinker_native.system import audience
+    assert audience.LINUX_ADDON_DIR == launcher.AUDIENCE_DIR, "the player looks where the launcher installs"
 
 
 def _zip(path, members):
@@ -142,7 +159,10 @@ def addon_server(tmp_path):
 
 def test_addon_install_verifies_the_checksum_and_is_idempotent(launcher, tmp_path, addon_server, monkeypatch):
     base, state = addon_server
-    launcher.AUDIENCE_DIR = str(tmp_path / "opt" / "audience-addon")
+    monkeypatch.setattr(launcher, "AUDIENCE_DIR", str(tmp_path / "usr" / "lib" / "audience"))
+    old = tmp_path / "opt" / "audience-addon"
+    (old / "cv2").mkdir(parents=True)
+    monkeypatch.setattr(launcher, "OLD_AUDIENCE_DIRS", (str(old),))
     monkeypatch.setattr(launcher, "addon_platform", lambda: "linux-aarch64-cp313")
     monkeypatch.setattr(launcher, "_restart_player", lambda cfg: None)
     run = lambda: launcher.cmd_audience_addon(types.SimpleNamespace(action="install", server=base))
@@ -156,6 +176,8 @@ def test_addon_install_verifies_the_checksum_and_is_idempotent(launcher, tmp_pat
     state["sha"] = real
     run()
     assert os.path.isfile(os.path.join(launcher.AUDIENCE_DIR, "ADDON.json"))
+    assert not old.exists(), "the old location is deleted, not left to be loaded"
+    assert os.stat(launcher.AUDIENCE_DIR).st_mode & 0o777 == 0o755
     assert open(os.path.join(launcher.AUDIENCE_DIR, "ADDON-SHA256")).read().strip() == real
     n = state["downloads"]
     run()
@@ -168,4 +190,5 @@ def test_addon_install_verifies_the_checksum_and_is_idempotent(launcher, tmp_pat
 def test_build_deb_purge_removes_the_addon():
     with open(BUILD_DEB) as f:
         src = f.read()
-    assert "rm -rf /opt/screentinker/audience-addon" in src and '"$1" = "purge"' in src
+    assert "rm -rf /usr/lib/screentinker-pi-audience" in src and '"$1" = "purge"' in src
+    assert "rm -rf /opt/screentinker/audience-addon" in src, "and the old location"

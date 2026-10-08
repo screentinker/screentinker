@@ -96,8 +96,8 @@ it, the player plays as normal and doesn't report a camera.
 
 | | How to add it |
 |---|---|
-| **Windows** | Tick **Audience counting add-on** in the installer. For a silent install, add `/MERGETASKS=audience`. An upgrade keeps your choice, and running the installer again with the box unticked removes the add-on. |
-| **Raspberry Pi** | Answer **y** when the installer asks, or pass `--audience`. On a Pi that's already installed, run `sudo screentinker-pi audience-addon install`. To remove it, use `... remove`. Needs 64-bit Pi OS. |
+| **Windows** | Tick **Audience counting add-on** in the installer. For a silent install, add `/MERGETASKS=audience` (with `/VERYSILENT /SUPPRESSMSGBOXES`; a silent install that can't add the add-on only notes it in the setup log). An upgrade keeps your choice, and running the installer again with the box unticked removes the add-on. |
+| **Raspberry Pi** | Answer **y** when the installer asks, or pass `--audience`. On a Pi that's already installed, run `sudo screentinker-pi audience-addon install`. To remove it, use `... remove`. Needs 64-bit Pi OS: a 32-bit Pi OS on a 64-bit kernel isn't enough. |
 
 The add-on is downloaded from **your own ScreenTinker server** and checked against the SHA-256
 checksum the server publishes. Nothing is installed if they don't match.
@@ -108,8 +108,15 @@ checksum the server publishes. Nothing is installed if they don't match.
 | Raspberry Pi (64-bit) | about 54 MB | about 145 MB |
 
 It's installed where only an administrator can change it: `C:\Program Files\ScreenTinker\addons\audience`
-on Windows, `/opt/screentinker/audience-addon` on a Pi. The player loads code from there, so it must
-not be writable by the player's user or the dashboard's remote terminal.
+on Windows, `/usr/lib/screentinker-pi-audience` on a Pi. The player loads code from there, so it must
+not be writable by the player's user or the dashboard's remote terminal. The player checks this
+before loading it. On a Pi, the folder and every folder above it must belong to root and be
+writable only by root, with no symlinks. On Windows, it must be inside the player's install folder.
+Otherwise the screen reports that it can't count, and why.
+
+Older players put the Pi add-on in `/opt/screentinker/audience-addon`. It isn't used from there any
+more, because an all-in-one Pi gives `/opt/screentinker` to the Pi's user. Run
+`sudo screentinker-pi audience-addon install` again, which also deletes the old copy.
 
 **Hosting it (self-hosted servers).** Build it with
 `python3 native/packaging/audience/build-addon.py`, which writes
@@ -125,6 +132,10 @@ loads into the Python it was built for: 3.12 for the Windows player, 3.13 on Pi 
   → Camera**.
 - To choose a camera other than the first one, set `"audience_camera"` in the player's config file
   to a device path such as `/dev/video2`, or to a camera index on Windows.
+- If the camera won't open or stops sending pictures, the player keeps retrying, waiting longer
+  each time, up to a minute between tries. Every fifth failed try it looks for cameras again and
+  switches to the first one it finds, for example a webcam that was unplugged and plugged back in.
+  A camera you set in `"audience_camera"` is never switched.
 
 **How it detects.** The player uses OpenCV's YuNet detector on a 480-pixel-wide greyscale frame and
 counts only **frontal** faces: both eyes visible, with the nose between them. This is the same rule

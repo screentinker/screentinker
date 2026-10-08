@@ -24,6 +24,7 @@ import json
 import os
 import pwd
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -34,8 +35,12 @@ LIB = "/usr/lib/screentinker-pi"
 SYSTEM_CONFIG = "/etc/screentinker-pi/config.json"
 SERVICE = "screentinker-pi"
 # Root-owned on purpose: the player imports code from here, so the player user (and with it the
-# dashboard's remote shell) must not be able to write it. screentinker_native/system/audience.py.
-AUDIENCE_DIR = "/opt/screentinker/audience-addon"
+# dashboard's remote shell) must not be able to write it — nor any directory above it, which is why
+# it is NOT under /opt/screentinker (raspberry-pi-setup.sh hands that tree to the player user). The
+# player refuses it otherwise: screentinker_native/system/audience.py LINUX_ADDON_DIR.
+AUDIENCE_DIR = "/usr/lib/screentinker-pi-audience"
+# Where 1.x add-ons went. Never loaded from now on; install and remove delete it.
+OLD_AUDIENCE_DIRS = ("/opt/screentinker/audience-addon",)
 
 
 def load_cfg():
@@ -216,13 +221,16 @@ def cmd_unpair(args):
 
 # ---------------------------------------------------------------------- audience-counting add-on
 
-def addon_platform(machine=None, version=None):
+def addon_platform(machine=None, version=None, pointer_bits=None):
     """The server's platform name (server/lib/audience-addon.js): the add-on holds compiled modules,
-    so it names the CPU AND the Python (this launcher runs on the same /usr/bin/python3 as the player)."""
+    so it names the CPU AND the Python (this launcher runs on the same /usr/bin/python3 as the player).
+    ⚠️ uname is the KERNEL's architecture: 32-bit Pi OS on a 64-bit kernel says aarch64, so the
+    userland (this Python's pointer size) must be 64-bit too."""
     machine = machine or os.uname().machine
     version = version or sys.version_info[:2]
+    pointer_bits = pointer_bits or struct.calcsize("P") * 8
     arch = {"aarch64": "aarch64", "arm64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}.get(machine)
-    if not arch:
+    if not arch or pointer_bits != 64:
         return None
     return "linux-%s-cp%d%d" % (arch, version[0], version[1])
 
@@ -256,6 +264,16 @@ def _restart_player(cfg):
         print("Player restarted.")
 
 
+def _remove_old_addons():
+    for d in OLD_AUDIENCE_DIRS:
+        if os.path.lexists(d):
+            if os.path.isdir(d) and not os.path.islink(d):
+                shutil.rmtree(d)
+            else:
+                os.unlink(d)
+            print("Removed the old add-on location %s (no longer used)." % d)
+
+
 def cmd_audience_addon(args):
     cfg = load_cfg()
     if args.action == "status":
@@ -266,6 +284,7 @@ def cmd_audience_addon(args):
             print("not installed")
         return 0
     need_root()
+    _remove_old_addons()
     if args.action == "remove":
         if os.path.isdir(AUDIENCE_DIR):
             shutil.rmtree(AUDIENCE_DIR)
@@ -276,7 +295,9 @@ def cmd_audience_addon(args):
         return 0
     platform = addon_platform()
     if not platform:
-        sys.exit("Audience counting needs a 64-bit OS (aarch64 or x86_64); this is %s." % os.uname().machine)
+        sys.exit("Audience counting needs a 64-bit OS (aarch64 or x86_64) with a 64-bit userland; this is "
+                 "a %s kernel with a %d-bit Python. Install the 64-bit Pi OS."
+                 % (os.uname().machine, struct.calcsize("P") * 8))
     server = (args.server or cfg.get("server_url") or "").rstrip("/")
     if not server:
         sys.exit("No server configured: sudo screentinker-pi audience-addon install --server https://your-server")
@@ -309,6 +330,7 @@ def cmd_audience_addon(args):
             sys.exit("Checksum mismatch: the download is not the add-on the server describes. Nothing was installed.")
         new = os.path.join(tmp, "audience")
         os.makedirs(new, mode=0o755)
+        os.chmod(new, 0o755)                   # whatever the umask: the player user must read it
         with zipfile.ZipFile(zpath) as zf:
             safe_extract(zf, new)
         with open(os.path.join(new, "ADDON.json")) as f:

@@ -18,6 +18,9 @@ Counting rules (the server validates the same shape):
     the histogram. Counted at the END because only then is the dwell known — which also keeps
     impressions <= arrivals in every bucket by construction.
   - it is attributed to the item that was on screen when it was confirmed.
+  - observed_ms: how long within the minute each item was on screen while the camera was counting
+    (from frame timestamps), so a per-item rate can be computed. Buckets are also keyed by the
+    counting run (`segment`): a run that ends mid-minute and the next one in that minute stay apart.
 """
 
 import json
@@ -64,13 +67,18 @@ def _clamp(v, lo, hi):
 class Bucket:
     """One minute of counts for one item. Integers only; to_json() is the whole wire format."""
 
-    __slots__ = ("start", "seconds", "item", "present_max", "present_sum", "frames",
-                 "arrivals", "impressions", "dwell")
+    __slots__ = ("start", "seconds", "item", "segment", "present_max", "present_sum", "frames",
+                 "arrivals", "impressions", "dwell", "observed_ms", "_legacy_id")
 
-    def __init__(self, start, seconds, item):
+    def __init__(self, start, seconds, item, segment=0):
         self.start = int(start)            # epoch seconds, a multiple of `seconds`
         self.seconds = int(seconds)
         self.item = item
+        # Which counting run (Aggregator) this came from, 0-9999. A run that stops mid-minute and a
+        # new one that starts in the same minute are two buckets, not one id sent twice.
+        self.segment = int(segment) % 10000
+        self.observed_ms = 0               # how long, within the minute, this item was on screen while counting
+        self._legacy_id = None             # a bucket queued by an older player (no segment): its own id
         self.present_max = 0
         self.present_sum = 0               # sum of per-frame counts (for the average)
         self.frames = 0
@@ -80,8 +88,10 @@ class Bucket:
 
     @property
     def id(self):
-        """The ack key. Unique per screen: one bucket per minute per item."""
-        return ("m%d-%s-%s" % (self.start, self.item.kind, self.item.id or "x"))[:80]
+        """The ack key. Unique per screen: one bucket per minute per counting run per item."""
+        if self._legacy_id is not None:
+            return self._legacy_id
+        return ("m%d-s%d-%s-%s" % (self.start, self.segment, self.item.kind, self.item.id or "x"))[:80]
 
     def present_avg_x100(self):
         if self.frames == 0:
@@ -101,6 +111,9 @@ class Bucket:
             "impressions": _clamp(self.impressions, 0, arrivals),
             "dwell": [_clamp(d, 0, 5000) for d in self.dwell],
         }
+        if self._legacy_id is None:
+            o["segment"] = self.segment
+            o["observed_ms"] = _clamp(self.observed_ms, 0, self.seconds * 1000)
         if self.item.kind != "none" and self.item.id is not None:
             o["item_id"] = self.item.id
         return o
@@ -119,6 +132,13 @@ class Bucket:
             b.impressions = int(o["impressions"])
             d = list(o["dwell"])
             b.dwell = [int(d[i]) if i < len(d) else 0 for i in range(6)]
+            if o.get("segment") is None:
+                # Queued before segments existed: keep the id it may already have been sent under,
+                # so the server's dedup still recognises it (and send no segment / observed_ms).
+                b._legacy_id = str(o["id"])[:80]
+            else:
+                b.segment = int(o["segment"]) % 10000
+                b.observed_ms = int(o.get("observed_ms") or 0)
             return b
         except (KeyError, TypeError, ValueError):
             return None
@@ -137,8 +157,10 @@ class _Track:
 
 class Aggregator:
     def __init__(self, min_dwell_ms=1000, bucket_sec=60, confirm_frames=2, lost_after_ms=1500,
-                 match_iou=0.25, max_tracks=100):
+                 match_iou=0.25, max_tracks=100, segment=0, frame_interval_ms=500):
         self.min_dwell_ms = min_dwell_ms
+        self.segment = segment                  # Bucket.segment: one per Aggregator (the controller numbers them)
+        self.frame_interval_ms = frame_interval_ms   # 1000 / fps; caps one frame's share of observed_ms
         self.bucket_sec = bucket_sec
         self.confirm_frames = confirm_frames
         self.lost_after_ms = lost_after_ms
@@ -147,6 +169,7 @@ class Aggregator:
         self._tracks = []
         self._open = OrderedDict()
         self.item = NONE_ITEM
+        self._last_frame_ms = None
 
     def _minute_of(self, ms):
         s = int(ms // 1000)
@@ -156,7 +179,7 @@ class Aggregator:
         key = (minute, item.kind, item.id)
         b = self._open.get(key)
         if b is None:
-            b = self._open[key] = Bucket(minute, self.bucket_sec, item)
+            b = self._open[key] = Bucket(minute, self.bucket_sec, item, self.segment)
         return b
 
     def on_frame(self, faces, now_ms):
@@ -187,6 +210,11 @@ class Aggregator:
         b.frames += 1
         b.present_sum += present
         b.present_max = max(b.present_max, present)
+        # observed_ms: the time since the previous frame goes to the item on screen now — capped at two
+        # frame intervals, so a stalled camera is not counted as watching. The first frame adds nothing.
+        if self._last_frame_ms is not None:
+            b.observed_ms += _clamp(now_ms - self._last_frame_ms, 0, 2 * self.frame_interval_ms)
+        self._last_frame_ms = now_ms
         return self._close_before(self._minute_of(now_ms))
 
     def _end_lost(self, now_ms):
@@ -295,14 +323,17 @@ class AudienceQueue:
             self._items = loaded._items
 
     def save(self):
+        """Called from the camera thread and the network thread: the lock covers the snapshot AND the
+        write, so two saves can never interleave in one .tmp file (and lose the unsent queue)."""
         if not self.path:
             return
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(self.to_json())
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
+        tmp = "%s.%d.tmp" % (self.path, os.getpid())
+        with self._lock:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(self.to_json())
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
 
 
 # ---------------------------------------------------------------------- detector output -> boxes
