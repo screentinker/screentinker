@@ -230,9 +230,11 @@ that case, so the card used to arrive up to a minute late. The contract that fix
 
 - **Server.** The CAP alert card (`server/lib/cap/feeds.js` `cardItem`, the hidden `cap_alert`
   widget — emergency feeds, emergency-alert hooks and Zapier all show it) carries `interrupt: true`.
-  Nothing else does: `buildPlaylistPayload` strips the field from every other item, on the one path
-  solo, group, wall and corporate payloads all leave by. A feed configured with its own playlist
-  sends that playlist without the flag.
+  So does every item of a head office "activate now" alert (`lib/corporate/emergency-live.js`,
+  flagged in `buildPlaylistPayload`), so activating or ending one cuts in the same way.
+  Nothing else carries it: `buildPlaylistPayload` strips the field from every other item, on the one
+  path solo, group, wall and corporate payloads all leave by. A CAP feed configured with its own
+  playlist sends that playlist without the flag.
 - **Players.** When the SET of interrupt items (by item identity) differs between the playlist on
   screen and the one arriving — raised, cleared, or another feed taking over — the player swaps at
   once, mid-item. It also ends an interactive-page (#473) session that is holding the playlist,

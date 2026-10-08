@@ -433,7 +433,9 @@ function overrideFor(db, deviceId) {
  * with this card, which removes the item on screen — exactly the case every player's #157 deferral
  * holds back "until the current item finishes", so the card used to appear up to 60 s late. A player
  * that sees the SET of interrupt items change (an alert raised, cleared, or a different feed taking
- * over) swaps immediately instead; an ordinary edit still defers. See docs/emergency-alerts.md.
+ * over) swaps immediately instead; an ordinary edit still defers. Head office "activate now"
+ * alerts (lib/corporate/emergency-live.js) flag their items the same way. See
+ * docs/player-parity.md, "Emergency alerts cut in".
  */
 function cardItem(feed) {
   return {
