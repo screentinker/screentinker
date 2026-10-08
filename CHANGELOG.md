@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Automation: hooks, Zapier, Alertus and InformaCast** (new Automation page).
+  - A **hook** is a secret web address another system calls. A call can raise or clear an emergency
+    alert, fire a trigger, update a table, or switch screens to a playlist for a while. A fire panel,
+    a building system or a script can call it; no account is needed.
+  - **Mass notification systems.** Alertus, Singlewire InformaCast and anything that sends CAP 1.2
+    can raise alerts on screens. The same alert sent twice shows once, and a cancel clears it.
+  - **Zapier.** Zaps can start when a screen goes offline or comes back, when an emergency alert is
+    raised or cleared, or when content is approved or a playlist is published. Zap actions can raise
+    alerts, switch playlists, fire triggers and update tables. Make and n8n can use the same API.
+  - Hook addresses are shown once and stored only as a fingerprint. Signing is optional, and every
+    call is logged. See `docs/automation.md`.
+
 - **SAML 2.0 single sign-on for organizations** (Settings → Single sign-on → Add provider →
   SAML 2.0).
   - Paste your identity provider's metadata, give it the entity ID and ACS URL that Settings

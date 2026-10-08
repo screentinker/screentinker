@@ -129,6 +129,10 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   // routes/corporate.js's router, which IS mounted with tenancy (JWT_ONLY_ROUTERS, '/api/corporate').
   'corporate-slots.js': 'handlers registered on routes/corporate.js (JWT_ONLY tenancy mount, /api/corporate)',
   'corporate-emergency.js': 'handlers registered on routes/corporate.js (JWT_ONLY tenancy mount, /api/corporate)',
+  // The inbound automation door: authenticated by the hook's URL secret, and the hook row names its
+  // workspace. Hooks are refused in a mesh-replicated workspace at creation (routes/automation.js)
+  // and automation_hooks is never replicated, so a replica has no hook for this door to find.
+  'hooks-in.js': 'inbound automation hook (secret URL); hooks are node-local and refused in replicated workspaces',
 });
 
 const INLINE_NOT_WORKSPACE_SCOPED = Object.freeze({

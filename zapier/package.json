@@ -1,0 +1,15 @@
+{
+  "name": "screentinker-zapier",
+  "version": "1.0.0",
+  "description": "Zapier integration for ScreenTinker digital signage (private app; push with the Zapier Platform CLI).",
+  "main": "index.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "validate": "zapier validate",
+    "push": "zapier push"
+  },
+  "dependencies": {
+    "zapier-platform-core": "15.19.0"
+  }
+}

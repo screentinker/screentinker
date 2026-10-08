@@ -28,7 +28,7 @@ function access(req, res, { write = false } = {}) {
 }
 
 function loadFeed(req, res) {
-  const f = db.prepare('SELECT * FROM cap_feeds WHERE id = ? AND workspace_id = ?').get(req.params.id, req.workspaceId);
+  const f = db.prepare("SELECT * FROM cap_feeds WHERE id = ? AND workspace_id = ? AND COALESCE(source, 'poll') = 'poll'").get(req.params.id, req.workspaceId);
   if (!f) { res.status(404).json({ error: 'Feed not found' }); return null; }
   return f;
 }
@@ -67,7 +67,8 @@ function meshRefusal(req) {
 
 router.get('/', (req, res) => {
   if (!access(req, res)) return;
-  const rows = db.prepare('SELECT * FROM cap_feeds WHERE workspace_id = ? ORDER BY name').all(req.workspaceId);
+  // Hook-owned push feeds (lib/automation) are managed on the Automation page, not here.
+  const rows = db.prepare("SELECT * FROM cap_feeds WHERE workspace_id = ? AND COALESCE(source, 'poll') = 'poll' ORDER BY name").all(req.workspaceId);
   res.json(rows.map(present));
 });
 

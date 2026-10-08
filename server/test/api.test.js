@@ -157,6 +157,15 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
     // The public redirect /q/:code is not on this door at all.
     '/api/qr-links',
     /*
+     * Zapier, added deliberately: Zapier (and Make, n8n…) IS an API token. Reads (the auth test,
+     * polling, dropdowns) need read; subscribing and the data action need write (the door's own
+     * rule for a POST); the emergency, playlist and trigger actions need full AND a workspace admin,
+     * because they take over screens. Subscription target URLs are https, public addresses only
+     * (lib/ssrf-guard) and shown back by host only. Inbound hook URLs are NOT minted here — that is
+     * /api/automation, JWT only — and the inbound door /api/hooks/in is not on this door at all.
+     */
+    '/api/zapier',
+    /*
      * Uploaded transitions, added deliberately. Same reasoning as fonts, already on this door: it is
      * workspace content an integrator may reasonably manage from their own tooling, and every route
      * here is workspace-scoped like its siblings.

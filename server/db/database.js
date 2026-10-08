@@ -3544,6 +3544,93 @@ try {
     );
   `);
 
+  /*
+   * Automation (lib/automation): inbound hooks (a secret URL that raises an emergency alert, fires a
+   * trigger, writes a table data source or switches screens to a playlist for a while), Zapier-style
+   * REST-hook subscriptions, and the event log both read.
+   *   - automation_hooks.secret_hash is sha256 of the URL secret; the secret itself is shown once.
+   *   - hmac_secret_enc is optional request signing (lib/secretbox), never returned.
+   *   - feed_id: the hidden push-mode CAP feed an emergency / mass-notification hook raises alerts on
+   *     (cap_feeds.source = 'hook'), so the card, scopes, expiry and override are CAP's own.
+   */
+  try { db.prepare("ALTER TABLE cap_feeds ADD COLUMN source TEXT NOT NULL DEFAULT 'poll'").run(); } catch (_) { /* present */ }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_hooks (
+      id              TEXT PRIMARY KEY,
+      workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      name            TEXT NOT NULL,
+      kind            TEXT NOT NULL,
+      config          TEXT NOT NULL DEFAULT '{}',
+      secret_hash     TEXT NOT NULL,
+      hmac_secret_enc TEXT,
+      feed_id         TEXT,
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      created_by      TEXT,
+      last_called_at  INTEGER,
+      call_count      INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_hooks_ws ON automation_hooks(workspace_id);
+    CREATE TABLE IF NOT EXISTS automation_hook_calls (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      hook_id    TEXT NOT NULL,
+      at         INTEGER NOT NULL,
+      status     INTEGER NOT NULL,
+      outcome    TEXT,
+      test       INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_hook_calls ON automation_hook_calls(hook_id, at);
+    CREATE TABLE IF NOT EXISTS automation_overrides (
+      id           TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      hook_id      TEXT,
+      scope_kind   TEXT NOT NULL,
+      scope_id     TEXT NOT NULL,
+      playlist_id  TEXT NOT NULL,
+      starts_at    INTEGER NOT NULL,
+      ends_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_overrides_ws ON automation_overrides(workspace_id, ends_at);
+    CREATE TABLE IF NOT EXISTS automation_events (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id TEXT NOT NULL,
+      type         TEXT NOT NULL,
+      data         TEXT NOT NULL,
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_events_ws ON automation_events(workspace_id, type, id);
+    CREATE TABLE IF NOT EXISTS automation_subscriptions (
+      id           TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      token_id     TEXT,
+      user_id      TEXT,
+      event        TEXT NOT NULL,
+      target_url   TEXT NOT NULL,
+      secret_enc   TEXT,
+      last_ok_at   INTEGER,
+      last_error   TEXT,
+      created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_subs_ws ON automation_subscriptions(workspace_id, event);
+    CREATE TABLE IF NOT EXISTS automation_deliveries (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      subscription_id TEXT NOT NULL,
+      event_id        INTEGER NOT NULL,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      next_at         INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      last_error      TEXT,
+      created_at      INTEGER NOT NULL,
+      UNIQUE (subscription_id, event_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_deliveries_due ON automation_deliveries(status, next_at);
+    CREATE TABLE IF NOT EXISTS automation_device_state (
+      device_id TEXT PRIMARY KEY,
+      status    TEXT NOT NULL
+    );
+  `);
+
   const BASELINE_ID = 'revisions_baseline_v1';
   if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(BASELINE_ID)) {
     try {

@@ -636,6 +636,18 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     }
   }
   const overrideNow = emergencyNow || capNow;
+  /*
+   * AUTOMATION PLAYLIST OVERRIDE (lib/automation/overrides.js): "switch these screens to that
+   * playlist for N minutes", from an inbound hook or Zapier. Below both emergency paths, and never on
+   * a head office (corporate) playlist — automation is not a way round a locked playlist.
+   */
+  let hookNow = null;
+  if (!overrideNow && !corporateSource) {
+    try { hookNow = require('../lib/automation/overrides').overrideFor(db, deviceId); } catch (e) {
+      console.warn(`[automation] override check failed for ${deviceId}: ${e && e.message}`);
+      hookNow = null;
+    }
+  }
   if (emergencyNow) {
     const t = emergencyNow.trigger;
     const pl = db.prepare('SELECT published_snapshot, published_playback_order FROM playlists WHERE id = ? AND workspace_id = ?')
@@ -665,6 +677,13 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     }
     for (const a of items) if (a && typeof a === 'object') a.__origin_ws = feed.workspace_id;
     assignments = items;
+    refreshWidgetRevs(assignments);
+    refreshContentRevs(assignments);
+    assignments = dropLiveIfUnsupported(assignments);
+  } else if (hookNow) {
+    assignments = hookNow.items;
+    for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = hookNow.override.workspace_id;
+    playback_order = hookNow.playback_order;
     refreshWidgetRevs(assignments);
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
@@ -779,7 +798,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   };
 
   let layout = null;
-  if (device?.layout_id && !overrideNow) {
+  if (device?.layout_id && !overrideNow && !hookNow) {
     layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(device.layout_id);
     if (layout) {
       layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
@@ -858,7 +877,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       // panel, see services/scheduler.js) is the wall's layout while it runs.
       const scheduledWallLayout = db.prepare('SELECT scheduled_layout_id FROM devices WHERE id = ?').get(deviceId)?.scheduled_layout_id || null;
       const wallLayoutId = scheduledWallLayout || wall.layout_id;
-      if (wallLayoutId && !overrideNow && !corporateSource) {
+      if (wallLayoutId && !overrideNow && !hookNow && !corporateSource) {
         const wl = db.prepare('SELECT * FROM layouts WHERE id = ?').get(wallLayoutId);
         if (wl) {
           wl.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(wl.id);
@@ -893,7 +912,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   const timezone = effectiveDeviceTz(device);
   // #group-sync: synchronized group playback (wall takes precedence — a wall member is never
   // also group-synced). Null unless the device is on a sync-enabled group's matching playlist.
-  const group_sync = wall_config || overrideNow ? null : resolveGroupSync(device, deviceId);
+  const group_sync = wall_config || overrideNow || hookNow ? null : resolveGroupSync(device, deviceId);
 
   // Device default / standby content: what a screen shows when it would otherwise be IDLE — no
   // playlist assigned, or a playlist whose every item is filtered out by its schedule (LED-wall

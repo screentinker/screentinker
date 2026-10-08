@@ -1026,7 +1026,10 @@ router.post('/:id/publish', requirePlaylistWrite, (req, res) => {
     WHERE pi.playlist_id = ?
     ORDER BY pi.sort_order ASC
   `).all(req.params.id);
-  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items: decorateEditorItems(items) });
+  const published = db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id);
+  // Zapier-style subscribers (lib/automation/events.js): a playlist went out to screens.
+  require('../lib/automation/events').emit(db, published.workspace_id, 'playlist_published', { playlist_id: published.id, playlist_name: published.name, items: items.length });
+  res.json({ ...published, items: decorateEditorItems(items) });
 });
 
 // Discard draft — revert playlist_items to match published_snapshot
