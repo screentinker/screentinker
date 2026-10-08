@@ -10,6 +10,7 @@ import * as whatsNew from '../components/whats-new.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 import { openMoveServerModal } from '../components/move-server-modal.js';
 import { openGroupPowerScheduleModal } from '../components/group-power-schedule-modal.js';
+import { openGroupRulesModal, groupRulesSummary } from '../components/group-rules.js';
 import { frameDeviceOutput } from '../lib/device-frame.js';
 import { selectedRemoteOrg } from '../components/workspace-switcher.js';
 import * as cui from '../components/corporate-ui.js';
@@ -168,6 +169,20 @@ function fillVersionFilter(devices) {
   if (sel && keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
 }
 
+/** The tag filter: every tag in use on this page, with its screen count. Hidden when none is. */
+function fillTagFilter(devices) {
+  const sel = document.getElementById('deviceTagFilter');
+  if (!sel) return;
+  const keep = sel.value;
+  const counts = new Map();
+  for (const d of devices) for (const tg of (Array.isArray(d.tags) ? d.tags : [])) counts.set(tg, (counts.get(tg) || 0) + 1);
+  const tags = [...counts.keys()].sort();
+  sel.innerHTML = `<option value="">${esc(t('dashboard.filter.all_tags'))}</option>`
+    + tags.map((tg) => `<option value="${esc(tg)}">#${esc(tg)} (${counts.get(tg)})</option>`).join('');
+  sel.hidden = !tags.length;
+  if (keep && counts.has(keep)) sel.value = keep;
+}
+
 function isBehindServedApk(device) {
   if (device.platform_family !== 'android' || !servedApkVersion || !device.app_version) return false;
   const c = compareVersions(device.app_version, servedApkVersion);
@@ -213,7 +228,7 @@ function renderDeviceCard(device) {
   const realBattery = device.battery_level !== null && device.battery_level !== undefined
     && !(Number(device.battery_level) === 0 && !device.battery_charging);
   return `
-    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" data-app-version="${esc(device.app_version || '')}" data-behind="${behind ? '1' : '0'}" onclick="window.location.hash='/device/${device.id}'">
+    <div class="device-card${checked ? ' selected' : ''}" draggable="true" data-device-id="${device.id}" data-device-name="${esc(device.name)}" data-can-screenshot="${canShot ? '1' : '0'}" data-app-version="${esc(device.app_version || '')}" data-behind="${behind ? '1' : '0'}" data-tags="${esc((Array.isArray(device.tags) ? device.tags : []).join(' '))}" onclick="window.location.hash='/device/${device.id}'">
       <span class="device-card-drag" title="${esc(t('dashboard.drag_to_reorder'))}" onclick="event.stopPropagation()">⠿</span>
       <label class="device-card-select" title="${t('dashboard.select_for_wall')}" onclick="event.stopPropagation()">
         <input type="checkbox" class="device-select-cb" data-device-id="${device.id}"${checked ? ' checked' : ''}>
@@ -249,7 +264,8 @@ function renderDeviceCard(device) {
           </span>` : ''}${device.ota_status === 'manual_update_required' ? `
           <span class="device-ota-badge" title="${esc(t('dashboard.device_ota_stuck', { version: device.ota_target_version || '?', n: device.ota_attempts || 0 }))}" style="margin-left:6px;display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--warning);vertical-align:middle">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>update
-          </span>` : ''}</div>
+          </span>` : ''}</div>${Array.isArray(device.tags) && device.tags.length ? `
+        <div class="device-card-tags" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">${device.tags.slice(0, 4).map((tg) => `<span style="font-size:10px;color:var(--text-secondary);background:var(--bg-primary);padding:1px 6px;border-radius:8px">#${esc(tg)}</span>`).join('')}${device.tags.length > 4 ? `<span style="font-size:10px;color:var(--text-muted)">+${device.tags.length - 4}</span>` : ''}</div>` : ''}
         ${device.owner_name || device.owner_email ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
@@ -397,6 +413,7 @@ function renderGroupSection(group, devices, playlists) {
           <span style="color:var(--text-muted);font-size:12px">${tn('dashboard.devices_count', devices.length)} &middot; ${t('dashboard.online_count', { n: onlineCount })}</span>
           ${playlistLabel ? `<span style="font-size:11px;color:var(--text-secondary);background:var(--bg-primary);padding:2px 8px;border-radius:10px">${t('dashboard.playlist_label', { name: playlistLabel })}</span>` : ''}
           ${corpGroupBadge(group)}
+          ${group.rules ? `<span style="font-size:11px;color:var(--accent, #3B82F6);background:var(--bg-primary);padding:2px 8px;border-radius:10px" title="${esc(t('grouprules.badge_hint'))}">${esc(t('grouprules.badge', { summary: groupRulesSummary(group.rules) }))}</span>` : ''}
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           ${devices.length > 0 && corpGroupCovered(group) ? `<button type="button" class="btn btn-secondary btn-sm corp-group-why" data-group-id="${group.id}" style="padding:4px 8px;font-size:12px;white-space:nowrap">${cui.LOCK_SVG} ${esc(t('corp.group.why'))}</button>` : ''}
@@ -433,6 +450,7 @@ function renderGroupSection(group, devices, playlists) {
           ` : ''}
           <!-- #talk broadcast: PA to every device in this group. Hidden until live video is confirmed. -->
           <button class="btn talk-scope-btn" data-scope-kind="group" data-group-id="${group.id}" style="display:none;padding:4px 10px;font-size:12px">🎙️ ${t('dashboard.talk_group')}</button>
+          <button class="btn btn-secondary btn-sm group-rules-btn" data-group-id="${group.id}" style="padding:4px 8px;font-size:12px;white-space:nowrap" title="${esc(t('grouprules.button_hint'))}">${t(group.rules ? 'grouprules.button_edit' : 'grouprules.button')}</button>
           <button class="btn" data-group-delete="${group.id}" style="padding:4px 8px;font-size:12px;color:var(--danger)" title="${t('dashboard.delete_group_tooltip')}">&#x2715;</button>
         </div>
       </div>
@@ -586,6 +604,7 @@ export function render(container) {
         </optgroup>
         <optgroup id="versionFilterGroup" label="${t('dashboard.filter.by_version')}" hidden></optgroup>
       </select>
+      <select id="deviceTagFilter" class="input" style="width:160px;background:var(--bg-input)" hidden title="${esc(t('dashboard.filter.by_tag'))}"></select>
       <details class="card-fields-menu" id="cardFieldsMenu">
         <summary class="btn btn-secondary btn-sm">${t('dashboard.card_fields')}</summary>
         <div class="card-fields-pop">
@@ -640,6 +659,7 @@ export function render(container) {
   // Search and filter
   document.getElementById('deviceSearch').oninput = () => filterDevices();
   document.getElementById('deviceFilter').onchange = () => filterDevices();
+  document.getElementById('deviceTagFilter').onchange = () => filterDevices();
   // #467: card details, remembered per browser.
   {
     const hidden = hiddenCardFields();
@@ -663,18 +683,20 @@ export function render(container) {
     const filter = document.getElementById('deviceFilter').value;    // '' | healthy | degraded | offline | offline:<reason>
     const reasonDrill = filter.startsWith('offline:') ? filter.slice(8) : null; // drill into a manner-of-death
     const versionDrill = filter.startsWith('version:') ? filter.slice(8) : null;  // #467: 'behind' | '=<version>' 
+    const tagFilter = document.getElementById('deviceTagFilter')?.value || '';
     document.querySelectorAll('.device-card').forEach(card => {
       const name = card.querySelector('.device-card-name')?.textContent.toLowerCase() || '';
       const el = card.querySelector('.device-card-status [data-liveness]');
       const cardState = el?.dataset.liveness || '';
       const cardReason = el?.dataset.offlineReason || '';
       const matchSearch = !search || name.includes(search);
+      const matchTag = !tagFilter || (card.dataset.tags || '').split(' ').includes(tagFilter);
       const matchState = versionDrill
         ? (versionDrill === 'behind' ? card.dataset.behind === '1' : card.dataset.appVersion === versionDrill.slice(1))
         : reasonDrill
         ? (cardState === 'offline' && cardReason === reasonDrill)     // Offline drill-in: liveness AND reason (e.g. silent = MDM-killed set)
         : (!filter || cardState === filter);                         // existing three-state filter — unchanged
-      card.style.display = (matchSearch && matchState) ? '' : 'none';
+      card.style.display = (matchSearch && matchState && matchTag) ? '' : 'none';
     });
     refreshSelectionBar();
   }
@@ -1157,6 +1179,7 @@ async function loadDashboard() {
     const devices = Array.from(seen.values());
     await loadServedApkVersion();   // #467: before any card renders, so "behind" is decided once
     fillVersionFilter(devices);
+    fillTagFilter(devices);
 
     /*
      * What's new. shouldFetch() is a localStorage read against the version app.js already knows,
@@ -1331,6 +1354,22 @@ function attachGroupHandlers(groupsWithDevices) {
   // The weekly backlight schedule for the group. The member list is passed through so the modal
   // can say how many panels cannot honour one, and how many override it with their own — neither
   // of which is visible from a group row.
+  // Dynamic membership rules (components/group-rules.js). Saving re-fills the group on the server.
+  document.querySelectorAll('.group-rules-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const g = groupsWithDevices.find((x) => x.id === btn.getAttribute('data-group-id'));
+      if (!g) return;
+      openGroupRulesModal({
+        group: { id: g.id, name: g.name, rules: g.rules || null },
+        onSave: async (rules) => {
+          await api.updateGroup(g.id, { rules });
+          showToast(t(rules ? 'grouprules.toast_saved' : 'grouprules.toast_off'), 'success');
+          loadDashboard();
+        },
+      });
+    });
+  });
   document.querySelectorAll('.group-power-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();

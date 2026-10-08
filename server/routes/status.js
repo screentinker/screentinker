@@ -228,7 +228,7 @@ router.get('/export', async (req, res) => {
   const user = db.prepare('SELECT id, email, name, role, auth_provider, plan_id, created_at FROM users WHERE id = ?').get(userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const devices = db.prepare('SELECT id, name, status, ip_address, android_version, app_version, screen_width, screen_height, created_at FROM devices WHERE user_id = ?').all(userId);
+  const devices = db.prepare('SELECT id, name, status, ip_address, android_version, app_version, screen_width, screen_height, tags, created_at FROM devices WHERE user_id = ?').all(userId);
   const deviceIds = devices.map(d => d.id);
   const devicePlaceholders = deviceIds.map(() => '?').join(',') || "'__none__'";
 
@@ -280,7 +280,7 @@ router.get('/export', async (req, res) => {
   const wallDevices = wallIds.length ? db.prepare(`SELECT * FROM video_wall_devices WHERE wall_id IN (${wallPlaceholders})`).all(...wallIds) : [];
 
   const kioskPages = db.prepare('SELECT id, name, config, created_at FROM kiosk_pages WHERE user_id = ?').all(userId);
-  const deviceGroups = db.prepare('SELECT id, name, color, created_at FROM device_groups WHERE user_id = ?').all(userId);
+  const deviceGroups = db.prepare('SELECT id, name, color, rules, created_at FROM device_groups WHERE user_id = ?').all(userId);
   const groupIds = deviceGroups.map(g => g.id);
   const groupPlaceholders = groupIds.map(() => '?').join(',') || "'__none__'";
   const groupMembers = groupIds.length ? db.prepare(`SELECT * FROM device_group_members WHERE group_id IN (${groupPlaceholders})`).all(...groupIds) : [];
@@ -538,7 +538,8 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
       const newId = uuid.v4();
       idMap.devices[d.id] = newId;
       const pairingCode = sixDigitCode(); // CSPRNG (lib/numeric-code): this code claims a device
-      db.prepare(`INSERT INTO devices (id, user_id, workspace_id, name, pairing_code, status, screen_width, screen_height, created_at) VALUES (?, ?, ?, ?, ?, 'provisioning', ?, ?, ?)`).run(newId, userId, workspaceId, d.name, pairingCode, d.screen_width || null, d.screen_height || null, d.created_at || Math.floor(Date.now() / 1000));
+      const tags = require('../lib/content-tags').normalizeTags(d.tags == null ? undefined : require('../lib/content-tags').parseTags(d.tags));
+      db.prepare(`INSERT INTO devices (id, user_id, workspace_id, name, pairing_code, status, screen_width, screen_height, tags, created_at) VALUES (?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?)`).run(newId, userId, workspaceId, d.name, pairingCode, d.screen_width || null, d.screen_height || null, tags && tags.length ? JSON.stringify(tags) : null, d.created_at || Math.floor(Date.now() / 1000));
       stats.devices++;
     }
 
@@ -810,7 +811,8 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
     for (const g of (data.device_groups || [])) {
       const newId = uuid.v4();
       idMap.groups[g.id] = newId;
-      db.prepare(`INSERT INTO device_groups (id, user_id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, g.name, g.color || '#3B82F6', g.created_at || Math.floor(Date.now() / 1000));
+      const rules = require('../lib/device-group-rules').parseRules(g.rules);   // invalid -> a hand-built group
+      db.prepare(`INSERT INTO device_groups (id, user_id, workspace_id, name, color, rules, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, g.name, g.color || '#3B82F6', rules ? JSON.stringify(rules) : null, g.created_at || Math.floor(Date.now() / 1000));
       stats.device_groups++;
     }
     for (const gm of (data.device_group_members || [])) {

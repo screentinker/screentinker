@@ -2386,6 +2386,14 @@ try { require('./lib/corporate/reconcile').reconcileAtBoot(require('./db/databas
 // timers and the 30-second belt sweep (lib/corporate/emergency-live.js).
 require('./lib/corporate/emergency-live').init(io);
 require('./lib/smart-playlist').start(io);
+// Dynamic device groups: a backstop for membership inputs changed by a path that does not reconcile
+// (an import, a mesh sync, a direct fix-up). A sweep that finds nothing to change writes nothing.
+{
+  const t = setInterval(() => {
+    try { require('./lib/device-group-rules').sweep(db, io); } catch (e) { console.warn(`[groups] sweep failed: ${e.message}`); }
+  }, 5 * 60 * 1000);
+  if (t.unref) t.unref();
+}
 
 // Start alert service
 const { startAlertService } = require('./services/alerts');
@@ -2750,6 +2758,9 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
       console.log(`[#150] restored saved settings for re-paired device ${device.id}`);
     }
   } catch (e) { console.warn(`[#150] settings restore failed for ${device.id}: ${e.message}`); }
+
+  // Join any dynamic group whose rules this screen matches, before it asks for its first playlist.
+  require('./lib/device-group-rules').reconcileDeviceAsSystem(db, null, device.id);
 
   // Notify the device via WebSocket — or, scale-out C2, through the replica it is attached to.
   const pairedMsg = { device_id: device.id, name: pairedName, settings_pin: settingsPin };

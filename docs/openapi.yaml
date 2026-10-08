@@ -297,6 +297,10 @@ components:
           type: string
         notes:
           type: string
+        tags:
+          type: array
+          items: { type: string }
+          description: Labels for this screen (lower-case). Dynamic groups match on them.
         created_at:
           type: integer
         playlist_source:
@@ -522,6 +526,37 @@ components:
           type: integer
         workspace_id:
           type: [string, "null"]
+        rules:
+          oneOf:
+            - $ref: '#/components/schemas/GroupRules'
+            - type: "null"
+          description: When set, the group fills itself with every matching screen and its members cannot be edited by hand.
+
+    GroupRules:
+      type: object
+      required: [rules]
+      properties:
+        match:
+          type: string
+          enum: [all, any]
+          default: all
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            required: [field, op, value]
+            properties:
+              field:
+                type: string
+                enum: [tag, name, platform, timezone]
+              op:
+                type: string
+                enum: [has, lacks, contains, starts_with, eq, neq]
+                description: "tag: has | lacks; name: contains | starts_with | eq; platform, timezone: eq | neq."
+              value:
+                type: string
 
     Schedule:
       type: object
@@ -1243,6 +1278,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
+        - { name: tag, in: query, required: false, schema: { type: string }, description: Only screens carrying this tag. }
       responses:
         '200':
           description: Array of devices.
@@ -1281,6 +1317,11 @@ paths:
               properties:
                 name: { type: string }
                 notes: { type: string }
+                tags:
+                  description: An array of labels or a comma-separated string. May move the screen into or out of dynamic groups.
+                  oneOf:
+                    - { type: array, items: { type: string } }
+                    - { type: string }
                 timezone: { type: string }
                 orientation: { type: string }
                 default_content_id: { type: string }
@@ -1493,12 +1534,31 @@ paths:
               properties:
                 name: { type: string }
                 color: { type: string }
+                rules: { $ref: '#/components/schemas/GroupRules' }
       responses:
         '201':
           description: Created group.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Group' }
+  /groups/rules-preview:
+    post:
+      tags: [groups]
+      summary: Preview which screens a rule set would select
+      description: 'Requires scope: write (a POST; nothing is saved). Excludes screens on a video wall, which never join a group.'
+      x-required-scope: write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rules]
+              properties:
+                rules: { $ref: '#/components/schemas/GroupRules' }
+      responses:
+        '200': { description: '{ devices: [{ id, name, status, platform }] }.' }
+        '400': { description: Invalid rules. }
   /groups/{id}:
     put:
       tags: [groups]
@@ -1515,8 +1575,14 @@ paths:
               properties:
                 name: { type: string }
                 color: { type: string }
+                rules:
+                  description: A rule set re-fills the group; null turns rules off and keeps the current members.
+                  oneOf:
+                    - $ref: '#/components/schemas/GroupRules'
+                    - type: "null"
       responses:
         '200': { description: Updated group. }
+        '400': { description: Invalid rules. }
     delete:
       tags: [groups]
       summary: Delete a group (converts group schedules to per-device)

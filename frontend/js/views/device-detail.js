@@ -1114,6 +1114,11 @@ async function loadDevice(deviceId, activeTab = null) {
             </div>
           </div>
           <div class="form-group">
+            <label>${t('device.form.tags_label')}</label>
+            <input id="deviceTags" class="input" value="${esc((Array.isArray(device.tags) ? device.tags : []).join(', '))}" placeholder="${t('device.form.tags_placeholder')}">
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('device.form.tags_hint')}</div>
+          </div>
+          <div class="form-group">
             <label>${t('device.form.notes_label')}</label>
             <textarea id="deviceNotes" class="input" rows="3" placeholder="${t('device.form.notes_placeholder')}" style="resize:vertical">${esc(device.notes || '')}</textarea>
           </div>
@@ -2434,7 +2439,8 @@ function setupActions(device) {
     bgInput.addEventListener('input', () => { bgInput.dataset.cleared = ''; });
   }
 
-      await api.updateDevice(device.id, {
+      const saved = await api.updateDevice(device.id, {
+        tags: document.getElementById('deviceTags')?.value ?? undefined,
         notes: document.getElementById('deviceNotes').value,
         orientation: document.getElementById('deviceOrientation').value,
         // #325: the reset button clears the field, which sends '' and the API stores NULL, putting
@@ -2451,6 +2457,14 @@ function setupActions(device) {
           ? { live_video_enabled: document.getElementById('liveVideoToggle').checked ? 1 : 0 } : {}),
       });
       showToast(t('device.toast.settings_saved'), 'success');
+      // A tag change can move the screen into or out of dynamic groups; say which.
+      for (const c of (saved && saved.groups_changed) || []) {
+        showToast(t(c.op === 'add' ? 'device.toast.joined_group' : 'device.toast.left_group', { name: c.name }), 'info');
+      }
+      if (saved && Array.isArray(saved.tags)) {
+        const el = document.getElementById('deviceTags');
+        if (el) el.value = saved.tags.join(', ');   // show what was stored (normalised), not what was typed
+      }
     } catch (err) {
       showToast(err.message, 'error');
     }

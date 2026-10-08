@@ -273,6 +273,8 @@ router.delete('/:id', requireWallWrite, (req, res) => {
   // exit wall mode and clear content immediately.
   for (const m of members) pushWallPayloadToDevice(req, m.device_id);
   notifyDashboards(req, wallWorkspaceId);
+  // The wall is gone, so its screens are eligible for dynamic groups again.
+  for (const m of members) require('../lib/device-group-rules').reconcileDeviceAsSystem(db, req.app.get('io'), m.device_id);
 
   res.json({ success: true });
 });
@@ -359,6 +361,8 @@ router.put('/:id/devices', requireWallWrite, (req, res) => {
   for (const id of removedIds) pushWallPayloadToDevice(req, id);
   pushToWallMembers(req, req.params.id);
   notifyDashboards(req, req.wall.workspace_id);
+  // A screen that left the wall is eligible for dynamic groups again (lib/device-group-rules.js).
+  for (const id of removedIds) require('../lib/device-group-rules').reconcileDeviceAsSystem(db, req.app.get('io'), id);
 
   res.json(loadWallWithDevices(req.params.id));
 });
