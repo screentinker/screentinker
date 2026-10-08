@@ -488,6 +488,7 @@ export default {
     'auth.sso_err_sso_required':
         'Je organisatie verplicht haar eigen single sign-on. Gebruik de single-sign-onoptie van je organisatie.',
     'auth.sso_err_domain_not_allowed': 'Je organisatie heeft dit e-maildomein niet geverifieerd voor aanmelding. Vraag je beheerder om het te verifiëren in {brandName}.',
+    'auth.sso_err_saml_transient_nameid': 'De SAML-identiteitsprovider van je organisatie stuurde een tijdelijke (transient) gebruikers-ID. Vraag je beheerder een persistente NameID of een NameID in e-mailformaat in te stellen.',
     'auth.sso_err_account_exists_other_provider':
         'Er bestaat al een account met dit e-mailadres dat via een andere provider aanmeldt. Gebruik die provider of neem contact op met je beheerder.',
     'auth.signin_microsoft': 'Aanmelden met Microsoft',

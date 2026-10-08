@@ -1203,7 +1203,7 @@ function asyncRoute(handler) {
     try {
       if (res.headersSent) return;
       // These are browser redirects, not API calls; a JSON body would be shown as text.
-      if (req.path.startsWith('/oidc/')) return backToApp(res, { sso_error: 'server_error' });
+      if (req.path.startsWith('/oidc/') || req.path.startsWith('/saml/')) return backToApp(res, { sso_error: 'server_error' });
       res.status(500).json({ error: 'Something went wrong' });
     } catch (e2) {
       console.error('[auth] failed to report an error:', e2 && e2.message);
@@ -1383,24 +1383,69 @@ router.get('/oidc/:slug/start', asyncRoute(async (req, res) => {
  * After the assertion is verified, the SAME post-login path as OIDC runs (completeFederatedLogin),
  * so every rule that makes per-org SSO safe applies identically.
  */
-router.get('/saml/:slug/start', async (req, res) => {
+/*
+ * ⚠️ LOGIN CSRF. node-saml checks that a response answers SOME request we issued (saml_requests is
+ * global, so a scaled-out node can finish it), but not that THIS browser issued it. Without a binding,
+ * an attacker starts a login, keeps their own SAMLResponse, and auto-posts it from a victim's browser:
+ * the victim is signed into the attacker's account and whatever they upload lands there. OIDC binds
+ * with the signed st_oidc_tx cookie; this is the same idea for SAML.
+ *
+ * ⚠️ SameSite=None, not Lax: the IdP returns with a cross-site POST, which Lax does not carry. None
+ * requires Secure, so over plain http (dev) it falls back to Lax — SAML sign-in needs HTTPS in
+ * practice, which every IdP demands of an ACS URL anyway.
+ */
+const SAML_TX_COOKIE = 'st_saml_tx';
+const SAML_TX_PATH = '/api/auth/saml';
+
+router.get('/saml/:slug/start', asyncRoute(async (req, res) => {
   const provider = oidcProviders.get(req.params.slug);
   if (!provider || provider.kind !== 'saml') return backToApp(res, { sso_error: 'unknown_provider' });
   try {
-    const url = await saml.samlFor(provider, publicOrigin(req)).getAuthorizeUrlAsync('', undefined, {});
+    const requestId = saml.newRequestId();
+    const url = await saml.samlFor(provider, publicOrigin(req), { generateUniqueId: () => requestId })
+      .getAuthorizeUrlAsync('', undefined, {});
+    const tx = jwt.sign(
+      { typ: 'saml-tx', slug: provider.slug, rid: requestId },
+      config.jwtSecret,
+      { expiresIn: OIDC_TX_TTL_S, algorithm: 'HS256' },   // a typ no other verifier accepts
+    );
+    const secure = req.protocol === 'https';
+    res.cookie(SAML_TX_COOKIE, tx, {
+      httpOnly: true,
+      secure,
+      sameSite: secure ? 'none' : 'lax',
+      maxAge: OIDC_TX_TTL_S * 1000,
+      path: SAML_TX_PATH,
+    });
     res.redirect(url);
   } catch (err) {
     console.error(`[saml] ${provider.slug} start failed:`, err.message);
     backToApp(res, { sso_error: 'provider_unavailable' });
   }
-});
+}));
 
 // The IdP posts here, cross-site, so this route has its own form parser (urlencoded is not global).
-router.post('/saml/:slug/acs', express.urlencoded({ extended: false, limit: '512kb' }), async (req, res) => {
+router.post('/saml/:slug/acs', express.urlencoded({ extended: false, limit: '512kb' }), asyncRoute(async (req, res) => {
   const provider = oidcProviders.get(req.params.slug);
   if (!provider || provider.kind !== 'saml') return backToApp(res, { sso_error: 'unknown_provider' });
   const body = req.body || {};
   if (typeof body.SAMLResponse !== 'string' || !body.SAMLResponse) return backToApp(res, { sso_error: 'no_code' });
+
+  // The browser binding (see SAML_TX_COOKIE). Checked BEFORE validation so a response posted from a
+  // browser that never started a login does not even spend the request ID; one-shot either way.
+  const raw = readCookie(req, SAML_TX_COOKIE);
+  const secure = req.protocol === 'https';
+  res.clearCookie(SAML_TX_COOKIE, { path: SAML_TX_PATH, httpOnly: true, secure, sameSite: secure ? 'none' : 'lax' });
+  let tx = null;
+  try {
+    tx = raw ? jwt.verify(raw, config.jwtSecret, { algorithms: ['HS256'] }) : null;
+    if (tx && (tx.typ !== 'saml-tx' || tx.slug !== provider.slug || typeof tx.rid !== 'string')) tx = null;
+  } catch { tx = null; }
+  if (!tx) {
+    console.warn(`[saml] ${provider.slug} response without this browser's login transaction`);
+    return backToApp(res, { sso_error: 'expired' });
+  }
+
   let profile;
   try {
     ({ profile } = await saml.samlFor(provider, publicOrigin(req)).validatePostResponseAsync({ SAMLResponse: body.SAMLResponse }));
@@ -1408,6 +1453,19 @@ router.post('/saml/:slug/acs', express.urlencoded({ extended: false, limit: '512
   } catch (err) {
     console.warn(`[saml] ${provider.slug} response refused: ${err.message}`);
     return backToApp(res, { sso_error: 'verification_failed' });
+  }
+  // A valid response to a request someone ELSE started (login CSRF), or to an older one of ours.
+  if (profile.inResponseTo !== tx.rid) {
+    console.warn(`[saml] ${provider.slug} response answers a request this browser did not start`);
+    return backToApp(res, { sso_error: 'bad_state' });
+  }
+  if (!saml.issuerMatches(profile, provider)) {
+    console.warn(`[saml] ${provider.slug} assertion issuer ${JSON.stringify(String(profile.issuer || '').slice(0, 200))} is not the configured IdP`);
+    return backToApp(res, { sso_error: 'verification_failed' });
+  }
+  if (saml.isTransientNameId(profile)) {
+    console.warn(`[saml] ${provider.slug} sent a transient NameID; a persistent one is required`);
+    return backToApp(res, { sso_error: 'saml_transient_nameid' });
   }
   // One use per assertion, atomically: a replayed (or doubly submitted) response fails here.
   if (!saml.consumeAssertion(saml.assertionIdOf(profile))) {
@@ -1422,7 +1480,7 @@ router.post('/saml/:slug/acs', express.urlencoded({ extended: false, limit: '512
     console.error(`[saml] ${provider.slug} sign-in failed:`, err.message);
     return backToApp(res, { sso_error: 'server_error' });
   }
-});
+}));
 
 // What the IdP needs from us: our entityID, ACS address and the bindings we use.
 router.get('/saml/:slug/metadata', (req, res) => {

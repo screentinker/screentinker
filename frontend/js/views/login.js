@@ -809,7 +809,7 @@ function setupHandlers(config, isSetup) {
     const known = ['expired', 'bad_state', 'no_code', 'no_email', 'email_unverified',
       'verification_failed', 'provider_refused', 'provider_unavailable', 'unknown_provider',
       'registration_disabled', 'account_exists_local', 'subject_mismatch', 'server_error',
-      'domain_not_allowed', 'account_exists_other_provider', 'sso_required'];
+      'domain_not_allowed', 'account_exists_other_provider', 'sso_required', 'saml_transient_nameid'];
     const key = known.includes(ssoError) ? `auth.sso_err_${ssoError}` : 'auth.sso_failed';
     showToast(t(key), 'error');
   }

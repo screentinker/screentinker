@@ -125,6 +125,7 @@ export default {
   'auth.sso_required': '你的组织要求使用单点登录。请点击上方“使用单点登录继续”，此处的密码不会生效。',
   'auth.sso_err_sso_required': '你的组织要求使用自己的单点登录方式，请选择组织的单点登录入口。',
   'auth.sso_err_domain_not_allowed': '你的组织尚未验证此邮箱域名用于登录。请联系管理员在 {brandName} 中完成验证。',
+  'auth.sso_err_saml_transient_nameid': '您组织的 SAML 身份提供商发送了临时（transient）用户标识。请让管理员配置持久（persistent）NameID 或电子邮件格式的 NameID。',
   'auth.sso_err_account_exists_other_provider': '此邮箱已有账户，但它通过其他身份提供商登录。请使用对应提供商，或联系管理员。',
   'auth.signin_microsoft': '使用 Microsoft 登录', 'auth.back_to_signin': '返回登录',
   'auth.mfa_title': '双因素身份验证', 'auth.mfa_prompt': '请输入验证器应用中的 6 位验证码。',

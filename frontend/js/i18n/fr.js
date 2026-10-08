@@ -281,6 +281,7 @@ export default {
   'auth.sso_required': "Votre organisation nécessite une authentification unique. Utilisez « Continuer avec l'authentification unique » ci-dessus : votre mot de passe ne fonctionnera pas ici.",
   'auth.sso_err_sso_required': "Votre organisation nécessite sa propre authentification unique. Utilisez l'option d'authentification unique pour votre organisation.",
   'auth.sso_err_domain_not_allowed': "Votre organisation n'a pas vérifié ce domaine de messagerie pour la connexion. Demandez à votre administrateur de le vérifier dans {brandName}.",
+  'auth.sso_err_saml_transient_nameid': "Le fournisseur d'identité SAML de votre organisation a envoyé un identifiant temporaire (transient). Demandez à votre administrateur de configurer un NameID persistant ou au format e-mail.",
   'auth.sso_err_account_exists_other_provider': "Un compte avec cette adresse e-mail existe déjà et se connecte via un autre fournisseur. Utilisez ce fournisseur ou demandez à votre administrateur.",
   'auth.signin_microsoft': "Se connecter avec Microsoft",
   'auth.back_to_signin': "Retour à la connexion",
