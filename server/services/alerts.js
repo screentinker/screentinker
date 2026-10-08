@@ -21,6 +21,11 @@ function shouldSendAlert(alertType, targetId, windowMs = DEFAULT_DEDUP_WINDOW_MS
 
 function startAlertService(io) {
   setInterval(() => checkOfflineDevices(io), 60000);
+  // Workspace alert channels (Slack / Teams / PagerDuty / webhook / email), on the same minute.
+  setInterval(() => {
+    require('../lib/alert-channels').tick({ localRowsSql: LOCAL_ROWS_SQL })
+      .catch((e) => console.warn(`[alerts] channel tick failed: ${e && e.message}`));
+  }, 60000);
   console.log('Alert service started');
 }
 
