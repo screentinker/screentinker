@@ -13,6 +13,18 @@
   - Screens on a video wall never join a group. A tag change that would change which head office
     playlist a screen plays is refused for store users, as moving the screen by hand would be.
   - Tags survive deleting and re-pairing a screen, so it rejoins its groups.
+- **Emergency feeds: public CAP alerts on your screens automatically** (Automate → Emergency feeds).
+  - Subscribe to an alert feed: the US National Weather Service by state or zone, MeteoAlarm for
+    38 European countries, or any CAP 1.1/1.2 feed (a CAP document, an Atom/RSS index, or NWS
+    GeoJSON).
+  - While an alert matches the feed's filters (minimum severity, alert types, areas), every screen
+    in its scope shows it instead of its playlist: a full-screen alert card with the headline, the
+    area, what to do and until when, colour-coded by severity. You can pick a playlist instead.
+    Screens go back when the alert is cancelled, replaced or expires.
+  - Scope it to all screens, some groups or some screens. **Test feed** shows what would be on
+    screens before you save.
+  - If the feed can't be reached, alerts already showing stay up until they expire.
+  - Workspace admins only. A head office emergency alert still takes priority.
 
 - **A video wall now works like one big screen.** See `docs/video-walls.md`.
   - **Zones on a wall.** A wall can take a layout: put content anywhere on it, in one screen,

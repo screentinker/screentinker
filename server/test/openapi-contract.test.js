@@ -68,7 +68,13 @@ test('openapi: every operation x-required-scope matches the method-based enforce
          * private network on a timer. Documenting it as 'write' would send an integrator to a
          * guaranteed 403 while the docs told them they were fine.
          */
-        || p === '/device-endpoints' || p.startsWith('/device-endpoints/');
+        || p === '/device-endpoints' || p.startsWith('/device-endpoints/')
+        /*
+         * ⚠️ /cap-feeds enforces full (routes/cap-feeds.js, every mutation, plus a workspace-admin
+         * check): a feed takes over every screen in its scope whenever a third party's alert
+         * matches, which is more than content editing — the same reasoning as /triggers.
+         */
+        || p === '/cap-feeds' || p.startsWith('/cap-feeds/');
       const expected = (m === 'get' || m === 'head') ? 'read' : (isFullScope ? 'full' : 'write');
       if (op['x-required-scope'] !== expected) {
         mismatches.push(`${m.toUpperCase()} ${p}: spec='${op['x-required-scope']}' enforcement='${expected}'`);

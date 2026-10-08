@@ -159,7 +159,8 @@ function safeDateString(d) {
 router.get('/', (req, res) => {
   if (!req.workspaceId) return res.json([]);
   const widgets = db.prepare(
-    'SELECT * FROM widgets WHERE (workspace_id = ? OR workspace_id IS NULL) ORDER BY created_at DESC'
+    // 'cap_alert' rows are the hidden cards of emergency feeds (lib/cap/feeds.js), not library widgets.
+    "SELECT * FROM widgets WHERE (workspace_id = ? OR workspace_id IS NULL) AND widget_type != 'cap_alert' ORDER BY created_at DESC"
   ).all(req.workspaceId);
   res.json(widgets.map(redactWidgetRow));
 });
@@ -250,6 +251,10 @@ function checkWidgetWrite(req, res) {
   if (!ctx) { res.status(403).json({ error: 'Access denied' }); return null; }
   if (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
+  }
+  // An emergency feed's card belongs to the feed: edit or delete the feed instead.
+  if (widget.widget_type === 'cap_alert') {
+    res.status(409).json({ error: 'This is an emergency feed\'s alert card. Change it from Emergency feeds.', code: 'CAP_CARD' }); return null;
   }
   return widget;
 }
@@ -498,6 +503,21 @@ router.get('/:id/render', (req, res) => {
    * link). Without it an html template's code would run as this server's origin — the origin
    * whose localStorage holds the dashboard session. See lib/templates/render.js.
    */
+  /*
+   * An emergency feed's alert card: the feed's live alerts, rendered from text a third party wrote,
+   * so it gets the same opaque-origin sandbox a template does (lib/cap/card.js escapes it all).
+   */
+  if (widget.widget_type === 'cap_alert') {
+    const feeds = require('../lib/cap/feeds');
+    const feed = config.feed_id ? db.prepare('SELECT * FROM cap_feeds WHERE id = ? AND workspace_id = ?').get(config.feed_id, widget.workspace_id) : null;
+    const alerts = feed ? feeds.liveAlerts(db, feed) : [];
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; sandbox allow-scripts");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    // Rev-pinned like every widget, but private: a shared cache must not keep a cleared alert.
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    return res.send(require('../lib/cap/card').renderCard(alerts, { title: feed ? feed.name : 'Emergency alert' }));
+  }
   if (widget.widget_type === 'template') {
     const out = require('../lib/templates/widget').renderTemplateWidget(widget, {
       origin: `${req.protocol}://${req.get('host')}`,

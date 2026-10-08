@@ -27,6 +27,8 @@ servers:
   - url: /api
 
 tags:
+  - name: emergency-feeds
+    description: Public CAP alert feeds that take screens over while an alert matches.
   - name: content
     description: Media library items (uploads, remote URLs, YouTube).
   - name: folders
@@ -557,6 +559,41 @@ components:
                 description: "tag: has | lacks; name: contains | starts_with | eq; platform, timezone: eq | neq."
               value:
                 type: string
+
+    CapFeedInput:
+      type: object
+      properties:
+        name: { type: string }
+        url: { type: string, description: 'A CAP document, a CAP Atom/RSS index, or NWS alert GeoJSON (https://api.weather.gov/alerts/active?area=WI).' }
+        enabled: { type: boolean }
+        poll_sec: { type: integer, minimum: 60, maximum: 3600 }
+        min_severity: { type: string, enum: [Extreme, Severe, Moderate, Minor, Unknown] }
+        events:
+          description: Only these CAP event names (empty = all).
+          oneOf:
+            - { type: array, items: { type: string } }
+            - { type: string }
+        area_match: { type: string, description: 'Comma-separated place names or area codes; matches areaDesc or any geocode.' }
+        language: { type: string, description: 'Preferred <info> language, e.g. en.' }
+        playlist_id: { type: [string, "null"], description: 'Play this instead of the generated alert card.' }
+        scopes:
+          type: array
+          items:
+            type: object
+            required: [scope_kind]
+            properties:
+              scope_kind: { type: string, enum: [workspace, group, device] }
+              scope_id: { type: string }
+    CapFeed:
+      allOf:
+        - $ref: '#/components/schemas/CapFeedInput'
+        - type: object
+          properties:
+            id: { type: string }
+            screens_in_scope: { type: integer }
+            live_count: { type: integer, description: Matching alerts on screens now. }
+            last_polled_at: { type: [integer, "null"] }
+            last_error: { type: [string, "null"] }
 
     Schedule:
       type: object
@@ -1939,6 +1976,105 @@ paths:
         '404': { description: 'No such font.' }
 
   # ----------------------------------------------------------------- triggers
+  /cap-feeds:
+    get:
+      tags: [emergency-feeds]
+      summary: List the workspace's emergency (CAP) feeds
+      description: 'Requires scope: read. Each feed reports how many matching alerts are on screens now.'
+      x-required-scope: read
+      responses:
+        '200':
+          description: Array of feeds.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/CapFeed' } }
+    post:
+      tags: [emergency-feeds]
+      summary: Add an emergency feed
+      description: 'Requires scope: full and a workspace admin. A feed can take over every screen in its scope.'
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CapFeedInput' }
+      responses:
+        '201': { description: Created feed. }
+        '400': { description: Invalid input. }
+        '403': { description: Not a workspace admin. }
+        '409': { description: The workspace is replicated over the mesh. }
+  /cap-feeds/test:
+    post:
+      tags: [emergency-feeds]
+      summary: Fetch a feed without saving it and report what would show
+      description: 'Requires scope: full and a workspace admin. Rate-limited.'
+      x-required-scope: full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CapFeedInput' }
+      responses:
+        '200': { description: '{ kind, total, would_show, alerts: [{ event, severity, headline, area, live, matches }] }.' }
+        '400': { description: The feed could not be fetched or read. }
+  /cap-feeds/{id}:
+    get:
+      tags: [emergency-feeds]
+      summary: Get a feed
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The feed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapFeed' }
+        '404': { description: Not found. }
+    put:
+      tags: [emergency-feeds]
+      summary: Update a feed (filters, scope, playlist, on/off)
+      description: 'Requires scope: full and a workspace admin. Takes effect on screens at once.'
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CapFeedInput' }
+      responses:
+        '200': { description: Updated feed. }
+        '400': { description: Invalid input. }
+    delete:
+      tags: [emergency-feeds]
+      summary: Delete a feed (screens showing its alerts go back to their playlists)
+      description: 'Requires scope: full and a workspace admin.'
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ success: true }.' }
+  /cap-feeds/{id}/alerts:
+    get:
+      tags: [emergency-feeds]
+      summary: Alerts the feed carried in the last week, and whether each is on screens
+      description: 'Requires scope: read.'
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Array of alerts. }
+  /cap-feeds/{id}/poll:
+    post:
+      tags: [emergency-feeds]
+      summary: Check the feed now
+      description: 'Requires scope: full and a workspace admin.'
+      x-required-scope: full
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: '{ ok, count | error, feed }.' }
   /triggers:
     get:
       tags: [triggers]

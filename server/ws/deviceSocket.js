@@ -620,6 +620,19 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     console.warn(`[emergency] activation check failed for ${deviceId}: ${e && e.message}`);
     emergencyNow = null;
   }
+  /*
+   * CAP EMERGENCY FEEDS (lib/cap/feeds.js): a live public alert matching one of the workspace's
+   * feeds takes the screen the same way — the feed's playlist, or its generated alert card. Head
+   * office's own alert outranks it. One Map.size test when nothing is live anywhere.
+   */
+  let capNow = null;
+  if (!emergencyNow) {
+    try { capNow = require('../lib/cap/feeds').overrideFor(db, deviceId); } catch (e) {
+      console.warn(`[cap] override check failed for ${deviceId}: ${e && e.message}`);
+      capNow = null;
+    }
+  }
+  const overrideNow = emergencyNow || capNow;
   if (emergencyNow) {
     const t = emergencyNow.trigger;
     const pl = db.prepare('SELECT published_snapshot, published_playback_order FROM playlists WHERE id = ? AND workspace_id = ?')
@@ -632,6 +645,26 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
     playback_order = (pl && pl.published_playback_order) || 'sequential';
+  } else if (capNow) {
+    const feed = capNow.feed;
+    const pl = feed.playlist_id
+      ? db.prepare('SELECT published_snapshot, published_playback_order FROM playlists WHERE id = ? AND workspace_id = ?').get(feed.playlist_id, feed.workspace_id)
+      : null;
+    let items = [];
+    if (pl && pl.published_snapshot) { try { items = JSON.parse(pl.published_snapshot); } catch (_) { items = []; } }
+    // No playlist, or an empty/unpublished one: the card. An alert must never show nothing.
+    if (!Array.isArray(items) || !items.length) {
+      require('../lib/cap/feeds').ensureWidget(db, feed);
+      items = [require('../lib/cap/feeds').cardItem(feed)];
+      playback_order = 'sequential';
+    } else {
+      playback_order = (pl && pl.published_playback_order) || 'sequential';
+    }
+    for (const a of items) if (a && typeof a === 'object') a.__origin_ws = feed.workspace_id;
+    assignments = items;
+    refreshWidgetRevs(assignments);
+    refreshContentRevs(assignments);
+    assignments = dropLiveIfUnsupported(assignments);
   } else if (corporateSource && device?.playlist_id) {
     try {
       const c = require('../lib/corporate/composition').compositionFor(db, deviceId, device.playlist_id);
@@ -670,7 +703,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   let triggers = [];
   try {
     // During an Activate-now alert only head office's emergency alerts stay armed (§5.6).
-    const rows = emergencyNow ? triggersForDevice(db, deviceId, { emergencyOnly: true })
+    const rows = overrideNow ? triggersForDevice(db, deviceId, { emergencyOnly: true })
       : triggersForDevice(db, deviceId, { mandated: corporateSource });
     for (const t of rows) {
       let items = [];
@@ -743,7 +776,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   };
 
   let layout = null;
-  if (device?.layout_id && !emergencyNow) {
+  if (device?.layout_id && !overrideNow) {
     layout = db.prepare('SELECT * FROM layouts WHERE id = ?').get(device.layout_id);
     if (layout) {
       layout.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layout.id);
@@ -822,7 +855,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       // panel, see services/scheduler.js) is the wall's layout while it runs.
       const scheduledWallLayout = db.prepare('SELECT scheduled_layout_id FROM devices WHERE id = ?').get(deviceId)?.scheduled_layout_id || null;
       const wallLayoutId = scheduledWallLayout || wall.layout_id;
-      if (wallLayoutId && !emergencyNow && !corporateSource) {
+      if (wallLayoutId && !overrideNow && !corporateSource) {
         const wl = db.prepare('SELECT * FROM layouts WHERE id = ?').get(wallLayoutId);
         if (wl) {
           wl.zones = db.prepare('SELECT * FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(wl.id);
@@ -857,7 +890,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   const timezone = effectiveDeviceTz(device);
   // #group-sync: synchronized group playback (wall takes precedence — a wall member is never
   // also group-synced). Null unless the device is on a sync-enabled group's matching playlist.
-  const group_sync = wall_config || emergencyNow ? null : resolveGroupSync(device, deviceId);
+  const group_sync = wall_config || overrideNow ? null : resolveGroupSync(device, deviceId);
 
   // Device default / standby content: what a screen shows when it would otherwise be IDLE — no
   // playlist assigned, or a playlist whose every item is filtered out by its schedule (LED-wall
@@ -875,7 +908,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   }
   // ⚠️ CORPORATE (D6): a screen head office's playlist drives never shows store-chosen content — a
   // dark mandate, or an empty corporate loop, falls to the player's own idle screen.
-  if (corporateSource || emergencyNow) default_content = null;
+  if (corporateSource || overrideNow) default_content = null;
 
   // #104: shared shape + zone-reset tail so the device payload and the dashboard
   // preview payload (GET /api/playlists/:id/preview-payload) can never drift.
@@ -886,7 +919,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   try {
     // An emergency alert that is live here must not sit behind a dark backlight window: no schedule
     // means "stay lit" on every player.
-    if (!emergencyNow) power_schedule = require('../lib/device-power-schedule').powerScheduleForDevice(db, deviceId);
+    if (!overrideNow) power_schedule = require('../lib/device-power-schedule').powerScheduleForDevice(db, deviceId);
   } catch (e) {
     console.warn(`[power-schedule] resolve failed for ${deviceId}: ${e.message}`);
   }

@@ -3278,6 +3278,48 @@ try {
   try { db.prepare('ALTER TABLE devices ADD COLUMN tags TEXT').run(); console.log('[migrate] devices.tags added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE device_groups ADD COLUMN rules TEXT').run(); console.log('[migrate] device_groups.rules added'); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE device_settings ADD COLUMN tags TEXT').run(); } catch (_) { /* present */ }
+  // CAP emergency feeds (lib/cap/feeds.js). Workspace-owned and FK-cascaded, so deleting a
+  // workspace takes its feeds, scopes and seen alerts with it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cap_feeds (
+      id             TEXT PRIMARY KEY,
+      workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id        TEXT,
+      name           TEXT NOT NULL,
+      url            TEXT NOT NULL,
+      enabled        INTEGER NOT NULL DEFAULT 1,
+      poll_sec       INTEGER NOT NULL DEFAULT 120,
+      min_severity   TEXT NOT NULL DEFAULT 'Severe',
+      events         TEXT,
+      area_match     TEXT,
+      language       TEXT NOT NULL DEFAULT 'en',
+      playlist_id    TEXT REFERENCES playlists(id) ON DELETE SET NULL,
+      widget_id      TEXT,
+      last_polled_at INTEGER,
+      last_ok_at     INTEGER,
+      last_error     TEXT,
+      created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_cap_feeds_ws ON cap_feeds(workspace_id);
+    CREATE TABLE IF NOT EXISTS cap_feed_scopes (
+      feed_id    TEXT NOT NULL REFERENCES cap_feeds(id) ON DELETE CASCADE,
+      scope_kind TEXT NOT NULL,
+      scope_id   TEXT NOT NULL,
+      PRIMARY KEY (feed_id, scope_kind, scope_id)
+    );
+    CREATE TABLE IF NOT EXISTS cap_alerts (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      feed_id     TEXT NOT NULL REFERENCES cap_feeds(id) ON DELETE CASCADE,
+      akey        TEXT NOT NULL,
+      data        TEXT NOT NULL,
+      in_feed     INTEGER NOT NULL DEFAULT 1,
+      ended       INTEGER NOT NULL DEFAULT 0,
+      first_seen  INTEGER NOT NULL,
+      last_seen   INTEGER NOT NULL,
+      UNIQUE (feed_id, akey)
+    );
+  `);
 
   const BASELINE_ID = 'revisions_baseline_v1';
   if (!db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(BASELINE_ID)) {

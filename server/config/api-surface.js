@@ -57,6 +57,8 @@ const PUBLIC_ROUTERS = [
   // on the device, because a trigger that needs this server is a trigger that fails with the WAN
   // down, which is the whole feature. See docs/triggers-design.md.
   { path: '/api/triggers',    mod: './routes/triggers' },
+  // CAP emergency feeds (lib/cap/feeds.js): an integrator wires a site's alert feed from its own tooling.
+  { path: '/api/cap-feeds',   mod: './routes/cap-feeds' },
   /*
    * Display power schedules — the weekly BACKLIGHT clock. Public (token-reachable) for the same
    * reason as triggers: an integrator provisioning a site sets these from their own tooling, and
