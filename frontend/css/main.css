@@ -1378,6 +1378,27 @@ body {
   margin-top: 4px;
 }
 
+/*
+ * Content library: the drop zone, then one card per way to add content. A GRID that wraps, not one
+ * flex row: with a fixed-width card per source (Remote URL, YouTube, documents, live stream, live
+ * input, hold, Canva…) every new source squeezed the drop zone thinner, until its text ran one word
+ * per line, and every card stretched to the tallest one's height. The drop zone spans the whole row;
+ * cards fill as many columns as fit and keep their own height.
+ */
+.content-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+.content-toolbar > .upload-area {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+  padding: 28px 24px;
+}
+.content-toolbar > .content-source { min-width: 0; }
+
 /* Modal */
 .modal-overlay {
   position: fixed;
@@ -1762,9 +1783,6 @@ body {
   .dash-stats-row { flex-direction: column; }
   .dash-stats-row .info-card { flex: none; }
 
-  /* Content-library 3-up toolbar stacks vertically */
-  .content-toolbar { flex-direction: column; }
-  .content-toolbar > div[style*="width:320px"] { width: auto !important; }
 
   /* Schedule controls: allow wrap and widen select to full row */
   .schedule-controls { gap: 8px; }

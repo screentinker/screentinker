@@ -71,8 +71,8 @@ export function render(container) {
          nothing that mentions it is how someone loses the thread. -->
     <div id="gettingStarted"></div>
 
-    <div class="content-toolbar" style="display:flex;gap:16px;margin-bottom:24px">
-      <div class="upload-area" id="uploadArea" style="flex:1;margin-bottom:0">
+    <div class="content-toolbar">
+      <div class="upload-area" id="uploadArea">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="17 8 12 3 7 8"/>
@@ -88,7 +88,7 @@ export function render(container) {
           <p style="font-size:12px;color:var(--text-secondary);margin-top:6px" id="uploadProgressText">${t('content.upload_progress')}</p>
         </div>
       </div>
-      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
@@ -109,7 +109,7 @@ export function render(container) {
         </select>
         <button class="btn btn-primary" id="addRemoteBtn">${t('content.remote_add_btn')}</button>
       </div>
-      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19.13C5.12 19.56 12 19.56 12 19.56s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.43z"/>
@@ -122,7 +122,7 @@ export function render(container) {
         <input type="text" id="youtubeNameInput" class="input" placeholder="${t('content.youtube_name_placeholder')}">
         <button class="btn btn-primary" id="addYoutubeBtn">${t('content.youtube_add_btn')}</button>
       </div>
-      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
@@ -135,7 +135,7 @@ export function render(container) {
         <button class="btn btn-primary" id="addCloudDocBtn">${t('content.cloud_docs_add_btn')}</button>
         <button class="btn btn-secondary" id="cloudFoldersBtn">${t('content.cloud_folders_btn')}</button>
       </div>
-      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="23 7 16 12 23 17 23 7"/>
@@ -148,7 +148,7 @@ export function render(container) {
         <input type="text" id="hlsNameInput" class="input" placeholder="${t('content.hls_name_placeholder')}">
         <button class="btn btn-primary" id="addHlsBtn">${t('content.hls_add_btn')}</button>
       </div>
-      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="2" y="7" width="20" height="10" rx="2"/>
@@ -167,7 +167,7 @@ export function render(container) {
         <input type="text" id="hdmiInName" class="input" placeholder="${t('content.hdmi_in_name_placeholder')}">
         <button class="btn btn-primary" id="addHdmiInBtn">${t('content.hdmi_in_add_btn')}</button>
       </div>
-      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
@@ -182,7 +182,7 @@ export function render(container) {
         <button class="btn btn-primary" id="addHoldBtn">${t('content.hold_add_btn')}</button>
       </div>
       <!-- Canva (components/canva-import.js): hidden until /api/canva/status answers. -->
-      <div id="canvaCard" style="display:none;width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;flex-direction:column;gap:12px"></div>
+      <div id="canvaCard" class="content-source" style="display:none;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;flex-direction:column;gap:12px"></div>
     </div>
     </div>
 
