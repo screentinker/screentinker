@@ -37,9 +37,12 @@ const LIMIT_PATH_SHAPES = [
   /*
    * ⚠️ THE LAST SEGMENT IS A CREDENTIAL. An inbound hook's URL carries its secret, so without this
    * the per-IP bucket was keyed on it (a new bucket per probe) and the `[limit] 429 <endpoint>`
-   * warning wrote the secret into the server log. Anything under the mount is one bucket.
+   * warning wrote the secret into the server log. The hook ID stays in the key (it is not a secret,
+   * and one bucket per hook keeps tenants that send from a shared cloud IP, like Make or n8n, from
+   * throttling each other); anything after it collapses. A path that is not a hook ID is one bucket.
    */
-  [/^\/api\/hooks\/in(\/.*)?$/, () => '/api/hooks/in/:id/:secret'],
+  [/^\/api\/hooks\/in\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/.*)?$/, (m) => `/api/hooks/in/${m[1]}/:secret`],
+  [/^\/api\/hooks\/in(\/.*)?$/, () => '/api/hooks/in/:unmatched'],
 ];
 
 /*

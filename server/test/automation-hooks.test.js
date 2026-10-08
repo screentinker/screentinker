@@ -481,9 +481,15 @@ test('a hook answers GET only when it allows GET', async () => {
 test('the rate-limit key for a hook URL never contains its secret', () => {
   const { canonicalLimitPath } = require('../lib/limit-paths');
   const secret = crypto.randomBytes(32).toString('base64url');
-  const a = canonicalLimitPath(`/api/hooks/in/${crypto.randomUUID()}/${secret}`);
-  const b = canonicalLimitPath(`/api/hooks/in/${crypto.randomUUID()}/${crypto.randomBytes(32).toString('base64url')}/`);
-  assert.equal(a, '/api/hooks/in/:id/:secret');
-  assert.equal(a, b, 'one bucket, not one per probe');
+  const id = crypto.randomUUID();
+  const a = canonicalLimitPath(`/api/hooks/in/${id}/${secret}`);
+  const b = canonicalLimitPath(`/api/hooks/in/${id}/${crypto.randomBytes(32).toString('base64url')}/`);
+  assert.equal(a, `/api/hooks/in/${id}/:secret`);
+  assert.equal(a, b, 'one bucket per hook, not one per secret guessed');
   assert.ok(!a.toLowerCase().includes(secret.toLowerCase()));
+  // Another hook (another tenant behind the same cloud IP) has its own bucket.
+  assert.notEqual(canonicalLimitPath(`/api/hooks/in/${crypto.randomUUID()}/${secret}`), a);
+  // Anything that is not a hook ID shares one bucket.
+  assert.equal(canonicalLimitPath(`/api/hooks/in/not-an-id/${secret}`), '/api/hooks/in/:unmatched');
+  assert.equal(canonicalLimitPath('/api/hooks/in'), '/api/hooks/in/:unmatched');
 });
