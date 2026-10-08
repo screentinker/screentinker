@@ -7,7 +7,7 @@ const oidcProviders = require('../lib/oidc-providers');
 const { canAdminWorkspace } = require('../lib/permissions');
 const { requirePlatformAdmin, requireAdmin } = require('../middleware/auth');
 const { logActivity, getClientIp } = require('../services/activity');
-const { deleteWorkspaceCascade, deleteOrgCascade } = require('../lib/user-deletion');
+const { deleteWorkspaceCascade, deleteOrgCascade, releaseWorkspaceMember } = require('../lib/user-deletion');
 const { platformDefaultRow, HARDCODED_BRANDING, PLATFORM_DEFAULT_ID } = require('../lib/branding');
 
 // Admin-provisioned user creation (#10). Operates on a target workspace
@@ -346,6 +346,8 @@ router.put('/users/:id/workspace', requirePlatformAdmin, (req, res) => {
     db.prepare('DELETE FROM workspace_members WHERE user_id = ?').run(target.id);
     db.prepare('INSERT INTO workspace_members (workspace_id, user_id, role, invited_by) VALUES (?, ?, ?, ?)')
       .run(ws.id, target.id, 'workspace_viewer', req.user.id);
+    // A move leaves the old workspace: what they set up there under their own name goes with it.
+    releaseWorkspaceMember(db, { userId: target.id, workspaceIds: memberships.map(m => m.workspace_id).filter(id => id !== ws.id) });
   });
   txn();
 
@@ -478,7 +480,10 @@ router.put('/users/:id/workspaces/:workspaceId', requirePlatformAdmin, (req, res
 router.delete('/users/:id/workspaces/:workspaceId', requirePlatformAdmin, (req, res) => {
   const member = db.prepare('SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?').get(req.params.workspaceId, req.params.id);
   if (!member) return res.status(404).json({ error: 'Membership not found' });
-  db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?').run(req.params.workspaceId, req.params.id);
+  db.transaction(() => {
+    db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?').run(req.params.workspaceId, req.params.id);
+    releaseWorkspaceMember(db, { userId: req.params.id, workspaceIds: [req.params.workspaceId] });
+  })();
   req.workspaceId = req.params.workspaceId;
   const target = db.prepare('SELECT email FROM users WHERE id = ?').get(req.params.id);
   logActivity(req.user.id, 'admin_remove_user_workspace', `target: ${target?.email}, workspace: ${req.params.workspaceId}`, null, getClientIp(req), req.params.workspaceId);

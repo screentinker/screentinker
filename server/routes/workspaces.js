@@ -11,6 +11,7 @@ const appConfig = require('../config');
 const replicaProxy = require('../lib/replica-proxy');
 const { logActivity, getClientIp } = require('../services/activity');
 const { sendEmail } = require('../services/email');
+const { releaseWorkspaceMember } = require('../lib/user-deletion');
 
 // Workspace management routes. Operates on a target workspace specified by
 // URL param, NOT the caller's currently active workspace - so this router
@@ -594,8 +595,13 @@ router.delete('/:id/members/:userId', (req, res) => {
   if (member.role === 'workspace_admin' && countWorkspaceAdmins(ws.id) <= 1) {
     return res.status(409).json({ error: 'Cannot remove the last admin' });
   }
-  db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
-    .run(ws.id, req.params.userId);
+  // What they set up here under their own name goes with the membership (Canva links, folder syncs,
+  // REST-hook subscriptions) - lib/user-deletion.js releaseWorkspaceMember.
+  db.transaction(() => {
+    db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
+      .run(ws.id, req.params.userId);
+    releaseWorkspaceMember(db, { userId: req.params.userId, workspaceIds: [ws.id] });
+  })();
   res.json({ success: true });
 });
 
