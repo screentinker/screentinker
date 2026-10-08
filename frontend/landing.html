@@ -397,6 +397,10 @@
     .hero h1 span { display:block; font-size:.6em; line-height:1.2; margin-top:12px; }
     .hero p.hero-lead { max-width:680px; }
     .hero p.hero-sub { font-size:14px; color:var(--muted); margin:16px auto 0; max-width:640px; line-height:1.7; }
+    /* Live social proof under the trial line (/api/public/stats). Hidden until a real number arrives. */
+    .hero p.hero-proof { margin:14px auto 0; font-size:15px; color:var(--text); }
+    .hero p.hero-proof strong { font-size:18px; font-weight:800; font-variant-numeric:tabular-nums; color:#a5b4fc; }
+    .hero p.hero-proof span { color:var(--muted); font-size:12px; }
     .gh-link { display:inline-flex; align-items:center; gap:5px; color:#93c5fd; font-weight:600; }
     .gh-link:hover { text-decoration:underline; }
     .works-with { max-width:1000px; margin:30px auto 0; display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; }
@@ -465,6 +469,13 @@
     <p class="hero-sub">14 days of Pro on our hosted service: up to 15 screens, every feature, no credit card.<br>
       Or host it yourself, free and open source:
       <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="gh-link"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg> View on GitHub</a></p>
+    <!--
+      ⚠️ The LIVE deployed count. Only the deployment that collects install statistics answers
+      /api/public/stats, so on a self-hosted instance the endpoint 404s and on a brand-new one the
+      count is 0. The line starts hidden and stays hidden then: a marketing page must not show a zero
+      or an empty frame. It counts screens paired and not deleted, reported by installs that opted in.
+    -->
+    <p class="hero-proof" id="deployed-stat" hidden><strong id="deployed-count"></strong> screens deployed <span>(from installs that share statistics)</span></p>
 
     <!-- Works-with strip: names, not logos (no trademark artwork, nothing heavy to load). Every chip
          is a page that says how the integration works and what it needs. -->
@@ -485,23 +496,12 @@
     <p style="margin-top:18px;font-size:14px;color:var(--muted)">Not sure what to run it on?
       <a href="/certified-hardware" style="color:var(--accent)">See certified hardware &rarr;</a></p>
 
-    <!-- Trust strip. Four facts, none of them a claim a competitor can also make. -->
-    <!--
-      Trust strip. Four facts, none of them a claim a competitor can also make.
-      ⚠️ The fourth cell is the LIVE deployed count and starts hidden: only the deployment that
-      collects install statistics answers /api/public/stats, so on a self-hosted instance the endpoint
-      404s and on a brand-new one the count is 0. The strip then renders as three columns rather than
-      leaving a hole — a marketing page must not show an empty frame or a zero, and there is nothing a
-      visitor could do about either.
-    -->
+    <!-- Trust strip: three facts, none of them a claim a competitor can also make. The live deployed
+         count lives in the hero (#deployed-stat), not here, so it is shown once. -->
     <div class="trust-strip cols-3" id="trustStrip">
       <div><div class="n">12</div><div class="l">platforms, one CMS</div></div>
       <div><div class="n">$0</div><div class="l">per extra screen</div></div>
       <div><div class="n">Self-host</div><div class="l">or managed cloud</div></div>
-      <div id="deployed-stat" hidden>
-        <div class="n" id="deployed-count"></div>
-        <div class="l">screens deployed <span style="opacity:0.8">(opt-in)</span></div>
-      </div>
     </div>
 
     <!--
@@ -1318,9 +1318,6 @@
         if (!s || !(s.screens > 0)) return;
         document.getElementById('deployed-count').textContent = s.screens.toLocaleString();
         document.getElementById('deployed-stat').hidden = false;
-        // Widen the strip to four columns now that the fourth cell has something in it.
-        const strip = document.getElementById('trustStrip');
-        if (strip) strip.classList.remove('cols-3');
       })
       .catch(() => {});
 
