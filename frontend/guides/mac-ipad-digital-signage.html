@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Signage on a Mac, iPad or iPhone | ScreenTinker</title>
+  <meta name="description" content="Run a sign on a Mac mini or iMac with the native macOS player, or on an iPad or iPhone with the ScreenTinker app, and keep it up unattended.">
+  <meta name="keywords" content="mac digital signage, mac mini digital signage, ipad digital signage, ipad kiosk signage, iphone digital signage, macos signage player">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/mac-ipad-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/mac-ipad-digital-signage.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/mac-ipad-digital-signage.html">
+  <meta property="og:title" content="Digital Signage on a Mac, iPad or iPhone">
+  <meta property="og:description" content="The native macOS player for a Mac mini or iMac, and the ScreenTinker app for iPad and iPhone.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Digital Signage on a Mac, iPad or iPhone">
+  <meta name="twitter:description" content="The native macOS player for a Mac mini or iMac, and the ScreenTinker app for iPad and iPhone.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#resources">Guides</a>
+      <span>/</span>
+      <span>Mac, iPad and iPhone</span>
+    </nav>
+
+    <h1>Digital signage on a Mac, iPad or iPhone</h1>
+    <p class="lead">A Mac mini behind a TV, or an iPad on a wall mount, makes a good sign. ScreenTinker has a native player for macOS and an app for iPad and iPhone. Both are new: treat them as beta, and try one screen before you roll out a fleet.</p>
+
+    <h2>Which one?</h2>
+    <ul>
+      <li><strong>A Mac</strong> (Mac mini, iMac, MacBook, macOS 12 or later) runs the <strong>native player</strong>, the same engine as the Raspberry Pi and Windows players. It plays from its own offline cache, does zones, transitions, video walls, LAN triggers and the remote terminal.</li>
+      <li><strong>An iPad or iPhone</strong> (iPadOS / iOS 16 or later) runs the <strong>ScreenTinker app</strong>, which shows the <a href="/player">web player</a> full screen with the screen kept awake. It needs the network to start: iOS does not let an app's web view keep an offline media cache for a server it does not know in advance.</li>
+      <li><strong>Apple TV</strong> cannot run a player — tvOS has no web view. <a href="/guides/apple-tv-digital-signage.html">Why, and what to use instead.</a></li>
+    </ul>
+
+    <h2 id="mac">Set up a Mac</h2>
+    <ol>
+      <li>Download <code>ScreenTinker-&lt;version&gt;.dmg</code> from your instance's <a href="/download/">downloads page</a>, open it and drag ScreenTinker to Applications.</li>
+      <li>The first launch: Control-click the app and choose <strong>Open</strong>, unless your administrator distributed a notarized build.</li>
+      <li>Start it at login, pointed at your server. In Terminal:
+        <pre><code>/Applications/ScreenTinker.app/Contents/MacOS/ScreenTinker --install-autostart --server https://your-server</code></pre>
+        It restarts the player if it ever crashes; <em>Exit player</em> on the on-screen menu leaves it stopped until the next login.</li>
+      <li>Allow <strong>Local Network</strong> access when macOS asks, if your server or trigger senders are on the LAN.</li>
+    </ol>
+
+    <h2 id="ipad">Set up an iPad or iPhone</h2>
+    <ol>
+      <li>Install the ScreenTinker app your organisation distributes (TestFlight or your device-management system).</li>
+      <li>Open it, type your server address and tap <strong>Connect</strong>. Pick an orientation lock if the device is mounted.</li>
+      <li>For a screen the public can touch, lock the device into the app: <strong>Guided Access</strong> (Settings &rarr; Accessibility) on one device, or <strong>Single App Mode</strong> from device management for a fleet.</li>
+    </ol>
+    <p>To get back to the setup screen, hold three fingers on the screen for three seconds.</p>
+
+    <h2 id="pair">Pairing</h2>
+    <p>Both show a six-digit code. In the dashboard, choose <strong>Add Display</strong>, type the code, and name the screen. The pairing survives restarts and app updates.</p>
+
+    <h2 id="unattended">Keeping it up unattended</h2>
+    <ul>
+      <li><strong>A Mac</strong> keeps its displays awake while the player runs. Turn on <strong>automatic login</strong> for the player account and <strong>Start up automatically after a power failure</strong> (System Settings &rarr; Energy), so a power cut ends with the sign back up.</li>
+      <li><strong>An iPad</strong> stays awake while the app is open. Keep it on power, and use Single App Mode so the app comes back after a restart — without device management, an iPad that restarts waits at the lock screen.</li>
+    </ul>
+
+    <h2>What the dashboard can and cannot do</h2>
+    <p>Playlists, schedules, layouts, widgets, proof-of-play, mute and the live view work on both. A Mac also takes screen on/off, volume, the remote terminal and LAN triggers; an iPad or iPhone does not — iOS gives an app no control over the panel or the media volume. Neither can be rebooted or updated from the dashboard: a Mac is updated from the .dmg or by device management, and the app updates through Apple. The dashboard only shows the buttons a screen can honour.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/download/">Download a player for any platform</a></li>
+        <li><a href="/guides/apple-tv-digital-signage.html">Apple TV</a></li>
+        <li><a href="/guides/windows-digital-signage.html">Windows</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+  </main>
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://screentinker.com/" },
+      { "@type": "ListItem", "position": 3, "name": "Mac, iPad and iPhone", "item": "https://screentinker.com/guides/mac-ipad-digital-signage.html" }
+    ]
+  }
+  </script>
+</body>
+</html>

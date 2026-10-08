@@ -329,6 +329,20 @@ const LINUX_TERMINAL_PRESETS = [
   { label: 'Whoami', cmd: 'id' },
 ];
 
+// The native macOS player: /bin/sh as the signed-in user, read-only diagnostics. There is no
+// privileged helper on a Mac, so nothing here could reach root even if it tried.
+const MAC_TERMINAL_PRESETS = [
+  { label: 'System', cmd: 'sw_vers; sysctl -n hw.model' },
+  { label: 'Storage', cmd: 'df -h /' },
+  { label: 'Memory', cmd: 'vm_stat | head -6' },
+  { label: 'Network', cmd: 'ifconfig | grep -E "^[a-z]|inet "' },
+  { label: 'Uptime', cmd: 'uptime' },
+  { label: 'Power', cmd: 'pmset -g | head -20' },
+  { label: 'Player status', cmd: 'launchctl print gui/$(id -u)/com.screentinker.player | head -25' },
+  { label: 'Player log', cmd: 'tail -n 50 "$HOME/Library/Application Support/ScreenTinker/state/player.log"' },
+  { label: 'Whoami', cmd: 'id' },
+];
+
 // The native Windows player: its one-shot shell is PowerShell (`powershell -NoProfile -Command`), run
 // as the signed-in player user. Read-only diagnostics only; anything needing elevation is not
 // reachable from here at all (the SYSTEM helper takes a fixed verb list, not commands).
@@ -453,6 +467,8 @@ function isAndroidDevice(device) {
   if (device.client_type === 'pi' || platform.startsWith('linux/')) return false;
   // The native Windows player, same reasoning and same inlining (see isWindowsDevice below).
   if (device.client_type === 'win' || platform.startsWith('windows/')) return false;
+  // And the native macOS player (see isMacDevice below).
+  if (device.client_type === 'mac' || platform.startsWith('macos/')) return false;
   if (device.client_type === 'apk') return true;
   const av = String(device.android_version || '');
   return av !== '' && !av.startsWith('Web/');
@@ -476,15 +492,24 @@ function isWindowsDevice(device) {
   return String(device.platform || '').toLowerCase().startsWith('windows/');
 }
 
-// Either native player (the shared Python/Qt engine): what they have in common is that they are not
+// Mirrors the 'macos' arm of platformFamily(): the native macOS player registers client_type 'mac'
+// and platform 'macOS/<version> (<model>)'. NOT Safari or Chrome opening /player on a Mac.
+function isMacDevice(device) {
+  if (!device) return false;
+  if (device.client_type === 'mac') return true;
+  return String(device.platform || '').toLowerCase().startsWith('macos/');
+}
+
+// Any native player (the shared Python/Qt engine): what they have in common is that they are not
 // Android, have no device-owner tier, and carry an on-device settings menu behind the PIN.
 function isNativeDevice(device) {
-  return isLinuxDevice(device) || isWindowsDevice(device);
+  return isLinuxDevice(device) || isWindowsDevice(device) || isMacDevice(device);
 }
 
 // The one-shot shell's presets and wording, per native OS. Android keeps TERMINAL_PRESETS.
 function terminalPresets(device) {
   if (isWindowsDevice(device)) return WINDOWS_TERMINAL_PRESETS;
+  if (isMacDevice(device)) return MAC_TERMINAL_PRESETS;
   if (isLinuxDevice(device)) return LINUX_TERMINAL_PRESETS;
   return TERMINAL_PRESETS;
 }

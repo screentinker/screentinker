@@ -1,7 +1,8 @@
 'use strict';
 
 /*
- * Native player self-update — one factory, mounted twice (routes/pi-update.js, routes/win-update.js):
+ * Native player self-update — one factory, mounted for the Pi and Windows (routes/pi-update.js,
+ * routes/win-update.js), and download-only for macOS (routes/mac-update.js):
  *
  *   GET /api/<kind>/update/check?version=&device_id=[&forced=1]
  *     -> { update_available, latest_version, current_version, download_url, sha256, size, reason }
@@ -45,9 +46,13 @@ const logCoalescer = require('../lib/log-coalescer');
  * @param {string} spec.missingReason     reason when nothing is hosted ('deb-missing')
  * @param {string} spec.hashingReason     reason while the sha256 is being computed ('deb-hashing')
  * @param {boolean} [spec.anonymousLookup] a check WITHOUT device_id is a package lookup (see below)
+ * @param {boolean} [spec.selfUpdate]     false = a player that never installs itself (macOS): only the
+ *                                        download is mounted — no update check, and no rollback branch,
+ *                                        so no OTA rollout row is ever created for a family that cannot
+ *                                        take part in one
  */
 function createNativeUpdateRoutes(spec) {
-  const { kind, cache, label, contentType, missingReason, hashingReason, anonymousLookup = false } = spec;
+  const { kind, cache, label, contentType, missingReason, hashingReason, anonymousLookup = false, selfUpdate = true } = spec;
   const CHECK_URL = `/api/${kind}/update/check`;
   const DOWNLOAD_URL = `/download/${kind}`;
   const tag = `[ota/${kind}]`;
@@ -64,7 +69,7 @@ function createNativeUpdateRoutes(spec) {
     const getDb = () => deps.db || require('../db/database').db;
     const getBand = deps.getBand || (() => require('../services/loop-lag').getBand());
 
-    app.get(CHECK_URL, (req, res) => {
+    if (selfUpdate) app.get(CHECK_URL, (req, res) => {
       const currentVersion = typeof req.query.version === 'string' ? req.query.version : '';
       const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
       const forced = req.query.forced === '1' || req.query.forced === 'true';
@@ -165,6 +170,7 @@ function createNativeUpdateRoutes(spec) {
       let pkg = cache.get();
       // ?version=<previous> during a rollback: the archived previous package (lib/ota-rollout.js).
       if (req.query.version && pkg.exists && String(req.query.version) !== pkg.version) {
+        if (!selfUpdate) return res.status(404).type('text/plain').send(`That ${label} version is not offered.`);
         const g = require('../lib/ota-rollout').gate(kind, pkg, {});
         if (g.action === 'rollback' && g.release.version === String(req.query.version)) pkg = g.release;
         else return res.status(404).type('text/plain').send(`That ${label} version is not offered.`);
@@ -190,7 +196,7 @@ function createNativeUpdateRoutes(spec) {
   }
 
   mount.DOWNLOAD_URL = DOWNLOAD_URL;
-  mount.CHECK_URL = CHECK_URL;
+  mount.CHECK_URL = selfUpdate ? CHECK_URL : null;
   return mount;
 }
 

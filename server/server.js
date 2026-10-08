@@ -2071,6 +2071,10 @@ winCache.start();                                    // native Windows player: n
 // /api/win/update/check + /download/win — the same factory as the Pi route (routes/native-update.js),
 // plus the device-less sha256 lookup the SYSTEM helper service makes before running an installer.
 require('./routes/win-update')(app);
+const macCache = require('./lib/mac-cache');
+macCache.start();                                    // native macOS player: newest ScreenTinker-<ver>.dmg + its sha256
+// /download/mac only — a Mac never updates itself, so the factory mounts no update check for it.
+require('./routes/mac-update')(app);
 require('./lib/revision-retention').start(require('./db/database').db);   // version history: bounded retention, daily
 // Storage backends (docs/storage.md): resume a migration copier a restart interrupted (it never
 // commits or drains by itself), honour STORAGE_DRAIN_AFTER_HOURS, probe open breakers. Idle on an
@@ -2904,6 +2908,7 @@ app.get(['/download', '/download/'], (req, res) => {
     brightsign: { exists: bsPackage.available(), version: bsPackage.version() },
     deb: debCache.get(),
     exe: winCache.get(),
+    dmg: macCache.get(),
   }, base));
 });
 

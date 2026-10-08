@@ -1,0 +1,76 @@
+# XcodeGen spec for the ScreenTinker iPad/iPhone app. The repository keeps this text file, never a
+# generated .xcodeproj:  brew install xcodegen && xcodegen generate  (docs/ios-player.md).
+name: ScreenTinker
+options:
+  bundleIdPrefix: com.screentinker
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "2.4.3"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    # Signing is the distributor's, not the repository's: set DEVELOPMENT_TEAM (or sign in Xcode).
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"
+targets:
+  ScreenTinker:
+    type: application
+    platform: iOS
+    sources:
+      - path: ScreenTinker
+    info:
+      path: ScreenTinker/Info.plist
+      properties:
+        CFBundleDisplayName: ScreenTinker
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+          - UIInterfaceOrientationPortraitUpsideDown
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # A signage server is often on the LAN, sometimes over plain http. Web content only — the
+        # app's own requests stay on ATS defaults.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: ScreenTinker connects to your signage server on the local network.
+        NSMicrophoneUsageDescription: The ScreenTinker dashboard can open a two-way intercom with this screen.
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.screentinker.player
+        INFOPLIST_FILE: ScreenTinker/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+  ScreenTinkerTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ScreenTinkerTests
+    dependencies:
+      - target: ScreenTinker
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.screentinker.player.tests
+schemes:
+  ScreenTinker:
+    build:
+      targets:
+        ScreenTinker: all
+        ScreenTinkerTests: [test]
+    test:
+      targets:
+        - ScreenTinkerTests

@@ -58,6 +58,19 @@
     counting (you can turn it off). Counts are kept for 90 days by default.
   - Android players only for now, with no extra download. The Raspberry Pi and Windows players
     will follow. See `docs/audience-counting.md`, which includes a notice to put up.
+- **Mac and iPad/iPhone players (beta).**
+  - **Mac:** the native player that runs on Raspberry Pi and Windows now runs on macOS 12 or later, as
+    `ScreenTinker.app` in a .dmg on your instance's download page. It plays from its own offline cache
+    and does zones, transitions, video walls, triggers, screen on/off, volume and the remote terminal.
+    `--install-autostart` starts it at login and restarts it if it crashes.
+  - **iPad and iPhone:** a new app shows your server's player full screen and keeps the device awake,
+    with an orientation lock. Distribute it through TestFlight or device management, and lock it with
+    Guided Access or Single App Mode.
+  - Both are new and have only been tested in CI so far. Neither can be rebooted or updated from the
+    dashboard: update a Mac from the .dmg or with device management, and the app updates through Apple.
+    iOS gives an app no media volume or offline media cache, so those controls do not appear for it.
+    See `docs/macos-player.md` and `docs/ios-player.md`. Apple TV is still not supported
+    (`docs/tvos-player.md`).
 
 - **SAML 2.0 single sign-on for organizations** (Settings → Single sign-on → Add provider →
   SAML 2.0).

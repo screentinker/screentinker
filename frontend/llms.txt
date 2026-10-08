@@ -29,6 +29,7 @@ so plainly when it has none.
 - [Samsung TV digital signage without MagicINFO](https://screentinker.com/guides/samsung-tv-digital-signage.html): uses the built-in URL Launcher, and states which model years actually work.
 - [LG webOS Signage panels](https://screentinker.com/guides/lg-webos-digital-signage.html): the .ipk, USB or SI-server install, fleet provisioning and self-update. Community-reported, not certified.
 - [BrightSign players](https://screentinker.com/guides/brightsign-digital-signage.html): one autorun.zip built by your own server, dual output, BrightWall sync, real reboots and CEC panel power.
+- [Digital signage on a Mac, iPad or iPhone](https://screentinker.com/guides/mac-ipad-digital-signage.html): the native macOS player and the iPad/iPhone app (both beta), autostart and unattended settings.
 - [Digital signage on Windows](https://screentinker.com/guides/windows-digital-signage.html): kiosk-mode browser, autostart, and the settings that decide whether it survives a month.
 - [ChromeOS and Chromebox](https://screentinker.com/guides/chromeos-digital-signage.html): managed kiosk through the Google Admin console, or unmanaged on a single device.
 - [Fire TV Stick 4K Select and HD (Vega OS)](https://screentinker.com/guides/digital-signage-vega.html): these two sticks are not Android, the APK does not install, and they are **not** certified hardware.

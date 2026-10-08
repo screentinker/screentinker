@@ -33,7 +33,9 @@ log = logging.getLogger("ota")
 CHECK_EVERY_S = 30 * 60
 FIRST_CHECK_S = 60
 def packaged():
-    return ops.packaged() and not VERSION.endswith("-dev")
+    # SELF_UPDATE False (platform/macos) means this OS never installs itself: like a source checkout it
+    # reports a newer version and stops there, so it never downloads a package it cannot install.
+    return getattr(ops, "SELF_UPDATE", True) and ops.packaged() and not VERSION.endswith("-dev")
 
 
 class Updater:
@@ -79,8 +81,8 @@ class Updater:
     async def check(self, forced):
         async with self._lock:
             server = self.config.server_url
-            if not server:
-                return
+            if not server or not ops.UPDATE_CHECK_PATH:
+                return          # no check at all where the OS updates the player itself (macOS)
             if forced:
                 self.state = T.on_forced_check(self.state)
             q = {"version": VERSION, "device_id": self.config.device_id or ""}
@@ -104,7 +106,8 @@ class Updater:
                 return
             latest = str(info.get("latest_version") or "")
             if not packaged():
-                self.log_remote("info", "ota", "update %s available, but this is a source checkout — not installing" % latest)
+                why = getattr(ops, "NO_SELF_UPDATE_REASON", "this is a source checkout")
+                self.log_remote("info", "ota", "update %s available, but %s — not installing" % (latest, why))
                 return
             if T.is_new_target(self.state, latest):
                 self._purge()

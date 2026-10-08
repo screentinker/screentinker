@@ -1,12 +1,13 @@
-# ScreenTinker native player — Raspberry Pi and Windows
+# ScreenTinker native player — Raspberry Pi, Windows and macOS
 
-One native player with Android-app parity, two operating systems. It is not the web player in a
+One native player with Android-app parity, three operating systems (macOS is beta — see
+`docs/macos-player.md`). It is not the web player in a
 browser: playback, zones, transitions, sync, triggers and device control are native Python/Qt code,
 and QtWebEngine is used only where Android uses a WebView (widgets, YouTube, HTML bundles, and the
 WebRTC intercom/live view).
 
 - **Engine** (`screentinker_native/`, OS-neutral): socket, playback, zones, transitions, sync,
-  triggers, cache, QML scene. **OS backends** (`screentinker_native/platform/linux`, `…/windows`):
+  triggers, cache, QML scene. **OS backends** (`screentinker_native/platform/linux`, `…/windows`, `…/macos`):
   device info, screen power, mixer, brightness, shell/PTY, the privileged door, OS actions. Nothing
   above `platform/` may test the OS itself.
 - **Stack:** Python + **PySide6** (Qt for Python, **LGPL-3.0**). ⚠️ Never PyQt6 — it is GPL-3.0, and
@@ -16,6 +17,9 @@ WebRTC intercom/live view).
   all come from the distribution. Bookworm Pis: upgrade, or use the web-kiosk installer.
 - **Windows:** Windows 10 1809+ / 11, x64. An Inno Setup installer bundling everything (PyInstaller),
   plus the `ScreenTinkerHelper` service.
+- **macOS (beta):** macOS 12+. `ScreenTinker.app` in a .dmg (PyInstaller), started at login by a
+  per-user LaunchAgent. No privileged helper, so no reboot/clock/install from the dashboard, and it does
+  not update itself. `native/packaging/macos/build.sh`; details in `docs/macos-player.md`.
 
 ## Install — Raspberry Pi
 On the Pi, pointing at your ScreenTinker server:

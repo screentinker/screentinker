@@ -443,16 +443,37 @@
         return !!(b && typeof b.postMessage === 'function');
       } catch (e) { return false; }
     }
+    /*
+     * The iPad/iPhone app (ios/) is the same shape as Vega: the page is the TOP window of a WKWebView,
+     * opened as /player?host=ios, and the shell listens on window.webkit.messageHandlers.screentinker.
+     * Same rule as onVega(): the query string alone is a Safari tab that copied the URL, and stays a
+     * browser. ⚠️ Only the SHELL behaviours Vega has are shared with iOS (identity kept by the shell,
+     * restart through it, waiting for host:ready). Vega's rendering concessions — the second decoder,
+     * the smaller wipe — are about Fire TV hardware and stay on onVega() alone.
+     */
+    function onIOS() {
+      try {
+        if (new URLSearchParams(window.location.search).get('host') !== 'ios') return false;
+        const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.screentinker;
+        return !!(h && typeof h.postMessage === 'function');
+      } catch (e) { return false; }
+    }
     const HOST = (() => {
       let platform = null;
       try { platform = new URLSearchParams(window.location.search).get('host'); } catch (e) {}
       const vegaBridge = () => {
         try {
+          if (platform === 'ios') {
+            const m = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.screentinker;
+            return m && typeof m.postMessage === 'function' ? m : null;
+          }
           const b = window.ReactNativeWebView;
           return b && typeof b.postMessage === 'function' ? b : null;
         } catch (e) { return null; }
       };
-      const topLevelVega = platform === 'vega' && window.parent === window;
+      // Top-level shells: Vega (ReactNativeWebView) and iOS (WKScriptMessageHandler). Both take a JSON
+      // string and answer with window.postMessage on this same window.
+      const topLevelVega = (platform === 'vega' || platform === 'ios') && window.parent === window;
       if (!platform || (window.parent === window && !topLevelVega)) return null;
       const h = { platform, ready: false, caps: [], info: {}, topLevel: topLevelVega };
       h.send = (msg) => {
@@ -555,8 +576,8 @@
       // unlike BrightSign's widget, does come back from one. Once the shell has answered we do
       // not also reload here; its reload tears this document down.
       try {
-        if (onVega() && HOST && HOST.command('restart')) {
-          console.log('[vega] restart delegated to shell:', reason);
+        if ((onVega() || onIOS()) && HOST && HOST.command('restart')) {
+          console.log('[' + HOST.platform + '] restart delegated to shell:', reason);
           return;
         }
       } catch (e) { /* a missing shell must not strand the refresh */ }
@@ -592,7 +613,10 @@
         if (vegaIdentityCleared) return null;
         // typeof onVega: a missing predicate means "not Vega", never a throw. The query string
         // alone is not enough — onVega() also requires the WebView bridge.
-        if (typeof onVega !== 'function' || !onVega()) return null;
+        // The iOS app keeps the pairing too (in the Keychain). typeof onIOS: the capability and
+        // identity tests extract this function without it, which must mean "not iOS".
+        const shell = (typeof onVega === 'function' && onVega()) || (typeof onIOS === 'function' && onIOS());
+        if (!shell) return null;
         if (typeof HOST === 'undefined' || !HOST || !HOST.ready || !HOST.info) return null;
         const deviceId = HOST.info.deviceId ? String(HOST.info.deviceId) : '';
         const deviceToken = HOST.info.deviceToken ? String(HOST.info.deviceToken) : '';
@@ -618,7 +642,8 @@
     function clearVegaIdentity() {
       vegaIdentityCleared = true;
       try {
-        if (typeof onVega !== 'function' || !onVega()) return;
+        const shell = (typeof onVega === 'function' && onVega()) || (typeof onIOS === 'function' && onIOS());
+        if (!shell) return;
         if (typeof HOST === 'undefined' || !HOST || typeof HOST.command !== 'function') return;
         HOST.command('clear-identity');
       } catch (e) { /* best effort: the local wipe still happened */ }
@@ -700,7 +725,8 @@
       // server cannot authenticate. Clearing is explicit (unpair, repair, ?reset=) — a save that
       // simply has no identity yet must not wipe a pairing the shell is about to hand us.
       try {
-        if (cfg && cfg.deviceId && cfg.deviceToken && typeof onVega === 'function' && onVega()
+        if (cfg && cfg.deviceId && cfg.deviceToken
+            && ((typeof onVega === 'function' && onVega()) || (typeof onIOS === 'function' && onIOS()))
             && typeof HOST !== 'undefined' && HOST && typeof HOST.command === 'function') {
           HOST.command('set-identity', { deviceId: String(cfg.deviceId), deviceToken: String(cfg.deviceToken) });
         }
@@ -2747,7 +2773,8 @@
       // The cap is the same idea as BrightSign's onReady: a shell that never speaks must still
       // be able to pair. vegaConnectGaveUp stops the cap from deferring itself forever.
       try {
-        if (!vegaConnectGaveUp && !vegaIdentityCleared && typeof onVega === 'function' && onVega()
+        if (!vegaConnectGaveUp && !vegaIdentityCleared
+            && ((typeof onVega === 'function' && onVega()) || (typeof onIOS === 'function' && onIOS()))
             && typeof HOST !== 'undefined' && HOST && !HOST.ready) {
           vegaConnectDeferred = true;
           if (!vegaConnectWait) {
@@ -4488,6 +4515,15 @@
       if (typeof HOST !== 'undefined' && HOST && HOST.ready) {
         for (const c of HOST.caps) if (!caps.includes(c)) caps.push(c);
       }
+      // iOS (ios/): a WKWebView ignores HTMLMediaElement.volume — it is read-only and always 1 on
+      // iPhone and iPad — so a volume slider there would move nothing. Mute does work. typeof-guarded:
+      // the capability tests extract this function without onIOS.
+      try {
+        if (typeof onIOS === 'function' && onIOS()) {
+          const i = caps.indexOf('audio.volume');
+          if (i !== -1) caps.splice(i, 1);
+        }
+      } catch (e) { /* not iOS */ }
       return caps;
     }
 
@@ -4642,7 +4678,8 @@
       // Vega must not register as "Chrome 120". platformFamily() keys off this string, and a
       // stick that says Chrome is a browser row: no model, and no CMA capture cap. onVega()
       // is false until ReactNativeWebView exists, so the query string alone does not flip it.
-      data.platform = ON_BRIGHTSIGN ? 'brightsign' : (onVega() ? 'vega' : browserPlatform());
+      // iOS likewise: 'ios' is what platformFamily() keys the ios family on — not "Safari 18".
+      data.platform = ON_BRIGHTSIGN ? 'brightsign' : (onVega() ? 'vega' : (onIOS() ? 'ios' : browserPlatform()));
       if (ON_BRIGHTSIGN) {
         try {
           data.bs_model = BS.model() || null;

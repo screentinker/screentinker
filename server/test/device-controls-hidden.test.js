@@ -74,6 +74,7 @@ function render(device, telemetry) {
       if (d.client_type === 'wgt') return false;
       if (d.client_type === 'pi' || p.startsWith('linux/')) return false;   // the native Pi player
       if (d.client_type === 'win' || p.startsWith('windows/')) return false;   // the native Windows player
+      if (d.client_type === 'mac' || p.startsWith('macos/')) return false;   // the native macOS player
       if (d.client_type === 'apk') return true;
       const av = String(d.android_version || '');
       return av !== '' && !av.startsWith('Web/');
@@ -84,8 +85,8 @@ function render(device, telemetry) {
     isLinuxDevice: (d) => !!d && (d.client_type === 'pi' || String(d.platform || '').toLowerCase().startsWith('linux/')),
     // Mirrors isWindowsDevice() / isNativeDevice() / terminalPresets() in device-detail.js.
     isWindowsDevice: (d) => !!d && (d.client_type === 'win' || String(d.platform || '').toLowerCase().startsWith('windows/')),
-    isNativeDevice: (d) => !!d && (d.client_type === 'pi' || d.client_type === 'win'
-      || /^(linux|windows)\//.test(String(d.platform || '').toLowerCase())),
+    isNativeDevice: (d) => !!d && (d.client_type === 'pi' || d.client_type === 'win' || d.client_type === 'mac'
+      || /^(linux|windows|macos)\//.test(String(d.platform || '').toLowerCase())),
     terminalPresets: (d) => {
       const p = String((d && d.platform) || '').toLowerCase();
       if (d && (d.client_type === 'win' || p.startsWith('windows/'))) return [{ label: 'Helper service', cmd: 'Get-Service ScreenTinkerHelper' }];
@@ -781,9 +782,15 @@ test('the shipped isWindowsDevice / terminalPresets agree with the harness stubs
     }
     return null;
   };
-  const ctx = { WINDOWS_TERMINAL_PRESETS: ['W'], LINUX_TERMINAL_PRESETS: ['L'], TERMINAL_PRESETS: ['A'] };
-  vm.runInNewContext([grab('isLinuxDevice'), grab('isWindowsDevice'), grab('isNativeDevice'), grab('terminalPresets')].join('\n')
-    + '\nthis.w = isWindowsDevice; this.n = isNativeDevice; this.p = terminalPresets;', ctx);
+  const ctx = { WINDOWS_TERMINAL_PRESETS: ['W'], LINUX_TERMINAL_PRESETS: ['L'], MAC_TERMINAL_PRESETS: ['M'], TERMINAL_PRESETS: ['A'] };
+  vm.runInNewContext([grab('isLinuxDevice'), grab('isWindowsDevice'), grab('isMacDevice'), grab('isNativeDevice'), grab('terminalPresets')].join('\n')
+    + '\nthis.w = isWindowsDevice; this.m = isMacDevice; this.n = isNativeDevice; this.p = terminalPresets;', ctx);
+  // The native macOS player: client_type 'mac' or platform 'macOS/…'; Safari on a Mac is a browser.
+  assert.equal(ctx.m({ client_type: 'mac' }), true);
+  assert.equal(ctx.m({ platform: 'macOS/15.1 (Mac mini)' }), true);
+  assert.equal(ctx.m({ client_type: 'player', platform: 'Safari 18' }), false);
+  assert.equal(ctx.n({ client_type: 'mac' }), true);
+  assert.deepEqual(ctx.p({ client_type: 'mac' }), ['M']);
   assert.equal(ctx.w({ client_type: 'win' }), true);
   assert.equal(ctx.w({ platform: 'windows/10 Enterprise LTSC (NUC)' }), true);
   assert.equal(ctx.w({ client_type: 'player', platform: 'Win32' }), false, 'navigator.platform is not our prefix');

@@ -1,0 +1,13 @@
+# macOS build of the native player. Every dependency here ends up in the .app, so every licence is
+# checked: PySide6/shiboken6 LGPL-3.0 (dynamically linked, notices shipped), everything else
+# MIT/BSD/Apache/PSF. NEVER PyQt6 (GPL-3.0) — see docs/macos-player.md. Same pins as the Windows build
+# where the package is shared, so the two desktop players run the same engine stack.
+PySide6-Essentials==6.8.3
+PySide6-Addons==6.8.3
+shiboken6==6.8.3
+python-socketio[asyncio_client]==5.17.0
+python-engineio==4.14.0
+aiohttp==3.14.3
+psutil==7.2.2
+tzlocal==5.4.4
+pyinstaller==6.22.3
