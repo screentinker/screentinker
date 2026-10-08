@@ -19,7 +19,16 @@
  * owner's plan (middleware/subscription storageRoomBytes) and the server's MAX_FILE_SIZE.
  *
  * Scale-out: a sync takes a short lease on its row (sync_lease_until), so two nodes never sync the
- * same folder at once.
+ * same folder at once. The lease is renewed after every file, and every renewal and the final clear
+ * are conditional on sync_lease_until still holding the value THIS sync wrote: a sync that outlived
+ * its lease (another node took the folder over) stops at the next file and leaves the row alone.
+ *
+ * Removal is the dangerous direction, so it runs only on a COMPLETE listing. A folder over
+ * MAX_FILES media files, or one too long to page through, syncs its first MAX_FILES and removes
+ * nothing; the summary says so.
+ *
+ * A sync runs as the person who set the folder up. If they can no longer write to the workspace, or
+ * the workspace (or its organization) is gone, the folder is paused (enabled = 0) with the reason.
  */
 
 const fs = require('fs');
@@ -35,7 +44,7 @@ const LEASE_SEC = 15 * 60;
 const MIN_INTERVAL_MIN = 5;
 const MAX_INTERVAL_MIN = 24 * 60;
 const DEFAULT_INTERVAL_MIN = 15;
-const MAX_FILES = 500;
+let MAX_FILES = 500;            // media files per folder; _setMaxFiles in tests
 
 let io = null;
 let timer = null;
@@ -149,13 +158,55 @@ function publishIfAllowed(db, folder) {
 
 /* ============================== sync ============================== */
 
+/** Take the folder's lease. Returns the expiry written (this sync's token for it), or null if held. */
 function takeLease(db, id) {
   const now = Math.floor(Date.now() / 1000);
   const r = db.prepare('UPDATE cloud_folders SET sync_lease_until = ? WHERE id = ? AND (sync_lease_until IS NULL OR sync_lease_until < ?)')
     .run(now + LEASE_SEC, id, now);
-  return r.changes === 1;
+  return r.changes === 1 ? now + LEASE_SEC : null;
 }
-function releaseLease(db, id) { try { db.prepare('UPDATE cloud_folders SET sync_lease_until = NULL WHERE id = ?').run(id); } catch { /* */ } }
+/**
+ * Push the lease out again, but only if it is still ours. Returns the new expiry, or null if another
+ * node has taken the folder over (ours ran out). A later taker always writes a later expiry than any
+ * of ours (it can take only once ours is in the past), so the value is a safe holder token.
+ */
+function renewLease(db, id, held) {
+  const until = Math.max(held, Math.floor(Date.now() / 1000) + LEASE_SEC);
+  // Run even when the expiry would not move: the WHERE is the "still ours?" check.
+  const r = db.prepare('UPDATE cloud_folders SET sync_lease_until = ? WHERE id = ? AND sync_lease_until = ?').run(until, id, held);
+  return r.changes === 1 ? until : null;
+}
+function releaseLease(db, id, held) {
+  try { db.prepare('UPDATE cloud_folders SET sync_lease_until = NULL WHERE id = ? AND sync_lease_until = ?').run(id, held); } catch { /* */ }
+}
+
+class LeaseLost extends Error {}
+
+/** Pause a folder that can no longer sync, with the reason, so the poller stops picking it up. */
+function pauseFolder(db, id, reason) {
+  try { db.prepare("UPDATE cloud_folders SET enabled = 0, updated_at = strftime('%s','now') WHERE id = ?").run(id); } catch { /* */ }
+  return new m365.M365Error(reason);
+}
+
+/**
+ * Why this folder must not sync any more, or null. The workspace and its organization must still
+ * exist (and still be the folder's), and the person it syncs as must still be able to write there:
+ * a workspace editor or admin, or an owner/admin of the organization.
+ */
+function cannotSync(db, folder) {
+  const ws = db.prepare('SELECT id, organization_id FROM workspaces WHERE id = ?').get(folder.workspace_id);
+  if (!ws) return 'This folder\'s workspace no longer exists. The sync is paused.';
+  if (ws.organization_id !== folder.organization_id || !db.prepare('SELECT 1 FROM organizations WHERE id = ?').get(folder.organization_id)) {
+    return 'This folder\'s workspace is no longer in the organization it was set up in. The sync is paused.';
+  }
+  const owner = folder.user_id && db.prepare('SELECT id FROM users WHERE id = ?').get(folder.user_id);
+  if (!owner) return 'The person who set up this folder no longer has an account. The sync is paused: remove it and have an organization admin add it again.';
+  const wsRole = db.prepare('SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?').get(folder.workspace_id, folder.user_id);
+  const orgRole = db.prepare('SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?').get(folder.organization_id, folder.user_id);
+  const canWrite = (wsRole && wsRole.role !== 'workspace_viewer') || (orgRole && (orgRole.role === 'org_owner' || orgRole.role === 'org_admin'));
+  if (!canWrite) return 'The person who set up this folder can no longer edit this workspace. The sync is paused: remove it and have an organization admin add it again.';
+  return null;
+}
 
 function maxBytesFor(userId) {
   let room = null;
@@ -169,7 +220,8 @@ function retireContent(db, folder, contentId) {
   if (!c) return 'gone';
   const elsewhere = db.prepare('SELECT COUNT(*) n FROM playlist_items WHERE content_id = ? AND playlist_id IS NOT ?').get(contentId, folder.playlist_id || null).n
     + db.prepare('SELECT COUNT(*) n FROM playlists WHERE id IS NOT ? AND published_snapshot LIKE ?').get(folder.playlist_id || null, `%${contentId}%`).n
-    + (() => { try { return db.prepare('SELECT COUNT(*) n FROM schedules WHERE content_id = ?').get(contentId).n; } catch { return 0; } })();
+    + [['schedules', 'content_id'], ['video_walls', 'content_id'], ['devices', 'default_content_id'], ['assignments', 'content_id']]
+      .reduce((n, [t, col]) => { try { return n + db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE ${col} = ?`).get(contentId).n; } catch { return n; } }, 0);
   if (elsewhere > 0) return 'kept';
   const purge = require('../routes/content').purgeContentRow;
   if (typeof purge !== 'function') return 'kept';
@@ -185,24 +237,41 @@ function retireContent(db, folder, contentId) {
 async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
   const db = dbOf();
   if (running.has(folderId)) { const e = new Error('This folder is already syncing.'); e.status = 409; throw e; }
-  if (!takeLease(db, folderId)) { const e = new Error('This folder is already syncing.'); e.status = 409; throw e; }
+  let lease = takeLease(db, folderId);
+  if (!lease) { const e = new Error('This folder is already syncing.'); e.status = 409; throw e; }
   running.add(folderId);
   const summary = { trigger, added: 0, updated: 0, removed: 0, kept: 0, unchanged: 0, skipped_other: 0, skipped_too_large: 0, failed: 0, playlist: 'none', errors: [] };
   let status = 'ok';
   let lastError = null;
+  let leaseLost = false;
+  const heartbeat = () => { lease = renewLease(db, folderId, lease); if (!lease) throw new LeaseLost(); };
   try {
     const folder = db.prepare('SELECT * FROM cloud_folders WHERE id = ?').get(folderId);
     if (!folder) return null;
-    const owner = folder.user_id && db.prepare('SELECT id FROM users WHERE id = ?').get(folder.user_id);
-    if (!owner) throw new m365.M365Error('The person who set up this folder no longer has an account. Remove it and add it again.');
+    const why = cannotSync(db, folder);
+    if (why) throw pauseFolder(db, folder.id, why);
 
-    const files = await m365.listFolder(folder.organization_id, folder.drive_id, folder.item_id, { max: MAX_FILES + 1 });
-    if (files.length > MAX_FILES) summary.errors.push(`Only the first ${MAX_FILES} files are synced.`);
-    const media = files.filter((f) => f.media).slice(0, MAX_FILES);
-    summary.skipped_other = files.filter((f) => !f.media).length;
+    const listing = await m365.listFolder(folder.organization_id, folder.drive_id, folder.item_id, { maxMedia: MAX_FILES + 1 });
+    heartbeat();
+    const allMedia = listing.files.filter((f) => f.media);
+    const media = allMedia.slice(0, MAX_FILES);
+    // Only a complete listing can say a file has gone; otherwise nothing is removed this time.
+    const complete = listing.complete && allMedia.length <= MAX_FILES;
+    summary.listing_complete = complete;
+    if (allMedia.length > MAX_FILES) summary.errors.push(`Only the first ${MAX_FILES} media files are synced, and nothing is removed while the folder holds more.`);
+    else if (!complete) summary.errors.push('The folder is too large to list in full, so nothing is removed this time.');
+    summary.skipped_other = listing.files.filter((f) => !f.media).length;
 
     const mapped = new Map(db.prepare('SELECT * FROM cloud_folder_items WHERE folder_id = ?').all(folder.id).map((r) => [r.remote_id, r]));
     const actor = { userId: null, kind: 'system', label: 'SharePoint sync' };
+    /*
+     * WHO the bytes are written for (lib/content-replace.js `writer`): the folder's creator. Without
+     * it the sync runs as system, and a synced file that head office later put in a corporate
+     * playlist would be rewritten on every mandated screen from SharePoint — the same hole the Canva
+     * sync had. A refused file is a per-file error in the summary; the rest of the folder syncs.
+     */
+    const ownerRow = db.prepare('SELECT id, role FROM users WHERE id = ?').get(folder.user_id);
+    const writer = ownerRow ? require('./corporate/actor').fromUser(ownerRow) : null;
     const { ingestUploadedFile } = require('./content-ingest');
     const { replaceContentBytes } = require('./content-replace');
 
@@ -225,7 +294,7 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
         tmp = await m365.downloadFile(folder.organization_id, folder.drive_id, f.id, { destDir: config.contentDir, maxBytes: Math.min(cap || Infinity, room == null ? Infinity : room) });
         const file = { path: tmp.path, size: tmp.size, originalname: f.name };
         if (row && live) {
-          const r = await replaceContentBytes({ content: live, file, actor, reqOrIo: io });
+          const r = await replaceContentBytes({ content: live, file, actor, writer, reqOrIo: io });
           if (r.status !== 200) throw new Error(r.body && r.body.error ? r.body.error : `replace failed (${r.status})`);
           db.prepare('UPDATE cloud_folder_items SET tag = ?, name = ?, size = ? WHERE folder_id = ? AND remote_id = ?').run(f.tag, f.name, f.size, folder.id, f.id);
           summary.updated++;
@@ -243,11 +312,12 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
         // ingest/replace rename the .part on success; anything left is ours to remove.
         if (tmp && fs.existsSync(tmp.path)) { try { fs.unlinkSync(tmp.path); } catch { /* */ } }
       }
+      heartbeat();
     }
 
-    // Files that left the folder.
+    // Files that left the folder — known only from a complete listing.
     const present = new Set(media.map((f) => f.id));
-    for (const [remoteId, row] of mapped) {
+    for (const [remoteId, row] of complete ? mapped : []) {
       if (present.has(remoteId)) continue;
       db.prepare('DELETE FROM cloud_folder_items WHERE folder_id = ? AND remote_id = ?').run(folder.id, remoteId);
       db.prepare('INSERT OR IGNORE INTO cloud_folder_removed (folder_id, content_id) VALUES (?, ?)').run(folder.id, row.content_id);
@@ -265,12 +335,16 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
     if (summary.failed || summary.skipped_too_large) status = 'partial';
   } catch (e) {
     status = 'error';
-    lastError = String((e && e.message) || e).slice(0, 500);
+    if (e instanceof LeaseLost) { leaseLost = true; lastError = 'This sync ran past its lease and another server took the folder over; it stopped.'; }
+    else lastError = String((e && e.message) || e).slice(0, 500);
   } finally {
-    try {
-      db.prepare("UPDATE cloud_folders SET last_sync_at = strftime('%s','now'), last_status = ?, last_error = ?, last_summary = ?, sync_lease_until = NULL WHERE id = ?")
-        .run(status, lastError, JSON.stringify(summary), folderId);
-    } catch { releaseLease(db, folderId); }
+    // Only while the lease is still ours: a node that took the folder over records its own outcome.
+    if (lease && !leaseLost) {
+      try {
+        db.prepare("UPDATE cloud_folders SET last_sync_at = strftime('%s','now'), last_status = ?, last_error = ?, last_summary = ?, sync_lease_until = NULL WHERE id = ? AND sync_lease_until = ?")
+          .run(status, lastError, JSON.stringify(summary), folderId, lease);
+      } catch { releaseLease(db, folderId, lease); }
+    }
     running.delete(folderId);
   }
   return { status, error: lastError, summary };
@@ -316,5 +390,6 @@ function start(ioRef) {
 }
 
 function _setIo(ref) { io = ref || null; }
+function _setMaxFiles(n) { MAX_FILES = n; }
 
-module.exports = { normaliseInput, present, syncFolder, createFolder, syncPlaylistItems, start, tick, _setIo, MIN_INTERVAL_MIN, MAX_INTERVAL_MIN };
+module.exports = { normaliseInput, present, syncFolder, createFolder, syncPlaylistItems, start, tick, _setIo, MIN_INTERVAL_MIN, MAX_INTERVAL_MIN, _setMaxFiles };

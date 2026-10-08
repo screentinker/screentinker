@@ -5,6 +5,8 @@
  *                      Org owners and admins only — the server answers can_manage:false to everyone
  *                      else and the card stays hidden.
  *   openCloudFolders   Content library: SharePoint/OneDrive folders synced into this workspace.
+ *                      Any editor can sync, pause or stop one; only org owners/admins (can_manage)
+ *                      see the Add form — the server refuses everyone else.
  *
  * ⚠️ THE SECRET IS WRITE-ONLY. The form sends it; nothing the server returns contains it. A save with
  * the secret field left empty keeps the stored one.
@@ -150,7 +152,8 @@ export async function openCloudFolders({ onChange } = {}) {
         </div>
       </div>`).join('');
     body.innerHTML = `${setup}${rows || '<p style="color:var(--text-muted);font-size:13px">No folders yet.</p>'}
-      ${app.configured ? `<details style="margin-top:12px" ${list.length ? '' : 'open'}><summary style="cursor:pointer;font-size:13px">Add a folder</summary>
+      ${app.configured && !app.can_manage ? '<p style="color:var(--text-muted);font-size:12px;margin-top:12px">Only an organization owner or admin can add a folder. You can sync the folders here now, or stop syncing them.</p>' : ''}
+      ${app.configured && app.can_manage ? `<details style="margin-top:12px" ${list.length ? '' : 'open'}><summary style="cursor:pointer;font-size:13px">Add a folder</summary>
         <div style="display:grid;gap:10px;margin-top:10px">
           <div class="form-group"><label>Folder sharing link</label>
             <input type="url" class="input" data-cf-f="share_url" placeholder="https://contoso.sharepoint.com/:f:/s/…" spellcheck="false">

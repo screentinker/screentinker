@@ -5,7 +5,11 @@
  *
  * JWT only (config/api-surface.js): the app holds a credential into the customer's tenant.
  *   /app       the ORGANIZATION's Entra app. Org owners/admins only; the secret is never returned.
- *   /folders   folder syncs into the CURRENT workspace. Read: any member. Change: editor or above.
+ *   /folders   folder syncs into the CURRENT workspace. Read: any member. Sync now, settings, stop
+ *              syncing: editor or above. ADDING one (choosing what is synced): org owners/admins only —
+ *              the org's app may read far more than this workspace should see (another person's
+ *              OneDrive, a private site), and the folder lands in a library the whole workspace sees.
+ *              The source of an existing folder cannot be changed (PUT takes no share_url).
  */
 
 const express = require('express');
@@ -109,6 +113,7 @@ router.get('/folders', (req, res) => {
 
 router.post('/folders', async (req, res) => {
   const w = workspaceCtx(req, res, { write: true }); if (!w) return;
+  if (!isOrgAdmin(req, w.orgId)) return res.status(403).json({ error: 'Only an organization owner or admin can add a SharePoint or OneDrive folder.' });
   const { fields, error } = folders.normaliseInput(req.body);
   if (error) return res.status(400).json({ error });
   let row;
