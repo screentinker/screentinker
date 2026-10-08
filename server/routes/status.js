@@ -638,6 +638,20 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
           config = JSON.stringify({ template: typeof parsed.template === 'string' ? parsed.template.slice(0, 100) : '', values: {}, ds_refs: [] });
         }
       }
+      // A dashboard widget's config is validated as a whole (lib/bi/widget.js), against a connection
+      // of THIS workspace's organization. One that does not pass — an export from another server
+      // names connections that do not exist here — keeps only its provider, and the screen says to
+      // choose a connection.
+      if (w.widget_type === 'bi-dashboard') {
+        const bi = require('../lib/bi/widget');
+        let parsed = {};
+        try { parsed = JSON.parse(config); } catch { parsed = {}; }
+        try {
+          config = JSON.stringify(bi.normaliseConfig(db, require('../lib/bi/connections').orgOfWorkspace(db, workspaceId), parsed));
+        } catch {
+          config = JSON.stringify(bi.PROVIDERS.includes(parsed && parsed.provider) ? { provider: parsed.provider, mode: 'connection' } : {});
+        }
+      }
       db.prepare(`INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(newId, userId, workspaceId, w.widget_type, w.name, config, w.created_at || Math.floor(Date.now() / 1000));
       stats.widgets++;
     }

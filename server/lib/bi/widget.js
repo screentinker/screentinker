@@ -101,6 +101,18 @@ function messagePage(bg, text) {
   return shell(bg, `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:#ccc;font:24px sans-serif;text-align:center;padding:24px;box-sizing:border-box">${escapeHtml(text)}</div>`);
 }
 
+/*
+ * ⚠️ EVERY DASHBOARD PAGE IS SANDBOXED TO AN OPAQUE ORIGIN, whoever opens it. It is served from this
+ * server at /api/widgets/:id/render, and without the sandbox it runs AS this server's origin — the
+ * one whose localStorage holds the dashboard session. The Tableau page loads a script from the
+ * connection's Tableau host, which an org admin typed, so an unsandboxed page was a script of their
+ * choosing in the dashboard's origin the moment a platform admin opened the link. Never add
+ * allow-same-origin here. What the pages fetch from this server (bi-token, bi-image.png, the
+ * vendored Power BI client) answers an opaque (Origin: null) caller for that reason, and nothing in
+ * these pages touches localStorage, sessionStorage or cookies, which throw in an opaque origin.
+ */
+const SANDBOX = 'sandbox allow-scripts';
+
 /* The status chip in the corner, shared by every provider page. */
 const STATUS_JS = 'function st(t){var e=document.getElementById("st");if(!e)return;e.textContent=t||"";e.style.display=t?"block":"none";}';
 /* GET JSON with retry, from an opaque-origin page (the endpoint answers with ACAO *). */
@@ -116,7 +128,7 @@ function load(){var r=window.devicePixelRatio||1,w=Math.round(innerWidth*r),h=Ma
 n.onload=function(){img.src=n.src;st("");};n.onerror=function(){st(img.src?"Showing the last image \\u2014 the dashboard is not answering":"Waiting for the dashboard\\u2026");};
 n.src=base+"?w="+w+"&h="+h+"&t="+Date.now();}
 load();setInterval(load,every);})();</script>`);
-  return { html, csp: `default-src 'none'; img-src ${origin} data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; sandbox allow-scripts` };
+  return { html, csp: `default-src 'none'; img-src ${origin} data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; ${SANDBOX}` };
 }
 
 function framePage(cfg, url, iframeSandbox) {
@@ -124,7 +136,7 @@ function framePage(cfg, url, iframeSandbox) {
   try { frameOrigin = new URL(url).origin; } catch { frameOrigin = "'none'"; }
   const reload = cfg.refresh_sec > 0 ? `<script>setInterval(function(){var f=document.getElementById("f");f.src=f.src;},${cfg.refresh_sec * 1000});</script>` : '';
   const html = shell(cfg.background, `<iframe id="f" src="${escapeHtml(url)}" sandbox="${escapeHtml(iframeSandbox)}" allowfullscreen style="border:0;width:100vw;height:100vh;display:block"></iframe>${reload}`);
-  return { html, csp: `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src ${frameOrigin}` };
+  return { html, csp: `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src ${frameOrigin}; ${SANDBOX}` };
 }
 
 function powerBiPage(widget, cfg, origin) {
@@ -154,7 +166,7 @@ if(reloadMs>0)setInterval(function(){report.reload()["catch"](function(){});},re
 });})();</script>`);
   return {
     html,
-    csp: `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' ${origin}; connect-src ${origin}; frame-src https://app.powerbi.com https://*.powerbi.com; img-src data:`,
+    csp: `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' ${origin}; connect-src ${origin}; frame-src https://app.powerbi.com https://*.powerbi.com; img-src data:; ${SANDBOX}`,
   };
 }
 
@@ -193,7 +205,7 @@ if(!publicSrc)setInterval(mount,6*3600*1000);
 })();</script>`);
     return {
       html,
-      csp: `default-src 'none'; style-src 'unsafe-inline' ${src}; script-src 'unsafe-inline' ${src}; connect-src ${origin} ${src}; frame-src ${src}; img-src ${src} data: blob:; font-src ${src} data:`,
+      csp: `default-src 'none'; style-src 'unsafe-inline' ${src}; script-src 'unsafe-inline' ${src}; connect-src ${origin} ${src}; frame-src ${src}; img-src ${src} data: blob:; font-src ${src} data:; ${SANDBOX}`,
     };
   };
 }
@@ -205,19 +217,21 @@ if(!publicSrc)setInterval(mount,6*3600*1000);
 function render(db, widget, rawConfig, { origin, iframeSandbox = 'allow-scripts' } = {}) {
   const cfg = rawConfig || {};
   const bg = /^#[0-9a-f]{3,8}$/i.test(String(cfg.background || '')) ? cfg.background : '#000000';
+  // Re-checked here, not trusted from the row: `fit` goes into a style attribute as it is.
+  const fit = FITS.includes(cfg.fit) ? cfg.fit : 'contain';
   const plain = (text) => ({ html: messagePage(bg, text), csp: "default-src 'none'; style-src 'unsafe-inline'; sandbox" });
   if (!PROVIDERS.includes(cfg.provider)) return plain('Choose a dashboard in this widget\'s settings.');
   if (cfg.mode === 'public') {
     let url;
     try { url = publicUrlFor(cfg.provider, cfg.public_url); } catch (e) { return plain(e.message); }
-    if (cfg.provider === 'tableau') return tableauPage(widget, { ...cfg, background: bg }, origin, { publicSrc: url })(null);
-    return framePage({ ...cfg, background: bg }, url, iframeSandbox);
+    if (cfg.provider === 'tableau') return tableauPage(widget, { ...cfg, background: bg, fit }, origin, { publicSrc: url })(null);
+    return framePage({ ...cfg, background: bg, fit }, url, iframeSandbox);
   }
   const conn = connections.forWidget(db, widget, cfg);
   if (!conn || conn.kind !== cfg.provider) return plain('This dashboard\'s connection has been removed. Choose another in the widget settings.');
-  if (cfg.provider === 'grafana') return grafanaImagePage(widget, { ...cfg, background: bg }, origin);
-  if (cfg.provider === 'powerbi') return powerBiPage(widget, { ...cfg, background: bg }, origin);
-  return tableauPage(widget, { ...cfg, background: bg }, origin)(conn);
+  if (cfg.provider === 'grafana') return grafanaImagePage(widget, { ...cfg, background: bg, fit }, origin);
+  if (cfg.provider === 'powerbi') return powerBiPage(widget, { ...cfg, background: bg, fit }, origin);
+  return tableauPage(widget, { ...cfg, background: bg, fit }, origin)(conn);
 }
 
 /** The dashboard editor's Preview: no widget id yet, so no tokens — say what the screen will show. */
@@ -229,19 +243,21 @@ function previewHtml(cfg) {
 /*
  * What /bi-token hands a screen. Small on purpose: see the header comment.
  */
-async function tokenFor(db, widget, cfg) {
+async function tokenFor(db, widget, cfg, { beforeFetch = null } = {}) {
   if (cfg.mode === 'public') throw Object.assign(new Error('A public dashboard needs no token'), { status: 404 });
   const conn = connections.forWidget(db, widget, cfg);
   if (!conn || conn.kind !== cfg.provider) throw Object.assign(new Error('No connection'), { status: 404 });
   if (cfg.provider === 'powerbi') {
-    const e = await powerbi.embedFor(conn, powerbi.normaliseWidgetConfig(cfg));
+    const e = await powerbi.embedFor(conn, powerbi.normaliseWidgetConfig(cfg), Date.now(), { beforeFetch });
     return { provider: 'powerbi', embedUrl: e.embedUrl, reportId: e.reportId, token: e.token, expiration: e.expiration };
   }
   if (cfg.provider === 'tableau') {
+    // Every Tableau JWT is new (no cache can serve one), so every call is counted.
+    if (beforeFetch && !beforeFetch()) throw Object.assign(new Error('Too many token requests'), { status: 429 });
     const t = tableau.normaliseWidgetConfig(cfg);
     return { provider: 'tableau', src: tableau.viewUrl(conn, t), token: tableau.mintJwt(conn), expires_in: tableau.JWT_LIFETIME_S };
   }
   throw Object.assign(new Error('Grafana dashboards are images; there is no token'), { status: 404 });
 }
 
-module.exports = { PROVIDERS, normaliseConfig, publicUrlFor, render, previewHtml, tokenFor };
+module.exports = { PROVIDERS, FITS, normaliseConfig, publicUrlFor, render, previewHtml, tokenFor };
