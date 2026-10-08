@@ -28,6 +28,8 @@ const fmtSec = (s) => {
 export async function render(container) {
   const today = new Date();
   const monthAgo = new Date(today); monthAgo.setDate(monthAgo.getDate() - 30);
+  // The LOCAL date (toISOString would give tomorrow's after 7pm in UTC-5).
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   container.innerHTML = `
     <div class="page-header">
       <div><h1>${t('audience.title')}</h1><div class="subtitle">${t('audience.subtitle')}</div></div>
@@ -51,9 +53,9 @@ export async function render(container) {
       <h3 style="font-size:14px;margin-bottom:10px">${t('audience.report_heading')}</h3>
       <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
         <div class="form-group" style="margin:0"><label>${t('report.start_date')}</label>
-          <input type="date" id="audStart" class="input" value="${monthAgo.toISOString().split('T')[0]}"></div>
+          <input type="date" id="audStart" class="input" value="${ymd(monthAgo)}"></div>
         <div class="form-group" style="margin:0"><label>${t('report.end_date')}</label>
-          <input type="date" id="audEnd" class="input" value="${today.toISOString().split('T')[0]}"></div>
+          <input type="date" id="audEnd" class="input" value="${ymd(today)}"></div>
         <button class="btn btn-primary btn-sm" id="audLoad">${t('report.load_report')}</button>
         <button class="btn btn-secondary btn-sm" id="audCsv">${t('report.export_csv')}</button>
       </div>
@@ -156,9 +158,17 @@ async function loadScreens() {
   });
 }
 
+// The day boundaries in THIS browser's zone, as epoch seconds: a bare date would be read as UTC
+// midnight, which is not where the viewer's day starts. Midnight is taken per day, so a range that
+// crosses a DST change is still exact; `tz` is only for the hour/day charts.
 function rangeQs() {
-  const s = document.getElementById('audStart').value;
-  const e = document.getElementById('audEnd').value;
+  const day = (v, next) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || '');
+    if (!m) return v || '';
+    return String(Math.floor(new Date(+m[1], +m[2] - 1, +m[3] + (next ? 1 : 0)).getTime() / 1000) - (next ? 1 : 0));
+  };
+  const s = day(document.getElementById('audStart').value, false);
+  const e = day(document.getElementById('audEnd').value, true);
   return `start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&tz=${new Date().getTimezoneOffset()}`;
 }
 
@@ -166,7 +176,7 @@ async function loadReport() {
   const box = document.getElementById('audReport');
   let r;
   try { r = await API(`/audience/report?${rangeQs()}`); } catch (e) { box.innerHTML = `<p style="color:var(--text-muted)">${esc(e.message)}</p>`; return; }
-  if (!r.overall.observed_minutes) { box.innerHTML = `<div class="empty-state"><p>${t('audience.no_data')}</p></div>`; return; }
+  if (!r.overall.observed_minutes && !r.overall.arrivals) { box.innerHTML = `<div class="empty-state"><p>${t('audience.no_data')}</p></div>`; return; }
   const o = r.overall;
   const th = (txt, right) => `<th style="padding:8px;text-align:${right ? 'right' : 'left'};color:var(--text-muted)">${txt}</th>`;
   const td = (txt, right) => `<td style="padding:8px${right ? ';text-align:right' : ''}">${txt}</td>`;

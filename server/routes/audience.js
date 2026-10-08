@@ -99,11 +99,26 @@ function setSwitch(kind) {
 router.put('/devices/:id', setSwitch('device'));
 router.put('/groups/:id', setSwitch('group'));
 
+/*
+ * The report's period. The dashboard sends EPOCH SECONDS for the start of its first day and the end
+ * of its last, computed in the browser's own zone (so a range across a DST change is still exact).
+ * A bare YYYY-MM-DD is also taken, and is a day in the viewer's zone from `tz` (minutes BEHIND UTC,
+ * as Date.getTimezoneOffset() reports it) — the same offset by_hour / by_day are shifted by — so
+ * "2026-03-10" for a UTC-5 viewer starts at 05:00 UTC, not at UTC midnight.
+ */
 function range(req, res) {
   const now = Math.floor(Date.now() / 1000);
+  const tzRaw = Number(req.query.tz || 0);
+  const tzOffsetMin = Number.isFinite(tzRaw) && Math.abs(tzRaw) <= 14 * 60 ? Math.trunc(tzRaw) : 0;
   const parse = (v, dflt) => {
     if (v === undefined || v === '') return dflt;
-    const t = /^\d+$/.test(String(v)) ? Number(v) : Math.floor(Date.parse(String(v)) / 1000);
+    const str = String(v);
+    if (/^\d+$/.test(str)) return Number(str);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+      const t = Date.parse(`${str}T00:00:00Z`);
+      return Number.isFinite(t) ? t / 1000 + tzOffsetMin * 60 : null;
+    }
+    const t = Math.floor(Date.parse(str) / 1000);
     return Number.isFinite(t) ? t : null;
   };
   const start = parse(req.query.start, now - 30 * 86400);
@@ -112,8 +127,7 @@ function range(req, res) {
   // A bare date for `end` means "through the end of that day".
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.end || ''))) end += 86399;
   if (end < start || end - start > 400 * 86400) { res.status(400).json({ error: 'The range must be at most 400 days.' }); return null; }
-  const tz = Number(req.query.tz || 0);
-  return { start, end, tzOffsetMin: Number.isFinite(tz) && Math.abs(tz) <= 14 * 60 ? tz : 0,
+  return { start, end, tzOffsetMin,
     deviceId: typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null };
 }
 

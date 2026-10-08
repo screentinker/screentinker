@@ -38,6 +38,21 @@ object AudienceLog {
     fun add(ctx: Context, bs: List<AudienceBucket>) { if (bs.isNotEmpty()) synchronized(lock) { val q = load(ctx); q.addAll(bs); save(ctx, q) } }
     fun peek(ctx: Context): List<AudienceBucket> = synchronized(lock) { load(ctx).peek() }
     fun ack(ctx: Context, ids: Collection<String>) = synchronized(lock) { val q = load(ctx); q.ack(ids); save(ctx, q) }
+
+    /**
+     * The next counting-run number, 1-9999 then round again (0 is what a player before segments
+     * sent). Persisted, and written synchronously, so a run after an app restart inside the same
+     * minute gets a new number too.
+     */
+    fun nextSegment(ctx: Context): Int = synchronized(lock) {
+        try {
+            val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val next = p.getInt(SEGMENT_KEY, 0) % 9999 + 1
+            p.edit().putInt(SEGMENT_KEY, next).commit()
+            next
+        } catch (_: Throwable) { ((System.currentTimeMillis() / 1000) % 9999 + 1).toInt() }
+    }
+    private const val SEGMENT_KEY = "audience_segment"
 }
 
 class AudienceController(
@@ -108,6 +123,9 @@ class AudienceController(
         }
         if (camera?.running == true) return
         if (aggregator == null) aggregator = AudienceAggregator(minDwellMs = cfg.minDwellMs, bucketSec = cfg.bucketSec).also { it.item = item }
+        // Every camera start is a new counting run: its partial minute must not collide with the last one's.
+        val seg = AudienceLog.nextSegment(activity.applicationContext)
+        synchronized(this) { aggregator?.segment = seg }
         camera = AudienceCamera(activity.applicationContext,
             onFaces = { faces, now ->
                 val done = synchronized(this) { aggregator?.onFrame(faces, now) } ?: emptyList()

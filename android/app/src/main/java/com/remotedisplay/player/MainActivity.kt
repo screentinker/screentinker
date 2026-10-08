@@ -495,7 +495,12 @@ class MainActivity : AppCompatActivity() {
             try {
                 val cached = JSONObject(cachedJson)
                 // An offline cold start keeps counting if it was counting (the cache is the whole payload).
-                try { audience?.onPayload(cached) } catch (e: Throwable) { Log.w("MainActivity", "audience restore: ${e.message}") }
+                /*
+                 * ⚠️ Audience counting is NOT restored from this cache. It is only rewritten when a
+                 * payload has assignments, so a switch-off that arrived while the screen had none is
+                 * not in it, and restoring it could start a camera an admin had stopped. Counting
+                 * waits for a fresh payload, which says on or off every time.
+                 */
                 val assignments = cached.getJSONArray("assignments")
                 if (assignments.length() > 0) {
                     Log.i("MainActivity", "Restoring cached playlist: ${assignments.length()} items")
@@ -2194,7 +2199,8 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == com.remotedisplay.player.audience.AudienceController.REQUEST_CODE) {
-            audience?.onPermissionResult(grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED)
+            try { audience?.onPermissionResult(grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) }
+            catch (e: Throwable) { Log.w("MainActivity", "audience permission result: ${e.message}") }
         }
     }
 
