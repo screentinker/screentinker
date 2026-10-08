@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audience Analytics for Digital Signage, Privacy-First | ScreenTinker</title>
+  <meta name="description" content="Count how many people looked at each screen and for how long. Counts only: no image stored or sent, nobody recognised, off by default. Plus proof of play.">
+  <meta name="keywords" content="audience analytics digital signage, anonymous audience measurement, digital signage analytics, people counting digital signage, proof of play, impressions per play, qr code tracking signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/solutions/audience-analytics.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/solutions/audience-analytics.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/solutions/audience-analytics.html">
+  <meta property="og:title" content="Audience analytics for digital signage, without recording anyone">
+  <meta property="og:description" content="Count how many people looked at each screen and for how long. Counts only: no image stored or sent, nobody recognised, off by default. Plus proof of play.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Audience analytics for digital signage, without recording anyone">
+  <meta name="twitter:description" content="Count how many people looked at each screen and for how long. Counts only: no image stored or sent, nobody recognised, off by default. Plus proof of play.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/solutions/">Solutions</a>
+      <span>/</span>
+      <span>Audience analytics</span>
+    </nav>
+
+    <h1>Audience analytics for digital signage, without recording anyone</h1>
+    <p class="lead">You paid for the screens. The next question is whether anyone looks at them, and which content earns its slot. ScreenTinker answers it three ways: proof of play says what ran where, audience counting says how many people looked and for how long, and tracked QR codes say how many acted. All three are built so that you learn about your content, not about the people in front of it.</p>
+
+    <h2>Audience counting: what it counts</h2>
+    <p>The screen&rsquo;s camera and a face detector built into the player count faces turned towards the screen, each minute, for each item on screen. The <strong>Audience</strong> report (under Insights) shows:</p>
+    <ul>
+      <li>impressions, arrivals, average look and the most people at once</li>
+      <li>impressions by hour of day and per day, in your time zone</li>
+      <li>a look-length histogram, from under 2 seconds to over a minute</li>
+      <li>results <strong>by content</strong>, with plays beside them and impressions per play, and by screen and playlist</li>
+      <li>CSV export, one row per screen, per minute, per item</li>
+    </ul>
+
+    <h2>The privacy model</h2>
+    <p>This is enforced in the player and on the server, not left to a setting.</p>
+    <ul>
+      <li><strong>Counts only.</strong> No picture or video is stored on the screen or leaves it. The player reads a small greyscale frame, finds the faces and discards the frame straight away.</li>
+      <li><strong>Nobody is recognised.</strong> There is no face recognition, no face template and no ID for a person. The same person coming back counts as a new arrival.</li>
+      <li><strong>No age, gender or emotion</strong> is estimated.</li>
+      <li><strong>The server refuses anything but counts.</strong> It accepts a fixed set of small whole numbers per minute, so even a modified player couldn&rsquo;t upload more.</li>
+      <li><strong>Off by default.</strong> An organization owner or admin first allows it for the organization, then switches it on for single screens or groups. A screen can&rsquo;t turn it on for itself.</li>
+      <li><strong>Visible.</strong> A small camera icon shows on screens that are counting (you can turn it off).</li>
+      <li><strong>Kept for 90 days</strong> by default, then deleted automatically. You set the retention.</li>
+    </ul>
+
+    <h2>Which players can count</h2>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>Player</th><th>Counts?</th><th>What it needs</th></tr></thead>
+      <tbody>
+        <tr><td>Android (tablets, Android TV / Google TV, Fire TV with a USB camera)</td><td class="yes">Yes</td><td>A camera. No extra download.</td></tr>
+        <tr><td>Raspberry Pi and Windows (native player)</td><td class="yes">Yes, with the add-on</td><td>The optional audience add-on (about 54 MB, off by default), a USB webcam, and 64-bit Pi OS on a Pi. A Pi camera module isn&rsquo;t supported.</td></tr>
+        <tr><td>Web player, Samsung Tizen, LG webOS, BrightSign</td><td class="no">No</td><td>No camera access a signage player can rely on</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>The add-on is downloaded from your own ScreenTinker server and checked against the checksum it publishes.</p>
+
+    <h2>Accuracy</h2>
+    <p>The detector counts frontal faces, which is what an impression means: someone looking at the screen. It works best within about 3 to 4 metres of a 720p camera, in reasonable light. Faces in profile aren&rsquo;t counted, and two faces that cross can be counted as one look ending and another starting. Treat the numbers as a consistent measure for comparing content, times and screens, not as an exact headcount.</p>
+
+    <h2>Check the law before you switch it on</h2>
+    <p>The counts aren&rsquo;t biometric data: no face template is created or kept, and frames are never stored. But a camera pointed at the public is still regulated in many places, so check with your own adviser first.</p>
+    <ul>
+      <li><strong>EU and UK (GDPR):</strong> even brief on-device processing of a camera image can count as processing personal data. You need a lawful basis, a visible notice and possibly a DPIA.</li>
+      <li><strong>Illinois (BIPA), Texas, Washington:</strong> no biometric identifier is created, but put the notice up anyway.</li>
+      <li><strong>California (CCPA/CPRA)</strong> and other US states: notice at collection.</li>
+      <li><strong>Workplaces:</strong> staff areas often need consultation or a works-council agreement.</li>
+    </ul>
+    <p>The audience counting guide includes a notice you can print and put up where people see it before they are in view.</p>
+
+    <h2>Proof of play</h2>
+    <p>Every player reports what it played, when, and on which screen. Reports show plays by content and by screen over a date range, with CSV export for advertisers, sponsors or internal sign-off, and an uptime report shows how long each screen was online.</p>
+
+    <h2>QR codes that count scans</h2>
+    <p>A tracked link is a short address that opens your page and counts the scan: totals, the last 30 days, and iPhone, Android or other. Put one on a slide or download it as SVG for print. You can change where the link goes at any time and the printed code keeps working. Nothing about the person scanning is stored: no IP address and no browser details, and link previews from chat apps aren&rsquo;t counted.</p>
+
+    <h2>Set it up</h2>
+    <ol>
+      <li>In <strong>Audience &rarr; Organization settings</strong>, an owner or admin turns on <strong>Allow audience counting in this organization</strong> and sets the camera icon, frames per second, impression time and retention.</li>
+      <li>Switch it on for single screens, or for a group.</li>
+      <li>On Android, allow camera permission on the screen once. On a Pi, answer <strong>y</strong> at the installer&rsquo;s prompt or run <code>sudo screentinker-pi audience-addon install</code>. On Windows, tick <strong>Audience counting add-on</strong> in the installer.</li>
+      <li>Put up the notice, then read <strong>Audience &rarr; Report</strong>.</li>
+      <li>Full details, including the notice template, are in the <a href="https://github.com/screentinker/screentinker/blob/main/docs/audience-counting.md" target="_blank" rel="noopener">audience counting guide</a>.</li>
+    </ol>
+
+    <h2>Limits</h2>
+    <ul>
+      <li>It needs a camera on the screen, and only the players in the table above can count.</li>
+      <li>It is not a footfall counter: it counts faces looking at the screen, not people passing.</li>
+      <li>We don&rsquo;t give legal advice. Whether you may run it where your screens are is for you and your adviser.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>Does audience counting record video or photos?</h3>
+    <p>No. The player reads a small greyscale frame, counts the faces in it and discards the frame straight away. Frames are never stored, uploaded or shown, and the server accepts only counts.</p>
+
+    <h3>Is it facial recognition?</h3>
+    <p>No. Nobody is recognised or identified, no face template is created, and no age, gender or emotion is estimated. A person who comes back counts as a new arrival.</p>
+
+    <h3>Is it on by default?</h3>
+    <p>No. An organization owner or admin must allow it for the organization and then switch it on for each screen or group.</p>
+
+    <h3>Which screens can count audiences?</h3>
+    <p>Android players with a camera, and Raspberry Pi and Windows players with the optional add-on and a USB webcam. The web player, Tizen, webOS and BrightSign cannot.</p>
+
+    <h3>Is it legal where I am?</h3>
+    <p>It depends on where your screens are. A camera pointed at the public is regulated in many places, including under GDPR. Check with your own adviser and put up the notice before switching it on.</p>
+
+    <h3>Can I prove an ad played?</h3>
+    <p>Yes. Proof of play records what played, when and on which screen, with CSV export.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/solutions/">All solutions</a></li>
+        <li><a href="/solutions/digital-menu-boards.html">Digital menu boards</a></li>
+        <li><a href="/solutions/enterprise-digital-signage.html">Enterprise digital signage</a></li>
+        <li><a href="/guides/digital-signage-android-tv.html">Android TV and Fire TV setup</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi setup</a></li>
+        <li><a href="/guides/windows-digital-signage.html">Windows setup</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Find out what your screens are worth</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card. Proof of play works from the first item.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Solutions",
+      "item": "https://screentinker.com/solutions/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Audience analytics",
+      "item": "https://screentinker.com/solutions/audience-analytics.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Does audience counting record video or photos?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. The player reads a small greyscale frame, counts the faces in it and discards the frame straight away. Frames are never stored, uploaded or shown, and the server accepts only counts."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it facial recognition?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Nobody is recognised or identified, no face template is created, and no age, gender or emotion is estimated. A person who comes back counts as a new arrival."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it on by default?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. An organization owner or admin must allow it for the organization and then switch it on for each screen or group."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Which screens can count audiences?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Android players with a camera, and Raspberry Pi and Windows players with the optional add-on and a USB webcam. The web player, Tizen, webOS and BrightSign cannot."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it legal where I am?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "It depends on where your screens are. A camera pointed at the public is regulated in many places, including under GDPR. Check with your own adviser and put up the notice before switching it on."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I prove an ad played?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Proof of play records what played, when and on which screen, with CSV export."
+      }
+    }
+  ]
+}
+  </script>
+</body>
+</html>

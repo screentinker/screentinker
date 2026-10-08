@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SharePoint &amp; Microsoft 365 Digital Signage | ScreenTinker</title>
+  <meta name="description" content="Show PowerPoint, Word and Excel files on screens, and sync a SharePoint or OneDrive folder of media to playlists. Uses your own Entra app.">
+  <meta name="keywords" content="microsoft 365 digital signage, sharepoint digital signage, onedrive digital signage, powerpoint on digital signage, powerpoint on tv screen, excel dashboard on tv, office 365 signage">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/integrations/microsoft-365-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/integrations/microsoft-365-digital-signage.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/integrations/microsoft-365-digital-signage.html">
+  <meta property="og:title" content="SharePoint &amp; Microsoft 365 Digital Signage">
+  <meta property="og:description" content="Show PowerPoint, Word and Excel files on screens, and sync a SharePoint or OneDrive folder of media to playlists. Uses your own Entra app.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="SharePoint &amp; Microsoft 365 Digital Signage">
+  <meta name="twitter:description" content="Show PowerPoint, Word and Excel files on screens, and sync a SharePoint or OneDrive folder of media to playlists. Uses your own Entra app.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/integrations/">Integrations</a>
+      <span>/</span>
+      <span>Microsoft 365</span>
+    </nav>
+
+    <h1>Microsoft 365 digital signage: SharePoint, OneDrive and Office files on your screens</h1>
+    <p class="lead">Keep working in the tools your staff already use. A PowerPoint deck, a Word notice or an Excel sheet in OneDrive or SharePoint can play on a screen as it is, and a SharePoint folder of images and videos can feed a playlist that updates itself when someone drops in a new file.</p>
+
+    <h2>How it works</h2>
+    <p>There are two ways to use Microsoft 365 content, for two different jobs.</p>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>You want to show</th><th>Use</th><th>What it needs</th></tr></thead>
+      <tbody>
+        <tr><td>A PowerPoint, Word or Excel file</td><td><strong>Cloud document</strong> widget</td><td>The file's <strong>Embed</strong> link from Office for the web</td></tr>
+        <tr><td>A SharePoint or OneDrive folder of images, videos and audio, kept up to date</td><td><strong>SharePoint &amp; OneDrive folder sync</strong></td><td>Your organization's own Microsoft Entra app</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p><strong>Cloud document widget.</strong> The screen shows Microsoft's own viewer, so the file looks the way it does in Office, and edits reach the screen without re-uploading anything. Word and Excel files reload every 5 minutes by default, so a rota or a sales sheet stays current. All players can show it: Android, Fire TV, Raspberry Pi, Windows and Samsung Tizen load the page directly, and the web player (also used on BrightSign and LG webOS) frames it.</p>
+    <p><strong>Folder sync.</strong> Point ScreenTinker at a folder and it keeps the folder's media in your content library:</p>
+    <ul>
+      <li>a new file is added, like an upload</li>
+      <li>a changed file is replaced in place, so playlists keep it and screens fetch the new version</li>
+      <li>a removed file is taken out of the folder's playlist, and deleted from the library unless something else uses it</li>
+    </ul>
+    <p>Each folder can keep a playlist of its files in file-name order. If your workspace requires approval, the updated playlist waits for review like any other change. Synced files are ordinary media, so they keep playing when the network is down.</p>
+
+    <h2 id="setup">Set it up</h2>
+    <h3>Show one Office file</h3>
+    <ol>
+      <li>Open the file in Office for the web and choose <strong>File &rarr; Share &rarr; Embed</strong>.</li>
+      <li>In ScreenTinker, open <strong>Content &rarr; Google &amp; Microsoft documents</strong>, paste the embed code or the link inside it, and press <strong>Add document</strong>.</li>
+      <li>Put the new item in a playlist and assign it to a screen.</li>
+    </ol>
+    <h3>Sync a SharePoint or OneDrive folder</h3>
+    <ol>
+      <li><strong>Register an app in your tenant</strong> (a Microsoft Entra admin, once per organization): a single-tenant app registration, with the Microsoft Graph application permission <strong>Sites.Selected</strong> (recommended: the app reads only the sites you grant it) or <strong>Files.Read.All</strong> (simpler, but it can read every file in the tenant). Grant admin consent and create a client secret.</li>
+      <li><strong>Connect it.</strong> An organization owner or admin opens <strong>Settings &rarr; Microsoft 365</strong> and enters the tenant ID, the client ID and the secret. The connection is tested straight away.</li>
+      <li><strong>Add a folder.</strong> In SharePoint or OneDrive, choose <strong>Share &rarr; Copy link</strong> on the folder. In ScreenTinker, open <strong>Content &rarr; SharePoint &amp; OneDrive folders</strong>, add the folder and paste the link.</li>
+      <li>Syncs run every 15 minutes by default (anything from 5 to 1440). Any workspace editor can press <strong>Sync now</strong>, pause the folder or change how often it syncs.</li>
+    </ol>
+    <p>The full walkthrough, including the Graph call that grants one site to the app, is in <a href="https://github.com/screentinker/screentinker/blob/main/docs/cloud-documents.md">docs/cloud-documents.md</a>.</p>
+
+    <h2>Bring your own app, keep your permissions</h2>
+    <p>The folder sync reads files with your organization's own Entra app, so your admins decide what it can see and can revoke it at any time. The secret is encrypted on the server and never shown again or sent to a screen. Only an organization owner or admin can add a folder, because the app may be able to read more than one workspace should see.</p>
+    <p>Media that head office plays in a corporate playlist is only updated by a sync if the folder's creator may change corporate media. Anything else is listed as an error in the sync summary and left alone.</p>
+
+    <h2>More from Microsoft 365</h2>
+    <ul>
+      <li><strong>Meeting rooms.</strong> Room displays read Microsoft 365 room mailboxes and let people book the room from the panel. See <a href="/solutions/meeting-room-display.html">meeting room displays</a>.</li>
+      <li><strong>Sign in with Entra ID.</strong> Organizations can connect their own Entra ID tenant over OIDC or SAML 2.0 and require SSO. See <a href="/solutions/enterprise-digital-signage.html">enterprise digital signage</a>.</li>
+      <li><strong>Power BI.</strong> Reports and dashboards from your own Power BI workspaces. See <a href="/integrations/power-bi-digital-signage.html">Power BI on digital signage</a>.</li>
+      <li><strong>Microsoft Teams.</strong> Get a message in a Teams channel when a screen goes offline. See <a href="/integrations/slack-teams-offline-alerts.html">offline alerts</a>.</li>
+    </ul>
+
+    <h2>Limits</h2>
+    <ul>
+      <li><strong>A SharePoint embed needs an "anyone" link.</strong> A screen can't sign in to Microsoft, so a file only shows if it can be viewed without signing in. If your tenant doesn't allow those links, use a folder sync and export the slides as images or a video.</li>
+      <li><strong>Folder sync takes media only.</strong> Images, videos and audio sync. PowerPoint, Word, Excel and PDF files in a folder are skipped and counted; show those with the Cloud document widget.</li>
+      <li><strong>Up to 500 media files per folder.</strong> While a folder holds more, the sync adds and updates what it saw but removes nothing, and says so. Split a larger folder.</li>
+      <li><strong>PowerPoint plays in Microsoft&rsquo;s viewer.</strong> ScreenTinker sets the timing for Google Slides, but not for PowerPoint. For a deck that must advance on its own, export it as a video or images and sync it from a folder.</li>
+      <li><strong>Cloud documents need the internet.</strong> The screen loads Microsoft's viewer live, so a Cloud document doesn't play offline. Synced folder media does.</li>
+      <li><strong>Storage counts.</strong> Synced files count against your plan's storage, and a file larger than the server's upload limit is skipped.</li>
+      <li><strong>Secrets expire.</strong> Entra client secrets have an end date. Set a reminder for the date Entra shows.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>Can I show a PowerPoint on a digital signage screen?</h3>
+    <p>Yes. Open the deck in PowerPoint for the web, choose File, Share, Embed, and paste the embed code into Content &rarr; Google &amp; Microsoft documents. The deck shows in Microsoft&rsquo;s own viewer, and your edits reach the screen without re-uploading. For a deck that must advance and loop unattended, export it as a video into a synced SharePoint folder instead.</p>
+
+    <h3>Do I need to give ScreenTinker access to our whole tenant?</h3>
+    <p>No. For folder sync, use the Sites.Selected permission and grant the app only the SharePoint sites you choose. Files.Read.All also works but is much broader. A single embedded Office file needs no app at all.</p>
+
+    <h3>Who can add a SharePoint folder?</h3>
+    <p>An organization owner or admin. Once a folder is added, any workspace editor can sync it, change how often it syncs, pause it or stop syncing it.</p>
+
+    <h3>What happens when someone deletes a file from the folder?</h3>
+    <p>It is taken out of the folder&rsquo;s playlist. It is also deleted from the library, unless something else uses it, such as another playlist, a schedule or a video wall.</p>
+
+    <h3>Will it work if our tenant blocks anonymous sharing links?</h3>
+    <p>Embedded Office files won&rsquo;t, because a screen cannot sign in. Folder sync still works, since it reads files with your own Entra app. Export slides as images or a video into a synced folder instead.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/integrations/power-bi-digital-signage.html">Power BI dashboards on digital signage</a></li>
+        <li><a href="/integrations/slack-teams-offline-alerts.html">Screen offline alerts in Slack, Teams and PagerDuty</a></li>
+        <li><a href="/solutions/meeting-room-display.html">Meeting room displays</a></li>
+        <li><a href="/solutions/enterprise-digital-signage.html">Enterprise digital signage: SSO, roles, audit</a></li>
+        <li><a href="/integrations/google-slides-digital-signage.html">Google Slides, Docs and Sheets on digital signage</a></li>
+        <li><a href="/integrations/">All digital signage integrations</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Put your Microsoft 365 content on a screen</h2>
+      <p>Connect a folder, paste an embed link, and watch it play. Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Integrations",
+        "item": "https://screentinker.com/integrations/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Microsoft 365",
+        "item": "https://screentinker.com/integrations/microsoft-365-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Can I show a PowerPoint on a digital signage screen?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Open the deck in PowerPoint for the web, choose File, Share, Embed, and paste the embed code into Content → Google & Microsoft documents. The deck shows in Microsoft’s own viewer, and your edits reach the screen without re-uploading. For a deck that must advance and loop unattended, export it as a video into a synced SharePoint folder instead."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Do I need to give ScreenTinker access to our whole tenant?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. For folder sync, use the Sites.Selected permission and grant the app only the SharePoint sites you choose. Files.Read.All also works but is much broader. A single embedded Office file needs no app at all."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Who can add a SharePoint folder?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "An organization owner or admin. Once a folder is added, any workspace editor can sync it, change how often it syncs, pause it or stop syncing it."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What happens when someone deletes a file from the folder?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "It is taken out of the folder’s playlist. It is also deleted from the library, unless something else uses it, such as another playlist, a schedule or a video wall."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Will it work if our tenant blocks anonymous sharing links?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Embedded Office files won’t, because a screen cannot sign in. Folder sync still works, since it reads files with your own Entra app. Export slides as images or a video into a synced folder instead."
+        }
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

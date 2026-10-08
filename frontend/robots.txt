@@ -20,6 +20,7 @@ Allow: /legal/
 Allow: /compare/
 Allow: /guides/
 Allow: /integrations/
+Allow: /solutions/
 Allow: /download
 
 # Application surfaces, not documents. /api is the REST API (described at /openapi.yaml, which is

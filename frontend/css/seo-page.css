@@ -23,7 +23,9 @@ nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: rgba
 
 /* Article container */
 .article { max-width: 880px; margin: 0 auto; padding: 120px 24px 60px; }
-.breadcrumb { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+/* The breadcrumb is a <nav> too, so undo the fixed top-bar rule above; without this it was pinned
+   to the top-left corner of the viewport, under the real nav, instead of sitting above the H1. */
+.breadcrumb { position: static; z-index: auto; background: none; backdrop-filter: none; border-bottom: 0; font-size: 13px; color: var(--muted); margin-bottom: 24px; }
 .breadcrumb a { color: var(--muted); }
 .breadcrumb a:hover { color: var(--text); }
 .breadcrumb span { margin: 0 8px; color: var(--dim); }
@@ -59,6 +61,8 @@ nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: rgba
 .cta { text-align: center; padding: 60px 24px; background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 48px 0; border-radius: 12px; }
 .cta h2 { font-size: 28px; margin: 0 0 12px; }
 .cta p { color: var(--muted); margin-bottom: 20px; font-size: 17px; }
+/* The secondary route under the trial button: self-hosting. Smaller on purpose; the trial is the ask. */
+.cta p.cta-alt { font-size: 14px; margin: 20px 0 0; }
 
 /* Related links / internal linking block */
 .related { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 32px 0; }

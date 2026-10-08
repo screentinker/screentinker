@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Google Slides on Digital Signage | ScreenTinker</title>
-  <meta name="description" content="Show a Google Slides deck on digital signage. Publish the slideshow to the web and paste the published URL into ScreenTinker's Webpage widget.">
-  <meta name="keywords" content="google slides digital signage, google slides on tv, google slides signage, publish google slides to web, google slides embed signage, google slides kiosk">
+  <title>Google Slides, Docs &amp; Sheets on Digital Signage | ScreenTinker</title>
+  <meta name="description" content="Put Google Slides, Docs and Sheets on digital signage with the Cloud document widget. Slides auto-advance and loop; Docs and Sheets reload on their own.">
+  <meta name="keywords" content="google slides digital signage, google slides on tv, google slides auto advance loop, google sheets digital signage, google docs on screen, google workspace digital signage">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://screentinker.com/integrations/google-slides-digital-signage.html">
   <link rel="alternate" type="text/markdown" href="https://screentinker.com/integrations/google-slides-digital-signage.md">
 
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://screentinker.com/integrations/google-slides-digital-signage.html">
-  <meta property="og:title" content="Google Slides on Digital Signage">
-  <meta property="og:description" content="Show a Google Slides deck on digital signage. Publish the slideshow to the web and paste the published URL into ScreenTinker's Webpage widget.">
+  <meta property="og:title" content="Google Slides, Docs &amp; Sheets on Digital Signage">
+  <meta property="og:description" content="Put Google Slides, Docs and Sheets on digital signage with the Cloud document widget. Slides auto-advance and loop; Docs and Sheets reload on their own.">
   <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
   <meta property="og:site_name" content="ScreenTinker">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Google Slides on Digital Signage">
-  <meta name="twitter:description" content="Show a Google Slides deck on digital signage. Publish the slideshow to the web and paste the published URL into ScreenTinker's Webpage widget.">
+  <meta name="twitter:title" content="Google Slides, Docs &amp; Sheets on Digital Signage">
+  <meta name="twitter:description" content="Put Google Slides, Docs and Sheets on digital signage with the Cloud document widget. Slides auto-advance and loop; Docs and Sheets reload on their own.">
   <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
 
   <meta name="theme-color" content="#111827">
@@ -38,16 +38,18 @@
       </div>
       <div class="nav-links">
         <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
         <a href="/#pricing">Pricing</a>
         <a href="/#compare">Compare</a>
-        <a href="/integrations/">Integrations</a>
         <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
         <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
       </div>
     </div>
   </nav>
 
-  <main class="article">
+    <main class="article">
     <nav class="breadcrumb" aria-label="Breadcrumb">
       <a href="/">Home</a>
       <span>/</span>
@@ -56,81 +58,86 @@
       <span>Google Slides</span>
     </nav>
 
-    <h1>How to put Google Slides on a digital signage screen</h1>
-    <p class="lead">ScreenTinker does not have a dedicated "Google Slides app" - and it does not need one. Google Slides can publish a deck to the web, and ScreenTinker's universal Webpage widget can display that published URL on any screen, auto-advancing through the slides on a loop.</p>
+    <h1>How to put Google Slides, Docs and Sheets on a digital signage screen</h1>
+    <p class="lead">Keep editing in Google and let the screens follow. The Cloud document widget shows a Google Slides deck, Doc or Sheet through Google&rsquo;s own viewer: a deck advances and loops on its own, and your edits appear on screen without re-uploading anything.</p>
 
     <h2>The short version</h2>
-    <p>In Google Slides, go to <strong>File &rarr; Share &rarr; Publish to web &rarr; Embed</strong>, set the auto-advance interval, and copy the published URL. In ScreenTinker, add a <strong>Webpage</strong> widget, paste that URL, drop the widget into a playlist, and assign the playlist to a screen. That is the whole integration.</p>
+    <p>In Google Slides, choose <strong>File &rarr; Share &rarr; Publish to web</strong> and publish, or share the file with <strong>Anyone with the link &rarr; Viewer</strong>. Copy the link. In ScreenTinker, open <strong>Content &rarr; Google &amp; Microsoft documents</strong>, paste it and press <strong>Add document</strong>. Put the new item in a playlist and assign it to a screen.</p>
 
-    <h2>Step by step</h2>
+    <h2>How it works</h2>
+    <p>Paste any of these and it works: the link from the address bar of a shared file, the published link, or the whole embed code. ScreenTinker rebuilds it as Google&rsquo;s embed address, so:</p>
+    <ul>
+      <li><strong>Slides</strong> advance every <em>Seconds per slide</em> (10 by default), loop, and keep themselves up to date.</li>
+      <li><strong>Docs and Sheets</strong> reload every 5 minutes by default. Set <em>Reload every</em> to change that, or 0 for never. A sheet keeps the tab it was shared on.</li>
+    </ul>
+    <p>Under <strong>Widgets &rarr; Cloud document</strong> you can also set the zoom and the background. Every player shows a cloud document: Android, Fire TV, Raspberry Pi, Windows and Samsung Tizen load Google&rsquo;s page directly, and the web player (also used on BrightSign and LG webOS) frames it.</p>
+
+    <h2 id="setup">Step by step</h2>
     <ol>
-      <li><strong>Open your deck</strong> in Google Slides and choose <strong>File &rarr; Share &rarr; Publish to web</strong>.</li>
-      <li><strong>Switch to the "Embed" tab.</strong> Pick how fast slides should advance (for example, every 5 seconds) and tick <em>Auto-advance</em> and <em>Restart the slideshow after the last slide</em> so it loops forever.</li>
-      <li><strong>Click Publish</strong> and confirm. Copy the published URL from the embed snippet - it is the <code>src</code> value that looks like the one below, <em>not</em> your normal editing link.</li>
-      <li><strong>In ScreenTinker, add a Webpage widget.</strong> Open your dashboard, create or edit a playlist item, and choose the <strong>Webpage</strong> widget type.</li>
-      <li><strong>Paste the published URL</strong> into the widget's URL field and save.</li>
-      <li><strong>Add the widget to a playlist</strong> and set its duration to at least one full loop of the deck.</li>
-      <li><strong>Assign the playlist to a screen.</strong> The player pulls the published deck and it starts advancing on the wall.</li>
+      <li><strong>Open the file</strong> in Google Slides, Docs or Sheets.</li>
+      <li><strong>Make it viewable without signing in.</strong> Choose <strong>File &rarr; Share &rarr; Publish to web</strong> and press <strong>Publish</strong>, or share it with <strong>Anyone with the link &rarr; Viewer</strong>. A screen has nobody to sign in to Google.</li>
+      <li><strong>Copy the link</strong> (or the embed code).</li>
+      <li><strong>In ScreenTinker</strong>, open <strong>Content &rarr; Google &amp; Microsoft documents</strong>, paste it, and press <strong>Add document</strong>.</li>
+      <li><strong>Set the timing</strong> if you like: seconds per slide for a deck, or how often a Doc or Sheet reloads.</li>
+      <li><strong>Add it to a playlist</strong> and assign the playlist to a screen.</li>
     </ol>
-    <p>A published Slides embed URL looks like this:</p>
-    <pre><code>https://docs.google.com/presentation/d/e/2PACX-xxxxxxxx/pubembed?start=true&amp;loop=true&amp;delayms=5000</code></pre>
+    <p>The full reference is in <a href="https://github.com/screentinker/screentinker/blob/main/docs/cloud-documents.md">docs/cloud-documents.md</a>.</p>
 
-    <h2>Getting the right URL</h2>
-    <p>This is the step that trips people up. Google Slides has several URLs and only one of them will embed:</p>
-    <ul>
-      <li><strong>The /edit URL</strong> (ends in <code>/edit</code>) is your working document. It requires a Google login and refuses to be framed - it will <em>not</em> show up in the Webpage widget.</li>
-      <li><strong>The /present URL</strong> (ends in <code>/present</code>) is presenter mode and also blocks framing.</li>
-      <li><strong>The published URL</strong> from <em>Publish to web</em> (contains <code>/pub</code> or <code>/pubembed</code>) is the only one that permits embedding. Always use this one.</li>
-    </ul>
-    <p>The reason is <code>X-Frame-Options</code> / <code>frame-ancestors</code>: any page that sends those headers to deny framing cannot be shown in an iframe, and ScreenTinker's Webpage widget is an iframe. The published URL is served without that restriction specifically so it can be embedded. If your slides do not appear, the URL is almost always the cause.</p>
+    <h2>Numbers from a Sheet, not a picture of it</h2>
+    <p>Showing a Sheet as a document is good for a rota or a table people read. To put a single value on a designed slide (a price, a total, today&rsquo;s count), connect the Sheet as a <strong>live data source</strong> instead and place the value with a tag like <code>{{ds:menu.latte_price}}</code>. When the cell changes, the slide does. Live data is included on every plan.</p>
 
-    <h2>Auto-advance and refresh tips</h2>
+    <h2>Limits</h2>
     <ul>
-      <li><strong>Set the pace in Slides, not ScreenTinker.</strong> The <code>delayms</code> parameter in the published URL controls how long each slide holds. Adjust it by re-publishing with a different interval, or edit the <code>delayms</code> value directly in the URL (milliseconds).</li>
-      <li><strong>Keep <code>loop=true</code></strong> so the deck restarts after the last slide and never goes blank.</li>
-      <li><strong>Give the playlist item enough time.</strong> Set the Webpage widget's on-screen duration to at least the length of one full loop so viewers see every slide.</li>
-      <li><strong>Content updates are automatic-ish.</strong> When you edit the source deck, Google re-publishes changes to the published URL within a short window (usually a few minutes), so the sign updates without touching ScreenTinker.</li>
+      <li><strong>The file must be viewable without signing in:</strong> published, or shared with &ldquo;anyone with the link&rdquo;. Anyone who has that link can see it, so don&rsquo;t share private documents this way.</li>
+      <li><strong>Only <code>docs.google.com</code> links</strong> are accepted.</li>
+      <li><strong>It needs the internet.</strong> The screen loads Google&rsquo;s viewer live, so a cloud document doesn&rsquo;t play offline. For a deck that must play offline, download it as images or a PDF and upload that; a PDF becomes one slide per page.</li>
+      <li><strong>The dashboard preview can&rsquo;t show it,</strong> because the preview is isolated from the dashboard for your security. Use <strong>open in a new tab</strong> next to the link in the editor to check the document.</li>
     </ul>
 
-    <h2>FAQ</h2>
+    <h2>Using the Webpage widget instead</h2>
+    <p>A published Slides <code>/pubembed</code> link still works in the general <strong>Webpage</strong> widget, as it always has. The Cloud document widget is simpler: it accepts the ordinary share link, handles timing and looping for you, and reloads Docs and Sheets on a schedule. The <code>/edit</code> and <code>/present</code> links need a Google sign-in and refuse to be framed, so they don&rsquo;t work in either.</p>
 
-    <h3>Why won't my Google Slides link show up on the screen?</h3>
-    <p>You almost certainly pasted the <code>/edit</code> or <code>/present</code> URL. Those require a login and block framing. Go back to <strong>File &rarr; Share &rarr; Publish to web</strong> and copy the published <code>/pubembed</code> URL instead.</p>
+    <h2 id="faq">FAQ</h2>
 
-    <h3>Do viewers need a Google account to see the deck?</h3>
-    <p>No. A published-to-web deck is public and renders without any login, which is exactly why it works on an unattended signage player.</p>
+    <h3>Why won&rsquo;t my Google Slides link show up on the screen?</h3>
+    <p>The file is probably not viewable without signing in. Publish it with File &rarr; Share &rarr; Publish to web, or share it with Anyone with the link &rarr; Viewer, then paste the link again.</p>
 
-    <h3>Can I make the slides advance automatically?</h3>
-    <p>Yes. Enable auto-advance when you publish and set the interval; the <code>delayms</code> and <code>loop</code> parameters in the published URL handle timing and looping.</p>
+    <h3>Do viewers need a Google account?</h3>
+    <p>No. A published or link-shared file opens without signing in, which is why it works on an unattended screen.</p>
 
-    <h3>Will the sign update when I edit the deck?</h3>
-    <p>Yes, on a short delay. Google re-publishes edits to the published URL automatically, so the screen picks up changes without any change in ScreenTinker.</p>
+    <h3>Can the slides advance automatically and loop?</h3>
+    <p>Yes. The Cloud document widget advances a deck every Seconds per slide, 10 by default, and loops it.</p>
+
+    <h3>Will the sign update when I edit the file?</h3>
+    <p>Yes. Slides keep themselves up to date, and Docs and Sheets reload every 5 minutes by default, so edits reach the screen without anything changing in ScreenTinker.</p>
 
     <h3>Is there a native Google Slides widget?</h3>
-    <p>No - this uses the universal Webpage widget with the deck's published URL. That is the supported and reliable way to show Slides on ScreenTinker.</p>
+    <p>Yes. The Cloud document widget shows Google Slides, Docs and Sheets, and PowerPoint, Word and Excel files from OneDrive or SharePoint.</p>
 
     <div class="related">
-      <h2>Related guides</h2>
+      <h2>Related</h2>
       <ul>
-        <li><a href="/integrations/">All digital signage integrations</a></li>
-        <li><a href="/integrations/canva-digital-signage.html">Display Canva designs on digital signage</a></li>
+        <li><a href="/integrations/microsoft-365-digital-signage.html">Microsoft 365: SharePoint, OneDrive and Office files</a></li>
+        <li><a href="/integrations/canva-digital-signage.html">Canva designs on digital signage</a></li>
         <li><a href="/integrations/power-bi-digital-signage.html">Power BI dashboards on digital signage</a></li>
-        <li><a href="/guides/what-is-digital-signage.html">What is digital signage?</a></li>
-        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage: complete guide</a></li>
+        <li><a href="/integrations/">All digital signage integrations</a></li>
+        <li><a href="/templates">Ready-made templates</a></li>
       </ul>
     </div>
 
     <div class="cta">
-      <h2>Try ScreenTinker free</h2>
-      <p>Add a Webpage widget, paste your published deck, and see it on a screen in minutes. Free plan, no credit card required.</p>
-      <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start Free</a>
-      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
+      <h2>Put your Google files on a screen</h2>
+      <p>Paste a share link and watch it play. Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
     </div>
   </main>
 
   <footer>
     <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
     <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
       <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
       <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
       <a href="/legal/terms.html">Terms</a>
@@ -141,26 +148,77 @@
   </footer>
 
   <script type="application/ld+json">
-  {
+{
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
-      { "@type": "ListItem", "position": 2, "name": "Integrations", "item": "https://screentinker.com/integrations/" },
-      { "@type": "ListItem", "position": 3, "name": "Google Slides", "item": "https://screentinker.com/integrations/google-slides-digital-signage.html" }
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Integrations",
+        "item": "https://screentinker.com/integrations/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Google Slides",
+        "item": "https://screentinker.com/integrations/google-slides-digital-signage.html"
+      }
     ]
   }
   </script>
+
   <script type="application/ld+json">
-  {
+{
     "@context": "https://schema.org",
     "@type": "FAQPage",
     "mainEntity": [
-      { "@type": "Question", "name": "Why won't my Google Slides link show up on the screen?", "acceptedAnswer": { "@type": "Answer", "text": "You almost certainly pasted the /edit or /present URL. Those require a login and block framing. Go back to File > Share > Publish to web and copy the published /pubembed URL instead." } },
-      { "@type": "Question", "name": "Do viewers need a Google account to see the deck?", "acceptedAnswer": { "@type": "Answer", "text": "No. A published-to-web deck is public and renders without any login, which is why it works on an unattended signage player." } },
-      { "@type": "Question", "name": "Can I make the slides advance automatically?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Enable auto-advance when you publish and set the interval; the delayms and loop parameters in the published URL handle timing and looping." } },
-      { "@type": "Question", "name": "Will the sign update when I edit the deck?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, on a short delay. Google re-publishes edits to the published URL automatically, so the screen picks up changes without any change in ScreenTinker." } },
-      { "@type": "Question", "name": "Is there a native Google Slides widget?", "acceptedAnswer": { "@type": "Answer", "text": "No - this uses the universal Webpage widget with the deck's published URL. That is the supported and reliable way to show Slides on ScreenTinker." } }
+      {
+        "@type": "Question",
+        "name": "Why won’t my Google Slides link show up on the screen?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The file is probably not viewable without signing in. Publish it with File → Share → Publish to web, or share it with Anyone with the link → Viewer, then paste the link again."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Do viewers need a Google account?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. A published or link-shared file opens without signing in, which is why it works on an unattended screen."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can the slides advance automatically and loop?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. The Cloud document widget advances a deck every Seconds per slide, 10 by default, and loops it."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Will the sign update when I edit the file?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Slides keep themselves up to date, and Docs and Sheets reload every 5 minutes by default, so edits reach the screen without anything changing in ScreenTinker."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is there a native Google Slides widget?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. The Cloud document widget shows Google Slides, Docs and Sheets, and PowerPoint, Word and Excel files from OneDrive or SharePoint."
+        }
+      }
     ]
   }
   </script>

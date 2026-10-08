@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zapier, Make &amp; n8n Digital Signage Automation | ScreenTinker</title>
+  <meta name="description" content="Change what screens show from Zapier, Make, n8n or any HTTP request: raise alerts, switch playlists, update tables, and react when a screen goes offline.">
+  <meta name="keywords" content="zapier digital signage, digital signage automation, make digital signage, n8n digital signage, power automate signage, digital signage webhook, digital signage api">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/integrations/zapier-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/integrations/zapier-digital-signage.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/integrations/zapier-digital-signage.html">
+  <meta property="og:title" content="Zapier, Make &amp; n8n Digital Signage Automation">
+  <meta property="og:description" content="Change what screens show from Zapier, Make, n8n or any HTTP request: raise alerts, switch playlists, update tables, and react when a screen goes offline.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Zapier, Make &amp; n8n Digital Signage Automation">
+  <meta name="twitter:description" content="Change what screens show from Zapier, Make, n8n or any HTTP request: raise alerts, switch playlists, update tables, and react when a screen goes offline.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/integrations/">Integrations</a>
+      <span>/</span>
+      <span>Zapier, Make &amp; n8n</span>
+    </nav>
+
+    <h1>Automate your digital signage with Zapier, Make, n8n or a webhook</h1>
+    <p class="lead">Let the systems you already run change what your screens show. A form submission can update a table on a screen, a ticketing alert can take over the lobby, and a screen going dark can open a ticket. Zapier, Make, n8n, Power Automate and plain HTTP all work.</p>
+
+    <h2>How it works</h2>
+    <p>There are two ways in.</p>
+    <ul>
+      <li><strong>Hooks.</strong> A secret web address that does one thing when called. It needs no account and no token, so anything that can send an HTTP request can use it: a script, a building system, a Make or n8n HTTP module.</li>
+      <li><strong>The Zapier API.</strong> Uses a ScreenTinker API token. It lets Zapier start Zaps when something happens here, and run actions from a Zap. Make, n8n and your own code can call the same endpoints.</li>
+    </ul>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>Triggers (something happened in ScreenTinker)</th><th>Actions (change what screens show)</th></tr></thead>
+      <tbody>
+        <tr><td>A screen went offline</td><td>Raise or clear an emergency alert</td></tr>
+        <tr><td>A screen came back online</td><td>Switch screens to a playlist for some minutes</td></tr>
+        <tr><td>An emergency alert was raised or cleared</td><td>Fire or clear a trigger</td></tr>
+        <tr><td>Content was approved, or a playlist was published</td><td>Update a table data source on screen</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Alert and playlist actions can target a group, a screen or a tag. A playlist switch never overrides a head office playlist, and an emergency alert always comes first.</p>
+
+    <h2 id="setup">Set it up</h2>
+    <h3>Zapier</h3>
+    <ol>
+      <li><strong>Push the app to your Zapier account.</strong> The ScreenTinker integration is a <strong>private Zapier app</strong> in the <code>zapier/</code> folder of the repository. You push it to your own Zapier account with the Zapier CLI, then invite your team. It is not listed in Zapier&rsquo;s public app directory.</li>
+      <li><strong>Create an API token</strong> in ScreenTinker under Settings &rarr; API tokens. Raising alerts, switching playlists and subscribing to triggers need a workspace admin&rsquo;s token.</li>
+      <li><strong>Connect</strong> with your ScreenTinker address and the token, then build Zaps as usual.</li>
+    </ol>
+    <h3>Make, n8n, Power Automate or your own code</h3>
+    <ol>
+      <li>For triggers, use the tool&rsquo;s custom webhook and subscribe it with <code>POST /api/zapier/subscriptions</code>, or poll <code>GET /api/zapier/events</code>.</li>
+      <li>For actions, call <code>/api/zapier/actions/...</code> with <code>Authorization: Bearer st_...</code>, or call a hook address, which needs no token.</li>
+    </ol>
+    <h3>A hook</h3>
+    <ol>
+      <li>Open the <strong>Automation</strong> page and choose <strong>New hook</strong>: emergency alert, mass notification, fire a trigger, update a table, or switch to a playlist.</li>
+      <li>Copy the address it shows. It is shown only once.</li>
+      <li>Point your system at it with a <code>POST</code>.</li>
+    </ol>
+    <p>Every endpoint, field and token scope is in <a href="https://github.com/screentinker/screentinker/blob/main/docs/automation.md">docs/automation.md</a> and the <a href="/docs">API reference</a>.</p>
+
+    <h2>Security</h2>
+    <ul>
+      <li><strong>Hook addresses are shown once</strong> and stored only as a fingerprint. A wrong address answers 404. Signing with HMAC-SHA256 is optional, and every call is logged.</li>
+      <li><strong>Deliveries to your webhooks are signed</strong> (<code>X-ScreenTinker-Signature</code>) and must go to a public <code>https</code> address. Failures are retried after 1, 5, 30 and 120 minutes.</li>
+      <li><strong>Token scopes.</strong> A <code>read</code> token can test the connection and read events. Updating tables needs <code>write</code>. Alerts, playlists and triggers need <code>full</code>.</li>
+      <li><strong>Only workspace admins</strong> can create hooks or subscribe a webhook to this workspace&rsquo;s events.</li>
+    </ul>
+
+    <h2>Limits</h2>
+    <ul>
+      <li>The Zapier app is private: someone on your team pushes it once with the Zapier CLI. There is no one-click install from Zapier&rsquo;s directory.</li>
+      <li>Firing a trigger over the internet reaches Raspberry Pi and Windows screens only. Other players listen for triggers on their own network.</li>
+      <li>Hooks answer <code>POST</code>. <code>GET</code> is off unless you switch it on for that hook, because link previews and email scanners open any address with <code>GET</code>.</li>
+      <li>A hook takes 30 calls a minute, and a table keeps at most 200 rows.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+
+    <h3>Is ScreenTinker in the Zapier app directory?</h3>
+    <p>No. It is a private Zapier app that ships with ScreenTinker. You push it to your own Zapier account once with the Zapier CLI, then invite your team.</p>
+
+    <h3>Can I use Make or n8n instead of Zapier?</h3>
+    <p>Yes. They use the same API: subscribe a custom webhook for triggers, or poll for events, and call the action endpoints with an API token. You can also call a hook address, which needs no token.</p>
+
+    <h3>Can a script change what a screen shows without an API token?</h3>
+    <p>Yes. Create a hook on the Automation page and send it a POST. A hook does one thing, such as switching screens to a playlist or updating a table, and its address is the credential.</p>
+
+    <h3>Can Zapier tell me when a screen goes offline?</h3>
+    <p>Yes. Screen went offline and Screen came back online are Zapier triggers. For a message straight to Slack, Teams or PagerDuty without Zapier, use an alert channel instead.</p>
+
+    <div class="related">
+      <h2>Related</h2>
+      <ul>
+        <li><a href="/integrations/slack-teams-offline-alerts.html">Screen offline alerts in Slack, Teams and PagerDuty</a></li>
+        <li><a href="/solutions/emergency-alert-digital-signage.html">Emergency alerts on every screen</a></li>
+        <li><a href="/integrations/microsoft-365-digital-signage.html">Microsoft 365: SharePoint, OneDrive and Office files</a></li>
+        <li><a href="/solutions/enterprise-digital-signage.html">Enterprise digital signage: SSO, roles, audit</a></li>
+        <li><a href="/guides/mcp-digital-signage.html">Manage screens from an AI assistant (MCP)</a></li>
+        <li><a href="/integrations/">All digital signage integrations</a></li>
+      </ul>
+    </div>
+
+    <div class="cta">
+      <h2>Connect your screens to the rest of your stack</h2>
+      <p>Create a hook in a minute and call it from anything. Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://screentinker.com/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Integrations",
+        "item": "https://screentinker.com/integrations/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Zapier, Make &amp; n8n",
+        "item": "https://screentinker.com/integrations/zapier-digital-signage.html"
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Is ScreenTinker in the Zapier app directory?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. It is a private Zapier app that ships with ScreenTinker. You push it to your own Zapier account once with the Zapier CLI, then invite your team."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I use Make or n8n instead of Zapier?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. They use the same API: subscribe a custom webhook for triggers, or poll for events, and call the action endpoints with an API token. You can also call a hook address, which needs no token."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can a script change what a screen shows without an API token?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Create a hook on the Automation page and send it a POST. A hook does one thing, such as switching screens to a playlist or updating a table, and its address is the credential."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can Zapier tell me when a screen goes offline?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Screen went offline and Screen came back online are Zapier triggers. For a message straight to Slack, Teams or PagerDuty without Zapier, use an alert channel instead."
+        }
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

@@ -243,6 +243,8 @@ test('published pages resolve, including directory indexes', () => {
   assert.ok(ai.markdownSource(FRONTEND, '/guides/brightsign-digital-signage.md'));
   assert.ok(ai.markdownSource(FRONTEND, '/certified-hardware.md'));
   assert.ok(ai.markdownSource(FRONTEND, '/integrations/'), 'a section index is a published page too');
+  assert.ok(ai.markdownSource(FRONTEND, '/solutions/'), 'the solutions hub is a section index too');
+  assert.ok(ai.markdownSource(FRONTEND, '/solutions/emergency-alert-digital-signage.md'));
   assert.ok(ai.markdownSource(FRONTEND, '/legal/terms.md'));
 });
 
@@ -398,6 +400,21 @@ test('robots.txt declares Content Signals without losing a single existing direc
   for (const d of ['User-agent: *', 'Allow: /', 'Disallow: /api/', 'Disallow: /app',
                    'Disallow: /player', 'Disallow: /uploads/', 'Sitemap: https://screentinker.com/sitemap.xml']) {
     assert.ok(robots.includes(d), `robots.txt lost: ${d}`);
+  }
+});
+
+test('llms.txt names every solutions and integrations page, and nothing that does not exist', () => {
+  const llms = fs.readFileSync(path.join(FRONTEND, 'llms.txt'), 'utf8');
+  for (const dir of ['solutions', 'integrations']) {
+    const linked = (llms.match(new RegExp(`https://screentinker\\.com/${dir}/[a-z0-9-]+\\.html`, 'g')) || [])
+      .map((u) => u.split('/').pop());
+    for (const g of new Set(linked)) {
+      assert.ok(fs.existsSync(path.join(FRONTEND, dir, g)), `llms.txt links ${dir}/${g}, which does not exist`);
+    }
+    for (const f of fs.readdirSync(path.join(FRONTEND, dir)).filter((f) => f.endsWith('.html') && f !== 'index.html')) {
+      assert.ok(linked.includes(f), `llms.txt does not mention ${dir}/${f}`);
+    }
+    assert.ok(llms.includes(`https://screentinker.com/${dir}/)`), `llms.txt should link the ${dir} hub`);
   }
 });
 
