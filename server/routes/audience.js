@@ -104,12 +104,26 @@ router.put('/groups/:id', setSwitch('group'));
  * of its last, computed in the browser's own zone (so a range across a DST change is still exact).
  * A bare YYYY-MM-DD is also taken, and is a day in the viewer's zone from `tz` (minutes BEHIND UTC,
  * as Date.getTimezoneOffset() reports it) — the same offset by_hour / by_day are shifted by — so
- * "2026-03-10" for a UTC-5 viewer starts at 05:00 UTC, not at UTC midnight.
+ * "2026-03-10" for a UTC-5 viewer starts at 05:00 UTC, not at UTC midnight. `from` / `to` are
+ * accepted as aliases of `start` / `end`; anything that does not parse is a 400, never the default.
  */
 function range(req, res) {
   const now = Math.floor(Date.now() / 1000);
-  const tzRaw = Number(req.query.tz || 0);
-  const tzOffsetMin = Number.isFinite(tzRaw) && Math.abs(tzRaw) <= 14 * 60 ? Math.trunc(tzRaw) : 0;
+  const bad = (error) => { res.status(400).json({ error }); return null; };
+  // `tz` given but not an offset in minutes was silently 0 (UTC days); say so instead.
+  const tzRaw = req.query.tz === undefined || req.query.tz === '' ? 0 : Number(req.query.tz);
+  if (!Number.isFinite(tzRaw) || Math.abs(tzRaw) > 14 * 60) return bad('tz must be the viewer\'s UTC offset in minutes (as Date.getTimezoneOffset() reports it).');
+  const tzOffsetMin = Math.trunc(tzRaw);
+  // `from` / `to` are aliases of `start` / `end` (a YYYY-MM-DD in `tz` reads naturally as from/to).
+  // They used to be ignored without a word, so the report silently showed the default 30 days.
+  const pick = (a, b) => {
+    const x = req.query[a], y = req.query[b];
+    if (Array.isArray(x) || Array.isArray(y) || (x !== undefined && typeof x !== 'string') || (y !== undefined && typeof y !== 'string')) return { error: `${a} must be given once` };
+    if (x !== undefined && x !== '' && y !== undefined && y !== '' && x !== y) return { error: `Give ${a} or ${b}, not both` };
+    return { v: x !== undefined && x !== '' ? x : y };
+  };
+  const ps = pick('start', 'from'), pe = pick('end', 'to');
+  if (ps.error || pe.error) return bad(ps.error || pe.error);
   const parse = (v, dflt) => {
     if (v === undefined || v === '') return dflt;
     const str = String(v);
@@ -121,12 +135,13 @@ function range(req, res) {
     const t = Math.floor(Date.parse(str) / 1000);
     return Number.isFinite(t) ? t : null;
   };
-  const start = parse(req.query.start, now - 30 * 86400);
-  let end = parse(req.query.end, now);
-  if (start === null || end === null) { res.status(400).json({ error: 'start and end must be dates' }); return null; }
+  const start = parse(ps.v, now - 30 * 86400);
+  let end = parse(pe.v, now);
+  if (start === null || end === null) return bad('start/from and end/to must be YYYY-MM-DD dates (in tz) or epoch seconds');
   // A bare date for `end` means "through the end of that day".
-  if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.end || ''))) end += 86399;
-  if (end < start || end - start > 400 * 86400) { res.status(400).json({ error: 'The range must be at most 400 days.' }); return null; }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(pe.v || ''))) end += 86399;
+  if (end < start) return bad('The range ends before it starts.');
+  if (end - start > 400 * 86400) return bad('The range must be at most 400 days.');
   return { start, end, tzOffsetMin,
     deviceId: typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null };
 }

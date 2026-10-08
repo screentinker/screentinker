@@ -135,3 +135,49 @@ test('creation and playback resolve the same zone from the same row', async () =
     assert.equal(created, expected || 'UTC', 'creation agrees with playback');
   }
 });
+
+// start_time/end_time are wall clock in the schedule's zone (services/scheduler.js compares their
+// first 16 characters with the screen's local time). An ISO instant with Z or an offset was stored
+// as typed, so "00:00Z" for a Tokyo screen ran at 00:00 Tokyo, nine hours late. It is converted now.
+test('a time sent with Z or an offset is converted to wall clock in the schedule\'s zone', async () => {
+  const tokyo = mkDevice('Tokyo UTC input', null, 'Asia/Tokyo');
+  const z = await createSchedule({ device_id: tokyo, start_time: '2026-07-28T00:00:00Z', end_time: '2026-07-28T08:00:00.000Z' });
+  assert.equal(z.status, 201, JSON.stringify(z.body));
+  assert.equal(z.body.start_time, '2026-07-28T09:00');
+  assert.equal(z.body.end_time, '2026-07-28T17:00');
+
+  const off = await createSchedule({ device_id: tokyo, start_time: '2026-07-28T09:00+02:00', end_time: '2026-07-28T23:30+02:00' });
+  assert.equal(off.status, 201, JSON.stringify(off.body));
+  assert.equal(off.body.start_time, '2026-07-28T16:00');
+  assert.equal(off.body.end_time, '2026-07-29T06:30', 'the date rolls over with the conversion');
+
+  // An explicit zone wins, for the conversion as for the stored zone.
+  const paris = await createSchedule({ device_id: tokyo, timezone: 'Europe/Paris', start_time: '2026-07-28T07:00Z', end_time: '2026-07-28T15:00Z' });
+  assert.equal(paris.body.start_time, '2026-07-28T09:00');
+  assert.equal(paris.body.timezone, 'Europe/Paris');
+
+  // Plain wall clock is stored exactly as before.
+  const plain = await createSchedule({ device_id: tokyo });
+  assert.equal(plain.body.start_time, '2026-07-28T09:00:00');
+
+  // PUT converts the same way.
+  const put = await jfetch(`/api/schedules/${z.body.id}`, { method: 'PUT', headers: auth(), body: JSON.stringify({ start_time: '2026-07-28T01:00Z' }) });
+  assert.equal(put.status, 200, JSON.stringify(put.body));
+  assert.equal(put.body.start_time, '2026-07-28T10:00');
+  assert.equal(put.body.end_time, '2026-07-28T17:00', 'a field not sent is left alone');
+});
+
+test('a time with an offset is refused when no zone can be determined', async () => {
+  const silent = mkDevice('Silent offset', null, null);
+  const r = await createSchedule({ device_id: silent, start_time: '2026-07-28T09:00:00Z', end_time: '2026-07-28T17:00:00Z' });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.match(r.body.error, /YYYY-MM-DDTHH:MM/);
+  assert.equal(db.prepare('SELECT COUNT(*) FROM schedules WHERE device_id = ?').pluck().get(silent), 0, 'nothing saved');
+
+  const ok = await createSchedule({ device_id: silent });
+  assert.equal(ok.status, 201);
+  const put = await jfetch(`/api/schedules/${ok.body.id}`, { method: 'PUT', headers: auth(), body: JSON.stringify({ end_time: '2026-07-28T18:00-05:00' }) });
+  assert.equal(put.status, 400, JSON.stringify(put.body));
+  assert.match(put.body.error, /YYYY-MM-DDTHH:MM/);
+  assert.equal(db.prepare('SELECT end_time FROM schedules WHERE id = ?').pluck().get(ok.body.id), '2026-07-28T17:00:00');
+});

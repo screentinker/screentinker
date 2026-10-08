@@ -135,6 +135,15 @@ test('rooms: an ICS address is never returned; a widget may only show a room of 
   assert.equal(ics.body.ics_host, 'outlook.office365.com');
   assert.ok(!ics.text.includes('SECRETTOKEN123'));
   assert.ok(!(await api('/api/rooms', J(undefined, 'GET'))).text.includes('SECRETTOKEN123'));
+
+  // An address the SSRF guard refuses is the admin's to fix: Test says so, not a generic 500.
+  const internal = await api('/api/rooms', J({ name: 'Internal', source: 'ics', ics_url: 'http://127.0.0.1:9/cal.ics', timezone: 'UTC' }));
+  assert.equal(internal.status, 201, JSON.stringify(internal.body));
+  const t = await api(`/api/rooms/${internal.body.id}/test`, J({}));
+  assert.equal(t.status, 200, JSON.stringify(t.body));
+  assert.equal(t.body.ok, false);
+  assert.match(t.body.error, /private or internal network address/);
+  await api(`/api/rooms/${internal.body.id}`, J(undefined, 'DELETE'));
   assert.equal((await api('/api/rooms', J({ name: 'x', source: 'm365', connection_id: S.conn, calendar_id: 'a@b', timezone: 'Mars/Olympus' }))).status, 400);
   assert.equal((await api('/api/rooms', J({ name: 'x', source: 'm365', connection_id: 'not-ours', calendar_id: 'a@b', timezone: 'UTC' }))).status, 400);
 
